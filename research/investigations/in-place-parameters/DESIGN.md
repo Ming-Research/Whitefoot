@@ -2613,3 +2613,306 @@ Whether #357 merges with the Snowghost cells left at main's level and the
 accessor inlining split into its own item, or waits for that item, is the
 owner's open choice on card `lm-357-accept-split`; nothing in this record
 presumes the answer.
+
+## Small accessors returning records: inline cost of field-wise transfers
+
+### Question and comparison fixed before measurement
+
+For board item `lm-small-accessor-inline`, can a small accessor returning a
+48-byte record inline at an LLVM 22 cold call site while preserving the
+opportunity to read only the fields its caller needs, without reinstating
+wide loads across separately stored fields or Whitefoot's withdrawn
+forced-inlining budget? This is a feasibility study of hand-written LLVM
+IR, not a compiler change or a new Snowghost timing result. The preceding
+withdrawal attribution supplies the workload motivation; this study does
+not rerun or independently verify its callgrind results.
+
+The comparison uses one record shape, accessor source-address computation,
+and statically cold caller, changing the transfer representation. A
+single-field consumer models `font_of` reading part of `computed_of`; a
+whole-record consumer exposes retained transfer widths that dead-field
+elimination could otherwise hide. The baseline follows the emitter's
+`copy_granules`: byte-offset GEPs, original scalar loads/stores at alignment
+one, all source captures preceding every destination store. The witnesses
+and their runnable driver live in
+[small-accessor-inline](../../experiments/small-accessor-inline/README.md).
+
+Before running those witnesses, the candidates and falsifiers are:
+
+| Candidate | Comparison and result that would reject it |
+| --- | --- |
+| (a) Current granule load/store transfer | Establish the cold inline remark and final widths/counts. If it already inlines and eliminates unused fields, this witness does not reproduce the attributed inline-cost problem and cannot support a proposed repair. Wide surviving loads refute a final-width guarantee, not the current emission decision, which expressly makes no such guarantee. |
+| (b) Return a compiler-internal source address and let the caller read the snapshot | Compare the same partial and complete observations after ordinary inlining. Reject for any path lacking source lifetime/stability through observation or capture, or if a complete copy is still necessary inside the accessor. Read-only use of a result alone is insufficient: its source must remain the value observed at the original call. Check whether existing incoming-parameter and Load-snapshot placement already implements this for call results. |
+| (c) Use memcpy with `!tbaa.struct` in an accessor selected for inline candidacy | Test whether its smaller inline cost survives normal `-O2`, and whether final complete-copy loads respect the field boundaries. Reject as a general repair if it merely recovers inlining by reintroducing wide source loads, needs unsound alias assumptions, or needs another unsupported function-size policy. A disappearing partial copy alone is insufficient. |
+| (d) Masked gather/scatter | Test ordinary cold inlining, retained lane-width accesses, and static machine-instruction counts against both granules and a direct field observation. Reject as an accessor repair if it retains the whole transfer and materially more instructions when the caller needs one field, even if the inline remark and widths are favorable. No simulated or static count will be called a measured latency. |
+| (e) LLVM-side equivalent-transfer cost accounting | Locate where LLVM 22 charges the expanded transfer and where early analysis stops. Specify, without implementing, a local/upstream patch that discounts a recognized transfer before that stop. Reject a finalize-only threshold adjustment, a change that forces inlining regardless of ordinary profitability, or a proposal claiming narrower final accesses from a cost-only change. Unpatched witnesses cannot establish this candidate's actual inline result or code size. |
+
+Record the exact LLVM version, target and commands; use full `opt -O2`
+followed by `llc -O2`, inline remarks, optimized IR and assembly. Counts
+must identify their region and distinguish static instructions, dynamic
+path arithmetic and any target-model estimates. This local permission is
+limited to small IR tools: no Whitefoot builds, native execution, timing,
+CI dispatch or GitHub polling. The record will separate measured results
+from source-derived expectations, propose any necessary design wording
+here, and leave `design/` unchanged.
+
+### IR-level results and the controls that bound them
+
+The local tools report Homebrew LLVM **22.1.8**. `opt -O2` uses the
+witness's `x86_64-unknown-linux-gnu` target with generic x86-64 target-cost
+information; `llc -O2 -mcpu=alderlake` supplies the machine lowering. This
+is compile-only cross-target evidence from the Mac, not an Alder Lake run,
+14900K measurement or the downstream full-LTO pipeline. The
+[experiment README](../../experiments/small-accessor-inline/README.md)
+owns the file inventory, output snapshots and exact reproduction commands.
+
+The first direct-address, twelve-i32 pure-copy accessor **already inlined**
+at both cold sites: cost 20, threshold 45. Its pre-inline scalar transfer
+and caller's fresh allocation allow store-side SROA credits. This falsified
+that witness as a reproduction of the missed-inline problem. It remains
+as `direct-granules.ll`, not silently replaced with a favorable case.
+The exploratory extension adds one identical external `resolve_source`
+call before the source-address GEP in each candidate. This models an
+accessor's source lookup and supplies the missing cost without forced
+attributes, invented escapes or disabled optimizations. It is a synthetic
+helper, not a claim about `computed_of`'s exact body or call-result placement;
+the repository contains the supplied attribution but not that downstream
+IR. Branch weights are 1:10000 in every caller, with the same partial and
+whole-result observations.
+
+| Lookup-shaped candidate | Cold inline remark, partial/full | Final record accesses after `-O2` and machine lowering | Static instructions: accessor / partial caller / full caller | Taken-path instruction arithmetic: partial / full |
+| --- | --- | --- | --- | --- |
+| (a) Twelve i32 granules | No / no; cost 55, threshold 45 | Retained accessor merges source loads to 32 + 16 bytes; partial caller reloads 4 bytes; full caller reloads result in 16-byte chunks | 11 / 12 / 18 | 22 / 28 |
+| (b) Source-pointer result | Yes / yes; cost 0, threshold 45 | Partial consumer has one 4-byte source read and no copy; whole consumer merges to 32 + 16 bytes | 5 / 9 / 14 | 8 / 13 |
+| (c) memcpy + `!tbaa.struct` | Yes / yes; cost 0, threshold 45 | Partial copy disappears to one 4-byte read; whole consumer uses 32 + 16-byte loads/stores; standalone accessor uses two overlapping 32-byte regions within the 48-byte extent | 11 / 9 / 14 | 8 / 13 |
+| (d) Masked gather/scatter | Yes / yes; cost 5, threshold 45 | Gather source lanes and scatter stores remain 4 bytes; all twelve lanes and temporary backing survive even for one-field use. Whole consumer then reloads the temporary in 16-byte chunks | 48 / 52 / 60 | 51 / 59 |
+| (e) LLVM cost patch | Not measured: no patch built | Would retain granule IR; subsequent merging remains possible | Not measured | Not measured |
+
+Inline remark costs include call-site credits and may stop early for a
+rejected call; they are not raw transfer instruction counts or execution
+costs. The static columns count each complete assembly function, including
+branches, calls, prologue/epilogue and returns, excluding directives,
+labels and comments. The taken-path columns are arithmetic over these
+particular two-exit functions: subtract the untaken common return and add
+the accessor body once if its call survives. They include the common
+`resolve_source` call instruction, but exclude its unknown body, dynamic
+linkage stubs and any microarchitectural cost. No code was executed.
+
+Two added controls prevent overstating what granules or SROA buy:
+
+- `mixed-granules.ll` alternates six i32 and six float leaves in the same
+  48-byte layout. With the lookup, it still misses at 55/45, but its
+  30-instruction accessor retains twelve 4-byte loads and twelve 4-byte
+  stores. Partial/full caller counts are 12/36 and taken-path totals 41/65.
+  Removing the lookup in `mixed-direct-granules.ll` inlines at 20/45;
+  the whole inlined consumer retains 4-byte accesses, with 28 static and
+  27 taken-path instructions. Thus both preserved and merged widths occur
+  under ordinary optimization; homogeneous merging does not mean #345's
+  typed granules never help.
+- `placed-granules.ll` keeps the direct-address homogeneous accessor but
+  passes caller-supplied result backing rather than a fresh allocation.
+  It misses at 80/45. Destination placement changes the inliner's available
+  savings; a record's byte size and granule count alone do not determine
+  its cold inline outcome.
+
+The masked form fails the cost criterion directly: 51 instructions on the
+partial path versus 22 for the out-of-line homogeneous baseline and 8 for
+the eliminated copy. Its inexpensive inline accounting conceals gather,
+address-vector construction and scalarized scatter work. Its whole-result
+consumer also demonstrates why lane-width source reads do not promise
+field-width accesses throughout a larger computation. Instruction counts
+suffice for this rejection; no `llvm-mca` throughput estimate or Mac timing
+is needed. The memcpy form fails the surviving-width criterion: metadata
+did not stop wide loads, although a partial consumer benefits when the
+entire copy disappears. Neither result supports an accessor-size exception
+to the current source-independent granule rule.
+
+### Existing placement and the result contract missing from it
+
+Source inspection at the study's base revision finds incoming-parameter and
+Load-snapshot placement, but no call-result read-through counterpart.
+[`ResultAbi`](../../../compiler/src/backend/abi.rs) selects scalar values,
+register-sized aggregates, or a caller destination; it has no source-backed
+result form. [`select_read_through`](../../../compiler/src/backend/storage/snapshots.rs)
+selects only `IrOperation::Load` producers. Calls can consume those snapshots
+through eligible immutable parameters, but do not produce them. The same
+module's `incoming_snapshots` protects indirect inputs from potentially
+aliased result writes. [`returned_storage_slot`](../../../compiler/src/backend/emitter/places.rs)
+can coalesce backing with the result destination; this removes an intermediate
+copy, not the source-to-result snapshot itself.
+
+Candidate (b) therefore needs a new compiler-private result-origin contract,
+not just another choice in the current local storage planner. An initial
+domain would be known synchronous, unsplit, non-overlapping accessors of
+ordinary inline data. The backing must survive the call, belong to a live
+caller-visible allocation, and still hold the observed value through every
+deferred read. Callee-local captures, consumed/released inputs, invalidating
+cleanup, unknown origins, mixed capture states and unsupported joins keep
+the ordinary destination result. Where stability can be proved up to a
+barrier, capture before it and retain that captured value for subsequent
+uses. A later read must never recapture from already changed source storage.
+Whole materialization keeps all-source-before-any-store granules and the
+existing permitted result/input overlap.
+
+For example, the conceptual sequence `v = accessor(p); change(p);
+read_field(v)` must observe the old field. A pointer returned by `accessor`
+and loaded after `change` would be wrong even though `v` itself is never
+mutated. This is a compiler placement obligation, not a proposal to make
+source-language snapshots into borrows. Internal pointer helpers must also
+derive their own capture attributes: transporting a source pointer out of
+the call cannot inherit the ordinary reference signature's noncapture
+claim or an allocator-style `noalias` result.
+
+A separate, unmeasured variant is demand specialization: a private helper
+returns just the scalar projection required by its caller, preserving the
+accessor's effects, observation point and cleanup. It avoids transporting
+source backing across the call, but needs demanded-result summaries,
+specialization reuse and code-growth evidence. It must not omit observable
+work because an unused result field disappears. Neither variant is already
+implemented or validated by the pointer-only LLVM witness.
+
+### LLVM-side candidate: change cost accounting, not transfer semantics
+
+Candidate (e) is a proposed local or upstream LLVM patch, not written here.
+For reproducible locations use
+[`llvmorg-22.1.8/llvm/lib/Analysis/InlineCost.cpp`](https://github.com/llvm/llvm-project/blob/llvmorg-22.1.8/llvm/lib/Analysis/InlineCost.cpp):
+`onMissedSimplification` at line 767 applies the base instruction charge;
+`visitLoad`/`visitStore` are at 2150–2179 and memory-intrinsic handling at
+2314–2319. `analyzeBlock` visits and charges instructions at 2542–2548, then
+checks `shouldStop` at 2591–2593. The threshold attribute is applied in
+`finalizeAnalysis` at 1031–1033, after the early-cutoff logic at 1050–1058.
+These pinned locations differ from the earlier mutable `release/22.x`
+references. Discounts must take effect before that cutoff.
+
+The proposed narrow patch would prevalidate a complete transfer group before
+its first charged load, with a preparatory scan at `onBlockStart` (line 784)
+as one possible insertion point. Initially require one block, constant
+offsets from one source and one destination, matching leaf types/offsets,
+nonoverlapping intervals, each captured value used only by its corresponding
+store, all captures before stores, and no intervening memory operation,
+volatile/atomic access or control boundary. Require contiguous coverage
+before calling the group equivalent to a whole intrinsic; copies omitting
+padding or containing byte-only union scratch need a separately justified
+extension. This deliberately narrower first scope must not be described as
+covering every Whitefoot granule transfer.
+
+Charge one intrinsic-equivalent base cost for the **whole group**, not one
+intrinsic cost for each pair. Twelve pairs priced at five still contribute
+60 units before other costs and credits. Keep ordinary visitor processing
+for SROA, lost SROA savings, load elimination and store barriers; discount
+only charges actually incurred, so an already simplified instruction is not
+credited twice. An overlap-safe group corresponds to memmove; using memcpy
+as a semantic replacement would require additional equal-or-disjoint facts.
+No replacement is needed for this proposal: it neither rewrites memory
+operations nor introduces alias/provenance promises.
+
+Estimated implementation scope is 120–200 C++ lines in `InlineCost.cpp` and
+80–150 lines of lit-test IR, an engineering estimate rather than a patch
+measurement. The tests would separate cold partial-result and surviving
+whole-result consumers, overlap-safe capture, and unsupported volatile,
+atomic, intervening-memory, type and offset patterns. Ordinary thresholds
+and profitability remain active. Blindly discounting a retained copy could
+grow text; a target-aware or caller-demand-aware discount needs more work
+than this estimate. Upstream acceptance, compile-time overhead, code growth
+and downstream timing are unverified. Changing the cost model preserves
+granule IR but cannot prevent later merging of machine accesses.
+
+### Design-tree gap check and proposed wording
+
+No design file is edited by this study. The current decisions do not
+promise final field widths, and their rejection of Whitefoot's forced
+inlining budget still stands. The following are proposals if a candidate
+is subsequently selected, not owner rulings:
+
+- **(b), `compiler/storage-placement`:** “Represent an eligible by-value
+  accessor result through its caller-live source backing only when retained
+  origin and effect/lifetime facts prove the original value survives every
+  deferred observation, capturing before invalidation or retaining the
+  ordinary result ABI otherwise, because scalar consumers otherwise pay
+  whole-result transfers, instead of changing snapshots into borrows or
+  returning callee-local storage.” Existing source-independent granules
+  still govern every materialized copy.
+- **(b), `compiler/result-registers`:** qualify the larger-result destination
+  rule: “Compiler-private read-through-result specializations may transport
+  a proved source pointer under compiler/storage-placement; ordinary and
+  linked call boundaries retain the current register-leaf and destination
+  policy.” This is a new internal specialization, not a larger register
+  budget. The body-optimization-before-inlining decision remains in force.
+- **(b), `compiler/backend-facts`:** “Derive capture, alias and extent facts
+  of private source-result helpers from their retained result-origin
+  contract, because the helper returns source backing beyond its call,
+  instead of copying ordinary reference noncapture facts or promising a
+  fresh noalias result.”
+- **(c), `compiler/storage-placement` and `compiler/backend-facts`:** an
+  exception for inline candidates would change the source-independent
+  bounded-transfer mechanism and add whole-transfer TBAA. Conditional
+  wording would be “Use a compact typed transfer for a structurally defined
+  accessor class only when its selected lowering preserves the required
+  producer boundaries and existing overlap semantics.” Neither the class
+  nor that lowering contract is established by `!tbaa.struct`; metadata is
+  not a field-width instruction. A favorable inline remark alone cannot
+  select this change or overturn the rejected producer-local policy.
+- **(d), `compiler/storage-placement`:** a selected gather/scatter form
+  would require wording such as “Use lane-addressed capture and stores for
+  homogeneous compatible scalar leaves, with every source lane captured
+  before destination writes, because measured costs justify preserving
+  those access widths.” A numeric twelve-lane witness cannot justify
+  pointer, Bool or union carriers. Extending those would also change
+  `compiler/payload-enum-layout`; its typed-pointer/byte-interval rules
+  remain required. The cost premise needs evidence before adoption.
+- **(e):** an experimental LLVM cost patch changes none of the current
+  placement, layout or result ABI rules. Shipping a patched toolchain
+  would add a toolchain requirement under `compiler/backend-facts`, for
+  example “Qualify the host optimizer with equivalent-transfer inline
+  accounting because the measured accessor regression persists under
+  unmodified accounting.” That adoption requires release/build integration
+  and comparative evidence; it is not authorized by this study.
+
+### Recommendation, disposition and remaining evidence
+
+Keep (a) as the compiler's current lowering. Reject (c) and (d) as general
+repairs on this evidence: one lacks a retained-width contract and the other
+retains expensive work even when almost all result fields are dead. Pursue
+(b) next as a result-demand/placement investigation against the actual
+Snowghost accessor bodies and their caller uses. First determine whether
+they admit stable source-backed observations or scalar-result
+specialization; the LLVM witness shows the benefit once that contract
+exists, not that Whitefoot can already prove it. This is a moderate-confidence
+direction: real accessor cleanup, effect/lifetime barriers or mixed origins
+could rule it out for the attributed sites.
+
+Keep (e) as the alternative cost-model experiment if ordinary result
+placement cannot cover those sites. Its advantages are preserving the
+existing ABI and transfer representation; its uncertainties are profitable
+copy recognition, code growth, upstream/toolchain adoption and final
+machine access widths. No current candidate has established a general
+combination of cold inlining, field-width accesses and lower downstream
+cost. The narrower successful case is a stable, partial read whose copy
+disappears.
+
+Found along the way: the direct-copy/SROA counterexample and mixed-type
+width control are retained as evidence; absent call-result origin transport
+and helper capture facts are specified above as deferred compiler/design
+work under `lm-small-accessor-inline`; selective memcpy and masked transfer
+mechanisms are declined for this investigation's proposed repair; the
+cost-only LLVM patch remains specified but unimplemented. No language,
+specification, conformance verdict or compiler behavior changed. Follow-up
+implementation needs snapshot mutation/lifetime/overlap cases in ordinary
+CI and same-source downstream comparisons, including retained-copy/text
+growth controls. The study stops at the requested feasibility boundary,
+with no commits or board/design/approval-log writes.
+
+Validation used the final driver run over all eleven retained witnesses at
+base `d837678c69057a7ca79be8fa0bd1598af51647b6` plus this uncommitted research
+change; every `opt` and `llc` invocation succeeded. A fresh read-only
+`gpt-6.1-sol` review inspected the complete addition, witness/driver sources,
+saved remarks and IR, assembly and count arithmetic, and relevant compiler
+and design contracts. It found no issues within scope: checklist A4, D2,
+T6 and design consistency/gap/correspondence checks passed for the research
+scope; constitution, specification and production/tree implementation
+checks were inapplicable. It did not independently verify upstream source
+locations or the proposed implementations. The primary investigation
+checked the cited LLVM source; patch feasibility, actual Snowghost
+applicability and performance remain unverified. No Whitefoot suite or
+repository gate ran locally. The experiment's README gives the command that
+reproduces every witness result.

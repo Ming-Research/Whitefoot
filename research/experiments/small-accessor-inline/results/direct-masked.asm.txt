@@ -1,0 +1,334 @@
+	.file	"direct-masked.ll"
+	.section	.rodata.cst32,"aM",@progbits,32
+	.p2align	5, 0x0                          # -- Begin function accessor
+.LCPI0_0:
+	.long	4294967295                      # 0xffffffff
+	.long	4294967295                      # 0xffffffff
+	.long	4294967295                      # 0xffffffff
+	.long	4294967295                      # 0xffffffff
+	.long	0                               # 0x0
+	.long	0                               # 0x0
+	.long	0                               # 0x0
+	.long	0                               # 0x0
+.LCPI0_1:
+	.long	32                              # 0x20
+	.long	36                              # 0x24
+	.long	40                              # 0x28
+	.long	44                              # 0x2c
+	.zero	4
+	.zero	4
+	.zero	4
+	.zero	4
+.LCPI0_2:
+	.long	0                               # 0x0
+	.long	4                               # 0x4
+	.long	8                               # 0x8
+	.long	12                              # 0xc
+	.long	16                              # 0x10
+	.long	20                              # 0x14
+	.long	24                              # 0x18
+	.long	28                              # 0x1c
+.LCPI0_3:
+	.quad	32                              # 0x20
+	.quad	36                              # 0x24
+	.quad	40                              # 0x28
+	.quad	44                              # 0x2c
+.LCPI0_4:
+	.quad	16                              # 0x10
+	.quad	20                              # 0x14
+	.quad	24                              # 0x18
+	.quad	28                              # 0x1c
+.LCPI0_5:
+	.quad	0                               # 0x0
+	.quad	4                               # 0x4
+	.quad	8                               # 0x8
+	.quad	12                              # 0xc
+	.section	.rodata.cst16,"aM",@progbits,16
+	.p2align	4, 0x0
+.LCPI0_6:
+	.long	32                              # 0x20
+	.long	36                              # 0x24
+	.long	40                              # 0x28
+	.long	44                              # 0x2c
+	.text
+	.globl	accessor
+	.p2align	4
+	.type	accessor,@function
+accessor:                               # @accessor
+# %bb.0:                                # %entry
+	vmovdqa	.LCPI0_0(%rip), %ymm1           # ymm1 = [4294967295,4294967295,4294967295,4294967295,0,0,0,0]
+	vbroadcasti128	.LCPI0_6(%rip), %ymm2   # ymm2 = [32,36,40,44,32,36,40,44]
+                                        # ymm2 = mem[0,1,0,1]
+	vpxor	%xmm0, %xmm0, %xmm0
+	vpgatherdd	%ymm1, 16(%rsi,%ymm2), %ymm0
+	vpxor	%xmm1, %xmm1, %xmm1
+	vpcmpeqd	%ymm2, %ymm2, %ymm2
+	vmovdqa	.LCPI0_2(%rip), %ymm3           # ymm3 = [0,4,8,12,16,20,24,28]
+	vpgatherdd	%ymm2, 16(%rsi,%ymm3), %ymm1
+	vmovq	%rdi, %xmm2
+	vpbroadcastq	%xmm2, %ymm2
+	vpaddq	.LCPI0_3(%rip), %ymm2, %ymm3
+	vpaddq	.LCPI0_5(%rip), %ymm2, %ymm4
+	vmovq	%xmm4, %rax
+	vmovd	%xmm1, (%rax)
+	vpextrq	$1, %xmm4, %rax
+	vpextrd	$1, %xmm1, (%rax)
+	vextracti128	$1, %ymm4, %xmm4
+	vmovq	%xmm4, %rax
+	vpextrd	$2, %xmm1, (%rax)
+	vpextrq	$1, %xmm4, %rax
+	vpextrd	$3, %xmm1, (%rax)
+	vpaddq	.LCPI0_4(%rip), %ymm2, %ymm2
+	vextracti128	$1, %ymm1, %xmm1
+	vmovq	%xmm2, %rax
+	vmovd	%xmm1, (%rax)
+	vpextrq	$1, %xmm2, %rax
+	vpextrd	$1, %xmm1, (%rax)
+	vextracti128	$1, %ymm2, %xmm2
+	vmovq	%xmm2, %rax
+	vpextrd	$2, %xmm1, (%rax)
+	vpextrq	$1, %xmm2, %rax
+	vpextrd	$3, %xmm1, (%rax)
+	vmovq	%xmm3, %rax
+	vmovd	%xmm0, (%rax)
+	vpextrq	$1, %xmm3, %rax
+	vpextrd	$1, %xmm0, (%rax)
+	vextracti128	$1, %ymm3, %xmm1
+	vmovq	%xmm1, %rax
+	vpextrd	$2, %xmm0, (%rax)
+	vpextrq	$1, %xmm1, %rax
+	vpextrd	$3, %xmm0, (%rax)
+	vzeroupper
+	retq
+.Lfunc_end0:
+	.size	accessor, .Lfunc_end0-accessor
+                                        # -- End function
+	.section	.rodata.cst32,"aM",@progbits,32
+	.p2align	5, 0x0                          # -- Begin function caller_partial
+.LCPI1_0:
+	.long	4294967295                      # 0xffffffff
+	.long	4294967295                      # 0xffffffff
+	.long	4294967295                      # 0xffffffff
+	.long	4294967295                      # 0xffffffff
+	.long	0                               # 0x0
+	.long	0                               # 0x0
+	.long	0                               # 0x0
+	.long	0                               # 0x0
+.LCPI1_1:
+	.long	32                              # 0x20
+	.long	36                              # 0x24
+	.long	40                              # 0x28
+	.long	44                              # 0x2c
+	.zero	4
+	.zero	4
+	.zero	4
+	.zero	4
+.LCPI1_2:
+	.long	0                               # 0x0
+	.long	4                               # 0x4
+	.long	8                               # 0x8
+	.long	12                              # 0xc
+	.long	16                              # 0x10
+	.long	20                              # 0x14
+	.long	24                              # 0x18
+	.long	28                              # 0x1c
+.LCPI1_3:
+	.quad	32                              # 0x20
+	.quad	36                              # 0x24
+	.quad	40                              # 0x28
+	.quad	44                              # 0x2c
+.LCPI1_4:
+	.quad	16                              # 0x10
+	.quad	20                              # 0x14
+	.quad	24                              # 0x18
+	.quad	28                              # 0x1c
+.LCPI1_5:
+	.quad	0                               # 0x0
+	.quad	4                               # 0x4
+	.quad	8                               # 0x8
+	.quad	12                              # 0xc
+	.section	.rodata.cst16,"aM",@progbits,16
+	.p2align	4, 0x0
+.LCPI1_6:
+	.long	32                              # 0x20
+	.long	36                              # 0x24
+	.long	40                              # 0x28
+	.long	44                              # 0x2c
+	.text
+	.globl	caller_partial
+	.p2align	4
+	.type	caller_partial,@function
+caller_partial:                         # @caller_partial
+# %bb.0:                                # %entry
+	xorl	%eax, %eax
+	testb	$1, %sil
+	jne	.LBB1_1
+# %bb.2:                                # %common.ret
+	retq
+.LBB1_1:                                # %rare
+	vmovdqa	.LCPI1_0(%rip), %ymm1           # ymm1 = [4294967295,4294967295,4294967295,4294967295,0,0,0,0]
+	vbroadcasti128	.LCPI1_6(%rip), %ymm2   # ymm2 = [32,36,40,44,32,36,40,44]
+                                        # ymm2 = mem[0,1,0,1]
+	vpxor	%xmm0, %xmm0, %xmm0
+	vpgatherdd	%ymm1, 16(%rdi,%ymm2), %ymm0
+	vpxor	%xmm1, %xmm1, %xmm1
+	vpcmpeqd	%ymm2, %ymm2, %ymm2
+	vmovdqa	.LCPI1_2(%rip), %ymm3           # ymm3 = [0,4,8,12,16,20,24,28]
+	vpgatherdd	%ymm2, 16(%rdi,%ymm3), %ymm1
+	leaq	-48(%rsp), %rax
+	vmovq	%rax, %xmm2
+	vpbroadcastq	%xmm2, %ymm2
+	vpaddq	.LCPI1_3(%rip), %ymm2, %ymm3
+	vpaddq	.LCPI1_5(%rip), %ymm2, %ymm4
+	vmovq	%xmm4, %rax
+	vmovd	%xmm1, (%rax)
+	vpextrq	$1, %xmm4, %rax
+	vpextrd	$1, %xmm1, (%rax)
+	vextracti128	$1, %ymm4, %xmm4
+	vmovq	%xmm4, %rax
+	vpextrd	$2, %xmm1, (%rax)
+	vpextrq	$1, %xmm4, %rax
+	vpextrd	$3, %xmm1, (%rax)
+	vpaddq	.LCPI1_4(%rip), %ymm2, %ymm2
+	vextracti128	$1, %ymm1, %xmm1
+	vmovq	%xmm2, %rax
+	vmovd	%xmm1, (%rax)
+	vpextrq	$1, %xmm2, %rax
+	vpextrd	$1, %xmm1, (%rax)
+	vextracti128	$1, %ymm2, %xmm2
+	vmovq	%xmm2, %rax
+	vpextrd	$2, %xmm1, (%rax)
+	vpextrq	$1, %xmm2, %rax
+	vpextrd	$3, %xmm1, (%rax)
+	vmovq	%xmm3, %rax
+	vmovd	%xmm0, (%rax)
+	vpextrq	$1, %xmm3, %rax
+	vpextrd	$1, %xmm0, (%rax)
+	vextracti128	$1, %ymm3, %xmm1
+	vmovq	%xmm1, %rax
+	vpextrd	$2, %xmm0, (%rax)
+	vpextrq	$1, %xmm1, %rax
+	vpextrd	$3, %xmm0, (%rax)
+	movl	-48(%rsp), %eax
+	vzeroupper
+	retq
+.Lfunc_end1:
+	.size	caller_partial, .Lfunc_end1-caller_partial
+                                        # -- End function
+	.section	.rodata.cst32,"aM",@progbits,32
+	.p2align	5, 0x0                          # -- Begin function caller_full
+.LCPI2_0:
+	.long	4294967295                      # 0xffffffff
+	.long	4294967295                      # 0xffffffff
+	.long	4294967295                      # 0xffffffff
+	.long	4294967295                      # 0xffffffff
+	.long	0                               # 0x0
+	.long	0                               # 0x0
+	.long	0                               # 0x0
+	.long	0                               # 0x0
+.LCPI2_1:
+	.long	32                              # 0x20
+	.long	36                              # 0x24
+	.long	40                              # 0x28
+	.long	44                              # 0x2c
+	.zero	4
+	.zero	4
+	.zero	4
+	.zero	4
+.LCPI2_2:
+	.long	0                               # 0x0
+	.long	4                               # 0x4
+	.long	8                               # 0x8
+	.long	12                              # 0xc
+	.long	16                              # 0x10
+	.long	20                              # 0x14
+	.long	24                              # 0x18
+	.long	28                              # 0x1c
+.LCPI2_3:
+	.quad	32                              # 0x20
+	.quad	36                              # 0x24
+	.quad	40                              # 0x28
+	.quad	44                              # 0x2c
+.LCPI2_4:
+	.quad	16                              # 0x10
+	.quad	20                              # 0x14
+	.quad	24                              # 0x18
+	.quad	28                              # 0x1c
+.LCPI2_5:
+	.quad	0                               # 0x0
+	.quad	4                               # 0x4
+	.quad	8                               # 0x8
+	.quad	12                              # 0xc
+	.section	.rodata.cst16,"aM",@progbits,16
+	.p2align	4, 0x0
+.LCPI2_6:
+	.long	32                              # 0x20
+	.long	36                              # 0x24
+	.long	40                              # 0x28
+	.long	44                              # 0x2c
+	.text
+	.globl	caller_full
+	.p2align	4
+	.type	caller_full,@function
+caller_full:                            # @caller_full
+# %bb.0:                                # %entry
+	testb	$1, %dl
+	jne	.LBB2_1
+# %bb.2:                                # %common.ret
+	retq
+.LBB2_1:                                # %rare
+	vmovdqa	.LCPI2_0(%rip), %ymm1           # ymm1 = [4294967295,4294967295,4294967295,4294967295,0,0,0,0]
+	vbroadcasti128	.LCPI2_6(%rip), %ymm2   # ymm2 = [32,36,40,44,32,36,40,44]
+                                        # ymm2 = mem[0,1,0,1]
+	vpxor	%xmm0, %xmm0, %xmm0
+	vpgatherdd	%ymm1, 16(%rsi,%ymm2), %ymm0
+	vpxor	%xmm1, %xmm1, %xmm1
+	vpcmpeqd	%ymm2, %ymm2, %ymm2
+	vmovdqa	.LCPI2_2(%rip), %ymm3           # ymm3 = [0,4,8,12,16,20,24,28]
+	vpgatherdd	%ymm2, 16(%rsi,%ymm3), %ymm1
+	leaq	-56(%rsp), %rax
+	vmovq	%rax, %xmm2
+	vpbroadcastq	%xmm2, %ymm2
+	vpaddq	.LCPI2_3(%rip), %ymm2, %ymm3
+	vpor	.LCPI2_5(%rip), %ymm2, %ymm4
+	vmovq	%xmm4, %rax
+	vmovd	%xmm1, (%rax)
+	vpextrq	$1, %xmm4, %rax
+	vpextrd	$1, %xmm1, (%rax)
+	vextracti128	$1, %ymm4, %xmm4
+	vmovq	%xmm4, %rax
+	vpextrd	$2, %xmm1, (%rax)
+	vpextrq	$1, %xmm4, %rax
+	vpextrd	$3, %xmm1, (%rax)
+	vpaddq	.LCPI2_4(%rip), %ymm2, %ymm2
+	vextracti128	$1, %ymm1, %xmm1
+	vmovq	%xmm2, %rax
+	vmovd	%xmm1, (%rax)
+	vpextrq	$1, %xmm2, %rax
+	vpextrd	$1, %xmm1, (%rax)
+	vextracti128	$1, %ymm2, %xmm2
+	vmovq	%xmm2, %rax
+	vpextrd	$2, %xmm1, (%rax)
+	vpextrq	$1, %xmm2, %rax
+	vpextrd	$3, %xmm1, (%rax)
+	vmovq	%xmm3, %rax
+	vmovd	%xmm0, (%rax)
+	vpextrq	$1, %xmm3, %rax
+	vpextrd	$1, %xmm0, (%rax)
+	vextracti128	$1, %ymm3, %xmm1
+	vmovq	%xmm1, %rax
+	vpextrd	$2, %xmm0, (%rax)
+	vpextrq	$1, %xmm1, %rax
+	vpextrd	$3, %xmm0, (%rax)
+	vmovaps	-56(%rsp), %xmm0
+	vmovups	%xmm0, (%rdi)
+	vmovaps	-40(%rsp), %xmm0
+	vmovups	%xmm0, 16(%rdi)
+	vmovaps	-24(%rsp), %xmm0
+	vmovups	%xmm0, 32(%rdi)
+	vzeroupper
+	retq
+.Lfunc_end2:
+	.size	caller_full, .Lfunc_end2-caller_full
+                                        # -- End function
+	.section	".note.GNU-stack","",@progbits
