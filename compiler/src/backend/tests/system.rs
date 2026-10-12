@@ -349,3 +349,45 @@ fn generic_host_instances_call_one_host_symbol() {
     assert!(!llvm.contains("@wf_std.process.release_map_reserve$instance$"));
     assert!(!llvm.contains("@wf_shared_map_release_reserve"));
 }
+
+/// The ordinary read-only prelude row must call the one-pointer runtime bridge.
+/// The prior compiler refuses the source's unknown key_set_bytes name; a row
+/// that silently omits its runtime call fails the ABI assertions.
+#[test]
+fn key_set_bytes_calls_the_retained_storage_bridge() {
+    let source =
+        include_bytes!("../../../../tests/conformance/cases/share-pos-key-set-bytes-read.wf");
+    let llvm = super::emit(source);
+    assert!(llvm.contains("call i64 @wf__key_set_bytes(ptr "), "{llvm}");
+    assert_eq!(
+        llvm.lines()
+            .filter(|line| line.starts_with("declare i64 @wf__key_set_bytes(ptr)"))
+            .count(),
+        1,
+        "{llvm}"
+    );
+}
+
+/// The logical byte measure reads the store account without enlarging the
+/// physical KeySet ABI. Before the measure exists this source is refused;
+/// lowering it as the second declared field would load the store pointer as
+/// a number instead of invoking the retained-storage bridge.
+#[test]
+fn key_set_byte_measure_uses_the_runtime_account() {
+    let source = br#"fn retained(keys: &KeySet) -> result: u64 reads(keys) {
+  doc "Reads retained storage through the measure.";
+  return keys^.bytes;
+}
+
+fn observed(keys: KeySet) -> result: u64 pure {
+  doc "An owned descriptor reads the same retained storage account.";
+  return keys.bytes;
+}
+"#;
+    let llvm = super::emit(source);
+    assert_eq!(
+        llvm.matches("call i64 @wf__key_set_bytes(ptr ").count(),
+        2,
+        "{llvm}"
+    );
+}

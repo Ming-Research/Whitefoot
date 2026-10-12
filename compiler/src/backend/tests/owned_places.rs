@@ -53,7 +53,8 @@ use super::{compile, compile_and_run, compile_link_and_run};
 
 /// Retain the ordinary emitted call boundaries for a second execution. This
 /// changes only optimization permission, so a passing inlined body cannot hide
-/// a broken aggregate argument or result ABI.
+/// a broken aggregate argument or result ABI. Mandatory-inline dispatch headers
+/// keep their contract; their ordinary enclosing functions and arms are retained.
 pub(super) fn retain_calls(module: &str) -> String {
     let mut retained = 0;
     let result = module
@@ -62,6 +63,7 @@ pub(super) fn retain_calls(module: &str) -> String {
             if line.starts_with("define ")
                 && line.contains(" @wf_")
                 && !line.contains(" @wf__")
+                && !line.split_whitespace().any(|word| word == "alwaysinline")
                 && let Some(header) = line.strip_suffix(" {")
             {
                 retained += 1;
@@ -73,6 +75,20 @@ pub(super) fn retain_calls(module: &str) -> String {
         .collect();
     assert!(retained > 0, "the fixture must retain an emitted function");
     result
+}
+
+#[test]
+fn retained_calls_preserve_mandatory_inline_dispatch_headers() {
+    let module = "define i64 @wf_reader(ptr %input) {\n  ret i64 7\n}\n\
+                  define internal i64 @wf_reader.dispatch(ptr %input) alwaysinline {\n  ret i64 7\n}\n\
+                  define internal i64 @wf_reader.arm.0(ptr %input) {\n  ret i64 7\n}\n";
+    let retained = retain_calls(module);
+    assert_eq!(
+        retained,
+        "define i64 @wf_reader(ptr %input) noinline {\n  ret i64 7\n}\n\
+         define internal i64 @wf_reader.dispatch(ptr %input) alwaysinline {\n  ret i64 7\n}\n\
+         define internal i64 @wf_reader.arm.0(ptr %input) noinline {\n  ret i64 7\n}\n"
+    );
 }
 
 fn assert_success(module: &str) {

@@ -1,0 +1,12 @@
+fn take(value: u64) -> result: unit pure {
+  return unit;
+}
+
+fn probe(r: &[u64]) -> result: unit reads(r) {
+  take(value: r^);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

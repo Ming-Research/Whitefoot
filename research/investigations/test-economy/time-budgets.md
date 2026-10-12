@@ -334,6 +334,19 @@ judgment reads as runner variance is expected. Slowest runs, in seconds:
 Every other stage's slowest run was under 6.6 s, so its budget is the 10-s
 floor.
 
+**The corpus group on macOS, raised by 10 s.** On main at `032a0f665`
+(Whitefoot run 38190993768), with every test passing, the corpus job on
+macos-15 took 365.8 s of `check/corpus`'s 330 s: 177.2 s of
+`compiler/test-build-corpus`'s 165 s and 188.1 s of `compiler/test-corpus`'s
+175 s. Over the 35 most recent corpus jobs on macos-15 the group's median was
+291 s, its 90th percentile 340 s and its longest 365 s, with six above 330 s;
+the same revision varied widely, 338 s and then 244 s on a rerun of #368, so
+the overruns are mostly runner variance with some growth of main. The owner
+approved the rule's raise of 10 s on the status board on 2026-10-12 (card
+coord-devspeed-macos-corpus-budget): `check/corpus` to 340 s,
+`compiler/test-build-corpus` to 175 s and `compiler/test-corpus` to 185 s on
+macOS; ubuntu is unchanged.
+
 **`check/runtime` on macOS, raised to 30 s.** On macOS hosted runners the
 stage overran 20 s five times on changes that touched none of its code:
 23.2 s on Whitefoot#298, 20.5 s on #311, 20.7 s on #312, 27.0 s on #333
@@ -480,9 +493,16 @@ in the workflow's order, the first build took 101.6 s and the second 93.2 s;
 in run 37395370468, with the two build steps swapped, the first took 107.2 s
 and the second 93.2 s. The owner set the budget directly to 130 s on
 2026-10-05, about 10 s over that slowest run, in the same ruling that fixed
-every later raise at 10 s; `performance-baseline-compiler` keeps 105 s, over its slowest run of 97.3 s. Why the first cold build is
+every later raise at 10 s; `performance-baseline-compiler` then kept 105 s, over its slowest run of 97.3 s. Why the first cold build is
 slower was not measured; an untimed warm-up before both builds would remove
 the difference instead of covering it.
+
+**`performance-baseline-compiler` raised to 115 s.** The baseline build
+compiles main's source, which no pull request changes, yet it overran 105 s on
+four branches with different changes, Whitefoot#346, #355, #358 and #359, at
+105.0 to 108.5 s, and every re-run passed. Main's cold build grows with main,
+so the owner approved a raise of 10 s, to 115 s, on the status board on
+2026-10-11 (card coord-budget-baseline-raise).
 
 **The candidate's images, back to 10 s.** `performance-candidate-images`
 builds the five formal kernels with the candidate compiler right after the
@@ -568,6 +588,47 @@ ubuntu-24.04 in the same hour (runs 38177118636 through 38178759524), took
 variance and not that change's cost. The owner approved a raise of 10 s, to
 45 s, on the status board (card gran-map-tsan-budget-raise, option A); macOS
 stays at 45 s.
+
+### macOS runner queue
+
+Every successful `gate.yml` run created between 2026-10-11 12:04Z and
+22:53Z, 58 runs of 4 groups on each platform, read from the Actions API
+(each job's `created_at`, `started_at` and `completed_at`). Twelve Linux
+and nine macOS jobs, re-run attempts, report a start before their creation;
+those waits count as zero:
+
+| Platform | Jobs | Job run, median / max (min) | Slowest job's wait per run, median / mean / max (min) |
+| --- | ---: | --- | --- |
+| ubuntu-24.04 | 232 | 2.4 / 5.6 | 0.2 / 1.8 / 12.0 |
+| macos-15 | 232 | 3.0 / 7.1 | 3.3 / 6.7 / 37.5 |
+
+A run's wall from its first job's creation to its last job's completion had
+a median of 8.4 minutes and a maximum of 43.6.
+
+The wait follows load. By the hour the run was created, the slowest macOS
+job's wait per run (job creation to start, minutes):
+
+| Hour (UTC) | Runs | Median | Max |
+| --- | ---: | ---: | ---: |
+| 12 | 10 | 5.5 | 11.4 |
+| 13 | 4 | 2.3 | 7.0 |
+| 14 | 8 | 3.1 | 5.3 |
+| 15 | 7 | 0.9 | 2.4 |
+| 16–20 | 9 | 0.1–0.2 | 0.2 |
+| 21 | 13 | 13.6 | 37.5 |
+| 22 | 7 | 10.3 | 26.8 |
+
+Measured instead from the run's creation to its slowest macOS job's start,
+which adds the selection job and any later re-run of failed jobs, the median
+is 5.4, the mean 9.6 and the 21Z and 22Z medians 15.9 and 22.4; the
+coordinator's count over 55 of these runs gave a median of 5.1, a mean of 8.7
+and a maximum of 39.7, and its earlier 13.5-minute mean covered the 25 most
+recent runs, all in the busy hours. Several sessions pushed work branches in
+those hours, and every push queued four macOS jobs; the macOS wait, not the
+jobs, made the slow runs. From this, the gate runs macOS only where its
+answer decides a merge (a ready pull request, `main`, a manual run) and checks
+both platforms per revision in a final job
+([decision](../../../design/compiler/verification.md)).
 
 ## Daily loop
 

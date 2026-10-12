@@ -124,6 +124,8 @@ const ENUM_ORDER: &[&str] = &[
     "range_relation",
     // v0.90 [GRAM-2, MOD-11]: a graph's package bindings.
     "package_decl",
+    // v0.128 [GRAM-5, RANGE-1]: guards admit a single Bool datum.
+    "range_guard",
     "held_clause",
 ];
 

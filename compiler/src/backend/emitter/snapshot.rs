@@ -42,6 +42,13 @@ fn variant(
     };
     representation_variant(target, program, id, tag).map_err(BackendFailure::TargetLayout)
 }
+/// The count-sized physical tag type of an enum value.
+fn tag_type(program: &IrProgram, ty: IrType) -> Result<String, BackendFailure> {
+    let IrType::Nominal(id) = ty else {
+        return Err(BackendFailure::InvalidIr);
+    };
+    enum_tag_type(program.nominal(id).ok_or(BackendFailure::InvalidIr)?)
+}
 fn structure(program: &IrProgram, ty: IrType) -> Result<Vec<IrType>, BackendFailure> {
     let IrType::Nominal(id) = ty else {
         return Err(BackendFailure::InvalidIr);
@@ -185,11 +192,7 @@ impl Descriptors<'_> {
                         shape = 2;
                         tag = 0x11;
                         count = variants.len() as u64;
-                        width = if nominal.is_tag_only_enum() && variants.len() <= 2 {
-                            1
-                        } else {
-                            4
-                        };
+                        width = u64::from(enum_tag_width(nominal)?.div_ceil(8));
                         let mut entries = Vec::new();
                         let mut refs = References::default();
                         for (ordinal, member) in variants.iter().enumerate() {
@@ -368,6 +371,18 @@ impl<'a> Wrapper<'a> {
         let ptr = self.address(base, offset);
         self.line(format!("  store {ty} {value}, ptr {ptr}"));
     }
+    /// Stores a runtime `i32` word into a field of type `ty`, truncating it
+    /// to a narrower count-sized tag.
+    fn store_word(&mut self, base: &str, offset: u64, ty: &str, word: &str) {
+        let value = if ty == "i32" {
+            word.to_owned()
+        } else {
+            let narrow = self.temp();
+            self.line(format!("  {narrow} = trunc i32 {word} to {ty}"));
+            narrow
+        };
+        self.store(base, offset, ty, &value);
+    }
     fn zero(
         &mut self,
         target: TargetLayout,
@@ -450,6 +465,12 @@ fn capture(
         return Err(BackendFailure::InvalidIr);
     };
     let present = variant(target, program, *entry, 1)?;
+    let entry_tag_bytes = {
+        let IrType::Nominal(entry) = *entry else {
+            return Err(BackendFailure::InvalidIr);
+        };
+        enum_tag_width(program.nominal(entry).ok_or(BackendFailure::InvalidIr)?)?.div_ceil(8)
+    };
     if present.len() != 1 || present[0].0 != *value {
         return Err(BackendFailure::InvalidIr);
     }
@@ -474,7 +495,7 @@ fn capture(
             ("ptr", "%p2".into()),
             ("ptr", format!("@{descriptor}")),
             ("i64", "0".into()),
-            ("i32", "4".into()),
+            ("i32", entry_tag_bytes.to_string()),
             ("i64", "0".into()),
             ("i64", present[0].1.to_string()),
         ],
@@ -484,7 +505,8 @@ fn capture(
     w.zero(target, program, function.result())?;
     w.line(format!("  br i1 {refused}, label %refused, label %created"));
     w.body.open_block("refused".into());
-    w.store("%result", 0, "i32", "1");
+    let result_tag = tag_type(program, function.result())?;
+    w.store("%result", 0, &result_tag, "1");
     w.line("  ret void");
     w.body.open_block("created".into());
     let payload = variant(target, program, function.result(), 0)?;
@@ -522,14 +544,14 @@ fn immediate(
         w.line(format!("  {failed} = icmp eq ptr {owner}, null"));
         w.line(format!("  br i1 {failed}, label %refused, label %prepared"));
         w.body.open_block("refused".into());
-        w.store("%result", 0, "i32", "1");
+        let result_tag = tag_type(program, function.result())?;
+        w.store("%result", 0, &result_tag, "1");
         let error = w.load("%error", 0, "i32");
         let ordinal = w.temp();
         w.line(format!("  {ordinal} = sub i32 {error}, 1"));
-        let bit = w.temp();
-        w.line(format!("  {bit} = trunc i32 {ordinal} to i1"));
         let payload = variant(target, program, function.result(), 1)?;
-        w.store("%result", payload[0].1, "i1", &bit);
+        let error_tag = tag_type(program, payload[0].0)?;
+        w.store_word("%result", payload[0].1, &error_tag, &ordinal);
         w.line("  ret i32 0");
         w.body.open_block("prepared".into());
         let payload = variant(target, program, function.result(), 0)?;
@@ -569,11 +591,13 @@ fn read_result(
     w.zero(target, program, result)?;
     w.line(format!("  br i1 {failed}, label %failed, label %read"));
     w.body.open_block("failed".into());
-    w.store("%result", 0, "i32", "1");
+    let result_tag = tag_type(program, result)?;
+    w.store("%result", 0, &result_tag, "1");
     let ordinal = w.temp();
     w.line(format!("  {ordinal} = sub i32 {error}, 1"));
     let payload = variant(target, program, result, 1)?;
-    w.store("%result", payload[0].1, "i32", &ordinal);
+    let error_tag = tag_type(program, payload[0].0)?;
+    w.store_word("%result", payload[0].1, &error_tag, &ordinal);
     w.line("  br label %translated");
     w.body.open_block("read".into());
     let count = w.load("%compact", 0, "i64");
@@ -600,9 +624,10 @@ fn read(
         .ok_or(BackendFailure::InvalidIr)?
         .1;
     let payload = variant(target, program, deadline, 1)?;
-    let tag = w.load("%p2", 0, "i32");
+    let deadline_tag = tag_type(program, deadline)?;
+    let tag = w.load("%p2", 0, &deadline_tag);
     let some = w.temp();
-    w.line(format!("  {some} = icmp eq i32 {tag}, 1"));
+    w.line(format!("  {some} = icmp eq {deadline_tag} {tag}, 1"));
     w.line(format!("  br i1 {some}, label %some, label %none"));
     w.body.open_block("some".into());
     let ticks = w.load("%p2", payload[0].1, "i64");
@@ -723,7 +748,8 @@ fn finish(
     let child = w.address("%result", child_offset);
     let child_tag = w.load("%compact", 32, "i32");
     let detail = w.load("%compact", 36, "i32");
-    w.store(&child, 0, "i32", &child_tag);
+    let child_tag_ty = tag_type(program, child_ty)?;
+    w.store_word(&child, 0, &child_tag_ty, &child_tag);
     w.line(format!("  switch i32 {child_tag}, label %child.protocol [ i32 0, label %child.complete i32 1, label %child.export i32 2, label %child.exit i32 3, label %child.signal ]"));
     for (tag, label) in [
         (0, "complete"),
@@ -743,8 +769,11 @@ fn finish(
             let code = w.temp();
             w.line(format!("  {code} = trunc i32 {detail} to i8"));
             w.store(&child, payload[0].1, "i8", &code);
-        } else {
+        } else if tag == 3 {
             w.store(&child, payload[0].1, "i32", &detail);
+        } else {
+            let error_tag = tag_type(program, payload[0].0)?;
+            w.store_word(&child, payload[0].1, &error_tag, &detail);
         }
         w.line("  br label %collection");
     }
@@ -753,7 +782,8 @@ fn finish(
     let collection = w.address("%result", collection_offset);
     let collection_tag = w.load("%compact", 40, "i32");
     let delivered = w.load("%compact", 16, "i64");
-    w.store(&collection, 0, "i32", &collection_tag);
+    let collection_tag_ty = tag_type(program, collection_ty)?;
+    w.store_word(&collection, 0, &collection_tag_ty, &collection_tag);
     w.line(format!("  switch i32 {collection_tag}, label %collection.failed [ i32 0, label %collection.collected i32 1, label %collection.discarded ]"));
     for (tag, label) in [(0, "collected"), (1, "discarded"), (2, "failed")] {
         w.body.open_block(format!("collection.{label}"));
@@ -766,7 +796,8 @@ fn finish(
                 w.store(&collection, payload[1].1, "i64", &discarded);
             }
             _ => {
-                w.store(&collection, payload[0].1, "i32", "0");
+                let error_tag = tag_type(program, payload[0].0)?;
+                w.store(&collection, payload[0].1, &error_tag, "0");
                 w.store(&collection, payload[1].1, "i64", &delivered);
             }
         }

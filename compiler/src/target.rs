@@ -37,6 +37,22 @@ pub(crate) enum TargetLayoutFailure {
     Unrepresentable(TargetObject),
 }
 
+/// Physical discriminant width for dense semantic tags `0..variant_count`.
+/// Payload tags use whole bytes; equivalent two-state scalar enums keep i1.
+/// Counts above the semantic u32 tag domain cannot describe valid enum IR.
+pub(crate) fn enum_tag_width(
+    variant_count: u64,
+    tag_only: bool,
+) -> Result<u8, TargetLayoutFailure> {
+    match variant_count {
+        0..=2 if tag_only => Ok(1),
+        0..=256 => Ok(8),
+        257..=65536 => Ok(16),
+        65537..=4294967296 => Ok(32),
+        _ => Err(TargetLayoutFailure::InvalidIr),
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct TargetLayout {
     triple: &'static str,
@@ -482,11 +498,12 @@ pub(super) fn paged_geometry(
 
 /// The selected-target layout of one union-laid-out enum
 /// (compiler/payload-enum-layout): the value's size and alignment, and each
-/// variant's view, the `i32` tag followed by that variant's fields.
+/// variant's view, the count-sized tag followed by that variant's fields.
 struct UnionLayout {
     value: Layout,
     views: Vec<(u32, Layout)>,
     handler_offset: Option<u64>,
+    tag_prefix_bytes: u64,
 }
 
 /// What the emitter prints for one union-laid-out enum: the value's size,
@@ -499,6 +516,7 @@ pub(crate) struct UnionEnumLayout {
     align: u64,
     aligning_variant: u32,
     handler_offset: Option<u64>,
+    tag_prefix_bytes: u64,
 }
 
 impl UnionEnumLayout {
@@ -512,6 +530,13 @@ impl UnionEnumLayout {
 
     pub(crate) const fn handler_offset(self) -> Option<u64> {
         self.handler_offset
+    }
+
+    /// A natural integer prefix containing the physical tag and only padding
+    /// common to every variant, bounded before any payload or handler word.
+    /// The variant views and their count-sized tags keep their own types.
+    pub(crate) const fn tag_prefix_bytes(self) -> u64 {
+        self.tag_prefix_bytes
     }
 
     pub(crate) fn handler_alignment(self) -> Option<u64> {
@@ -556,6 +581,7 @@ pub(crate) fn union_enum_layout(
         align: union.value.align,
         aligning_variant,
         handler_offset: union.handler_offset,
+        tag_prefix_bytes: union.tag_prefix_bytes,
     })
 }
 
@@ -876,7 +902,7 @@ impl<'types> ReturnLeaves<'types> {
                     }
                     // `{ i128, i128 }`: each `i128` takes two words.
                     IrNominalKind::Opaque => self.integer(copies, 4),
-                    // `i1` or `i32`.
+                    // A count-sized scalar tag occupies one register.
                     IrNominalKind::Enum { .. } if nominal.is_tag_only_enum() => {
                         self.integer(copies, 1);
                     }
@@ -905,7 +931,7 @@ impl<'types> ReturnLeaves<'types> {
         Ok(())
     }
 
-    /// The `i32` tag, then every variant's fields in order.
+    /// The count-sized tag, then every variant's fields in order.
     fn product_enum(
         &mut self,
         variants: &[crate::IrVariant],
@@ -1763,10 +1789,14 @@ impl<'types> LayoutComputer<'types> {
             let IrNominalKind::Enum { variants } = nominal.kind() else {
                 return Err(TargetLayoutFailure::InvalidIr);
             };
-            if variants.len() <= 2 {
-                Layout { size: 1, align: 1 }
-            } else {
-                Layout { size: 4, align: 4 }
+            let width = enum_tag_width(
+                u64::try_from(variants.len()).map_err(|_| TargetLayoutFailure::InvalidIr)?,
+                true,
+            )?;
+            let bytes = u64::from(width.div_ceil(8));
+            Layout {
+                size: bytes,
+                align: bytes,
             }
         } else if is_union_enum(self.nominals, self.elements, id)? {
             let IrNominalKind::Enum { variants } = nominal.kind() else {
@@ -1781,7 +1811,11 @@ impl<'types> LayoutComputer<'types> {
                 } => fields.extend(declarations.iter().map(|field| field.ty())),
                 IrNominalKind::Enum { variants } => {
                     fields.push(IrType::Integer {
-                        width: 32,
+                        width: enum_tag_width(
+                            u64::try_from(variants.len())
+                                .map_err(|_| TargetLayoutFailure::InvalidIr)?,
+                            false,
+                        )?,
                         signed: false,
                     });
                     fields.extend(
@@ -1808,24 +1842,44 @@ impl<'types> LayoutComputer<'types> {
     }
 
     /// compiler/payload-enum-layout: every variant on its own as the
-    /// sequence of the `i32` tag and its fields, the value sized and aligned
-    /// for the largest and most aligned of them. A fieldless variant's view
+    /// sequence of the count-sized tag and its fields, the value sized and
+    /// aligned for the largest and most aligned of them. A fieldless variant's view
     /// is the tag alone. A nested enum field takes its own selected layout.
     fn union_layout(
         &mut self,
         variants: &[crate::IrVariant],
         words: u32,
     ) -> Result<UnionLayout, TargetLayoutFailure> {
+        let tag_width = enum_tag_width(
+            u64::try_from(variants.len()).map_err(|_| TargetLayoutFailure::InvalidIr)?,
+            false,
+        )?;
         let mut views = Vec::with_capacity(variants.len());
         let mut size = 0_u64;
         let mut align = 1_u64;
+        let mut tag_prefix_limit = 4_u64;
         for variant in variants {
             let mut fields = vec![IrType::Integer {
-                width: 32,
+                width: tag_width,
                 signed: false,
             }];
             fields.extend(variant.fields().iter().map(|field| field.ty()));
-            let view = self.struct_layout(fields)?;
+            let field_layouts = fields
+                .iter()
+                .map(|&ty| self.layout(ty))
+                .collect::<Result<Vec<_>, _>>()?;
+            let (view, offsets) = self.aggregate_offsets(
+                field_layouts.iter().copied(),
+                TargetObject::Representation,
+            )?;
+            // A zero-size field has no representation bytes to overwrite.
+            // Every occupied field bounds the common padding prefix, even
+            // when another variant is fieldless or starts its payload later.
+            for (field, offset) in field_layouts.iter().zip(offsets).skip(1) {
+                if field.size != 0 {
+                    tag_prefix_limit = tag_prefix_limit.min(offset);
+                }
+            }
             size = size.max(view.size);
             align = align.max(view.align);
             views.push((variant.tag(), view));
@@ -1849,10 +1903,22 @@ impl<'types> LayoutComputer<'types> {
             None
         };
         let size = align_up(self.target, size, align, TargetObject::Representation)?;
+        tag_prefix_limit = tag_prefix_limit.min(size);
+        if let Some(offset) = handler_offset {
+            tag_prefix_limit = tag_prefix_limit.min(offset);
+        }
+        let tag_prefix_bytes = if tag_prefix_limit >= 4 {
+            4
+        } else if tag_prefix_limit >= 2 {
+            2
+        } else {
+            1
+        };
         Ok(UnionLayout {
             value: Layout { size, align },
             views,
             handler_offset,
+            tag_prefix_bytes,
         })
     }
 
@@ -1888,7 +1954,11 @@ impl<'types> LayoutComputer<'types> {
                             return self.union_transfer(variants, nominal.handler_words);
                         }
                         let mut fields = vec![IrType::Integer {
-                            width: 32,
+                            width: enum_tag_width(
+                                u64::try_from(variants.len())
+                                    .map_err(|_| TargetLayoutFailure::InvalidIr)?,
+                                false,
+                            )?,
                             signed: false,
                         }];
                         fields.extend(
@@ -1940,17 +2010,27 @@ impl<'types> LayoutComputer<'types> {
         words: u32,
     ) -> Result<Option<Vec<TransferGranule>>, TargetLayoutFailure> {
         let layout = self.union_layout(variants, words)?;
+        let tag_width = enum_tag_width(
+            u64::try_from(variants.len()).map_err(|_| TargetLayoutFailure::InvalidIr)?,
+            false,
+        )?;
         let mut views = Vec::new();
         let mut boundaries = std::collections::BTreeSet::from([0, layout.value.size]);
         for variant in variants {
             let mut fields = vec![IrType::Integer {
-                width: 32,
+                width: tag_width,
                 signed: false,
             }];
             fields.extend(variant.fields().iter().map(|field| field.ty()));
             let Some(mut leaves) = self.transfer_fields(fields)? else {
                 return Ok(None);
             };
+            // Keep the variant's actual field offsets, but transport the
+            // tag together with its common padding in one natural integer.
+            // This cannot reach any payload, pointer or non-byte leaf.
+            let tag = leaves.first_mut().ok_or(TargetLayoutFailure::InvalidIr)?;
+            tag.size = layout.tag_prefix_bytes;
+            tag.access = TransferAccess::Integer((layout.tag_prefix_bytes * 8) as u16);
             if let Some(offset) = layout.handler_offset {
                 for word in 0..words {
                     leaves.push(TransferGranule {
@@ -1983,20 +2063,36 @@ impl<'types> LayoutComputer<'types> {
                         && leaf.access == TransferAccess::Pointer
                 })
             });
-            let plain = views
+            let mut plain = true;
+            for leaf in views
                 .iter()
                 .flatten()
                 .filter(|leaf| leaf.offset < end && offset < leaf.offset + leaf.size)
-                .all(|leaf| match leaf.access {
+            {
+                plain &= match leaf.access {
                     TransferAccess::Integer(_) => true,
                     TransferAccess::Scalar(
                         IrType::Unit | IrType::Integer { .. } | IrType::Float { .. },
                     ) => true,
                     TransferAccess::Scalar(IrType::Nominal(id)) => {
-                        self.nominals[id.index()].is_tag_only_enum() && leaf.size == 4
+                        let nominal = self
+                            .nominals
+                            .get(id.index())
+                            .ok_or(TargetLayoutFailure::InvalidIr)?;
+                        if let IrNominalKind::Enum { variants } = nominal.kind() {
+                            nominal.is_tag_only_enum()
+                                && enum_tag_width(
+                                    u64::try_from(variants.len())
+                                        .map_err(|_| TargetLayoutFailure::InvalidIr)?,
+                                    true,
+                                )? % 8 == 0
+                        } else {
+                            false
+                        }
                     }
                     _ => false,
-                });
+                };
+            }
             result.push(TransferGranule {
                 offset,
                 size: end - offset,
@@ -2120,5 +2216,48 @@ fn as_object(failure: TargetLayoutFailure, object: TargetObject) -> TargetLayout
     match failure {
         TargetLayoutFailure::Unrepresentable(_) => TargetLayoutFailure::Unrepresentable(object),
         other => other,
+    }
+}
+
+#[cfg(test)]
+mod enum_tag_tests {
+    use super::{TargetLayoutFailure, enum_tag_width};
+
+    #[test]
+    fn tag_width_covers_every_dense_tag_without_widening_early() {
+        let cases = [
+            (0, 8, 1),
+            (1, 8, 1),
+            (2, 8, 1),
+            (3, 8, 8),
+            (255, 8, 8),
+            (256, 8, 8),
+            (257, 16, 16),
+            (65535, 16, 16),
+            (65536, 16, 16),
+            (65537, 32, 32),
+            (4294967295, 32, 32),
+            (4294967296, 32, 32),
+        ];
+        for (count, payload, scalar) in cases {
+            assert_eq!(
+                enum_tag_width(count, false),
+                Ok(payload),
+                "payload count {count}"
+            );
+            assert_eq!(
+                enum_tag_width(count, true),
+                Ok(scalar),
+                "scalar count {count}"
+            );
+        }
+        for count in [4294967297, u64::MAX] {
+            for tag_only in [false, true] {
+                assert_eq!(
+                    enum_tag_width(count, tag_only),
+                    Err(TargetLayoutFailure::InvalidIr)
+                );
+            }
+        }
     }
 }

@@ -15,7 +15,7 @@ fn base64_has_typed_results_and_no_host_allocation() {
     // three-leaf Result returns in registers from the public entry, so no
     // destination precedes them there. The internal body still constructs
     // the result through its destination (compiler/src/backend/abi.rs).
-    let result = register_result_type(&llvm, encode, &["i32", "i64", "i1"]);
+    let result = register_result_type(&llvm, encode, &["i8", "i64", "i1"]);
     assert!(encode.contains(" @wf_encode(ptr noalias nonnull "));
     assert!(
         body.starts_with(
@@ -28,7 +28,7 @@ fn base64_has_typed_results_and_no_host_allocation() {
     }
     // Both result routes initialize the body's typed destination: tag, u64
     // success, and fieldless one-bit IndexError on the error route.
-    assert_scalar_result_fields(&llvm, body, &["i32", "i64", "i1"]);
+    assert_scalar_result_fields(&llvm, body, &["i8", "i64", "i1"]);
     assert_eq!(body.matches("call ptr @wf__heap_take").count(), 0);
     assert_eq!(body.matches("call void @wf__heap_give").count(), 0);
     assert_eq!(

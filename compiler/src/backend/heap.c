@@ -5,7 +5,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Array stores one 8-byte word, Slots two and Ring three. target.rs
+/* Array stores one 8-byte word, Slots two, and Ring and Paged three. Paged's
+ * empty directory begins after those three words and has no entries. target.rs
  * qualifies runtime elements against every supported allocator's 8-byte
  * alignment, so the largest padded element offset is 24 bytes. The 64-byte,
  * 64-aligned object also covers rounding that header to any power-of-two

@@ -1,0 +1,5 @@
+public struct Leaf {
+  public readonly value: u8;
+}
+
+public fn main() -> status: std::process::ExitStatus pure doc "Runs the case.";

@@ -134,7 +134,11 @@ impl Vocabulary {
         // Sharing the image path cannot give a signed parameter the unsigned
         // nonnegativity bound or widen a narrower parameter's range.
         let ty = match self.terms.kind(anchor) {
-            TermKind::ConstParameter(_, ty) => *ty,
+            TermKind::ConstParameter(_, ty)
+            | TermKind::Place(_, ty)
+            | TermKind::CallDatum { ty, .. }
+            | TermKind::EntryDatum { ty, .. }
+            | TermKind::MeasureDatum { ty, .. } => *ty,
             _ => IntegerType::U64,
         };
         let atom = self.new_affine_atom(ty);
@@ -162,7 +166,9 @@ impl Vocabulary {
         if state.measure_atoms.borrow().contains_key(&datum) {
             return;
         }
-        let atom = self.measure_atom(live, state);
+        let atom = self
+            .affine_term_value(live, state)
+            .unwrap_or_else(|| self.measure_atom(live, state));
         // A constant image is still the exact immutable value this datum
         // captures. Retaining it is what carries an affine exact measure
         // across the transfer that kills the live place.
@@ -191,18 +197,9 @@ impl Vocabulary {
                 self.terms.kind(id),
                 TermKind::Measure(..)
                     | TermKind::TargetMeasure { .. }
-                    | TermKind::CallDatum {
-                        measure: Some(_),
-                        ..
-                    }
-                    | TermKind::EntryDatum {
-                        measure: Some(_),
-                        ..
-                    }
-                    | TermKind::MeasureDatum {
-                        measure: Some(_),
-                        ..
-                    }
+                    | TermKind::CallDatum { .. }
+                    | TermKind::EntryDatum { .. }
+                    | TermKind::MeasureDatum { .. }
             ) {
                 self.measure_terms_seen.push(id);
             }
@@ -293,9 +290,12 @@ impl Reasoning<'_, '_, '_> {
             CheckedMeasure::Capacity,
             CheckedMeasure::Head,
             CheckedMeasure::Pages,
+            CheckedMeasure::Bytes,
         ] {
             let cell = cell_measure.cell(measured);
-            if cell_measure == CheckedMeasure::Pages && cell == MeasureCell::Absent {
+            if matches!(cell_measure, CheckedMeasure::Pages | CheckedMeasure::Bytes)
+                && cell == MeasureCell::Absent
+            {
                 continue;
             }
             let term = self.vocabulary.intern_measure(cell_measure, &path);
@@ -577,8 +577,8 @@ impl Reasoning<'_, '_, '_> {
                 },
                 ..
             }
-        ) && closed.holds_opaque(goal, GoalSign::Negative)
-            && !closed.holds_opaque(goal, GoalSign::Positive)
+        ) && closed.holds_opaque(goal, GoalSign::Negative, &self.vocabulary.goals)
+            && !closed.holds_opaque(goal, GoalSign::Positive, &self.vocabulary.goals)
         {
             return ProofResult {
                 disposition: ProofDisposition::Refuted,
@@ -593,7 +593,7 @@ impl Reasoning<'_, '_, '_> {
             };
         }
 
-        let positive_opaque = closed.holds_opaque(goal, GoalSign::Positive);
+        let positive_opaque = closed.holds_opaque(goal, GoalSign::Positive, &self.vocabulary.goals);
         let positive_projection = self
             .vocabulary
             .goals
@@ -625,7 +625,7 @@ impl Reasoning<'_, '_, '_> {
             };
         }
 
-        let negative_opaque = closed.holds_opaque(goal, GoalSign::Negative);
+        let negative_opaque = closed.holds_opaque(goal, GoalSign::Negative, &self.vocabulary.goals);
         let negative_projection = self
             .vocabulary
             .goals
@@ -1018,6 +1018,7 @@ impl Reasoning<'_, '_, '_> {
                     root,
                     projections,
                     ty,
+                    ..
                 }) if context.origin_view == OriginView::Prepared => context
                     .facts
                     .goal_origins
@@ -1028,7 +1029,7 @@ impl Reasoning<'_, '_, '_> {
                         for projection in projections {
                             let result = self
                                 .input
-                                .goal_projection_type(definition.ty(), *projection)?;
+                                .goal_expression_projection_type(&definition, *projection)?;
                             definition = definition.with_projection(*projection, result)?;
                         }
                         if definition.ty() != *ty {
@@ -1171,15 +1172,19 @@ impl Reasoning<'_, '_, '_> {
             };
         }
         if let Some(canonical) = canonical {
-            if closed.holds_opaque(canonical, GoalSign::Positive) {
+            if closed.holds_opaque(canonical, GoalSign::Positive, &self.vocabulary.goals) {
                 return ProofResult {
                     disposition: ProofDisposition::Proved,
                     route: Some(ProofRoute::FiniteGoal),
-                    derivation: closed.opaque_proof(canonical, GoalSign::Positive),
+                    derivation: closed.opaque_proof(
+                        canonical,
+                        GoalSign::Positive,
+                        &self.vocabulary.goals,
+                    ),
                     product_interval: None,
                 };
             }
-            if closed.holds_opaque(canonical, GoalSign::Negative) {
+            if closed.holds_opaque(canonical, GoalSign::Negative, &self.vocabulary.goals) {
                 return ProofResult {
                     disposition: ProofDisposition::Refuted,
                     route: Some(ProofRoute::FiniteGoal),
@@ -2055,9 +2060,9 @@ impl Reasoning<'_, '_, '_> {
         }
 
         if let Some(canonical) = goal.canonical {
-            if closed.holds_opaque(canonical, GoalSign::Positive) {
+            if closed.holds_opaque(canonical, GoalSign::Positive, &self.vocabulary.goals) {
                 let parent = closed
-                    .opaque_proof(canonical, GoalSign::Positive)
+                    .opaque_proof(canonical, GoalSign::Positive, &self.vocabulary.goals)
                     .expect("an opaque goal fact retains its proof");
                 let derivation =
                     self.vocabulary
@@ -2073,7 +2078,7 @@ impl Reasoning<'_, '_, '_> {
                     product_interval: None,
                 };
             }
-            if closed.holds_opaque(canonical, GoalSign::Negative) {
+            if closed.holds_opaque(canonical, GoalSign::Negative, &self.vocabulary.goals) {
                 return ProofResult {
                     disposition: ProofDisposition::Refuted,
                     route: Some(ProofRoute::FiniteGoal),
@@ -2937,6 +2942,12 @@ impl Reasoning<'_, '_, '_> {
                 continue;
             }
             candidates.push(AffineL0Candidate { term, value });
+        }
+        let sums = self.vocabulary.terms.sum_ids().collect::<Vec<_>>();
+        for term in sums {
+            if let Some(value) = self.vocabulary.affine_term_value(term, values) {
+                candidates.push(AffineL0Candidate { term, value });
+            }
         }
         let mut bindings = values.values.keys().copied().collect::<Vec<_>>();
         bindings.sort_by_key(|binding| binding.0);

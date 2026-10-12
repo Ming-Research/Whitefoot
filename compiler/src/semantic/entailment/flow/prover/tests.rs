@@ -75,6 +75,250 @@ fn with_integer_parameters(types: &[IntegerType], check: impl FnOnce(&mut Analyz
 }
 
 #[test]
+fn joined_opaque_views_keep_origin_sign_transport_without_numeric_sources() {
+    use crate::semantic::entailment::state::{GoalOrigin, join};
+    use crate::semantic::goal::GoalAdmission;
+    use crate::semantic::places::{CaptureId, CapturedTerm};
+
+    with_analyzer(|analyzer| {
+        let captured = CapturedValue::new(CaptureId::ValueDetermined, CapturedTerm::Literal(0));
+        let expression = |admission| {
+            GoalExpression::Datum(GoalDatum::Place {
+                root: BindingId(0),
+                projections: vec![GoalProjection::Subscript(captured)],
+                ty: CheckedType::Bool,
+                admission,
+            })
+        };
+        let plain_expression = expression(GoalAdmission::plain(CheckedType::Bool));
+        let mut indexed_admission = GoalAdmission::plain_range(CheckedType::Bool);
+        indexed_admission
+            .projections
+            .push(GoalProjection::Subscript(captured));
+        let indexed_expression = expression(indexed_admission);
+        let plain = analyzer
+            .reasoning()
+            .intern_goal_expression(plain_expression.clone());
+        let indexed = analyzer
+            .reasoning()
+            .intern_goal_expression(indexed_expression);
+        assert_ne!(plain, indexed);
+        let event = analyzer
+            .vocabulary
+            .derivations
+            .event(FlowEventKind::S1, None);
+        let mut left = FactState::new();
+        left.establish_goal(
+            plain,
+            GoalSign::Positive,
+            &analyzer.vocabulary.goals,
+            &mut analyzer.vocabulary.derivations,
+            event,
+        );
+        let mut right = FactState::new();
+        right.establish_goal(
+            indexed,
+            GoalSign::Positive,
+            &analyzer.vocabulary.goals,
+            &mut analyzer.vocabulary.derivations,
+            event,
+        );
+        let mut joined = join(
+            &[left, right],
+            &analyzer.vocabulary.terms,
+            &analyzer.vocabulary.goals,
+            &mut analyzer.vocabulary.derivations,
+        );
+        assert!(joined.opaque_sources.is_empty());
+        let binding = BindingId(1);
+        let origin_event = analyzer
+            .vocabulary
+            .derivations
+            .event(FlowEventKind::LetOrigin, None);
+        let proof = analyzer
+            .vocabulary
+            .derivations
+            .intern(DerivationNode::LetOrigin {
+                binding,
+                value: plain,
+                event: origin_event,
+            });
+        joined
+            .goal_origins
+            .insert(binding, GoalOrigin { goal: plain, proof });
+        let submitted = goal_binding_place(binding, [], CheckedType::Bool);
+        let affine = AffineFlowState::default();
+        let view = analyzer
+            .reasoning()
+            .origin_query_view(ProofContext::new(&joined, &affine), Some(&submitted));
+        let goal = analyzer
+            .vocabulary
+            .goals
+            .id(&submitted)
+            .expect("submitted origin member interned");
+        let closed = close(
+            &view,
+            &analyzer.vocabulary.terms,
+            &analyzer.vocabulary.goals,
+            &mut analyzer.vocabulary.derivations,
+        );
+        assert!(closed.holds_opaque(goal, GoalSign::Positive, &analyzer.vocabulary.goals));
+        assert!(view.opaque_sources.is_empty());
+        assert_eq!(view.live_l0_relations(), joined.live_l0_relations());
+    });
+}
+
+#[test]
+fn joined_opaque_views_project_a_genuine_ordinary_let_origin() {
+    use crate::semantic::entailment::state::{GoalOrigin, join};
+    use crate::semantic::goal::GoalAdmission;
+    use crate::semantic::places::{CaptureId, CapturedTerm};
+
+    with_integer_parameters(&[IntegerType::U8, IntegerType::U8], |analyzer| {
+        let ty = CheckedType::Integer(IntegerType::U8);
+        let captured = CapturedValue::new(CaptureId::ValueDetermined, CapturedTerm::Literal(0));
+        let place = |admission| {
+            GoalExpression::Datum(GoalDatum::Place {
+                root: BindingId(0),
+                projections: vec![GoalProjection::Subscript(captured)],
+                ty,
+                admission,
+            })
+        };
+        let comparison = |value| GoalExpression::Operation {
+            row: GoalOperation::Integer {
+                operation: CheckedIntegerOperation::LessEqual,
+                operand_type: ty,
+            },
+            type_arguments: Vec::new(),
+            const_arguments: Vec::new(),
+            result: CheckedType::Bool,
+            arguments: vec![
+                value,
+                GoalExpression::Datum(GoalDatum::Literal(CheckedValue::Integer {
+                    ty: IntegerType::U8,
+                    bits: 1,
+                })),
+            ],
+        };
+        let plain_value = place(GoalAdmission::plain(ty));
+        let mut indexed_admission = GoalAdmission::plain_range(ty);
+        indexed_admission
+            .projections
+            .push(GoalProjection::Subscript(captured));
+        let indexed_value = place(indexed_admission);
+        let indexed = analyzer
+            .reasoning()
+            .intern_goal_expression(comparison(indexed_value.clone()));
+        let plain = analyzer
+            .reasoning()
+            .intern_goal_expression(comparison(plain_value));
+        assert_ne!(plain, indexed);
+        let event = analyzer
+            .vocabulary
+            .derivations
+            .event(FlowEventKind::S1, None);
+        let mut left = FactState::new();
+        left.establish_goal(
+            plain,
+            GoalSign::Positive,
+            &analyzer.vocabulary.goals,
+            &mut analyzer.vocabulary.derivations,
+            event,
+        );
+        let mut right = FactState::new();
+        right.establish_goal(
+            indexed,
+            GoalSign::Positive,
+            &analyzer.vocabulary.goals,
+            &mut analyzer.vocabulary.derivations,
+            event,
+        );
+        let mut joined = join(
+            &[left, right],
+            &analyzer.vocabulary.terms,
+            &analyzer.vocabulary.goals,
+            &mut analyzer.vocabulary.derivations,
+        );
+        assert!(joined.opaque_sources.is_empty());
+        let binding = BindingId(1);
+        let definition = analyzer.reasoning().intern_goal_expression(indexed_value);
+        let origin_event = analyzer
+            .vocabulary
+            .derivations
+            .event(FlowEventKind::LetOrigin, None);
+        let proof = analyzer
+            .vocabulary
+            .derivations
+            .intern(DerivationNode::LetOrigin {
+                binding,
+                value: definition,
+                event: origin_event,
+            });
+        joined.goal_origins.insert(
+            binding,
+            GoalOrigin {
+                goal: definition,
+                proof,
+            },
+        );
+        let submitted = comparison(goal_binding_place(binding, [], ty));
+        let affine = AffineFlowState::default();
+        let view = analyzer
+            .reasoning()
+            .origin_query_view(ProofContext::new(&joined, &affine), Some(&submitted));
+        let goal = analyzer
+            .vocabulary
+            .goals
+            .id(&submitted)
+            .expect("submitted origin member interned");
+        let relation = analyzer
+            .vocabulary
+            .goals
+            .projection(goal)
+            .cloned()
+            .expect("ordinary-let integer binding is admitted");
+        let closed = close(
+            &view,
+            &analyzer.vocabulary.terms,
+            &analyzer.vocabulary.goals,
+            &mut analyzer.vocabulary.derivations,
+        );
+        assert!(closed.derives(&relation));
+        let entering = close(
+            &joined,
+            &analyzer.vocabulary.terms,
+            &analyzer.vocabulary.goals,
+            &mut analyzer.vocabulary.derivations,
+        );
+        assert!(!entering.derives(&relation));
+        let Relation::Bound { left, right, bound } = relation else {
+            panic!("one ordinary comparison bound");
+        };
+        let retained = closed
+            .bound_proof(left, right, bound, &mut analyzer.vocabulary.derivations)
+            .expect("the transported relation retains its proof");
+        let mut pending = vec![retained];
+        let mut ancestors = HashSet::new();
+        while let Some(parent) = pending.pop() {
+            if ancestors.insert(parent) {
+                pending
+                    .extend(analyzer.vocabulary.derivations.nodes[parent.0 as usize].parent_ids());
+            }
+        }
+        assert!(
+            ancestors.contains(&proof),
+            "numeric transport retains the live ordinary-let introduction"
+        );
+        assert!(ancestors.iter().any(|parent| matches!(
+            &analyzer.vocabulary.derivations.nodes[parent.0 as usize],
+            DerivationNode::OriginTransport { origins, .. } if origins.contains(&proof)
+        )));
+        assert!(view.opaque_sources.is_empty());
+    });
+}
+
+#[test]
 fn measure_term_forms_pages_only_for_paged() {
     for (measured, has_pages) in [
         (MeasuredKind::RuntimeRing, false),
@@ -578,6 +822,7 @@ fn affine_index_cache_rebuilds_on_inventory_revisions_and_contradiction() {
         facts.establish_goal(
             goal,
             GoalSign::Positive,
+            &analyzer.vocabulary.goals,
             &mut analyzer.vocabulary.derivations,
             event,
         );
@@ -608,6 +853,7 @@ fn affine_index_cache_rebuilds_on_inventory_revisions_and_contradiction() {
         facts.establish_goal(
             goal,
             GoalSign::Negative,
+            &analyzer.vocabulary.goals,
             &mut analyzer.vocabulary.derivations,
             event,
         );

@@ -732,7 +732,7 @@ impl CheckedType {
     }
 }
 
-/// One of [MSR-1]'s three measures of a measured value.
+/// One of [MSR-1]'s measures of a measured value.
 ///
 /// The spelling and the [ENT-2] term are the same quantity read two ways, so
 /// one enum keys both the [OP-1] reader row and the measure term.
@@ -743,6 +743,8 @@ pub(crate) enum CheckedMeasure {
     Head,
     /// Initialized page count, supported by the same word as len.
     Pages,
+    /// Heap bytes retained by a KeySet, including unused capacity.
+    Bytes,
 }
 
 /// One cell of [MSR-1]'s measure table.
@@ -766,7 +768,7 @@ pub(crate) enum MeasureCell {
     /// `cap` [WIN-1].
     ExactRuntime,
     /// The measure is only two-sidedly published by some writing operation:
-    /// a Ring's `head` and a key set's `len` are the measures of this class
+    /// a Ring's `head` and a key set's `len` and `bytes` are measures of this class
     /// [MSR-1].
     Bounded,
     /// The type has no such measure.
@@ -807,6 +809,7 @@ impl CheckedMeasure {
             Self::Capacity => "cap",
             Self::Head => "head",
             Self::Pages => "pages.len",
+            Self::Bytes => "bytes",
         }
     }
 
@@ -816,6 +819,8 @@ impl CheckedMeasure {
     /// a member's spelling alone cannot establish either.
     pub(crate) const fn cell(self, measured: MeasuredKind) -> MeasureCell {
         match (measured, self) {
+            (MeasuredKind::KeySet, Self::Bytes) => MeasureCell::Bounded,
+            (_, Self::Bytes) => MeasureCell::Absent,
             (MeasuredKind::Paged, Self::Pages) => MeasureCell::ExactRuntime,
             (_, Self::Pages) => MeasureCell::Absent,
             // `Array<T, N>`: `len` is the type constant and every slot always
@@ -853,10 +858,8 @@ impl CheckedMeasure {
                 MeasuredKind::Range | MeasuredKind::Segments | MeasuredKind::Entries,
                 Self::Length,
             ) => MeasureCell::ExactRuntime,
-            // The two *bounded* cell classes of the table: the two
-            // front-moving operations publish a `Ring`'s window origin
-            // two-sidedly and no operation re-establishes it exactly
-            // [MSR-1, OP-10], and the key-set additions publish a set's `len`
+            // Front-moving operations publish a Ring's window origin
+            // two-sidedly [MSR-1, OP-10]. Key-set additions publish len
             // two-sidedly, a key already held adding none [SHARE-1].
             (MeasuredKind::ConstantRing | MeasuredKind::RuntimeRing, Self::Head)
             | (MeasuredKind::KeySet, Self::Length) => MeasureCell::Bounded,
@@ -3076,7 +3079,7 @@ pub(crate) enum CheckedEffectStep {
     },
     /// `.next`, `.last`, `.filled`, or `.free` [WIN-2, TYPE-10].
     Part(super::places::WindowPart),
-    /// `.len`, `.cap`, or `.head` [MSR-1, OP-15, TYPE-2].
+    /// `.len`, `.cap`, `.head`, or `.bytes` [MSR-1, OP-15, TYPE-2].
     Measure(CheckedMeasure),
 }
 

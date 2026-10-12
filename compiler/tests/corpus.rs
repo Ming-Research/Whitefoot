@@ -19,6 +19,7 @@ mod programs {
     #[cfg(unix)]
     mod binary;
     mod containers;
+    mod driver_count;
     #[cfg(unix)]
     mod contexts;
     mod file_replacement;

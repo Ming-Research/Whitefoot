@@ -110,6 +110,7 @@ static int wf_bridge_file_error;
 static _Atomic int wf_bridge_helpers_pinned;
 static _Atomic unsigned wf_bridge_ready;
 static _Atomic unsigned wf_bridge_file_ready;
+static _Atomic unsigned wf_bridge_wake_ready;
 /* Records completed, and of those the ones the engine executed inside the
  * submitting call itself. */
 static _Atomic uint64_t wf_bridge_publications;
@@ -248,7 +249,7 @@ static int wf_bridge_ensure_file(void) {
 static void wf_bridge_print_report(void);
 
 static void wf_bridge_shutdown(void) {
-    if (wf_bridge_ready == 0) {
+    if (wf_bridge_wake_ready == 0) {
         return;
     }
     if (wf_bridge_file_ready != 0) {
@@ -259,6 +260,7 @@ static void wf_bridge_shutdown(void) {
     wf_bridge_ring_shutdown();
     (void)wf_completion_runtime_destroy(&wf_bridge_runtime);
     wf_bridge_ready = 0;
+    wf_bridge_wake_ready = 0;
 }
 
 /* ------------------------------------------------------------- the ring */
@@ -306,10 +308,10 @@ static _Noreturn void wf_bridge_fail_with_code(const char *reason, int code) {
 /* WF_IO_NO_NATIVE_RING: run this process on the bounded adapter route.
  *
  * Runtime policy of the same class as WF_IO_NOCACHE and WF_IO_HELPERS, and
- * test-only within that class: no Whitefoot source names it, no accepted
- * program changes meaning under it, and no byte any operation produces
- * differs with it set.  Absent -- and any value other than the exact text "1"
- * -- is today's behaviour exactly.
+ * test-only within that class: no Whitefoot source names it and the operation
+ * contracts stay the same. The execution input Inputs.drivers reflects the
+ * resulting one-driver policy. Absent -- and any value other than the exact
+ * text "1" -- keeps the ordinary native-ring selection.
  *
  * It exists because the route a host takes is not a choice a test can
  * otherwise make.  A host with a kernel completion ring takes every positioned
@@ -809,15 +811,15 @@ int wf__bridge_report(char *buffer, size_t capacity) {
  * core's entry, before the program's first operation, and the first operation's
  * once-control is a window another thread can park inside.
  *
- * So the epoch has its own start, taken by whichever of the two arrives first:
- * a seam call, or the bridge's own initializer.  It is a mutex, a condition
- * variable and a counter -- no ring, no helper, no descriptor -- so a program
- * that never submits anything pays for those and nothing else.  Both sleep
+ * So the epoch has its own start, taken by whichever arrives first: a seam
+ * call, driver-count selection, or the bridge's own initializer. It is a
+ * mutex, a condition variable and a counter -- no ring, no helper, no
+ * descriptor. Driver-count selection separately initializes the root ring
+ * before entry, without starting any thread. Both sleep
  * mechanisms announce themselves against this one epoch under this one lock,
  * the ring's `epoll_wait` included, so one wake reaches a sleeper on either. */
 static unsigned wf_bridge_wake_once;
 static int wf_bridge_wake_error;
-static _Atomic unsigned wf_bridge_wake_ready;
 
 static void wf_bridge_initialize_wake(void) {
     wf_bridge_wake_error = wf_completion_runtime_init(&wf_bridge_runtime);
@@ -831,25 +833,41 @@ static int wf_bridge_ensure_wake(void) {
     return wf_bridge_wake_ready != 0;
 }
 
-static void wf_bridge_initialize(void) {
+/* Inputs needs the actual ring policy before entry, but selecting the count
+ * must not start helpers, executors or the deadline monitor. Build the root
+ * ring once and retain its result for the later full bridge initializer. */
+static unsigned wf_bridge_ring_once;
+
+static void wf_bridge_initialize_ring(void) {
     if (!wf_bridge_ensure_wake()) {
         wf_bridge_error = wf_bridge_wake_error != 0 ? wf_bridge_wake_error : EAGAIN;
         return;
     }
+    (void)wf_bridge_ring_start();
+    if (atexit(wf_bridge_shutdown) != 0) {
+        /* Registration failure changes cleanup at process exit, not the
+         * completion contract of any admitted operation. */
+    }
+}
+
+static int wf_bridge_ensure_ring(void) {
+    wf__sched_once(&wf_bridge_ring_once, wf_bridge_initialize_ring);
+    return wf_bridge_wake_ready != 0;
+}
+
+static void wf_bridge_initialize(void) {
+    if (!wf_bridge_ensure_ring()) return;
     /* The ring where this run has one, and the bounded typed adapter where it
      * does not: a target with no kernel completion facility for regular files
      * -- Darwin in the supported set, and either of the other two under
      * WF_IO_NO_NATIVE_RING -- must have the adapter before it is ready, because
      * that adapter is then the whole engine. */
-    if (!wf_bridge_ring_start() && !wf_bridge_ensure_file()) {
+    if (!wf_bridge_ring_ready() && !wf_bridge_ensure_file()) {
         (void)wf_completion_runtime_destroy(&wf_bridge_runtime);
+        wf_bridge_wake_ready = 0;
         return;
     }
     wf_bridge_ready = 1;
-    if (atexit(wf_bridge_shutdown) != 0) {
-        /* Registration failure changes cleanup at process exit, not the
-         * completion contract of any admitted operation. */
-    }
 }
 
 /* The bridge, or nothing.
@@ -1553,6 +1571,10 @@ static wf_driver wf_driver_root;
  * every slot while the entry publishes the next driver. */
 static _Atomic(wf_driver *) wf_drivers[WF_DRIVER_LIMIT];
 static _Atomic unsigned wf_driver_count;
+/* Selection is immutable once Inputs is constructed. The active count above
+ * still publishes only initialized, started roles to scheduler readers. */
+static unsigned wf_driver_selection_once;
+static unsigned wf_driver_selected_count;
 /* Attribution belongs to the driver doing the borrowing or stealing. Static
  * storage survives driver teardown for WF_SCHED_REPORT=2 at process exit.
  * Exceptional assistance/transfer paths increment these observational counters. */
@@ -4016,24 +4038,31 @@ static void wf_handoff_begin(void) {
 
 #if defined(__linux__)
 
-/* The drivers after the entry's, started the first time a context starts:
- * WF_DRIVERS of them in all, one per CPU the process may run on when it is
- * not written, and only where the host has a ring for each to wait in. A
- * driver that cannot be made leaves the program with the ones already
- * running. */
-static void wf_drivers_begin(void) {
+static void wf_driver_select_count(void) {
     unsigned long written = 0;
     unsigned wanted = wf_prim_online_cpus();
-    unsigned index;
     if (wf__sched_setting("WF_DRIVERS", WF_DRIVER_LIMIT, &written) && written != 0u) {
         wanted = (unsigned)written;
     }
-    if (wanted == 0u || !wf_bridge_ring_ready()) {
+    if (!wf_bridge_ensure_ring())
+        wf_bridge_fail("the completion bridge could not initialize");
+    if (!wf_bridge_ring_ready()) {
         wanted = 1u;
+    } else if (wanted == 0u) {
+        wf_bridge_fail("cannot determine the available CPU count");
     }
     if (wanted > WF_DRIVER_LIMIT) {
         wanted = WF_DRIVER_LIMIT;
     }
+    wf_driver_selected_count = wanted;
+}
+
+/* The drivers after the entry's start only when the first context starts.
+ * The count was fixed before entry: resources that cannot supply that count
+ * stop the execution with a report instead of changing its Inputs value. */
+static void wf_drivers_begin(void) {
+    unsigned wanted = (unsigned)wf__context_driver_count();
+    unsigned index;
     for (index = 1u; index < wanted; index++) {
         size_t granted;
         wf_driver *driver = (wf_driver *)wf_pool_take(sizeof(*driver), &granted);
@@ -4046,7 +4075,7 @@ static void wf_drivers_begin(void) {
         atomic_store_explicit(&driver->service_token, driver->departure, memory_order_relaxed);
         if (wf_completion_runtime_init(&driver->own_runtime) != 0) {
             wf_pool_give(driver, granted);
-            break;
+            wf_bridge_fail("cannot initialize a selected driver wake");
         }
         driver->runtime = &driver->own_runtime;
         if (wf_linux_io_uring_init(
@@ -4057,7 +4086,7 @@ static void wf_drivers_begin(void) {
             ) != 0) {
             (void)wf_completion_runtime_destroy(&driver->own_runtime);
             wf_pool_give(driver, granted);
-            break;
+            wf_bridge_fail("cannot initialize a selected driver ring");
         }
         if (wf_completion_set_wake_callback(
                 &driver->own_runtime,
@@ -4067,7 +4096,7 @@ static void wf_drivers_begin(void) {
             (void)wf_linux_io_uring_destroy(&driver->own_adapter);
             (void)wf_completion_runtime_destroy(&driver->own_runtime);
             wf_pool_give(driver, granted);
-            break;
+            wf_bridge_fail("cannot initialize a selected driver ring wake");
         }
         wf_drivers[index] = driver;
         wf_executor_init(2u * index, driver);
@@ -4081,10 +4110,17 @@ static void wf_drivers_begin(void) {
 
 #else
 
+static void wf_driver_select_count(void) { wf_driver_selected_count = 1u; }
+
 /* A host with no ring has one logical role, but still needs a warm spare. */
 static void wf_drivers_begin(void) { wf_handoff_begin(); }
 
 #endif
+
+uint64_t wf__context_driver_count(void) {
+    wf__sched_once(&wf_driver_selection_once, wf_driver_select_count);
+    return wf_driver_selected_count;
+}
 
 /* After monitor shutdown and root completion, admission has ended. A root
  * COMPLETE adoption publishes root_done before retiring its ingress count;
@@ -4142,6 +4178,7 @@ void wf__context_root_begin(void) {
     if (wf_driver_self != NULL || atomic_load_explicit(&wf_driver_count, memory_order_acquire)) {
         wf_bridge_fail("the root context was begun twice");
     }
+    (void)wf__context_driver_count();
     wf_bridge_require();
     atomic_flag_clear(&wf_driver_root.run_lock);
     atomic_flag_clear(&wf_driver_root.ingress_lock);

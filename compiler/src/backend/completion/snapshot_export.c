@@ -99,11 +99,14 @@ static uint64_t snap_u64(const void *data) {
 static const unsigned char *snap_pointer(const void *data) {
     return (const unsigned char *)(uintptr_t)snap_u64(data);
 }
-static uint64_t snap_tag(const void *data, uint64_t width) {
+/* An enum's discriminant is its descriptor's width in bytes. A two-state
+ * enum may store an i1 whose byte carries unspecified upper bits, so only its
+ * low bit is read; wider counts use every byte of the count-sized tag. */
+static uint64_t snap_tag(const void *data, const wf_snapshot_type *type) {
     const unsigned char *p = data;
     uint64_t n = 0;
-    for (uint64_t i = 0; i < width; ++i) n |= (uint64_t)p[i] << (8u * i);
-    return width == 1 ? n & 1u : n;
+    for (uint64_t i = 0; i < type->width; ++i) n |= (uint64_t)p[i] << (8u * i);
+    return type->count <= 2 ? n & 1u : n;
 }
 
 void wf_snapshot_atomic_begin(void) {
@@ -351,7 +354,7 @@ static void snap_encode(snap_writer *writer, const wf_snapshot_type *root,
                 snap_body_word(writer, type->count, 8);
                 break;
             case WF_SNAPSHOT_ENUM: {
-                uint64_t tag = snap_tag(frame->data, type->width);
+                uint64_t tag = snap_tag(frame->data, type);
                 if (tag >= type->count) { writer->error = SNAP_LENGTH; break; }
                 frame->length = type->variants[tag].count;
                 frame->fields = type->variants[tag].fields;
@@ -366,7 +369,7 @@ static void snap_encode(snap_writer *writer, const wf_snapshot_type *root,
                 uint64_t pairs = 0;
                 for (uint64_t i = 0; i < frame->length; ++i) {
                     const unsigned char *bucket = snap_element(cells->type->element, frame->data, i);
-                    if (snap_tag(bucket, type->element->width) == 2) ++pairs;
+                    if (snap_tag(bucket, type->element) == 2) ++pairs;
                 }
                 snap_body_word(writer, pairs, 8);
                 break;
@@ -399,7 +402,7 @@ static void snap_encode(snap_writer *writer, const wf_snapshot_type *root,
             const wf_snapshot_type *slots = type->fields[0].type->element;
             const unsigned char *bucket = snap_element(slots, frame->data, frame->at++);
             const wf_snapshot_type *slot = type->element;
-            if (snap_tag(bucket, slot->width) != 2) continue;
+            if (snap_tag(bucket, slot) != 2) continue;
             const wf_snapshot_field *fields = slot->variants[2].fields;
             snap_push(writer, stack, &depth, capacity, fields[1].type,
                       bucket + fields[1].offset, 0);

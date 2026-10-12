@@ -1,0 +1,16 @@
+struct Cell {
+  value: u8;
+}
+
+fn probe(cells: &[Cell]) -> result: unit writes(cells) contract {
+  requires cells^.len > 0_u64;
+} {
+  set cells^[0_u64] = Cell(value: 1_u8);
+  let ref = &cells^[0_u64];
+  let value = ref^.value + 254_u8;
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

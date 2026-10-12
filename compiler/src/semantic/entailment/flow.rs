@@ -35,7 +35,7 @@ mod goals;
 mod invariants;
 mod judge;
 mod loop_summary;
-mod operation_facts;
+pub(crate) mod operation_facts;
 mod origin_transport;
 mod postconditions;
 mod prover;
@@ -67,8 +67,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
 
 use super::super::goal::{
-    CheckedRequirement, ConcreteGoal, EvaluatedValueOccurrence, GoalDatum, GoalExpression,
-    GoalOperation, GoalProjection,
+    CheckedRequirement, ConcreteGoal, EvaluatedValueOccurrence, GoalAdmission, GoalDatum,
+    GoalExpression, GoalOperation, GoalProjection,
 };
 use super::super::model::expression_children;
 use super::super::model::{
@@ -132,6 +132,8 @@ enum KillEvent {
     Write {
         place: ResolvedPlace,
         element: bool,
+        /// [ENT-5] a canonical grow call preserves logical length and elements.
+        relocation: bool,
         source: crate::NodePath,
         /// For a callee's declared write, the places the same call would
         /// write if the row declared only what the body writes [EFF-2];
@@ -158,6 +160,8 @@ enum KillEvent {
     EntryImageHolderWrite {
         place: ResolvedPlace,
         element: bool,
+        /// [ENT-5] a canonical grow call preserves logical length and elements.
+        relocation: bool,
         source: crate::NodePath,
         narrowed: Narrowed,
     },
@@ -1198,6 +1202,7 @@ fn analyze_candidate_inner(
     let run = run(function, context);
     let mut entailment = FunctionEntailment {
         body_disposition: run.body_disposition,
+        operation_intervals: run.operation_intervals,
         obligations: run.obligations,
         call_goals: run.call_goals,
         contract_goals: Vec::new(),
@@ -1218,6 +1223,7 @@ fn analyze_candidate_inner(
 }
 
 struct AnalysisRun {
+    operation_intervals: BTreeMap<crate::NodePath, Option<Vec<operation_facts::Interval>>>,
     body_disposition: super::super::model::CheckedBodyDisposition,
     obligations: Vec<ObligationOutcome>,
     call_goals: Vec<CallGoalOutcome>,
@@ -1312,6 +1318,7 @@ fn run(function: &CheckedFunction, context: &EntailmentContext<'_>) -> AnalysisR
         goals: analyzer.vocabulary.goals.into_inventory(),
     };
     AnalysisRun {
+        operation_intervals: analyzer.output.operation_intervals,
         body_disposition,
         obligations: analyzer.output.obligations,
         call_goals: analyzer.output.call_goals,
@@ -1364,6 +1371,7 @@ impl<'check, 'unit> Analyzer<'check, 'unit> {
                 loop_induction_roots: 0,
             },
             output: Output {
+                operation_intervals: BTreeMap::new(),
                 obligations: Vec::new(),
                 call_goals: Vec::new(),
                 counted_derivations: Vec::new(),
@@ -1789,6 +1797,7 @@ struct Vocabulary {
 /// What the analysis publishes: every judgment's outcome, the retained
 /// derivation sets, and which separation questions have been asked.
 struct Output {
+    operation_intervals: BTreeMap<crate::NodePath, Option<Vec<operation_facts::Interval>>>,
     obligations: Vec<ObligationOutcome>,
     call_goals: Vec<CallGoalOutcome>,
     counted_derivations: Vec<CountedDerivationSet>,
@@ -2062,6 +2071,7 @@ mod indexed_goal_kill_tests {
                 root: BindingId(0),
                 projections: projections.clone(),
                 ty: CheckedType::Bool,
+                admission: Default::default(),
             }),
             None,
             None,
@@ -2082,6 +2092,7 @@ mod indexed_goal_kill_tests {
                         place: ResolvedPlace::binding(binding),
                         element: false,
                         source: source.clone(),
+                        relocation: false,
                         narrowed: None,
                     },
                     KillEvent::Consume { binding, source },
@@ -2095,6 +2106,7 @@ mod indexed_goal_kill_tests {
                     facts.establish_goal(
                         goal,
                         sign,
+                        &analyzer.vocabulary.goals,
                         &mut analyzer.vocabulary.derivations,
                         established,
                     );
@@ -2121,6 +2133,7 @@ mod indexed_goal_kill_tests {
                 facts.establish_goal(
                     goal,
                     sign,
+                    &analyzer.vocabulary.goals,
                     &mut analyzer.vocabulary.derivations,
                     established,
                 );
@@ -2311,6 +2324,7 @@ mod range_argument_kill_tests {
                 let event = KillEvent::Write {
                     element: matches!(path.last(), Some(PlaceStep::Index(_))),
                     place: place(path),
+                    relocation: false,
                     source: crate::NodePath { components: vec![] },
                     narrowed: None,
                 };

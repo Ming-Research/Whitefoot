@@ -549,9 +549,16 @@ impl<'unit> TypeContext<'unit> {
         // [TYPE-7] `^` names the referent of a reference, whose selected
         // type is the type the reference binding already carries [REF-1].
         let mut ty = {
-            // `entry(IDENT)` is a contract-only `pbase` [GRAM-5, MSR-3] and
-            // names no operand in a body.
-            if !self.declarations.tree.children(pbase)?.is_empty() {
+            // An entry former's projected suffixes are children of its
+            // pbase [GRAM-5, MSR-3]. In an ensures clause they join the
+            // outer suffixes in the ordinary place walk; the declaration's
+            // check_entry_formers judgment owns their contract admission.
+            let projected_entry = check_context.active_postcondition.is_some()
+                && self
+                    .declarations
+                    .tree
+                    .has_fixed(pbase, crate::FixedTerminal::Entry)?;
+            if !self.declarations.tree.children(pbase)?.is_empty() && !projected_entry {
                 return self
                     .declarations
                     .unsupported(UnsupportedSemanticFeature::CompositeValues, pbase);
@@ -576,11 +583,14 @@ impl<'unit> TypeContext<'unit> {
                 _ => return Ok(None),
             }
         };
-        for &suffix in suffixes {
+        for (position, &suffix) in suffixes.iter().enumerate() {
             if matches!(
                 self.declarations.tree.place_suffix(suffix)?,
                 crate::syntax::views::PlaceSuffix::Dereference
             ) {
+                if position == 0 && matches!(ty, SelectedPlaceType::Range(_)) {
+                    self.declarations.check_range_referent(suffix)?;
+                }
                 continue;
             }
             if self.declarations.tree.subscript_offset(suffix)?.is_some() {
