@@ -3,9 +3,9 @@ fn record(maps: &Array<Shared<ConcurrentHashMap<u64>>, 2>, i: u64, j: u64, key: 
   requires j < 2_u64;
 } {
   let counted = 0_u64;
-  atomic whole = &maps^[i], entry = &maps^[j][key] {
+  atomic whole = &maps^[i], keyed = &maps^[j][key] {
     set counted = map_count::<u64>(map: whole);
-    set entry^ = Some<u64>(value: counted);
+    set keyed^ = Some<u64>(value: counted);
   }
   return unit;
 }
