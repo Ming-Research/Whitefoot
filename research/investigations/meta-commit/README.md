@@ -1,5 +1,10 @@
 # Meta commit: statements on different keys overlap their computation
 
+**Status:** provisional. The criterion below was revised once, after the
+first run with a ten-millisecond computation failed on macOS for a reason the
+first criterion did not foresee (that host runs one driver); the result below
+is the first measurement under the revised criterion.
+
 ## The question
 
 Firn runs each data-modifying command as one atomic statement that names
@@ -32,7 +37,7 @@ timing is caught.
   before it computes, so it holds Meta through the computation.
 
 Both are run by
-[the program cases](../../../compiler/tests/programs/parallel.rs) with
+[the program case](../../../compiler/tests/programs/parallel.rs) with
 `WF_DRIVERS=2`.
 
 The computation is a loop of integer mixing that runs until the monotonic
@@ -80,6 +85,22 @@ hosted runner can delay the start of the second context and this costs the
 result only when it happens in every round. A repeat cannot hide a lock held
 through the computation: every run of it takes at least 2 C and fails the
 first condition.
+
+## Result
+
+At revision 337f8febf, gate run
+[38307111387](https://github.com/Ming-Research/Whitefoot/actions/runs/38307111387)
+passed the case on the hosted Linux runner (two drivers): within five rounds
+the best overlapping run was under 1.8 C and more than C / 2 under the best
+control run, and every run of both programs passed its state checks. The
+hosted macOS runner (one driver) passed the state checks and the driver count.
+The durations themselves are not recorded: a passing case prints nothing, so
+the margin by which the criterion was met is unmeasured.
+
+The two programs repeat their scaffolding (the log printer and `main`) and
+differ only where each statement reaches Meta. A program in `tests/programs/`
+is one source file, so the control is kept as a full copy; an edit to one
+program is made to both.
 
 ## What a failure would mean
 

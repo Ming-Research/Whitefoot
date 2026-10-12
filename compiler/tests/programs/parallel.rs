@@ -520,9 +520,7 @@ fn objects_met_in_any_order_are_taken_in_one_on_one_driver_and_on_four() {
 /// monotonic clock has advanced this far, whatever the host's load. It is
 /// two hundred milliseconds so that a start delay of the second context on a
 /// loaded hosted runner stays a fraction of it; the criterion below tolerates
-/// one of up to 100 ms. (The 23 to 31 ms that a ten-millisecond computation
-/// took on the macOS runner measured no such delay: that host runs one
-/// driver, see `META_COMMIT_DRIVERS`.)
+/// one of up to 100 ms.
 const META_COMMIT_COMPUTATION: u64 = 200_000_000;
 
 /// The rounds the overlap case may use, each running the overlapping program
@@ -575,7 +573,10 @@ fn meta_commit_output(output: &Output) -> (u64, u64) {
 /// it takes at least 2 C, and (2) is shorter than the best control run by
 /// more than C / 2, half of the difference C an overlap leaves. A repeat
 /// cannot hide a lock held through the computation: every run of it takes at
-/// least 2 C and fails (1).
+/// least 2 C and fails (1). The control takes its sequence number from Meta
+/// before its computation, so Meta is held through it, and every control run
+/// must take at least 1.8 C (the program's own status 4 floor); on two drivers
+/// this shows that the criterion separates the two lock timings.
 ///
 /// The duration is judged only where the programs report two drivers. One
 /// driver runs a context until it suspends, and a statement's block never
@@ -628,38 +629,6 @@ fn statements_on_different_keys_compute_together_and_meet_only_at_the_meta_commi
         "no best overlapping run was under 1.8 computations and more than half a \
          computation under the best control run; (overlap, control) ns per round: {rounds:?}"
     );
-}
-
-/// The control of the case above: the same statements, but each takes its
-/// sequence number from Meta before its computation, so Meta is held through
-/// it. Two computations that exclude one another need 2 C, so every run must
-/// take at least 1.8 C (the program's own status 4 floor). On two drivers the
-/// control shows that the criterion of the case above separates the two lock
-/// timings: the same statements with Meta reached first end above the floor
-/// and so above the 1.8 C bound of the overlapping case. On one driver
-/// (`META_COMMIT_DRIVERS`) the statements run one after the other anyway, so
-/// the floor holds there for that reason alone. It needs no repeat, because a
-/// lock held through the computation can only lengthen a run.
-#[test]
-fn statements_that_take_meta_before_computing_run_one_after_the_other() {
-    let program = build_program(&compile_program("meta_commit_held.wf"));
-    for round in 0..3 {
-        let output = program.run_with_settings(None, &[("WF_DRIVERS", "2")]);
-        assert_eq!(
-            output.status.code(),
-            Some(0),
-            "meta_commit_held.wf, round {round}: {output:?}"
-        );
-        let (elapsed, drivers) = meta_commit_output(&output);
-        assert_eq!(
-            drivers, META_COMMIT_DRIVERS,
-            "round {round} driver count: {output:?}"
-        );
-        assert!(
-            elapsed >= META_COMMIT_COMPUTATION * 9 / 5,
-            "round {round}, {elapsed} ns: {output:?}"
-        );
-    }
 }
 
 /// Requested overlap must preserve the histogram and signed-extrema oracle.
