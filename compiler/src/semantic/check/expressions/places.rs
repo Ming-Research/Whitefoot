@@ -1,7 +1,8 @@
 //! Type-directed place suffixes [GRAM-5, TYPE-7].
 //!
-//! The postfix `^` selects the referent of `&T` or `&[T]`. A Box instead
-//! exposes its content through the ordinary field `inner` [TYPE-9]. Resolving
+//! The postfix `^` selects the referent of `&T`, or the run named by `&[T]`
+//! or `&Run<T>`; a run admits only an index, range step or `len` measure.
+//! A Box exposes its content through the ordinary field `inner` [TYPE-9]. Resolving
 //! a reference step substitutes the path that reference names; every
 //! [OWN-7] judgment reads that same resolved place [REF-1].
 
@@ -84,10 +85,10 @@ pub(super) struct ElaboratedPlace {
     /// always the last written suffix and the place it is read over is the
     /// one this record otherwise describes.
     pub(super) measure: Option<super::super::super::model::CheckedMeasure>,
-    /// Whether the written path starts with `^` on a `&[T]` range reference
-    /// [REF-4]. [MSR-1] gives `&[T]` its own row, whose one cell is the
-    /// range's element count, and the referent type the deref selects is the
-    /// element type, so the row cannot be recovered from that type.
+    /// Whether the written path starts with `^` on a range reference
+    /// [REF-4, TYPE-7]. [MSR-1] gives that run its own row, whose one cell is
+    /// the range's element count. This record carries the element type, so
+    /// the row cannot be recovered from that type.
     pub(super) range_referent: bool,
 }
 
@@ -156,14 +157,10 @@ impl<'unit> Checker<'_, 'unit> {
         // [MSR-1] measures select copy u64 values, rather than the measured
         // container. [DIAG-1] gives their moves and all other copy moves to
         // [OWN-1] before [SHARE-1] considers a frozen-content consume.
-        // A range referent without a measure names a run, not a value, which
-        // TYPE-5 refuses below before any copy judgment.
+        // [TYPE-7] range referents have already been restricted to their
+        // admitted projections during place formation.
         let copy = place.measure.is_some() || self.types.is_copy_type(check_context, place.ty)?;
-        if copy
-            && options.explicit_move
-            && !(place.range_referent && place.measure.is_none())
-            && Checker::judges_class_spelling(check_context)
-        {
+        if copy && options.explicit_move && Checker::judges_class_spelling(check_context) {
             return self.types.declarations.issue_node(
                 SemanticRule::Own1,
                 use_node,
@@ -264,21 +261,6 @@ impl<'unit> Checker<'_, 'unit> {
                     })
                     .collect(),
             });
-        }
-        // [TYPE-8] `&[T]` is a reference kind and not a type, so `p^`
-        // of a range reference denotes the run it names and never a value of
-        // its own: the admitted readers are its one measure above and one
-        // subscript [MSR-1, OP-4], both of which resolve before this point.
-        if place.range_referent {
-            return self.types.declarations.issue_node(
-                SemanticRule::Type5,
-                use_node,
-                SemanticIssueKind::type_mismatch(
-                    "a value place",
-                    "the run a range reference names, which is read by `p^[i]` or \
-                     `p^.len` [REF-4, MSR-1]",
-                ),
-            );
         }
         let read_out = !copy
             && options.explicit_move
@@ -728,6 +710,9 @@ impl<'unit> Checker<'_, 'unit> {
                 },
             );
         }
+        if inner.mode.is_range() {
+            self.types.declarations.check_range_referent(pbase)?;
+        }
         let local = bindings
             .get(&inner.declaration)
             .ok_or(SemanticCompilerFailure::InvalidResolution)?;
@@ -771,6 +756,62 @@ impl<'unit> Checker<'_, 'unit> {
 }
 
 impl<'unit> TypeContext<'unit> {
+    /// [TYPE-7] type range-referent steps before the narrower expression
+    /// shapes of contracts and proofs can attribute their use to another rule.
+    pub(in crate::semantic::check) fn check_range_referent_places(
+        &self,
+        check_context: &CheckContext<'_>,
+        expression: NodeId,
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+    ) -> Result<(), CheckStop> {
+        for place in self
+            .declarations
+            .tree
+            .descendants_with(expression, Production::Place)?
+        {
+            let suffixes = self
+                .declarations
+                .tree
+                .children_with(place, Production::Psuffix)?;
+            let Some(0) = self.declarations.tree.reference_step(&suffixes)? else {
+                continue;
+            };
+            // [REF-3] result selectors cannot denote references.
+            if self
+                .declarations
+                .postcondition_selector_spelling(check_context, place)?
+                .is_some()
+            {
+                continue;
+            }
+            let base = self
+                .declarations
+                .tree
+                .first_child_with(place, Production::Pbase)?
+                .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
+            let usage = self.declarations.use_at_roles(
+                check_context,
+                base,
+                &[
+                    LexicalUseRole::PlaceBase,
+                    LexicalUseRole::InvariantValue,
+                    LexicalUseRole::ProofValue,
+                ],
+            )?;
+            if let ResolvedTarget::Source {
+                declaration,
+                class: DeclarationClass::Value,
+            } = usage.target()
+                && bindings
+                    .get(&declaration)
+                    .is_some_and(|local| local.mode.is_range())
+            {
+                self.declarations.check_range_referent(suffixes[0])?;
+            }
+        }
+        Ok(())
+    }
+
     /// Resolve the type transition without choosing a diagnostic. A write
     /// judges readonly members before ordinary member validity; other uses
     /// judge validity first. Both consume this same type-directed selection.
@@ -1872,6 +1913,47 @@ impl<'unit> TypeContext<'unit> {
 }
 
 impl<'unit> DeclarationInventory<'unit> {
+    /// [TYPE-7] a range referent is a run, admitted only as the base of an
+    /// element subscript, a range step or its `len` measure. Inspect the
+    /// complete written place even when a caller elaborates only a prefix.
+    pub(in crate::semantic::check) fn check_range_referent(
+        &self,
+        caret: NodeId,
+    ) -> Result<(), CheckStop> {
+        use crate::syntax::views::PlaceSuffix;
+        let place = self
+            .tree
+            .parent(caret)?
+            .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
+        let suffixes = self.tree.children_with(place, Production::Psuffix)?;
+        let position = suffixes
+            .iter()
+            .position(|suffix| *suffix == caret)
+            .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
+        let rest = &suffixes[position + 1..];
+        if let Some(&next) = rest.first() {
+            match self.tree.place_suffix(next)? {
+                PlaceSuffix::Index { .. } | PlaceSuffix::Range { .. } => return Ok(()),
+                // [MSR-1] the run's one measure ends the place.
+                PlaceSuffix::Member(_)
+                    if rest.len() == 1
+                        && self.trailing_measure_member(rest)?
+                            == Some(CheckedMeasure::Length) =>
+                {
+                    return Ok(());
+                }
+                _ => {}
+            }
+        }
+        self.issue_node(
+            SemanticRule::Type7,
+            place,
+            SemanticIssueKind::RangeReferentUse {
+                mechanical_fix: "write `let q = r;` to alias the reference, `&r^[i]` to borrow one element, or `&r^[a..b]` to borrow a subrange",
+            },
+        )
+    }
+
     /// The measure a written `psuffix` run ends with [OP-15, MSR-1], if any.
     ///
     /// [MSR-1] gives a measure no storage below itself, so only the last

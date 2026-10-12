@@ -1001,7 +1001,7 @@ fn main() -> status: std::process::ExitStatus pure {
 "#;
     let llvm = emit(source);
     assert!(llvm.contains("switch i1"));
-    assert!(llvm.contains("switch i32"));
+    assert!(llvm.contains("switch i8"));
     // compiler/payload-enum-layout: `Payload`'s product, the tag and four
     // payload leaves, does not return in registers, so it is a union of
     // variant views; `Compact`'s tag and two leaves do, so it keeps the
@@ -1016,7 +1016,7 @@ fn main() -> status: std::process::ExitStatus pure {
         "{llvm}"
     );
     assert!(
-        llvm.contains(&format!("{compact} = type {{ i32, i32, i64 }}")),
+        llvm.contains(&format!("{compact} = type {{ i8, i32, i64 }}")),
         "{llvm}"
     );
     // The address one `getelementptr inbounds` into `ty` at `field` defines.
@@ -1029,8 +1029,10 @@ fn main() -> status: std::process::ExitStatus pure {
         })
     };
     // Every constructor initializes the complete result, then stores its
-    // `i32` tag at field 0 and each selected payload field with its own type.
-    let initialized = |body: &str, ty: &str, tag: u32, fields: &[(String, &str)]| {
+    // tag at field 0 and each selected payload field with its own type.
+    // Payload's union has three common padding bytes after its byte tag;
+    // Compact's register-returned product keeps its byte tag store.
+    let initialized = |body: &str, ty: &str, tag: u32, prefix_width: u8, fields: &[(String, &str)]| {
         assert!(
             body.contains(&format!("store {ty} zeroinitializer, ptr %wf.result")),
             "the baseline constructor initializes the complete result: {body}"
@@ -1040,8 +1042,8 @@ fn main() -> status: std::process::ExitStatus pure {
         let tag_address = field_address(body, ty, 0).expect("the tag has a destination at field 0");
         assert!(
             body.lines()
-                .any(|line| line.trim() == format!("store i32 {tag}, ptr {tag_address}")),
-            "the tag is initialized with its width: {body}"
+                .any(|line| line.trim() == format!("store i{prefix_width} {tag}, ptr {tag_address}")),
+            "the tag uses the expected union prefix or product leaf width: {body}"
         );
         for (address, field_type) in fields {
             assert!(
@@ -1082,7 +1084,7 @@ fn main() -> status: std::process::ExitStatus pure {
                 (address, *field_type)
             })
             .collect();
-        initialized(body, &payload, tag, &fields);
+        initialized(body, &payload, tag, 32, &fields);
     }
     // A register-returned product is constructed by its destination-form
     // body, each selected field at its flattened position after the tag and
@@ -1101,7 +1103,7 @@ fn main() -> status: std::process::ExitStatus pure {
         }
         let address = field_address(body, &compact, selected)
             .expect("each selected payload field has a destination");
-        initialized(body, &compact, tag, &[(address, field_type)]);
+        initialized(body, &compact, tag, 8, &[(address, field_type)]);
     }
     // compiler/backend-facts: a match's default is unreachable, since every
     // enum value carries a declared tag.

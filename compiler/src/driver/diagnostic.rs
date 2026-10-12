@@ -873,6 +873,7 @@ impl Report for SemanticIssueKind {
             RangeOverEntries { mechanical_fix };
             MoveOutOfSlot { mechanical_fix };
             MissingDereference { mechanical_fix };
+            RangeReferentUse { mechanical_fix };
             MoveOuterBindingInLoop { binding, mechanical_fix };
             InvalidOperation;
             InvalidEqualityType { mechanical_fix };
