@@ -66,7 +66,7 @@ public fn capture_export<V: drop>(reserve: Reserve, map: &ConcurrentHashMap<V>, 
 } doc "Attempts the typed export whose graph is admitted by SNAP-1, with bytes specified by SNAP-2 and lifetime and outcomes by SNAP-3.";
 
 public fn read(job: &Job, out: &[u8], deadline: Option<Instant>, cancel: &CancelWatch) -> result: Result<u64, ReadError> reads(cancel), writes(job), writes(out) waits contract {
-  requires 0 < out^.len;
+  requires 0_u64 < out^.len;
   ensures when Ok(value: count): count <= out^.len;
 } doc "Collects the next stream bytes under SNAP-3; zero reports EOF and establishes no export success.";
 

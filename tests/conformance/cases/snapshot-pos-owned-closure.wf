@@ -11,15 +11,15 @@ struct Rank {
 }
 
 struct Sorted {
-  order: OrderedMap<Rank, unit, 4294967296_u64>;
-  scores: HashMap<Box<Slots<u8>>, f64, 4294967296_u64>;
+  order: OrderedMap<Rank, unit, 4294967296>;
+  scores: HashMap<Box<Slots<u8>>, f64, 4294967296>;
 }
 
 enum Value {
   Text(bytes: Box<Slots<u8>>);
   Items(items: Box<Ring<Box<Slots<u8>>>>);
-  Members(members: HashMap<Box<Slots<u8>>, unit, 4294967296_u64>);
-  Fields(fields: HashMap<Box<Slots<u8>>, Box<Slots<u8>>, 4294967296_u64>);
+  Members(members: HashMap<Box<Slots<u8>>, unit, 4294967296>);
+  Fields(fields: HashMap<Box<Slots<u8>>, Box<Slots<u8>>, 4294967296>);
   Ranked(ranked: Sorted);
 }
 

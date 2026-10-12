@@ -151,7 +151,7 @@ fn held_direct_formal_conditional_and_loop_calls_stay_on_the_executor() {
             program
                 .functions()
                 .iter()
-                .any(|function| function.name().starts_with("_par_cond_conditional_"))
+                .any(|function| function.name().starts_with("_par_cond_conditional."))
         );
     });
 }

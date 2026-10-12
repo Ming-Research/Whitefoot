@@ -36,25 +36,25 @@ fn a_range_parameter_preserves_its_symbolic_held_cover() {
 
 #[test]
 fn a_protected_slot_admits_other_proved_disjoint_slot_writes() {
-    assert_accepts(b"fn observe(value: &u64) -> result: u64 reads(value) contract {\n  requires held(value);\n} {\n  return value^;\n}\n\nfn sample(state: &Shared<Array<u64, 2>>) -> result: unit writes(state) waits {\n  atomic current = &state^ {\n    set current^[1_u64] = 3_u64;\n    let seen = observe(value: &current^[0_u64]);\n    set current^[1_u64] = seen;\n  }\n  return unit;\n}\n");
+    assert_accepts(b"fn observe(value: &u64) -> result: u64 reads(value) contract {\n  requires held(value);\n} {\n  return value^;\n}\n\nfn sample(state: &Shared<Array<u64, 2>>) -> result: unit reads(state) waits {\n  atomic current = &state^ {\n    set current^[1_u64] = 3_u64;\n    let seen = observe(value: &current^[0_u64]);\n    set current^[1_u64] = seen;\n  }\n  return unit;\n}\n");
 }
 
 #[test]
 fn a_protected_range_admits_a_write_at_its_excluded_end() {
-    assert_accepts(b"fn length(value: &[u64]) -> result: u64 reads(value) contract {\n  requires held(value);\n} {\n  return value^.len;\n}\n\nfn sample(state: &Shared<Array<u64, 2>>) -> result: unit writes(state) waits {\n  atomic current = &state^ {\n    let count = length(value: &current^[0_u64..1_u64]);\n    set current^[1_u64] = count;\n  }\n  return unit;\n}\n");
+    assert_accepts(b"fn length(value: &[u64]) -> result: u64 reads(value) contract {\n  requires held(value);\n} {\n  return value^.len;\n}\n\nfn sample(state: &Shared<Array<u64, 2>>) -> result: unit reads(state) waits {\n  atomic current = &state^ {\n    let count = length(value: &current^[0_u64..1_u64]);\n    set current^[1_u64] = count;\n  }\n  return unit;\n}\n");
 }
 
 #[test]
 fn a_write_inside_the_protected_range_fails_at_the_observation_call() {
-    super::assert_rule_at(b"fn length(value: &[u64]) -> result: u64 reads(value) contract {\n  requires held(value);\n} {\n  return value^.len;\n}\n\nfn sample(state: &Shared<Array<u64, 2>>) -> result: unit writes(state) waits {\n  atomic current = &state^ {\n    let count = length(value: &current^[0_u64..2_u64]);\n    set current^[1_u64] = count;\n  }\n  return unit;\n}\n", SemanticRule::Hold1, "length(value: &current^[0_u64..2_u64])");
+    super::assert_rule_at(b"fn length(value: &[u64]) -> result: u64 reads(value) contract {\n  requires held(value);\n} {\n  return value^.len;\n}\n\nfn sample(state: &Shared<Array<u64, 2>>) -> result: unit reads(state) waits {\n  atomic current = &state^ {\n    let count = length(value: &current^[0_u64..2_u64]);\n    set current^[1_u64] = count;\n  }\n  return unit;\n}\n", SemanticRule::Hold1, "length(value: &current^[0_u64..2_u64])");
 }
 
 #[test]
 fn ordinary_index_disequality_facts_discharge_held_protection() {
-    assert_accepts(b"fn observe(value: &u64) -> result: u64 reads(value) contract {\n  requires held(value);\n} {\n  return value^;\n}\n\nfn sample(state: &Shared<Array<u64, 2>>, first: u64, second: u64) -> result: unit writes(state) waits contract {\n  requires first < 2_u64;\n  requires second < 2_u64;\n  requires first != second;\n} {\n  atomic current = &state^ {\n    let seen = observe(value: &current^[first]);\n    set current^[second] = seen;\n  }\n  return unit;\n}\n");
+    assert_accepts(b"fn observe(value: &u64) -> result: u64 reads(value) contract {\n  requires held(value);\n} {\n  return value^;\n}\n\nfn sample(state: &Shared<Array<u64, 2>>, first: u64, second: u64) -> result: unit reads(state) waits contract {\n  requires first < 2_u64;\n  requires second < 2_u64;\n  requires first != second;\n} {\n  atomic current = &state^ {\n    let seen = observe(value: &current^[first]);\n    set current^[second] = seen;\n  }\n  return unit;\n}\n");
 }
 
 #[test]
 fn a_write_through_an_alias_to_the_protected_slot_is_rejected() {
-    super::assert_rule_at(b"fn observe(value: &u64) -> result: u64 reads(value) contract {\n  requires held(value);\n} {\n  return value^;\n}\n\nfn sample(state: &Shared<Array<u64, 2>>) -> result: unit writes(state) waits {\n  atomic current = &state^ {\n    let alias = &current^[0_u64];\n    let seen = observe(value: alias);\n    set alias^ = seen;\n  }\n  return unit;\n}\n", SemanticRule::Hold1, "observe(value: alias)");
+    super::assert_rule_at(b"fn observe(value: &u64) -> result: u64 reads(value) contract {\n  requires held(value);\n} {\n  return value^;\n}\n\nfn sample(state: &Shared<Array<u64, 2>>) -> result: unit reads(state) waits {\n  atomic current = &state^ {\n    let selected = &current^[0_u64];\n    let seen = observe(value: selected);\n    set selected^ = seen;\n  }\n  return unit;\n}\n", SemanticRule::Hold1, "observe(value: selected)");
 }

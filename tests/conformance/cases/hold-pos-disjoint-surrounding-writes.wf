@@ -15,7 +15,7 @@ struct State {
   visits: u64;
 }
 
-fn sample(state: &Shared<State>) -> result: Pair writes(state) waits {
+fn sample(state: &Shared<State>) -> result: Pair reads(state) waits {
   atomic current = &state^ {
     set current^.visits = 1_u64;
     let seen = observe(left: &current^.left, right: &current^.right);

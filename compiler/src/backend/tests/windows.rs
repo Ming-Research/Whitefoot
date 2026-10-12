@@ -1898,8 +1898,8 @@ fn choose_join(first: &Array<u8>, second: &Array<u8>, pick: Bool) -> result: u8 
   } else {
     give &second^;
   }
-  let held = chosen;
-  return inspect_join(array: held);
+  let observed_state = chosen;
+  return inspect_join(array: observed_state);
 }
 
 fn main() -> status: std::process::ExitStatus pure {
