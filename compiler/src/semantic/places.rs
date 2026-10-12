@@ -25,6 +25,7 @@
 //! values is available only along the control-flow edges it dominates.
 
 use crate::DeclarationId;
+use crate::syntax::NodeId;
 
 use super::model::{
     BindingId, CheckedConstantId, CheckedExpression, CheckedFunction, CheckedLoopId,
@@ -44,6 +45,12 @@ use super::model::{
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) enum CaptureId {
     Source(u32),
+    /// An erased contract position instantiated at one call boundary,
+    /// identified by that call's node and a call-local position.
+    ContractRead {
+        call: NodeId,
+        position: u32,
+    },
     LoopHeader {
         loop_id: CheckedLoopId,
         holder: BindingId,
