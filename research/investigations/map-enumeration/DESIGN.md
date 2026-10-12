@@ -270,13 +270,40 @@ after a write. The conformance proof-checking runs on `e5f3ac05d` passed
 in the corpus jobs on Linux and macOS.
 
 The runtime byte query sums the host-granted item/index store and byte arena
-capacities; live key lengths alone omit unused capacity. Public KeySet
-release must return both allocations to the runtime pool. Its previous
-thread-local spare path kept those allocations in the metered heap after
-release, so it could not meet the selected meaning. No production caller
-would populate that cache once public release bypassed it, so the cache is
-removed and every KeySet release returns its storage. The performance effect
-of removing the spare cache is unmeasured.
+capacities; live key lengths alone omit unused capacity. A KeySet release
+must lower the metered heap by that sum. The first implementation of this
+meaning met it by removing the thread-local spare, whose kept allocations had
+stayed in the heap reading after release, and returning every release's
+storage to the runtime pool.
+
+That removal cost firn a quarter of its two-core `MSET` throughput: each
+statement builds a set, and without the spare every build and release took
+the runtime pool's one free-list lock on every driver (depth 16, two server
+CPUs on the i9-14900K, about 1.15 million requests a second against 1.55
+million before the upgrade). The spare is restored with the release still
+lowering the reading by the reported holding: the heap holding [PRE-2]
+excludes released blocks an allocator retains, so the spare's granted bytes
+are recorded as released when it is kept and as taken when a set reuses it,
+and a reused set reports the spare's capacities. A store of at most 1,024
+keys with an arena of at most 64 KiB is kept; larger ones return to the
+pool, so one thread retains at most one bounded spare.
+
+The restored spare was compared on the same machine against firn on the
+release before the upgrade: firn at its pre-upgrade revision with only its
+pin moved to the experiment release of the fix, two server CPUs, `MSET` at
+pipeline depths 16 and 1, both sides with a twin, eight interleaved passes
+([Firn-wf run 38221198675](https://github.com/Ming-Research/Firn-wf/actions/runs/38221198675)).
+Medians, million requests a second:
+
+| Depth | Before the upgrade | Its twin | With the restored spare | Its twin | Restored / before |
+|---|---|---|---|---|---|
+| 16 | 1.557 | 1.543 | 1.553 | 1.528 | 0.9975 |
+| 1 | 0.609 | 0.604 | 0.606 | 0.605 | 0.9947 |
+
+Each gap from the pre-upgrade build is smaller than that build's gap from its
+own twin (0.9911 at depth 16, 0.9919 at depth 1), so the regression is gone
+within this run's noise; eight passes do not resolve a cost below about one
+percent.
 
 ## The runtime step under a whole hold
 
