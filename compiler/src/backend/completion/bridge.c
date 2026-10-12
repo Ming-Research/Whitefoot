@@ -3814,7 +3814,7 @@ static int wf_shared_turn_refuses(wf_shared *shared, wf_context *self, int exemp
 /* A waiting claim refuses every statement that parks, readers, the
  * reservation's owner and the cancellation update included: each holds
  * nothing a claim's owner needs, which already holds every earlier target,
- * and parking leaves its driver free (wf__shared_take). The claim check
+ * and parking leaves its driver unblocked (wf__shared_take). The claim check
  * reads the same slot as the turn's. */
 static int wf_shared_admits_context(wf_shared *shared, uint32_t write, wf_context *self, int exempt) {
     if (wf_shared_claims(shared) != NULL) {

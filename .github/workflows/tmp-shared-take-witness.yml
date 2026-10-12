@@ -1,11 +1,14 @@
 # Temporary phase-2 count sweep. Remove after the hosted comparison is
 # complete; the fixed required regression remains in completion-test.
+# Runs the research sweep script, so it is explicitly requested only:
+#
+#   gh workflow run tmp-shared-take-witness.yml --ref claude/shared-take-fair-2
+#
+# research-boundary: manual-only
 name: tmp-shared-take-witness
 
 on:
   workflow_dispatch:
-  push:
-    branches: [claude/shared-take-fair-2]
 
 permissions:
   contents: read
