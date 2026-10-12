@@ -533,7 +533,7 @@ mod tests {
                 .support
                 .push(Literal::new(value, Relation::Equal, Linear::constant(0)));
         }
-        assert!(judge(&mut world, &[fact.clone()], &[0], &[], one_tuple).is_ok());
+        assert!(judge(&mut world, std::slice::from_ref(&fact), &[0], &[], one_tuple).is_ok());
         let mut many_tuples = Query::default();
         for index in 0..257 {
             let value = world.read(
