@@ -1,17 +1,18 @@
-fn helper(source: &[u64], target: &[u64], j: u64) -> result: unit writes(target[j]) contract {
+fn helper(source: &[u64], target: &[u64], width: &[u64], j: u64) -> result: unit writes(target[j]) contract {
   requires target^.len == 3_u64;
   requires source^.len == 3_u64;
+  requires width^.len == 2_u64;
   requires j == 0_u64;
-  requires forall two(k in 0_u64..1_u64): target^[0_u64] == 2_u64;
-  ensures forall same(k in 0_u64..1_u64): source^[target^[0_u64]] == source^[target^[0_u64]];
+  ensures forall same(k in 0_u64..1_u64): source^[width^.len] == source^[width^.len];
 } {
   set target^[j] = 0_u64;
   return unit;
 }
 
 fn caller() -> result: unit pure {
-  doc "EFF-5, RANGE-1: the postcondition reads source[target[0]] as the return leaves target, so that position widens to the whole source run, which writes(target[j]) reaches; its call-entry value 2 does not select the element read.";
-  let values = array_filled::<u64, 3>(value: 2_u64);
-  helper(source: &values[0_u64..3_u64], target: &values[0_u64..3_u64], j: 0_u64);
+  doc "EFF-5, RANGE-1: the postcondition position width.len reads storage, so source[width.len] denotes the state the return leaves and widens to the whole source run, which writes(target[j]) reaches; its call-entry value 2 is known to differ from j = 0 and would have separated the read from the write.";
+  let values = array_filled::<u64, 3>(value: 0_u64);
+  let widths = array_filled::<u64, 2>(value: 0_u64);
+  helper(source: &values[0_u64..3_u64], target: &values[0_u64..3_u64], width: &widths[0_u64..2_u64], j: 0_u64);
   return unit;
 }

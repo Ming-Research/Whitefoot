@@ -257,44 +257,52 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 #[test]
-fn a_filled_range_read_can_share_an_owner_with_a_back_append() {
-    let source = br#"fn append_range_length(window: &Box<Slots<u64>>, lo: u64, hi: u64) -> result: unit reads(window.inner[lo..hi]), writes(window.inner.next), writes(window.inner.len) contract {
-  requires lo <= hi;
-  requires hi <= window^.inner.len;
-  requires window^.inner.len < window^.inner.cap;
-  ensures window^.inner.len == entry(window)^.inner.len + 1_u64;
+fn a_narrow_range_read_can_share_an_owner_with_a_back_append() {
+    let source = br#"fn append_range_length(source: &Box<Slots<u64>>, target: &Box<Slots<u64>>, sink: &Box<Slots<u64>>, lo: u64, hi: u64, tag: u64) -> result: unit reads(source.inner[lo..hi]), writes(target.inner.next), writes(target.inner.len), writes(sink) contract {
+  requires lo == 0_u64;
+  requires hi == 0_u64;
+  requires target^.inner.len < target^.inner.cap;
+  requires sink^.inner.len < sink^.inner.cap;
+  ensures target^.inner.len == entry(target)^.inner.len + 1_u64;
+  ensures sink^.inner.len == entry(sink)^.inner.len + 1_u64;
+  ensures sink^.inner.cap == entry(sink)^.inner.cap;
 } {
-  let run = &window^.inner[lo..hi];
+  let run = &source^.inner[lo..hi];
   let count = run^.len;
-  place_back(window: &window^.inner, value: count);
+  place_back(window: &target^.inner, value: count);
+  place_back(window: &sink^.inner, value: tag);
   return unit;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
   let window = box_slots_new::<u64>(capacity: 18_u64);
-  place_back(window: &window.inner, value: 11_u64);
-  place_back(window: &window.inner, value: 22_u64);
+  let sink = box_slots_new::<u64>(capacity: 18_u64);
   for (
-    i in 2_u64..18_u64,
-    invariant length: window.inner.len == i
+    i in 0_u64..18_u64,
+    invariant length: window.inner.len == i,
+    invariant sunk: sink.inner.len == i,
+    invariant width: sink.inner.cap == 18_u64
   ) {
-    append_range_length(window: &window, lo: 0_u64, hi: i);
-    if window.inner[i] != i {
+    append_range_length(source: &window, target: &window, sink: &sink, lo: 0_u64, hi: 0_u64, tag: i);
+    if window.inner[i] != 0_u64 {
       return std::process::exit_status(code: 1_u8);
     }
-    if window.inner[0_u64] != 11_u64 {
+    if sink.inner[i] != i {
       return std::process::exit_status(code: 2_u8);
-    }
-    if window.inner[1_u64] != 22_u64 {
-      return std::process::exit_status(code: 3_u8);
     }
   }
   if window.inner.len != 18_u64 {
+    return std::process::exit_status(code: 3_u8);
+  }
+  if sink.inner.len != 18_u64 {
     return std::process::exit_status(code: 4_u8);
   }
-  for (i in 2_u64..18_u64) {
-    if window.inner[i] != i {
+  for (i in 0_u64..18_u64) {
+    if window.inner[i] != 0_u64 {
       return std::process::exit_status(code: 5_u8);
+    }
+    if sink.inner[i] != i {
+      return std::process::exit_status(code: 6_u8);
     }
   }
   return std::process::exit_status(code: 0_u8);
@@ -312,19 +320,23 @@ fn main() -> status: std::process::ExitStatus pure {
     );
     assert!(
         lengths.iter().all(|line| !line.contains("!alias.scope")),
-        "the implicit full-length load is outside reads(window.inner[lo..hi]): {append}"
+        "the implicit full-length load is outside reads(source.inner[lo..hi]): {append}"
     );
     assert!(
         !append.contains("!noalias"),
-        "the read run's header is the written window header: {append}"
+        "no formal with a narrow read row may be excluded by sink's writes: {append}"
     );
-    // One parameter supplies both the read run and the append, as EFF-5
-    // requires once the contract reads the length the append writes. WIN-2
-    // separates the filled prefix from next, but not the implicit descriptor
-    // access from the len write. Native execution checks every
-    // appended count (codes 1/5), the prefix (2/3), and final length (4).
-    // The preliminary full-length load is later replaced by hi - lo: the
-    // metadata absence, not a predicted native miscompile, detects the old UB.
+    // One window reaches source and target. EFF-5 admits that sharing because
+    // the contract reads nothing through source (lo and hi are fixed by value)
+    // and WIN-2 separates the read run from next; it does not separate the
+    // range's implicit full-length load from target's len write. sink, a
+    // distinct Box written as a whole root, opens the owner-scope plan, so
+    // whether source receives a scope rests on its read row alone: source is
+    // readonly, and only its narrow row keeps its loads unscoped and sink's
+    // stores unexcluded. Native execution checks every appended value of
+    // the shared window (codes 1/5) and of sink (2/6), and both final
+    // lengths (3/4). The metadata absence, not a predicted native
+    // miscompile, detects a scope whose read row does not cover its loads.
     for module in [&llvm, &super::owned_places::retain_calls(&llvm)] {
         let output = compile_and_run(module);
         assert_eq!(output.status.code(), Some(0), "{output:?}");
