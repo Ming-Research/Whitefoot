@@ -23,6 +23,7 @@ use super::super::super::super::places::{
     CaptureId, CapturedRange, CapturedTerm, CapturedValue, PlaceRoot, PlaceStep, ResolvedPlace,
     SeparationOracle, UnprovedSeparations, WindowPart, overlaps_at_every_position, places_overlap,
 };
+use super::super::super::contract_reads::{ContractReadStep, range_term_goal};
 use super::super::super::generics::{
     GenericArgument, GenericParameterKey, HEAP_ALLOCATING_PRELUDE_FUNCTIONS,
 };
@@ -40,7 +41,11 @@ use super::super::super::{
 /// (`move`) or a read (copy) of its own place to the same comparison, which
 /// is why an entry carries a resolved place and a category and nothing about
 /// how it was spelled.
+#[derive(Clone)]
 struct SubstitutedEntry {
+    /// A proof-only contract observation; compared only across arguments.
+    contract_read: bool,
+    contract_indices: Vec<(CapturedValue, GoalExpression)>,
     place: ResolvedPlace,
     /// Whether this entry writes, replaces, moves out of, or frees the
     /// storage at its path and everything below it [EFF-1].
@@ -525,7 +530,98 @@ impl<'unit> Checker<'_, 'unit> {
         // [EFF-5] would otherwise report against that row.
         let atomic_target =
             self.check_atomic_update_row(node, &actual_paths, &substituted, bindings)?;
-        self.check_call_pairwise_disjointness(node, signature, &substituted, bindings)?;
+        let contract_reads = self.contract_read_footprint(check_context, signature)?;
+        let mut compared = substituted.clone();
+        let origin_start = substituted
+            .iter()
+            .map(|entry| entry.origin)
+            .max()
+            .map_or(Some(0), |origin| origin.checked_add(1))
+            .ok_or(SemanticCompilerFailure::CounterOverflow)?;
+        let mut contract_position = 0_u32;
+        for (ordinal, read) in contract_reads.iter().enumerate() {
+            let argument = signature
+                .parameters
+                .iter()
+                .position(|parameter| parameter.declaration == read.root)
+                .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+            let mut suffix = Vec::new();
+            let mut contract_indices = Vec::new();
+            for step in &read.steps {
+                match step {
+                    ContractReadStep::Row(step) => {
+                        suffix.extend(Checker::substitute_effect_steps(
+                            signature,
+                            &CheckedStatePath {
+                                root: read.root,
+                                steps: vec![*step],
+                            },
+                            &actual_captures,
+                        )?);
+                    }
+                    ContractReadStep::Captured(step) => suffix.push(*step),
+                    ContractReadStep::Computed(term, definitions) => {
+                        let mut pending = Vec::new();
+                        let goal = range_term_goal(
+                            term,
+                            signature,
+                            definitions,
+                            node,
+                            &mut contract_position,
+                            &mut pending,
+                        )
+                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                        for (capture, template) in pending {
+                            let image = self.instantiate_goal_expression(
+                                check_context,
+                                &template,
+                                signature,
+                                &signature.region_parameters,
+                                &goal_arguments,
+                            )?;
+                            contract_indices.push((capture, image));
+                        }
+                        let goal = self.instantiate_goal_expression(
+                            check_context,
+                            &goal,
+                            signature,
+                            &signature.region_parameters,
+                            &goal_arguments,
+                        )?;
+                        let captured = CapturedValue::new(
+                            CaptureId::ContractRead {
+                                call: node,
+                                position: contract_position,
+                            },
+                            CapturedTerm::Opaque,
+                        );
+                        contract_position = contract_position
+                            .checked_add(1)
+                            .ok_or(SemanticCompilerFailure::CounterOverflow)?;
+                        suffix.push(PlaceStep::Index(captured));
+                        contract_indices.push((captured, goal));
+                    }
+                }
+            }
+            for actual in actual_paths.get(argument).into_iter().flatten() {
+                let mut place = actual.clone();
+                let formed = place.path.len();
+                place.path.extend(suffix.iter().copied());
+                compared.push(SubstitutedEntry {
+                    contract_read: true,
+                    contract_indices: contract_indices.clone(),
+                    place,
+                    formed,
+                    write: false,
+                    consuming: false,
+                    argument,
+                    origin: origin_start
+                        .checked_add(ordinal)
+                        .ok_or(SemanticCompilerFailure::CounterOverflow)?,
+                });
+            }
+        }
+        self.check_call_pairwise_disjointness(node, signature, &compared, bindings)?;
         self.types.invalidate_call_references(
             node,
             &substituted,
@@ -786,6 +882,9 @@ impl<'unit> Checker<'_, 'unit> {
         let formal = Checker::formal_row_places(signature)?;
         for (index, left) in entries.iter().enumerate() {
             for right in entries.iter().skip(index + 1) {
+                if (left.contract_read || right.contract_read) && left.argument == right.argument {
+                    continue;
+                }
                 if left.origin == right.origin || !(left.write || right.write) {
                     continue;
                 }
@@ -839,6 +938,12 @@ impl<'unit> Checker<'_, 'unit> {
                         exchange,
                         reference_use: None,
                         positions,
+                        contract_indices: left
+                            .contract_indices
+                            .iter()
+                            .chain(&right.contract_indices)
+                            .cloned()
+                            .collect(),
                         window,
                         left_spelling: self
                             .types
@@ -1064,6 +1169,8 @@ impl<'unit> TypeContext<'unit> {
                     let mut place = base.clone();
                     place.path.extend_from_slice(&steps);
                     entries.push(SubstitutedEntry {
+                        contract_read: false,
+                        contract_indices: Vec::new(),
                         formed: base.path.len(),
                         place,
                         write,
@@ -1089,6 +1196,8 @@ impl<'unit> TypeContext<'unit> {
                     .is_copy_place_type(check_context, signature, index)
                     .is_none_or(|copy| !copy);
                 entries.push(SubstitutedEntry {
+                    contract_read: false,
+                    contract_indices: Vec::new(),
                     formed: place.path.len(),
                     place: place.clone(),
                     // A `move` empties the place, which [EFF-1] classes with

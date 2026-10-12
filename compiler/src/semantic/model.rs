@@ -3234,6 +3234,9 @@ pub(crate) struct CheckedCallSeparation {
     /// the invalidating write, and diagnosed at this later use.
     pub(crate) reference_use: Option<CheckedReferencePreservationUse>,
     pub(crate) positions: Vec<CheckedCallSeparationPositions>,
+    /// Erased index expressions instantiated in this call's entry state.
+    /// Their captures serve only this separation, never runtime evaluation.
+    pub(crate) contract_indices: Vec<(super::places::CapturedValue, super::goal::GoalExpression)>,
     /// The window a position beside one of its parts reads `r.len` of
     /// [WIN-2]: the place both paths reach above the divergence.
     pub(crate) window: Option<super::places::ResolvedPlace>,

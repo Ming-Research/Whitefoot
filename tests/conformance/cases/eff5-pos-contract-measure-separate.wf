@@ -1,0 +1,22 @@
+struct Holder {
+  marker: u64;
+  items: Slots<Box<u64>, 4>;
+}
+
+fn helper(frame: &Holder, other: &Holder) -> result: unit writes(frame.marker), writes(other.items) contract {
+  requires frame^.items.len >= 1_u64;
+  requires other^.items.len >= 1_u64;
+  ensures frame^.items.len >= 1_u64;
+} {
+  set frame^.marker = 1_u64;
+  let taken = take_back(window: &other^.items);
+  return unit;
+}
+
+fn caller(first: &Holder, second: &Holder) -> result: unit writes(first.marker), writes(second.items) contract {
+  requires first^.items.len >= 1_u64;
+  requires second^.items.len >= 1_u64;
+} {
+  helper(frame: first, other: second);
+  return unit;
+}

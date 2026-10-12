@@ -26,6 +26,8 @@ pub(super) struct CheckedRequires {
     pub(super) requirements: Vec<CheckedRequirement>,
     /// [RANGE-1] the range clauses among the requirements, in source order.
     pub(super) range: Vec<super::super::range_facts::CheckedRangeClause>,
+    /// Expanded erased definitions used by range-clause contract positions.
+    pub(super) definitions: Vec<(BindingId, GoalExpression)>,
     /// The [ENT-2] clause (b) places each requirement forms, index-aligned
     /// with `requirements` [`super::super::model::CheckedFunction::requirement_places`].
     pub(super) places: Vec<Vec<CheckedExpression>>,
@@ -567,7 +569,18 @@ impl<'unit> Checker<'_, 'unit> {
             }
             requirement_places.push(places);
         }
+        let definitions = definitions
+            .into_iter()
+            .map(|definition| {
+                let expression = expanded_bindings
+                    .remove(&definition.binding)
+                    .and_then(ExpandedClauseExpression::into_goal_expression)
+                    .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                Ok((definition.binding, expression))
+            })
+            .collect::<Result<Vec<_>, CheckStop>>()?;
         Ok(CheckedRequires {
+            definitions,
             requirements,
             range,
             places: requirement_places,
