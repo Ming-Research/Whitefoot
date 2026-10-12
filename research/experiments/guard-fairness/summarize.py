@@ -360,6 +360,11 @@ def main():
             timing = list(csv.DictReader(stream))
         with Path(sys.argv[3]).open() as stream:
             diagnostic = list(csv.DictReader(stream))
+        # Each diagnostic cell's counters sit beside its probe row in counters.csv.
+        with Path(sys.argv[3]).with_name("counters.csv").open() as stream:
+            counters = {(row["pass"], row["arm"], row["contexts"]): row for row in csv.DictReader(stream)}
+        for row in diagnostic:
+            row.update(counters[(row["pass"], row["arm"], row["contexts"])])
         lines = predictions(timing, diagnostic, int(sys.argv[4]))
         print(f"diagnostic_integrity,{3 * (len(ARMS) - 1)}_cells,no_acceptance_judgment")
         print("\n".join(lines))

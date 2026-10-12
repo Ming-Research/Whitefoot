@@ -1306,3 +1306,58 @@ to fail with their own assertions, and runs the candidate under
 ThreadSanitizer. "Frozen foreign atoms" is a compiler variant, guarded by
 the lowering test of a cross-object conjunction. The 14900K job runs the
 registered comparison with diagnostics by default.
+
+### 8. Results
+
+[Run 38208806178](https://github.com/Ming-Research/Whitefoot/actions/runs/38208806178)
+on revision `faccdca4e883d4f18c2b4fab52be50e8e6b8e703`, native 14900K,
+`WF_DRIVERS=2` on CPUs 2 and 4, K = 1,000, both passes with counters
+interleaved. Its hosted job passed: every arm's smoke runs, every mode's
+runtime tests, the six candidate mutants and the other modes failing with
+their own assertions, and the candidate under ThreadSanitizer. The 14900K
+job's registered decision, `summarize.py judge`, printed `verdict,pass`;
+its diagnostics step then failed because `run.sh` hands the counter panel's
+probe rows to `summarize.py diagnostics`, whose prediction reads the
+per-take counters kept beside them in `counters.csv`. The diagnostics
+command now joins the two by cell. The prediction lines below are that
+command's output over the run's uploaded artifact, recomputed after the
+run; no cell was rerun.
+
+| Pass | N | Baseline runtime (ms) | Twin/base | Candidate/base | A1/base | Mode 2/base | Baseline maximum wait (ms) | Candidate maximum wait (ms) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 2 | 14.10 | 0.998 | 1.052 | 1.053 | 1.044 | 7.30 | 1.006 |
+| 1 | 8 | 63.79 | 1.009 | 0.930 | 1.178 | 1.134 | 57.06 | 1.091 |
+| 1 | 50 | 540.38 | 0.974 | 0.690 | 0.914 | 1.404 | 533.63 | 1.313 |
+| 2 | 2 | 14.03 | 1.000 | 1.058 | 1.061 | 1.053 | 7.27 | 1.009 |
+| 2 | 8 | 64.44 | 0.999 | 0.920 | 1.131 | 1.127 | 57.66 | 1.047 |
+| 2 | 50 | 531.15 | 1.021 | 0.702 | 0.919 | 1.454 | 524.38 | 1.339 |
+
+**Acceptance.** Every twin/base ratio lies in [0.95, 1.05]; the N = 50
+candidate maximum wait is at most 3.3 ms in both passes; candidate/base is
+at most 1.10 at every N in both passes. The candidate meets the registered
+criteria. A1 and mode 2 do not vote.
+
+**Prediction** (counter panel, N = 50, per take):
+
+| Quantity | Candidate | Baseline | A1 | Mode 2 | Registered |
+| --- | ---: | ---: | ---: | ---: | --- |
+| Notifications (wakes) | 0.995 | 29.87 | 26.02 | 48.04 | candidate at most 3 |
+| Spurious wakes | 0.643 | 28.96 | 25.02 | 47.04 | — |
+| False hand-offs (registered as "white hand-offs") | 0.000 | — | 0.000 | 13.26 | candidate at most 0.1 |
+| Tests evaluated | 1.990 | — | 2.000 | — | — |
+| Wakes avoided | 63.47 | — | 44.72 | — | — |
+| Hold/base, passes 1 and 2 | 1.006, 1.005 | — | — | — | within 10% |
+
+Every prediction held: about one notification per take against the
+baseline's 29.9, no false hand-off, the mean hold within 1% of baseline,
+and A1 at 26 wakes per take, at least 15. Neither refutation fired. The
+counters separate the mechanism from its runtime: the ordered queue of
+mode 2 also kept the maximum wait near 1.3 ms but at 1.40 to 1.45 times the
+baseline's runtime, while waking each waiter whose test was false; the
+candidate keeps the same bound and removes those wakes.
+
+**Limits.** One probe, one machine, two drivers. At N = 2, the candidate
+costs 5 to 6% over baseline, as do A1 and mode 2, so the cost there belongs
+to the age threshold's turn, not the tests. The candidate's p99 wait at
+N = 8 and 50 is about 1 ms, the threshold itself: the tail is now set by
+the 1 ms turn. Firn's engine has not been measured with the candidate.
