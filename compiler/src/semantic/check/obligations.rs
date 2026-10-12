@@ -84,6 +84,15 @@ fn obligation_records(
     // compiler-owned [PRE-1] signature has none, its contract being a
     // declaration premise.
     if function.body.is_some() {
+        // [ENT-2, FN-9] the places a postcondition forms owe their
+        // subscripts' obligations at every return that selects it.
+        for postcondition in &function.postconditions {
+            for _ in &postcondition.selected_returns {
+                for place in &postcondition.places {
+                    records.expression(place);
+                }
+            }
+        }
         for (ordinal, postcondition) in function.postconditions.iter().enumerate() {
             records.push(
                 SemanticRule::Fn9,

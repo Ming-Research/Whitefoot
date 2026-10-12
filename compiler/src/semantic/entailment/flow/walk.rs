@@ -780,6 +780,7 @@ impl Analyzer<'_, '_> {
                 self.judge_atomic_exit(node_path, state);
                 // [FN-9] and it is a selected return of every unrouted
                 // clause, judged over the state that edge leaves with.
+                self.judge_postcondition_places(node_path, state, &[]);
                 self.judging().judge_postcondition_return(
                     node_path,
                     state,
@@ -1180,6 +1181,7 @@ impl Analyzer<'_, '_> {
 
                 // [TYPE-11] a return inside an atomic block leaves it.
                 self.judge_atomic_exit(node_path, state);
+                self.judge_postcondition_places(node_path, state, &results);
                 self.judging().judge_postcondition_return(
                     node_path,
                     state,

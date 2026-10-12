@@ -312,4 +312,7 @@ pub(crate) struct CheckedPostcondition {
     pub(crate) const_substitutions: Vec<(DeclarationId, u64)>,
     pub(crate) relation: RelationTemplate,
     pub(crate) selected_returns: Vec<SelectedPostconditionReturn>,
+    /// The [ENT-2] clause (b) places the clause forms, each owing its
+    /// subscripts' [OP-4] obligations at every selected return [FN-9].
+    pub(crate) places: Vec<super::model::CheckedExpression>,
 }

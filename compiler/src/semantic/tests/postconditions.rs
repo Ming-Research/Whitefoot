@@ -3868,3 +3868,123 @@ fn main() -> status: std::process::ExitStatus pure {
 "#;
     assert_fn9_rejects(holder_rebinding);
 }
+
+/// The [OP-4] bounds outcomes `function` retains, after a complete check.
+fn bounds_outcomes(source: &[u8], function: &str) -> Vec<bool> {
+    with_semantics_dark(source, |outcome| {
+        let SemanticOutcome::Complete(checked) = outcome else {
+            panic!("bounds fixture must check completely: {outcome:?}");
+        };
+        checked
+            .data
+            .functions
+            .iter()
+            .find(|candidate| candidate.name == function)
+            .unwrap_or_else(|| panic!("function {function} must exist"))
+            .entailment
+            .obligations
+            .iter()
+            .filter(|outcome| {
+                outcome.family == crate::semantic::entailment::ObligationFamily::Bounds
+            })
+            .map(|outcome| outcome.discharged)
+            .collect()
+    })
+}
+
+/// [ENT-2, FN-9] a postcondition forms its places at every return that
+/// selects it, so the subscript of `rows^[i]` owes [OP-4] at each of the two
+/// returns, beside the body's own subscript, and a requirement discharges
+/// both. Without one the place is unformed and the clause is refused at that
+/// subscript, where before nothing judged it.
+#[test]
+fn a_postcondition_place_owes_its_subscript_at_every_selected_return() {
+    let bounded =
+        br#"fn width(rows: &Array<Slots<u8, 8>, 4>, i: u64) -> r: u64 reads(rows) contract {
+  requires i < 4_u64;
+  ensures r <= rows^[i].len;
+} {
+  if rows^[0_u64].len > 9_u64 {
+    return 0_u64;
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    assert_eq!(bounds_outcomes(bounded, "width"), vec![true, true, true]);
+    let unbounded = String::from_utf8(bounded.to_vec())
+        .expect("fixture is text")
+        .replace("  requires i < 4_u64;\n", "");
+    assert_rule_at(unbounded.as_bytes(), SemanticRule::Op4, "[i]");
+    // A body whose requirements contradict still judges each place, under
+    // the contradiction, so its records are answered.
+    let uninhabited = String::from_utf8(bounded.to_vec())
+        .expect("fixture is text")
+        .replace(
+            "  requires i < 4_u64;\n",
+            "  requires i > 9_u64;\n  requires i < 4_u64;\n",
+        );
+    assert_complete(uninhabited.as_bytes());
+}
+
+/// [FN-9, ENT-3.S12] a formal-valued subscript is the actual of that formal
+/// at each call, at both the callee's selected returns and the caller: the
+/// body proves `r == rows^[i].len` from its own read of `rows^[i].len`, and
+/// of two calls only the one at offset two publishes a relation over
+/// element two. Before, the offset was an unknown index on both sides, so
+/// the body could not prove the relation and the caller received none.
+#[test]
+fn a_postcondition_formal_subscript_is_the_actual_at_each_call() {
+    let source = |returned: &str| {
+        format!(
+            r#"fn width(rows: &Array<Slots<u8, 8>, 4>, i: u64) -> r: u64 reads(rows) contract {{
+  requires i < 4_u64;
+  ensures r == rows^[i].len;
+}} {{
+  return rows^[i].len;
+}}
+
+fn second(rows: &Array<Slots<u8, 8>, 4>) -> r: u64 reads(rows) contract {{
+  ensures r == rows^[2_u64].len;
+}} {{
+  let first = width(rows: rows, i: 1_u64);
+  let other = width(rows: rows, i: 2_u64);
+  return {returned};
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
+}}
+"#
+        )
+    };
+    assert_complete(source("other").as_bytes());
+    assert_fn9_unproved(source("first").as_bytes());
+}
+
+/// [FN-9, ENT-2] the offset of a postcondition place is its formal's entry
+/// image: a body that rebinds the formal leaves the place the clause names
+/// unavailable at every return, even though the rebound value is in bounds
+/// where the place is formed.
+#[test]
+fn a_rebound_offset_formal_leaves_its_postcondition_place_unavailable() {
+    assert_fn9_unproved(
+        br#"fn width(rows: &Array<Slots<u8, 8>, 4>, i: u64) -> r: u64 reads(rows) contract {
+  ensures r <= rows^[i].len;
+} {
+  set i = 0_u64;
+  if rows^[i].len > 9_u64 {
+    return 0_u64;
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+    );
+}

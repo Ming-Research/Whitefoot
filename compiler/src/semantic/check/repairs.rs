@@ -1154,6 +1154,24 @@ pub(super) fn clause_bounds(case: &GoalCase<'_>, constant_offset: bool) -> Strin
     }
 }
 
+/// [OP-4] a subscript of a place a postcondition forms [ENT-2, FN-9]. The
+/// place is formed at every return that selects the clause, in the state that
+/// return leaves with, so a requirement or the facts before each such return
+/// establish the bound.
+pub(super) fn postcondition_bounds(case: &GoalCase<'_>, constant_offset: bool) -> String {
+    match case.disposition {
+        Disposition::Refuted => format!(
+            "`{}` is false at a `return` that selects this postcondition: {}",
+            case.text,
+            refuted_index(constant_offset, false)
+        ),
+        Disposition::Unproved => format!(
+            "add `requires {};` to the `contract` of `{}`, which each caller then establishes, or establish it before every `return` that selects this postcondition",
+            case.text, case.function
+        ),
+    }
+}
+
 /// The alternatives of a refuted subscript. A longer storage holds only an
 /// index that does not grow with it: an offset such as `r.len` stays out of
 /// range at every length, so a constant offset is given that route and any

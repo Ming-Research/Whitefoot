@@ -2,7 +2,7 @@ use crate::semantic::check::CheckContext;
 use crate::semantic::check::FunctionContext;
 use crate::semantic::check::{DeclarationInventory, TypeContext};
 use crate::semantic::entailment::integer_value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::FixedTerminal;
 use crate::syntax::NodeId;
@@ -28,7 +28,7 @@ use super::super::postcondition::{
 };
 use super::generics::GenericArgument;
 use super::publication;
-use super::requires::{ClauseKind, ExpandedClauseDatum, ExpandedClauseExpression};
+use super::requires::{ClauseKind, ClausePlaces, ExpandedClauseDatum, ExpandedClauseExpression};
 use super::{
     CheckStop, Checker, ControlCounters, ControlScope, FunctionSignature, LocalBinding,
     ParameterSignature,
@@ -594,14 +594,17 @@ impl<'unit> Checker<'_, 'unit> {
         self.types.postcondition_selectors_from_source(signature)
     }
 
+    /// The clause's relation template, with the [ENT-2] clause (b) places
+    /// it forms at each return that selects it [FN-9].
     pub(super) fn check_postcondition_clause(
         &mut self,
         context: FunctionContext<'_, '_>,
         selector: &CheckedPostconditionSelector,
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         counters: &mut ControlCounters<'_>,
-    ) -> Result<RelationTemplate, CheckStop> {
-        let expanded = self.expand_postcondition_clause(context, selector, bindings, counters)?;
+    ) -> Result<(RelationTemplate, Vec<CheckedExpression>), CheckStop> {
+        let (expanded, places) =
+            self.expand_postcondition_clause(context, selector, bindings, counters)?;
         let clause = self
             .types
             .declarations
@@ -614,18 +617,24 @@ impl<'unit> Checker<'_, 'unit> {
             .tree
             .first_child_with(clause, Production::ClauseExpr)?
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-        self.types
-            .declarations
-            .postcondition_relation(expression, expanded, context.function)
+        let relation = self.types.declarations.postcondition_relation(
+            expression,
+            expanded,
+            context.function,
+        )?;
+        Ok((relation, places))
     }
 
+    /// The clause's alpha-expanded expression, with the [ENT-2] clause (b)
+    /// places it forms: those of the definitions its expansion reaches, each
+    /// offset read through a definition expanded, then its own [FN-8].
     pub(super) fn expand_postcondition_clause(
         &mut self,
         context: FunctionContext<'_, '_>,
         selector: &CheckedPostconditionSelector,
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         counters: &mut ControlCounters<'_>,
-    ) -> Result<ExpandedClauseExpression, CheckStop> {
+    ) -> Result<(ExpandedClauseExpression, Vec<CheckedExpression>), CheckStop> {
         let FunctionContext {
             check_context,
             function,
@@ -669,6 +678,7 @@ impl<'unit> Checker<'_, 'unit> {
         };
         {
             let mut expanded_bindings = HashMap::<BindingId, ExpandedClauseExpression>::new();
+            let mut clause_places = ClausePlaces::default();
             for (ordinal, parameter) in function.parameters.iter().enumerate() {
                 let local = bindings
                     .get(&parameter.declaration)
@@ -758,6 +768,7 @@ impl<'unit> Checker<'_, 'unit> {
                         .invalid_postcondition_relation(expression);
                 }
                 expanded_bindings.insert(*binding, expanded);
+                clause_places.define(*binding, value);
             }
             let expression = self
                 .types
@@ -801,7 +812,10 @@ impl<'unit> Checker<'_, 'unit> {
                 bindings,
                 &expanded_bindings,
             )?;
-            Ok(expanded)
+            // [ENT-2, FN-9] each clause forms every place its expansion
+            // reaches, at every return that selects it.
+            let places = clause_places.clause(&condition.expression, &mut HashSet::new());
+            Ok((expanded, places))
         }
     }
 
@@ -2684,6 +2698,7 @@ impl<'unit> TypeContext<'unit> {
             const_substitutions,
             relation,
             selected_returns,
+            places: Vec::new(),
         })
     }
     #[allow(clippy::too_many_arguments)]

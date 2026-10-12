@@ -353,7 +353,7 @@ impl<'unit> Checker<'_, 'unit> {
         }
         let mut relations = Vec::with_capacity(selectors.len());
         for (relation_ordinal, selector) in selectors.iter().enumerate() {
-            let relation = self.check_postcondition_clause(
+            let (relation, _) = self.check_postcondition_clause(
                 FunctionContext {
                     check_context,
                     function: signature,
@@ -363,7 +363,7 @@ impl<'unit> Checker<'_, 'unit> {
                 &mut counters,
             )?;
             relations.push(relation.clone());
-            let mut expression = self.expand_postcondition_clause(
+            let (mut expression, _) = self.expand_postcondition_clause(
                 FunctionContext {
                     check_context,
                     function: signature,

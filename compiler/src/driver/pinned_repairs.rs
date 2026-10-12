@@ -1685,6 +1685,64 @@ fn main() -> status: std::process::ExitStatus pure {
 "#],
     },
     RepairPair {
+        // [ENT-2, FN-9] a postcondition forms its places at every return that
+        // selects it, in the state that return leaves with: a requirement
+        // establishes the bound at all of them, and a guard establishes it at
+        // the returns it encloses, which here are all the routed clause
+        // selects.
+        name: "bounds-of-a-place-a-postcondition-forms.wf",
+        rejected: br#"fn width(rows: &Array<Slots<u8, 8>, 4>, i: u64) -> r: Option<u64> reads(rows) contract {
+  ensures when Some(value: v): v <= rows^[i].len;
+} {
+  if rows^[0_u64].len > 9_u64 {
+    return None<u64>();
+  }
+  return Some<u64>(value: 0_u64);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "OP-4",
+        sentences: &[
+            "\n  residual: i < rows^.len\n  disposition: Unproved\n",
+            "\n  mechanical_fix: add `requires i < rows^.len;` to the `contract` of `width`, which each caller then establishes, or establish it before every `return` that selects this postcondition\n",
+        ],
+        repaired: &[
+            br#"fn width(rows: &Array<Slots<u8, 8>, 4>, i: u64) -> r: Option<u64> reads(rows) contract {
+  requires i < rows^.len;
+  ensures when Some(value: v): v <= rows^[i].len;
+} {
+  if rows^[0_u64].len > 9_u64 {
+    return None<u64>();
+  }
+  return Some<u64>(value: 0_u64);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+            br#"fn width(rows: &Array<Slots<u8, 8>, 4>, i: u64) -> r: Option<u64> reads(rows) contract {
+  ensures when Some(value: v): v <= rows^[i].len;
+} {
+  if rows^[0_u64].len > 9_u64 {
+    return None<u64>();
+  }
+  if i < rows^.len {
+    return Some<u64>(value: 0_u64);
+  }
+  return None<u64>();
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        ],
+    },
+    RepairPair {
         // The earlier requirement makes `i` the length, so the place the
         // second requirement forms is refuted there: the requirements before
         // it are what fix the index.
