@@ -577,14 +577,15 @@ fn permission_of_with_discharged_query(
         let SemanticOutcome::Complete(program) = outcome else {
             panic!("permission fixture must check: {outcome:?}");
         };
-        for function in &program.data.functions {
+        // Permission consumes ordinary analyses. The backing arena also
+        // retains symbolic hypotheses that publish no entailment summary.
+        for function in program.data.executable_functions() {
             super::entailment::validate_derivations(&function.entailment);
         }
         for &(expected_function, expected_ordering) in expected {
             let function = program
                 .data
-                .functions
-                .iter()
+                .executable_functions()
                 .find(|function| function.name == expected_function)
                 .unwrap_or_else(|| panic!("no checked function named {expected_function}"));
             assert!(
@@ -2833,13 +2834,12 @@ fn rebound(v: &[u8], p: u64) -> result: u64 writes(v) contract {
         let SemanticOutcome::Complete(program) = outcome else {
             panic!("permission fixture must check: {outcome:?}");
         };
-        for function in &program.data.functions {
+        for function in program.data.executable_functions() {
             super::entailment::validate_derivations(&function.entailment);
         }
         let function = program
             .data
-            .functions
-            .iter()
+            .executable_functions()
             .find(|function| function.name == "rebound")
             .expect("rebound is checked");
         let proofs = &function.entailment.permission_separations;
