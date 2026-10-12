@@ -393,10 +393,13 @@ int main(void) {
     ring_staleness_is_one_run();
     wf_test_guard_phase("ring trigger: a staged submission is ring work");
     ring_staged_submission();
-    wf_test_guard_phase("ring trigger: only the exact OUTSIDE word is claimed");
-    ring_claim_is_exclusive();
+    /* The miss case runs before the exclusive-claim case, whose borrowed
+     * peer also leaves no spare, so a miss mutant shows the case that guards
+     * it. */
     wf_test_guard_phase("ring trigger: a miss leaves the token and moving count");
     ring_without_a_spare();
+    wf_test_guard_phase("ring trigger: only the exact OUTSIDE word is claimed");
+    ring_claim_is_exclusive();
     wf_test_guard_phase("ring probe reads each pending condition alone");
     ring_probe_words();
     CHECK(wf_bridge_linux_adapter.initialized);
