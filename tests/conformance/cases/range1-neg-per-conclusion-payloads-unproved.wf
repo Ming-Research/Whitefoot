@@ -18,12 +18,12 @@ fn follow(code: &Box<Slots<Instr>>, pc: u64) -> r: u64 reads(code) contract {
   let n = code^.inner.len;
   match code^.inner[pc] {
     Jump(t: jump_to) => {
-      need_below(value: jump_to, bound: n);
-      return jump_to;
+      need_below(value: jump_to^, bound: n);
+      return jump_to^;
     }
     Branch(t: branch_to, ..) => {
-      need_below(value: branch_to, bound: n);
-      return branch_to;
+      need_below(value: branch_to^, bound: n);
+      return branch_to^;
     }
     Halt() => {
       return pc;

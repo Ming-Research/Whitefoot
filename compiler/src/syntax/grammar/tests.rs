@@ -125,7 +125,7 @@ fn complete_inventory_is_pinned() {
     // `range_binder` and `range_relation` [GRAM-5]: four productions.
     // v0.90's package bindings add `package_decl` [GRAM-2, MOD-11].
     // v0.128 adds `range_guard` [GRAM-5, RANGE-1].
-    // v0.135 adds `range_variant` [GRAM-5, RANGE-1].
+    // v0.136 adds `range_variant` [GRAM-5, RANGE-1].
     assert_eq!(productions().len(), 102);
     // v0.72's standard library qualifier [MOD-10] adds a `"pkg" | "std"`
     // alternation to `alias_decl`, `module_path` and `callee`, three
@@ -160,7 +160,7 @@ fn complete_inventory_is_pinned() {
     // v0.128 admits projections inside `entry` [GRAM-5, MSR-3]:
     // `pbase` gains one `psuffix*` repeat.
     // v0.128's range guard optional comparison adds one decision.
-    // v0.135's variant relation adds three: the comparison-or-variant choice
+    // v0.136's variant relation adds three: the comparison-or-variant choice
     // of `range_guard` and of `range_relation`, and `range_variant`'s
     // optional `not`.
     assert_eq!(DECISIONS.len(), 183);
@@ -182,8 +182,21 @@ fn complete_inventory_is_pinned() {
     // continuations each followed by those thirteen origins: 104 rows.
     // Together the projected entry former and the guard comparison add
     // 95 + 104 rows to the 7,932-row v0.127 inventory.
-    assert_eq!(SELECT_ROWS.len(), 8_131);
-    // v0.135's `not` is one new terminal [RANGE-1].
+    // v0.136's variant relation adds 197 rows to those 8,131. Its three new
+    // decisions hold 172: each comparison-or-variant choice has the 78
+    // comparison rows above plus `is not` and `is TYPEID`, and the optional
+    // `not` has one entry row and eleven exit rows, the variant's TYPEID
+    // followed by each token that can follow a guard or a conclusion. The
+    // guard's optional gains the same two `is` rows. Because `is` now
+    // follows `affine_expr`, 23 rows join the decisions that can end one:
+    // `is not`, `is TYPEID` and a parenthesized factor's `) is` at the
+    // add-term repeat and at the `*` optional; `literal is` and `IDENT is`
+    // at `affine_factor` and at `atom`; six at `place`'s suffix repeat, five
+    // exits and `^ is`; one at `pbase`, at its `entry` suffix repeat, at
+    // `psuffix`'s `^` arm and at its range-tail optional; and a call's
+    // `) is` at its argument optional and its two argument-list repeats.
+    assert_eq!(SELECT_ROWS.len(), 8_328);
+    // v0.136's `not` is one new terminal [RANGE-1].
     assert_eq!(diagnostic_terminal_order().len(), 116);
     assert_eq!(productions()[0], Production::Program);
     // v0.70 [GRAM-2] adds the file alias header as an `item` arm and closes
@@ -369,7 +382,7 @@ fn complete_inventory_is_pinned() {
     // suffix decisions; later decision identities move by one [MSR-3].
     assert_eq!(DECISIONS[156].production(), Production::Pbase);
     assert_eq!(DECISIONS[156].kind(), DecisionKind::Repeat0);
-    // v0.135's variant relation lets `is` follow a place in a range clause,
+    // v0.136's variant relation lets `is` follow a place in a range clause,
     // so the repeat's exit gains the row `) is`.
     assert_eq!(DECISIONS[156].rows().len(), 93);
     assert_eq!(DECISIONS[157].production(), Production::Psuffix);
@@ -388,7 +401,7 @@ fn complete_inventory_is_pinned() {
         assert_eq!(DECISIONS[index].kind(), kind);
     }
     // v0.128 [GRAM-5, RANGE-1] the guard's optional comparison, and
-    // v0.135's choice between a comparison and a variant relation in a guard
+    // v0.136's choice between a comparison and a variant relation in a guard
     // and in a conclusion, then the variant relation's optional `not`.
     for (index, production, kind) in [
         (163, Production::RangeGuard, DecisionKind::Optional),
@@ -644,6 +657,6 @@ fn all_detailed_rows_retain_provenance_and_remain_cross_arm_disjoint() {
     }
     // Count the complete inventory independently by summing each decision's
     // rows, including the explicit interface import arm [FN-3].
-    assert_eq!(total_rows, 8_131);
+    assert_eq!(total_rows, 8_328);
     assert!(saw_atom_only);
 }

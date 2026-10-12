@@ -866,7 +866,7 @@ mod tests {
         // `apart` [RANGE-5] first occurs in the counted header after the match
         // atoms, and `forall` [RANGE-1] after the element read's `^`. v0.101's
         // `continue` [GRAM-4] first occurs right after `break`, moving every
-        // later terminal one slot. v0.135's `not` [RANGE-1] first occurs in
+        // later terminal one slot. v0.136's `not` [RANGE-1] first occurs in
         // the variant relation after `forall`, moving the effect atoms one slot.
         assert_eq!(FixedTerminal::Alias as u8, 1);
         assert_eq!(FixedTerminal::Equal as u8, 2);
