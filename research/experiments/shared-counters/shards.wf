@@ -1,0 +1,85 @@
+alias Clock = std::time::Clock;
+alias ExitStatus = std::process::ExitStatus;
+alias Inputs = std::process::Inputs;
+alias Instant = std::time::Instant;
+
+const shards_name: Array<u8, 6> =[115_u8, 104_u8, 97_u8, 114_u8, 100_u8, 115_u8];
+
+fn shards_new() -> shards: Array<Shared<u64>, 16> pure {
+  doc "Sixteen shared objects, each holding zero, in an array.";
+  let window = slots_new::<Shared<u64>, 16>();
+  for @make (
+    at in 0_u64..16_u64,
+    invariant made: window.len == at
+  ) {
+    let one = shared_new::<u64>(value: 0_u64);
+    place_back(window: &window, value: move one);
+  }
+  return slots_into_array::<Shared<u64>, 16>(values: move window);
+}
+
+fn shards_share(source: &Array<Shared<u64>, 16>) -> handles: Array<Shared<u64>, 16> reads(source) {
+  doc "A further handle to each of the sixteen shared objects, in the same order.";
+  let window = slots_new::<Shared<u64>, 16>();
+  for @fill (
+    at in 0_u64..16_u64,
+    invariant filled: window.len == at
+  ) {
+    let one = shared_share::<u64>(shared: &source^[at]);
+    place_back(window: &window, value: move one);
+  }
+  return slots_into_array::<Shared<u64>, 16>(values: move window);
+}
+
+fn shards_context(shards: Array<Shared<u64>, 16>, totals: Shared<Totals>, gate: Shared<Gate>, clock: Clock, index: u64) -> result: unit pure waits {
+  doc "Until the deadline adds one to the element of its array of sixteen shared objects at its index modulo 16, in one atomic statement per operation, in batches of 1024, then adds its count to the totals once.";
+  let deadline = gate_pass(gate: &gate, clock: &clock);
+  let slot = index % 16_u64;
+  let mine = &shards[slot];
+  let state = index;
+  let done = 0_u64;
+  loop @run {
+    for @batch (turn in 0_u64..1024_u64) {
+      atomic held = &mine^ {
+        set state = ixor(state, held^);
+        set held^ = held^ +wrap 1_u64;
+      }
+      set state = step(state: state);
+    }
+    set done = done +wrap 1024_u64;
+    let at = std::time::now(clock: &clock);
+    if std::time::instant_reached(deadline: deadline, instant: at) {
+      break @run;
+    }
+  }
+  tally(totals: &totals, done: done, state: state);
+  return unit;
+}
+
+fn shards_start(shards: &Array<Shared<u64>, 16>, totals: &Shared<Totals>, clock: &Clock, millis: u64, contexts: u64) -> started: Instant reads(shards), reads(totals), writes(clock) waits {
+  doc "Spawns the contexts, each with its own handle to every one of the sixteen shared objects, opens the gate and returns the instant it opened, once every context has completed.";
+  let gate = gate_new(clock: clock);
+  for @start (index in 0_u64..contexts) {
+    let handles = shards_share(source: shards);
+    let tally_handle = shared_share::<Totals>(shared: totals);
+    let gate_handle = shared_share::<Gate>(shared: &gate);
+    let ticks = std::time::clock_share(clock: clock);
+    spawn shards_context(shards: move handles, totals: move tally_handle, gate: move gate_handle, clock: move ticks, index: index);
+  }
+  let started = gate_open(gate: &gate, clock: clock, millis: millis);
+  return started;
+}
+
+fn shards_main(inputs: Inputs) -> status: ExitStatus pure waits {
+  doc "W3: each of CONTEXTS contexts adds one to the element at its index modulo 16 of an array of sixteen shared objects, in one atomic statement per operation, for MILLISECONDS; the shard array a writer can build today.";
+  let bench = bench_begin(inputs: move inputs);
+  if bench.valid {
+  } else {
+    return std::process::exit_status(code: 2_u8);
+  }
+  let shards = shards_new();
+  let totals = totals_new();
+  let started = shards_start(shards: &shards, totals: &totals, clock: &bench.clock, millis: bench.millis, contexts: bench.contexts);
+  let ended = std::time::now(clock: &bench.clock);
+  return bench_end(bench: move bench, name: &shards_name[0_u64..6_u64], totals: &totals, started: started, ended: ended);
+}

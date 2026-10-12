@@ -1,0 +1,159 @@
+# Temporary: runs research/experiments/shared-counters (the arms that need no
+# language change, DESIGN.md section 8 of research/investigations/
+# shared-counters) once on the owner's i9-14900K, with the Whitefoot compiler
+# release given as an input, and keeps the raw rows and the summary. A pilot
+# (one block at the 8-P-core list) comes first; the main run follows the
+# pilot's reading. Removed after the run, with the results copied into the
+# investigation's record.
+#
+#   gh workflow run tmp-shared-counters.yml --ref <branch> -f mode=pilot
+#   gh workflow run tmp-shared-counters.yml --ref <branch> -f mode=main
+#
+# research-boundary: manual-only
+# Explicitly requested measurement; no push or pull-request trigger.
+name: tmp-shared-counters
+
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: Whitefoot compiler release to build the arms with (wf-<12 hex> or wf-exp-<12 hex>)
+        type: string
+        default: wf-29de8a21eef8
+      mode:
+        description: pilot is one block at the 8-P-core list; main is the interleaved blocks at all four lists
+        type: choice
+        options: [pilot, main]
+        default: pilot
+      blocks:
+        description: Blocks of the main run (provisional; the pilot's spread may change it)
+        type: string
+        default: "6"
+
+defaults:
+  run:
+    shell: bash
+
+# One run at a time on the 14900K, queued rather than cancelled.
+concurrency:
+  group: tmp-shared-counters-14900k
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  measure:
+    name: shared-counters (${{ inputs.mode }})
+    runs-on: [self-hosted, 14900k]
+    # Main: 6 blocks x 4 lists x 10 arms x ~5.3 s is about 21 minutes of cells,
+    # plus the compiler download and eight builds. Bounds a stuck runner only.
+    timeout-minutes: 90
+    env:
+      OUT: ${{ runner.temp }}/shared-counters
+      RELEASE: ${{ inputs.release }}
+      MODE: ${{ inputs.mode }}
+      BLOCKS: ${{ inputs.blocks }}
+      PILOT: ${{ inputs.mode == 'pilot' && '1' || '0' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the inputs and the host's tools
+        run: |
+          [[ "$RELEASE" =~ ^wf-(exp-)?[0-9a-f]{12}$ ]] || { echo "release must be wf-<12 hex digits> or wf-exp-<12 hex digits>"; exit 1; }
+          [[ "$BLOCKS" =~ ^[1-9][0-9]?$ ]] || { echo "blocks must be a number from 1 to 99"; exit 1; }
+          missing=
+          for tool in /usr/bin/clang taskset python3 sha256sum curl awk lscpu timeout; do
+            command -v "$tool" >/dev/null || missing="$missing $tool"
+          done
+          if [ -n "$missing" ]; then
+            echo "missing:$missing"
+            exit 1
+          fi
+          /usr/bin/clang --version
+          nproc
+
+      # A cancelled earlier run can leave its arms running; stop them and say
+      # so. Then the machine must be idle: under 5% busy on all CPUs over 5 s.
+      - name: Stop leftovers and check that the host is idle
+        run: |
+          ps -eo pid,args | grep -E '/shared-counters/bin/w' | grep -v grep | tee "$RUNNER_TEMP/leftover.txt" || true
+          awk '{print $1}' "$RUNNER_TEMP/leftover.txt" | xargs -r kill 2>/dev/null || true
+          sleep 2
+          sample() { awk '/^cpu / {idle = $5 + $6; total = 0; for (i = 2; i <= NF; i++) total += $i; print idle, total}' /proc/stat; }
+          read -r idle_before total_before < <(sample)
+          sleep 5
+          read -r idle_after total_after < <(sample)
+          busy=$(awk -v ib="$idle_before" -v tb="$total_before" -v ia="$idle_after" -v ta="$total_after" 'BEGIN { printf "%.4f", 1 - (ia - ib) / (ta - tb) }')
+          echo "load: $(cat /proc/loadavg); busy share over 5 s: $busy"
+          ps -eo pid,pcpu,args --sort=-pcpu | head -n 8
+          awk -v busy="$busy" 'BEGIN { exit !(busy > 0.05) }' && { echo "the host is not idle; stop its other work first"; exit 1; } || true
+
+      - name: Download the Whitefoot compiler release
+        run: |
+          mkdir -p "$OUT/compiler"
+          cd "$OUT/compiler"
+          asset=whitefootc-linux-x86_64.tar.gz
+          for file in "$asset" SHA256SUMS whitefoot-release.json; do
+            curl -fsSL --retry 3 -o "$file" "https://github.com/$GITHUB_REPOSITORY/releases/download/$RELEASE/$file" \
+              || gh release download "$RELEASE" --repo "$GITHUB_REPOSITORY" --pattern "$file" --dir .
+          done
+          test "$(grep -cE "  ($asset|whitefoot-release\.json)\$" SHA256SUMS)" = 2
+          grep -E "  ($asset|whitefoot-release\.json)\$" SHA256SUMS | sha256sum -c -
+          python3 -I -c '
+          import json, os, sys
+          m = json.load(open("whitefoot-release.json"))
+          release = os.environ["RELEASE"]
+          if m["tag"] != release or not m["commit"].startswith(release.split("-")[-1]):
+              sys.exit("whitefoot-release.json does not describe " + release)
+          major = m.get("linux_llvm_major") or ""
+          print("release", release, "commit", m["commit"], "specification", m.get("spec"), "LLVM major", major)
+          open("llvm-major", "w").write(str(major))
+          '
+          tar -xzf "$asset"
+          rm "$asset"
+          test -x whitefootc
+          major=$(cat llvm-major)
+          found=$(/usr/bin/clang -dumpversion | cut -d. -f1)
+          if [ -n "$major" ] && [ "$found" != "$major" ]; then
+            echo "$RELEASE was built with LLVM $major but /usr/bin/clang is $found"
+            exit 1
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Build the arms
+        run: |
+          WHITEFOOTC="$OUT/compiler/whitefootc" WF_RELEASE="$RELEASE" \
+            bash research/experiments/shared-counters/run.sh --out "$OUT" --build-only
+
+      - name: Run the cells
+        run: |
+          bash research/experiments/shared-counters/run.sh --out "$OUT" --skip-build
+
+      - name: Summarize
+        if: always()
+        run: |
+          test -s "$OUT/raw.tsv" || { echo "no rows were written"; exit 0; }
+          python3 -B research/experiments/shared-counters/summarize.py "$OUT/raw.tsv" > "$OUT/summary.txt"
+          cat "$OUT/summary.txt"
+          {
+            echo "## shared-counters ($MODE, $RELEASE)"
+            echo
+            echo '```text'
+            cat "$OUT/host.txt" 2>/dev/null
+            echo
+            cat "$OUT/summary.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: shared-counters-${{ inputs.mode }}-${{ github.run_id }}
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/shared-counters/raw.tsv
+            ${{ runner.temp }}/shared-counters/summary.txt
+            ${{ runner.temp }}/shared-counters/host.txt
+            ${{ runner.temp }}/shared-counters/runs/

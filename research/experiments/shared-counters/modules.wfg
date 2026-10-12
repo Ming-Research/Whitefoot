@@ -1,0 +1,15 @@
+pkg: [std::process, std::text, std::time, std::io, std::fs];
+
+entry w_base = pkg::base_main;
+
+entry w_private = pkg::private_main;
+
+entry w_shared = pkg::shared_main;
+
+entry w_shared_param = pkg::shared_param_main;
+
+entry w_read_shared = pkg::read_shared_main;
+
+entry w_shards = pkg::shards_main;
+
+entry w_shards_reader = pkg::shards_reader_main;
