@@ -7,9 +7,9 @@ fn width(rows: &Array<Slots<u8, 8>, 4>, i: u64) -> r: u64 reads(rows) contract {
 } {
   doc "Returns a bound on the length of element i.";
   if rows^[i].len > 9_u64 {
-    return 0_u64;
+    return 9_u64;
   }
-  return rows^[i].len;
+  return 0_u64;
 }
 
 fn relay(rows: &Array<Slots<u8, 8>, 4>, k: u64) -> r: u64 reads(rows) contract {
