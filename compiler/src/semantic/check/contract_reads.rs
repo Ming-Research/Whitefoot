@@ -69,6 +69,11 @@ impl Checker<'_, '_> {
         check_context: &CheckContext<'_>,
         signature: &FunctionSignature,
     ) -> Result<Vec<ContractReadPath>, CheckStop> {
+        // [MSR-3] admits every entry former before the clauses that contain
+        // it are formed, as the body check and formal contract formation do:
+        // RANGE-1 forms a place from an entry former only once MSR-3 has
+        // admitted it, and [DIAG-1] cites MSR-3, defined first, at the former.
+        self.types.declarations.check_entry_formers(signature)?;
         let check_context = CheckContext {
             writing_module: self
                 .types
