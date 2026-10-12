@@ -22,8 +22,6 @@
 name: import-limit-timing
 
 on:
-  push:
-    branches: [claude/small-accessor-inline]
   workflow_dispatch:
     inputs:
       runner:
@@ -82,7 +80,7 @@ env:
 
 jobs:
   timing:
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/claude/small-accessor-inline'
+    if: github.ref == 'refs/heads/claude/small-accessor-inline'
     runs-on: ${{ inputs.runner == '14900k' && fromJSON('["self-hosted", "14900k"]') || 'ubuntu-24.04' }}
     timeout-minutes: 150
     env:
