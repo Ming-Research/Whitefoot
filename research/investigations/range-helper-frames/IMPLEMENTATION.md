@@ -2,40 +2,39 @@
 
 ## Delivery and selection ground
 
-The amendment on `claude/range-helper-frames`, initially based on
-`cef63d637d3f07377163c9e4c70cb70c3e229cea`, implements the owner-selected
-[entry-version and one-sided unchanged frames](DESIGN.md). Owner-supplied CI
-results for `ee730e186835f7870109d55433438b341f4b0df7` exposed the fixture
-failures recorded below. The current fixture corrections are uncommitted and
-await CI; specified expectations are distinguished from observed results.
+The amendment on `claude/range-helper-frames` implements the owner-selected
+[entry-version and one-sided unchanged frames](DESIGN.md) as specification
+v0.136 over the v0.135 archive, on top of a merge of main at v0.135. The
+sections below record the specification changes, the compiler mechanisms, the
+conformance cases and the validation state.
 
 On 2026-10-11 the owner selected decision B: the implicit entry read follows
 RANGE-1's existing defined-read premise. An exit tuple absent at entry has a
-vacuous frame instance and gives the caller no definition. The note's meaning
-and acceptance list were corrected accordingly. No separate definedness
-obligation was introduced. The note's claim that cancellation held the sole
-identifier collision was also corrected after the active corpus scan.
+vacuous frame instance and gives the caller no definition. No separate
+definedness obligation exists. The identifier collisions with the newly
+reserved word are all those the active corpus scan found, not only the one in
+the cancellation program.
 
-No commits, pushes, GitHub polling, status-board changes or approval-log edits
-were performed. `design/skill` was not changed. Work stops for the requested CI
-handoff; no semantic decision or known implementation contract gap remains open.
+The status board, the approval logs (`spec/log.md`, `design/log.md`) and
+`design/skill` are untouched by this work. Specification and design approval
+remain the owner's.
 
 ## Specification changes, rule by rule
 
 | Rule | Before | After and selection ground |
 | --- | --- | --- |
 | GRAM-5 | Range conclusions were two affine operands around a comparison; `unchanged` was an identifier. | Adds the factored `unchanged` suffix. RANGE-1 admits only a single element place in a range postcondition. Guard and ordinary-clause syntax also recognize the suffix so their semantic refusals cite RANGE-1. FORM-3's existing derived reservation makes the word reserved. Selected by the original helper-frame note. |
-| GRAM-6 | The explanatory clause shape mentioned only a bare affine expression or two around an operator. | Includes the parsed suffix and points to RANGE-1 for admission. A grammar-correspondence wording change, with no additional admitted context. |
+| GRAM-6 | The explanatory clause shape mentioned only a bare affine expression or two around an operator. | Includes the parsed suffix, which `clause_expr` accepts only so that RANGE-1 refuses it with a repair, and names the `range_relation` conclusion of a range postcondition as the admitted spelling. A grammar-correspondence wording change, with no additional admitted context. |
 | MSR-3 | Entry formers denoted ordinary projected entry measures or fragment-integer places. | Points to RANGE-1 for range reads. Existing former admission and refusals remain: only a reference parameter whose row writes it, in ensures; own and nonwriting parameters still reject MSR-3. No new decision beyond the selected range use. |
 | RANGE-1 | Range terms read no entry image; no unchanged conclusion existed. | Admits entry-rooted postcondition places and `P unchanged` for an element projection of a written reference parameter, without a final measure or equality capability. Generic instances retain this conclusion for any T. Requirements, guards, loop/type invariants, ordinary relations, whole windows, measures and nonwriting roots reject unchanged with RANGE-1 and DIAG-1 repair. Plain consumed own storage retains RANGE-1. The implicit entry read participates in ordinary read-definedness, as owner decision B selected. |
 | RANGE-2 | Versions described ordinary projection values; calls imported exit facts after forgetting writes. | Adds abstract whole-element reads whose identities are unknown after overlapping writes. Calls record entry storage views before effects. Imported unchanged instances define requested exit projection reads by recorded entry reads under the fact's bounds, guards and definedness. Copy wording now says value projections: copying retains values, while whole-container replacement cannot recover old identity. The latter follows the note's explicit refusal of written/restored storage and fixes review R1. |
 | RANGE-3 | Ordinary range comparisons were owed and proved through the fixed derivation. | An unchanged obligation is equality of exit and entry whole-element reads; imported frame definitions join step 2. Automatic instantiation remains exactly two rounds, with the existing shared 256-instance and 4096-atom ceilings. Selected by the note, without a new theory or search. |
 
-The active file is v0.129. Its v0.128 archive is byte-identical to the base's
-active specification: both SHA-256 values are
-`b492cec7a43b20da4e45791e218bb129bf2bcc4dc68a41ebe464a67a222596ca`.
-No other archive was changed. Specification/design approval logs were left for
-the owner, as requested.
+The active file is v0.136. Its v0.135 archive is byte-identical to the
+merge base's active specification: both SHA-256 values are
+`e8a54d37ac561bed4bb770b353c622ad8c3358b8e9953bac3541615d2d208e33`.
+No other archive was changed. The specification approval log is the owner's
+to write.
 
 ## Compiler mechanisms and owning functions
 
@@ -71,17 +70,17 @@ Call/exit extraction keeps the growing walk below the required limit:
 
 24 added/replaced case entries cover the selected acceptance list. The old
 `range1-neg-entry-image` becomes `range1-pos-entry-image` because the endpoint
-is now admitted. All expectation changes follow v0.129; identifier-only edits
-retain their prior verdicts.
+is now admitted. All expectation changes follow the active specification;
+identifier-only edits retain their prior verdicts. A further table below lists
+the cases that pin the refusal and soundness boundaries of the admitted forms.
 
 Baseline command: the supplied released compiler
 `../rel4173/whitefootc --check FILE`, from main
-`4173ec89e9fe187108fc40679427cd39bb533293`.
-The released before-behavior below is from the initial handoff. The owner
-subsequently supplied amended-compiler CI results at ee730e186; see the
-fixture-correction section for that evidence and its remaining failure.
+`4173ec89e9fe187108fc40679427cd39bb533293`. The released before-behavior in
+the first table was measured on that compiler before the amendment; the
+amended compiler's results come from CI, as the validation section records.
 
-| Case | Expected v0.129 verdict | Released before behavior |
+| Case | Expected verdict | Released before behavior |
 | --- | --- | --- |
 | [range2-pos-helper-append-frame](../../../tests/conformance/cases/range2-pos-helper-append-frame.wf) | accept | GRAM-5 / UnexpectedToken (exit 1) |
 | [range2-pos-helper-append-affine-frame](../../../tests/conformance/cases/range2-pos-helper-append-affine-frame.wf) | accept | GRAM-5 / UnexpectedToken (exit 1) |
@@ -126,16 +125,37 @@ They exposed fixture formatting and unused effect-row issues, which were
 fixed before handoff. Readonly refusal cases return u64 so result-selector
 admission does not hide the intended diagnostic.
 
+Boundary cases pin where the admitted forms stop and which writes defeat an
+`unchanged` conclusion. Their expectations are specified by the rules named;
+the site column says which compiler path produces the verdict. None has a
+released-compiler before behavior, because the released compiler lacks the
+`unchanged` spelling.
+
+| Case | Expected verdict | Site that produces it |
+| --- | --- | --- |
+| [range1-neg-entry-requirement-written-parameter](../../../tests/conformance/cases/range1-neg-entry-requirement-written-parameter.wf) | MSR-3 | `check_entry_formers` refuses an entry former outside an `ensures_clause`; the parameter is written, so only the position is at fault. |
+| [range1-neg-entry-loop-invariant](../../../tests/conformance/cases/range1-neg-entry-loop-invariant.wf) | MSR-3 | The same check covers the function body, so a loop invariant's entry former is refused before its range clause is formed. |
+| [range1-neg-unchanged-entry-rooted](../../../tests/conformance/cases/range1-neg-unchanged-entry-rooted.wf) | RANGE-1 | `range_unchanged` admits only a place whose root is a written reference parameter binding; an entry root is refused. |
+| [range1-neg-unchanged-result-rooted](../../../tests/conformance/cases/range1-neg-unchanged-result-rooted.wf) | RANGE-1 | The same root test refuses a result-ordinal root. |
+| [range3-neg-unchanged-field-write](../../../tests/conformance/cases/range3-neg-unchanged-field-write.wf) | RANGE-3 | A field write overlaps the element's whole-element identity (`projections_overlap`), leaving its exit read unknown. |
+| [range3-neg-unchanged-box-content-write](../../../tests/conformance/cases/range3-neg-unchanged-box-content-write.wf) | RANGE-3 | The same overlap through a `Box` content step. |
+| [range3-neg-unchanged-alias-write](../../../tests/conformance/cases/range3-neg-unchanged-alias-write.wf) | RANGE-3 | A local reference to the element is an element view; a write through it is a placed element write. |
+| [range3-neg-unchanged-helper-write](../../../tests/conformance/cases/range3-neg-unchanged-helper-write.wf) | RANGE-3 | A call forgets the storage its row writes through the argument. |
+| [range3-pos-unchanged-routed-postcondition](../../../tests/conformance/cases/range3-pos-unchanged-routed-postcondition.wf) | accept | A routed postcondition is owed at the Some return only; the None return writes the framed element. |
+| [range3-neg-unchanged-routed-written-element](../../../tests/conformance/cases/range3-neg-unchanged-routed-written-element.wf) | RANGE-3 | The Some return writes the framed element. |
+| [range3-neg-unchanged-paged-page-call](../../../tests/conformance/cases/range3-neg-unchanged-paged-page-call.wf) | RANGE-3 | A page argument has no logical element offset, so the writing call forgets all storage. |
+| [range3-neg-unchanged-paged-page-element-write](../../../tests/conformance/cases/range3-neg-unchanged-paged-page-element-write.wf) | RANGE-3 | A direct write through a page is not placed at an element tuple and forgets all storage. |
+
 The supplied regression witnesses were checked with the released compiler:
 
-| Witness | Released before behavior | Amended/base expectation |
+| Witness | Released before behavior | Expectation on the merge base |
 | --- | --- | --- |
-| `../hf-wit/publish-consume.wf` | RANGE-3 at return, missing `root_bounds`, line 52 | Accept through the inherited operation/relocation/take_back work; unverified here. |
-| `../hf-wit/live-inverse-bare.wf` | GRAM-5 at the bare Bool guard, line 25 | Accept through the inherited Bool-guard work; unverified here. |
+| `../hf-wit/publish-consume.wf` | RANGE-3 at return, missing `root_bounds`, line 52 | Accept through the base's operation/relocation/take_back work. |
+| `../hf-wit/live-inverse-bare.wf` | GRAM-5 at the bare Bool guard, line 25 | Accept through the base's Bool-guard work. |
 
-The released main predates the supplied merged base, so those baseline
-rejections do not contradict the base expectation. CI must establish their
-post-amendment regression results.
+The released main predates the merge base, so those baseline rejections do
+not contradict the base expectation. The two witnesses are not repository
+cases, so their behavior on the amended compiler is unverified.
 
 ## Identifier-only conformance and program migration
 
@@ -166,10 +186,9 @@ this base; the scan included docs and the active app sources.
 
 ## Unit tests added and what each guards
 
-The added tests were unrun at the initial handoff. Owner CI later exposed two
-fixture failures at ee730e186; their corrections remain unrun. The paired
-expected outcomes below describe the faults each test distinguishes; no local
-red/green result is claimed.
+The added tests run in the gate's Rust test group, which passed on
+8e2ba7eb7. The observation column below names the fault each test
+distinguishes; no run of a test against the unamended compiler is recorded.
 
 | Test | Observation guarded |
 | --- | --- |
@@ -206,8 +225,8 @@ was weakened.
 - `design/language/checks-and-proofs.md`: the ancestor's range-fact scope
   now includes unchanged postconditions, with detailed choices in its child.
 
-These are proposed live-tree Decisions as requested; no design approval log
-was written. The proof theory, instantiation rounds, structural ceilings,
+These Decisions are proposed until the owner approves them; the design
+approval log has no entry for them. The proof theory, instantiation rounds, structural ceilings,
 equality capability and refusal of two-sided element relocation still stand.
 
 ## Grammar pins and computation
@@ -215,7 +234,7 @@ equality capability and refusal of two-sided element relocation still stand.
 A temporary data calculation parsed all seven normative EBNF fences and
 computed the generator's provenance-bearing FIRST(2), FOLLOW(2), repetition
 continuations and two-token SELECT rows. It reproduced every base inventory
-before deriving the amended counts:
+before deriving the amended counts on the base before the v0.135 merge:
 
 | Inventory | v0.128 | v0.129 |
 | --- | ---: | ---: |
@@ -261,7 +280,7 @@ relevant ancestors, the value-equality decision, directly affected copy/store
 consumers, normative cases, inventory data and released baseline controls.
 No outstanding concrete finding remains within that scope.
 
-| Checklist | Disposition |
+| Checklist | Disposition as the reviewer reported it |
 | --- | --- |
 | A4, D2, G1, G2, G3, DC1, DC2 | Pass by source inspection after fixes. |
 | D1, T8, DC3 | Not applicable: constitution/stages unchanged; walk methods extracted rather than a design approach retired. |
@@ -270,14 +289,14 @@ No outstanding concrete finding remains within that scope.
 | T4, T5, T6 | Source ownership, shared construction and research boundary pass by inspection; execution unverified. |
 | DC4 | Implementation paths present by inspection; execution unverified. |
 
-## CI fixture corrections after ee730e186
+## Fixture corrections found by CI
 
-The owner ran CI on `ee730e186835f7870109d55433438b341f4b0df7`, containing the
-initial amendment plus the owner's clippy fix in facts/unchanged.rs. The
-reported conformance adapter result was Pass=2411, Fail=1. The failed case and
-one failed unit share the same source fixture; a second unit has a separate
-call-effect error. These are source-fixture mistakes, not failures of the
-selected range-frame semantics.
+CI on `ee730e186835f7870109d55433438b341f4b0df7`, the initial amendment plus a
+clippy fix in facts/unchanged.rs, reported conformance adapter Pass=2411,
+Fail=1. The failed case and one failed unit share the same source fixture; a
+second unit has a separate call-effect error. These were source-fixture
+mistakes, not failures of the selected range-frame semantics, and commit
+`caa780036` corrected them.
 
 | Reported failure | Why it happened | Correction |
 | --- | --- | --- |
@@ -285,46 +304,33 @@ selected range-frame semantics.
 | `generic_unchanged_forms_entry_identity_without_projection_expansion`, OWN-1 | Its include_bytes source is the copy-element append fixture. Block has only a u32 field, so OWN-1 requires bare use; the concrete wrapper wrote `move value`. | Correct that shared source and inspect both the copy and affine fixtures. Retain every prior identity/root/index assertion, require both symbolic and concrete scopes in each fixture, and assert concrete copy capability true for the copy Block and false for the owning Block. |
 | `range2-pos-helper-append-frame`, expected accept but rejected OWN-1 | The same concrete wrapper passed a copy Block with `move`. | Pass bare `value` in append_target. The generic T:drop body's move remains valid under OWN-1's generic spelling rule; the affine fixture's Box-owning Block retains its explicit move. |
 
-Files changed in this follow-up: compiler/src/semantic/range_judgment/walk/calls.rs,
+The correction changed compiler/src/semantic/range_judgment/walk/calls.rs,
 compiler/src/semantic/tests/range_facts.rs and
-tests/conformance/cases/range2-pos-helper-append-frame.wf. No verdict, contract,
-frame assertion, grammar pin, language decision or compiler proof logic was
-weakened. Existing formal cases still cover both copy and affine elements, and
-the representation unit now explicitly checks both ownership classes. No new
-unit or case was added.
+tests/conformance/cases/range2-pos-helper-append-frame.wf. No verdict,
+contract, frame assertion, grammar pin, language decision or compiler proof
+logic was weakened. Formal cases still cover both copy and affine elements, and
+the representation unit checks both ownership classes.
 
-The spec-archives static failure is expected for this stacked branch, as the
-owner reported. The v0.128 archive is left for the owner's correction after
-[Whitefoot#366 — spec v0.128 base](https://github.com/Ming-Research/Whitefoot/pull/366)
-merges. The owner's clippy fix is retained. No builds, cargo,
-make, clippy or tests ran locally for this follow-up; direct rustfmt was the
-only authoring command. The corrected fixtures await the owner's next CI run.
+A fresh read-only completion review of `ee730e186`, requested as
+`gpt-6.1-sol` at high effort, inspected the four-file fixture and report
+diff against the reported CI failures. It found no concrete findings within
+scope. A4/D2/C4/T1/T4/T5/T6/V3 and applicable G/DC checks pass by source
+inspection; D1/G1/DC3 and new stage/budget checks are not applicable. The
+reviewer ran no tests, lint, builds or check suites.
 
-A fresh read-only completion review, requested as gpt-6.1-sol at high effort,
-inspected ee730e186 through the complete four-file fixture/report diff, using
-the reported CI failures as validation evidence. It found no concrete findings
-within scope. A4/D2/C4/T1/T4/T5/T6/V3 and applicable G/DC checks pass by source
-inspection; D1/G1/DC3 and new stage/budget checks are not applicable. Corrected
-execution and new-revision gate success remain unverified. The reviewer ran no
-tests, lint, builds or check suites.
+## Validation state
 
-## Remaining uncertainty and CI handoff
-
-There is no known unresolved contract gap in the selected note. Owner CI
-compiled the amended compiler and ran the conformance adapter, reporting
-2,411 passes and one failure at ee730e186. Two unit fixtures also failed.
-The corrections above need a new CI run, including the affected units and
-conformance case. Full gate success, the supplied regression witnesses and
-merge readiness are not established by the provided results. The review did not
-rerun a suite or establish proof-system soundness beyond the inspected paths. Design-lint metrics were
-not generated because checks are reserved for CI. Approval records and merge
-readiness remain the owner's work, as requested.
-
-Only authorized released-compiler before checks, read-only source/data/git
-inspection, grammar-data calculation and direct rustfmt authoring were performed
-on the Mac. No builds, cargo, make, clippy, test suites or performance
-measurements ran locally. Amended-compiler results in this report are the
-owner-supplied CI observations, not local execution.
+- The gate (`gate.yml`: static, compiler build and tests, conformance adapter,
+  runtime, on Linux and macOS) passed on `8e2ba7eb7`, the revision with the
+  merge of main at v0.135 and the EFF-5 alias cases. Its conformance adapter
+  and Rust tests include every case and unit named above except the
+  boundary-case table, which was added afterwards, and the `clause_expr`
+  wording of GRAM-6, edited afterwards.
+- Amended-compiler results in this report are CI observations; nothing
+  compiled or ran on the authoring machine.
+- Not established: proof-system soundness beyond the inspected paths and
+  the boundary cases' amended verdicts.
+- Approval records and merge readiness are the owner's work.
 
 ## Merge with main at v0.135
 
