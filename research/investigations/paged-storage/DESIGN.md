@@ -127,8 +127,8 @@ opaque nocopy struct Paged<T> {
   reallocate the cell that holds the directory, and may replace the small
   first page under R3. The row writes the whole cell, so growth invalidates
   every reference into the storage and overlaps every element access. Fact
-  preservation across relocation is the separate Whitefoot PR #352 dependency
-  described below; the base specification still kills overlapping facts.
+  survival across that write is ENT-5's relocation classification, described
+  below.
   Lowering additionally cuts an overlap group before forming a Paged address through the owner or directory, because reference formation
   itself has no source content read under [PAR-1].
 - **Window operations.** `place_back` and `take_back` admit `Paged<T>` as
@@ -314,19 +314,17 @@ skips the shared header and frees a small page 0 at its actual size.
 Snowghost confirms that it keeps neither a page reference nor an element
 address across growth; its block identity is a slot number.
 
-**Fact-preservation dependency.** Whitefoot [PR #352, growth retains
-unchanged facts](https://github.com/Ming-Research/Whitefoot/pull/352), on
-`claude/grow-keeps-facts`, is approved but not in this amendment's base.
-Its ENT-5 relocation classification is by the canonical `grow_paged`
-operation and preserves support in the unchanged length and filled element
-storage, including owned descendants, while reference validity still
-follows REF-2. A page-0 replacement changes storage addresses without
-changing those values, so the same classification applies after #352 lands;
-no separate element-equality premise is needed. OP-10 identifies the move
-as a relocation and leaves fact survival to ENT-5. The dependent range-fact
-witness must be enabled and pass after #352 is integrated; this amendment
-does not import that branch's broad proof-system changes or claim that its
-base preserves those facts.
+**Fact preservation.** Specification v0.128, from Whitefoot
+[PR #352, growth retains unchanged facts](https://github.com/Ming-Research/Whitefoot/pull/352),
+is this amendment's base. Its ENT-5 relocation classification is by the
+canonical `grow_paged` operation and preserves support in the unchanged
+length and filled element storage, including owned descendants, while
+reference validity still follows REF-2. A page-0 replacement changes storage
+addresses without changing those values, so the same classification applies;
+no separate element-equality premise is needed. OP-10 identifies the move as
+a relocation and leaves fact survival to ENT-5. The backend case
+`paged_page_zero_move_preserves_filled_element_range_fact` checks that the
+copied page 0 still holds the value an accepted range fact states.
 
 **Remaining comparison and veto.** Snowghost must retest
 [Snowghost-wf PR #61, the Paged mechanism](https://github.com/Ming-Research/Snowghost-wf/pull/61)
