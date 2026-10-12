@@ -1163,22 +1163,30 @@ pub(super) fn postcondition_bounds(
     constant_offset: bool,
     return_line: u64,
     bound: &SelectedReturnBound,
+    held: bool,
 ) -> String {
     // [FN-9, MSR-3] a place reads its formal offsets, and the bases it
     // denotes at entry, at function entry. Once the body rebinds an offset,
     // the clause is unavailable at the return whatever bounds it, so the
-    // value the body computes needs its own name. A base length the body
-    // changes is established only by facts about its entry value.
+    // value the body computes needs its own name; `held` says the contract
+    // already requires the bound, which then needs nothing more. A base
+    // length the body changes is established only by facts about its entry
+    // value.
     if let Some((rebound, values, them)) = entry_values(&bound.rebound) {
-        let alternative = match case.disposition {
-            Disposition::Refuted => refuted_index(constant_offset, false).to_owned(),
-            Disposition::Unproved => format!(
-                "add `requires {};` to the `contract` of `{}`, which each caller then establishes",
+        let alternative = match (case.disposition, held) {
+            (Disposition::Refuted, _) => {
+                format!(", and {}", refuted_index(constant_offset, false))
+            }
+            // The contract already requires the bound; only the rebinding
+            // keeps it from the place.
+            (Disposition::Unproved, true) => String::new(),
+            (Disposition::Unproved, false) => format!(
+                ", and add `requires {};` to the `contract` of `{}`, which each caller then establishes",
                 bound.requirement, case.function
             ),
         };
         return format!(
-            "`{}` reads {rebound} at {values}, and a clause reading {them} is unavailable at the `return` on line {return_line}, where the body has rebound {them}: give the new value its own name instead of rebinding {rebound}, and {alternative}",
+            "`{}` reads {rebound} at {values}, and a clause reading {them} is unavailable at the `return` on line {return_line}, where the body has rebound {them}: give the new value its own name instead of rebinding {rebound}{alternative}",
             case.text
         );
     }

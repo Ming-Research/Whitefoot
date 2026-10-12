@@ -610,7 +610,18 @@ impl<'unit> TypeContext<'unit> {
                         repairs::clause_bounds(&case, constant_offset)
                     } else if let Some(exit) = &outcome.selected_return {
                         let (_, line) = self.declarations.tree.source_line(&exit.statement)?;
-                        repairs::postcondition_bounds(&case, constant_offset, line, exit)
+                        // [FORM-2] a requirement is spelled canonically, so
+                        // one the contract already writes has this spelling.
+                        let required = format!("requires {};", exit.requirement);
+                        let held = function.requirements.iter().any(|requirement| {
+                            requirement.subject.is_none()
+                                && self
+                                    .declarations
+                                    .tree
+                                    .path_spelling(&requirement.clause)
+                                    .is_ok_and(|spelling| spelling == required)
+                        });
+                        repairs::postcondition_bounds(&case, constant_offset, line, exit, held)
                     } else if let (Some(note), false) =
                         (outcome.killed_by.first(), calls.is_empty())
                     {

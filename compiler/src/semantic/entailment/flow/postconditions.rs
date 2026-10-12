@@ -2808,36 +2808,57 @@ impl Analyzer<'_, '_> {
         denotation: PlaceDenotation,
     ) -> Vec<SubscriptDatums> {
         let parameters = &self.input.function.parameters;
-        let (mut base, root_parameter, steps, mut datums) = match formed {
-            FormedPlace::Container(root) => {
-                let root_parameter = root.binding().and_then(|binding| {
-                    parameters
-                        .iter()
-                        .position(|parameter| parameter.binding == binding)
-                });
-                (root.proof_prefix(), root_parameter, &root.path, Vec::new())
-            }
-            // [REF-4] a range's length is the value its formation captured,
-            // so only its offset can read another state than the return's.
-            FormedPlace::RangeElement(place) => {
-                let offset = self.offset_entry_datum(&place.offset);
-                let mut base = place.root.proof_place();
-                base.path.push(PlaceStep::Index(place.captured));
-                (
-                    base,
-                    None,
-                    &place.path,
-                    vec![SubscriptDatums {
-                        offset,
-                        length: None,
-                    }],
-                )
-            }
+        let root_binding = match formed {
+            FormedPlace::Container(root) => root.binding(),
+            FormedPlace::RangeElement(place) => Some(place.root.binding),
         };
+        let root_parameter = root_binding.and_then(|binding| {
+            parameters
+                .iter()
+                .position(|parameter| parameter.binding == binding)
+        });
         let entry = denotation != PlaceDenotation::Return;
         let mut identity = match root_parameter {
             Some(ordinal) if parameters[ordinal].mode.is_reference() => vec![PlaceStep::Deref],
             _ => Vec::new(),
+        };
+        let entry_length = |ordinal: usize, identity: &[PlaceStep]| TermKind::EntryDatum {
+            formal: u32::try_from(ordinal)
+                .expect("parameter ordinal exceeds the u32 identity space"),
+            projections: identity.to_vec(),
+            measure: Some(CheckedMeasure::Length),
+            ty: IntegerType::U64,
+        };
+        let mut datums = Vec::new();
+        let (mut base, steps) = match formed {
+            FormedPlace::Container(root) => (root.proof_prefix(), &root.path),
+            // [MSR-3, FN-9] a range parameter's length is fixed for the range
+            // the parameter received, and a place denoting entry state reads
+            // that range even where the body has rebound the parameter.
+            FormedPlace::RangeElement(place) => {
+                let offset = self.offset_entry_datum(&place.offset);
+                let mut base = place.root.proof_place();
+                identity.extend(base.path.iter().map(|step| match step {
+                    PlaceStep::Index(captured) => PlaceStep::Index(captured.goal_identity()),
+                    other => *other,
+                }));
+                let length = match root_parameter {
+                    Some(ordinal) if entry => {
+                        let live = self.reasoning().place_measure_term(
+                            CheckedMeasure::Length,
+                            base.clone(),
+                            MeasuredKind::Range,
+                            None,
+                        );
+                        Some((entry_length(ordinal, &identity), live))
+                    }
+                    _ => None,
+                };
+                datums.push(SubscriptDatums { offset, length });
+                base.path.push(PlaceStep::Index(place.captured));
+                identity.push(PlaceStep::Index(place.captured.goal_identity()));
+                (base, &place.path)
+            }
         };
         for step in steps {
             let (step, subscript) = match step {
@@ -2860,16 +2881,7 @@ impl Analyzer<'_, '_> {
                             measured,
                             type_constant(subscript.base_type),
                         );
-                        Some((
-                            TermKind::EntryDatum {
-                                formal: u32::try_from(ordinal)
-                                    .expect("parameter ordinal exceeds the u32 identity space"),
-                                projections: identity.clone(),
-                                measure: Some(CheckedMeasure::Length),
-                                ty: IntegerType::U64,
-                            },
-                            live,
-                        ))
+                        Some((entry_length(ordinal, &identity), live))
                     }
                     _ => None,
                 };
@@ -3110,11 +3122,22 @@ impl Analyzer<'_, '_> {
             (PlaceDenotation::EntryImage, Some(length)) => self.reasoning().render_term(length),
             _ => plain_length.clone(),
         };
-        let owned_root = matches!(subscript.display.root,
-            PlaceRoot::Binding(binding) if !self.input.places.is_reference(binding));
+        // [MSR-3] the one state of a parameter can differ from what the body
+        // spells at the return when the parameter is owned storage the body
+        // may write, or a reference the body rebinds to another target.
+        let root_changes = match subscript.display.root {
+            PlaceRoot::Binding(binding) => {
+                !self.input.places.is_reference(binding)
+                    || body_rebinds(
+                        self.input.function.body.as_deref().unwrap_or_default(),
+                        binding,
+                    )
+            }
+            PlaceRoot::Constant(_) => false,
+        };
         let entry_lengths = if length.is_some()
             && (denotation == PlaceDenotation::EntryImage
-                || (denotation == PlaceDenotation::Entry && owned_root))
+                || (denotation == PlaceDenotation::Entry && root_changes))
         {
             vec![format!("`{plain_length}`")]
         } else {

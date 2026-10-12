@@ -271,3 +271,31 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
     );
 }
+
+/// [FN-9, ENT-2, MSR-3] a range the row only reads is an entry datum, so a
+/// place over it denotes the range the parameter received even after the
+/// body rebinds the parameter: a bound on the new range's length does not
+/// discharge its subscript, and one on the received range's length does.
+/// Before, the subscript was judged against the rebound range's length and
+/// the first program was accepted.
+#[test]
+fn a_range_place_is_judged_against_the_range_its_parameter_received() {
+    let source = |bounded: &str| {
+        format!(
+            r#"fn span(rows: &[Slots<u8, 8>], other: &[Slots<u8, 8>], i: u64) -> r: u64 pure contract {{
+  requires i < {bounded}^.len;
+  ensures r <= rows^[i].len;
+}} {{
+  set rows = other;
+  return 0_u64;
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
+}}
+"#
+        )
+    };
+    assert_rule_at(source("other").as_bytes(), SemanticRule::Op4, "[i]");
+    assert_complete(source("rows").as_bytes());
+}

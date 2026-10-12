@@ -79,21 +79,32 @@ pub(super) fn parameter_has_exit_state(
 /// denote: every place of a parameter that has no exit state denotes its one
 /// state at entry, and a place of one that has denotes its entry image when
 /// it is written through `entry(parameter)`, whose subscripts' psuffix nodes
-/// `entry_suffixes` holds. A place rooted at a named const, a range place
-/// and every other place of a written reference parameter are read where the
-/// return reads them.
+/// `entry_suffixes` holds; a range element place is classified by the range
+/// parameter it indexes, as a container place is by its root. A place rooted
+/// at a named const and every other place of a written reference parameter
+/// are read where the return reads them.
 fn place_denotation(
     function: &FunctionSignature,
     bindings: &HashMap<DeclarationId, LocalBinding>,
     place: &CheckedExpression,
     entry_suffixes: &HashSet<crate::NodePath>,
 ) -> PlaceDenotation {
-    let (CheckedExpression::ContainerMeasure { root, .. }
-    | CheckedExpression::ReadStorage { root, .. }) = place
-    else {
-        return PlaceDenotation::Return;
+    let (binding, suffixes) = match place {
+        CheckedExpression::ContainerMeasure { root, .. }
+        | CheckedExpression::ReadStorage { root, .. } => (
+            root.binding(),
+            subscript_suffixes(&root.path).collect::<Vec<_>>(),
+        ),
+        CheckedExpression::RangeElementMeasure { place, .. }
+        | CheckedExpression::RangeIndex { place, .. } => (
+            Some(place.root.binding),
+            std::iter::once(&place.obligation)
+                .chain(subscript_suffixes(&place.path))
+                .collect(),
+        ),
+        _ => return PlaceDenotation::Return,
     };
-    let Some(binding) = root.binding() else {
+    let Some(binding) = binding else {
         return PlaceDenotation::Return;
     };
     let Some(parameter) = function.parameters.iter().find(|parameter| {
@@ -105,14 +116,24 @@ fn place_denotation(
     };
     if !parameter_has_exit_state(function, parameter) {
         PlaceDenotation::Entry
-    } else if root.path.iter().any(|step| {
-        matches!(step, CheckedPlaceStep::Subscript(subscript)
-                if entry_suffixes.contains(&subscript.obligation))
-    }) {
+    } else if suffixes
+        .iter()
+        .any(|suffix| entry_suffixes.contains(*suffix))
+    {
         PlaceDenotation::EntryImage
     } else {
         PlaceDenotation::Return
     }
+}
+
+/// The psuffix node of each subscript in one place path.
+fn subscript_suffixes(path: &[CheckedPlaceStep]) -> impl Iterator<Item = &crate::NodePath> {
+    path.iter().filter_map(|step| match step {
+        CheckedPlaceStep::Subscript(subscript) => Some(&subscript.obligation),
+        CheckedPlaceStep::Field(_)
+        | CheckedPlaceStep::BoxReferent(_)
+        | CheckedPlaceStep::Measure(_) => None,
+    })
 }
 
 /// [FN-9] a comparison's direction-normalized relation; no other

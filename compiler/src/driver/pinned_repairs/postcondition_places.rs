@@ -252,4 +252,120 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "#],
     },
+    RepairPair {
+        // The contract already requires the inner bound at entry; only the call
+        // that rebinds `i` keeps it from the place, so the repair offers the
+        // rename alone.
+        name: "bounds-below-a-rebound-offset-the-contract-requires.wf",
+        rejected: br#"fn bump(x: &u64) -> result: unit writes(x) {
+  set x^ = 0_u64;
+  return unit;
+}
+
+fn claim(rows: &Slots<Slots<Slots<u8, 8>, 4>, 4>, i: u64, j: u64) -> r: u64 writes(rows.next), writes(rows.len) contract {
+  requires i < rows^.len;
+  requires 0_u64 < rows^.len;
+  requires rows^.len < rows^.cap;
+  requires j < rows^[i].len;
+  ensures r <= rows^[i][j].len;
+} {
+  let fresh = slots_new::<Slots<u8, 8>, 4>();
+  place_back(window: rows, value: move fresh);
+  bump(x: &i);
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "OP-4",
+        sentences: &[
+            "\n  residual: j < rows^[i].len\n  disposition: Unproved\n",
+            "\n  mechanical_fix: `j < rows^[i].len` reads `i` at its function-entry value, and a clause reading it is unavailable at the `return` on line 16, where the body has rebound it: give the new value its own name instead of rebinding `i`\n",
+        ],
+        repaired: &[br#"fn bump(x: &u64) -> result: unit writes(x) {
+  set x^ = 0_u64;
+  return unit;
+}
+
+fn claim(rows: &Slots<Slots<Slots<u8, 8>, 4>, 4>, i: u64, j: u64) -> r: u64 writes(rows.next), writes(rows.len) contract {
+  requires i < rows^.len;
+  requires 0_u64 < rows^.len;
+  requires rows^.len < rows^.cap;
+  requires j < rows^[i].len;
+  ensures r <= rows^[i][j].len;
+} {
+  let fresh = slots_new::<Slots<u8, 8>, 4>();
+  place_back(window: rows, value: move fresh);
+  let k = i;
+  bump(x: &k);
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        // A range parameter the row only reads denotes the range it received,
+        // so a test of the range it is rebound to is no evidence: the repair
+        // asks for the bound on the entry length, which a requirement or a test
+        // made before the rebinding gives.
+        name: "bounds-of-a-range-place-after-rebinding.wf",
+        rejected: br#"fn span(rows: &[Slots<u8, 8>], other: &[Slots<u8, 8>], i: u64) -> r: u64 reads(other.len) contract {
+  ensures r <= rows^[i].len;
+} {
+  set rows = other;
+  if i < rows^.len {
+    return 0_u64;
+  }
+  loop {
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "OP-4",
+        sentences: &[
+            "\n  residual: i < rows^.len\n  disposition: Unproved\n",
+            "\n  mechanical_fix: add `requires i < rows^.len;` to the `contract` of `span`, which each caller then establishes, or establish it with `rows^.len` at its function-entry value before the `return` on line 6 and every other `return` that selects this postcondition, which a test made after the body changes it does not\n",
+        ],
+        repaired: &[
+            br#"fn span(rows: &[Slots<u8, 8>], other: &[Slots<u8, 8>], i: u64) -> r: u64 reads(other.len) contract {
+  requires i < rows^.len;
+  ensures r <= rows^[i].len;
+} {
+  set rows = other;
+  if i < rows^.len {
+    return 0_u64;
+  }
+  loop {
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+            br#"fn span(rows: &[Slots<u8, 8>], other: &[Slots<u8, 8>], i: u64) -> r: u64 reads(rows.len) contract {
+  ensures r <= rows^[i].len;
+} {
+  if i < rows^.len {
+    set rows = other;
+    return 0_u64;
+  }
+  loop {
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        ],
+    },
 ];
