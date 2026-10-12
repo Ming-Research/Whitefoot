@@ -1164,11 +1164,16 @@ impl Reasoning<'_, '_, '_> {
                 let term = self.goal_operand(expression)?;
                 Some(self.vocabulary.measure_atom(term, state))
             }
+            // Instantiated contract positions also spell measures as typed
+            // place projections. They denote the same measure term and use
+            // its existing affine atom, just like the operation form above.
+            GoalExpression::Datum(GoalDatum::Place { .. } | GoalDatum::NamedConst { .. }) => {
+                let term = self.goal_operand(expression)?;
+                self.vocabulary.affine_term_value(term, state)
+            }
             GoalExpression::Datum(
                 GoalDatum::Parameter { .. } | GoalDatum::EvaluatedValue { .. },
             )
-            | GoalExpression::Datum(GoalDatum::NamedConst { .. })
-            | GoalExpression::Datum(GoalDatum::Place { .. })
             | GoalExpression::Operation { .. } => None,
         }
     }
@@ -1640,7 +1645,8 @@ impl Reasoning<'_, '_, '_> {
                 ..
             } => live_holders.iter().any(|holder| {
                 if *relocation {
-                    self.input.relocation_kills_holder(separations, *holder, place)
+                    self.input
+                        .relocation_kills_holder(separations, *holder, place)
                 } else {
                     self.input.write_replaces_live_holder(*holder, place)
                 }

@@ -1,0 +1,19 @@
+fn helper(a: &[u64], b: &[u64], i: u64, j: u64) -> result: unit writes(a[i]), writes(b[j]) contract {
+  requires a^.len == 2_u64;
+  requires b^.len == 2_u64;
+  requires i == 1_u64;
+  requires j == 0_u64;
+  requires forall before(k in 0_u64..1_u64): a^[k] == 0_u64;
+  ensures forall after(k in 0_u64..1_u64): a^[k] == 0_u64;
+} {
+  set a^[i] = 5_u64;
+  set b^[j] = 1_u64;
+  return unit;
+}
+
+fn caller() -> result: unit pure {
+  let xs = array_filled::<u64, 2>(value: 0_u64);
+  let ys = array_filled::<u64, 2>(value: 0_u64);
+  helper(a: &xs[0_u64..2_u64], b: &ys[0_u64..2_u64], i: 1_u64, j: 0_u64);
+  return unit;
+}
