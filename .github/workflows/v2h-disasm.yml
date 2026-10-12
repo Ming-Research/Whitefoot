@@ -1,4 +1,4 @@
-# Temporary: the machine code and LLVM IR of v2h's select and compare arms,
+# Temporary: the machine code of v2h's and wasmi's control-flow handlers,
 # for the loop { match } line's third phase. Removed before
 # claude/v2h-attribution-1012 is ready.
 name: v2h-disasm
@@ -33,21 +33,22 @@ jobs:
           compiler/target/gate/whitefootc "$out/v2h.wf" -o "$out/v2h" > /dev/null
           compiler/target/gate/whitefootc --emit-llvm "$out/v2h.wf" -o "$out/v2h.ll" > /dev/null || true
           ls -la "$out"
-      - name: Disassemble the select and compare arms
+      - name: Install wasmi
+        run: cargo install --quiet --locked --version 2.0.0 --root "$RUNNER_TEMP/wasmi" wasmi_cli
+      - name: Disassemble the control-flow handlers
         run: |
           out="$RUNNER_TEMP/d"
-          for name in SelectC SelectD SelectCD Select I32GeSB I32LeUB I32GeUA I32GeSA BrI32GeSA; do
-            idx=$(grep -n -x "$name" "$out/names.txt" | head -1 | cut -d: -f1)
-            [ -n "$idx" ] || { echo "no $name"; continue; }
-            arm=$((idx - 1))
-            for sym in "wf_run.arm.$arm" "wf_run.body.arm.$arm"; do
-              echo "===== $name ($sym) machine code"
-              llvm-objdump -d --no-show-raw-insn --disassemble-symbols="$sym" "$out/v2h" | sed -n '1,120p'
-            done
-            if [ -s "$out/v2h.ll" ]; then
-              echo "===== $name LLVM IR"
-              awk -v s="@\"?wf_run(.body)?.arm.$arm\"?\\(" '$0 ~ "^define" && $0 ~ s {p=1} p {print} p && /^}/ {exit}' "$out/v2h.ll" | head -150
-            fi
+          # Arm numbers follow the instruction variants' tags, read from the
+          # handler-word stores in v2h.ll: 185 BrI32Ne, 356 BrIfC, 7 BrTableN,
+          # 1 Jump, 9 Call, 8 Return, and 278 I32AddSD as a straight-line baseline.
+          for arm in 185 356 7 1 9 8 278; do
+            echo "===== v2h wf_run.arm.$arm"
+            llvm-objdump -d --no-show-raw-insn --disassemble-symbols="wf_run.arm.$arm" "$out/v2h" | sed -n '1,160p'
+          done
+          llvm-objdump -d --no-show-raw-insn --demangle "$RUNNER_TEMP/wasmi/bin/wasmi" > "$out/wasmi.s"
+          for h in branch_i32_not_eq_si branch_i32_not_eq_ri branch_table_s branch call_internal return i32_add_rs_si; do
+            echo "===== wasmi $h"
+            awk -v h="handler::exec::$h>:" 'index($0, h) {p=1} p {print; n++} p && /^$/ {exit} n > 160 {exit}' "$out/wasmi.s"
           done
       - uses: actions/upload-artifact@v4
         with:
@@ -55,3 +56,4 @@ jobs:
           path: |
             ${{ runner.temp }}/d/v2h.ll
             ${{ runner.temp }}/d/names.txt
+            ${{ runner.temp }}/d/wasmi.s
