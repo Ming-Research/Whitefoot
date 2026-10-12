@@ -32,17 +32,19 @@ jobs:
           native="$WHITEFOOT_SCRATCH_ROOT/whitefoot-completion-test/driver-service-native-test"
           bridge=compiler/src/backend/completion/bridge.c
           uring=compiler/src/backend/completion/linux_io_uring.c
+          # The step's shell runs with -e, so each status a script reads is
+          # captured on a list that -e does not abort on.
           run_ring() {
-            timeout 300s make -C compiler driver-service-native-test CC=/usr/bin/clang REQUIRE_NATIVE=1 > "$out" 2>&1
-            code=$?
+            code=0
+            timeout 300s make -C compiler driver-service-native-test CC=/usr/bin/clang REQUIRE_NATIVE=1 > "$out" 2>&1 || code=$?
             tail -5 "$out"
             return $code
           }
           # The same image with the ring refused runs only the probe's word cases.
           run_refused() {
             timeout 300s make -C compiler "$native" CC=/usr/bin/clang > "$out" 2>&1 || return 1
-            env -u WF_REQUIRE_LINUX_IO_URING WF_IO_NO_NATIVE_RING=1 WF_IO_HELPERS=0 "$native" >> "$out" 2>&1
-            code=$?
+            code=0
+            env -u WF_REQUIRE_LINUX_IO_URING WF_IO_NO_NATIVE_RING=1 WF_IO_HELPERS=0 "$native" >> "$out" 2>&1 || code=$?
             tail -5 "$out"
             return $code
           }
@@ -62,7 +64,8 @@ jobs:
             git diff --stat -- "$file"
           }
           if run_ring; then echo "PASS control: native cases"; else echo "FAIL control: native cases"; status=1; fi
-          run_refused; code=$?
+          code=0
+          run_refused || code=$?
           if [ "$code" = 77 ]; then echo "PASS control: probe cases with the ring refused"; else echo "FAIL control: refused run exited $code"; status=1; fi
           if timeout 300s make -C compiler driver-service-test CC=/usr/bin/clang > "$out" 2>&1; then echo "PASS control: service cases"; else tail -5 "$out"; echo "FAIL control: service cases"; status=1; fi
 
@@ -128,11 +131,15 @@ jobs:
           status=0
           out="$RUNNER_TEMP/witness.txt"
           bridge=compiler/src/backend/completion/bridge.c
+          # The step's shell runs with -e: the status is captured on a list
+          # that -e does not abort on. A failure prints each panic's message,
+          # which carries the runs' driver reports.
           witness() {
+            code=0
             timeout 1500s cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline \
-              --test corpus "$1" -- --test-threads=1 > "$out" 2>&1
-            code=$?
-            grep -E '^test |panicked|echo took|test result' "$out" | tail -20
+              --test corpus "$1" -- --test-threads=1 > "$out" 2>&1 || code=$?
+            grep -E '^test |test result' "$out" | tail -20
+            sed -n '/panicked at/,/^note: /p' "$out" | head -200
             return $code
           }
           same=programs::ring_assist::an_echo_beside_a_computation_on_its_driver_returns_within_100_ms

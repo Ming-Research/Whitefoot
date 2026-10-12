@@ -608,6 +608,15 @@ Each run's placement is read from its report, not assumed:
 `stolen_contexts ≥ 1` on driver 1 means split; `ring_reassignments ≥ 1` means
 the same-driver case was served by the new trigger.
 
+Amendment, after the first hosted mutants run and before any latency
+result was read against the criterion: the two clauses overlap, since a
+handoff makes the echo's context ready on driver 0's role and driver 1 may
+then steal it. A run with both counts is classed same-driver, served by the
+trigger: split means `stolen_contexts ≥ 1` on driver 1 and
+`ring_reassignments = 0` on driver 0. The first hosted run (4 CPUs) placed
+all three same-driver attempts as split under the original rule, each with
+its echo inside the bound; the latency criterion below is unchanged.
+
 **Configurations.** Hosted ubuntu-24.04, with one confirming run on the
 14900K. Arms: `WF_DRIVERS=2` on 2 CPUs; `WF_DRIVERS=2` on 1 CPU; a
 zero-step control; and the base compiler with the same arms. Start with 3

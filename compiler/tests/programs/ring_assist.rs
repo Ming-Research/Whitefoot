@@ -14,6 +14,11 @@
 //! control that the client and the timing detect the stall and nothing else.
 //! Each run's placement is read from its `WF_SCHED_REPORT=2` lines, never
 //! assumed, and a run whose placement differs from its arm's is run again.
+//! A run is split when the idle driver took a context and the computing
+//! driver's role was never handed over for ring work; every other run is
+//! same-driver. The handoff makes the echo's context ready on the computing
+//! driver's role, where the idle driver may then take it, so a steal alone
+//! does not show that the echo was served on a driver of its own.
 
 use std::io::{ErrorKind, Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
@@ -126,6 +131,8 @@ fn driver_reports(stderr: &str) -> Vec<DriverReport> {
 
 struct Run {
     echo: Duration,
+    /// The computation's reply was already readable when the echo returned.
+    computed_first: bool,
     reports: Vec<DriverReport>,
     stderr: String,
 }
@@ -172,10 +179,11 @@ fn run_once(program: &CompiledProgram, spin: u64) -> Option<Run> {
     assert_eq!(&returned, b"ping");
     compute.set_nonblocking(true).expect("look at the computation's reply without waiting");
     let mut first = [0_u8; 1];
-    match compute.peek(&mut first) {
-        Err(error) if error.kind() == ErrorKind::WouldBlock => {}
-        other => panic!("the computation had answered before the echo returned: {other:?}"),
-    }
+    let computed_first = match compute.peek(&mut first) {
+        Err(error) if error.kind() == ErrorKind::WouldBlock => false,
+        Ok(read) if read > 0 => true,
+        other => panic!("the computation's connection failed before the echo returned: {other:?}"),
+    };
     compute.set_nonblocking(false).expect("wait for the computation's reply");
     let mut value = [0_u8; 8];
     compute.read_exact(&mut value).expect("read the computation's reply");
@@ -193,20 +201,29 @@ fn run_once(program: &CompiledProgram, spin: u64) -> Option<Run> {
     assert_eq!(reports.len(), 2, "{stderr}");
     Some(Run {
         echo: latency,
+        computed_first,
         reports,
         stderr,
     })
 }
 
 /// Runs one arm until a run shows the arm's placement, checking the echo's
-/// bound on every run, and returns the run that showed it.
+/// bound on every run before anything else, so a late echo always fails as
+/// one, and returns the run that showed the placement.
 fn run_arm(arm: &str, spin: u64, placed: impl Fn(&[DriverReport]) -> bool) -> Option<Run> {
     let program = build_program(&compile_program("ring_assist.wf"));
+    let mut misplaced = String::new();
     for attempt in 1..=ATTEMPTS {
         let run = run_once(&program, spin)?;
         assert!(
             run.echo < ECHO_LIMIT,
             "{arm} arm, attempt {attempt}: the echo took {:?}, over {ECHO_LIMIT:?}:\n{}",
+            run.echo,
+            run.stderr
+        );
+        assert!(
+            !run.computed_first,
+            "{arm} arm, attempt {attempt}: the computation answered before an echo of {:?}, so it did not run beside the echo:\n{}",
             run.echo,
             run.stderr
         );
@@ -219,24 +236,32 @@ fn run_arm(arm: &str, spin: u64, placed: impl Fn(&[DriverReport]) -> bool) -> Op
         if placed(&run.reports) {
             return Some(run);
         }
+        misplaced.push_str(&format!("attempt {attempt}, echo {:?}:\n{}", run.echo, run.stderr));
     }
-    panic!("{arm} arm: no run of {ATTEMPTS} showed the arm's placement");
+    panic!("{arm} arm: no run of {ATTEMPTS} showed the arm's placement:\n{misplaced}");
 }
 
-/// The idle driver took no context: both contexts ran on the entry's driver.
-fn same_driver(reports: &[DriverReport]) -> bool {
-    reports[1].field("stolen_contexts") == 0
-}
-
-/// The idle driver took a ready context from the entry's driver.
+/// The idle driver took a ready context from the entry's driver, and that
+/// driver's role was never handed over for ring work, so the echo's
+/// context was taken before its receive was submitted.
 fn split_drivers(reports: &[DriverReport]) -> bool {
-    reports[1].field("stolen_contexts") >= 1
+    reports[1].field("stolen_contexts") >= 1 && reports[0].field("ring_reassignments") == 0
 }
 
-/// Same driver: the idle driver takes no context, so both contexts park on
-/// the entry's driver and the echo's receive completes in the computing
+/// Every run that is not split: either the idle driver took no context, or
+/// the computing driver's role was handed over for ring work, after which
+/// the idle driver may take the contexts the handoff made ready.
+fn same_driver(reports: &[DriverReport]) -> bool {
+    !split_drivers(reports)
+}
+
+/// Same driver: the idle driver takes no context before both contexts park
+/// on the entry's driver, so the echo's receive completes in the computing
 /// driver's ring. The echo returns within 100 ms, and the report attributes
-/// it to the ring trigger, which handed the computing driver's role over.
+/// it to the ring trigger, which handed the computing driver's role over;
+/// the idle driver may take the echo's context once the handoff made it
+/// ready. Without the trigger the echo waits for the whole computation and
+/// fails the bound on its first same-driver run.
 #[test]
 fn an_echo_beside_a_computation_on_its_driver_returns_within_100_ms() {
     let Some(run) = run_arm("same-driver", 0, same_driver) else {
