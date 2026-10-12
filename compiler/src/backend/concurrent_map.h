@@ -104,9 +104,14 @@ uint64_t wf_cmap_key_set_insert(wf_key_set *set, const unsigned char *key, uint6
  * the set next changes. */
 const unsigned char *wf_cmap_key_set_key(const wf_key_set *set, uint64_t index, uint64_t *length);
 /* Gives all the set's grants back, leaving it empty; or gives back the
- * memory of a set whose `store` alone is at hand, NULL for none. */
+ * memory of a set whose `store` alone is at hand, NULL for none. When the
+ * includer keeps spares (WF_CMAP_SPARE_KEYS), a small set's memory stays as
+ * the calling thread's spare instead, for its next set, until
+ * wf_cmap_key_set_drop_spare gives it back; the heap reading records either
+ * as the same release of the set's granted bytes. */
 void wf_cmap_key_set_release(wf_key_set *set);
 void wf_cmap_key_set_free_store(void *store);
+void wf_cmap_key_set_drop_spare(void);
 
 /* A hold of several entries of one map, which a statement keeps in its own
  * frame from wf_cmap_hold_begin to wf_cmap_hold_release, so that one
