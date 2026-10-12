@@ -2,8 +2,16 @@
 
 Newest first. One entry per approved change of the tree: a dated title,
 `Nodes:` naming every node changed, `Owner-approved:` and `Summary:`;
-`skill/SKILL.md` owns the form. Older entries also record refused amendments,
+the owner's agent instructions own the form. Older entries also record refused amendments,
 a mechanism since retired.
+
+## 2026-10-11 The gate runs macOS where it decides a merge
+
+Nodes: compiler/verification
+
+Owner-approved: On the shared status board on 2026-10-11, written in Chinese, the owner chose option A, "approve" (translated), on the card wf-gate-368-approve, which asked "approve the design-tree change in Whitefoot #368 (head f6d7da395) recording that the gate's macOS jobs run only for ready pull requests, main and manual runs?" (translated); the direction was the owner's choice of A on the card coord-gate-macos-queue the same day.
+
+Summary: The hosted gate runs every group on Linux for each push and adds macOS for a push to a ready pull request, the ready event, main and a manual run, and a final job passes only when the revision's latest check runs show every group green on both platforms, because macOS jobs waited far longer than Linux jobs for hosted runners in busy hours while a macOS-only fault must still be caught before the main line ([macOS runner queue](../research/investigations/test-economy/time-budgets.md#macos-runner-queue)). Both platforms on every push with sessions asked to push less was rejected because nothing enforces fewer pushes.
 
 ## 2026-10-11 Goal data admit integer terms by the place as written
 
