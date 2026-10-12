@@ -131,6 +131,8 @@ impl CallTransport {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct EntailmentCallee {
     pub(crate) range_boundary: bool,
+    /// Canonical prelude grow/grow_paged relocation [ENT-5].
+    pub(crate) relocation: bool,
     pub(crate) parameter_declarations: Vec<crate::DeclarationId>,
     pub(crate) parameter_modes: Vec<CheckedMode>,
     /// Per parameter, the `epsuffix*` of every declared `writes` entry
@@ -172,6 +174,7 @@ impl EntailmentCallee {
         };
         Self {
             range_boundary: false,
+            relocation: false,
             parameter_exhibited_writes: exhibited.map(rooted),
             parameter_declarations: parameters
                 .iter()

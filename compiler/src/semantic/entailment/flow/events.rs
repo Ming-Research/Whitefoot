@@ -74,6 +74,84 @@ impl Input<'_, '_> {
         })
     }
 
+    /// [ENT-5, REF-2] a relocation preserves the cell holder and references
+    /// to it or its ancestors. A reference into its old content loses validity.
+    pub(super) fn relocation_kills_holder(
+        &self,
+        separations: &dyn SeparationOracle,
+        binding: BindingId,
+        written: &ResolvedPlace,
+    ) -> bool {
+        if !self.places.is_reference(binding) {
+            return false;
+        }
+        let targets = self.places.resolve(PlaceRoot::Binding(binding), &[]);
+        let writes = self.places.resolve(written.root, &written.path);
+        targets.is_empty()
+            || writes.is_empty()
+            || targets.iter().any(|target| {
+                writes.iter().any(|write| {
+                    write.may_be_prefix_of(separations, target, false)
+                })
+            })
+    }
+
+    /// The fact-support classification of one write [ENT-5]. Relocation's
+    /// full effect place remains available to ownership and permission.
+    pub(super) fn write_kills_support(
+        &self,
+        separations: &dyn SeparationOracle,
+        support: &ResolvedPlace,
+        written: &ResolvedPlace,
+        relocation: bool,
+    ) -> bool {
+        if !relocation {
+            return self.resolved_places_overlap(separations, support, written);
+        }
+        if let PlaceRoot::Binding(binding) = support.root
+            && self.relocation_kills_holder(separations, binding, written)
+        {
+            return true;
+        }
+        let supports = self.places.resolve(support.root, &support.path);
+        let writes = self.places.resolve(written.root, &written.path);
+        if supports.is_empty() || writes.is_empty() {
+            return true;
+        }
+        supports.iter().any(|support| {
+            writes.iter().any(|write| {
+                if !self.places.overlaps(separations, support, write) {
+                    return false;
+                }
+                if support.path.len() < write.path.len() {
+                    return true;
+                }
+                let mut selected_cell = support.clone();
+                selected_cell.path.truncate(write.path.len());
+                // [OWN-7] two positions of one fixed slot shape are equal
+                // or disjoint. In both cases relocation preserves a filled
+                // descendant or length of the selected cell. An unresolved
+                // descendant cover or shifted range needs actual identity,
+                // exactly as the shared exchange judgment requires.
+                if !write.exchange_safe(separations, &selected_cell) {
+                    return true;
+                }
+                let suffix = &support.path[write.path.len()..];
+                // The Box's identity, logical length, and every descendant
+                // of an already filled selection remain the same value.
+                !matches!(
+                    suffix,
+                    []
+                    | [PlaceStep::Deref, PlaceStep::Measure(CheckedMeasure::Length)]
+                    | [PlaceStep::Deref, PlaceStep::Index(_), ..]
+                    | [PlaceStep::Deref, PlaceStep::Range(_), ..]
+                    | [PlaceStep::Deref, PlaceStep::Part(WindowPart::Filled), ..]
+                    | [PlaceStep::Deref, PlaceStep::Page(_), ..]
+                )
+            })
+        })
+    }
+
     /// [MSR-2] whether one event kills a measure of `support`.
     ///
     /// A write at an element position of P carries the written element's own
@@ -105,13 +183,22 @@ impl Input<'_, '_> {
             KillEvent::Write {
                 place: written,
                 element,
+                relocation,
                 ..
             }
             | KillEvent::EntryImageHolderWrite {
                 place: written,
                 element,
+                relocation,
                 ..
-            } => self.write_overlaps_measure(separations, written, support, measure, *element),
+            } => self.write_overlaps_measure(
+                separations,
+                written,
+                support,
+                measure,
+                *element,
+                *relocation,
+            ),
             KillEvent::Consume { binding, .. } => root == PlaceRoot::Binding(*binding),
             KillEvent::EntryImageHolderConsume { .. } => false,
         }
@@ -129,6 +216,7 @@ impl Input<'_, '_> {
         support: &ResolvedPlace,
         measure: CheckedMeasure,
         element_write: bool,
+        relocation: bool,
     ) -> bool {
         // [REF-4, MSR-2] a range reference's `len` is the immutable
         // descriptor value captured at formation. An element write through
@@ -162,7 +250,7 @@ impl Input<'_, '_> {
             .push(PlaceStep::Measure(measure.support_word()));
         // The fact's own place goes first: [WIN-2]'s liveness is a question
         // about the window above its index [`Reasoning::event_live_bounds`].
-        self.resolved_places_overlap(separations, &descriptor, written)
+        self.write_kills_support(separations, &descriptor, written, relocation)
     }
 
     /// Whether `support` is the range value itself, rather than an element
@@ -263,9 +351,17 @@ impl Input<'_, '_> {
         event: &KillEvent,
     ) -> bool {
         match event {
-            KillEvent::Write { place, .. } | KillEvent::EntryImageHolderWrite { place, .. } => {
-                self.resolved_places_overlap(separations, &ResolvedPlace::binding(binding), place)
+            KillEvent::Write {
+                place, relocation, ..
             }
+            | KillEvent::EntryImageHolderWrite {
+                place, relocation, ..
+            } => self.write_kills_support(
+                separations,
+                &ResolvedPlace::binding(binding),
+                place,
+                *relocation,
+            ),
             KillEvent::Consume {
                 binding: consumed, ..
             } => binding == *consumed,
@@ -286,8 +382,36 @@ impl Input<'_, '_> {
             {
                 false
             }
-            KillEvent::Write { place, .. } | KillEvent::EntryImageHolderWrite { place, .. } => {
-                self.resolved_places_overlap(separations, &image.place, place)
+            KillEvent::Write {
+                place,
+                element,
+                relocation,
+                ..
+            }
+            | KillEvent::EntryImageHolderWrite {
+                place,
+                element,
+                relocation,
+                ..
+            } => {
+                if !*relocation {
+                    return self.resolved_places_overlap(separations, &image.place, place);
+                }
+                image
+                    .holders
+                    .iter()
+                    .any(|holder| self.relocation_kills_holder(separations, *holder, place))
+                    || match image.datum.measure {
+                        Some(measure) => self.write_overlaps_measure(
+                            separations,
+                            place,
+                            &image.place,
+                            measure,
+                            *element,
+                            true,
+                        ),
+                        None => self.write_kills_support(separations, &image.place, place, true),
+                    }
             }
             KillEvent::Consume { binding, .. }
             | KillEvent::EntryImageHolderConsume { binding, .. } => {
@@ -355,6 +479,7 @@ impl Input<'_, '_> {
                     place,
                     element: true,
                     source: call.clone(),
+                    relocation: false,
                     narrowed: None,
                 });
             } else {
@@ -362,6 +487,7 @@ impl Input<'_, '_> {
                     place,
                     element: true,
                     source: call.clone(),
+                    relocation: false,
                     narrowed: None,
                 });
             }
@@ -506,6 +632,9 @@ impl Input<'_, '_> {
                                     place: written,
                                     element,
                                     source: call.clone(),
+                                    relocation: formal_effects.is_none()
+                                        && callee.is_some_and(|callee| callee.relocation)
+                                        && index == 0,
                                     narrowed: narrowed.clone(),
                                 });
                             } else {
@@ -513,6 +642,9 @@ impl Input<'_, '_> {
                                     place: written,
                                     element,
                                     source: call.clone(),
+                                    relocation: formal_effects.is_none()
+                                        && callee.is_some_and(|callee| callee.relocation)
+                                        && index == 0,
                                     narrowed: narrowed.clone(),
                                 });
                             }
@@ -542,9 +674,17 @@ impl Input<'_, '_> {
         event: &KillEvent,
     ) -> bool {
         match event {
-            KillEvent::Write { place, .. } | KillEvent::EntryImageHolderWrite { place, .. } => {
-                self.resolved_places_overlap(separations, &ResolvedPlace::binding(binding), place)
+            KillEvent::Write {
+                place, relocation, ..
             }
+            | KillEvent::EntryImageHolderWrite {
+                place, relocation, ..
+            } => self.write_kills_support(
+                separations,
+                &ResolvedPlace::binding(binding),
+                place,
+                *relocation,
+            ),
             KillEvent::Consume {
                 binding: consumed, ..
             }
@@ -573,6 +713,7 @@ impl Input<'_, '_> {
                     place: self.resolve(&spelled),
                     element: false,
                     source: node_path.clone(),
+                    relocation: false,
                     narrowed: None,
                 }
             }
@@ -582,6 +723,7 @@ impl Input<'_, '_> {
                     place: self.resolve(&spelled),
                     element: true,
                     source: node_path.clone(),
+                    relocation: false,
                     narrowed: None,
                 }
             }
@@ -592,6 +734,7 @@ impl Input<'_, '_> {
                 place: self.container_root_place(target),
                 element: true,
                 source: node_path.clone(),
+                relocation: false,
                 narrowed: None,
             },
         }
@@ -735,10 +878,18 @@ impl Reasoning<'_, '_, '_> {
             // measure over the same place. A clause (a) place has none.
             TermKind::Place(place, _) => {
                 (match event {
-                    KillEvent::Write { place: written, .. }
-                    | KillEvent::EntryImageHolderWrite { place: written, .. } => self
+                    KillEvent::Write {
+                        place: written,
+                        relocation,
+                        ..
+                    }
+                    | KillEvent::EntryImageHolderWrite {
+                        place: written,
+                        relocation,
+                        ..
+                    } => self
                         .input
-                        .resolved_places_overlap(separations, place, written),
+                        .write_kills_support(separations, place, written, *relocation),
                     KillEvent::Consume { binding, .. } => {
                         place.root == PlaceRoot::Binding(*binding)
                     }
@@ -751,6 +902,21 @@ impl Reasoning<'_, '_, '_> {
             // storage, which is the resolved place of P itself and not of
             // P's root: a write to a sibling field of P overlaps neither.
             TermKind::Measure(measure, place) => {
+                if let KillEvent::Write {
+                    place: written,
+                    relocation: true,
+                    ..
+                }
+                | KillEvent::EntryImageHolderWrite {
+                    place: written,
+                    relocation: true,
+                    ..
+                } = event
+                    && let PlaceRoot::Binding(binding) = place.root
+                    && self.input.relocation_kills_holder(separations, binding, written)
+                {
+                    return true;
+                }
                 let support = self.input.resolve(place);
                 self.input
                     .event_kills_measure(separations, *measure, &support, place.root, event)
@@ -769,6 +935,22 @@ impl Reasoning<'_, '_, '_> {
     ) -> bool {
         self.vocabulary.goals.support(goal).iter().any(|support| {
             let (place, holders) = self.input.resolve_goal_support(support);
+            if let KillEvent::Write {
+                place: written,
+                relocation: true,
+                ..
+            }
+            | KillEvent::EntryImageHolderWrite {
+                place: written,
+                relocation: true,
+                ..
+            } = event
+                && holders.iter().any(|holder| {
+                    self.input.relocation_kills_holder(separations, *holder, written)
+                })
+            {
+                return true;
+            }
             // [ENT-5, MSR-2] a current place reads every named offset as
             // well as the selected storage. Goals and L0 terms must lose
             // that place's identity on the same offset event.
@@ -792,11 +974,13 @@ impl Reasoning<'_, '_, '_> {
                 KillEvent::Write {
                     place: written,
                     element,
+                    relocation,
                     ..
                 }
                 | KillEvent::EntryImageHolderWrite {
                     place: written,
                     element,
+                    relocation,
                     ..
                 } if support.measure.is_some() => {
                     // [MSR-2, WIN-2] a row naming a measure word of P --
@@ -816,13 +1000,22 @@ impl Reasoning<'_, '_, '_> {
                             &place,
                             measure,
                             *element,
+                            *relocation,
                         )
                     })
                 }
-                KillEvent::Write { place: written, .. }
-                | KillEvent::EntryImageHolderWrite { place: written, .. } => self
+                KillEvent::Write {
+                    place: written,
+                    relocation,
+                    ..
+                }
+                | KillEvent::EntryImageHolderWrite {
+                    place: written,
+                    relocation,
+                    ..
+                } => self
                     .input
-                    .resolved_places_overlap(separations, &place, written),
+                    .write_kills_support(separations, &place, written, *relocation),
                 KillEvent::Consume { binding, .. } => {
                     holders.contains(binding) || place.root == PlaceRoot::Binding(*binding)
                 }
@@ -928,12 +1121,14 @@ impl Reasoning<'_, '_, '_> {
                     element,
                     source,
                     narrowed,
+                    ..
                 }
                 | KillEvent::EntryImageHolderWrite {
                     place,
                     element,
                     source,
                     narrowed,
+                    ..
                 }) = event
                 else {
                     continue;
@@ -948,6 +1143,7 @@ impl Reasoning<'_, '_, '_> {
                                     place: place.clone(),
                                     element: *element,
                                     source: source.clone(),
+                                    relocation: false,
                                     narrowed: None,
                                 },
                             )

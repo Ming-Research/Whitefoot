@@ -1744,6 +1744,7 @@ impl Analyzer<'_, '_> {
                         },
                         element: false,
                         source: node_path.clone(),
+                        relocation: false,
                         narrowed: None,
                     }]);
                     kills.set_bindings.insert(*binder);
