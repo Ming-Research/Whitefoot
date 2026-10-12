@@ -266,8 +266,8 @@ fn a_header_match_loop_is_split_into_one_function_per_arm() {
     if !convention.is_empty() {
         // Seven parameters: pc, acc, count, the hoisted code length and
         // box referent (the run), the cell's address and the frame. Jnz's
-        // joined next index is not a known step,
-        // so its edge needs the run to form the next cell's address.
+        // absolute predecessor still needs the run to form its address;
+        // the fall-through predecessor now advances the received cursor.
         assert!(
             verdict.starts_with(
                 "split: the loop over Op into 4 arms, taking 7 integer and 0 floating"
@@ -305,6 +305,10 @@ fn a_header_match_loop_is_split_into_one_function_per_arm() {
     } else {
         assert!(!module.contains("@wf_run.dispatch"), "{module}");
     }
+    // Main rebases Jnz's scalar phi, so the pointer phi and received-cursor
+    // advance asserted here fail on main. Runtime takes 999 absolute jumps,
+    // then the mixed join's fall-through, checking both pointer paths.
+    assert_mixed_cursor_join(&module);
     let output = compile_and_run(&module);
     assert!(output.status.success(), "{output:?}");
 }
@@ -392,6 +396,189 @@ fn a_result_returned_through_its_destination_threads_the_destination_through_eve
     }
     let output = compile_and_run(&module);
     assert!(output.status.success(), "{output:?}");
+}
+
+/// Read one emitted LLVM block, excluding its following block.
+fn cursor_block<'body>(body: &'body str, label: &str) -> &'body str {
+    let start = body
+        .find(&format!("\n{label}:\n"))
+        .expect("the cursor predecessor exists")
+        + 1;
+    let rest = &body[start..];
+    let mut end = rest.len();
+    let mut offset = rest.lines().next().expect("the block has a label").len() + 1;
+    for line in rest[offset..].lines() {
+        if !line.starts_with(' ') && line.ends_with(':') {
+            end = offset;
+            break;
+        }
+        offset += line.len() + 1;
+    }
+    &rest[..end]
+}
+
+/// The scalar join's bounds test is distributed once per reached path,
+/// before either pointer is formed. The qualified predecessors then join
+/// their pointers; the original scalar guard block contains no second test.
+fn assert_mixed_cursor_join(module: &str) {
+    let (convention, _) = host_convention();
+    let split = verdict(module, "wf_run").starts_with("split");
+    assert!(convention.is_empty() || split, "{module}");
+    if !split {
+        return;
+    }
+    let arm = definition(module, "wf_run.arm.2");
+    let phis = arm
+        .lines()
+        .filter(|line| line.contains("%wf.cursor.v") && line.contains(" = phi ptr "))
+        .collect::<Vec<_>>();
+    assert_eq!(phis.len(), 1, "one mixed join transports an address: {arm}");
+    let (pointer, inputs) = phis[0]
+        .trim()
+        .split_once(" = phi ptr ")
+        .expect("the cursor phi");
+    let run = cursor_run(module);
+    let mut advancing = 0;
+    let mut rebasing = 0;
+    for input in inputs.split("],") {
+        let (_, predecessor) = input.split_once(", %").expect("the phi predecessor");
+        let label = predecessor.trim().trim_end_matches(']').trim();
+        assert!(
+            label.ends_with(".valid"),
+            "every pointer is formed after the bound: {arm}"
+        );
+        let qualified = cursor_block(arm, label);
+        let source = label
+            .rsplit_once(".from.b")
+            .expect("the source block")
+            .1
+            .trim_end_matches(".valid");
+        let predecessor = cursor_block(arm, &format!("bb{source}"));
+        assert!(
+            predecessor.contains(" = icmp ult i64 ")
+                && predecessor.contains(&format!("label %{label}")),
+            "the original bounds test qualifies this predecessor: {arm}"
+        );
+        assert!(
+            !predecessor.contains(".nonnegative =")
+                && !predecessor.contains(&format!(", ptr {run},")),
+            "no loaded target is addressed or assumed in-domain before its guard: {arm}"
+        );
+        if let Some(step) = qualified.lines().find(|line|
+            line.contains(" = getelementptr %") && line.ends_with(", i64 1"))
+        {
+            advancing += 1;
+            let (_, operands) = step.split_once(", ptr ").expect("the step's pointer operand");
+            let (received, _) = operands.split_once(',').expect("the step's offset");
+            assert!(received != run && arm.lines().next().expect("the arm's signature")
+                .contains(&format!("ptr {received}")),
+                "the fall-through advances the received cursor: {qualified}");
+            assert!(
+                !qualified.contains(&format!(", ptr {run},")),
+                "fall-through never rebases: {qualified}"
+            );
+        } else {
+            rebasing += 1;
+            assert!(
+                qualified
+                    .lines()
+                    .any(|line| line.contains(" = getelementptr inbounds {")
+                        && line.contains(&format!(", ptr {run},"))),
+                "the qualified absolute target rebases: {qualified}"
+            );
+        }
+    }
+    assert_eq!((advancing, rebasing), (1, 1), "{arm}");
+    assert!(arm.lines().any(|line| line.contains("musttail call ") && line.contains(&format!("ptr {pointer}"))),
+        "the continuing edge uses the joined pointer: {arm}");
+    let join_label = arm[..arm.find(phis[0]).expect("the phi is in the arm")]
+        .lines()
+        .rev()
+        .find(|line| line.ends_with(':'))
+        .expect("the join's label")
+        .trim_end_matches(':');
+    assert!(
+        !cursor_block(arm, join_label).contains("icmp ult"),
+        "the guard is moved, never duplicated dynamically: {arm}"
+    );
+}
+
+#[test]
+fn an_out_of_bounds_mixed_target_reaches_the_original_failure_without_addressing_it() {
+    // A full-width target would poison an inbounds GEP or its nonnegative
+    // assumption before the guard. Keep it on the original safe failure path.
+    let source = scalar_interpreter()
+        .replace("Op::Jnz(t: 0_u64)", "Op::Jnz(t: 18446744073709551615_u64)")
+        .replace("return 0_u64;", "return pc;")
+        .replace("r == 3000_u64", "r == 2_u64");
+    assert!(source.contains("Op::Jnz(t: 18446744073709551615_u64)") && source.contains("r == 2_u64"));
+    let module = emit(source.as_bytes());
+    assert_mixed_cursor_join(&module);
+    let output = compile_and_run(&module);
+    assert!(
+        output.status.success(),
+        "the invalid target returns its original pc through the failure aliases: {output:?}"
+    );
+}
+
+#[test]
+fn two_absolute_join_predecessors_keep_run_based_cursor_formation() {
+    // This control already passes main. Neither incoming value is a known
+    // step, so B1 must not revive the arbitrary index-delta optimization.
+    let source = scalar_interpreter().replace(
+        "let next = pc + 1_u64;\n        if count != 0_u64 {\n          set next = tv^;",
+        "let next = tv^;\n        if count != 0_u64 {\n          set next = 0_u64;",
+    );
+    let module = emit(source.as_bytes());
+    let (convention, _) = host_convention();
+    let split = verdict(&module, "wf_run").starts_with("split");
+    assert!(convention.is_empty() || split, "{module}");
+    if split {
+        let arm = definition(&module, "wf_run.arm.2");
+        let run = cursor_run(&module);
+        assert!(
+            !arm.contains("%wf.cursor.v"),
+            "all-absolute joins have no cursor phi: {arm}"
+        );
+        assert!(
+            arm.lines()
+                .any(|line| line.contains(" = getelementptr inbounds {")
+                    && line.contains(&format!(", ptr {run},"))),
+            "the continuing edge still rebases: {arm}"
+        );
+        assert!(!arm.contains("sub i64"), "no arbitrary index delta: {arm}");
+    }
+}
+
+#[test]
+fn equal_nonzero_steps_through_a_join_advance_without_a_pointer_phi() {
+    // Distinct additions in the two predecessors carry the same step.
+    // Main only propagates step zero through joins, then rebases this pc+1.
+    let source = scalar_interpreter().replace(
+        "set next = tv^;",
+        "let same_next = pc + 1_u64;\n          set next = same_next;",
+    );
+    let module = emit(source.as_bytes());
+    let (convention, _) = host_convention();
+    let split = verdict(&module, "wf_run").starts_with("split");
+    assert!(convention.is_empty() || split, "{module}");
+    if split {
+        let arm = definition(&module, "wf_run.arm.2");
+        let run = cursor_run(&module);
+        assert!(
+            !arm.contains("%wf.cursor.v"),
+            "an equal step needs no pointer phi: {arm}"
+        );
+        assert!(
+            arm.lines()
+                .any(|line| line.contains(" = getelementptr %") && line.ends_with(", i64 1")),
+            "the common nonzero step advances the received address: {arm}"
+        );
+        assert!(
+            !arm.contains(&format!(", ptr {run},")),
+            "equal steps never rebase: {arm}"
+        );
+    }
 }
 
 /// An interpreter whose path tells a carried element address from a wrong

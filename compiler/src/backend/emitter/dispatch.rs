@@ -460,8 +460,10 @@ enum Role {
 /// that element through its address. The parts then carry the address as
 /// well as the index: an edge into the header passes the address of the
 /// element its index selects. A known constant step moves the received
-/// address; any other index forms an address from the run. The header uses
-/// the address it receives instead of forming it from the index.
+/// address; a mixed join carries the addresses formed on its qualified
+/// predecessors, while any other index forms an address from the run.
+/// The header uses the address it receives instead of forming it from the
+/// index.
 #[derive(Clone)]
 struct Cursor {
     /// The header value addressing the matched element.
@@ -470,6 +472,8 @@ struct Cursor {
     index: IrValueId,
     /// Values that are `index` plus a small constant number of elements.
     steps: HashMap<IrValueId, u64>,
+    /// Arm-local addresses transported through qualified joins.
+    joins: HashMap<IrValueId, String>,
     /// The run's address.
     run: IrValueId,
     /// The header instruction that defines `place`.
@@ -478,6 +482,31 @@ struct Cursor {
     element: IrType,
     /// The header projection's target-domain obligation.
     target_domain: crate::IrTargetDomainObligation,
+}
+
+/// A mixed scalar join with its existing bounds test distributed over
+/// incoming edges. Only qualified edges enter the join, so its address phi
+/// never requires a speculative address from an unbounded target.
+struct CursorJoin {
+    block: IrBlockId,
+    index: IrValueId,
+    bound: IrValueId,
+    success: IrBlockId,
+    failure: IrBlockId,
+    failure_blocks: Vec<bool>,
+    failure_aliases: HashMap<IrValueId, IrValueId>,
+}
+
+fn joined_cursor_name(value: IrValueId) -> String {
+    format!("%wf.cursor.v{}", value.ordinal())
+}
+
+fn predecessor_cursor_name(value: IrValueId, predecessor: IrBlockId) -> String {
+    format!(
+        "%wf.cursor.v{}.from.b{}",
+        value.ordinal(),
+        predecessor.index()
+    )
 }
 
 /// The emission state of one split function.
@@ -1281,9 +1310,37 @@ impl FunctionEmitter<'_, '_> {
         ));
 
         self.set_part(Part::Arm);
+        let mut transported_joins = 0;
         for ((target, blocks), arm_symbol) in arms.iter().zip(&arm_symbols) {
             self.output = FunctionBody::default();
             self.incoming = self.collect_incoming(blocks)?;
+            if let Some(index) = self
+                .dispatch
+                .as_ref()
+                .and_then(|dispatch| dispatch.cursor.as_ref())
+                .map(|cursor| cursor.index)
+            {
+                let steps = self.index_steps(index, Some(blocks));
+                if let Some(cursor) = self
+                    .dispatch
+                    .as_mut()
+                    .and_then(|dispatch| dispatch.cursor.as_mut())
+                {
+                    cursor.steps = steps;
+                }
+            }
+            let cursor_joins = self.cursor_joins(blocks)?;
+            transported_joins += cursor_joins.len();
+            if let Some(cursor) = self
+                .dispatch
+                .as_mut()
+                .and_then(|dispatch| dispatch.cursor.as_mut())
+            {
+                cursor.joins = cursor_joins
+                    .iter()
+                    .map(|join| (join.index, joined_cursor_name(join.index)))
+                    .collect();
+            }
             self.output.open_block("entry".to_owned());
             writeln!(self.output, "  br label %{}", block_label(*target))
                 .map_err(|_| BackendFailure::TextEmission)?;
@@ -1294,13 +1351,32 @@ impl FunctionEmitter<'_, '_> {
                 self.materialized.clear();
                 let block_id =
                     IrBlockId::from_index(index).ok_or(BackendFailure::CounterOverflow)?;
+                self.pin_names.clear();
+                for join in &cursor_joins {
+                    if join.failure_blocks[index] {
+                        self.pin_names.extend(
+                            join.failure_aliases
+                                .iter()
+                                .map(|(parameter, source)| (*parameter, value_name(*source))),
+                        );
+                    }
+                }
                 self.output.open_block(block_label(block_id));
                 self.emit_block_parameters(block_id, member)?;
-                for (instruction_index, instruction) in member.instructions().iter().enumerate() {
-                    self.emit_part_instruction(block_id, instruction_index, instruction)?;
+                if let Some(join) = cursor_joins.iter().find(|join| join.block == block_id) {
+                    self.emit_cursor_join_phi(join)?;
+                    writeln!(self.output, "  br label %{}", block_label(join.success))?;
+                } else {
+                    for (instruction_index, instruction) in member.instructions().iter().enumerate()
+                    {
+                        self.emit_part_instruction(block_id, instruction_index, instruction)?;
+                    }
+                    if !self.emit_cursor_join_edge(block_id, &cursor_joins)? {
+                        self.emit_terminator(block_id, member.terminator())?;
+                    }
                 }
-                self.emit_terminator(block_id, member.terminator())?;
                 self.output.finish_ir_block(block_id)?;
+                self.pin_names.clear();
             }
             parts.push((
                 self.part_signature(arm_symbol, Part::Arm)?,
@@ -1309,6 +1385,10 @@ impl FunctionEmitter<'_, '_> {
             ));
         }
 
+        self.dispatch_ledger.push(format!(
+            "{}: transports the matched element's address through {transported_joins} mixed joins",
+            symbol.strip_suffix(".dispatch").unwrap_or(&symbol)
+        ));
         let mut users: HashMap<FunctionSlot, usize> = HashMap::new();
         for (_, _, uses) in &parts {
             for key in uses {
@@ -1849,11 +1929,12 @@ impl FunctionEmitter<'_, '_> {
                 })
                 .unwrap_or_default();
             if !renamed.is_empty() {
+                let saved_names = self.pin_names.clone();
                 for (argument, parameter) in &renamed {
                     self.pin_names.insert(*argument, pin_slot_name(*parameter));
                 }
                 let emitted = self.emit_instruction(block, index, instruction);
-                self.pin_names.clear();
+                self.pin_names = saved_names;
                 return emitted;
             }
         }
@@ -1917,7 +1998,8 @@ impl FunctionEmitter<'_, '_> {
                 return Ok(Some(Cursor {
                     place: *result,
                     index: *offset,
-                    steps: self.index_steps(*offset),
+                    steps: self.index_steps(*offset, None),
+                    joins: HashMap::new(),
                     run: *address,
                     instruction,
                     element: referent.ty(),
@@ -1928,11 +2010,290 @@ impl FunctionEmitter<'_, '_> {
         Ok(None)
     }
 
+    /// Move a join's existing, pure bounds test to its incoming edges.
+    /// The immediate success edge already has the header's checked target
+    /// domain; moving its address formation to those successful predecessors
+    /// preserves that domain without introducing another test: substituting
+    /// each incoming value in the pure comparison leaves exactly the same
+    /// hypotheses at the immediate, instruction-free checked continuation.
+    /// The bound can be the run's length or a previously justified tighter
+    /// bound; the existing header obligation, not a guessed bound, is the
+    /// authority. A failure
+    /// continuation may read equal-input parameters through their dominating
+    /// source values, but a varying failure value or a shared continuation
+    /// keeps the ordinary run-based path.
+    fn cursor_joins(&self, blocks: &[bool]) -> Result<Vec<CursorJoin>, BackendFailure> {
+        let Some(dispatch) = &self.dispatch else {
+            return Ok(Vec::new());
+        };
+        let Some(cursor) = &dispatch.cursor else {
+            return Ok(Vec::new());
+        };
+        let mut joins = Vec::new();
+        for (index, block) in self.function.blocks().iter().enumerate() {
+            if !blocks[index] {
+                continue;
+            }
+            let [
+                IrInstruction::Define {
+                    result,
+                    ty: IrType::Bool,
+                    operation:
+                        crate::IrOperation::Integer {
+                            operation: crate::IrIntegerOperation::Less,
+                            operand_type:
+                                IrType::Integer {
+                                    width: 64,
+                                    signed: false,
+                                },
+                            arguments,
+                        },
+                },
+            ] = block.instructions()
+            else {
+                continue;
+            };
+            let [offset, bound] = arguments.as_slice() else {
+                continue;
+            };
+            let Some(position) = block
+                .parameters()
+                .iter()
+                .position(|(value, _)| value == offset)
+            else {
+                continue;
+            };
+            if cursor.steps.contains_key(offset) {
+                continue;
+            }
+            let IrTerminator::Match {
+                scrutinee,
+                enum_type: IrEnumType::Bool,
+                targets,
+            } = block.terminator()
+            else {
+                continue;
+            };
+            if scrutinee != result || targets.len() != 2 {
+                continue;
+            }
+            if self
+                .function
+                .blocks()
+                .iter()
+                .enumerate()
+                .any(|(at, member)| {
+                    blocks[at]
+                        && at != index
+                        && (member
+                            .instructions()
+                            .iter()
+                            .any(|instruction| instruction.operands().contains(result))
+                            || member.terminator().operands().contains(result))
+                })
+            {
+                continue;
+            }
+            let Some(success) = targets
+                .iter()
+                .find(|target| target.tag() == 1)
+                .map(|target| target.block())
+            else {
+                continue;
+            };
+            let Some(failure) = targets
+                .iter()
+                .find(|target| target.tag() == 0)
+                .map(|target| target.block())
+            else {
+                continue;
+            };
+            let success_block = self.block(success)?;
+            let IrTerminator::Jump {
+                target,
+                arguments: returned,
+                ..
+            } = success_block.terminator()
+            else {
+                continue;
+            };
+            if !success_block.instructions().is_empty() || *target != dispatch.plan.header {
+                continue;
+            }
+            let Some(cursor_position) = self
+                .block(*target)?
+                .parameters()
+                .iter()
+                .position(|(value, _)| *value == cursor.index)
+            else {
+                continue;
+            };
+            if returned.get(cursor_position) != Some(offset) {
+                continue;
+            }
+            let incoming = &self.incoming[index];
+            if incoming.len() < 2
+                || incoming.iter().any(|edge| edge.arguments.len() != block.parameters().len())
+                || !incoming
+                    .iter()
+                    .any(|edge| cursor.steps.contains_key(&edge.arguments[position]))
+            {
+                continue;
+            }
+            let block_id = IrBlockId::from_index(index).ok_or(BackendFailure::CounterOverflow)?;
+            // A cycle can revisit a join with a new index before dispatch:
+            // that is not a constant step from this arm's received cursor.
+            if incoming.iter().any(|edge| {
+                reach(self.function, &[index], dispatch.plan.header.index())
+                    [edge.predecessor.index()]
+            }) {
+                continue;
+            }
+            let success_blocks = reach(
+                self.function,
+                &[success.index()],
+                dispatch.plan.header.index(),
+            );
+            let failure_blocks = reach(
+                self.function,
+                &[failure.index()],
+                dispatch.plan.header.index(),
+            );
+            if success_blocks
+                .iter()
+                .zip(&failure_blocks)
+                .any(|(a, b)| *a && *b)
+                || failure_blocks[index]
+                || self
+                    .function
+                    .blocks()
+                    .iter()
+                    .enumerate()
+                    .any(|(at, member)| {
+                        failure_blocks[at]
+                            && successors(member).contains(&dispatch.plan.header.index())
+                    })
+            {
+                continue;
+            }
+            let mut aliases = HashMap::new();
+            for (at, (parameter, _)) in block.parameters().iter().enumerate() {
+                let first = incoming[0].arguments[at];
+                if incoming.iter().all(|edge| edge.arguments[at] == first) {
+                    aliases.insert(*parameter, first);
+                }
+            }
+            let mut reads = BTreeSet::new();
+            for (at, member) in self.function.blocks().iter().enumerate() {
+                if failure_blocks[at] {
+                    used_values(member, &mut reads);
+                }
+            }
+            if reads.contains(result)
+                || block
+                    .parameters()
+                    .iter()
+                    .any(|(value, _)| reads.contains(value) && !aliases.contains_key(value))
+            {
+                continue;
+            }
+            joins.push(CursorJoin {
+                block: block_id,
+                index: *offset,
+                bound: *bound,
+                success,
+                failure,
+                failure_blocks,
+                failure_aliases: aliases,
+            });
+        }
+        Ok(joins)
+    }
+
+    fn emit_cursor_join_phi(&mut self, join: &CursorJoin) -> Result<(), BackendFailure> {
+        write!(
+            self.output,
+            "  {} = phi ptr ",
+            joined_cursor_name(join.index)
+        )?;
+        for (at, edge) in self.incoming[join.block.index()].iter().enumerate() {
+            if at != 0 {
+                self.output.push_str(", ");
+            }
+            self.output.incoming(
+                predecessor_cursor_name(join.index, edge.predecessor),
+                edge.predecessor,
+            );
+        }
+        self.output.push('\n');
+        Ok(())
+    }
+
+    /// Returns whether this predecessor's transfer was emitted, retaining
+    /// the original edge's storage and drop actions before its moved guard.
+    fn emit_cursor_join_edge(
+        &mut self,
+        block: IrBlockId,
+        joins: &[CursorJoin],
+    ) -> Result<bool, BackendFailure> {
+        let member = self.block(block)?.clone();
+        let IrTerminator::Jump {
+            target,
+            arguments,
+            drops,
+        } = member.terminator()
+        else {
+            return Ok(false);
+        };
+        let Some(join) = joins.iter().find(|join| join.block == *target) else {
+            return Ok(false);
+        };
+        let parameters = self.block(*target)?.parameters().to_vec();
+        let argument = |value: IrValueId| {
+            parameters
+                .iter()
+                .position(|(parameter, _)| *parameter == value)
+                .map_or(value, |position| arguments[position])
+        };
+        let offset = argument(join.index);
+        let bound = argument(join.bound);
+        self.prepare_snapshot_use(block, member.instructions().len())?;
+        self.emit_place_edge(*target, arguments, drops)?;
+        let predicate = self.next_temporary()?;
+        let qualified = format!(
+            "wf.cursor.v{}.from.b{}.valid",
+            join.index.ordinal(),
+            block.index()
+        );
+        writeln!(
+            self.output,
+            "  %{predicate} = icmp ult i64 {}, {}\n  br i1 %{predicate}, label %{qualified}, label %{}",
+            self.value_name(offset),
+            self.value_name(bound),
+            block_label(join.failure)
+        )?;
+        self.output.open_block(qualified);
+        let cursor = self
+            .dispatch
+            .as_ref()
+            .and_then(|dispatch| dispatch.cursor.clone())
+            .ok_or(BackendFailure::InvalidIr)?;
+        let address = self.edge_cursor(&cursor, &[(cursor.index, offset)], true)?;
+        writeln!(
+            self.output,
+            "  {} = getelementptr i8, ptr {address}, i64 0\n  br label %{}",
+            predecessor_cursor_name(join.index, block),
+            block_label(join.block)
+        )?;
+        Ok(true)
+    }
+
     /// The matched element's address for the index an edge into the header
     /// gives it. Entering the loop, it is the run's element at that index.
     /// An edge back to the header reuses the received address for the same
-    /// index, moves it for a known constant step, and otherwise forms the
-    /// address from the run just as the entering edge does.
+    /// index, moves it for a known constant step, or uses a qualified join
+    /// pointer. Every other index forms its address from the run just as
+    /// the entering edge does.
     fn edge_cursor(
         &mut self,
         cursor: &Cursor,
@@ -1944,6 +2305,9 @@ impl FunctionEmitter<'_, '_> {
             .find(|(parameter, _)| *parameter == cursor.index)
             .map(|(_, argument)| *argument)
             .ok_or(BackendFailure::InvalidIr)?;
+        if tail && let Some(pointer) = cursor.joins.get(&argument) {
+            return Ok(pointer.clone());
+        }
         if tail && let Some(step) = cursor.steps.get(&argument) {
             if *step == 0 {
                 return Ok(self.value_name(cursor.place));
@@ -1965,12 +2329,12 @@ impl FunctionEmitter<'_, '_> {
 
     /// Finds direct additions of a nonnegative integer constant at most
     /// `u32::MAX` to the cursor index, in either operand order, including the
-    /// index itself at step zero and the joins whose every incoming value is
-    /// the index. With nonzero stride, the valid index is
+    /// index itself at step zero and joins whose incoming values all have
+    /// the same constant step. With nonzero stride, the valid index is
     /// below the signed address limit, so these additions cannot wrap u64;
     /// zero stride uses address index zero. Larger constants keep the
     /// run-based addressing path.
-    fn index_steps(&self, index: IrValueId) -> HashMap<IrValueId, u64> {
+    fn index_steps(&self, index: IrValueId, region: Option<&[bool]>) -> HashMap<IrValueId, u64> {
         let definitions: HashMap<IrValueId, &crate::IrOperation> = self
             .function
             .blocks()
@@ -1991,12 +2355,15 @@ impl FunctionEmitter<'_, '_> {
             }
             _ => None,
         };
-        // A block parameter whose every incoming value is the index, as at
-        // the join after an `if` in an arm, is the index; only a jump passes
-        // block arguments.
+        // A block parameter whose incoming values all have one constant
+        // step keeps that step; only a jump passes block arguments. Arm
+        // emission considers only the predecessors that its part reaches.
         let blocks = self.function.blocks();
         let mut incoming: HashMap<IrValueId, Vec<IrValueId>> = HashMap::new();
-        for block in blocks {
+        for (at, block) in blocks.iter().enumerate() {
+            if region.is_some_and(|region| !region[at]) {
+                continue;
+            }
             if let IrTerminator::Jump {
                 target, arguments, ..
             } = block.terminator()
@@ -2007,42 +2374,50 @@ impl FunctionEmitter<'_, '_> {
                 }
             }
         }
-        let mut same: HashSet<IrValueId> = HashSet::from([index]);
+        let mut steps = HashMap::from([(index, 0)]);
         loop {
-            let joined: Vec<IrValueId> = incoming
-                .iter()
-                .filter(|(parameter, arguments)| {
-                    !same.contains(*parameter)
-                        && arguments.iter().all(|argument| same.contains(argument))
-                })
-                .map(|(parameter, _)| *parameter)
-                .collect();
-            if joined.is_empty() {
-                break;
+            let before = steps.len();
+            for (parameter, arguments) in &incoming {
+                if *parameter == index || steps.contains_key(parameter) {
+                    continue;
+                }
+                if let Some(first) = arguments
+                    .first()
+                    .and_then(|value| steps.get(value))
+                    .copied()
+                    && arguments
+                        .iter()
+                        .all(|value| steps.get(value) == Some(&first))
+                {
+                    steps.insert(*parameter, first);
+                }
             }
-            same.extend(joined);
-        }
-        let mut steps: HashMap<IrValueId, u64> = same.iter().map(|value| (*value, 0)).collect();
-        for (result, operation) in &definitions {
-            let crate::IrOperation::Integer {
-                operation:
-                    crate::IrIntegerOperation::AddExact
-                    | crate::IrIntegerOperation::AddChecked
-                    | crate::IrIntegerOperation::AddDefined
-                    | crate::IrIntegerOperation::AddWrap,
-                arguments,
-                ..
-            } = operation
-            else {
-                continue;
-            };
-            let step = match arguments.as_slice() {
-                [left, right] if same.contains(left) => constant(right),
-                [left, right] if same.contains(right) => constant(left),
-                _ => None,
-            };
-            if let Some(step) = step {
-                steps.insert(*result, step);
+            for (result, operation) in &definitions {
+                let crate::IrOperation::Integer {
+                    operation:
+                        crate::IrIntegerOperation::AddExact
+                        | crate::IrIntegerOperation::AddChecked
+                        | crate::IrIntegerOperation::AddDefined
+                        | crate::IrIntegerOperation::AddWrap,
+                    arguments,
+                    ..
+                } = operation
+                else {
+                    continue;
+                };
+                // Keep the existing direct-step domain: an arbitrary
+                // changing index is never turned into a cursor delta.
+                let step = match arguments.as_slice() {
+                    [left, right] if steps.get(left) == Some(&0) => constant(right),
+                    [left, right] if steps.get(right) == Some(&0) => constant(left),
+                    _ => None,
+                };
+                if let Some(step) = step {
+                    steps.insert(*result, step);
+                }
+            }
+            if steps.len() == before {
+                break;
             }
         }
         steps

@@ -1194,6 +1194,87 @@ predecessors that arm reaches:
 - mixed steps take a pointer phi of each predecessor's cursor;
 - arbitrary targets form the cursor from the run.
 
+#### Mixed-join cursor transport: question, comparison and rejection criterion
+
+**Question.** Does carrying the matched element's address through a join
+between a constant-step index and an absolute target remove useful work
+beyond the current constant-step/rebase lowering? The reported static census
+on main identifies 33 mixed sites among 41 rebasing continuing edges out of
+359 in v2h; this is an opportunity count, not a dynamic cost measurement.
+The candidate preserves both the numeric index and its corresponding cursor.
+A constant-step predecessor advances the received cursor, an absolute-target
+predecessor forms its cursor from the stable run, and a pointer phi merges
+them. Equal constant steps through a join retain one step; joins containing
+only arbitrary targets retain run-based rebasing.
+
+**Scope and safety.** Implement this one candidate in dispatch lowering,
+without opcode-specific cases, new acceptance rules or runtime checks.
+Preserve bounds guards, target-domain obligations, stable storage and the
+index/address correspondence. In particular, a loaded target must not cause
+an `inbounds` address to be formed before its bound is established on that
+path. Where a guard follows the scalar join, address transport must preserve
+its dominance over address formation. The selected implementation approach
+distributes a compare-only bounds guard to the incoming paths, preserving
+one execution of the original comparison on each path, and joins the
+pointers only after success. Failure retains the original continuation;
+the former joined guard is removed. Merely omitting `inbounds` is
+insufficient for an arbitrary loaded index: [STOR-6] still requires exact
+target-index and scaled-offset representation. Joins whose guard or failure
+continuation cannot be transported safely keep the existing rebase.
+Unknown steps still rebase; this candidate does not compute `next - old`.
+
+**Comparison.** Generate identical v2h source once from this revision's
+`research/experiments/match-dispatch/wasm/gen.py`. Compile it with main at
+`032a0f665`, the candidate, and an independently built twin of that main.
+Use the same LLVM, optimization settings and CoreMark 2K workload. Also
+compile Halo-wf at `acb39ad7f`, the revision used in
+[the previous Halo comparison](../../experiments/match-dispatch/RESULTS.md#the-register-pressure-candidate-and-the-code-cursor-on-halo),
+with all three compilers and full LTO; run `fib` at N = 35 and `loop`.
+The temporary CI workflow first offers a two-round hosted smoke run; the
+measurement is seven interleaved launches in rotated order on the 14900K.
+Record correctness, per-round results, medians, spread, paired
+candidate/main and twin/main ratios, and dispatch ledgers. Inspect affected
+address sequences and any added branches or spills before attributing a
+score change to eliminated fall-through rebasing. Hosted results qualify
+the workflow, not the performance claim.
+
+**Prediction and rejection criterion, fixed before measuring.** Mixed-join
+transport should remove fall-through rebasing at recognized mixed sites
+while retaining necessary absolute-target rebasing. Adopt only if v2h
+CoreMark's median score rises at least 2%, neither Halo kernel (`fib`,
+`loop`) becomes more than 2% slower, and the result is distinguishable from
+the twin. Reject or leave inconclusive a result that misses these conditions.
+Incorrect pointer formation, changed acceptance or an added runtime check
+fails regardless of performance. A lower GEP count alone is not adoption
+evidence; extra spills or branches count against the measured result.
+
+**Prior objections.** The
+[per-arm derived-pointer trial](../../experiments/match-dispatch/RESULTS.md#frame-slots-addressed-from-a-derived-pointer)
+cut v2h instructions 3.3% but raised score only 0.9%, below its criterion.
+The [carried-frame prototype](../../experiments/match-dispatch/RESULTS.md#stage-3-the-frame-as-an-address)
+scored 0.994 of its comparator and missed Halo's non-inlined helpers; its
+AArch64 `Copy` reconstructed the stack base. B1 changes join transport,
+not frame-slot consumers, and makes no claim to address either failure.
+Replacing the index with the cursor scored 1.6% below carrying both, so B1
+retains numeric PC, including its trap, outcome and saved-return uses.
+Moving every cursor by `next - old` slowed Halo `loop` 5.7%; B1 preserves
+the [constant-step/rebase rule](../../experiments/match-dispatch/RESULTS.md#edges-by-their-step)
+that removed that regression. Absolute target bounds authorize valid
+address formation, not cheaper relative arithmetic.
+
+**Uncertainties.** The census supplies neither dynamic fall-through
+frequency nor optimized x86 cost. Bounds established after a join constrain
+where address formation may assert validity. The candidate must account for
+the run as a reader wherever a transported alternative rebases. Halo timing
+is a regression control, not evidence that helper-based frame accesses
+receive this mechanism. No measurements of this candidate exist yet.
+
+**Later candidates.** Persistent frame pointers require complete consumer
+rewriting, helper coverage and an explicit usable relation for `enter`'s
+successful frame result; stable length alone does not supply that relation.
+Producer-supplied target addresses require a separate private representation
+and lifetime design; carrying a pointer alone does not remove its first GEP.
+
 **B2. Parameters that only travel.** `natural-loop.wf` passes its
 `count0` and the enclosing frame through every arm unread. The fix is
 liveness over real observations, applied to the dispatcher, the arms and
