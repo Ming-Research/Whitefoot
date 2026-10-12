@@ -11,6 +11,14 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-12 v0.130: an empty Paged shares the static header and page 0 grows to B
+
+Rules: changed TYPE-9, WIN-1, STOR-1, STOR-3, STOR-6, OP-10, OP-13
+
+Owner-approved: On the shared status board on 2026-10-12, the owner chose option A, "approve" (translated), on the card paged-small-spec-approve, "approve Whitefoot#363 (head 6127336ed)'s specification changes: an empty Paged shares the static header, page 0 is allocated by capacity and may move before it holds B?" (translated), whose background summarized every changed rule; the direction was the owner's choice of B on the card paged-small-owners on 2026-10-11.
+
+Summary: A capacity-0 `Box<Paged<T>>` points at the shared static empty header like the runtime-capacity Array, Slots and Ring (STOR-1), and a positive capacity allocates page 0 at the least power of two covering it, capped at the page length B, with every later page at B (OP-13). Growth past page 0's allocated length before B replaces page 0 and copies its initialized elements, at most B - 1 copies over the owner's growth, while full pages keep their addresses (OP-10, alongside v0.128's ENT-5 relocation classification, REF-2 and PAR-1). TYPE-9 and WIN-1 describe pages by their allocated lengths with the unchanged page-and-offset map, STOR-6 sizes and qualifies each page at its allocated length, and STOR-3 releases a Box's content before freeing its allocated cell once. The approval named v0.129; the merge order gave v0.129 to the range-referent amendment, so these unchanged rules are numbered v0.130. Selection ground: Snowghost's per-owner Paged storage paid 89,038 extra header allocations and 100,466 extra full pages; a fixed small page 0 would add a compare and branch to every element address, and keeping full pages would leave Snowghost to route around the gap in source.
+
 ## 2026-10-12 v0.129: a range reference's referent is a run, admitted only as a subscript, range or length base
 
 Rules: changed TYPE-7
