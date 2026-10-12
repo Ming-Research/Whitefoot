@@ -2291,6 +2291,48 @@ fn reference_match_payload_writes_reach_the_container() {
     }
 }
 
+/// [RANGE-1] a payload binder's referent below an element projection is that
+/// element's payload projection in a range goal. The corpus owns the
+/// verdicts; this pins each negative to the intended call rather than an
+/// earlier type, effect or reference error.
+#[test]
+fn payload_binder_referents_are_element_projections() {
+    for (source, expected) in [
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range1-pos-payload-binder-referent.wf"
+            )
+            .as_slice(),
+            None,
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range1-neg-payload-binder-referent-unproved.wf"
+            )
+            .as_slice(),
+            Some((SemanticRule::Range3, "follow(")),
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range1-neg-payload-binder-referent-written.wf"
+            )
+            .as_slice(),
+            Some((SemanticRule::Fn8, "need_below(value: jump_to^")),
+        ),
+    ] {
+        with_semantics(source, |outcome| match (expected, outcome) {
+            (None, SemanticOutcome::Complete(_)) => {}
+            (Some((rule, call)), SemanticOutcome::SourceIssue { issue, .. }) => {
+                assert_eq!(issue.rule(), rule, "{issue:?}");
+                let crate::SemanticLocation::SourceNode(_, coordinate) = issue.location();
+                let start = usize::try_from(coordinate.start().value()).unwrap();
+                assert!(source[start..].starts_with(call.as_bytes()), "{issue:?}");
+            }
+            (expected, outcome) => panic!("expected {expected:?}: {outcome:?}"),
+        });
+    }
+}
+
 #[test]
 fn range_facts_discharge_every_integer_domain_family() {
     for (ty, bound, expression) in [
