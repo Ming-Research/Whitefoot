@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 the owner's agent instructions own the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-12 Paged shares the empty header and grows a small first page
+
+Nodes: compiler/storage-representation, language/data-model/storage-shapes
+
+Owner-approved: On the shared status board on 2026-10-12, the owner chose option A, "approve" (translated), on the card paged-small-design-approve, "approve Whitefoot#363 (head 6127336ed)'s design-tree changes: Paged shares the empty header, page 0 grows step by step, and the two rejected approaches are recorded?" (translated); the direction was the owner's choice of B on the card paged-small-owners on 2026-10-11.
+
+Summary: The shared read-only empty header extends to Paged, and a positive-capacity Paged allocates page 0 at the least power-of-two element count covering its capacity, capped at B, replacing and copying it only while growth exceeds that count before B, because Snowghost's many empty and tiny Paged owners paid 89,038 extra header allocations and 100,466 extra full pages while shift-and-mask addressing stays unchanged and all replacements together copy at most B - 1 elements. Paged growth may therefore relocate only page 0 before it reaches B, with full pages kept in place, and a future page-adoption operation would adopt only full pages. A fixed smaller page 0 with non-uniform indexing (a compare and branch on every element address) and full first pages with per-owner headers (leaving Snowghost to route around the gap) are rejected. The storage-shapes decision on whole-storage effect entries now states overlap only and leaves fact survival to the relocation classification approved for Whitefoot#352.
+
 ## 2026-10-11 Payload enum tags sized by variant count
 
 Nodes: compiler/payload-enum-layout, compiler/storage-placement, compiler/tag-only-lowering
