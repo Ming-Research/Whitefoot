@@ -1,0 +1,10 @@
+fn main() -> status: std::process::ExitStatus pure waits {
+  let stats = shared_shards_new::<u8>(value: 0_u8);
+  let count = 0_u64;
+  atomic all = &stats {
+    let run = &all^[0_u64..1_u64];
+    set count = run^.len;
+  }
+  let code = cvt.wrap::<u64, u8>(count);
+  return std::process::exit_status(code: code);
+}

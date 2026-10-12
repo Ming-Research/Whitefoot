@@ -1,0 +1,16 @@
+fn main() -> status: std::process::ExitStatus pure waits {
+  let flags = shared_shards_new::<u8>(value: 1_u8);
+  let same = 1_u8;
+  let first = 0_u8;
+  atomic all = &flags {
+    for @shard (i in 0_u64..all^.len) {
+      if all^[i] != 1_u8 {
+        set same = 0_u8;
+      }
+    }
+    set first = all^[0_u64];
+  }
+  let tens = same *wrap 10_u8;
+  let code = tens +wrap first;
+  return std::process::exit_status(code: code);
+}

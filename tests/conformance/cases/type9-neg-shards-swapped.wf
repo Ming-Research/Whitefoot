@@ -1,0 +1,8 @@
+fn main() -> status: std::process::ExitStatus pure waits {
+  let x = shared_shards_new::<u8>(value: 1_u8);
+  let y = shared_shards_new::<u8>(value: 2_u8);
+  atomic a = &x, b = &y {
+    swap(first: a, second: b);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

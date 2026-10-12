@@ -1,0 +1,73 @@
+source: /home/runner/actions-runner/_work/_temp/shared-counters/raw.tsv; blocks 6; CPU lists 0,2 (2 drivers), 0,2,4,6 (4 drivers), 0,2,4,6,8,10,12,14 (8 drivers), 0-15 (16 drivers)
+Every threshold below is provisional (DESIGN.md, section 8.4).
+
+Table 1. Rate, millions of operations per second summed over all contexts: median over blocks [min-max] (n = blocks)
+Source: raw.tsv column ops_per_s. Higher is better; W0 is the runtime ceiling and W1 the uncontended-statement ceiling.
+arm    2 CPUs                    4 CPUs                    8 CPUs                   16 CPUs                  
+W0   99663.07 [99566.66-99744.38] n=6 199447.92 [197329.22-199575.82] n=6 399191.31 [399143.92-399275.91] n=6 674165.02 [672614.85-677308.09] n=6   no atomic statement (runtime floor)
+W1      89.44 [89.04-90.09] n=6   171.82 [170.85-174.28] n=6   346.01 [344.27-348.51] n=6   437.88 [432.22-443.70] n=6   own Shared<u64> per context (ceiling for an uncontended statement)
+W2      11.08 [9.34-12.43] n=6     4.48 [4.25-5.49] n=6      2.81 [2.64-2.89] n=6      0.72 [0.69-0.75] n=6    one Shared<u64>, value handle (the contended base)
+W2t     10.39 [9.43-11.22] n=6     4.89 [4.61-5.52] n=6      2.71 [2.65-2.73] n=6      0.70 [0.68-0.99] n=6    second build of W2's source (noise control)
+W2r     11.76 [10.96-15.79] n=6     7.42 [7.11-8.40] n=6      3.43 [3.26-4.27] n=6      0.87 [0.82-0.95] n=6    W2 through a read-only reference parameter (attributes the handle count)
+W6      13.32 [12.77-15.74] n=6     5.74 [5.41-11.61] n=6     2.99 [2.90-3.11] n=6      0.81 [0.74-0.94] n=6    read-only statement on one Shared<u64>
+W3      58.87 [43.81-65.94] n=6    82.78 [81.24-84.11] n=6   175.09 [139.50-177.92] n=6   134.94 [95.11-150.28] n=6   +wrap 1 on element index mod 16 of an array of 16 Shared<u64>
+W3rd    46.19 [39.63-61.61] n=6    84.90 [82.44-90.99] n=6   120.18 [90.77-230.44] n=6   105.75 [97.54-124.40] n=6   W3 plus a reader of all 16 every millisecond
+W5     142.54 [110.94-150.26] n=6   124.86 [107.64-143.46] n=6   118.06 [105.12-127.56] n=6    98.88 [85.42-102.34] n=6   C: one 64-byte-aligned counter, atomic_fetch_add, seq_cst
+W5p    498.51 [498.03-498.62] n=6   997.04 [996.65-997.10] n=6  1993.71 [1993.42-1994.38] n=6  1669.50 [1667.18-1670.04] n=6   C: each thread on its own padded line
+
+Table 2. Share of the listed CPUs' time spent in user and system mode, median over blocks (1.00 = all busy)
+Source: raw.tsv columns user_frac + sys_frac. A low value means contexts or threads were parked.
+arm    2 CPUs    4 CPUs    8 CPUs   16 CPUs  
+W0       1.00     1.00     1.00     1.00 
+W1       1.00     1.00     0.99     1.00 
+W2       1.00     0.98     0.98     0.99 
+W2t      0.99     0.98     0.98     0.99 
+W2r      1.00     0.98     0.98     0.98 
+W6       0.99     0.98     0.98     0.99 
+W3       1.00     1.00     0.99     1.00 
+W3rd     1.00     1.00     0.99     1.00 
+W5       1.00     1.00     0.99     1.00 
+W5p      1.00     1.00     0.99     1.00 
+
+Noise e = max over CPU lists of |median(W2t) / median(W2) - 1|  (DESIGN.md, section 8.3)
+W2t is the same source built a second time; the compared binaries' hashes are in host.txt.
+  per list: 2 CPUs 0.938, 4 CPUs 1.091, 8 CPUs 0.965, 16 CPUs 0.970
+  e = 0.091  (inconclusive threshold exceeded)
+
+Table 3. Descriptive ratios of median rates (no rejection condition attached)
+ratio      2 CPUs    4 CPUs    8 CPUs   16 CPUs  
+W2/W1        0.124     0.026     0.008     0.002 
+W3/W2        5.314    18.481    62.324   186.133 
+W3/W1        0.658     0.482     0.506     0.308 
+W2r/W2       1.062     1.657     1.221     1.198 
+W6/W2        1.202     1.282     1.063     1.121 
+W6/W1        0.149     0.033     0.009     0.002 
+W3rd/W3      0.785     1.026     0.686     0.784 
+W5/W5p       0.286     0.125     0.059     0.059 
+
+Table 4. The reader context of W3rd: its all-sixteen atomic statement, microseconds
+Source: raw.tsv columns reads, read_ns, read_max_ns. Mean = read_ns / reads per cell, median over blocks; longest = median over blocks of the longest read.
+          2 CPUs    4 CPUs    8 CPUs   16 CPUs  
+mean          0.6       1.2       2.5       5.6 
+longest       2.6       9.6     506.2      22.1 
+reads        4122      4534      3998      3994 
+About 5000 reads are expected in a 5 s cell; fewer means the reader fell behind its 1 ms period.
+
+Registered conditions these arms can decide (all thresholds provisional; e as above)
+
+R2, approximated. Registered: W3 >= 0.8 x W4 at every CPU list rejects the recommendation.
+  No sharded state exists yet, so there is no W4. Stand-in: W1 (private objects), taken as an upper bound
+  on what any sharded implementation could reach. This is an inference: W4 could in principle exceed W1,
+  and the stand-in decides only one direction. W3 >= 0.8 x W1 at every list implies W3 >= 0.8 x W4 if
+  W4 <= W1; a lower W3/W1 leaves R2 undecided, because W4 may sit below W1.
+  W3/W1 at 2 CPUs (0,2): 0.658  vs 0.8: inconclusive: noise e = 0.091 exceeds 0.03 (provisional)
+  W3/W1 at 4 CPUs (0,2,4,6): 0.482  vs 0.8: inconclusive: noise e = 0.091 exceeds 0.03 (provisional)
+  W3/W1 at 8 CPUs (0,2,4,6,8,10,12,14): 0.506  vs 0.8: inconclusive: noise e = 0.091 exceeds 0.03 (provisional)
+  W3/W1 at 16 CPUs (0-15): 0.308  vs 0.8: inconclusive: noise e = 0.091 exceeds 0.03 (provisional)
+  Stand-in reading: not met at some list: R2 stays undecided until W4 exists
+
+R3. Registered: W5 / W5p >= 0.5 at 8 P-cores rejects the recommendation (a contended hardware add then serves counts).
+  W5/W5p at 8 P-cores (0,2,4,6,8,10,12,14): 0.059  vs 0.5: inconclusive: noise e = 0.091 exceeds 0.03 (provisional)
+P3. Registered: W5 / W5p <= 0.25 at 8 P-cores (a contended hardware add stays far below private increments).
+  W5/W5p at 8 P-cores (0,2,4,6,8,10,12,14): 0.059  vs 0.25: inconclusive: noise e = 0.091 exceeds 0.03 (provisional)
+  e comes from the Whitefoot twin pair; the C arms have no twin, so it is applied to them as an approximation.

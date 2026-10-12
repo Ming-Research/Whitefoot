@@ -2,16 +2,31 @@
 
 ## Status
 
-A design study, written before any implementation or measurement. It checks
-the active specification `spec/kernel-spec.md` (title v0.134) and the
-compiler and runtime at Whitefoot `4ad4f5786` (main). It changes no rule,
-design-tree node or code; the specification changes in
-[section 9](#9-specification-changes-proposal-only) are a proposal. No build,
-test or measurement was run for it. Every number below is either quoted from
-a cited run or marked as an estimate.
+A design study, then the measurements the owner asked for before a language
+change, then a drafted change. Sections 1 to 8 were written before any
+implementation or measurement and check the active specification
+`spec/kernel-spec.md` (title v0.134) and the compiler and runtime at
+Whitefoot `4ad4f5786` (main); line numbers there cite that revision.
 
-Line numbers cite `spec/kernel-spec.md` and source files at that revision.
-Where this study infers instead of reading, it says so.
+The owner chose (board card on what Whitefoot should offer for a count many
+cores update, 2026-10-12, option A) to measure three things without a
+language change first. They ran on the 14900K on 2026-10-12 and
+[section 9](#9-results-the-arms-that-need-no-language-change) records them:
+the hand-built array of 16 shared objects reaches 0.31 to 0.66 of the rate of
+private objects, a contended hardware add reaches 0.059 of private lines at 8
+P-cores, and Firn now reads memory usage at about 5% of its GET rate. Neither
+the writer pattern nor single-step cells is selected, so the ruling's third
+outcome applies: the sharded state. Its specification change is drafted on
+the work branch as v0.136 over main's v0.135
+([section 10](#10-specification-changes)), its design-tree decisions are
+proposed ([section 11](#11-design-tree-changes)), and its implementation is
+planned, not done ([section 12](#12-implementation-plan)). All of it awaits
+the owner's approval card; the drafted conformance cases fail until the
+compiler implements the change.
+
+Every number below is either quoted from a cited run, measured in a cited
+run, or marked as an estimate. Where this study infers instead of reading, it
+says so.
 
 ## 1. The question
 
@@ -839,90 +854,504 @@ A W4r ≥ 0.8 × W1 with W4 < 0.8 × W1 is an implementation defect (header
 writes on one-shard statements) to fix before the result counts; it does not
 reject the design.
 
-## 9. Specification changes (proposal only)
+## 9. Results: the arms that need no language change
 
-For the recommendation (c). Nothing here is applied; `spec/kernel-spec.md`
-is unchanged.
+The owner chose, on the board card that asked what Whitefoot should offer for
+a count many cores update (2026-10-12, option A), to take the sharded-state
+direction but first to measure three things without a language change: the
+hand-built array of 16 shared objects (W3), a hardware atomic add in C (W5
+against W5p), and Firn without reading memory usage (F-heap). The ruling fixed
+three outcomes: if the hand-built array is enough (R2), write it as a writer
+pattern; if the hardware add reaches half the rate of each thread on its own
+line (R3), build single-step integer cells (a) instead; if neither, implement
+the sharded state, its specification change on its own approval card. This
+section records what the runs show and which outcome they select.
 
-| Rule | Change |
-|---|---|
-| PRE-1 (`:2343`, declarations `:2376–2396`, `:2543–2559`) | Add `opaque nocopy struct Shards<T: copy> { readonly len: u64; }`, `opaque struct AnyShard { }`, `fn shared_shards_new<T: copy>(value: T) -> result: Shared<Shards<T>> pure;` and `fn any_shard() -> result: AnyShard pure;`, with their diagnostic ordinals. |
-| TYPE-2 (`:411–416`) | The opaque values the build forms through SHARE-1 functions include shards states and the `AnyShard` token. |
-| TYPE-9 (homes table, `:571–574`) | Add a row: `Shards<T>` has one home, the state of a shared object, the type argument of `Shared<·>` or `SharedRead<·>`; not the exchange of a `swap`. |
-| OP-4 (`:1065`) | Add `Shards<T>`, reached through `^`, to the indexable bases, its element type T, so a whole binding's shards are `all^[i]`. |
-| SHARE-1 (`:2276`) | Define a shards state: `len` shards, each a copy of the value `shared_shards_new` takes; `len` at least one, an input of the execution, fixed for the object's life. |
-| SHARE-2, target table (`:2311–2316`) | Add two rows: a `Shared<Shards<T>>` or `SharedRead<Shards<T>>` handle place with an index atom that is a place of type `AnyShard` binds `&T`, whose path is the shard the statement selects; the same handle place whole binds `&Shards<T>`. |
-| SHARE-2, target overlap (`:2320`) | One handle place carries at most one `AnyShard` target and none beside a whole target on it; two `AnyShard` selections through handles that may name one object compare as possibly one shard. |
-| SHARE-2, guard | A guard whose footprint reads a path into a shards state is a hard error citing SHARE-2 at the guard `expr`, with a repair. |
-| SHARE-3 (`:2333`) | No change in wording; "the states its targets name" covers one shard or every shard. |
-| WAIT-2 (`:2259`) | Add the number of shards of each shards object and the shard each `AnyShard` target selects to the inputs of the execution. |
-| CAP-1, PAR-1, PAR-2, HOST-1, EFF-1–5, WAIT-1 | No change: shard statements are atomic statements, hence waiting calls without overlap permission, and shards are reached only through targets. |
-| Conformance and programs | New cases: acceptance of both target forms and of a shard target beside a map entry; refusal of two `AnyShard` targets on one place, of one beside a whole target, of a guard reading a shard, of `Shards` outside its home, of a non-copy T; a program test whose 16 contexts count and whose whole read is exact after the joins. |
+### 9.1 Runs, host and noise
 
-For (b): no specification change (SHARE-3's last sentence). For (a), if
-adopted later: PRE-1 declarations of `SharedCell<T: Int>` and its ten
-functions, a SHARE-1 paragraph giving each operation's single-point meaning
-and `cell_add_checked`'s unchanged-on-overflow rule, and the target capability
-row of relaxed-fields decision 6 for the hardware route.
+Two runs of the temporary workflow on the 14900K runner, both with compiler
+release `wf-29de8a21eef8`, `/usr/bin/clang` 22.1.8, kernel 7.0.0-38, governor
+`performance`, 64 contexts (64 threads for W5 and W5p), 5 s per cell:
 
-## 10. Design-tree changes it would need (proposal only)
+- pilot, [run 38303980083](https://github.com/Ming-Research/Whitefoot/actions/runs/38303980083):
+  one block of every arm at the 8-P-core list;
+- main, [run 38304337014](https://github.com/Ming-Research/Whitefoot/actions/runs/38304337014):
+  six blocks, each running every arm once per CPU list in an order rotated by
+  one position per block. The pilot's spread did not change the registered
+  six blocks.
 
-- `design/language/waiting/shared-objects.md`: a decision for sharded states,
-  its grounds (section 7), and rejected entries for (c′) hidden combine, (d3)
-  a runtime peak and (d4) whole-program detection, each with its reason here.
-- `design/compiler/waiting-contexts/state-locks.md`: shards of one object are
-  taken in index order; a one-shard target takes the running thread's shard,
-  each shard keeping its own lock because two threads may share it.
+Their `raw.tsv`, `host.txt` and `summary.txt` are kept in
+[`research/experiments/shared-counters/results/`](../../experiments/shared-counters/results/).
+Every rate below is the `ops_per_s` column of the main run's `raw.tsv`,
+divided by 10^6, as the median over the six blocks with the lowest and highest
+block in brackets; every ratio is of two such medians. The CPU lists are
+`0,2`, `0,2,4,6` and `0,2,4,…,14` (one hyperthread of each of 2, 4 and 8
+P-cores) and `0-15` (8 P-cores, both hyperthreads), with `WF_DRIVERS` equal to
+the list's count; `host.txt` records the CPU map.
+
+The registered noise measure is `e = max |median(W2t) / median(W2) − 1|` over
+the lists (section 8.3), W2t being W2's source built a second time into a
+byte-identical binary (`host.txt` records both hashes). The main run gives
+`e = 0.091` (per list 0.938, 1.091, 0.965, 0.970); the pilot gave 0.089. That
+exceeds the provisional limit of 0.03, so `summarize.py` prints every
+registered condition as inconclusive: that is the registered rule's mechanical
+output, and this record leaves the rule as written. The noise is the
+contended arm's own: W2's blocks span 9.34 to 12.43 at 2 CPUs, while the
+uncontended arms vary little (W1's blocks lie within 2.7% of each other at
+every list, W5p's within 0.2%), so applying `e` to every arm overstates their
+noise. Section 9.6 states, for each decision, how far the measured ratio lies
+from its threshold in units of `e`.
+
+### 9.2 The hand-built array
+
+W3 is the array of 16 `Shared<u64>` a writer can build today (control d2):
+each context adds one to element `index mod 16`. W1, each context on its own
+object, is the ceiling an uncontended statement reaches; W2, every context on
+one object, is the contended baseline.
+
+Table 9.2a. Rate of 64 contexts updating one logical count, million updates per
+second summed over the contexts (higher is better). Source: run 38304337014,
+`raw.tsv` column `ops_per_s`, arms W1, W2 and W3.
+
+| CPU list (drivers) | W1: own object per context, M/s (ceiling) | W2: one shared object, M/s (baseline) | W3: array of 16 shared objects, M/s [min–max] | W3 / W1 (registered stand-in for R2: ≥ 0.8 would make the array enough) | W3 / W2 (baseline 1) |
+|---|---:|---:|---:|---:|---:|
+| 2 CPUs (2) | 89.44 | 11.08 | 58.87 [43.81–65.94] | 0.658 | 5.3 |
+| 4 CPUs (4) | 171.82 | 4.48 | 82.78 [81.24–84.11] | 0.482 | 18.5 |
+| 8 P-cores (8) | 346.01 | 2.81 | 175.09 [139.50–177.92] | 0.506 | 62.3 |
+| 16 hyperthreads (16) | 437.88 | 0.72 | 134.94 [95.11–150.28] | 0.308 | 186.1 |
+
+The array is 5 to 186 times the single shared object, so splitting the count
+removes most of the collapse. It stays at 0.31 to 0.66 of the private rate, and
+its best block stays below 0.8 of W1's median at every list (0.74, 0.49, 0.51,
+0.34). Unlike W1, it also falls from 175.1 at 8 P-cores to 134.9 at 16
+hyperthreads. Two causes are
+consistent with the source, neither separated by these arms: contexts, not
+drivers, choose elements, so 64 contexts on 16 drivers put about four contexts
+on each element and drivers meet on elements (section 5.5, d2); and each W3
+statement still counts its handle, since the emitted LLVM of W3 calls
+`wf__shared_share` as often as W2's does (4 calls against W2r's 3, `host.txt`),
+so every update writes the element object's header too. That second cause is
+board item gran-skip-handle-count; W2r / W2 = 1.06, 1.66, 1.22 and 1.20 (Table
+3 of `summary.txt`) prices the handle count on the one shared object.
+
+Table 9.2b. The array with one reader context that every millisecond reads all
+16 elements in one statement of 16 targets (W3rd). Source: run 38304337014,
+`raw.tsv` columns `ops_per_s`, `reads`, `read_ns` and `read_max_ns`, arm W3rd.
+
+| CPU list | W3rd: rate with the reader, M/s | W3rd / W3 (ideal 1; registered P4 asked ≥ 0.95 of the sharded state) | mean read, µs (read_ns / reads, median over blocks; P4 asked ≤ 50) | longest read, µs (median over blocks of the longest) | reads per 5 s cell (about 5000 expected) |
+|---|---:|---:|---:|---:|---:|
+| 2 CPUs | 46.19 | 0.785 | 0.6 | 2.6 | 4122 |
+| 4 CPUs | 84.90 | 1.026 | 1.2 | 9.6 | 4534 |
+| 8 P-cores | 120.18 | 0.686 | 2.5 | 506.2 | 3998 |
+| 16 hyperthreads | 105.75 | 0.784 | 5.6 | 22.1 | 3994 |
+
+A read of all sixteen at one point costs microseconds on average, and the
+reader falls behind its period by 9 to 20%. The writers lose up to 31% of
+their rate while it runs, more than the twin's 9% noise. P4 was registered for
+the sharded state (W4), not for W3, so these rows are descriptive.
+
+### 9.3 The hardware atomic add
+
+W5 is a C program whose 64 threads add one to a single 64-byte-aligned
+`_Atomic uint64_t` with `atomic_fetch_add` (sequentially consistent); W5p is
+the same program with each thread on its own padded line. It prices candidate
+(a) without implementing it.
+
+Table 9.3. Rate of 64 C threads, million increments per second summed over
+the threads (higher is better). Source: run 38304337014, `raw.tsv` column
+`ops_per_s`, arms W5 and W5p, with W1 and W3 from Table 9.2a.
+
+| CPU list | W5p: own padded line per thread, M/s (ceiling) | W5: one shared line, M/s [min–max] | W5 / W5p (R3: ≥ 0.5 at 8 P-cores would select cells (a); P3 predicted ≤ 0.25) | W5 / W1 (Whitefoot statement on own objects = 1) | W5 / W3 (hand-built array = 1) |
+|---|---:|---:|---:|---:|---:|
+| 2 CPUs | 498.51 | 142.54 [110.94–150.26] | 0.286 | 1.59 | 2.42 |
+| 4 CPUs | 997.04 | 124.86 [107.64–143.46] | 0.125 | 0.73 | 1.51 |
+| 8 P-cores | 1993.71 | 118.06 [105.12–127.56] | 0.059 | 0.34 | 0.67 |
+| 16 hyperthreads | 1669.50 | 98.88 [85.42–102.34] | 0.059 | 0.23 | 0.73 |
+
+The contended add stays near 100 to 140 million a second whatever the CPU
+count, as one cache line moving between cores does, while the private lines
+grow with the P-cores. At 8 P-cores it reaches 0.059 of the private rate, and
+below the hand-built array at 8 P-cores and at 16 hyperthreads. W5 and W5p run
+64 OS threads time-sliced on the list's CPUs, where the Whitefoot arms run 64
+contexts on as many drivers as the list has CPUs; the comparison is of the
+cost of one contended or private increment, not of the schedulers.
+
+### 9.4 Firn without reading memory usage
+
+The registered F-heap arm (Firn with the heap reading removed and the peak
+update kept) was not built. Firn's session measured the question it asks
+during the acceptance of the lock-free heap reading (Whitefoot#381), recorded
+on the board item for that acceptance (coord-q114, log entry of
+2026-10-12T10:16:50Z), and section 2.1 quotes the build with no peak at all.
+
+Table 9.4. Firn GET at pipeline depth 16, server on 8 P-cores, million
+requests per second (higher is better); run 38234681969 reports the median of
+4 rounds of 10 s per build.
+
+| Firn build | Compiler | GET, M/s | Twin, M/s | Source |
+|---|---|---:|---:|---|
+| exclusive peak statement after every command | release of the time | 2.98 | — | Firn-wf run 38227806896 (section 2.1) |
+| peak statement only above the connection's cached peak | release of the time | 19.21 | — | Firn-wf run 38227806896 (section 2.1) |
+| the same | current release | 18.27 | 17.38 | Firn-wf run 38234681969 (coord-q114) |
+| the same | experiment release with the lock-free heap reading | 25.65 | 25.74 | Firn-wf run 38234681969 (coord-q114) |
+| no peak recording (the ideal) | release of the time | 26.99 | — | Firn-wf run 38227806896 (section 2.1) |
+
+With the lock-free reading, Firn keeps the exact peak at 25.65 / 26.99 = 0.950
+of the build that records no peak. The two numbers come from two runs, not
+from interleaved blocks of one run, so the gap of about 5% is indicative only:
+it is the size of the spread between the twins of the current-release build
+(18.27 against 17.38) in the same run. Within that precision, reading memory
+usage after each command now costs Firn little, and section 2.2's inference
+holds: most of the gap between 19.21 and 26.99 was the heap reading's lock,
+which the lock-free reading removed, not the shared update.
+
+### 9.5 The other arms
+
+- W0, the loop with no atomic statement, reports 99.7 to 674 thousand million
+  operations a second (`raw.tsv` column `ops`, about 5 × 10^11 operations per
+  5 s at 2 CPUs), far beyond what a loop doing one operation per step can
+  reach; the optimizer has evidently reduced its batch to a closed form. It is
+  a floor that measures nothing here, and no reading uses it.
+- W2 and W1 reproduce section 2.1's witness rows (W2 11.08, 4.48, 2.81, 0.72
+  against 9.6, 5.5, 2.7, 0.7; W1 89.44, 171.82, 346.01, 437.88 against 89.6,
+  171.4, 348.1, 438.5), so the port of the harness did not move them.
+- W6, a statement on the one object that writes nothing, runs at 13.32, 5.74,
+  2.99 and 0.81: 1.06 to 1.28 times W2, collapsing as W2 does. Section 2.1's
+  read-only row (27.4 to 41.9) is not reproduced by this source, whose handle
+  is a value handle as W2's; that row's source remains unlocated (section 13).
+
+### 9.6 What the results decide
+
+- **R2, approximated** (the hand-built array is enough when W3 ≥ 0.8 × the
+  sharded state at every list). With no sharded state, W1 stands in for its
+  upper bound, which decides R2 in one direction only. W3 / W1 is below 0.8 at
+  every list: by 18% of the threshold at 2 CPUs (about twice `e`), 40% at 4, 37%
+  at 8 and 62% at 16 hyperthreads (6.8 times `e`). The stand-in therefore does
+  not show the array to be enough. R2 itself stays undecided until the sharded
+  state is measured (W4): if W4 is at most 1.25 times W3 at every list, R2
+  then rejects the language change after its implementation.
+- **R3** (cells (a) are recommended when W5 / W5p ≥ 0.5 at 8 P-cores). W5 /
+  W5p = 0.059, 88% below the threshold (9.7 times `e`); the most favourable
+  pairing of blocks, W5's highest against W5p's lowest, gives 0.064. Not met.
+- **P3** (W5 / W5p ≤ 0.25 at 8 P-cores) holds, 76% below its bound.
+- **F-heap** (descriptive): Firn reads memory usage at about 5% of its GET
+  rate, as section 9.4 qualifies.
+
+Against the owner's ruling: the hand-built array is not shown to be enough
+and the hardware add reaches 0.059 of the private rate at 8 P-cores, not
+half, so neither of the first two outcomes holds, and the third applies: implement
+the sharded state, with its specification change on its own approval card.
+The draft of that change is section 10, its design-tree decisions section 11
+and its implementation plan section 12. The maximum needs no language change
+(section 7), which section 9.4 now supports with a measurement.
+
+## 10. Specification changes
+
+For the recommendation (c), drafted on the work branch as specification
+v0.136 over main's v0.135 (archived byte for byte as
+`spec/kernel-spec-v0.135.md`). Every change awaits the owner's approval card;
+no `spec/log.md` entry exists yet. The surface is section 5.4's with one name
+changed: the token is called the *shard selector*, and a target naming one
+shard a *shard target*.
+
+### 10.1 Rule by rule
+
+| Rule | Before (v0.135) | After (v0.136) |
+|---|---|---|
+| TYPE-2 | The functions of SHARE-1 form the shared and frozen handles, maps and key sets. | They also form shards states and the shard selector. |
+| TYPE-9 | Homes table: storage forms in a `Box`; a map in a shared object's state or a `swap`'s exchange. | Adds `Shards<T>`, whose one home is a shared object's state, not a `swap`'s exchange; the consequence sentence says a `swap` of two whole shards targets is refused. |
+| TYPE-10 | `len`, `cap`, `head` are the readonly fields of the storage shapes, the key set and the entries. | Adds the shards state's `len`. |
+| REF-4 | A range reference over a `Ring` or an `Entries` is refused with its reason. | Adds the refusal of a range reference over a `Shards`, whose shards are kept apart and are no run of storage. |
+| OP-4 | Indexable bases include `Entries<V>` and `ConcurrentHashMap<V>`, reached through `^`. | Adds `Shards<T>`, reached through `^`, its elements its shards of type T. The existing sentences then give it a `u64` offset and the obligation `i < p.len`, so an `AnyShard` offset is refused. |
+| OP-9 | Layout pairs of the prelude's opaque structs; any other fieldless one `(32,16)`. | Adds `Shards<T>` `(8,8)`, its `len`, its shards living in its object and entering no sequence, and `AnyShard` `(1,1)`, carrying nothing. |
+| MSR-1 | Measures table rows. | Adds `Shards<T>`: `len` counts shards, exact; no `cap`, `head` or `bytes`. |
+| SHARE-1 | Shared and frozen objects, maps and key sets. | Adds the shards state: `len` shards of T; `shared_shards_new` copies its argument into every shard; `len` is at least one, fixed for the object's life and an input of the execution that an implementation may choose by the driver count; a shard target names one shard, which shard being an input, with no index and so no bounds obligation; `any_shard` returns the one selector value; no operation computes with shard values; a whole statement reads every shard at its one point, so its total counts every shard write before that point and none after. |
+| SHARE-2, target places | A whole handle place, or a map handle place with one index step whose atom is a byte range or a key set. | Adds a `Shared<Shards<T>>` or `SharedRead<Shards<T>>` handle place with one index step whose atom is a place of type `AnyShard`: the shard target. |
+| SHARE-2, binding table | Three rows: whole, entry, key-set. | Adds the shard target's row: `&T`, whose path is the state extended by an index step whose offset no relation names [OWN-7], the shard the statement selects. A whole target over a shards state uses the first row, binding `&Shards<T>`. |
+| SHARE-2, overlap | Two targets on overlapping handle places each have an index step; a whole target is alone on its place. | Two targets on overlapping handle places are each an entry or key-set target; a whole or shard target is alone on its place. Two shard targets on two handles of one type compare as one root with an index step no relation names, so they may overlap (EFF-5 then refuses one call writing both). |
+| SHARE-2, facts | A key-set binding establishes `es^.len == ks.len` at the block's entry. | Adds: a whole binding over a shards state establishes `all^.len >= 1_u64` there. |
+| SHARE-2, guard | The guard writes no path. | The guard also reads no path that starts at a shards state. |
+| WAIT-2 | Inputs of the execution include map positions, scan extents, released and key-set bytes and the driver count. | Adds the number of shards of each shards state and the shard each shard target names. |
+| PRE-1 | Opaque structs through `Entries`; functions through `release`; the preorder. | Adds `opaque nocopy struct Shards<T: copy> { readonly len: u64; }` and `opaque struct AnyShard { }` after `Entries`, `fn shared_shards_new<T: copy>(value: T) -> result: Shared<Shards<T>> pure;` and `fn any_shard() -> result: AnyShard pure;` after `shared_map_new`, and both functions in the preorder there, which moves every later prelude ordinal. |
+
+Unchanged, and why: SHARE-3, since its meaning is already exclusive access to
+the whole states the targets name and its last sentence admits holding one
+shard where the outcomes are unchanged, which they are because a shard
+statement reaches only its shard; WAIT-1, WAIT-3, CAP-1, PAR-1, PAR-2 and
+HOST-1, since shard and whole statements are atomic statements and so waiting
+calls without overlap permission; EFF-1 to EFF-5, since a state is a path of
+no row and a callee receiving `&Shards<T>` uses ordinary rows; OP-2, since a
+shard update is the writer's arithmetic.
+
+### 10.2 The guarantees, rule by rule
+
+- **No data race.** Shards are reached only through targets [SHARE-1], and
+  every access has SHARE-3's exclusive meaning. Holding one shard instead of
+  the object is SHARE-3's last sentence, not a new rule.
+- **No silent overflow.** No operation adds anything for the program
+  [SHARE-1]: each shard update and each total is a block's own arithmetic, so
+  `+` needs a proof (none exists for a concurrently changing value, section
+  3.2), and `+wrap`, `+checked` and `+sat` state their results [OP-2].
+- **A read of the whole.** A whole target holds every shard at one point
+  [SHARE-3], so its total equals the value a single `Shared<u64>` updated by
+  the same statements would hold at that point: no weaker read, and the same
+  one order of all statements [WAIT-2].
+- **Progress.** Shard and whole statements have no guard on the shards, so
+  WAIT-2's promise for unguarded statements covers both; a whole statement
+  takes effect even while shard statements keep arriving. The
+  implementation keeps that promise with first-come locks per shard
+  (section 12).
+- **Guards.** Refused on any path into a shards state, in the first design. A
+  guard on one shard whose identity is an input of the execution states no
+  condition a writer can rely on, and a guard on the whole run would make
+  every shard write look for watches on the object, a step on the path the
+  design keeps free. Refusing now and admitting a whole-run guard later, when
+  a program needs to wait for a total, changes no accepted program; the
+  reverse would.
+- **Overlap footprints.** A statement's footprint is still its handle places
+  and index atoms, read [SHARE-2]; the selector is a place of a copy type
+  that carries nothing. Inside a whole block, a counted loop summing the
+  shards into a scalar accumulator meets PAR-2 as it would over any read-only
+  storage, while `Shards` is not one of PAR-2's element-map bases, so a loop
+  writing shards stays sequential. Neither needs a new clause.
+- **Effects.** A function that updates a shard declares `waits` and a read of
+  the handle place, as for any shared object; a callee receiving a whole
+  binding declares `reads(parts)` or `writes(parts)` on its `&Shards<T>`
+  parameter (case `share-pos-shards-whole-to-callee`).
+- **Naming one's part.** The program names a shard only by the selector, never
+  by a number, so a shard target has no bounds obligation and no index can be
+  out of range; an integer index atom is SHARE-2's refusal and a selector as a
+  subscript is OP-4's.
+- **The driver count.** `len` is an input of the execution that an
+  implementation may choose by the driver count [PRE-2]; no rule relates the
+  two further, so a program that reads `len` learns nothing it relies on
+  beyond `len >= 1`.
+
+### 10.3 Conformance cases
+
+Seventeen cases in `tests/conformance/cases/`, their manifest lines after the
+existing shared-object cases. Each states the verdict the specification
+requires; every one fails until the compiler implements the change, and so do
+the two compiler unit tests that compare the compiler's prelude records and
+measure table with the specification's text. That is expected on this draft
+branch; no verdict was chosen to pass.
+
+| Case | Verdict | What it shows |
+|---|---|---|
+| `share-pos-shards-count` | run, exit 40 | four contexts add one ten times each through shard targets; a whole read after the joins totals 40 whichever shards were named |
+| `share-pos-shards-start-from-copies` | run, exit 11 | every shard starts as a copy, and `len >= 1` admits `all^[0_u64]` |
+| `share-pos-shards-maximum` | run, exit 9 | `imax` through shard targets, maximum over the whole run |
+| `share-pos-shards-beside-map-entry` | run, exit 31 | one statement names a map entry and a statistics shard |
+| `share-pos-shards-whole-to-callee` | run, exit 70 | callees read and reset a `&Shards<u64>` under ordinary rows |
+| `share-neg-shards-two-on-one-handle` | reject SHARE-2 | two shard targets on one handle place |
+| `share-neg-shards-shard-beside-whole` | reject SHARE-2 | a shard target beside a whole target on one place |
+| `share-neg-shards-guard-reads-shard` | reject SHARE-2 | a guard on a shard's value |
+| `share-neg-shards-guard-reads-whole` | reject SHARE-2 | a guard on the whole state's `len` |
+| `share-neg-shards-index-not-a-selector` | reject SHARE-2 | an integer where the selector belongs |
+| `share-neg-shards-two-handles-one-call` | reject EFF-5 | shard targets on two handles of one type may be one shard |
+| `type9-neg-shards-parameter` | reject TYPE-9 | a `Shards<u8>` value parameter |
+| `type9-neg-shards-swapped` | reject TYPE-9 | a `swap` of two whole shards targets |
+| `prov6-neg-shards-element-not-copy` | reject PROV-6 | a `Box<u8>` shard type against the copy bound |
+| `op4-neg-shards-past-the-first` | reject OP-4 | `all^[1_u64]` is unproved, since only `len >= 1` is known |
+| `op4-neg-shards-selector-as-subscript` | reject OP-4 | the selector as a subscript offset |
+| `ref4-neg-shards-as-a-range` | reject REF-4 | a range reference over the shards |
+
+The program test that section 5.4 names (16 contexts counting, an exact whole
+read after the joins) belongs in `tests/programs/` with the implementation,
+since it exercises the runtime's shard selection rather than a rule.
+
+For (b): no specification change (SHARE-3's last sentence). For (a), if ever
+adopted: PRE-1 declarations of `SharedCell<T: Int>` and its ten functions, a
+SHARE-1 paragraph giving each operation's single-point meaning and
+`cell_add_checked`'s unchanged-on-overflow rule, and the target capability row
+of relaxed-fields decision 6 for the hardware route; section 9.3 is the
+evidence against it for counts.
+
+## 11. Design-tree changes
+
+Proposed on the work branch, each awaiting the owner's approval:
+
+- New node `design/language/waiting/shared-objects/sharded-states.md`: the
+  shards state and its two target forms; that the number of shards and the
+  selected shard are inputs and the program never supplies an index; the
+  guard refusal; the copy bound; and the state-only home. Rejected: single-step
+  integer cells (a), the hand-built array as the answer (d2), the hidden
+  combine (c′), a runtime peak in the memory meter (d3), whole-program
+  detection (d4) and per-context accumulation flushed (d1).
+- `design/language/waiting/shared-objects.md`, third decision: the target
+  forms gain the shard target, alone on its handle place.
+- `design/compiler/waiting-contexts/state-locks.md`: first decision, a sharded
+  object is held by one shard or whole; second decision, its shards are taken
+  in index order; a new decision for the shard layout and selection (section
+  12).
 - For (b) B2, if pursued: `design/language/waiting/shared-objects/keyed-tables.md`'s
   refusal of version-checked reads narrowed to blocks that run on racing
-  state, with the account in 5.3; owner decision required.
+  state, with the account in 5.3; owner decision required. Not part of this
+  change.
 
-## 11. Found along the way
+## 12. Implementation plan
 
-- **The heap reading takes a global lock.** `wf__heap_in_use` takes the pool's
-  spin lock on every reading (`bridge.c:1412–1414`), which Firn's perf c2c
-  located as the hottest contended line. Disposition: being fixed on
-  `claude/heap-read-nolock`. Its per-thread sum still reads up to 193 lines,
-  each written by its owner; that remainder is unmeasured.
+Not implemented on this branch. The order follows the gate: the checker first,
+so the reject cases pass, then lowering and the runtime, so the run cases
+pass, then the measurement.
+
+**Prerequisite.** A shard statement must not write the object header. Today
+every statement through a value handle counts the handle on the header
+(section 2.2; W3 shows it, section 9.2), which would put one contended line
+back on every update. Board item gran-skip-handle-count (skip the count when
+the block neither moves nor writes the handle place) lands first or with this
+work; W4r in section 8.2 separates the two if it does not.
+
+**Checker.**
+
+- Prelude records: the two opaque structs and two functions in the order
+  PRE-1 states, so the record test and the diagnostic ordinals follow the
+  specification; `Shards` gets its own storage identity, as `Entries` has, and
+  a measured kind with `len` exact for the measure-table test.
+- Placement [TYPE-9]: `Shards<T>`'s home is the type argument of `Shared` or
+  `SharedRead`, checked where map placement is.
+- Subscripts [OP-4]: `Shards<T>` reached through `^` with a `u64` offset and
+  the ordinary `i < p.len` obligation; a range over it refused at REF-4 with
+  the repair.
+- Targets [SHARE-2]: classify a target whose handle has state type
+  `Shards<T>` and whose index atom is a place of type `AnyShard` as a shard
+  target; refuse any other index atom on a shards handle; extend the overlap
+  check so overlapping handle places admit only entry and key-set targets.
+  The shard binding's resolved place is the state extended by an index step
+  with an unknown offset, so the existing OWN-7 and EFF-5 comparisons refuse
+  what may be one shard without new code.
+- Guards: refuse a guard whose footprint reads any path rooted at a shards
+  state, at the guard `expr`, citing SHARE-2.
+- Facts: a whole binding over a shards state publishes `all^.len >= 1` at the
+  block's entry, where the key-set binding publishes its length equality.
+
+**Lowering.**
+
+- A shard target lowers to one runtime call that returns the address of the
+  running thread's shard and takes its lock, and one that releases it; the
+  binding is that address. The statement's lock-order group is the object's
+  type, as for any target (state-locks, second decision).
+- A whole target over a shards state takes every shard's lock in index order
+  and binds the object's shard array; `all^.len` reads the header word and
+  `all^[i]` is the address `first + i × stride`. Release is in any order after
+  the block, as two-phase locking already requires.
+- Targets of one statement that name one object are held once (state-locks,
+  third decision): a whole hold absorbs a shard hold, and two shard targets
+  on one object bind the same selected shard.
+- No guard reads a shards state, so no watch is ever registered on a shard,
+  and a shard release wakes nothing. A guarded statement that also has a
+  shards target keeps its guard's watches on its other objects.
+
+**Runtime layout, per object.**
+
+- Header on its own 64-byte line: the handle count, `len` and the object's
+  identity for lock order.
+- Then `len` shards, each starting on a 64-byte boundary, holding its lock
+  word and the T value, its stride `round_up(lock + size(T), 64)` so no two
+  shards share a line. The allocation is counted in the heap the program holds
+  [PRE-2] like any shared object's.
+- `len` is the number of threads that may run contexts: twice the driver
+  count on a multi-driver target, since a driver's role can pass to a spare
+  thread (compiler/waiting-contexts/concurrent-map, fifth decision), and one on
+  a single-driver or embedded target, where a shard target is the object's one
+  lock and the object is a `Shared<T>` in all but name. At the measured 16
+  drivers that is 32 shards, 2 KiB plus T per object (section 5.4, Memory).
+- A shard target selects shard `user mod len`, `user` being the running
+  thread's map-user number. A statement holding a shard never suspends, so it
+  ends on the thread that began it; a displaced thread and its spare can meet
+  on one shard, which is why each shard keeps a lock rather than a
+  single-writer store (section 3.6).
+- Each shard's lock is first-come (a ticket lock): uncontended it costs one
+  atomic read-modify-write on the thread's own line, as the present object lock
+  does, and a whole statement waiting for a shard waits for at most one shard
+  statement per shard, which keeps WAIT-2's promise for the whole statement
+  however fast shard statements arrive.
+
+**The read-all path.** A whole statement costs `len` lock acquisitions in
+index order plus the block's loop. At 32 shards the estimate is a few
+microseconds; W3rd's 16-target read took 0.6 to 5.6 µs on average (section
+9.2), the comparable figure. While it runs, shard statements on shards it
+already holds wait; ones on shards it has not reached proceed.
+
+**Validation.**
+
+- The seventeen conformance cases of section 10.3, the compiler record and
+  measure tests, and the program test of section 10.3.
+- A runtime test of the shard lock and the whole hold under ThreadSanitizer,
+  as the concurrent map's test runs, with a whole reader racing shard
+  writers and an exact total checked after the joins.
+- The registered experiment's remaining arms on the 14900K (section 8.2): W4,
+  W4r and their reader variants, M1 to M4, and the Firn arms F0 to F3 from
+  Firn's session, deciding P1, P2, P4, P5 and R1, R2, R4, R5. If the noise rule
+  of section 8.3 is to change for that run, the change is recorded before it
+  measures (section 13).
+
+## 13. Found along the way
+
+- **The heap reading took a global lock.** `wf__heap_in_use` took the pool's
+  spin lock on every reading, which Firn's perf c2c located as the hottest
+  contended line. Disposition: fixed by Whitefoot#381 (merged to main as
+  `abc27fbd3`); section 9.4 measures the remainder at about 5% of Firn's GET.
 - **Whole-object read-only statements take write holds.** The emitter passes
   `write = 1` for every object acquire, take and unlock
   (`emitter/shared.rs:1027,1059,1075`), while SHARE-3's last sentence and the
-  runtime admit read holds. No design-tree decision states sharing for whole
-  objects; the keyed-tables decision covers entries only. Disposition:
-  deferred to (b); worth a board item, since every read-only statement on a
-  hot object pays it.
+  runtime admit read holds. W6 confirms the cost: a statement that writes
+  nothing runs at 1.06 to 1.28 times a writing one and collapses as it does
+  (section 9.5). Disposition: deferred to (b); worth a board item, since every
+  read-only statement on a hot object pays it.
 - **The handle count on every statement through a value handle.** It writes
-  the object header twice per statement; the compiler's skip covers only
-  read-only reference parameters. SHARE-2 requires only that the object stay
-  live until the statement completes, which a block that neither moves nor
-  writes the handle place guarantees without counting. Disposition: deferred;
-  a prerequisite of (c)'s cost (arm W4 against W4r).
-- **Contended objects collapse rather than plateau** (9.6 to 0.7 M/s). The
-  object lock is a test-and-set spin lock with 256 spins before parking.
-  Disposition: recorded as (d5); `claude/shared-take-fair` touches a related
-  case.
-- **The read-only witness has no located source.** The reported row 3 is not
-  in the branch's witness list; arm W6 supplies one.
+  the object header twice per statement; W2r / W2 = 1.06 to 1.66 prices it,
+  and the W3 statements through a local reference pay it too (section 9.2).
+  Disposition: board item gran-skip-handle-count, a prerequisite of (c)
+  (section 12).
+- **Contended objects collapse rather than plateau** (11.08 to 0.72 M/s from
+  2 CPUs to 16 hyperthreads in W2). Disposition: board item
+  gran-lock-no-collapse.
+- **Section 2.1's read-only row has no located source, and W6 does not
+  reproduce it.** W6 reads 2.99 M/s at 8 P-cores where the row says 30.3.
+  Disposition: recorded; the row is Firn-wf's, and no reading here depends on
+  it.
+- **W0 measures nothing.** Its loop is folded by the optimizer (section 9.5).
+  Disposition: deferred; make its batch observable when the sharded-state arms
+  join the harness, since no reading uses it now.
+- **The registered noise limit cannot decide contended arms.** `e` comes from
+  W2, the most contended arm, whose blocks span a third of its median at 2 CPUs, while the
+  uncontended arms vary under 3%. Disposition: for the W4 run, propose before
+  measuring a twin of an uncontended arm (W1 built twice) and a per-arm noise
+  measure; section 8.3's rule stays as registered for these results.
+- **A parallel change to the same rejection.** Whitefoot#364 (the one-time
+  decision cell, approved, not yet on main) narrows the shared-objects
+  rejection of atomic fields and lock-free cells; the new sharded-states
+  node's rejection of single-step cells must still read consistently once
+  both land. Disposition: check at that merge.
 - **Name collision to keep in mind.** OP-12 calls `set p = f(move p, ...)` "the
   atomic in-place update" (`:1215`), an ownership property unrelated to
-  concurrency. A surface added by this study should not use "atomic" for its
-  operations.
+  concurrency. The drafted surface uses "shard" and "selector" and no
+  "atomic" in its operation names.
 
-## 12. What is established and what is not
+## 14. What is established and what is not
 
 Established by reading the specification, design tree and source at
 `4ad4f5786`: the rules in section 3; that whole-object statements take write
 holds and that even read holds write the object's line; the handle-count
-traffic; the heap reading's lock; the runtime's own per-thread counters and
-the decision that chose them; the prior refusals in section 4; and that (c)
-needs no new memory model because its targets are ordinary atomic statements.
-The witness and Firn numbers are quoted from the cited runs and records, not
-reproduced.
+traffic; the runtime's own per-thread counters and the decision that chose
+them; the prior refusals in section 4; and that (c) needs no new memory model
+because its targets are ordinary atomic statements.
 
-Unverified: every cost estimate in sections 5 and 6; the attribution of
-Firn's 19.21 to 26.99 gap to the heap reading (F-heap measures it); B2's
-LLVM-model correctness; that `Stats` in the examples is copy; that the
-fragments compile; the reader's latency; the shard selection's correctness
-under a driver handoff to a spare thread (argued from per-shard locks,
-section 3.6, not tested).
+Measured on the 14900K (section 9, runs 38303980083 and 38304337014): the
+hand-built array reaches 0.31 to 0.66 of the private-object rate and falls
+from 8 P-cores to 16 hyperthreads; a contended hardware add reaches 0.059 of
+private lines at 8 P-cores; the two witness rows of section 2.1 for one shared
+object and for own objects reproduce; a read-only statement collapses as a
+writing one does. Measured by Firn and quoted (section 9.4): Firn's GET with
+the lock-free heap reading at 0.950 of the build without a peak, across two
+runs.
 
+Unverified: every cost estimate for (c) in sections 5, 6 and 12, since no
+sharded state exists to measure (W4); R2's final reading, which needs W4;
+B2's LLVM-model correctness; that the specification draft of section 10 is
+complete and consistent, which the approval card and the implementation will
+test; that the conformance cases compile and reach their verdicts, which
+needs the implementation; the reader's latency for a whole target; the shard
+selection's correctness under a driver handoff to a spare thread (argued from
+per-shard locks, section 3.6, not tested).

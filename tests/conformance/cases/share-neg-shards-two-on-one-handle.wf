@@ -1,0 +1,9 @@
+fn main() -> status: std::process::ExitStatus pure waits {
+  let stats = shared_shards_new::<u8>(value: 0_u8);
+  let mine = any_shard();
+  atomic a = &stats[mine], b = &stats[mine] {
+    set a^ = 1_u8;
+    set b^ = 2_u8;
+  }
+  return std::process::exit_status(code: 0_u8);
+}

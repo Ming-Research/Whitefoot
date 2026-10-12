@@ -106,32 +106,53 @@ cost of a contended or private increment, not of the schedulers.
   Not decided here: P1, P2, P4, P5, R1, R4, R5 and the descriptive M1-M4 and
   F-heap arms.
 
-## Running it
+## Results
 
-The run is `tmp-shared-counters.yml`, a temporary dispatch-only workflow on
-the self-hosted runner `14900k`. It checks that the host is idle (under 5%
-busy over 5 s), downloads the Whitefoot compiler release given as `release`
-and checks it against the release's `SHA256SUMS` and manifest and against
-`/usr/bin/clang`'s LLVM major, builds every arm, runs `run.sh`, runs
-`summarize.py`, and uploads `raw.tsv`, `summary.txt`, `host.txt` and the cells'
-output as an artifact. Tell the other sessions before a long run; one run
-holds the machine at a time.
+The arms ran on 2026-10-12 on the owner's i9-14900K (self-hosted runner
+`14900k`, native Ubuntu, kernel 7.0.0-38, governor `performance`) with the
+compiler release `wf-29de8a21eef8` and `/usr/bin/clang` 22.1.8:
+
+| Directory | Run | What it is |
+|---|---|---|
+| [`results/38303980083/`](results/38303980083/) | [pilot](https://github.com/Ming-Research/Whitefoot/actions/runs/38303980083) | one block of every arm at the 8-P-core list |
+| [`results/38304337014/`](results/38304337014/) | [main](https://github.com/Ming-Research/Whitefoot/actions/runs/38304337014) | six interleaved blocks at all four lists; `blocks` was left at 6 after the pilot |
+
+Each directory keeps the run's `raw.tsv` (one row per cell), `host.txt` (the
+host, the CPU map, the release and the twin's hashes) and `summary.txt`
+(`summarize.py`'s output). The cells' own standard output and error, which
+the workflow uploaded under `runs/`, are not kept: every number they carry is
+in `raw.tsv`. The reading of these results against the registered conditions
+is DESIGN.md
+[section 9](../../investigations/shared-counters/DESIGN.md#9-results-the-arms-that-need-no-language-change).
+
+## Running it again
+
+The measurement ran through a temporary dispatch-only workflow on the
+self-hosted runner `14900k`, removed after the run; it is in git history at
+commit `34df4f505` as `.github/workflows/tmp-shared-counters.yml`. It checked
+that the host was idle (under 5% busy over 5 s), downloaded the Whitefoot
+compiler release given as `release` and checked it against the release's
+`SHA256SUMS` and manifest and against `/usr/bin/clang`'s LLVM major, built
+every arm with `run.sh --build-only`, ran the cells with `run.sh --skip-build`,
+ran `summarize.py`, and uploaded `raw.tsv`, `summary.txt`, `host.txt` and the
+cells' output as an artifact. To run it again, restore it on a work branch,
+push, and dispatch it there:
 
 ```
+git show 34df4f505:.github/workflows/tmp-shared-counters.yml > .github/workflows/tmp-shared-counters.yml
 gh workflow run tmp-shared-counters.yml --ref <branch> -f mode=pilot
 gh workflow run tmp-shared-counters.yml --ref <branch> -f mode=main
 ```
 
-Inputs: `release` (default `wf-29de8a21eef8`), `mode` (`pilot`, the default,
-or `main`) and `blocks` (default 6, main only). Run the pilot first and look
-at its spread and its length; then the main run, and record any change to
-`blocks`. The expected length is about a minute of cells for the pilot and
-about twenty-one minutes of cells for the main run (10 arms times 5 s plus a
-second of start-up per cell; 6 blocks times 4 lists), plus the download and
-the builds.
-
-The workflow is temporary. Remove `.github/workflows/tmp-shared-counters.yml`
-after the run and copy the tables the investigation relies on into its
-record, with the run id, because artifacts expire. This directory stays as the
+It needs the 14900K runner: the CPU lists name that machine's P-cores and
+their hyperthreads, and a hosted runner has neither the cores nor a quiet
+host. Tell the other sessions before a run; one run holds the machine at a
+time. Inputs: `release` (default `wf-29de8a21eef8`), `mode` (`pilot`, the
+default, or `main`) and `blocks` (default 6, main only). The pilot took about
+a minute of cells and the main run about twenty-one minutes of cells (10 arms
+times 5 s plus a second of start-up per cell; 6 blocks times 4 lists), plus
+the download and the builds. Copy the new `raw.tsv`, `host.txt` and
+`summary.txt` into `results/<run id>/`, because artifacts expire, and remove
+the workflow again before the branch is ready. This directory stays as the
 record of the arms until the sharded-state arms join it or the investigation
 closes.

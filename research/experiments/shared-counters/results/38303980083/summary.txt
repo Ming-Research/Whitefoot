@@ -1,0 +1,70 @@
+source: /home/runner/actions-runner/_work/_temp/shared-counters/raw.tsv; blocks 1; CPU lists 0,2,4,6,8,10,12,14 (8 drivers)
+Every threshold below is provisional (DESIGN.md, section 8.4).
+
+Table 1. Rate, millions of operations per second summed over all contexts: median over blocks [min-max] (n = blocks)
+Source: raw.tsv column ops_per_s. Higher is better; W0 is the runtime ceiling and W1 the uncontended-statement ceiling.
+arm    8 CPUs                  
+W0   399165.52 [399165.52-399165.52] n=1   no atomic statement (runtime floor)
+W1     342.72 [342.72-342.72] n=1   own Shared<u64> per context (ceiling for an uncontended statement)
+W2       3.01 [3.01-3.01] n=1    one Shared<u64>, value handle (the contended base)
+W2t      2.75 [2.75-2.75] n=1    second build of W2's source (noise control)
+W2r      3.72 [3.72-3.72] n=1    W2 through a read-only reference parameter (attributes the handle count)
+W6       2.65 [2.65-2.65] n=1    read-only statement on one Shared<u64>
+W3     176.82 [176.82-176.82] n=1   +wrap 1 on element index mod 16 of an array of 16 Shared<u64>
+W3rd   162.27 [162.27-162.27] n=1   W3 plus a reader of all 16 every millisecond
+W5     110.98 [110.98-110.98] n=1   C: one 64-byte-aligned counter, atomic_fetch_add, seq_cst
+W5p   1993.83 [1993.83-1993.83] n=1   C: each thread on its own padded line
+
+Table 2. Share of the listed CPUs' time spent in user and system mode, median over blocks (1.00 = all busy)
+Source: raw.tsv columns user_frac + sys_frac. A low value means contexts or threads were parked.
+arm    8 CPUs  
+W0       0.99 
+W1       0.99 
+W2       0.98 
+W2t      0.98 
+W2r      0.98 
+W6       0.98 
+W3       0.99 
+W3rd     0.99 
+W5       0.99 
+W5p      1.00 
+
+Noise e = max over CPU lists of |median(W2t) / median(W2) - 1|  (DESIGN.md, section 8.3)
+W2t is the same source built a second time; the compared binaries' hashes are in host.txt.
+  per list: 8 CPUs 0.911
+  e = 0.089  (inconclusive threshold exceeded)
+
+Table 3. Descriptive ratios of median rates (no rejection condition attached)
+ratio      8 CPUs  
+W2/W1        0.009 
+W3/W2       58.666 
+W3/W1        0.516 
+W2r/W2       1.235 
+W6/W2        0.878 
+W6/W1        0.008 
+W3rd/W3      0.918 
+W5/W5p       0.056 
+
+Table 4. The reader context of W3rd: its all-sixteen atomic statement, microseconds
+Source: raw.tsv columns reads, read_ns, read_max_ns. Mean = read_ns / reads per cell, median over blocks; longest = median over blocks of the longest read.
+          8 CPUs  
+mean          1.9 
+longest       5.2 
+reads        3959 
+About 5000 reads are expected in a 5 s cell; fewer means the reader fell behind its 1 ms period.
+
+Registered conditions these arms can decide (all thresholds provisional; e as above)
+
+R2, approximated. Registered: W3 >= 0.8 x W4 at every CPU list rejects the recommendation.
+  No sharded state exists yet, so there is no W4. Stand-in: W1 (private objects), taken as an upper bound
+  on what any sharded implementation could reach. This is an inference: W4 could in principle exceed W1,
+  and the stand-in decides only one direction. W3 >= 0.8 x W1 at every list implies W3 >= 0.8 x W4 if
+  W4 <= W1; a lower W3/W1 leaves R2 undecided, because W4 may sit below W1.
+  W3/W1 at 8 CPUs (0,2,4,6,8,10,12,14): 0.516  vs 0.8: inconclusive: noise e = 0.089 exceeds 0.03 (provisional)
+  Stand-in reading: not met at some list: R2 stays undecided until W4 exists
+
+R3. Registered: W5 / W5p >= 0.5 at 8 P-cores rejects the recommendation (a contended hardware add then serves counts).
+  W5/W5p at 8 P-cores (0,2,4,6,8,10,12,14): 0.056  vs 0.5: inconclusive: noise e = 0.089 exceeds 0.03 (provisional)
+P3. Registered: W5 / W5p <= 0.25 at 8 P-cores (a contended hardware add stays far below private increments).
+  W5/W5p at 8 P-cores (0,2,4,6,8,10,12,14): 0.056  vs 0.25: inconclusive: noise e = 0.089 exceeds 0.03 (provisional)
+  e comes from the Whitefoot twin pair; the C arms have no twin, so it is applied to them as an approximation.
