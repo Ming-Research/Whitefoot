@@ -140,8 +140,9 @@ fn a_group_target_says_whether_the_statement_may_write_it() {
     with_ir(two_alphas("set seen = p^.n +wrap q^.n;").as_bytes(), |program| {
         assert_eq!(group_write_flags(program), [(0, false), (1, false)]);
     });
-    // Writing p from q: p alone is.
+    // Writing p: two handles of one type may name one object, so the
+    // checker counts a write through p as a possible write of q's object.
     with_ir(two_alphas("set p^.n = q^.n;").as_bytes(), |program| {
-        assert_eq!(group_write_flags(program), [(0, true), (1, false)]);
+        assert_eq!(group_write_flags(program), [(0, true), (1, true)]);
     });
 }

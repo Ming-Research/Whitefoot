@@ -305,33 +305,17 @@ fn main() -> status: std::process::ExitStatus pure waits {
     );
 }
 
-#[test]
-fn a_group_record_carries_each_target_s_write_flag() {
-    // `p` is written and `q` only read: the record's third field is 1 for
-    // the first target and 0 for the second, which the group's release reads.
-    let llvm = compile(
-        br#"struct Alpha {
-  n: u64;
-}
-
-fn main() -> status: std::process::ExitStatus pure waits {
-  let a0 = Alpha(n: 0_u64);
-  let a1 = Alpha(n: 1_u64);
-  let first = shared_new::<Alpha>(value: a0);
-  let second = shared_new::<Alpha>(value: a1);
-  atomic p = &first, q = &second {
-    set p^.n = q^.n;
-  }
-  return std::process::exit_status(code: 0_u8);
-}
-"#,
-    );
-    let main = emitted_function(&llvm, "main");
+/// The write flag each target of `main`'s two-target group record stores, by
+/// target index, each site once.
+fn group_record_flags(llvm: &str) -> Vec<(String, String)> {
+    let main = emitted_function(llvm, "main");
     let lines = main.lines().collect::<Vec<_>>();
     let mut flags = lines
         .windows(2)
         .filter_map(|pair| {
-            let (name, gep) = pair[0].trim().split_once(" = getelementptr [2 x { ptr, ptr, i32 }], ptr ")?;
+            let (name, gep) = pair[0]
+                .trim()
+                .split_once(" = getelementptr [2 x { ptr, ptr, i32 }], ptr ")?;
             let index = gep.strip_suffix(", i32 2")?.rsplit_once(", i32 ")?.1;
             let stored = pair[1].trim().strip_prefix("store i32 ")?;
             let (value, place) = stored.split_once(", ptr ")?;
@@ -340,11 +324,41 @@ fn main() -> status: std::process::ExitStatus pure waits {
         .collect::<Vec<_>>();
     flags.sort_unstable();
     flags.dedup();
-    assert_eq!(
-        flags,
-        [("0".to_owned(), "1".to_owned()), ("1".to_owned(), "0".to_owned())],
-        "{main}"
-    );
+    flags
+}
+
+fn two_alpha_group(block: &str) -> String {
+    format!(
+        r#"struct Alpha {{
+  n: u64;
+}}
+
+fn main() -> status: std::process::ExitStatus pure waits {{
+  let a0 = Alpha(n: 0_u64);
+  let a1 = Alpha(n: 1_u64);
+  let first = shared_new::<Alpha>(value: a0);
+  let second = shared_new::<Alpha>(value: a1);
+  let seen = 0_u64;
+  atomic p = &first, q = &second {{
+    {block}
+  }}
+  return std::process::exit_status(code: 0_u8);
+}}
+"#
+    )
+}
+
+#[test]
+fn a_group_record_carries_each_target_s_write_flag() {
+    let flag = |index: &str, value: &str| (index.to_owned(), value.to_owned());
+    // Reading both: the record's third field is 0 for each target, so the
+    // group's release starts no sweep.
+    let llvm = compile(two_alpha_group("set seen = p^.n +wrap q^.n;").as_bytes());
+    assert_eq!(group_record_flags(&llvm), [flag("0", "0"), flag("1", "0")], "{llvm}");
+    // Writing p: two handles of one type may name one object, so a write
+    // through p may write q's object and both are released as written.
+    let llvm = compile(two_alpha_group("set p^.n = q^.n;").as_bytes());
+    assert_eq!(group_record_flags(&llvm), [flag("0", "1"), flag("1", "1")], "{llvm}");
 }
 
 #[test]
