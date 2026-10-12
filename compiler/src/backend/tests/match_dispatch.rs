@@ -450,7 +450,9 @@ fn assert_mixed_cursor_join(module: &str) {
         .lines()
         // Ordinary pointer phis also name cursor predecessor labels on
         // their right-hand side. Count only cursor definitions.
-        .filter(|line| line.trim_start().starts_with("%wf.cursor.v") && line.contains(" = phi ptr "))
+        .filter(|line| {
+            line.trim_start().starts_with("%wf.cursor.v") && line.contains(" = phi ptr ")
+        })
         .collect::<Vec<_>>();
     assert_eq!(phis.len(), 1, "one mixed join transports an address: {arm}");
     assert_transported_joins(module, 1);
@@ -485,15 +487,24 @@ fn assert_mixed_cursor_join(module: &str) {
                 && !predecessor.contains(&format!(", ptr {run},")),
             "no loaded target is addressed or assumed in-domain before its guard: {arm}"
         );
-        if let Some(step) = qualified.lines().find(|line|
-            line.contains(" = getelementptr %") && line.ends_with(", i64 1"))
+        if let Some(step) = qualified
+            .lines()
+            .find(|line| line.contains(" = getelementptr %") && line.ends_with(", i64 1"))
         {
             advancing += 1;
-            let (_, operands) = step.split_once(", ptr ").expect("the step's pointer operand");
+            let (_, operands) = step
+                .split_once(", ptr ")
+                .expect("the step's pointer operand");
             let (received, _) = operands.split_once(',').expect("the step's offset");
-            assert!(received != run && arm.lines().next().expect("the arm's signature")
-                .contains(&format!("ptr {received}")),
-                "the fall-through advances the received cursor: {qualified}");
+            assert!(
+                received != run
+                    && arm
+                        .lines()
+                        .next()
+                        .expect("the arm's signature")
+                        .contains(&format!("ptr {received}")),
+                "the fall-through advances the received cursor: {qualified}"
+            );
             assert!(
                 !qualified.contains(&format!(", ptr {run},")),
                 "fall-through never rebases: {qualified}"
@@ -510,8 +521,12 @@ fn assert_mixed_cursor_join(module: &str) {
         }
     }
     assert_eq!((advancing, rebasing), (1, 1), "{arm}");
-    assert!(arm.lines().any(|line| line.contains("musttail call ") && line.contains(&format!("ptr {pointer}"))),
-        "the continuing edge uses the joined pointer: {arm}");
+    assert!(
+        arm.lines().any(|line| {
+            line.contains("musttail call ") && line.contains(&format!("ptr {pointer}"))
+        }),
+        "the continuing edge uses the joined pointer: {arm}"
+    );
     let join_label = arm[..arm.find(phis[0]).expect("the phi is in the arm")]
         .lines()
         .rev()
@@ -545,6 +560,21 @@ fn nested_forwarding_joins_keep_the_failure_value_and_transport_the_cursor() {
 }
 
 #[test]
+fn a_guard_written_bound_above_index_transports_the_cursor() {
+    // `n > next` is `next < n` with its operands swapped: the same test, so
+    // the same join carries the address.
+    let source = scalar_interpreter().replace(
+        "        }\n        if next < n {",
+        "        }\n        if n > next {",
+    );
+    assert!(source.contains("if n > next {"));
+    let module = emit(source.as_bytes());
+    assert_mixed_cursor_join(&module);
+    let output = compile_and_run(&module);
+    assert!(output.status.success(), "{output:?}");
+}
+
+#[test]
 fn an_out_of_bounds_mixed_target_reaches_the_original_failure_without_addressing_it() {
     // A full-width target would poison an inbounds GEP or its nonnegative
     // assumption before the guard. Keep it on the original safe failure path.
@@ -553,7 +583,10 @@ fn an_out_of_bounds_mixed_target_reaches_the_original_failure_without_addressing
             .replace("Op::Jnz(t: 0_u64)", "Op::Jnz(t: 18446744073709551615_u64)")
             .replace("return 0_u64;", "return pc;")
             .replace("r == 3000_u64", "r == 2_u64");
-        assert!(source.contains("Op::Jnz(t: 18446744073709551615_u64)") && source.contains("r == 2_u64"));
+        assert!(
+            source.contains("Op::Jnz(t: 18446744073709551615_u64)")
+                && source.contains("r == 2_u64")
+        );
         let module = emit(source.as_bytes());
         assert_mixed_cursor_join(&module);
         let output = compile_and_run(&module);
@@ -598,10 +631,14 @@ fn two_absolute_join_predecessors_keep_run_based_cursor_formation() {
 fn equal_nonzero_steps_through_a_join_advance_without_a_pointer_phi() {
     // Distinct additions in the two predecessors carry the same step.
     // Main only propagates step zero through joins, then rebases this pc+1.
-    let source = scalar_interpreter().replace(
-        "set next = tv^;",
-        "let same_next = pc + 1_u64;\n          set next = same_next;",
-    );
+    // Jnz now falls through to Halt, so the run returns the first Add's 3.
+    let source = scalar_interpreter()
+        .replace(
+            "set next = tv^;",
+            "let same_next = pc + 1_u64;\n          set next = same_next;",
+        )
+        .replace("r == 3000_u64", "r == 3_u64");
+    assert!(source.contains("set next = same_next;") && source.contains("r == 3_u64"));
     let module = emit(source.as_bytes());
     let (convention, _) = host_convention();
     let split = verdict(&module, "wf_run").starts_with("split");
@@ -623,6 +660,8 @@ fn equal_nonzero_steps_through_a_join_advance_without_a_pointer_phi() {
             "equal steps never rebase: {arm}"
         );
     }
+    let output = compile_and_run(&module);
+    assert!(output.status.success(), "{output:?}");
 }
 
 /// An interpreter whose path tells a carried element address from a wrong
@@ -1003,6 +1042,10 @@ fn a_two_variant_tag_indexes_the_handler_table_unsigned() {
 
     let module = emit(PARITY_TABLE.as_bytes());
     assert_split(&module, "wf_run", 2);
+    assert!(
+        !module.contains("transports the matched element's address"),
+        "a loop that carries no address reports no mixed joins: {module}"
+    );
     let dispatch = definition(&module, "wf_run.dispatch");
     assert!(
         dispatch.contains("zext i1 "),

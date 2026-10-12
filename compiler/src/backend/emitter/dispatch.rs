@@ -472,8 +472,8 @@ struct Cursor {
     index: IrValueId,
     /// Values that are `index` plus a small constant number of elements.
     steps: HashMap<IrValueId, u64>,
-    /// Arm-local addresses transported through qualified joins.
-    joins: HashMap<IrValueId, String>,
+    /// The arm's joins that carry the address through a pointer join.
+    joins: Vec<CursorJoin>,
     /// The run's address.
     run: IrValueId,
     /// The header instruction that defines `place`.
@@ -487,14 +487,87 @@ struct Cursor {
 /// A mixed scalar join with its existing bounds test distributed over
 /// incoming edges. Only qualified edges enter the join, so its address phi
 /// never requires a speculative address from an unbounded target.
+#[derive(Clone)]
 struct CursorJoin {
     block: IrBlockId,
+    guard: JoinGuard,
+    /// The blocks of the guard's failure path.
+    failure_blocks: Vec<bool>,
+    /// The source each join parameter the failure path reads stands for.
+    failure_aliases: HashMap<IrValueId, IrValueId>,
+}
+
+/// A join block's only work: a test of its parameter `index` below `bound`
+/// whose result `test` its Bool `match` branches on.
+#[derive(Clone)]
+struct JoinGuard {
+    test: IrValueId,
     index: IrValueId,
+    /// The position of `index` among the join's parameters.
+    position: usize,
     bound: IrValueId,
     success: IrBlockId,
     failure: IrBlockId,
-    failure_blocks: Vec<bool>,
-    failure_aliases: HashMap<IrValueId, IrValueId>,
+}
+
+/// The guard of a block that only tests one of its own parameters below a
+/// bound, u64 `index < bound` or `bound > index`, and branches on the
+/// result: a pure comparison each incoming edge can repeat with its own
+/// argument, leaving exactly the hypotheses the join established.
+fn guard_shape(block: &IrBlock) -> Option<JoinGuard> {
+    let [
+        IrInstruction::Define {
+            result,
+            ty: IrType::Bool,
+            operation:
+                crate::IrOperation::Integer {
+                    operation,
+                    operand_type:
+                        IrType::Integer {
+                            width: 64,
+                            signed: false,
+                        },
+                    arguments,
+                },
+        },
+    ] = block.instructions()
+    else {
+        return None;
+    };
+    let (index, bound) = match (operation, arguments.as_slice()) {
+        (crate::IrIntegerOperation::Less, [index, bound])
+        | (crate::IrIntegerOperation::Greater, [bound, index]) => (*index, *bound),
+        _ => return None,
+    };
+    let position = block
+        .parameters()
+        .iter()
+        .position(|(value, _)| *value == index)?;
+    let IrTerminator::Match {
+        scrutinee,
+        enum_type: IrEnumType::Bool,
+        targets,
+    } = block.terminator()
+    else {
+        return None;
+    };
+    if scrutinee != result || targets.len() != 2 {
+        return None;
+    }
+    let target = |tag: u32| {
+        targets
+            .iter()
+            .find(|target| target.tag() == tag)
+            .map(|target| target.block())
+    };
+    Some(JoinGuard {
+        test: *result,
+        index,
+        position,
+        bound,
+        success: target(1)?,
+        failure: target(0)?,
+    })
 }
 
 fn joined_cursor_name(value: IrValueId) -> String {
@@ -1310,37 +1383,17 @@ impl FunctionEmitter<'_, '_> {
         ));
 
         self.set_part(Part::Arm);
+        // Each arm sets its own steps and joins; the next part starts again
+        // from the loop's cursor.
+        let entry_cursor = self
+            .dispatch
+            .as_ref()
+            .and_then(|dispatch| dispatch.cursor.clone());
         let mut transported_joins = 0;
         for ((target, blocks), arm_symbol) in arms.iter().zip(&arm_symbols) {
             self.output = FunctionBody::default();
             self.incoming = self.collect_incoming(blocks)?;
-            if let Some(index) = self
-                .dispatch
-                .as_ref()
-                .and_then(|dispatch| dispatch.cursor.as_ref())
-                .map(|cursor| cursor.index)
-            {
-                let steps = self.index_steps(index, Some(blocks));
-                if let Some(cursor) = self
-                    .dispatch
-                    .as_mut()
-                    .and_then(|dispatch| dispatch.cursor.as_mut())
-                {
-                    cursor.steps = steps;
-                }
-            }
-            let cursor_joins = self.cursor_joins(blocks)?;
-            transported_joins += cursor_joins.len();
-            if let Some(cursor) = self
-                .dispatch
-                .as_mut()
-                .and_then(|dispatch| dispatch.cursor.as_mut())
-            {
-                cursor.joins = cursor_joins
-                    .iter()
-                    .map(|join| (join.index, joined_cursor_name(join.index)))
-                    .collect();
-            }
+            transported_joins += self.prepare_arm_cursor(blocks)?;
             self.output.open_block("entry".to_owned());
             writeln!(self.output, "  br label %{}", block_label(*target))
                 .map_err(|_| BackendFailure::TextEmission)?;
@@ -1351,32 +1404,21 @@ impl FunctionEmitter<'_, '_> {
                 self.materialized.clear();
                 let block_id =
                     IrBlockId::from_index(index).ok_or(BackendFailure::CounterOverflow)?;
-                self.pin_names.clear();
-                for join in &cursor_joins {
-                    if join.failure_blocks[index] {
-                        self.pin_names.extend(
-                            join.failure_aliases
-                                .iter()
-                                .map(|(parameter, source)| (*parameter, value_name(*source))),
-                        );
-                    }
-                }
+                self.pin_names = self.cursor_failure_aliases(index);
                 self.output.open_block(block_label(block_id));
                 self.emit_block_parameters(block_id, member)?;
-                if let Some(join) = cursor_joins.iter().find(|join| join.block == block_id) {
-                    self.emit_cursor_join_phi(join)?;
-                    writeln!(self.output, "  br label %{}", block_label(join.success))?;
-                } else {
+                if !self.emit_cursor_join_phi(block_id)? {
                     for (instruction_index, instruction) in member.instructions().iter().enumerate()
                     {
                         self.emit_part_instruction(block_id, instruction_index, instruction)?;
                     }
-                    if !self.emit_cursor_join_edge(block_id, &cursor_joins)? {
-                        self.emit_terminator(block_id, member.terminator())?;
-                    }
+                    self.emit_terminator(block_id, member.terminator())?;
                 }
                 self.output.finish_ir_block(block_id)?;
                 self.pin_names.clear();
+            }
+            if let Some(dispatch) = &mut self.dispatch {
+                dispatch.cursor.clone_from(&entry_cursor);
             }
             parts.push((
                 self.part_signature(arm_symbol, Part::Arm)?,
@@ -1385,10 +1427,12 @@ impl FunctionEmitter<'_, '_> {
             ));
         }
 
-        self.dispatch_ledger.push(format!(
-            "{}: transports the matched element's address through {transported_joins} mixed joins",
-            symbol.strip_suffix(".dispatch").unwrap_or(&symbol)
-        ));
+        if entry_cursor.is_some() {
+            self.dispatch_ledger.push(format!(
+                "{}: transports the matched element's address through {transported_joins} mixed joins",
+                symbol.strip_suffix(".dispatch").unwrap_or(&symbol)
+            ));
+        }
         let mut users: HashMap<FunctionSlot, usize> = HashMap::new();
         for (_, _, uses) in &parts {
             for key in uses {
@@ -1999,7 +2043,7 @@ impl FunctionEmitter<'_, '_> {
                     place: *result,
                     index: *offset,
                     steps: self.index_steps(*offset, None),
-                    joins: HashMap::new(),
+                    joins: Vec::new(),
                     run: *address,
                     instruction,
                     element: referent.ty(),
@@ -2056,261 +2100,294 @@ impl FunctionEmitter<'_, '_> {
         }
     }
 
-    /// Move a join's existing, pure bounds test to its incoming edges.
-    /// The immediate success edge already has the header's checked target
-    /// domain; moving its address formation to those successful predecessors
-    /// preserves that domain without introducing another test: substituting
-    /// each incoming value in the pure comparison leaves exactly the same
-    /// hypotheses at the immediate, instruction-free checked continuation.
-    /// The bound can be the run's length or a previously justified tighter
-    /// bound; the existing header obligation, not a guessed bound, is the
-    /// authority. A failure
-    /// continuation may read equal-input parameters through their dominating
-    /// source values, including nested forwarding joins, but a varying failure
-    /// value or a shared continuation keeps the ordinary run-based path.
-    fn cursor_joins(&self, blocks: &[bool]) -> Result<Vec<CursorJoin>, BackendFailure> {
-        let Some(dispatch) = &self.dispatch else {
-            return Ok(Vec::new());
+    /// Sets the cursor's steps and transported joins to those of the arm
+    /// whose blocks are `blocks`, returning how many joins it transports.
+    /// The steps see only the predecessors this arm reaches, so a join that
+    /// another arm also enters can still keep this arm's constant step.
+    fn prepare_arm_cursor(&mut self, blocks: &[bool]) -> Result<usize, BackendFailure> {
+        let Some((index, header)) = self.dispatch.as_ref().and_then(|dispatch| {
+            let cursor = dispatch.cursor.as_ref()?;
+            Some((cursor.index, dispatch.plan.header))
+        }) else {
+            return Ok(0);
         };
-        let Some(cursor) = &dispatch.cursor else {
-            return Ok(Vec::new());
-        };
+        let steps = self.index_steps(index, Some(blocks));
+        let joins = self.cursor_joins(blocks, header, index, &steps)?;
+        let transported = joins.len();
+        let cursor = self
+            .dispatch
+            .as_mut()
+            .and_then(|dispatch| dispatch.cursor.as_mut())
+            .ok_or(BackendFailure::InvalidIr)?;
+        cursor.steps = steps;
+        cursor.joins = joins;
+        Ok(transported)
+    }
+
+    /// The joins of an arm whose existing, pure bounds test moves onto their
+    /// incoming edges, so that a pointer join carries the matched element's
+    /// address beside the index. Each successful predecessor forms its
+    /// address after its own copy of the test; the immediate success edge
+    /// already has the header's checked target domain, and substituting each
+    /// incoming value in the pure comparison leaves exactly the hypotheses
+    /// the join established, so no test is added. The bound can be the run's
+    /// length or a previously justified tighter bound: the existing header
+    /// obligation, not a guessed bound, is the authority.
+    fn cursor_joins(
+        &self,
+        blocks: &[bool],
+        header: IrBlockId,
+        cursor: IrValueId,
+        steps: &HashMap<IrValueId, u64>,
+    ) -> Result<Vec<CursorJoin>, BackendFailure> {
         let roots = self.cursor_join_roots(blocks);
-        let root = |value: IrValueId| roots.get(&value).copied().unwrap_or(value);
         let mut joins = Vec::new();
-        for (index, block) in self.function.blocks().iter().enumerate() {
-            if !blocks[index] {
+        for (at, block) in self.function.blocks().iter().enumerate() {
+            if !blocks[at] {
                 continue;
             }
-            let [
-                IrInstruction::Define {
-                    result,
-                    ty: IrType::Bool,
-                    operation:
-                        crate::IrOperation::Integer {
-                            operation: crate::IrIntegerOperation::Less,
-                            operand_type:
-                                IrType::Integer {
-                                    width: 64,
-                                    signed: false,
-                                },
-                            arguments,
-                        },
-                },
-            ] = block.instructions()
+            // A known step already moves the received address.
+            let Some(guard) = guard_shape(block).filter(|guard| !steps.contains_key(&guard.index))
             else {
                 continue;
             };
-            let [offset, bound] = arguments.as_slice() else {
-                continue;
-            };
-            let Some(position) = block
-                .parameters()
-                .iter()
-                .position(|(value, _)| value == offset)
-            else {
-                continue;
-            };
-            if cursor.steps.contains_key(offset) {
-                continue;
-            }
-            let IrTerminator::Match {
-                scrutinee,
-                enum_type: IrEnumType::Bool,
-                targets,
-            } = block.terminator()
-            else {
-                continue;
-            };
-            if scrutinee != result || targets.len() != 2 {
-                continue;
-            }
-            if self
-                .function
-                .blocks()
-                .iter()
-                .enumerate()
-                .any(|(at, member)| {
-                    blocks[at]
-                        && at != index
-                        && (member
-                            .instructions()
-                            .iter()
-                            .any(|instruction| instruction.operands().contains(result))
-                            || member.terminator().operands().contains(result))
-                })
+            if !self.guard_only_branches(blocks, at, guard.test)
+                || !self.success_continues(&guard, header, cursor)?
+                || !self.mixed_incoming(at, &guard, steps, header)
             {
                 continue;
             }
-            let Some(success) = targets
-                .iter()
-                .find(|target| target.tag() == 1)
-                .map(|target| target.block())
+            let Some((failure_blocks, failure_aliases)) =
+                self.failure_continuation(at, &guard, header, &roots)
             else {
                 continue;
             };
-            let Some(failure) = targets
-                .iter()
-                .find(|target| target.tag() == 0)
-                .map(|target| target.block())
-            else {
-                continue;
-            };
-            let success_block = self.block(success)?;
-            let IrTerminator::Jump {
-                target,
-                arguments: returned,
-                ..
-            } = success_block.terminator()
-            else {
-                continue;
-            };
-            if !success_block.instructions().is_empty() || *target != dispatch.plan.header {
-                continue;
-            }
-            let Some(cursor_position) = self
-                .block(*target)?
-                .parameters()
-                .iter()
-                .position(|(value, _)| *value == cursor.index)
-            else {
-                continue;
-            };
-            if returned.get(cursor_position) != Some(offset) {
-                continue;
-            }
-            let incoming = &self.incoming[index];
-            if incoming.len() < 2
-                || incoming.iter().any(|edge| edge.arguments.len() != block.parameters().len())
-                || !incoming
-                    .iter()
-                    .any(|edge| cursor.steps.contains_key(&edge.arguments[position]))
-            {
-                continue;
-            }
-            let block_id = IrBlockId::from_index(index).ok_or(BackendFailure::CounterOverflow)?;
-            // A cycle can revisit a join with a new index before dispatch:
-            // that is not a constant step from this arm's received cursor.
-            if incoming.iter().any(|edge| {
-                reach(self.function, &[index], dispatch.plan.header.index())
-                    [edge.predecessor.index()]
-            }) {
-                continue;
-            }
-            let success_blocks = reach(
-                self.function,
-                &[success.index()],
-                dispatch.plan.header.index(),
-            );
-            let failure_blocks = reach(
-                self.function,
-                &[failure.index()],
-                dispatch.plan.header.index(),
-            );
-            if success_blocks
-                .iter()
-                .zip(&failure_blocks)
-                .any(|(a, b)| *a && *b)
-                || failure_blocks[index]
-                || self
-                    .function
-                    .blocks()
-                    .iter()
-                    .enumerate()
-                    .any(|(at, member)| {
-                        failure_blocks[at]
-                            && successors(member).contains(&dispatch.plan.header.index())
-                    })
-            {
-                continue;
-            }
-            let mut aliases = HashMap::new();
-            for (at, (parameter, _)) in block.parameters().iter().enumerate() {
-                let first = root(incoming[0].arguments[at]);
-                if incoming.iter().all(|edge| root(edge.arguments[at]) == first) {
-                    aliases.insert(*parameter, first);
-                }
-            }
-            let mut reads = BTreeSet::new();
-            for (at, member) in self.function.blocks().iter().enumerate() {
-                if failure_blocks[at] {
-                    used_values(member, &mut reads);
-                }
-            }
-            if reads.contains(result)
-                || block
-                    .parameters()
-                    .iter()
-                    .any(|(value, _)| reads.contains(value) && !aliases.contains_key(value))
-            {
-                continue;
-            }
             joins.push(CursorJoin {
-                block: block_id,
-                index: *offset,
-                bound: *bound,
-                success,
-                failure,
+                block: IrBlockId::from_index(at).ok_or(BackendFailure::CounterOverflow)?,
+                guard,
                 failure_blocks,
-                failure_aliases: aliases,
+                failure_aliases,
             });
         }
         Ok(joins)
     }
 
-    fn emit_cursor_join_phi(&mut self, join: &CursorJoin) -> Result<(), BackendFailure> {
-        write!(
-            self.output,
-            "  {} = phi ptr ",
-            joined_cursor_name(join.index)
-        )?;
-        for (at, edge) in self.incoming[join.block.index()].iter().enumerate() {
+    /// Whether only the join's own branch reads the test's result: the
+    /// join's comparison is not emitted, so no other read may remain.
+    fn guard_only_branches(&self, blocks: &[bool], join: usize, test: IrValueId) -> bool {
+        !self
+            .function
+            .blocks()
+            .iter()
+            .enumerate()
+            .any(|(at, member)| {
+                blocks[at]
+                    && at != join
+                    && (member
+                        .instructions()
+                        .iter()
+                        .any(|instruction| instruction.operands().contains(&test))
+                        || member.terminator().operands().contains(&test))
+            })
+    }
+
+    /// Whether the success target is an empty block that jumps to the header
+    /// with the tested index as the header's index: the header's checked
+    /// target domain then covers exactly the value each predecessor tests,
+    /// so the address formed after that test needs no other check.
+    fn success_continues(
+        &self,
+        guard: &JoinGuard,
+        header: IrBlockId,
+        cursor: IrValueId,
+    ) -> Result<bool, BackendFailure> {
+        let success = self.block(guard.success)?;
+        let IrTerminator::Jump {
+            target, arguments, ..
+        } = success.terminator()
+        else {
+            return Ok(false);
+        };
+        if !success.instructions().is_empty() || *target != header {
+            return Ok(false);
+        }
+        let position = self
+            .block(header)?
+            .parameters()
+            .iter()
+            .position(|(value, _)| *value == cursor);
+        Ok(position.is_some_and(|position| arguments.get(position) == Some(&guard.index)))
+    }
+
+    /// Whether the join is mixed and outside every cycle of the arm: two or
+    /// more incoming edges, each passing every parameter, one of them a known
+    /// constant step of the received index, and no predecessor the join
+    /// reaches. A cycle could revisit the join with an index from a later
+    /// visit, which is no step from this arm's received address.
+    fn mixed_incoming(
+        &self,
+        join: usize,
+        guard: &JoinGuard,
+        steps: &HashMap<IrValueId, u64>,
+        header: IrBlockId,
+    ) -> bool {
+        let incoming = &self.incoming[join];
+        let parameters = self.function.blocks()[join].parameters().len();
+        if incoming.len() < 2
+            || incoming
+                .iter()
+                .any(|edge| edge.arguments.len() != parameters)
+            || !incoming
+                .iter()
+                .any(|edge| steps.contains_key(&edge.arguments[guard.position]))
+        {
+            return false;
+        }
+        let cycle = reach(self.function, &[join], header.index());
+        !incoming.iter().any(|edge| cycle[edge.predecessor.index()])
+    }
+
+    /// The failure path's blocks and, for each join parameter every incoming
+    /// edge supplies from one dominating source, that source, when each
+    /// predecessor can branch to the path directly: it shares no block with
+    /// the success path, never returns to the join or the header, and reads
+    /// only parameters with such a source, resolved through nested
+    /// forwarding joins. A varying value or a shared continuation keeps the
+    /// ordinary run-based path.
+    fn failure_continuation(
+        &self,
+        join: usize,
+        guard: &JoinGuard,
+        header: IrBlockId,
+        roots: &HashMap<IrValueId, IrValueId>,
+    ) -> Option<(Vec<bool>, HashMap<IrValueId, IrValueId>)> {
+        let header = header.index();
+        let success_blocks = reach(self.function, &[guard.success.index()], header);
+        let failure_blocks = reach(self.function, &[guard.failure.index()], header);
+        if failure_blocks[join]
+            || success_blocks
+                .iter()
+                .zip(&failure_blocks)
+                .any(|(success, failure)| *success && *failure)
+            || self
+                .function
+                .blocks()
+                .iter()
+                .enumerate()
+                .any(|(at, member)| failure_blocks[at] && successors(member).contains(&header))
+        {
+            return None;
+        }
+        let root = |value: IrValueId| roots.get(&value).copied().unwrap_or(value);
+        let incoming = &self.incoming[join];
+        let parameters = self.function.blocks()[join].parameters();
+        let mut aliases = HashMap::new();
+        for (at, (parameter, _)) in parameters.iter().enumerate() {
+            let first = root(incoming[0].arguments[at]);
+            if incoming
+                .iter()
+                .all(|edge| root(edge.arguments[at]) == first)
+            {
+                aliases.insert(*parameter, first);
+            }
+        }
+        // No read of the test itself is checked here: the failure path lies
+        // inside the arm and excludes the join, where `guard_only_branches`
+        // already refused one.
+        let mut reads = BTreeSet::new();
+        for (at, member) in self.function.blocks().iter().enumerate() {
+            if failure_blocks[at] {
+                used_values(member, &mut reads);
+            }
+        }
+        if parameters
+            .iter()
+            .any(|(value, _)| reads.contains(value) && !aliases.contains_key(value))
+        {
+            return None;
+        }
+        Some((failure_blocks, aliases))
+    }
+
+    /// The transported join at `block` in the arm being emitted.
+    fn arm_cursor_join(&self, block: IrBlockId) -> Option<&CursorJoin> {
+        self.dispatch
+            .as_ref()?
+            .cursor
+            .as_ref()?
+            .joins
+            .iter()
+            .find(|join| join.block == block)
+    }
+
+    /// The source values a failure-path block reads in place of the join
+    /// parameters every incoming edge supplies alike, since a predecessor
+    /// branches to that path without passing the join.
+    fn cursor_failure_aliases(&self, block: usize) -> HashMap<IrValueId, String> {
+        self.dispatch
+            .as_ref()
+            .and_then(|dispatch| dispatch.cursor.as_ref())
+            .into_iter()
+            .flat_map(|cursor| &cursor.joins)
+            .filter(|join| join.failure_blocks[block])
+            .flat_map(|join| &join.failure_aliases)
+            .map(|(parameter, source)| (*parameter, value_name(*source)))
+            .collect()
+    }
+
+    /// Emits a transported join as the phi of its predecessors' addresses
+    /// and a branch to its success; its test moved onto those predecessors.
+    /// Returns whether `block` was such a join.
+    fn emit_cursor_join_phi(&mut self, block: IrBlockId) -> Result<bool, BackendFailure> {
+        let Some((index, success)) = self
+            .arm_cursor_join(block)
+            .map(|join| (join.guard.index, join.guard.success))
+        else {
+            return Ok(false);
+        };
+        write!(self.output, "  {} = phi ptr ", joined_cursor_name(index))?;
+        for (at, edge) in self.incoming[block.index()].iter().enumerate() {
             if at != 0 {
                 self.output.push_str(", ");
             }
             self.output.incoming(
-                predecessor_cursor_name(join.index, edge.predecessor),
+                predecessor_cursor_name(index, edge.predecessor),
                 edge.predecessor,
             );
         }
-        self.output.push('\n');
-        Ok(())
+        writeln!(self.output, "\n  br label %{}", block_label(success))?;
+        Ok(true)
     }
 
-    /// Returns whether this predecessor's transfer was emitted, retaining
-    /// the original edge's storage and drop actions before its moved guard.
-    fn emit_cursor_join_edge(
+    /// Ends a jump into a transported join, after the edge's storage
+    /// transfers and drops: the join's test of this edge's index, a failure
+    /// entering the join's original failure path, and on success this edge's
+    /// address of the matched element. Returns whether `target` was such a
+    /// join.
+    pub(super) fn emit_cursor_join_edge(
         &mut self,
         block: IrBlockId,
-        joins: &[CursorJoin],
+        target: IrBlockId,
+        arguments: &[IrValueId],
     ) -> Result<bool, BackendFailure> {
-        let member = self.block(block)?.clone();
-        let IrTerminator::Jump {
-            target,
-            arguments,
-            drops,
-        } = member.terminator()
+        let Some((index, bound, failure)) = self
+            .arm_cursor_join(target)
+            .map(|join| (join.guard.index, join.guard.bound, join.guard.failure))
         else {
             return Ok(false);
         };
-        let Some(join) = joins.iter().find(|join| join.block == *target) else {
-            return Ok(false);
-        };
-        let parameters = self.block(*target)?.parameters().to_vec();
+        let parameters = self.block(target)?.parameters();
         let argument = |value: IrValueId| {
             parameters
                 .iter()
                 .position(|(parameter, _)| *parameter == value)
                 .map_or(value, |position| arguments[position])
         };
-        let offset = argument(join.index);
-        let bound = argument(join.bound);
-        self.prepare_snapshot_use(block, member.instructions().len())?;
-        self.emit_place_edge(*target, arguments, drops)?;
+        let (offset, bound) = (argument(index), argument(bound));
         let predicate = self.next_temporary()?;
         let qualified = format!(
             "wf.cursor.v{}.from.b{}.valid",
-            join.index.ordinal(),
+            index.ordinal(),
             block.index()
         );
         writeln!(
@@ -2318,7 +2395,7 @@ impl FunctionEmitter<'_, '_> {
             "  %{predicate} = icmp ult i64 {}, {}\n  br i1 %{predicate}, label %{qualified}, label %{}",
             self.value_name(offset),
             self.value_name(bound),
-            block_label(join.failure)
+            block_label(failure)
         )?;
         self.output.open_block(qualified);
         let cursor = self
@@ -2326,12 +2403,14 @@ impl FunctionEmitter<'_, '_> {
             .as_ref()
             .and_then(|dispatch| dispatch.cursor.clone())
             .ok_or(BackendFailure::InvalidIr)?;
+        // Formed before the success edge's drops, which cannot end the run:
+        // the loop cannot change it.
         let address = self.edge_cursor(&cursor, &[(cursor.index, offset)], true)?;
         writeln!(
             self.output,
             "  {} = getelementptr i8, ptr {address}, i64 0\n  br label %{}",
-            predecessor_cursor_name(join.index, block),
-            block_label(join.block)
+            predecessor_cursor_name(index, block),
+            block_label(target)
         )?;
         Ok(true)
     }
@@ -2353,8 +2432,8 @@ impl FunctionEmitter<'_, '_> {
             .find(|(parameter, _)| *parameter == cursor.index)
             .map(|(_, argument)| *argument)
             .ok_or(BackendFailure::InvalidIr)?;
-        if tail && let Some(pointer) = cursor.joins.get(&argument) {
-            return Ok(pointer.clone());
+        if tail && cursor.joins.iter().any(|join| join.guard.index == argument) {
+            return Ok(joined_cursor_name(argument));
         }
         if tail && let Some(step) = cursor.steps.get(&argument) {
             if *step == 0 {
