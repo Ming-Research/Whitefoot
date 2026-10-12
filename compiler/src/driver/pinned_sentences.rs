@@ -1476,7 +1476,7 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         rule: "OP-4",
         sentences: &[
-            "would prove it, and their rows, which write `context^` and `context^.blocks.inner`, removed them: where `bump` and `clear_all` leave `context^.blocks.inner.len` unchanged, state `context^.blocks.inner.len` unchanged in each one's `ensures`; or guard",
+            "would prove it, and their rows, which write `context^` and `context^.blocks.inner`, removed them: where `bump` and `clear_all` leave `context^.blocks.inner.len` unchanged, state equality of the entry and exit values of `context^.blocks.inner.len` in each one's `ensures`; or guard",
         ],
     },
     // -------------------------------------------------------------------
@@ -1511,7 +1511,7 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         rule: "OP-4",
         sentences: &[
-            "held before the calls to `bump` at line 13 and to `bump` at line 14 would prove it, and their rows, which write `context^`, removed them: where `bump` leaves `context^.blocks.inner.len` unchanged, declare its row as `writes(context.width)`, the paths its body accesses, or state `context^.blocks.inner.len` unchanged in its `ensures`; or guard",
+            "held before the calls to `bump` at line 13 and to `bump` at line 14 would prove it, and their rows, which write `context^`, removed them: where `bump` leaves `context^.blocks.inner.len` unchanged, declare its row as `writes(context.width)`, the paths its body accesses, or state equality of the entry and exit values of `context^.blocks.inner.len` in its `ensures`; or guard",
         ],
     },
 ];

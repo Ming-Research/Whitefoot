@@ -16,6 +16,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+mod unchanged;
+
 use super::super::model::CheckedMeasure;
 use super::super::range_facts::{
     CheckedRangeClause, CheckedRangePlace, CheckedRangeProjection, CheckedRangeRelation,
@@ -539,6 +541,9 @@ struct Trigger {
     /// Only an overflowing template uses the original aggregate prefix. It
     /// must still report capacity when a later, unmaterialized field is read.
     descendants: bool,
+    /// An unchanged selection triggers at every read at or below it,
+    /// including measures and the whole-element identity itself [RANGE-3].
+    unchanged: bool,
 }
 
 fn collect_triggers(term: &CheckedRangeTerm, out: &mut Vec<Trigger>, overflowing: bool) {
@@ -552,8 +557,9 @@ fn collect_triggers(term: &CheckedRangeTerm, out: &mut Vec<Trigger>, overflowing
             guarded_from,
             ..
         } => {
-            let descendants = overflowing && guarded_from.is_some();
-            let count = if descendants {
+            let unchanged = projection.last() == Some(&CheckedRangeProjection::WholeElement);
+            let descendants = unchanged || (overflowing && guarded_from.is_some());
+            let count = if descendants && !unchanged {
                 implicit_indices
                     .first()
                     .map_or(indices.len(), |at| *at as usize)
@@ -572,12 +578,15 @@ fn collect_triggers(term: &CheckedRangeTerm, out: &mut Vec<Trigger>, overflowing
                     place: place.clone(),
                     shape: *shape,
                     positions,
-                    projection: if descendants {
+                    projection: if unchanged {
+                        projection[..projection.len() - 1].to_vec()
+                    } else if descendants {
                         projection[..guarded_from.unwrap()].to_vec()
                     } else {
                         projection.clone()
                     },
                     descendants,
+                    unchanged,
                 });
             }
             for index in indices {
@@ -619,6 +628,9 @@ pub(super) struct Query {
     pub(super) units: Vec<Literal>,
     pub(super) choices: Vec<Vec<Vec<Literal>>>,
     pub(super) rules: Vec<Rule>,
+    /// Imported frame instances contribute step-2 definitions, not a round
+    /// of automatic instantiation [RANGE-3].
+    pub(super) frames: unchanged::Definitions,
 }
 
 impl Query {
@@ -640,6 +652,7 @@ impl Query {
         }
         for mut conclusion in formed.conclusions {
             conclusion.guards.extend(formed.premises.iter().cloned());
+            self.frames.record(world, &conclusion, &formed.conditions);
             for literal in
                 conclusion
                     .guards
@@ -791,7 +804,9 @@ pub(super) fn judge(
                         }
                         _ => trigger.projection.clone(),
                     };
-                    let matches = if trigger.descendants {
+                    let matches = if trigger.unchanged {
+                        projection.starts_with(&expected)
+                    } else if trigger.descendants {
                         projection.len() > expected.len()
                             && projection.starts_with(&expected)
                             && !matches!(
@@ -952,6 +967,12 @@ fn expand(
 ) -> Result<(), Capacity> {
     loop {
         let Some(atom) = atoms.iter().copied().find(|atom| !expanded.contains(atom)) else {
+            // Frame definitions also apply to reads introduced by ordinary
+            // version definitions and second-round instances. They add no
+            // tuple instances, and share this step-2 closure's atom ceiling.
+            if unchanged::expand(world, atoms, query)? {
+                continue;
+            }
             return Ok(());
         };
         expanded.insert(atom);
@@ -987,7 +1008,9 @@ fn expand(
                 }
                 match world.versions[version as usize].def.clone() {
                     VersionDef::Initial | VersionDef::Fresh => {}
-                    VersionDef::Copied { source, arity } => {
+                    VersionDef::Copied { source, arity }
+                        if projection.last() != Some(&CheckedRangeProjection::WholeElement) =>
+                    {
                         let mut path = source.projection;
                         path.extend((0..arity).map(|position| {
                             CheckedRangeProjection::Index((source.indices.len() + position) as u32)
@@ -1009,6 +1032,10 @@ fn expand(
                             selected,
                         )]);
                     }
+                    // [RANGE-2] Copying preserves values, not storage
+                    // identity, including collections materialized lazily
+                    // from an aggregate's Slot::Read source.
+                    VersionDef::Copied { .. } => {}
                     VersionDef::Forget {
                         previous,
                         projections,
@@ -1043,7 +1070,8 @@ fn expand(
                         // replacement overlaps every descendant, measures included.
                         if !projections_overlap(&projection, &footprint) {
                             hit.push(Literal::new(value.clone(), Relation::Equal, old.clone()));
-                        } else if let Some(relative) = projection.strip_prefix(footprint.as_slice())
+                        } else if projection.last() != Some(&CheckedRangeProjection::WholeElement)
+                            && let Some(relative) = projection.strip_prefix(footprint.as_slice())
                         {
                             for length in (0..=relative.len()).rev() {
                                 if let Some(stored) = stored.get(&relative[..length]) {

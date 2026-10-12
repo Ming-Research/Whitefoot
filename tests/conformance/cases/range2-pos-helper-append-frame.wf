@@ -1,0 +1,42 @@
+struct Block {
+  entry_slot: u32;
+}
+
+fn push_item<T: drop>(cell: &Box<Slots<T>>, value: T, ceiling: u64) -> pushed: Bool writes(cell) contract {
+  requires ceiling <= 1073741824_u64;
+  ensures cell^.inner.len >= entry(cell)^.inner.len;
+  ensures cell^.inner.len <= entry(cell)^.inner.len + 1_u64;
+  ensures forall preserved(k in 0_u64..entry(cell)^.inner.len): cell^.inner[k] unchanged;
+} {
+  let length = cell^.inner.len;
+  if length >= ceiling {
+    return False();
+  }
+  let capacity = cell^.inner.cap;
+  if length >= capacity {
+    invariant below_ceiling: length < ceiling;
+    invariant full: capacity <= length;
+    let room = ceiling - capacity;
+    if capacity < room {
+      if capacity == 0_u64 {
+        grow(cell: cell, capacity: 4_u64);
+      } else {
+        let doubled = capacity + capacity;
+        grow(cell: cell, capacity: doubled);
+      }
+    } else {
+      grow(cell: cell, capacity: ceiling);
+    }
+  }
+  place_back(window: &cell^.inner, value: move value);
+  return True();
+}
+
+fn append_target(targets: &Box<Slots<Block>>, value: Block) -> result: Bool writes(targets) {
+  let pushed = push_item::<Block>(cell: targets, value: move value, ceiling: 1073741824_u64);
+  return pushed;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

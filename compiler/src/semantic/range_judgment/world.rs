@@ -90,8 +90,10 @@ pub(super) struct Container {
 pub(super) enum VersionDef {
     /// The contents the container held when the judgment first saw it.
     Initial,
-    /// A collection reached below an aggregate copy. Its elements and initial
-    /// descriptor retain the immutable source definition captured by the copy.
+    /// A copied collection's value projections retain the immutable source;
+    /// its whole-element identities are new [RANGE-2]. `arity` adds the
+    /// subscripts into a collection reached below an aggregate source; zero
+    /// copies an already materialized container's version directly.
     Copied { source: ReadSource, arity: usize },
     /// Contents nothing here describes.
     Fresh,
@@ -225,6 +227,13 @@ impl World {
         projection: Vec<CheckedRangeProjection>,
         ty: Option<IntegerType>,
     ) -> Linear {
+        // [RANGE-3] Whole-element identity is a mathematical read, with no
+        // source-language integer type or value-equality interpretation.
+        let ty = if projection.last() == Some(&CheckedRangeProjection::WholeElement) {
+            None
+        } else {
+            ty
+        };
         let key = (version, indices.clone(), projection.clone());
         if let Some(atom) = self.reads.get(&key) {
             return Linear::atom(*atom);
@@ -1090,6 +1099,14 @@ pub(super) fn projections_overlap(
     left: &[CheckedRangeProjection],
     right: &[CheckedRangeProjection],
 ) -> bool {
+    // [OWN-7, RANGE-2] An identity read names all the owned storage below
+    // its selection, so every descendant write overlaps it.
+    let left = left
+        .strip_suffix(&[CheckedRangeProjection::WholeElement])
+        .unwrap_or(left);
+    let right = right
+        .strip_suffix(&[CheckedRangeProjection::WholeElement])
+        .unwrap_or(right);
     for (left, right) in left.iter().zip(right) {
         if left == right {
             continue;

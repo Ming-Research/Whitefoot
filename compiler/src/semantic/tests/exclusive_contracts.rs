@@ -260,7 +260,7 @@ fn main() -> status: std::process::ExitStatus pure {
   let pair = Pair(changed: move changed, untouched: move untouched);
   push(pair: &pair, value: 7_u64);
   invariant changed: pair.changed.len >= 1_u64;
-  invariant unchanged: pair.untouched.len <= 0_u64;
+  invariant untouched_length: pair.untouched.len <= 0_u64;
   return std::process::exit_status(code: 0_u8);
 }
 "#;

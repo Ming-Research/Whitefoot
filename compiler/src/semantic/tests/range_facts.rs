@@ -242,12 +242,10 @@ fn main() -> status: std::process::ExitStatus pure {{
 }
 
 #[test]
-fn a_callee_relation_over_an_entry_image_is_not_taken_as_a_range_fact() {
-    // `place_back`'s relation `window^.len == entry(window)^.len + 1` names
-    // an entry image, which no range term reads [RANGE-1]. Read as a range
-    // fact over the current length it is `len == len + 1`, a contradiction
-    // after which the caller proved every owed range fact, including this
-    // false one.
+fn a_callee_entry_relation_never_collapses_entry_and_exit_versions() {
+    // [RANGE-1, RANGE-2] `place_back`'s relation reads its recorded entry
+    // version. Collapsing it into the exit version would state
+    // `len == len + 1` and prove every fact, including this false one.
     let source = b"fn need_sevens(xs: &Slots<u64, 8>) -> result: unit pure contract {
   requires forall seven(k in 0_u64..xs^.len): xs^[k] == 7_u64;
 } {
@@ -3087,4 +3085,98 @@ fn generic_float_struct_equality_exports_no_integer_field_fact() {
         SemanticRule::Range3,
         "need(xs: &xs[0_u64..1_u64], expected: value.index)",
     );
+}
+
+/// [RANGE-1] symbolic and concrete generic frames retain whole-selection
+/// identity rather than becoming value equality or an omitted aggregate clause.
+#[test]
+fn generic_unchanged_forms_entry_identity_without_projection_expansion() {
+    use super::super::model::CheckedType;
+    use super::super::range_facts::{
+        CheckedRangeProjection as Projection, CheckedRangeRoot as Root, CheckedRangeTerm as Term,
+        RangeComparison,
+    };
+    let source =
+        include_bytes!("../../../../tests/conformance/cases/range2-pos-helper-append-frame.wf");
+    with_semantics(source, |outcome| {
+        let SemanticOutcome::Complete(program) = outcome else {
+            panic!("generic and Block frames must check: {outcome:?}");
+        };
+        let mut symbolic = false;
+        let mut concrete = false;
+        for function in program
+            .data
+            .functions
+            .iter()
+            .filter(|f| f.name == "push_item")
+        {
+            match function.parameters[1].ty {
+                CheckedType::Generic(_) => symbolic = true,
+                CheckedType::Nominal(_) => concrete = true,
+                other => panic!("unexpected instance element: {other:?}"),
+            }
+            let clause = &function
+                .range_facts
+                .postconditions
+                .iter()
+                .find(|post| post.clause.name == "preserved")
+                .unwrap()
+                .clause;
+            let [relation] = clause.conclusions.as_slice() else {
+                panic!("one written unchanged remains one identity: {clause:?}");
+            };
+            assert!(!relation.projected);
+            assert_eq!(relation.comparison, RangeComparison::Equal);
+            let Term::Read {
+                place: exit,
+                indices,
+                projection,
+                ..
+            } = &relation.left
+            else {
+                panic!("{relation:?}");
+            };
+            let Term::Read {
+                place: entry,
+                indices: entry_indices,
+                projection: entry_projection,
+                ..
+            } = &relation.right
+            else {
+                panic!("{relation:?}");
+            };
+            assert_eq!(projection, &[Projection::WholeElement]);
+            assert_eq!(entry_projection, projection);
+            assert_eq!(
+                entry_indices, indices,
+                "indices retain their written denotation"
+            );
+            assert_eq!(exit.root, Root::Binding(function.parameters[0].binding));
+            assert_eq!(entry.root, Root::Entry(function.parameters[0].binding));
+            assert_eq!(exit.path, entry.path);
+        }
+        assert!(symbolic && concrete, "both instance scopes were inspected");
+    });
+}
+
+/// [RANGE-1, DIAG-1] syntactically factored affine operands must still be
+/// single places, and refusals must precede ordinary element-read checking.
+#[test]
+fn unchanged_refusals_name_the_written_relation() {
+    for (contract, offending) in [
+        (
+            "ensures forall preserved(k in 0_u64..cell^.len): cell^[k] + 0_u64 unchanged;",
+            "cell^[k] + 0_u64 unchanged",
+        ),
+        ("ensures cell^[0_u64] unchanged;", "cell^[0_u64] unchanged"),
+        (
+            "ensures forall preserved(k in 0_u64..cell^.len) when cell^[k] unchanged: cell^[k] == k;",
+            "cell^[k] unchanged",
+        ),
+    ] {
+        let source = field_range_program(&format!(
+            "fn preserve(cell: &Array<u64, 1>) -> result: unit writes(cell) contract {{\n  {contract}\n}} {{\n  set cell^[0_u64] = 0_u64;\n  return unit;\n}}\n"
+        ));
+        super::assert_rule_at(&source, SemanticRule::Range1, offending);
+    }
 }
