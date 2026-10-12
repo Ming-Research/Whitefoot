@@ -1276,7 +1276,7 @@ frequency nor optimized x86 cost. Bounds established after a join constrain
 where address formation may assert validity. The candidate must account for
 the run as a reader wherever a transported alternative rebases. Halo timing
 is a regression control, not evidence that helper-based frame accesses
-receive this mechanism. No measurements of this candidate exist yet.
+receive this mechanism.
 
 **Expected coverage.** The generated v2h source contains 33 mixed sites:
 `BrIf`, `BrUnless`, `BrIfMove`, ten ordinary `BrI32` compares, eighteen
@@ -1292,6 +1292,26 @@ rewriting, helper coverage and an explicit usable relation for `enter`'s
 successful frame result; stable length alone does not supply that relation.
 Producer-supplied target addresses require a separate private representation
 and lifetime design; carrying a pointer alone does not remove its first GEP.
+
+**Result on the 14900K.** Whitefoot run 38196645988 (candidate 22071cccd,
+main `032a0f665` and its twin, seven rotated rounds, CoreMark 20000
+iterations, Halo-wf `641eb29f4` with full LTO). The candidate ledger shows
+33 transported mixed joins in v2h, as expected, and 0 in every Halo loop.
+
+| Workload | Candidate/main, paired median (range) | Twin/main, paired median (range) |
+| --- | --- | --- |
+| v2h CoreMark score | 1.0128 (1.0095-1.0154), higher in 7/7 | 1.0011 (0.9979-1.0024) |
+| Halo `fib` time | 1.0008 (0.9952-1.0036) | 1.0033 (0.9940-1.0130) |
+| Halo `loop` time | 0.9998 (0.9965-1.0035) | 1.0013 (0.9984-1.0083) |
+
+The CoreMark gain is consistent and separated from the twin, and neither
+Halo kernel slowed, but 1.3% misses the pre-registered 2% adoption
+threshold, so by that criterion the candidate is not adopted. The owner
+then ruled to keep it as an exception (board card lm-b1-adopt, option B),
+under the standing rule that a change which reads as an ordinary
+optimization, adds little complexity and is not a hack may stay for a small
+stable gain. The threshold above is unchanged as the record of what was
+predicted; the adoption rests on the owner's ruling, not on meeting it.
 
 **B2. Parameters that only travel.** `natural-loop.wf` passes its
 `count0` and the enclosing frame through every arm unread. The fix is
