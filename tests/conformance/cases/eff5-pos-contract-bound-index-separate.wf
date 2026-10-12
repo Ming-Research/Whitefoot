@@ -1,0 +1,21 @@
+struct Frame {
+  marker: u64;
+  items: Array<u64, 1>;
+}
+
+fn helper(frame: &Frame, other: &Frame) -> result: unit writes(frame.marker), writes(other.items) contract {
+  requires forall before(k in 0_u64..1_u64): frame^.items[k] == 0_u64;
+  ensures forall after(k in 0_u64..1_u64): frame^.items[k] == 0_u64;
+} {
+  set frame^.marker = 1_u64;
+  set other^.items[0_u64] = 1_u64;
+  return unit;
+}
+
+fn caller() -> result: unit pure {
+  let zeros = array_filled::<u64, 1>(value: 0_u64);
+  let first = Frame(marker: 0_u64, items: zeros);
+  let second = Frame(marker: 0_u64, items: zeros);
+  helper(frame: &first, other: &second);
+  return unit;
+}

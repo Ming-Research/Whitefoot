@@ -511,6 +511,39 @@ fn two_overlapping_substituted_writes_are_refused() {
     });
 }
 
+/// [EFF-5, DIAG-1] a substituted contract read meets another argument's
+/// write at the complete call, carrying both caller-spelled paths and the
+/// repair that separates the arguments.
+#[test]
+fn a_contract_read_alias_reports_the_complete_call_and_both_paths() {
+    let source =
+        include_str!("../../../../tests/conformance/cases/eff5-neg-contract-field-alias.wf");
+    with_semantics(source.as_bytes(), |outcome| {
+        let SemanticOutcome::SourceIssue { issue, .. } = outcome else {
+            panic!("expected a contract-read EFF-5 rejection, got {outcome:?}");
+        };
+        assert_eq!(issue.rule(), SemanticRule::Eff5);
+        let coordinate = issue.location().coordinate();
+        let start = usize::try_from(coordinate.start().value()).unwrap();
+        let end = usize::try_from(coordinate.end().value()).unwrap();
+        assert_eq!(&source[start..end], "helper(frame: f, other: f)");
+        let SemanticIssueKind::OverlappingCallEffects {
+            first,
+            second,
+            mechanical_fix,
+        } = issue.kind()
+        else {
+            panic!("unexpected contract-read diagnostic {:?}", issue.kind());
+        };
+        assert_eq!(first, "f^.value");
+        assert_eq!(second, "f^.value");
+        assert_eq!(
+            *mechanical_fix,
+            "pass places that do not overlap, or pass the shared place through one argument only"
+        );
+    });
+}
+
 /// A pair-writing helper whose row is `ROW`, called once on a local pair.
 const PAIR_ACT: &str = r#"struct Pair {
   first: u8;
@@ -2144,6 +2177,134 @@ fn assert_indexed_call_proof(label: &str, source: &[u8], require_affine: bool) {
         assert!(
             found,
             "accepted source must retain one exact indexed call proof"
+        );
+    });
+}
+
+#[test]
+fn nested_contract_index_rejects_the_resolved_equal_position() {
+    use super::super::entailment::{
+        DerivationNode, MeasureBound, ObligationFamily, Relation, TermId, TermKind,
+    };
+    use super::super::model::{CheckedCallSeparationPositions, CheckedMeasure};
+    use super::super::places::CapturedTerm;
+
+    let positive = include_str!(
+        "../../../../tests/conformance/cases/eff5-pos-contract-nested-index-separate.wf"
+    );
+    let negative =
+        include_str!("../../../../tests/conformance/cases/eff5-neg-contract-nested-index-alias.wf");
+    assert_eq!(positive.replace("j: 2_u64", "j: 1_u64"), negative);
+    let resolved_position = with_semantics(positive.as_bytes(), |outcome| {
+        let SemanticOutcome::Complete(program) = outcome else {
+            panic!("nested readonly length must separate positions one and two: {outcome:?}");
+        };
+        let caller = program
+            .data
+            .functions
+            .iter()
+            .find(|function| function.name == "caller")
+            .expect("caller is checked");
+        let entailment = &caller.entailment;
+        super::entailment::validate_derivations(entailment);
+        let (query, separation) = caller
+            .call_separations
+            .iter()
+            .enumerate()
+            .find(|(_, separation)| !separation.contract_indices.is_empty())
+            .expect("nested position participates in the call comparison");
+        let [(capture, expression)] = separation.contract_indices.as_slice() else {
+            panic!("only the outer readonly measure needs a capture");
+        };
+        assert!(
+            entailment.obligations.iter().any(|outcome| {
+                matches!(outcome.family, ObligationFamily::CallSeparation(id)
+                if id as usize == query)
+                    && outcome.discharged
+                    && outcome.derivation.is_some()
+            }),
+            "the nested position must retain its separation proof"
+        );
+        let capture_kind = TermKind::IndexCapture {
+            capture: capture.capture,
+        };
+        let capture_term = TermId(
+            u32::try_from(
+                entailment
+                    .inventory
+                    .terms
+                    .iter()
+                    .position(|term| *term == capture_kind)
+                    .expect("the compared capture has a term"),
+            )
+            .expect("term id fits u32"),
+        );
+        assert!(
+            entailment.derivations.nodes.iter().any(|node| {
+                let DerivationNode::SourceBound {
+                    relation:
+                        Relation::Equal {
+                            left,
+                            right,
+                            difference: 0,
+                        },
+                    ..
+                } = node
+                else {
+                    return false;
+                };
+                *left == capture_term
+                    && matches!(
+                        entailment.inventory.terms.get(right.0 as usize),
+                        Some(TermKind::Measure(CheckedMeasure::Length, _))
+                    )
+                    && entailment.inventory.measure_bounds.get(right.0 as usize)
+                        == Some(&Some(MeasureBound::Constant(1)))
+            }),
+            "the compared position must equal the standing Array length one"
+        );
+        expression.clone()
+    });
+    // A failed separation has no retained proof root. Compare its exact
+    // position expression with the positively proved value above instead:
+    // an EFF-5 verdict alone also passes when this image is left opaque.
+    super::with_semantics_dark(negative.as_bytes(), |outcome| {
+        let SemanticOutcome::Complete(program) = outcome else {
+            panic!("nested-index witness must reach entailment: {outcome:?}");
+        };
+        let caller = program
+            .data
+            .functions
+            .iter()
+            .find(|function| function.name == "caller")
+            .expect("caller is checked");
+        let entailment = &caller.entailment;
+        super::entailment::validate_derivations(entailment);
+        let (query, separation) = caller
+            .call_separations
+            .iter()
+            .enumerate()
+            .find(|(_, separation)| !separation.contract_indices.is_empty())
+            .expect("nested position participates in the call comparison");
+        let [(capture, expression)] = separation.contract_indices.as_slice() else {
+            panic!("the same readonly measure needs the same one capture");
+        };
+        assert_eq!(*expression, resolved_position);
+        assert!(
+            separation.positions.iter().any(|positions| {
+                matches!(positions, CheckedCallSeparationPositions::Indices(left, right)
+                if (*left == *capture && right.term == CapturedTerm::Literal(1))
+                    || (*right == *capture && left.term == CapturedTerm::Literal(1)))
+            }),
+            "the resolved position one is compared with written position one"
+        );
+        assert!(
+            entailment.obligations.iter().any(|outcome| {
+                matches!(outcome.family, ObligationFamily::CallSeparation(id)
+                if id as usize == query)
+                    && !outcome.discharged
+            }),
+            "equal positions must fail separation"
         );
     });
 }

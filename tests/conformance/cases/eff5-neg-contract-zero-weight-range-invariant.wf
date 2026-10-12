@@ -1,0 +1,16 @@
+struct Vacuous {
+  cells: Array<u64, 1>;
+  invariant(v): forall ok(k in 0_u64..1_u64): 0_u64 * v^.cells[k] == 0_u64;
+}
+
+fn helper(source: &Vacuous, target: &Vacuous) -> result: unit writes(target.cells) {
+  set target^.cells[0_u64] = 1_u64;
+  return unit;
+}
+
+fn caller() -> result: unit pure {
+  let zero = array_filled::<u64, 1>(value: 0_u64);
+  let object = Vacuous(cells: zero);
+  helper(source: &object, target: &object);
+  return unit;
+}

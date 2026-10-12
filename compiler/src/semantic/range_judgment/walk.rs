@@ -17,8 +17,8 @@ use super::super::obligations::ObligationSubject;
 use crate::NodePath;
 
 mod aggregate;
-mod ordinary;
 mod operations;
+mod ordinary;
 #[cfg(test)]
 mod tests;
 mod type_invariants;
@@ -3034,7 +3034,8 @@ impl<'program> Walker<'program> {
                 .insert(*container, self.world.new_generation());
         }
         for container in &modified.capacities {
-            if !modified.containers.contains(container) && !modified.descriptors.contains(container) {
+            if !modified.containers.contains(container) && !modified.descriptors.contains(container)
+            {
                 header.relocate_container(&mut self.world, *container);
             }
         }
@@ -3472,6 +3473,7 @@ impl<'program> Walker<'program> {
         // A certificate argument names the loop's own state: form it in a
         // frame over the entry state, its iterations bound.
         let clause = CheckedRangeClause {
+            contract_reads: Vec::new(),
             declaration: synthetic_declaration(),
             name: String::new(),
             node: empty_path(),
