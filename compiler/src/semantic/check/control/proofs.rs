@@ -192,6 +192,8 @@ impl<'unit> Checker<'_, 'unit> {
         loop_depth: usize,
         owner: AffineProofOwner,
     ) -> Result<CheckedAffineRelation, CheckStop> {
+        self.types
+            .check_range_referent_places(context.check_context, node, bindings)?;
         let normalization = self
             .types
             .declarations

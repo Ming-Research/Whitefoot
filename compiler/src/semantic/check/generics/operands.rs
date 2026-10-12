@@ -576,11 +576,14 @@ impl<'unit> TypeContext<'unit> {
                 _ => return Ok(None),
             }
         };
-        for &suffix in suffixes {
+        for (position, &suffix) in suffixes.iter().enumerate() {
             if matches!(
                 self.declarations.tree.place_suffix(suffix)?,
                 crate::syntax::views::PlaceSuffix::Dereference
             ) {
+                if position == 0 && matches!(ty, SelectedPlaceType::Range(_)) {
+                    self.declarations.check_range_referent(suffix)?;
+                }
                 continue;
             }
             if self.declarations.tree.subscript_offset(suffix)?.is_some() {
