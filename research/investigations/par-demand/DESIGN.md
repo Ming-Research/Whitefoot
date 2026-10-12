@@ -3969,3 +3969,345 @@ without grain-worthy complementary work under either policy. Separately, the
 startup observation supports bringing the owner-registration exposure repair
 to the owner and running the registered twin/startup trace; this run alone
 selects neither.
+
+#### Twin and startup diagnostic results
+
+[Compute-bench run 38200599238](https://github.com/Ming-Research/Whitefoot/actions/runs/38200599238)
+ran `par_demand_experiment=diagnostic-twin` at revision
+`5f9c8497843a8254b2f40dd2aae80b20eb3462e0`; its i9-14900K job ran
+03:49:46-03:51:59 UTC (run record supplied with the artifact). Evidence is that
+run's `par-demand-results-14900k` artifact: `diagnostic-twin.json` (cited as
+`dt.`), `identity.json` and `measurement-host.txt`;
+`diagnostic-twin-smoke.json` is the hosted, unqualified smoke and is used only
+for binding. Intervals were recomputed from the raw rows with
+`summarize.median_interval` (paired second calls, median, 10,000 draws, seed
+20261010, 95%) and agree with `dt.reports[]` to every printed digit. No build,
+native execution or retiming was performed for this reading. Statements are
+marked **registered reading** or **exploratory** as in the spine section.
+
+**Validity: complete and valid as a diagnostic, with one void cell.**
+
+- `dt.status` is `complete`, `dt.smoke` is false, `dt.qualification` is
+  "diagnostic only; no E6 adoption verdict", and `measurement-host.txt` names
+  an Intel Core i9-14900K. `dt.hosted_smoke_sha256` equals the transferred
+  smoke's SHA-256 and the smoke's `construction` equals `dt.construction`.
+- Revision: `identity.json.revision` is 5f9c84978 with empty `dirty`;
+  `dt.construction.runtime_source_sha256` is `e17236ba...`, the same
+  `core.c` bytes as the spine run. The only difference from 2f5d5be09 is two
+  `diagnostics.py` hunks in the FIR loop-shape helpers (`strongly_connected`,
+  `innermost_loops`, `operands`, `ordered_tap_chain`, `selected_call_shapes`)
+  and their tests; the twin mode's preparation, image plan, path resolution,
+  sample validation, run loop and reduction are unchanged.
+- Construction: each workload's twin is byte-identical to its demand image
+  (`dt.construction.images[].sha256`). The `same` pair runs the demand image
+  under both labels, `distinct` runs demand as D and twin as T, `swapped` the
+  reverse (`dt.decisive[].physical_image`). The trace image links the same WF
+  object as large_helper's demand image and differs only in the counter core and
+  counter primitive objects (`dt.construction.link_inputs`).
+- Matrix and order: 252 pilot and 1,512 decisive rows (seven cells, six arms,
+  six and 36 rounds) and 12/72 trace rows, without duplicates. In every cell
+  each pair's T runs first in exactly 18 of 36 decisive rounds, and trace-T
+  precedes trace-D in 18 of 36. Placement and settings are as registered
+  (`dt.placement`, `dt.settings`); six pilot rounds took 16.31 s, the
+  projection was 114.16 s and the mode finished in 113.88 s.
+- Trace conditions: `startup_trace.dropped` is 0 in all 84 trace rows, and
+  every row carries lane 0's `word-registered` and `idle-window-selected` and
+  each helper's `helper-ready` and `scan` events (`validate_sample`). Every
+  trace row's pool is complete, 8 lanes and 7 ready, before and after both
+  calls, so there is no partial startup to report separately. The selected
+  idle window is 1000 us in every W4/W8 row; W1 rows start no pool.
+- Void condition: one of 21 twin intervals excludes 1 (histogram W1, `same`),
+  which voids that cell (table below).
+
+**Q1, order and path-role crossover (registered reading: six of the seven E6
+voids do not recur under balanced order; histogram W1 rejects order-only
+attribution).**
+
+| Cell (workload / threads; baseline = n/a; ideal = n/a) | Distinct paths, twin / demand wall (ratio; baseline = demand image path, same round; ideal = CI includes 1) | Swapped roles, demand-as-T / twin-as-D wall (ratio; baseline = twin image path as D; ideal = CI includes 1) | Same path, T / D wall (ratio; baseline = the same image under label D; ideal = CI includes 1) | Registered reading (category; baseline = step-4 rule; ideal = valid) |
+| --- | --- | --- | --- | --- |
+| large_helper W1 | 0.999968 [0.999728, 1.000233] | 1.000003 [0.999937, 1.000081] | 0.999846 [0.999763, 1.000062] | valid; order-only not rejected |
+| large_helper W8 | 0.999717 [0.998434, 1.002281] | 0.998589 [0.994344, 1.000391] | 1.000053 [0.998522, 1.002389] | valid; order-only not rejected |
+| records W8 | 1.003893 [0.988931, 1.022863] | 1.010745 [0.983709, 1.025016] | 0.992022 [0.977978, 1.011117] | valid; order-only not rejected |
+| fir W4 | 1.003297 [0.989283, 1.017177] | 0.997803 [0.993128, 1.003117] | 1.001061 [0.990352, 1.004863] | valid; order-only not rejected |
+| stencil W4 | 1.000716 [0.983812, 1.011405] | 0.998271 [0.984360, 1.006544] | 0.992439 [0.982974, 1.000798] | valid; order-only not rejected |
+| prefix W4 | 0.996024 [0.986760, 1.010855] | 1.003511 [0.986744, 1.011076] | 0.996935 [0.990928, 1.013158] | valid; order-only not rejected |
+| histogram W1 | 1.002244 [0.995716, 1.007409] | 0.995950 [0.992241, 1.000339] | **1.003887 [1.000876, 1.007783]** | **void; order-only rejected; qualification stops for state/mapping analysis** |
+
+Source: `dt.reports[workload,width].twins.{distinct,swapped,same}.{median,interval}`, `.order_only_rejected`, `.twin_valid`, `.causal_status`.
+
+"Not rejected" is the registered outcome, not proof that order caused the E6
+voids: the rule can reject order-only attribution but cannot confirm it.
+Histogram W1 has no pool, so its same-path exclusion cannot involve the
+scheduler; its lower endpoint is 0.000876 above 1, and one exclusion among 21
+intervals at 95% coverage is about what chance gives (exploratory). The
+registered rule has no multiplicity allowance, and the reading stands.
+
+**Q2, startup exposure (registered reading: the large_helper W8 trace
+supports the unexposed-root hypothesis).** The registered rule: a full wider
+pool with near-seq calls and no owner request or useful exposure supports it;
+slow calls with sustained requests, publications and steals reject it.
+
+| Trace process (phase, round, role; baseline = n/a; ideal = n/a) | Owner registration after last helper ready (us; baseline = 0.185-32.889 in the 66 exposed decisive rows; ideal = 0) | Second call wall / CPU (ms; baseline = large_helper W1 in this run, 47.744-47.748 ms per arm, and E6 W8 seq 48.087 ms; ideal = about 6.7 ms) | Publications / steals, first and second call (count; baseline = about 3,000 / 2,400 per call in exposed rows; ideal = n/a) | Owner request before and after second call (word value; baseline = 1; ideal = 1) | Helpers parked before registration (of 7; baseline = n/a; ideal = n/a) | Helpers proven to have stopped scanning before registration (of 7; baseline = n/a; ideal = n/a) |
+| --- | --- | --- | --- | --- | --- | --- |
+| decisive 10, trace-T | 1103.4 | 47.859 / 47.852 | 0 / 0, 0 / 0 | 0, 0 | 0 | 6 |
+| decisive 14, trace-T | 1098.2 | 47.827 / 47.826 | 0 / 0, 0 / 0 | 0, 0 | 0 | 6 |
+| decisive 15, trace-T | 1157.4 | 47.819 / 47.818 | 0 / 0, 0 / 0 | 0, 0 | 5 | 6 |
+| decisive 19, trace-D | 1105.8 | 47.838 / 47.837 | 0 / 0, 0 / 0 | 0, 0 | 1 | 6 |
+| decisive 27, trace-D | 1105.4 | 47.838 / 47.837 | 0 / 0, 0 / 0 | 0, 0 | 1 | 7 |
+| decisive 32, trace-D | 1112.4 | 47.835 / 47.834 | 0 / 0, 0 / 0 | 0, 0 | 1 | 7 |
+| pilot 2, trace-T | 1109.9 | 47.863 / 47.862 | 0 / 0, 0 / 0 | 0, 0 | 0 | not computed |
+
+Source: `dt.counter_decisive[]` and `dt.counter_pilots[]`: `startup_trace.events[]` (`helper-ready`, lane 0 `word-registered`, `park`), `samples[0,1].{wall_ns,cpu_ns,before.owner_request,after.owner_request}` and counter deltas of `samples[].snapshot_{before,after}.counters`; E6 seq from run 38179220701 `summary.json.cells[large_helper,8].initial.wall_ns.seq.median`; W1 from `dt.decisive[large_helper,1]`. "Stopped scanning" counts helpers whose park lies less than 1,000 us after registration: a helper's last every-round scan precedes its window, which precedes its park by at least the 1,000 us window (`core.c` 1352-1376), so such a helper ended its every-round scanning before registration.
+
+Six of 72 decisive trace processes (8.3%) and one of 12 pilots meet the
+supporting condition: complete pools, the owner never requested, no
+publication or steal in either call, second-call CPU equal to wall, and a
+near-seq call. No near-seq call had sustained requests, publications or
+steals. The registered reading is **supported**, with the registered caveat
+that trace overhead can perturb startup; its rate here is not E6's rate.
+
+Ambiguity: the registration does not define "slow". Under "slow = near seq",
+the reading above holds. Under any wider reading, decisive round 16 trace-D
+(second call 9.952 ms against an exposed median of 6.719 ms, 2,605
+publications, 2,076 steals and 4 parks) is a slow, exposed call; it would
+reject the hypothesis as the explanation of that call, not of the six near-seq
+calls, whose cause the hypothesis names.
+
+**Q2 detail: what happened before registration (exploratory, from the
+trace).**
+
+- In all six unexposed processes the owner registered 1.098-1.157 ms after
+  the last helper became ready; in all 66 exposed decisive processes it
+  registered 0.185-32.889 us after it. Every helper in an unexposed process
+  made exactly 1,026 scans in the first call, all at epoch 0
+  (`samples[0].snapshot_after.scans[].{count,last_scan_epoch}`), and the first
+  call attempted exactly 7,182 = 7 x 1,026 requests and posted 7 (one to each
+  helper's own word). That is 1,025 every-round scans in each helper's first
+  spin bound, then no scan through the 1,000 us window (the epoch never
+  moved), then one scan before parking (`core.c` 1515-1533).
+- **The wider mechanism is supported.** In rounds 10 and 14 no helper had
+  parked when the owner registered, yet none requested it afterwards: six of
+  seven helpers had already stopped scanning and were spinning without
+  scanning, and their pre-park scans after registration did not reach lane 0.
+  Parking before registration occurred in only four of the six processes (8 of
+  42 helper instances). Stopping scanning, not parking, is what the six
+  processes share.
+- Why the pre-park scans miss the owner: lane seeds are fixed
+  (`0x9e3779b97f4a7c15 * (index + 1)`, `core.c` 1580) and each failed scan
+  advances the seed once and requests one victim (1112-1113, 1134-1137).
+  Replaying that sequence for eight lanes, the 1,026th scan of lanes 1-7
+  targets lanes 5, 1, 5, 1, 6, 2, 6; for four lanes, lanes 1-3 target 2, 1,
+  1. On this startup path no helper's pre-park request can reach lane 0 at W4
+  or W8: once registration follows every helper's 1,025th scan, the owner is
+  never requested. The replay script is `scratchpad/twin-analysis/seeds.py`.
+  Each helper's first 1,026 scans target lane 0 112-249 times, first within
+  scans 2-9, which is why prompt registration always exposed work here.
+- Time to first steal is not recorded: the trace has no steal or publication
+  event, and helper scans are sampled to the first 16 per lane. In the six
+  unexposed processes no steal occurred in either call, more than 97 ms in
+  total. In exposed processes, the earliest helper scan seeing a nonzero epoch
+  came 0.346-59.032 us after registration (median 0.579 us, 25 rows where a
+  helper's sampled scans outlasted registration), and lane 0's first sampled
+  scan, which follows its first publication, came 29.3-144.0 us after
+  registration (median 41.0 us, 66 rows) with the epoch already at 25-159.
+  Once the owner is registered while a helper still scans every round, work is
+  exposed within microseconds.
+- Why the owner was about 1.1 ms late is not established. The delay equals
+  roughly one helper's 1,025 scans (sampled spacing median 196 ns, about
+  0.2 ms) plus its 1,000 us window, which fits an owner that cannot run until
+  a spinning helper sharing its CPU starts yielding. In each unexposed process
+  one helper parked 0.9-30 ms after registration, also consistent with sharing
+  the owner's CPU. Per-thread CPU placement was not recorded, so this is a
+  candidate only. In two exposed processes (rounds 16 and 35, trace-D), a
+  helper's start was delayed by a similar 1.2-1.5 ms instead; registration
+  followed that late helper, which was still scanning every round, and work was
+  exposed.
+
+**Exploratory: the same signature in the uninstrumented images.** Without
+tracing, the signature appears in every request-gated cell with a pool except
+prefix W4.
+
+| Cell (workload / threads; baseline = n/a; ideal = n/a) | Decisive processes whose second call had no owner request before or after and CPU/wall <= 1.006 (count of 216; baseline = 0; ideal = 0) | Their second-call wall (ms; baseline = cell median of 216; ideal = cell median) | Pilot processes with the same signature (count of 36; baseline = 0; ideal = 0) |
+| --- | --- | --- | --- |
+| large_helper W8 | 5 | 47.806-47.945 (median 6.640) | 2 |
+| records W8 | 7 | 10.529-10.661 (median 1.587) | 0 |
+| fir W4 | 3 | 7.991-8.093 (median 2.826) | 1 |
+| stencil W4 | 1 | 64.694 (median 39.368) | 0 |
+| prefix W4 | 0 | n/a (median 1.758) | 0 |
+
+Source: `dt.decisive[]` and `dt.pilots[]` second calls: `before.owner_request`, `after.owner_request`, `after.lane_count`, `cpu_ns`, `wall_ns`. W1 cells start no pool and are omitted.
+
+Four of the seven E6 voids (large_helper W8, records W8, fir W4, stencil W4)
+are cells where whole calls ran unexposed in this run, and E6's large_helper W8
+round-10 outlier had this signature. That makes the startup defect a plausible
+contributor to those voids, but no interval here establishes it: balanced
+order kept all four cells' twin intervals around 1 despite the outliers, and
+the rate in E6's processes is unknown.
+
+**Repair evidence (exploratory, from the trace and the seed replay).** The
+registration's proposed repair is to make owner registration part of the
+startup contract. The six unexposed schedules discriminate the candidates:
+
+| Candidate repair (mechanism; baseline = current runtime; ideal = exposure guaranteed) | Rounds 10 and 14: nothing parked at registration, six or more helpers no longer scanning (outcome; baseline = unexposed; ideal = exposed) | Rounds 15, 19, 27 and 32: one to five helpers parked at registration (outcome; baseline = unexposed; ideal = exposed) | Guarantee (category; baseline = none; ideal = by construction) |
+| --- | --- | --- | --- |
+| Registration bumps the scan epoch | each non-scanning helper scans once more; per the replay, lane 2's 1,027th victim is lane 0 (W8 and W4), so this schedule is rescued only by the fixed seed sequence | parked helpers are not woken; rescue again depends on which helpers remain in their window | none; depends on seed sequence and timing |
+| Registration wakes one idle worker | nothing is parked, so `wf__par_wake_one` finds no idle bit; no change | the woken helper restarts 1,025 every-round scans and reaches lane 0 within a few | none; fails when no helper is parked |
+| Owner posts its own initial request when it registers its word | the owner's first poll publishes; the publication bumps the epoch, so non-scanning helpers rescan and steal | the publication also wakes one parked helper (`wf__par_publish`, 1736-1760) | exposure of the root's first offer by construction |
+| Register lane 0's word before helpers start | helpers' first scans post to lane 0, and the request persists until the owner publishes | same | by construction, but requires choosing lane 0's owner before `wf__par_start` (today the CAS in `wf__par_attach` decides) |
+
+Source: trace rows as in the Q2 table; `core.c` 1001 (signal bump), 1009-1021 (`wf__par_wake_one`), 1035 (push bump), 1093 (steal bump), 1283-1300 (scan gating), 1662-1686 (ready wait, attach, registration); victims from `scratchpad/twin-analysis/seeds.py`.
+
+**Proposed consequence, not selected here.** The trace turns the static
+startup finding into an observed, attributable failure. It occurs with a
+complete pool, needs only that helpers stop scanning before registration, and
+on this startup path is not rescued by later requests, because the epoch never
+moves and every pre-park victim misses lane 0. A repair should guarantee that a
+newly registered owner is requested, independent of helper state and seeds:
+the owner's initial self-request at registration does so most locally, and
+registering lane 0's word before helpers start does so at the cost of fixing
+lane 0's owner earlier. An epoch bump or a wake alone is not sufficient.
+
+The test should fail before the repair and pass after, deterministically, by
+controlling the schedule rather than timing it. A `WF_SCHED_TEST` hook holds
+the owner between the ready wait and `wf__par_register_word` until every helper
+has made its pre-park scan (window nonzero; one variant releases the owner
+while helpers are still spinning in the window, matching rounds 10 and 14, and
+one after they park, matching round 15). The owner then runs a request-gated
+root that polls its word a bounded number of times and publishes only when
+requested. The test asserts at least one publication and one steal. At W4 and
+W8 the current runtime fails both variants, because the seed replay shows no
+pre-park request reaches lane 0. A self-request repair passes both; a wake-only
+repair fails the first variant. A zero-window control passes before and after.
+Word withdrawal, request-user lifetime and partial-startup tests stay
+unchanged. Owner approval of the repair comes before implementation; this run
+changes no policy.
+
+#### FIR diagnostic results
+
+[Compute-bench run 38201260238](https://github.com/Ming-Research/Whitefoot/actions/runs/38201260238)
+ran `par_demand_experiment=diagnostic-fir` at revision
+`5f9c8497843a8254b2f40dd2aae80b20eb3462e0`, whose construction check finds
+the legacy loop as the innermost loop's dataflow (`diagnostics.py`
+`innermost_loops`, `ordered_tap_chain`). Its i9-14900K job ran 03:58:03-03:59:03
+UTC (run record supplied with the artifact). Evidence is that run's
+`par-demand-results-14900k` artifact: `diagnostic-fir.json` (cited as `df.`),
+`identity.json`, `measurement-host.txt` and `diagnostics/fir/`;
+`diagnostic-fir-smoke.json` only binds. Intervals were recomputed from the raw
+rows with `summarize.median_interval` (paired second calls, median, 10,000
+draws, seed 20261010, 95%) and agree with `df.reports[]`. No build, native
+execution or retiming was performed for this reading.
+
+**Validity: complete, construction admitted, two of three padding treatments
+void under the implemented rule.**
+
+- `df.status` is `complete`, `df.smoke` is false and `df.qualification` is
+  "diagnostic only; no E6 adoption verdict"; `measurement-host.txt` names an
+  Intel Core i9-14900K. `identity.json.revision` is 5f9c84978 with empty
+  `dirty`; the smoke's SHA-256 matches `df.hosted_smoke_sha256` and its
+  construction equals `df.construction`; the runtime hash is the same
+  `e17236ba...` as in the other two diagnostics.
+- Construction (`df.construction.fir`):
+  - All 24 timed images link one computation object (`compute_object`
+    `51814ae8...`), and each twin is byte-identical to its image.
+  - Within a padding treatment, the four combinations differ only in their
+    selector object (`df.construction.link_inputs`), and the exposed and actual
+    roots keep the same absolute start and size (`matched_placement`).
+  - The legacy ordered four-tap loop survives as the innermost loop of
+    `wf__par_seq_filter`. In `diagnostics/fir/64/legacy-direct.disassembly` it
+    is 0x45c0-0x460d: four `mulsd`/`addsd` taps accumulated one after another
+    into `%xmm0` (`legacy_four_tap_loops`).
+  - The canonical closure is instruction-identical to seq's noinline
+    `wf_filter` after normalization, apart from the explicitly shared, latched
+    `wf_resource_record_abort` (`actual_canonical_closure`).
+  - No FMA appears, and each query adapter calls `wf__par_pool_active` exactly
+    once, outside every loop (`validate_fir_images`).
+- Matrix and order: 144 pilot and 720 decisive rows (eight arms, three
+  treatments, six and 30 rounds), without duplicates, 524,288 outputs per call;
+  every compared pair runs first in exactly 15 of 30 rounds in every
+  treatment. W1 placement is CPU 2, and the settings are as registered. Pilots
+  took 6.97 s, the projection was 41.82 s and the mode finished in 42.35 s.
+- Void condition: two of twelve twin intervals exclude 1, on byte-identical
+  images: legacy-query at 64 bytes, 0.997403 [0.996977, 0.999825], and
+  canonical-query at 4160 bytes, 0.998478 [0.997446, 0.999459]. The reducer
+  frozen before the run voids every comparison of a treatment with an excluded
+  twin, and then the layout floor, which needs every treatment's twins
+  (`df.reports[].causal_status`, `.same_job_layout_floor[].status`).
+
+**Q1, kernel construction under matched adapters (registered reading:
+supported at 65664 bytes; void at 64 and 4160).** Step 3 predicted a
+canonical/legacy wall ratio with lower endpoint > 1 under the same adapter
+while the legacy four-tap loop survives; upper <= 1 rejects.
+
+| Treatment / adapter (padding bytes / adapter; baseline = n/a; ideal = n/a) | Canonical / legacy wall (ratio; baseline = legacy computation, same adapter and treatment; supporting ideal = lower CI > 1) | Canonical minus legacy wall (us per call; baseline = legacy, same round; ideal = n/a) | Registered reading (category; baseline = step-3 rule and reducer void rule; ideal = valid) | Alternative reading: void only comparisons whose own arms' twins exclude 1 (category; baseline = same rule; ideal = valid) |
+| --- | --- | --- | --- | --- |
+| 64 / direct | 1.051271 [1.050186, 1.053614] | 404.0 [396.2, 422.3] | void (raw: supported) | supported |
+| 64 / query | 1.051526 [1.049443, 1.052369] | 406.2 [390.6, 412.8] | void (raw: supported) | void (legacy-query twin) |
+| 4160 / direct | 1.052783 [1.051610, 1.054690] | 416.0 [407.0, 430.3] | void (raw: supported) | supported |
+| 4160 / query | 1.053122 [1.051446, 1.054450] | 418.6 [406.0, 429.4] | void (raw: supported) | void (canonical-query twin) |
+| 65664 / direct | 1.053730 [1.052741, 1.055593] | 423.5 [415.6, 438.2] | **supported** | supported |
+| 65664 / query | 1.053478 [1.050583, 1.055129] | 421.5 [399.9, 434.7] | **supported** | supported |
+
+Source: `df.reports[padding].canonical_over_legacy[adapter].{median,interval,status,raw_status}` and `.twins`; us deltas recomputed from `df.decisive[]` second-call `wall_ns`.
+
+Under matched adapters, the canonical source loop is 5.1-5.4% slower than the
+legacy ordered four-tap loop in all six comparisons, void or not, and no
+interval approaches 1. That matches E6's FIR W1 demand/par of 1.052447 and
+par/seq of about 0.95461. The legacy construction's advantage therefore
+belongs to the computation, not to the query or wrapper. As registered, this
+prices the loop difference without attributing it to one machine-code feature.
+
+**Q2, adapter residue (registered reading: the adapter-negligible claim is
+not rejected; the floor is void).** Step 3 rejects negligible adapter
+execution if the query-minus-direct lower endpoint reaches 32 us; otherwise
+the interval is reported.
+
+| Treatment / computation (padding bytes / construction; baseline = n/a; ideal = n/a) | Query minus direct wall (ns per call; baseline = direct adapter, same computation and round; rejection = lower CI >= 32,000) | Query / direct wall (ratio; baseline = direct adapter; ideal = within the same-job floor) | Same-job floor band (ratio bounds; baseline = 64-byte direct reference; ideal = contains the query/direct interval) | Registered reading (category; baseline = step-3 rule and reducer; ideal = valid) |
+| --- | --- | --- | --- | --- |
+| 64 / canonical | 1830.5 [-7066.0, 10253.0] | 1.000220 [0.999150, 1.001238] | [0.997649, 1.002351]; raw: at floor | void; raw: not rejected |
+| 64 / legacy | 7674.0 [-1434.5, 19479.0] | 1.000973 [0.999818, 1.002476] | [0.997407, 1.002593]; raw: at floor | void; raw: not rejected |
+| 4160 / canonical | 2653.0 [-19637.0, 15375.5] | 1.000319 [0.997644, 1.001853] | [0.997649, 1.002351]; raw: outside by 0.000005 | void; raw: not rejected |
+| 4160 / legacy | 5555.0 [-3897.0, 11392.5] | 1.000704 [0.999505, 1.001445] | [0.997407, 1.002593]; raw: at floor | void; raw: not rejected |
+| 65664 / canonical | -917.0 [-23318.5, 14689.0] | 0.999889 [0.997191, 1.001772] | [0.997649, 1.002351]; raw: outside (lower) | not rejected; floor void |
+| 65664 / legacy | 1286.5 [-16466.5, 9721.5] | 1.000163 [0.997917, 1.001233] | [0.997407, 1.002593]; raw: at floor | not rejected; floor void |
+
+Source: `df.reports[padding].{query_minus_direct_ns,query_over_direct,query_residue_claim_rejected,raw_query_residue_claim_rejected,same_job_layout_floor}`; raw floor membership recomputed from the reported band and interval. Bands come from the direct computations at 4160 and 65664 bytes paired with 64 bytes: canonical 1.000041 [0.998902, 1.001537] and 1.000204 [0.998857, 1.002351]; legacy 0.999272 [0.998154, 1.000833] and 0.999015 [0.997407, 1.001119].
+
+Every lower endpoint is negative and every upper endpoint is at most 19.5 us,
+so one query outside loops cannot reproduce E6's roughly 32 us demand/seq
+residue. The registered statements are only "not rejected" and the
+intervals. Whether the adapter ratio is at the floor is undecided under the
+frozen rule. Under the alternative reading, whose direct floor controls all
+have valid twins, the legacy adapter is at the floor in all three treatments
+and the canonical adapter at 64 bytes only; at 4160 and 65664 bytes the
+canonical interval's lower end lies just below the band.
+
+**Exploratory observations.**
+
+- The two excluding twins are small (0.26% and 0.15%), on byte-identical
+  images run first equally often. Their order-conditional medians,
+  0.997323/0.998258 and 0.999078/0.997763 with the twin after or before its
+  image, show no consistent order sign. Two of twelve exclusions at 95%
+  coverage is more than chance usually gives (about 0.6 expected), so a small
+  path- or state-dependent effect remains possible, as in histogram W1's
+  same-path exclusion. The frozen rule's coupling of a whole treatment to one
+  twin is what turns these small exclusions into void kernel comparisons.
+- Absolute scale differs from E6: the canonical computation takes about
+  8.30 ms and the legacy about 7.88 ms per call (`df.decisive[]` medians in
+  every treatment), against E6's fir W1 seq 7.461 ms and par about 7.12 ms
+  (run 38179220701). Both constructions are about 11% slower in this
+  noinline, single-module build with the diagnostic runner. The ratio
+  reproduces E6 while the absolute times do not, so these numbers price the
+  loop difference within this construction, not E6's absolute walls. Which
+  part of the build costs the 11% was not measured.
+
+**Proposed consequence, not selected here.** The FIR question is answered in
+direction: par's W1 advantage is the legacy computation's ordered four-tap
+loop, about 5% at this size, and not the query adapter, whose cost is not
+distinguishable from zero at microsecond resolution. This supports option A's
+direction: an opaque canonical-computation boundary compiled once, so demand
+and seq run the same machine code. It also makes the remaining fir W1
+par-preservation failure a choice between keeping canonical identity, which
+costs about 5% against legacy par, and an owner-approved general change to the
+canonical loop's lowering. Reassociation and contraction are excluded as
+before. Any further timing should either use the narrower void rule above or
+pre-register why one excluded twin voids every comparison in its treatment.
