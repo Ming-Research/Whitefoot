@@ -2331,7 +2331,7 @@ Every atomic statement counts as a waiting call for [WAIT-1], [PAR-1] and [PAR-2
 The guard and the block contain no call to a waiting function [WAIT-1] and no atomic statement. The guard has the condition judgment of an `if` [GRAM-6], and its footprint [PAR-1] writes no path.
 No path of the guard's footprint, read or written, has a type that is a self-changing host handle [PRE-2] or has one as a part at any depth of field, payload field, element or `Box` content.
 The guard and the block together name every binding.
-A violation is a hard error citing SHARE-2 at the offending `call`, `atomic_stmt`, target, guard `expr`, `place` or index atom, with a repair [DIAG-1]. For a footprint path with a self-changing host handle, the offending `call` is the guard's call whose projected row [EFF-5] reads or writes that path, and the repair waits for a time outside the guard, with a deadline [PRE-2] or with a context that waits for the deadline and fires a cancellation source whose state the guard reads.
+A violation is a hard error citing SHARE-2 at the offending `call`, `atomic_stmt`, target, guard `expr`, `place` or index atom, with a repair [DIAG-1]. For a footprint path with a self-changing host handle, the offending `call` is the guard's call whose projected row [EFF-5] reads or writes that path, the one `call` a guard's `expr` can hold [GRAM-5], and the repair waits for a time outside the guard, with a deadline [PRE-2] or with a context that waits for the deadline and fires a cancellation source whose state the guard reads.
 The statement's footprint is its handle places and index atoms, read, together with the footprint of its guard and block from which every path that starts at a target's state is removed.
 
 [SHARE-3] An atomic statement takes effect at one point after it begins and before it completes.
@@ -2688,7 +2688,7 @@ The fixed texts are ASCII bytes, without the table's backticks:
 | `DeviceFailure` | `Device failure` |
 | `Other` | `Other I/O error` |
 
-`error_copy_class_description` describes its argument's variant, its class, and its selection ignores `code` and `origin`. Its description is the description `error_copy_description` selects for that variant carrying the class's code on the host as its `code`. The class's code is the code the following table names for the host: on a POSIX host, the value the host C library's `<errno.h>` gives the named constant, and on Windows, the system error code shown. A class whose entry is None, or whose named constant the host C library does not define, has no code on that host.
+`error_copy_class_description` describes its argument's variant, its class, and its selection ignores `code` and `origin`. A class has a code on a host exactly when the following table names one for that host and, on a POSIX host, the host C library's `<errno.h>` defines the named constant; that code is the constant's value on a POSIX host and the system error code shown on Windows. For a class with a code on the host, the selected description is the one `error_copy_description` selects for that variant carrying that code as its `code`; a class with no code on the host selects no description.
 
 | Variant | POSIX code | Windows code |
 |---|---|---|
@@ -2723,7 +2723,7 @@ The fixed texts are ASCII bytes, without the table's backticks:
 | `DeviceFailure` | `EIO` | `ERROR_IO_DEVICE` (1117) |
 | `Other` | None | None |
 
-Each description function selects one description by its rule above. For a selected description of byte length n, a window of length at least n receives all n bytes beginning at `start` and returns `Ok(start + n)`; every byte outside that copied range is unchanged, and no terminating NUL is written. A shorter window returns `DescriptionTooSmall(required: n)` and leaves the entire destination unchanged. A code the host cannot describe, a class with no code on the host, or failure to obtain or encode the selected description, returns `DescriptionUnavailable` and leaves the entire destination unchanged.
+Each description function selects at most one description by its rule above. For a selected description of byte length n, a window of length at least n receives all n bytes beginning at `start` and returns `Ok(start + n)`; every byte outside that copied range is unchanged, and no terminating NUL is written. A shorter window returns `DescriptionTooSmall(required: n)` and leaves the entire destination unchanged. A code the host cannot describe, a class with no code on the host, or failure to obtain or encode the selected description, returns `DescriptionUnavailable` and leaves the entire destination unchanged.
 
 `std::time`, the record `time/module.wfm`:
 

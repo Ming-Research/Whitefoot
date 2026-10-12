@@ -354,11 +354,89 @@ static void description_probe(wf_probe_description copy) {
 
 extern void wf_test_public_error_copy_class_description(wf_copy_result *, const wf_io_error *, wf_view *, uint64_t, uint64_t);
 
+/* [PRE-2] the class-to-code table, restated from the specification apart
+ * from the runtime's own table: every class in tag order with its code on
+ * this host, zero for a class whose entry is None or whose constant the host
+ * C library does not define. Windows codes are the specification's numbers
+ * rather than the SDK's names, so a wrong name in the runtime fails too. */
+static const struct { uint32_t tag; uint32_t code; } wf_probe_class_codes[] = {
+#if defined(_WIN32)
+    {WF_IO_NOT_FOUND, 2},
+    {WF_IO_PERMISSION_DENIED, 5},
+    {WF_IO_ALREADY_EXISTS, 183},
+    {WF_IO_NOT_DIRECTORY, 267},
+    {WF_IO_IS_DIRECTORY, 0},
+    {WF_IO_DIRECTORY_NOT_EMPTY, 145},
+    {WF_IO_READ_ONLY, 19},
+    {WF_IO_RESOURCE_BUSY, 170},
+    {WF_IO_INVALID_INPUT, 87},
+    {WF_IO_INVALID_PATH, 123},
+    {WF_IO_UNSUPPORTED, 50},
+    {WF_IO_TIMED_OUT, 121},
+    {WF_IO_DEADLINE_PASSED, 0},
+    {WF_IO_CANCELLED, 0},
+    {WF_IO_BROKEN_PIPE, 109},
+    {WF_IO_WRITE_ZERO, 0},
+    {WF_IO_UNEXPECTED_END, 0},
+    {WF_IO_CONNECTION_REFUSED, 1225},
+    {WF_IO_CONNECTION_RESET, 64},
+    {WF_IO_CONNECTION_ABORTED, 1235},
+    {WF_IO_NOT_CONNECTED, 2250},
+    {WF_IO_ADDRESS_IN_USE, 10048},
+    {WF_IO_ADDRESS_UNAVAILABLE, 10049},
+    {WF_IO_RESOURCE_EXHAUSTED, 4},
+    {WF_IO_FILE_TOO_LARGE, 223},
+    {WF_IO_NO_SPACE, 112},
+    {WF_IO_QUOTA_EXCEEDED, 1816},
+    {WF_IO_CROSS_DEVICE, 17},
+    {WF_IO_DEVICE_FAILURE, 1117},
+    {WF_IO_OTHER, 0},
+#else
+    {WF_IO_NOT_FOUND, ENOENT},
+    {WF_IO_PERMISSION_DENIED, EACCES},
+    {WF_IO_ALREADY_EXISTS, EEXIST},
+    {WF_IO_NOT_DIRECTORY, ENOTDIR},
+    {WF_IO_IS_DIRECTORY, EISDIR},
+    {WF_IO_DIRECTORY_NOT_EMPTY, ENOTEMPTY},
+    {WF_IO_READ_ONLY, EROFS},
+    {WF_IO_RESOURCE_BUSY, EBUSY},
+    {WF_IO_INVALID_INPUT, EINVAL},
+    {WF_IO_INVALID_PATH, ENAMETOOLONG},
+    {WF_IO_UNSUPPORTED, ENOTSUP},
+    {WF_IO_TIMED_OUT, ETIMEDOUT},
+    {WF_IO_DEADLINE_PASSED, 0},
+    {WF_IO_CANCELLED, 0},
+    {WF_IO_BROKEN_PIPE, EPIPE},
+    {WF_IO_WRITE_ZERO, 0},
+    {WF_IO_UNEXPECTED_END, 0},
+    {WF_IO_CONNECTION_REFUSED, ECONNREFUSED},
+    {WF_IO_CONNECTION_RESET, ECONNRESET},
+    {WF_IO_CONNECTION_ABORTED, ECONNABORTED},
+    {WF_IO_NOT_CONNECTED, ENOTCONN},
+    {WF_IO_ADDRESS_IN_USE, EADDRINUSE},
+    {WF_IO_ADDRESS_UNAVAILABLE, EADDRNOTAVAIL},
+    {WF_IO_RESOURCE_EXHAUSTED, EMFILE},
+    {WF_IO_FILE_TOO_LARGE, EFBIG},
+    {WF_IO_NO_SPACE, ENOSPC},
+#ifdef EDQUOT
+    {WF_IO_QUOTA_EXCEEDED, EDQUOT},
+#else
+    {WF_IO_QUOTA_EXCEEDED, 0},
+#endif
+    {WF_IO_CROSS_DEVICE, EXDEV},
+    {WF_IO_DEVICE_FAILURE, EIO},
+    {WF_IO_OTHER, 0},
+#endif
+};
+
 /* [PRE-2] a class's description is its host code's text whatever code and
- * origin the error carries. On Linux the text for NoSpace is glibc's exact
- * "No space left on device"; on every host it is that host's own text for the
- * class's code, so a body that returned the fixed table text, read the
- * error's code or described an unrelated code fails the byte comparison. */
+ * origin the error carries, for every row of the class table. On Linux the
+ * text for NoSpace is also glibc's exact "No space left on device". Each coded
+ * class is compared with the host's own strerror or FormatMessageW text for
+ * the code the table names, so a runtime table entry naming another code, a
+ * body that returned the fixed table text or read the error's code fails the
+ * byte comparison; a codeless class must stay unavailable even when its
+ * error carries a describable code. */
 static void class_description_probe(wf_probe_description copy) {
 #if defined(__linux__)
     {
@@ -366,24 +444,21 @@ static void class_description_probe(wf_probe_description copy) {
         description_window_probe(copy, &error, "No space left on device");
     }
 #endif
-#if defined(_WIN32)
-    static const struct { uint32_t tag; DWORD code; } classes[] = {
-        {WF_IO_NO_SPACE, ERROR_DISK_FULL},
-        {WF_IO_FILE_TOO_LARGE, ERROR_FILE_TOO_LARGE},
-        {WF_IO_BROKEN_PIPE, ERROR_BROKEN_PIPE},
-        {WF_IO_NOT_FOUND, ERROR_FILE_NOT_FOUND}
-    };
-#else
-    static const struct { uint32_t tag; int code; } classes[] = {
-        {WF_IO_NO_SPACE, ENOSPC},
-        {WF_IO_FILE_TOO_LARGE, EFBIG},
-        {WF_IO_BROKEN_PIPE, EPIPE},
-        {WF_IO_NOT_FOUND, ENOENT}
-    };
-#endif
-    for (size_t index = 0; index < sizeof(classes) / sizeof(classes[0]); ++index) {
-        char *text = host_description_oracle((uint32_t)classes[index].code);
-        wf_io_error error = {classes[index].tag, 0, 0};
+    _Static_assert(sizeof(wf_probe_class_codes) / sizeof(wf_probe_class_codes[0])
+                   == WF_IO_OTHER + 1, "one row for every IoError class");
+    const size_t rows = sizeof(wf_probe_class_codes) / sizeof(wf_probe_class_codes[0]);
+    for (size_t index = 0; index < rows; ++index) {
+        assert(wf_probe_class_codes[index].tag == index);
+        const uint32_t code = wf_probe_class_codes[index].code;
+        wf_io_error error = {wf_probe_class_codes[index].tag, 0, 0};
+        if (code == 0) {
+            description_unavailable_probe(copy, &error);
+            error.code = wf_probe_class_codes[0].code;
+            error.origin = 3;
+            description_unavailable_probe(copy, &error);
+            continue;
+        }
+        char *text = host_description_oracle(code);
         description_window_probe(copy, &error, text);
         error.code = 12345;
         error.origin = 9;
@@ -391,22 +466,6 @@ static void class_description_probe(wf_probe_description copy) {
         error.code = UINT32_MAX;
         description_window_probe(copy, &error, text);
         free(text);
-    }
-    /* Classes with no host code, including those whose variants carry no
-     * payload: poisoned spare bytes must not select a description. */
-    static const uint32_t codeless[] = {
-        WF_IO_DEADLINE_PASSED, WF_IO_CANCELLED, WF_IO_WRITE_ZERO,
-        WF_IO_UNEXPECTED_END, WF_IO_OTHER
-#if defined(_WIN32)
-        , WF_IO_IS_DIRECTORY
-#endif
-    };
-    for (size_t index = 0; index < sizeof(codeless) / sizeof(codeless[0]); ++index) {
-        wf_io_error error = {codeless[index], 0, 0};
-        description_unavailable_probe(copy, &error);
-        error.code = (uint32_t)classes[0].code;
-        error.origin = 3;
-        description_unavailable_probe(copy, &error);
     }
 }
 

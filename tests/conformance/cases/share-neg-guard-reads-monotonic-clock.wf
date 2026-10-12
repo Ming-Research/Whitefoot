@@ -4,15 +4,16 @@ struct Progress {
   n: u64;
 }
 
-fn reached(clock: &std::time::Clock, deadline: Instant) -> result: Bool writes(clock) {
-  doc "Reports whether the monotonic clock has reached deadline.";
-  let reading = std::time::now(clock: clock);
+fn reached(clock: &std::time::Clock, deadline: Instant) -> result: Bool reads(clock) {
+  doc "Reports whether the monotonic clock has reached deadline, reading it through a clock of its own so the row only reads clock.";
+  let own = std::time::clock_share(clock: clock);
+  let reading = std::time::now(clock: &own);
   let done = std::time::instant_reached(deadline: deadline, instant: reading);
   return done;
 }
 
 fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
-  doc "A guard that waits for the monotonic clock through now reads a self-changing host handle.";
+  doc "A guard that waits for the monotonic clock through a helper whose row only reads the clock reads a self-changing host handle.";
   let std::process::Inputs(cwd: directory, handles: factory, clock: clock, ..) = move inputs;
   let std::fs::Directory(read: directory_read, write: directory_write) = move directory;
   std::fs::close_directory_write(factory: &factory, directory: move directory_write);

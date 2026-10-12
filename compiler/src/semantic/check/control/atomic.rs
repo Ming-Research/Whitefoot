@@ -672,9 +672,11 @@ impl Checker<'_, '_> {
         Ok((guard, block))
     }
 
-    /// [SHARE-2, PRE-2] the first call of a guard, in evaluation order,
-    /// whose row reads or writes a path whose type is or has a self-changing
-    /// host handle part, with that part. A row path is rooted at one of the
+    /// [SHARE-2, PRE-2] the call of a guard whose row reads or writes a path
+    /// whose type is or has a self-changing host handle part, with that part.
+    /// A guard's `expr` holds at most one call, whose arguments are atoms
+    /// [GRAM-5, GRAM-9], so the walk finds at most that call and the site is
+    /// unique. A row path is rooted at one of the
     /// callee's reference parameters, so its type is the one the caller's
     /// projected path has [EFF-5]; a formal's row is rebased to the selected
     /// callee's parameters [FN-4].

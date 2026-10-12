@@ -38,7 +38,7 @@ impl TypeContext<'_> {
     /// Depth-first declaration order, with nominal cycles visited once. Symbolic
     /// parameters are checked again at each concrete instantiation.
     pub(super) fn first_unfrozen_part(&self, ty: CheckedType) -> Result<Option<String>, CheckStop> {
-        self.first_part(ty, |types, ty| {
+        self.first_part(ty, false, |types, ty| {
             let CheckedType::Nominal(id) = ty else {
                 return Ok(false);
             };
@@ -58,12 +58,14 @@ impl TypeContext<'_> {
     /// [SHARE-2, PRE-2] the first part of `ty`, `ty` included, that is a
     /// self-changing host handle, in the same walk as frozen content. A
     /// shared handle is a part without parts of its own: its state is reached
-    /// only through an atomic statement's target.
+    /// only through an atomic statement's target. A map's entries are its
+    /// elements [SHARE-1, OP-4], so a path of type `ConcurrentHashMap<V>`
+    /// has each entry's `Option<V>` and its parts as parts.
     pub(super) fn first_self_changing_part(
         &self,
         ty: CheckedType,
     ) -> Result<Option<String>, CheckStop> {
-        self.first_part(ty, |types, ty| {
+        self.first_part(ty, true, |types, ty| {
             let CheckedType::Nominal(id) = ty else {
                 return Ok(false);
             };
@@ -105,10 +107,15 @@ impl TypeContext<'_> {
 
     /// The first part of `ty` in depth-first declaration order, `ty` itself
     /// included, that `stops` selects, rendered as a path from the type's
-    /// name; nominal cycles are visited once.
+    /// name; nominal cycles are visited once. With `map_entries` a map's
+    /// entries are walked as its elements. The frozen walk leaves them out:
+    /// a map is only ever a shared object's state or a `swap`'s exchange
+    /// [TYPE-9], never a part of frozen content, and the frozen walk stops at
+    /// the `Shared` handle that holds one.
     fn first_part(
         &self,
         ty: CheckedType,
+        map_entries: bool,
         stops: impl Fn(&Self, CheckedType) -> Result<bool, CheckStop>,
     ) -> Result<Option<String>, CheckStop> {
         let mut pending = vec![(ty, self.checked_type_name(ty)?)];
@@ -122,7 +129,12 @@ impl TypeContext<'_> {
             }
             match ty {
                 CheckedType::Nominal(id) => match &self.nominal(id)?.kind {
-                    CheckedNominalKind::Shared { .. } | CheckedNominalKind::Opaque => {}
+                    CheckedNominalKind::Shared { shape, .. } => {
+                        if map_entries && let CheckedShared::Map { entry } = shape {
+                            pending.push((*entry, format!("{path}[element]")));
+                        }
+                    }
+                    CheckedNominalKind::Opaque => {}
                     CheckedNominalKind::Box { referent, .. } => {
                         pending.push((*referent, format!("{path}.inner")))
                     }

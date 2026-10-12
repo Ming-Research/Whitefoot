@@ -1,0 +1,39 @@
+struct Progress {
+  n: u64;
+}
+
+enum Timing {
+  Calendar(wall: std::time::WallClock, deadline: i64);
+  Untimed();
+}
+
+fn due(timing: &Timing) -> result: Bool reads(timing) {
+  doc "Reports whether a calendar timing has reached its deadline; an untimed one never has.";
+  match &timing^ {
+    Calendar(wall: clock, deadline: limit) => {
+      let reading = std::time::unix_nanoseconds(clock: clock);
+      let reached = reading >= limit^;
+      return reached;
+    }
+    Untimed() => {
+      return False();
+    }
+  }
+}
+
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
+  doc "A guard whose call reads an enum whose payload field is a wall clock reads that clock.";
+  let std::process::Inputs(cwd: directory, handles: factory, wall_clock: wall, ..) = move inputs;
+  let std::fs::Directory(read: directory_read, write: directory_write) = move directory;
+  std::fs::close_directory_write(factory: &factory, directory: move directory_write);
+  std::fs::close_directory(factory: &factory, directory: move directory_read);
+  let start = std::time::unix_nanoseconds(clock: &wall);
+  let deadline = start +sat 1000000_i64;
+  let timing = Timing::Calendar(wall: move wall, deadline: deadline);
+  let initial = Progress(n: 0_u64);
+  let state = shared_new::<Progress>(value: initial);
+  atomic g = &state when due(timing: &timing) {
+    set g^.n = 1_u64;
+  }
+  return std::process::exit_status(code: 0_u8);
+}
