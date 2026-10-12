@@ -359,7 +359,7 @@ fn assert_tag_through(body: &str, address: &str) {
     }
     assert!(
         body.lines().any(|line| {
-            line.split_once("load i32, ptr ")
+            line.split_once("load i8, ptr ")
                 .is_some_and(|(_, source)| {
                     let pointer = source.split([',', ' ']).next().expect("load pointer");
                     tags.iter().any(|tag| tag == pointer)

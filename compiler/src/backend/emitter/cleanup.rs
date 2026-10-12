@@ -264,7 +264,11 @@ pub(super) fn shared_runtime_declarations() -> Module {
         ),
         ("wf__table_unlock_entry", "void", &["ptr", "i32"]),
         ("wf__atomic_group_take", "void", &["ptr", "i64"]),
-        ("wf__atomic_group_release", "void", &["ptr", "i64"]),
+        (
+            "wf__atomic_group_release",
+            "void",
+            &["ptr", "i64", "i64", "i32", "i64"],
+        ),
         ("wf__table_hold_read", "void", &["ptr"]),
         ("wf__table_held_entry", "ptr", &["ptr", "ptr", "i64", "i32"]),
         (
@@ -1130,22 +1134,23 @@ fn emit_enum_cleanup_body(
     aggregate_ty: &str,
 ) -> Result<(), BackendFailure> {
     let ty = IrType::Nominal(nominal);
+    let tag_ty = super::enum_tag_type(program.nominal(nominal).ok_or(BackendFailure::InvalidIr)?)?;
     {
         output.open_block("entry".to_string());
         // The tag is at offset 0 in every enum layout.
         if by_address {
-            writeln!(output, "  %tag = load i32, ptr %value")
+            writeln!(output, "  %tag = load {tag_ty}, ptr %value")
         } else {
             writeln!(output, "  %tag = extractvalue {aggregate_ty} %value, 0")
         }
         .map_err(|_| BackendFailure::TextEmission)?;
     };
-    writeln!(output, "  switch i32 %tag, label %invalid [")
+    writeln!(output, "  switch {tag_ty} %tag, label %invalid [")
         .map_err(|_| BackendFailure::TextEmission)?;
     for variant in variants {
         writeln!(
             output,
-            "    i32 {}, label %variant.{}",
+            "    {tag_ty} {}, label %variant.{}",
             variant.tag(),
             variant.tag()
         )
