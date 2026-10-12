@@ -19,10 +19,6 @@ fn main() -> status: ExitStatus pure {
     return exit_status(code: 2_u8);
   }
   let t = s + n;
-  if t == 42_i32 {
-  } else {
-    return exit_status(code: 3_u8);
-  }
   let f = Flag::A();
   match move f {
     A() => {
@@ -31,5 +27,6 @@ fn main() -> status: ExitStatus pure {
       return exit_status(code: 4_u8);
     }
   }
-  return exit_status(code: 0_u8);
+  let status_code = cvt::<i32, u8>(t);
+  return exit_status(code: status_code);
 }

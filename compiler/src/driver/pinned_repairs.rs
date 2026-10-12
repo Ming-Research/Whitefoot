@@ -3902,10 +3902,12 @@ fn an_allocation_count_bounded_only_by_its_type_builds() {
     }
 }
 
-/// The pair test's second condition is live: a guard around a refuted goal
-/// is accepted, and the goal inside it succeeds only because the branch
-/// state is contradictory, which is what makes guarding a refuted goal no
-/// repair [DIAG-1].
+/// Guarding a refuted goal is no repair [DIAG-1]. Where the guard's entering
+/// state is noncontradictory, the guard is a condition the derivation decides
+/// False, which [OP-5] rejects as a redundant source form. Where that state
+/// is contradictory, [OP-5] admits the guard, and the goal inside it succeeds
+/// only because the state is contradictory: the pair test's second condition
+/// is live and reports it.
 #[test]
 fn a_guard_around_a_refuted_goal_succeeds_only_in_a_contradictory_state() {
     let guarded = br#"fn main() -> status: std::process::ExitStatus pure {
@@ -3917,10 +3919,35 @@ fn a_guard_around_a_refuted_goal_succeeds_only_in_a_contradictory_state() {
   return std::process::exit_status(code: 0_u8);
 }
 "#;
-    let contradictions = contradictory_successes("guarded-refuted-goal.wf", guarded)
-        .expect("the guarded program is accepted");
+    let failure = compile(
+        &[SourceInput::new("guarded-refuted-goal.wf", guarded)],
+        CompilerLimits::default(),
+    )
+    .expect_err("a guard decided False in a noncontradictory state is redundant");
+    assert_eq!(failure.kind(), CompilationFailureKind::Source, "{failure}");
+    assert_eq!(failure.rule_id(), Some("OP-5"), "{failure}");
+    let rendered = format!("{failure}\n");
+    for sentence in ["]: RedundantCondition\n", "\n  decided: False\n"] {
+        assert!(rendered.contains(sentence), "{rendered}");
+    }
+    let uninhabited = br#"fn bump(x: u8) -> r: u8 pure contract {
+  requires x < 0_u8;
+} {
+  if x +defined 1_u8 {
+    let y = x + 1_u8;
+    return y;
+  }
+  return 0_u8;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let contradictions = contradictory_successes("guarded-refuted-goal.wf", uninhabited)
+        .expect("a guard in a contradictory entering state is accepted");
     assert!(
         !contradictions.is_empty(),
-        "the operation inside the dead branch must be discharged by contradiction"
+        "the operation inside the contradictory state must be discharged by contradiction"
     );
 }

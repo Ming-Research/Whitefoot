@@ -13,21 +13,19 @@ fn main() -> status: ExitStatus pure {
   let first = run[0_u64];
   if first == 9_u8 {
   } else {
-    return exit_status(code: 1_u8);
+    return exit_status(code: 11_u8);
   }
   let second = run[1_u64];
   if second == 3_u8 {
   } else {
-    return exit_status(code: 2_u8);
+    return exit_status(code: 12_u8);
   }
   let third = run[2_u64];
   if third == 4_u8 {
   } else {
-    return exit_status(code: 3_u8);
+    return exit_status(code: 13_u8);
   }
   let held = run.len;
-  if held == 3_u64 {
-    return exit_status(code: 0_u8);
-  }
-  return exit_status(code: 4_u8);
+  let code = cvt::<u64, u8>(held);
+  return exit_status(code: code);
 }

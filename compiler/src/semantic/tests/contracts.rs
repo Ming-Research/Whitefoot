@@ -1525,13 +1525,8 @@ fn invoke<interface Reader<T>>(value: &Envelope<T>) -> result: u64 reads(value) 
 
 fn main() -> status: std::process::ExitStatus pure {
   let value = Envelope<u64>(tag: 7_u64, payload: 8_u64);
-  if value.tag <= 99_u64 {
-    let tag = invoke::<ReadU64>(value: &value);
-    if tag == 7_u64 {
-      return std::process::exit_status(code: 0_u8);
-    }
-  }
-  return std::process::exit_status(code: 1_u8);
+  let tag = invoke::<ReadU64>(value: &value);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     for mode in [OverlapLowering::Off, OverlapLowering::On] {

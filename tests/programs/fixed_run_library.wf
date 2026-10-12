@@ -97,26 +97,50 @@ fn rebase<T: drop, const n: u64>(window: Ring<T, n>, spare: Ring<T, n>) -> rebas
   return move built;
 }
 
-fn main() -> status: ExitStatus pure {
-  doc "Runs all six fixed-window library functions at copy element types, then separately instantiates the transposing removal at an affine Box element type: the two constructions, the removal built on swap, the two checked boundary forms, and the drain that returns a wrapped window to its origin.";
+fn publish_report(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8], length: u64) -> result: Result<unit, std::io::IoError> reads(source), writes(factory), writes(output) waits contract {
+  define source_length = source^.len;
+  requires length <= source_length;
+} {
+  doc "Publishes one prefix of the report, reattempting until the host has accepted every byte or refused it.";
+  let sent = 0_u64;
+  loop @publish {
+    let pending = sent < length;
+    if pending {
+    } else {
+      break @publish;
+    }
+    let no_deadline = None<std::time::Instant>();
+    let wait_cancel = std::time::cancel_never();
+    let wait_outcome = std::io::write_once(factory: factory, output: output, source: source, start: sent, end: length, deadline: no_deadline, cancel: &wait_cancel);
+    std::time::close_cancel_watch(watch: move wait_cancel);
+    match wait_outcome {
+      Ok(value: accepted) => {
+        set sent = accepted;
+      }
+      Err(error: problem) => {
+        return Err<unit, std::io::IoError>(error: problem);
+      }
+    }
+  }
+  return Ok<unit, std::io::IoError>(value: unit);
+}
+
+fn main(inputs: std::process::Inputs) -> status: ExitStatus pure waits {
+  doc "Runs all six fixed-window library functions at copy element types, then separately instantiates the transposing removal at an affine Box element type: the two constructions, the removal built on swap, the two checked boundary forms, and the drain that returns a wrapped window to its origin. The lengths the constructions, the removal and the drain leave are published as one byte each for the harness to compare.";
+  let std::process::Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
+  std::fs::close_directory_write(factory: &factory, directory: move unused_cwd_write);
+  std::fs::close_directory(factory: &factory, directory: move unused_cwd);
+  let report = array_filled::<u8, 5>(value: 0_u8);
   let slots = vacant::<u8, 4>();
   let vacant_held = slots.len;
-  if vacant_held == 4_u64 {
-  } else {
-    return exit_status(code: 1_u8);
-  }
+  set report[0_u64] = cvt::<u64, u8>(vacant_held);
   let nested = vacant::<Option<u8>, 4>();
   let nested_held = nested.len;
-  if nested_held == 4_u64 {
-  } else {
-    return exit_status(code: 19_u8);
-  }
+  set report[1_u64] = cvt::<u64, u8>(nested_held);
   let bytes = filled::<u8, 4>(value: 7_u8);
   let filled_held = bytes.len;
-  if filled_held == 4_u64 {
-  } else {
-    return exit_status(code: 2_u8);
-  }
+  set report[2_u64] = cvt::<u64, u8>(filled_held);
   let wide = filled::<u64, 4>(value: 9_u64);
   let wide_first = wide[0_u64];
   if wide_first == 9_u64 {
@@ -142,10 +166,7 @@ fn main() -> status: ExitStatus pure {
   place_back(window: &three, value: c);
   let pulled = take_at::<Option<u8>, 4>(window: &three, at: 0_u64);
   let rest_held = three.len;
-  if rest_held == 2_u64 {
-  } else {
-    return exit_status(code: 5_u8);
-  }
+  set report[3_u64] = cvt::<u64, u8>(rest_held);
   match pulled {
     Some(value: got) => {
       if got == 1_u8 {
@@ -237,10 +258,7 @@ fn main() -> status: ExitStatus pure {
   let fresh = ring_new::<u8, 4>();
   let flat = rebase::<u8, 4>(window: move s3, spare: move fresh);
   let flat_held = flat.len;
-  if flat_held == 3_u64 {
-  } else {
-    return exit_status(code: 14_u8);
-  }
+  set report[4_u64] = cvt::<u64, u8>(flat_held);
   let flat_head = flat.head;
   if flat_head == 0_u64 {
   } else {
@@ -308,6 +326,14 @@ fn main() -> status: ExitStatus pure {
   if survivor_value == 42_u64 {
   } else {
     return exit_status(code: 29_u8);
+  }
+  let report_window = &report[0_u64..5_u64];
+  match publish_report(factory: &factory, output: &out, source: report_window, length: 5_u64) {
+    Ok(value: published) => {
+    }
+    Err(error: problem) => {
+      return exit_status(code: 30_u8);
+    }
   }
   return exit_status(code: 0_u8);
 }

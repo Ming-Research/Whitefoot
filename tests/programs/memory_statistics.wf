@@ -112,15 +112,11 @@ fn measure_grow(meter: &MemoryMeter) -> result: u64 writes(meter) {
   } else {
     return 1_u64;
   }
-  if cell.inner.len == 1_u64 {
-    let held = take_back(window: &cell.inner);
-    if held != 73_u64 {
-      return 1_u64;
-    }
-    return 0_u64;
-  } else {
+  let held = take_back(window: &cell.inner);
+  if held != 73_u64 {
     return 1_u64;
   }
+  return 0_u64;
 }
 
 fn measure_empty_windows(meter: &MemoryMeter) -> result: u64 writes(meter) {
@@ -163,15 +159,6 @@ fn measure_empty_windows(meter: &MemoryMeter) -> result: u64 writes(meter) {
       return 1_u64;
     }
   } else {
-    return 1_u64;
-  }
-  if slots.inner.len != 1_u64 {
-    return 1_u64;
-  }
-  if zero_bytes.inner.len != 1_u64 {
-    return 1_u64;
-  }
-  if array.inner.len != 0_u64 {
     return 1_u64;
   }
   free_empty(window: move ring);
@@ -290,9 +277,6 @@ fn measure_key_set(meter: &MemoryMeter) -> result: u8 writes(meter) waits {
   if reserved == 0_u64 {
     return 26_u8;
   }
-  if keys.len != 0_u64 {
-    return 27_u8;
-  }
   let seed = array_filled::<u8, 65536>(value: 250_u8);
   let before_insert = std::process::heap_in_use(meter: meter);
   key_set_insert(keys: &keys, key: &seed[0_u64..65536_u64]);
@@ -329,9 +313,6 @@ fn measure_key_set(meter: &MemoryMeter) -> result: u8 writes(meter) waits {
       let outcome = map_scan_within::<u8>(map: map, cursor: cursor, count: 3_u64, limit: limit, keys: &keys);
       let reported_after = key_set_bytes(keys: &keys);
       let heap_after = std::process::heap_in_use(meter: meter);
-      if reported_after < reported_before {
-        return 32_u8;
-      }
       let retained_growth = reported_after - reported_before;
       if heap_after >= heap_before {
         let heap_growth = heap_after - heap_before;

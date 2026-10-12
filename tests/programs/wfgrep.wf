@@ -218,12 +218,7 @@ fn widen_window(cell: &Box<Slots<u8>>, total: u64) -> widened: Bool writes(cell)
     if done {
       break @fill;
     }
-    let room = cell^.inner.len < cell^.inner.cap;
-    if room {
-      place_back(window: &cell^.inner, value: 0_u8);
-    } else {
-      return False();
-    }
+    place_back(window: &cell^.inner, value: 0_u8);
   }
   return True();
 }
@@ -291,22 +286,17 @@ fn append_slice(destination: &[u8], capacity: u64, filled: u64, text: &[u8]) -> 
 } {
   doc "Appends as much of one static message as the destination still holds. The destination's capacity is a written operand rather than a measure the row writes, so the published bound is a fact about a value this caller supplied [MSR-3].";
   let spare = destination^.len;
-  let admitted = filled <= spare;
   let length = text^.len;
-  if admitted {
-    for @append (at in filled..spare) {
-      let taken = at -wrap filled;
-      let done = taken >= length;
-      if done {
-        return at;
-      }
-      let byte = text^[taken];
-      set destination^[at] = byte;
+  for @append (at in filled..spare) {
+    let taken = at -wrap filled;
+    let done = taken >= length;
+    if done {
+      return at;
     }
-    return spare;
-  } else {
-    return filled;
+    let byte = text^[taken];
+    set destination^[at] = byte;
   }
+  return spare;
 }
 
 fn copy_range(destination: &[u8], at: u64, source: &[u8], from: u64, to: u64) -> result: u64 reads(source), writes(destination) {
@@ -700,11 +690,6 @@ fn publish_oversized(factory: &HandleFactory, out: &OutputStream, path: &[u8], p
     return 6_u8;
   }
   let numbered = filled +wrap 1_u64;
-  let numbered_fits = numbered <= scratch_room;
-  if numbered_fits {
-  } else {
-    return 6_u8;
-  }
   match publish_all(factory: factory, output: out, source: scratch, length: numbered) {
     Ok(value: published) => {
     }
@@ -1092,16 +1077,6 @@ fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_leng
           } else {
             break @stored_entry;
           }
-          let ordered = name_at <= name_end;
-          if ordered {
-          } else {
-            break @stored_entry;
-          }
-          let addressable = name_end <= entries_room;
-          if addressable {
-          } else {
-            break @stored_entry;
-          }
           set at = name_end;
           let dotted = 0_u8;
           let single = name_count == 1_u64;
@@ -1172,22 +1147,12 @@ fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_leng
     if done {
       break @sort;
     }
-    let selected_readable = selected < order_room;
-    if selected_readable {
-    } else {
-      break @sort;
-    }
     let best = selected;
     let probe = selected +wrap 1_u64;
     loop @scan {
       let scan_room = order^.len;
       let scanned = probe >= stored;
       if scanned {
-        break @scan;
-      }
-      let probe_readable = probe < scan_room;
-      if probe_readable {
-      } else {
         break @scan;
       }
       let best_readable = best < scan_room;
@@ -1219,16 +1184,10 @@ fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_leng
   let visited = 0_u64;
   loop @process {
     let names_room = names^.len;
-    let order_room = order^.len;
     let child_room = child^.len;
     let prefix_room = prefix^.len;
     let done = visited >= stored;
     if done {
-      break @process;
-    }
-    let readable = visited < order_room;
-    if readable {
-    } else {
       break @process;
     }
     let base = order^[visited];
@@ -1292,11 +1251,6 @@ fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_leng
       }
       let prefix_readable = cursor < prefix_room;
       if prefix_readable {
-      } else {
-        break @prefix_copy;
-      }
-      let writable = cursor < child_room;
-      if writable {
       } else {
         break @prefix_copy;
       }
@@ -1599,38 +1553,10 @@ fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputSt
     }
     return exit_status(code: 2_u8);
   }
-  let root_name_room = root_name^.len;
-  let root_length_fits = root_length <= root_name_room;
-  if root_length_fits {
-  } else {
-    let length = 0_u64;
-    let report_room = report^.len;
-    let view = &reason_root_too_long[0_u64..29_u64];
-    set length = append_slice(destination: report, capacity: report_room, filled: length, text: view);
-    match publish_all(factory: files, output: err, source: report, length: length) {
-      Ok(value: published) => {
-      }
-      Err(error: problem) => {
-      }
-    }
-    return exit_status(code: 2_u8);
-  }
   let copied = 0_u64;
   loop @root_copy_out {
-    let name_room = root_name^.len;
-    let root_room = root_path^.len;
     let done = copied >= root_length;
     if done {
-      break @root_copy_out;
-    }
-    let readable = copied < name_room;
-    if readable {
-    } else {
-      break @root_copy_out;
-    }
-    let writable = copied < root_room;
-    if writable {
-    } else {
       break @root_copy_out;
     }
     let byte = root_name^[copied];

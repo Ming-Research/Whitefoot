@@ -122,9 +122,6 @@ fn direct_slots(meter: &MemoryMeter, capacity: u64, mode: u64) -> result: Bool w
   place_back(window: &slots.inner, value: move initial);
   let held = std::process::heap_in_use(meter: meter);
   for (iteration in 0_u64..4_u64) {
-    if slots.inner.len != 1_u64 {
-      return False();
-    }
     if mode == 1_u64 {
       let buffer = box_slots_new::<u32>(capacity: capacity);
       set slots.inner[0_u64].payload.upvals = move buffer;

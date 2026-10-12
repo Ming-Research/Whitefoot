@@ -4309,13 +4309,8 @@ fn main() -> status: ExitStatus pure {
       return move failed;
     }
   }
-  let expected = v == 42_i32;
-  if expected {
-  } else {
-    let failed = exit_status(code: 1_u8);
-    return move failed;
-  }
-  let success = exit_status(code: 0_u8);
+  let code = cvt::<i32, u8>(v);
+  let success = exit_status(code: code);
   return move success;
 }
 ```

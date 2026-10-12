@@ -33,12 +33,6 @@ fn ipv4_checksum(header: &[u8]) -> result: u16 reads(header) contract {
 fn main() -> status: ExitStatus pure {
   doc "The same header is summed twice: once over a const run reached by a range reference, and once over a frame-resident window filled from it.";
   let view = &ipv4_header[0_u64..20_u64];
-  let view_length = view^.len;
-  let view_odd = iand(view_length, 1_u64);
-  if view_odd == 0_u64 {
-  } else {
-    return exit_status(code: 1_u8);
-  }
   let checksum = ipv4_checksum(header: view);
   if checksum == 47248_u16 {
   } else {
@@ -55,12 +49,6 @@ fn main() -> status: ExitStatus pure {
     place_back(window: &runtime_header, value: byte);
   }
   let copied = &runtime_header[0_u64..20_u64];
-  let copied_length = copied^.len;
-  let copied_odd = iand(copied_length, 1_u64);
-  if copied_odd == 0_u64 {
-  } else {
-    return exit_status(code: 1_u8);
-  }
   let copied_checksum = ipv4_checksum(header: copied);
   if copied_checksum == 47248_u16 {
   } else {

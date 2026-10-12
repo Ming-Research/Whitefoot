@@ -698,14 +698,18 @@ fn loop_break_and_backedge_cleanup_is_explicit() {
   value: i32;
 }
 
-fn main() -> status: std::process::ExitStatus pure {
+fn cycle(stop: Bool) -> result: unit pure {
   loop @again {
     let first = Cell(value: 1_i32);
-    if True() {
+    if stop {
       break @again;
     }
     let second = Cell(value: 2_i32);
   }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
 "#;
@@ -713,12 +717,17 @@ fn main() -> status: std::process::ExitStatus pure {
         let SemanticOutcome::Complete(checked) = outcome else {
             panic!("loop cleanup source must check: {outcome:?}");
         };
-        let main = &checked.data.functions[0];
+        let cycle = checked
+            .data
+            .functions
+            .iter()
+            .find(|function| function.name == "cycle")
+            .expect("cycle");
         let CheckedStatement::Loop {
             body,
             backedge_drops,
             ..
-        } = &main.body.as_ref().expect("WF body")[0]
+        } = &cycle.body.as_ref().expect("WF body")[0]
         else {
             panic!("first statement must be the checked loop");
         };

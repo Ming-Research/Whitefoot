@@ -5412,20 +5412,19 @@ fn guard(value: i32) -> result: unit pure contract {
   return unit;
 }
 
-fn choose(value: i32, narrow: Bool) -> result: unit pure contract {
+fn choose(value: i32, narrow: Bool, cap: i32) -> result: unit pure contract {
   requires value < 8_i32;
+  requires cap <= 16_i32;
 } {
   let picked = if narrow {
     let bounded = limit(value: value);
-    if bounded < 16_i32 {
+    if bounded < cap {
       give bounded;
     } else {
       return unit;
     }
-  } else if value < 32_i32 {
-    give value;
   } else {
-    return unit;
+    give value;
   }
   guard(value: picked);
   return unit;

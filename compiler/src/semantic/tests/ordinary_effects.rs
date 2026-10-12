@@ -1037,15 +1037,20 @@ fn the_suggested_row_keeps_positions_a_call_can_separate() {
   return unit;
 }
 
-fn main() -> status: std::process::ExitStatus pure {
+fn examine(upper: u64) -> result: unit pure {
   let window = slots_new::<u8, 2>();
   place_back(window: &window, value: 7_u8);
   let other = 0_u64;
   let i = 0_u64;
-  let j = 1_u64;
+  let j = upper;
   if i < j {
     copy_within(window: &window, spare: &other, from: i, to: j);
   }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  examine(upper: 1_u64);
   return std::process::exit_status(code: 0_u8);
 }
 "#;

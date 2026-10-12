@@ -10,11 +10,18 @@ struct Outer {
   other: i32;
 }
 
-fn main() -> status: ExitStatus pure {
+struct Outcome {
+  observed: i32;
+  preserved: i32;
+  selected: i32;
+  number: i32;
+}
+
+fn update(flag: Bool) -> result: Outcome pure {
+  doc "Updates a copy local and a nested copy field through a statement join and a value join selected by flag, and reports the values they leave.";
   let number = 1_i32;
   let inner = Inner(value: 2_i32);
   let outer = Outer(inner: inner, other: 7_i32);
-  let flag = True();
   if flag {
     set number = 42_i32;
     set outer.inner.value = number;
@@ -23,15 +30,7 @@ fn main() -> status: ExitStatus pure {
     set outer.inner.value = number;
   }
   let observed = outer.inner.value;
-  if observed == 42_i32 {
-  } else {
-    return exit_status(code: 1_u8);
-  }
   let preserved = outer.other;
-  if preserved == 7_i32 {
-  } else {
-    return exit_status(code: 2_u8);
-  }
   let selected = if flag {
     set number = 43_i32;
     give number;
@@ -39,11 +38,25 @@ fn main() -> status: ExitStatus pure {
     set number = 10_i32;
     give number;
   }
-  if selected == 43_i32 {
+  return Outcome(observed: observed, preserved: preserved, selected: selected, number: number);
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "The true flag selects 42 for the nested field and 43 for the value join and the local, and the untouched sibling stays 7.";
+  let outcome = update(flag: True());
+  if outcome.observed == 42_i32 {
+  } else {
+    return exit_status(code: 1_u8);
+  }
+  if outcome.preserved == 7_i32 {
+  } else {
+    return exit_status(code: 2_u8);
+  }
+  if outcome.selected == 43_i32 {
   } else {
     return exit_status(code: 3_u8);
   }
-  if number == 43_i32 {
+  if outcome.number == 43_i32 {
   } else {
     return exit_status(code: 4_u8);
   }

@@ -962,14 +962,19 @@ fn indexed_call_separation_accepts_strict_orderings_and_disequality() {
   return unit;
 }
 
-fn main() -> status: std::process::ExitStatus pure {
+fn examine(upper: u64) -> result: unit pure {
   let window = slots_new::<u8, 2>();
   place_back(window: &window, value: 7_u8);
   let i = 0_u64;
-  let j = 1_u64;
+  let j = upper;
   if i < j {
     write_two(window: &window, first: i, second: j);
   }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  examine(upper: 1_u64);
   return std::process::exit_status(code: 0_u8);
 }
 "#;
@@ -985,16 +990,21 @@ fn indexed_call_separation_does_not_retarget_captured_bindings() {
   return unit;
 }
 
-fn main() -> status: std::process::ExitStatus pure {
+fn examine(upper: u64) -> result: unit pure {
   let values = array_filled::<u8, 2>(value: 0_u8);
   let i = 0_u64;
   let j = 0_u64;
   let first = &values[i];
   let second = &values[j];
-  set j = 1_u64;
+  set j = upper;
   if i < j {
     write_refs(first: first, second: second);
   }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  examine(upper: 1_u64);
   return std::process::exit_status(code: 0_u8);
 }
 "#;
@@ -1013,9 +1023,9 @@ fn indexed_call_separation_keeps_formation_proof_after_source_writes() {
   return unit;
 }
 
-fn main() -> status: std::process::ExitStatus pure {
+fn examine(lower: u64) -> result: unit pure {
   let values = array_filled::<u8, 2>(value: 0_u8);
-  let i = 0_u64;
+  let i = lower;
   let j = 1_u64;
   if i < j {
     let first = &values[i];
@@ -1023,6 +1033,11 @@ fn main() -> status: std::process::ExitStatus pure {
     set j = 0_u64;
     write_refs(first: first, second: second);
   }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  examine(lower: 0_u64);
   return std::process::exit_status(code: 0_u8);
 }
 "#;
@@ -1042,16 +1057,21 @@ fn indexed_call_separation_is_unique_per_call_actual() {
   return unit;
 }
 
-fn main() -> status: std::process::ExitStatus pure {
+fn examine(upper: u64) -> result: unit pure {
   let window = slots_new::<u8, 2>();
   place_back(window: &window, value: 7_u8);
   let i = 0_u64;
-  let j = 1_u64;
+  let j = upper;
   if i < j {
     write_two(window: &window, first: i, second: j);
   }
   set j = 0_u64;
   write_two(window: &window, first: i, second: j);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  examine(upper: 1_u64);
   return std::process::exit_status(code: 0_u8);
 }
 "#;
@@ -1404,9 +1424,9 @@ fn a_reborrow_of_a_joined_reference_kills_facts_for_every_possible_target() {
   return unit;
 }
 
-fn examine(flag: Bool) -> result: u64 pure {
+fn examine(flag: Bool, initial: u64) -> result: u64 pure {
   let a = 1_u64;
-  let b = 1_u64;
+  let b = initial;
   let p = if flag {
     give &a;
   } else {
@@ -1422,7 +1442,7 @@ fn examine(flag: Bool) -> result: u64 pure {
 
 fn main() -> status: std::process::ExitStatus pure {
   let flag = False();
-  let value = examine(flag: flag);
+  let value = examine(flag: flag, initial: 1_u64);
   return std::process::exit_status(code: 0_u8);
 }
 "#;
@@ -1473,8 +1493,8 @@ fn a_delivered_reference_with_a_returning_alternative_kills_stale_facts() {
   return unit;
 }
 
-fn examine(flag: u64) -> result: u64 pure {
-  let value = 1_u64;
+fn examine(flag: u64, initial: u64) -> result: u64 pure {
+  let value = initial;
   let p = if flag == 1_u64 {
     give &value;
   } else {
@@ -1488,7 +1508,7 @@ fn examine(flag: u64) -> result: u64 pure {
 }
 
 fn main() -> status: std::process::ExitStatus pure {
-  let value = examine(flag: 1_u64);
+  let value = examine(flag: 1_u64, initial: 1_u64);
   return std::process::exit_status(code: 0_u8);
 }
 "#;
@@ -1841,16 +1861,13 @@ fn reforming_before_use_and_noncontinuing_invalidation_are_valid() {
   let selected = &owner^.inner[0_u64];
   let result = 0_u64;
   for (i in 0_u64..2_u64) {
-    let nonempty = 0_u64 < owner^.inner.len;
-    if nonempty {
-      set selected = &owner^.inner[0_u64];
-      let current = selected^;
-      set result = result +wrap current;
-      let capacity = owner^.inner.cap;
-      let allocation_fits = capacity <= 4_u64;
-      if allocation_fits {
-        grow(cell: owner, capacity: capacity);
-      }
+    set selected = &owner^.inner[0_u64];
+    let current = selected^;
+    set result = result +wrap current;
+    let capacity = owner^.inner.cap;
+    let allocation_fits = capacity <= 4_u64;
+    if allocation_fits {
+      grow(cell: owner, capacity: capacity);
     }
   }
   return result;
@@ -1974,18 +1991,15 @@ fn examine() -> result: u64 pure {
   set packets[1_u64] = Packet::Data(value: 9_u64);
   let index = 1_u64;
   let part = &packets[0_u64..2_u64];
-  if index < part^.len {
-    match part^[index] {
-      Data(value: payload) => {
-        set index = 0_u64;
-        return payload^;
-      }
-      Idle() => {
-        return 0_u64;
-      }
+  match part^[index] {
+    Data(value: payload) => {
+      set index = 0_u64;
+      return payload^;
+    }
+    Idle() => {
+      return 0_u64;
     }
   }
-  return 0_u64;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -2011,18 +2025,15 @@ fn examine() -> result: u64 pure {
   set packets[1_u64] = Packet::Data(value: 9_u64);
   let index = 1_u64;
   let part = &packets[0_u64..2_u64];
-  if index < part^.len {
-    match part^[index] {
-      Data(value: payload) => {
-        set packets[1_u64] = Packet::Idle();
-        return payload^;
-      }
-      Idle() => {
-        return 0_u64;
-      }
+  match part^[index] {
+    Data(value: payload) => {
+      set packets[1_u64] = Packet::Idle();
+      return payload^;
+    }
+    Idle() => {
+      return 0_u64;
     }
   }
-  return 0_u64;
 }
 
 fn main() -> status: std::process::ExitStatus pure {

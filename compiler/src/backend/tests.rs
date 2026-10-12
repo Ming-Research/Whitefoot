@@ -1249,11 +1249,10 @@ struct Outer {
   other: i32;
 }
 
-fn main() -> status: std::process::ExitStatus pure {
+fn exercise(flag: Bool) -> status: std::process::ExitStatus pure {
   let number = 1_i32;
   let inner = Inner(value: 2_i32);
   let outer = Outer(inner: inner, other: 7_i32);
-  let flag = True();
   if flag {
     set number = 42_i32;
     set outer.inner.value = number;
@@ -1266,9 +1265,6 @@ fn main() -> status: std::process::ExitStatus pure {
     return std::process::exit_status(code: 1_u8);
   }
   let preserved = outer.other;
-  if preserved != 7_i32 {
-    return std::process::exit_status(code: 2_u8);
-  }
   let selected = if flag {
     set number = 43_i32;
     give number;
@@ -1282,22 +1278,32 @@ fn main() -> status: std::process::ExitStatus pure {
   if number != 43_i32 {
     return std::process::exit_status(code: 4_u8);
   }
-  return std::process::exit_status(code: 0_u8);
+  let preserved_code = cvt::<i32, u8>(preserved);
+  return std::process::exit_status(code: preserved_code);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let chosen = True();
+  return exercise(flag: chosen);
 }
 "#;
+    // `exercise` takes the branch selector as its parameter, so both
+    // assignment branches and both value-if arms are emitted and joined. Its
+    // exit status is the untouched sibling field `outer.other`, which the
+    // harness compares with the constructed 7.
     let llvm = emit(source);
-    let main = emitted_function(&llvm, "main");
-    assert!(main.contains(" = phi i32 "));
-    assert!(main.contains(&format!(
+    let exercise = emitted_function(&llvm, "exercise");
+    assert!(exercise.contains(" = phi i32 "));
+    assert!(exercise.contains(&format!(
         "store {} zeroinitializer, ptr ",
         nominal_type("Outer")
     )));
-    assert!(main.contains(&format!(
+    assert!(exercise.contains(&format!(
         "store {} zeroinitializer, ptr ",
         nominal_type("Inner")
     )));
     let mut value_addresses = Vec::new();
-    for line in main.lines() {
+    for line in exercise.lines() {
         let Some((address, operation)) = line.trim().split_once(" = ") else {
             continue;
         };
@@ -1313,7 +1319,7 @@ fn main() -> status: std::process::ExitStatus pure {
             value_addresses.push(address);
         }
     }
-    let value_stores = main
+    let value_stores = exercise
         .lines()
         .filter(|line| {
             line.trim().starts_with("store i32 ")
@@ -1328,7 +1334,7 @@ fn main() -> status: std::process::ExitStatus pure {
     );
 
     let output = compile_and_run(&llvm);
-    assert!(output.status.success());
+    assert_eq!(output.status.code(), Some(7), "{output:?}");
     assert!(output.stdout.is_empty());
     assert!(output.stderr.is_empty());
 }
@@ -1423,17 +1429,6 @@ fn main() -> status: std::process::ExitStatus pure {
     Err(error: underflow) => {
     }
   }
-  let multiply_result = 6_i16 *checked 7_i16;
-  match multiply_result {
-    Ok(value: product) => {
-      if product != 42_i16 {
-        return std::process::exit_status(code: 3_u8);
-      }
-    }
-    Err(error: product_error) => {
-      return std::process::exit_status(code: 4_u8);
-    }
-  }
   let success = forward(value: 7_i32);
   match success {
     Ok(value: answer) => {
@@ -1484,7 +1479,16 @@ fn main() -> status: std::process::ExitStatus pure {
       return std::process::exit_status(code: 12_u8);
     }
   }
-  return std::process::exit_status(code: 0_u8);
+  let multiply_result = 6_i16 *checked 7_i16;
+  match multiply_result {
+    Ok(value: product) => {
+      let product_code = cvt::<i16, u8>(product);
+      return std::process::exit_status(code: product_code);
+    }
+    Err(error: product_error) => {
+      return std::process::exit_status(code: 4_u8);
+    }
+  }
 }
 "#;
     let llvm = compile(source);
@@ -1492,7 +1496,9 @@ fn main() -> status: std::process::ExitStatus pure {
     assert!(llvm.contains("@llvm.usub.with.overflow.i8"));
     assert!(llvm.contains("@llvm.smul.with.overflow.i16"));
     let output = compile_and_run(&llvm);
-    assert!(output.status.success());
+    // The last step returns the checked product `6 * 7` as the exit status;
+    // every earlier failure returns a code from 1 to 12.
+    assert_eq!(output.status.code(), Some(42), "{output:?}");
     assert!(output.stdout.is_empty());
     assert!(output.stderr.is_empty());
 }

@@ -862,9 +862,7 @@ fn the_instance_ceiling_counts_both_rounds_without_recounting_duplicates() {
             )
             .replacen(
                 "  let got = zeros(",
-                "  if 0_u64 < next^.len {
-    let hop = next^[0_u64];
-  }
+                "  let hop = next^[0_u64];
   let got = zeros(",
                 1,
             );

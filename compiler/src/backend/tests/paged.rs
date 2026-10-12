@@ -2,7 +2,11 @@
 
 use super::*;
 
-const GROWTH: &[u8] = br#"fn main() -> status: std::process::ExitStatus pure {
+const GROWTH: &[u8] = br#"fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
+  let std::process::Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
+  std::fs::close_directory_write(factory: &entry_factory, directory: move unused_cwd_write);
+  std::fs::close_directory(factory: &entry_factory, directory: move unused_cwd);
   let p = box_paged_new::<u64>(capacity: 1_u64);
   place_back(window: &p.inner, value: 73_u64);
   grow_paged(cell: &p, capacity: 2_u64);
@@ -25,8 +29,25 @@ const GROWTH: &[u8] = br#"fn main() -> status: std::process::ExitStatus pure {
     place_back(window: &p.inner, value: i);
   }
   grow_paged(cell: &p, capacity: 8193_u64);
-  if p.inner.cap != 8193_u64 {
-    return std::process::exit_status(code: 1_u8);
+  let grown = p.inner.cap;
+  let low_word = iand(grown, 255_u64);
+  let high_word = ishr(grown, 8_u32);
+  let report = array_filled::<u8, 2>(value: 255_u8);
+  match cvt.checked::<u64, u8>(low_word) {
+    Ok(value: low_byte) => {
+      set report[0_u64] = low_byte;
+    }
+    Err(error: low_refused) => {
+      return std::process::exit_status(code: 5_u8);
+    }
+  }
+  match cvt.checked::<u64, u8>(high_word) {
+    Ok(value: high_byte) => {
+      set report[1_u64] = high_byte;
+    }
+    Err(error: high_refused) => {
+      return std::process::exit_status(code: 6_u8);
+    }
   }
   if p.inner[0_u64] != 73_u64 {
     return std::process::exit_status(code: 2_u8);
@@ -40,7 +61,19 @@ const GROWTH: &[u8] = br#"fn main() -> status: std::process::ExitStatus pure {
   if last != 1024_u64 {
     return std::process::exit_status(code: 4_u8);
   }
-  return std::process::exit_status(code: 0_u8);
+  let report_bytes = &report[0_u64..2_u64];
+  let no_deadline = None<std::time::Instant>();
+  let wait_cancel_1 = std::time::cancel_never();
+  let wait_outcome_1 = std::io::write_once(factory: &entry_factory, output: &out, source: report_bytes, start: 0_u64, end: 2_u64, deadline: no_deadline, cancel: &wait_cancel_1);
+  std::time::close_cancel_watch(watch: move wait_cancel_1);
+  match wait_outcome_1 {
+    Ok(value: accepted) => {
+      return std::process::exit_status(code: 0_u8);
+    }
+    Err(error: problem) => {
+      return std::process::exit_status(code: 1_u8);
+    }
+  }
 }
 "#;
 
@@ -116,23 +149,38 @@ int main(int argc, char **argv) {
 "#;
     let output = compile_link_and_run(&observed, Some(host), &[]);
     assert_eq!(output.status.code(), Some(0), "{output:?}");
+    // The grown capacity, 8193, as its two low-order bytes, low first.
+    assert_eq!(output.stdout, 8193_u16.to_le_bytes(), "{output:?}");
     assert!(output.stderr.is_empty(), "{output:?}");
 }
 
 #[test]
 fn paged_empty_owners_and_zero_growth_never_allocate_or_release_the_shared_header() {
-    let source = br#"fn main() -> status: std::process::ExitStatus pure {
+    let source = br#"fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
+  let std::process::Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
+  std::fs::close_directory_write(factory: &entry_factory, directory: move unused_cwd_write);
+  std::fs::close_directory(factory: &entry_factory, directory: move unused_cwd);
   let first = box_paged_new::<u64>(capacity: 0_u64);
   let second = box_paged_new::<Box<u64>>(capacity: 0_u64);
   grow_paged(cell: &first, capacity: 0_u64);
   grow_paged(cell: &second, capacity: 0_u64);
-  if first.inner.cap != 0_u64 {
-    return std::process::exit_status(code: 1_u8);
+  let report = array_filled::<u8, 2>(value: 255_u8);
+  set report[0_u64] = cvt::<u64, u8>(first.inner.cap);
+  set report[1_u64] = cvt::<u64, u8>(second.inner.len);
+  let report_bytes = &report[0_u64..2_u64];
+  let no_deadline = None<std::time::Instant>();
+  let wait_cancel_1 = std::time::cancel_never();
+  let wait_outcome_1 = std::io::write_once(factory: &entry_factory, output: &out, source: report_bytes, start: 0_u64, end: 2_u64, deadline: no_deadline, cancel: &wait_cancel_1);
+  std::time::close_cancel_watch(watch: move wait_cancel_1);
+  match wait_outcome_1 {
+    Ok(value: accepted) => {
+      return std::process::exit_status(code: 0_u8);
+    }
+    Err(error: problem) => {
+      return std::process::exit_status(code: 1_u8);
+    }
   }
-  if second.inner.len != 0_u64 {
-    return std::process::exit_status(code: 2_u8);
-  }
-  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let observed = compile(source)
@@ -149,6 +197,9 @@ void wf_paged_unexpected_release(void *p, uint64_t bytes) {
 "#;
     let output = compile_link_and_run(&observed, Some(host), &[]);
     assert_eq!(output.status.code(), Some(0), "{output:?}");
+    // `first.inner.cap` and `second.inner.len`, read from the shared empty
+    // header after the zero growth, one byte each.
+    assert_eq!(output.stdout, [0_u8, 0], "{output:?}");
     assert!(output.stderr.is_empty(), "{output:?}");
 }
 
@@ -305,9 +356,6 @@ fn paged_page_geometry_covers_zero_stride_and_elements_larger_than_a_page() {
   }
   grow_paged(cell: &p, capacity: 8193_u64);
   let value = take_back(window: &p.inner);
-  if value.len != 0_u64 {
-    return std::process::exit_status(code: 5_u8);
-  }
   if p.inner.pages.len != 1_u64 {
     return std::process::exit_status(code: 6_u8);
   }

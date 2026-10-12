@@ -5,9 +5,7 @@ const maximum: u64 = 18446744073709551615_u64;
 
 fn main() -> status: ExitStatus pure {
   let held = maximum;
-  if held == 18446744073709551615_u64 {
-  } else {
-    return exit_status(code: 1_u8);
-  }
-  return exit_status(code: 0_u8);
+  let offset = held - 18446744073709551573_u64;
+  let status_code = cvt::<u64, u8>(offset);
+  return exit_status(code: status_code);
 }

@@ -6,12 +6,11 @@ struct Chunk<T> {
 }
 
 fn main() -> status: ExitStatus pure {
-  doc "FN-2: instantiation arguments are always explicit, so a construct writes its type argument even where the field's own operand already fixes it; there is no elision and no region axis left to elide. The measure is then read through the field as an ordinary place [MSR-1, OP-15].";
+  doc "FN-2: instantiation arguments are always explicit, so a construct writes its type argument even where the field's own operand already fixes it; there is no elision and no region axis left to elide. The measure is then read through the field as an ordinary place [MSR-1, OP-15], and the program returns that capacity less 214, 42, as its exit status.";
   let page = box_slots_new::<u8>(capacity: 256_u64);
   let held = Chunk<Box<Slots<u8>>>(page: move page);
   let width = held.page.inner.cap;
-  if width == 256_u64 {
-    return exit_status(code: 0_u8);
-  }
-  return exit_status(code: 1_u8);
+  let shifted = width - 214_u64;
+  let code = cvt::<u64, u8>(shifted);
+  return exit_status(code: code);
 }

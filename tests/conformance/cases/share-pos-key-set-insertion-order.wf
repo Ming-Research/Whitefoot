@@ -8,9 +8,8 @@ fn main() -> status: std::process::ExitStatus pure waits {
   let first = key_set_insert(keys: &keys, key: b);
   let second = key_set_insert(keys: &keys, key: a);
   let repeated = key_set_insert(keys: &keys, key: b);
-  if first != 0_u64 {
-    return std::process::exit_status(code: 1_u8);
-  }
+  let success = first + 37_u64;
+  let success_code = cvt::<u64, u8>(success);
   if second != 1_u64 {
     return std::process::exit_status(code: 2_u8);
   }
@@ -50,5 +49,5 @@ fn main() -> status: std::process::ExitStatus pure waits {
   if a_value != 23_u64 {
     return std::process::exit_status(code: 6_u8);
   }
-  return std::process::exit_status(code: 37_u8);
+  return std::process::exit_status(code: success_code);
 }
