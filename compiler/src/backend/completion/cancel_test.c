@@ -12,7 +12,9 @@
  * wake tests (WF_GUARD_MODE 3) a write below the threshold wakes only the
  * oldest watch whose test holds, and its retry passes the notification on,
  * so the two-context firing is followed through both retries. */
+#ifndef WF_GUARD_TURN_AGE_NS
 #define WF_GUARD_TURN_AGE_NS UINT64_MAX
+#endif
 #include "bridge.c"
 #include "../ordinary_values.c"
 #include "../runtime_test_guard.h"
