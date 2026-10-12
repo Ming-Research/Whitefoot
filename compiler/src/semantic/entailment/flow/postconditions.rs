@@ -2794,7 +2794,7 @@ impl Analyzer<'_, '_> {
                 let Some(formed) = FormedPlace::of(&place.expression) else {
                     continue;
                 };
-                let (root_parameter, subscripts, _) = self.place_subscripts(formed);
+                let (root_parameter, subscripts) = self.place_subscripts(formed);
                 let datums = self
                     .postcondition_place_datums(root_parameter, &subscripts, place.denotation)
                     .into_iter()
@@ -2814,16 +2814,11 @@ impl Analyzer<'_, '_> {
     /// [OP-4, ENT-2] every subscript one postcondition place evaluates, in
     /// evaluation order, beside the root parameter's ordinal: those of the
     /// container a page or segment of the place's range is selected from,
-    /// the selector, the range's own subscript and those below it. A range
-    /// formed any other way is returned whole, to be judged where it stands.
+    /// the selector, the range's own subscript and those below it.
     fn place_subscripts<'p>(
         &self,
         formed: FormedPlace<'p>,
-    ) -> (
-        Option<usize>,
-        Vec<PlaceSubscript<'p>>,
-        Option<&'p CheckedExpression>,
-    ) {
+    ) -> (Option<usize>, Vec<PlaceSubscript<'p>>) {
         let parameters = &self.input.function.parameters;
         let root_binding = match formed {
             FormedPlace::Container(root) => root.binding(),
@@ -2839,21 +2834,20 @@ impl Analyzer<'_, '_> {
             Some(ordinal) if parameters[ordinal].mode.is_reference() => vec![PlaceStep::Deref],
             _ => Vec::new(),
         };
-        let mut unformed = None;
         let walk = match formed {
             FormedPlace::Container(root) => {
                 let mut walk = SubscriptWalk::new(root.proof_prefix(), identity);
                 walk.steps(&root.path);
                 walk
             }
-            FormedPlace::RangeRun(root) => SubscriptWalk::range(root, identity, &mut unformed),
+            FormedPlace::RangeRun(root) => SubscriptWalk::range(root, identity),
             FormedPlace::RangeElement(place) => {
-                let mut walk = SubscriptWalk::range(&place.root, identity, &mut unformed);
+                let mut walk = SubscriptWalk::range(&place.root, identity);
                 walk.range_element(place);
                 walk
             }
         };
-        (root_parameter, walk.subscripts, unformed)
+        (root_parameter, walk.subscripts)
     }
 
     /// The entry datums each subscript of one place reads, index-aligned
@@ -2966,12 +2960,7 @@ impl Analyzer<'_, '_> {
         denotation: PlaceDenotation,
         states: &mut ProofFlowState,
     ) {
-        let (root_parameter, subscripts, unformed) = self.place_subscripts(formed);
-        if let Some(formation) = unformed
-            && !self.judge_children_reach_parent(std::iter::once(formation), states)
-        {
-            return;
-        }
+        let (root_parameter, subscripts) = self.place_subscripts(formed);
         let datums = self.postcondition_place_datums(root_parameter, &subscripts, denotation);
         let mut rebound_above = Vec::new();
         let mut rebound_terms = Vec::new();
@@ -3162,12 +3151,11 @@ impl<'p> SubscriptWalk<'p> {
     /// The walk to the run a range root names: a range parameter's own run,
     /// or the run a page or segment selector forms in the clause, after the
     /// container's subscripts and the selector [OP-4, REF-4], each judged
-    /// over the state the place denotes. A range formed any other way is
-    /// left in `unformed`, to be judged where it stands.
+    /// over the state the place denotes. The checker forms a clause's range
+    /// only by selecting a page or segment.
     fn range(
         root: &'p super::super::super::model::CheckedRangeRoot,
         identity: Vec<PlaceStep>,
-        unformed: &mut Option<&'p CheckedExpression>,
     ) -> Self {
         match root.formation.as_deref() {
             None => Self::new(root.proof_place(), identity),
@@ -3189,17 +3177,14 @@ impl<'p> SubscriptWalk<'p> {
                 segment,
                 ..
             }) => {
-                let mut walk = Self::range(&element.root, identity, unformed);
+                let mut walk = Self::range(&element.root, identity);
                 walk.range_element(element);
                 walk.base = element.proof_place();
                 walk.segment(segment);
                 walk.base = root.proof_place();
                 walk
             }
-            Some(formation) => {
-                *unformed = Some(formation);
-                Self::new(root.proof_place(), identity)
-            }
+            Some(_) => unreachable!("a clause forms a range only by page or segment selection"),
         }
     }
 
