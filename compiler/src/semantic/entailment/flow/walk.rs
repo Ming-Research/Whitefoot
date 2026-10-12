@@ -1285,6 +1285,9 @@ impl Analyzer<'_, '_> {
                 {
                     let _ = self.expression_effects(key, state);
                 }
+                let _ = self
+                    .judging()
+                    .judge_atomic_target_separations(node_path, state);
                 let outer_scope_depth = self.frames.scopes.len();
                 self.frames
                     .scopes

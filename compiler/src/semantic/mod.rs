@@ -1036,9 +1036,10 @@ pub enum SemanticIssueKind {
         mechanical_fix: String,
     },
     /// Two compared positions have no source proof of the separation their
-    /// family needs [OWN-7, WIN-2, EFF-5]: two index or range steps, an index
-    /// beside a range, or either beside a window part. The residual names the
-    /// exact position family.
+    /// family needs [OWN-7, WIN-2]: two index or range steps, an index
+    /// beside a range, or either beside a window part, in a call's row
+    /// [EFF-5], an exchange [OP-11] or two handle places of one atomic
+    /// statement [SHARE-2]. The residual names the exact position family.
     UndischargedCallSeparation {
         residual: String,
         mechanical_fix: &'static str,

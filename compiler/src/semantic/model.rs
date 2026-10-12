@@ -3210,19 +3210,22 @@ pub(crate) struct CheckedContextAwait {
 
 /// One [OWN-7] separation question the checker could not settle by syntax.
 ///
-/// A mandatory call-effect pair [EFF-5] or a write's preservation of a later
-/// reference use [REF-2] requires the positions to be proved distinct.
+/// A mandatory call-effect pair [EFF-5], a write's preservation of a later
+/// reference use [REF-2] or two handle places of one atomic statement
+/// [SHARE-2] requires the positions to be proved distinct.
 /// The checker holds the actual argument spellings and the live
 /// reference state, so it owns the comparison; what it cannot do is discharge
 /// the index or range goal, which is the fixed [ENT-6] families' work under
 /// [MSR-4]'s disposition. This record is that handover, and the diagnostic it
-/// carries cites EFF-5 or OP-11 at the call, or REF-2 at the reference use.
+/// carries cites EFF-5 or OP-11 at the call, SHARE-2 at the target, or REF-2
+/// at the reference use.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CheckedCallSeparation {
-    /// The call or set commit whose pre-write proof context answers the query.
+    /// The call, set commit or atomic statement whose pre-write proof context
+    /// answers the query.
     pub(crate) site: NodePath,
-    /// Exchange's possible ancestry is refused by OP-11, rather than EFF-5.
-    pub(crate) exchange: bool,
+    /// The rule whose separation this is, when no reference use names one.
+    pub(crate) occasion: CheckedSeparationOccasion,
     /// A demanded REF-2 use; the separation is still proved at `site`, before
     /// the invalidating write, and diagnosed at this later use.
     pub(crate) reference_use: Option<CheckedReferencePreservationUse>,
@@ -3240,6 +3243,20 @@ pub(crate) struct CheckedCallSeparation {
     /// Whether one reference argument supplies both paths [EFF-5], so that
     /// passing only one of them is no repair [DIAG-1].
     pub(crate) one_argument: bool,
+}
+
+/// Which judgment asks a [`CheckedCallSeparation`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum CheckedSeparationOccasion {
+    /// Two entries of one call's substituted row [EFF-5].
+    Call,
+    /// Exchange's possible ancestry is refused by OP-11, rather than EFF-5.
+    Exchange,
+    /// Two targets of one atomic statement whose handle places overlap
+    /// unless their positions differ, where one is a whole target [SHARE-2].
+    /// The site is the atomic statement, judged when it begins, and the
+    /// diagnostic cites the later target.
+    AtomicTargets(NodePath),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -3265,6 +3282,34 @@ pub(crate) enum CheckedCallSeparationPositions {
     /// [WIN-2] a range beside the window's `next` or `free`, which the
     /// separation needs proved to end at or below `r.len`, or empty.
     RangeWithinLength(super::places::CapturedRange),
+}
+
+impl CheckedCallSeparationPositions {
+    /// Whether the fixed [ENT-6] families can name every value this
+    /// candidate's proof reads.
+    ///
+    /// The unknown marker stands for an offset no captured value names, such
+    /// as an atomic binder's own key subscript or an index actual read from
+    /// an element: it has no term, and no index or range image is ever filed
+    /// under it, so no fact separates it from anything. A range's endpoint
+    /// images are found through both endpoints, so a range with either
+    /// endpoint the marker is unnamed. A candidate reading an unnamed value
+    /// is never proved, and a pair with no other candidate is one no named
+    /// position separates [EFF-5, OWN-7].
+    pub(crate) fn names_its_values(self) -> bool {
+        let named = |value: super::places::CapturedValue| {
+            value != super::places::CapturedValue::unknown()
+        };
+        let named_range =
+            |range: super::places::CapturedRange| named(range.start) && named(range.end);
+        match self {
+            Self::Indices(left, right) => named(left) && named(right),
+            Self::Ranges(left, right) => named_range(left) && named_range(right),
+            Self::Live(index) => named(index),
+            Self::IndexOutsideRange(index, range) => named(index) && named_range(range),
+            Self::RangeWithinLength(range) => named_range(range),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
