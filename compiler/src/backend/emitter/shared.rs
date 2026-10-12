@@ -810,6 +810,25 @@ impl FunctionEmitter<'_, '_> {
         .map_err(|_| BackendFailure::TextEmission)
     }
 
+    /// Reads the set's retained heap bytes without changing its storage.
+    pub(super) fn emit_key_set_bytes(
+        &mut self,
+        result: IrValueId,
+        set: IrValueId,
+    ) -> Result<(), BackendFailure> {
+        if self.value_type(set) != Some(IrType::Address(IrAddressed::KeySet)) {
+            return Err(BackendFailure::InvalidIr);
+        }
+        self.names(&["wf__key_set_bytes"]);
+        writeln!(
+            self.output,
+            "  {} = call i64 @wf__key_set_bytes(ptr {})",
+            self.value_name(result),
+            self.value_name(set),
+        )
+        .map_err(|_| BackendFailure::TextEmission)
+    }
+
     /// Copies a key's first bytes into a range, defining the key's length.
     pub(super) fn emit_key_set_read_key(
         &mut self,

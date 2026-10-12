@@ -177,6 +177,105 @@ int wf_test_resident_bytes(uint64_t *bytes) {
     std::fs::remove_dir_all(directory).expect("remove linked narrow enum result case");
 }
 
+/// glibc's unknown-code strerror_l path can allocate a persistent TLS buffer
+/// outside the runtime counter. Observe admission to that lookup, replacing it
+/// with a nonallocating fixture: the previous implementation enters the spy
+/// before validating the code and fails its zero-call assertion. A positive
+/// control calls through a test-only helper in the runtime's translation unit,
+/// so a missing substitution fails its spy-count assertion. The separate heap
+/// equality checks only balanced counted storage; it cannot detect allocations
+/// internal to libc.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+#[test]
+fn unknown_description_never_enters_the_allocating_glibc_lookup() {
+    use super::BoundedOutput;
+    let directory = test_directory();
+    let llvm = r#"
+declare i32 @description_lookup_probe()
+declare i32 @wf__floor_run(i32, ptr)
+define i32 @main(i32 %argc, ptr %argv) {
+  %status = call i32 @wf__floor_run(i32 %argc, ptr %argv)
+  ret i32 %status
+}
+define i32 @wf__main_body(i32 %argc, ptr %argv) {
+  %status = call i32 @description_lookup_probe()
+  ret i32 %status
+}
+"#;
+    let host = r#"
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+#include <errno.h>
+#include <limits.h>
+#include <locale.h>
+#include <stdint.h>
+#include <string.h>
+#include "ordinary_values.h"
+#include "completion/bridge.h"
+
+char *wf_test_library_strerror_l_control(int code, locale_t locale);
+
+static unsigned lookup_calls;
+
+char *wf_test_strerror_l(int code, locale_t locale) {
+    ++lookup_calls;
+    if (code == INT32_MAX) {
+        static char text[] = "Unknown error 2147483647";
+        return text;
+    }
+    return strerror_l(code, locale);
+}
+
+int description_lookup_probe(void) {
+    /* The helper is appended to ordinary_values.c and receives its -D options.
+     * EIO and a valid C locale keep this control safe if interception is lost. */
+    locale_t c_locale = newlocale(LC_ALL_MASK, "C", (locale_t)0);
+    if (c_locale == (locale_t)0) return 1;
+    const char *control = wf_test_library_strerror_l_control(EIO, c_locale);
+    freelocale(c_locale);
+    if (control == NULL || lookup_calls != 1) return 1;
+    lookup_calls = 0;
+    unsigned char bytes[32], expected[32];
+    memset(bytes, 90, sizeof(bytes));
+    memset(expected, 90, sizeof(expected));
+    wf_view destination = {bytes, sizeof(bytes)};
+    wf_io_error error = {WF_IO_OTHER, INT32_MAX, 3};
+    wf_copy_result result;
+    uint64_t before = wf__heap_in_use();
+    wf__body_error_copy_description(&result, &error, &destination,
+                                    3, sizeof(bytes));
+    if (result.tag != 1 || result.err.error.tag != 1) return 2;
+    if (memcmp(bytes, expected, sizeof(bytes)) != 0) return 3;
+    if (lookup_calls != 0) return 4;
+    if (wf__heap_in_use() != before) return 5;
+    wf__body_error_copy_description(&result, &error, &destination, 3, 3);
+    if (result.tag != 1 || result.err.error.tag != 1) return 6;
+    if (memcmp(bytes, expected, sizeof(bytes)) != 0) return 7;
+    if (lookup_calls != 0) return 8;
+    return wf__heap_in_use() == before ? 0 : 9;
+}
+"#;
+    let library_fixture = r#"
+char *wf_test_library_strerror_l_control(int code, locale_t locale) {
+    return strerror_l(code, locale);
+}
+"#;
+    let executable = super::build_linked_executable_with_library_fixture(
+        llvm,
+        Some(host),
+        &[],
+        &["strerror_l=wf_test_strerror_l".to_owned()],
+        library_fixture,
+        &directory,
+    );
+    let output = Command::new(executable)
+        .bounded_output()
+        .expect("run unknown description lookup probe");
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    std::fs::remove_dir_all(directory).expect("remove description lookup case");
+}
+
 #[test]
 fn the_compiler_owned_c_units_compile_in_the_default_dialect() {
     let directory = test_directory();

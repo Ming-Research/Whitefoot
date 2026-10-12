@@ -26,6 +26,7 @@ pub(super) const fn lower_measure(measure: CheckedMeasure) -> IrMeasure {
         CheckedMeasure::Capacity => IrMeasure::Capacity,
         CheckedMeasure::Head => IrMeasure::Head,
         CheckedMeasure::Pages => IrMeasure::Pages,
+        CheckedMeasure::Bytes => IrMeasure::Bytes,
     }
 }
 

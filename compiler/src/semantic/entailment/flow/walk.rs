@@ -71,6 +71,11 @@ impl Reasoning<'_, '_, '_> {
                 proof,
                 &self.vocabulary.derivations,
             );
+            self.vocabulary.establish_postcondition_affine(
+                &instantiated.relation,
+                proof,
+                &mut state.affine,
+            );
         }
     }
 }

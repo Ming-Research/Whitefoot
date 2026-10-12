@@ -2841,6 +2841,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             } => self.emit_keyed_entries_fill(result, *entries, *hold, *position, *set),
             IrOperation::KeySetNew { capacity } => self.emit_key_set_new(result, ty, *capacity),
             IrOperation::KeySetInsert { set, key } => self.emit_key_set_insert(result, *set, *key),
+            IrOperation::KeySetBytes { set } => self.emit_key_set_bytes(result, *set),
             IrOperation::KeySetReadKey { set, index, out } => {
                 self.emit_key_set_read_key(result, *set, *index, *out)
             }

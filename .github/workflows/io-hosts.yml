@@ -84,6 +84,30 @@ jobs:
       - name: Thread sanitizer over the bridge and the ring
         run: WHITEFOOT_CHECK_TIMEOUT=180 perl .github/run-check.pl linux-runtime-tsan make -C compiler -j2 completion-tsan CC=/usr/bin/clang REQUIRE_NATIVE=1
 
+      # The native C checks above keep their own compiler. The WF witness
+      # below needs the gate's LLVM version for its emitted waiting entry.
+      - name: Install the production compiler's LLVM toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          rustup default stable
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
+
+      # This host already requires io_uring. The case uses taskset with
+      # three CPUs from its allowed set, prints Inputs.drivers, and compares
+      # it with reports published after actual driver executors started.
+      # No unavailable-ring or fewer-CPU result satisfies the criterion.
+      - name: Runtime driver count through the ordinary Inputs entry
+        run: |
+          perl .github/run-check.pl compiler/test-build-corpus \
+            cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --test corpus --no-run
+          perl .github/run-check.pl compiler/test-corpus \
+            cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --test corpus \
+            programs::driver_count::driver_count_matches_started_roles_under_three_cpu_affinity -- --ignored --exact
+
       # run-check.pl appended every stage over its budget in
       # .github/time-budgets.txt, or without one, to this record; the stages
       # themselves kept their own statuses.
@@ -280,4 +304,4 @@ jobs:
           RUST_MIN_STACK: 8388608
         run: |
           cargo test --manifest-path compiler/Cargo.toml --profile gate --locked \
-            --test corpus -- programs::windows:: programs::network:: programs::file_replacement:: programs::stop_signals:: conformance::file_replacement:: native_windows::
+            --test corpus -- programs::windows:: programs::network:: programs::file_replacement:: programs::stop_signals:: programs::driver_count:: conformance::file_replacement:: native_windows::

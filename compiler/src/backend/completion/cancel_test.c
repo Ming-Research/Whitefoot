@@ -4,7 +4,15 @@
  * driver's firing context, as in shared_object_test.c. Socketpairs carry
  * real receives; the silent peer remains open throughout cancellation.
  * No test-specific branch is compiled into the runtime. */
+#if defined(__APPLE__)
+#ifndef _DARWIN_C_SOURCE
+#define _DARWIN_C_SOURCE 1
+#endif
+#else
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
+#endif
 #include "bridge.c"
 #include "../ordinary_values.c"
 #include "../runtime_test_guard.h"
