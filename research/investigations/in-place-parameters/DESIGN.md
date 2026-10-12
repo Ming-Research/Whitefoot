@@ -3239,3 +3239,66 @@ succeeding, and the earlier eleven witnesses' summary unchanged. No
 Whitefoot build, test suite, timing or CI run was involved. The callgrind
 build mode of run 38183553516 was not re-read. The match between its
 4 → 160 direct call sites and the import gate is inferred, not confirmed.
+
+### Fragment-link import limit: question, comparison and rejection criterion
+
+The owner chose to try the import-limit arm first (status board card
+lm-accessor-import-gate, option A), keeping the result-origin contract above
+as a design to revisit with whatever gap remains. This section is written
+before any measurement of it.
+
+**Question.** Does a ThinLTO import limit of 200 summary instructions in
+`whitefootc`'s fragment link, in place of LLVM's default 100, return
+Snowghost's word edits and apollo11's sequential font-size change to the
+times they had before field-wise transfers, without a cost elsewhere that
+outweighs it? The limit is passed to the linker's LTO backend, so it governs
+every cross-fragment import of every fragment build and nothing else;
+whole-program builds do not import and are unaffected.
+
+**Mechanism predicted.** With the limit at 200, `computed_of`, `font_of` and
+`box_of` are imported into their callers' fragments and inlined there, as in
+the control above and as in the whole-program build; `text_of`,
+`write_item` and `next_glyphs` keep missing the ordinary inline threshold
+and stay out of line. The direct call sites of the three styles accessors in
+Snowghost's `layout_oracle` fall back toward the four of the base before
+field-wise transfers.
+
+**Comparison.** Three compilers built from one source: the base (main at the
+experiment's base), a twin of the base, and the candidate, which differs
+only by the limit. Each builds the same Snowghost and Halo sources in
+fragment mode (`--cache --fragments function`, an empty cache per build):
+
+1. Hosted CI, before any timing: per compiler, the direct call sites of the
+   three styles accessors in Snowghost's `layout_oracle`, its text size,
+   its link time and total build time, and the same sizes and times for
+   Halo's fragment build. The import counts are deterministic; sizes and
+   times come from three builds each.
+2. The 14900K, through Snowghost's edit-timing harness (the one behind run
+   38197250440): the six word-edit cells, apollo11 sequential font-size, the
+   block-edit cells and html5 style matching, base, twin and candidate
+   interleaved in rotated rounds, paired medians against the base.
+
+**Adopt** if both hold:
+
+- The candidate's word-edit cells and apollo11 font-size are faster than
+  the base beyond the twin's spread in every cell, and the median word-edit
+  cell recovers at least half of its slowdown against
+  wf-78223721f77d, the release before field-wise transfers.
+- No Snowghost cell is slower than the base by more than the twin's spread
+  plus 1%, Snowghost's 3% veto is not reached in any cell, the fragment
+  build's text grows by at most 10% for Snowghost and for Halo, and its
+  link time by at most 25%.
+
+**Reject** if the word-edit cells do not improve beyond the twin's spread,
+which would mean the import gate is not what costs them time; or if any
+cell crosses the veto, or text or link time exceeds the bounds above. A
+mechanism check failing in step 1 (the three accessors still called
+directly at 200) stops the experiment before timing.
+
+**What follows either way.** Adoption puts the limit and its grounds in the
+design tree (compiler/incremental-compilation, which already requires
+measured correction of modularity-induced runtime losses) and measures what
+gap remains, which decides whether the result-origin contract is still
+worth its mechanism. Rejection records the result here and returns the
+direction to the owner with the remaining candidates: the result-origin
+contract (about 35% estimated coverage) and the LLVM-side change (e′).
