@@ -64,6 +64,20 @@ pub(crate) struct QualifiedValueSite {
     pub(crate) after: usize,
 }
 
+impl QualifiedValueSite {
+    /// Whether a frontier whose lookahead begins at `cursor` lies at the
+    /// path's final IDENT or at the token after it [DIAG-1].
+    ///
+    /// Recognition stops at either. When an operator follows the path, as in
+    /// `pkg::m::k == 1`, no `callee_path` row starts `IDENT ==`, so the
+    /// `callee_path` choice fails with its lookahead at the final IDENT; when
+    /// a `;` follows, the `IDENT ;` row of `fn_bind`'s continuation admits the
+    /// IDENT and the next decision fails at the `;`.
+    pub(crate) fn applies_at(self, cursor: usize) -> bool {
+        self.after == cursor || cursor.checked_add(1) == Some(self.after)
+    }
+}
+
 /// The repair for a qualified path written where a value stands [MOD-5]: the
 /// alias that binds its final name [MOD-4], with that name written in the
 /// path's place.
@@ -399,7 +413,7 @@ fn forbidden_atom_override(
 /// path, expecting the call continuation `::` or `(`.
 fn qualified_value_override(context: ProbeContext, cursor: usize) -> Option<SyntaxIssue> {
     let site = context.qualified_value?;
-    if site.after != cursor {
+    if !site.applies_at(cursor) {
         return None;
     }
     let mut expected = ExpectedBuilder::empty();

@@ -180,7 +180,9 @@ impl<'classified> Parser<'classified> {
     /// a `call` an `expr` or `affine_factor` derives: the innermost frames are
     /// that call's `callee` and `callee_path` frames, or the call itself once
     /// its callee is complete. Every terminal the call has consumed lies
-    /// before the cursor, so the path is the token run those terminals cover.
+    /// before the cursor, so the path begins where those terminals begin; it
+    /// ends at the last of them or, when the `callee_path` choice failed on
+    /// it, at the IDENT the lookahead begins with.
     fn qualified_value(
         &mut self,
         source: SourceId,
@@ -220,7 +222,7 @@ impl<'classified> Parser<'classified> {
         };
         let site =
             qualified_value_path(source, tokens, start, &mut self.work).map_err(Stop::Resource)?;
-        Ok(site.filter(|site| site.after == cursor))
+        Ok(site.filter(|site| site.applies_at(cursor)))
     }
 
     fn note_child_extent(
