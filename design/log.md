@@ -5,6 +5,13 @@ Newest first. One entry per approved change of the tree: a dated title,
 the owner's agent instructions own the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-12 A heap reading loads the pool counter without the pool lock
+
+Nodes: language/system-interface/memory-statistics
+
+Owner-approved: On the shared status board on 2026-10-12, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve Whitefoot#381 (head commit d83539e29)'s change to the design tree? The change: reading memory use no longer takes the memory pool's lock, and the pool's total becomes an atomic on a cache line of its own" (translated), whose background listed the narrowed allocation-accounting decision, the added pool-reading decision with its refused alternative, and the two 14900K acceptance runs.
+
+Summary: The allocation-accounting decision now says only that the pool counter changes under its lock. A new decision has a reading load that counter without the lock, the counter being an atomic padded to its own cache line that only a lock holder changes with a relaxed load and store, because each stored value is exact when stored, so PRE-2's quiescent exactness and concurrent bound hold, while a reading under the lock wrote the lock's line on every driver. On the i9-14900K a loop of readings fell from 51.1 to 16.3 million per second in total from 2 to 8 performance cores under the lock and rose to 4.0 times its 2-core rate without it, and firn's GET on 8 performance cores became 40% faster against a 5% twin spread ([pool counter read without the pool lock](../research/investigations/memory-statistics/README.md#pool-counter-read-without-the-pool-lock)); reading the counter under the pool lock is refused.
 ## 2026-10-12 A released small KeySet stays as its thread's spare
 
 Nodes: compiler/waiting-contexts/concurrent-map
