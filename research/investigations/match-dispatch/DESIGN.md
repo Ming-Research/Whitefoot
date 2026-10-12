@@ -1761,29 +1761,41 @@ the cursor transport through mixed joins; a comparison across runs, not
 an attribution of that change). Task-clock medians are 387.3 ms and
 357.6 ms: 29.7 ms, 8.3% of wasmi's time, remains.
 
+Handler names come from the IR, not from the order of `gen.py --names`:
+each instruction constructor stores its variant tag and its handler's
+address (`store i16 203` then `store ptr @wf_run.arm.197`), and tag order is
+the names order. All 362 arms map to exactly one tag. Arm numbers do not
+follow tag order, so a label taken from the arm number's line in the names
+list is wrong for most arms (the disassembly of arm 197 is a 32-bit load,
+`I32LoadSD`, not a select).
+
 The two instruction sets differ (wasmi fuses a compare into its branch and
 select forms and has register-operand load forms; v2h has accumulator
-forms), so only operations with a counterpart compare one to one. Times are
-the sample share times the task-clock median:
+forms), so the comparison groups handlers by operation kind. Times are the
+sample share times the task-clock median; each report lists handlers above
+0.3% of samples, and the rest is the last row:
 
-| Operation | v2h ms | wasmi ms | v2h − wasmi |
+| Operation kind | v2h ms | wasmi ms | v2h − wasmi |
 |---|---|---|---|
-| jump table (`BrTableN`, `BrTableNC`; `branch_table_*`) | 24.8 | 19.0 | +5.8 |
-| call (`Call`; `call_internal`) | 15.6 | 12.9 | +2.7 |
-| return (`Return`; `return`) | 4.0 | 1.8 | +2.2 |
-| unconditional jump (`Jump`; `branch`) | 4.2 | 2.7 | +1.5 |
+| conditional and unconditional branches (`Br*`, `Jump`; `branch*`) | 49.9 | 36.0 | +13.8 |
+| jump tables (`BrTableN`, `BrTableNC`; `branch_table_*`) | 26.1 | 19.0 | +7.1 |
+| bitwise and | 22.9 | 16.0 | +6.9 |
+| call and return (`Call`, `Return`; `call_internal`, `return`) | 19.6 | 14.7 | +4.8 |
+| select | 6.0 | 3.8 | +2.2 |
 | `memset` from the C library | 3.7 | 2.2 | +1.5 |
-| kernel page faults (`do_user_addr_fault`) | 3.5 | below 1.1 | about +2.4 |
+| loads | 111.2 | 118.7 | −7.6 |
+| adds | 47.2 | 54.0 | −6.8 |
+| copies (`Copy*`; `*_copy_*`) | 29.2 | 40.5 | −11.4 |
+| handlers below 0.3% each | 30.4 | 12.9 | +17.5 |
 
-These account for about 16 ms of the 29.7. The rest lies in operations
-without a counterpart. The largest single v2h arm is `SelectC` (select
-with its condition in the accumulator): 10.1%, 39.2 ms, against 3.8 ms for
-all of wasmi's select forms; with the compare arms that feed it (`I32GeSB`
-5.9%, `I32LeUB` 2.9%, `I32GeUA` 1.5%, `I32GeSA` 1.1%), v2h spends 83 ms on
-compare-then-select, while wasmi computes the compare inside its select
-form. Whether `SelectC` itself compiles poorly (a branch instead of a
-conditional move, or the slot-to-slot move) or wasmi simply does less work
-is not yet known; its machine code is the next thing to read.
+Control flow (branches, jump tables, calls and returns) accounts for about
+26 ms of the 29.7; loads, adds and copies are cheaper in v2h, and a longer
+tail of rare handlers is dearer. In the IR, every v2h branch arm checks its
+target index against the code length before forming the next cursor, and
+the fall-through path checks the next index too; the taken path of a jump
+(`Jump`, arm 1) is a compare, a trap branch and the dispatch. Whether these
+checks are what the branch arms pay over wasmi's is the next question,
+answered by their machine code beside wasmi's.
 
 ### Constructor and runtime-boundary audit
 
