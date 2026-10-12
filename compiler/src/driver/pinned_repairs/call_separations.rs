@@ -1184,4 +1184,134 @@ fn main() -> status: ExitStatus pure {
 }
 "#],
     },
+    RepairPair {
+        // [EFF-5, WIN-2] a struct field below a window part keeps the declared name in both places the rejection prints, whose type the part leaves as the element type.
+        name: "call-separation-struct-field-below-window-part.wf",
+        rejected: br#"struct Pair {
+  a: u64;
+  b: u64;
+}
+
+interface Stage {
+  fn touch(a: &Slots<Pair, 4>, b: &Slots<Pair, 4>) -> result: u64 reads(a.last.a), writes(b.last.a);
+}
+
+fn outer<interface Stage>(items: &Slots<Pair, 4>) -> result: u64 writes(items) {
+  let y = Stage::touch(a: items, b: items);
+  return y;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "EFF-5",
+        sentences: &[
+            "\n  first: items^.last.a\n  second: items^.last.a\n",
+            "\n  mechanical_fix: pass places that do not overlap, or pass the shared place through one argument only\n",
+        ],
+        repaired: &[
+            br#"struct Pair {
+  a: u64;
+  b: u64;
+}
+
+interface Stage {
+  fn touch(a: &Slots<Pair, 4>, b: &Slots<Pair, 4>) -> result: u64 reads(a.last.a), writes(b.last.a);
+}
+
+fn outer<interface Stage>(items: &Slots<Pair, 4>, other: &Slots<Pair, 4>) -> result: u64 reads(items.last.a), writes(other.last.a) {
+  let y = Stage::touch(a: items, b: other);
+  return y;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+            br#"struct Pair {
+  a: u64;
+  b: u64;
+}
+
+interface Stage {
+  fn touch(a: &Slots<Pair, 4>) -> result: u64 writes(a.last.a);
+}
+
+fn outer<interface Stage>(items: &Slots<Pair, 4>) -> result: u64 writes(items.last.a) {
+  let y = Stage::touch(a: items);
+  return y;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        ],
+    },
+    RepairPair {
+        // [EFF-5, WIN-2] a variant and its payload field below a window part print their declared names.
+        name: "call-separation-payload-below-window-part.wf",
+        rejected: br#"enum Shape {
+  Dot(x: u64);
+  Box2(w: u64, h: u64);
+}
+
+interface Stage {
+  fn touch(a: &Slots<Shape, 4>, b: &Slots<Shape, 4>) -> result: u64 reads(a.last.Box2.h), writes(b.last.Box2.h);
+}
+
+fn outer<interface Stage>(items: &Slots<Shape, 4>) -> result: u64 writes(items) {
+  let y = Stage::touch(a: items, b: items);
+  return y;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "EFF-5",
+        sentences: &[
+            "\n  first: items^.last.Box2.h\n  second: items^.last.Box2.h\n",
+            "\n  mechanical_fix: pass places that do not overlap, or pass the shared place through one argument only\n",
+        ],
+        repaired: &[
+            br#"enum Shape {
+  Dot(x: u64);
+  Box2(w: u64, h: u64);
+}
+
+interface Stage {
+  fn touch(a: &Slots<Shape, 4>, b: &Slots<Shape, 4>) -> result: u64 reads(a.last.Box2.h), writes(b.last.Box2.h);
+}
+
+fn outer<interface Stage>(items: &Slots<Shape, 4>, other: &Slots<Shape, 4>) -> result: u64 reads(items.last.Box2.h), writes(other.last.Box2.h) {
+  let y = Stage::touch(a: items, b: other);
+  return y;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+            br#"enum Shape {
+  Dot(x: u64);
+  Box2(w: u64, h: u64);
+}
+
+interface Stage {
+  fn touch(a: &Slots<Shape, 4>) -> result: u64 writes(a.last.Box2.h);
+}
+
+fn outer<interface Stage>(items: &Slots<Shape, 4>) -> result: u64 writes(items.last.Box2.h) {
+  let y = Stage::touch(a: items);
+  return y;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        ],
+    },
 ];
