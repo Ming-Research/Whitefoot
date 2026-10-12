@@ -1593,6 +1593,11 @@ impl Reasoning<'_, '_, '_> {
                     .intern(TermKind::Constant(i128::from(value))),
             ),
             CapturedTerm::Const(declaration) => Some(self.const_parameter_term(declaration)),
+            CapturedTerm::Opaque if matches!(value.capture, CaptureId::ContractRead { .. }) => {
+                self.vocabulary.terms.interned(&TermKind::IndexCapture {
+                    capture: value.capture,
+                })
+            }
             // A superseded binding's capture still names the value its
             // formation read, which is the immutable term the capture minted.
             CapturedTerm::Binding(_) | CapturedTerm::Superseded(_)

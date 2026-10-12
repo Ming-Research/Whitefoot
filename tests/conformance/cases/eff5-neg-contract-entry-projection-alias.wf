@@ -1,0 +1,19 @@
+struct Pair {
+  marker: u64;
+  value: u64;
+}
+
+fn helper(frame: &Pair, other: &Pair) -> result: unit writes(frame.marker), writes(other.value) contract {
+  ensures frame^.marker <= entry(frame^.value) + 1_u64;
+} {
+  set frame^.marker = 1_u64;
+  set other^.value = 1_u64;
+  return unit;
+}
+
+fn caller() -> result: unit pure {
+  doc "EFF-5, MSR-3: the entry-state read entry(frame^.value) is the only contract read overlapping writes(other.value); the exit-state read frame^.marker and the row pair frame.marker, other.value are disjoint from it.";
+  let object = Pair(marker: 0_u64, value: 0_u64);
+  helper(frame: &object, other: &object);
+  return unit;
+}

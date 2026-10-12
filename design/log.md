@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 the owner's agent instructions own the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-12 A call separates the places a callee's contract reads
+
+Nodes: compiler/checker-facts, language/effects/call-site-check
+
+Owner-approved: On the shared status board on 2026-10-12, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve Ming-Research/Whitefoot#373 (head commit 4d8025bb6) changing the specification and the design tree?" (translated), whose background listed EFF-5's contract-read footprint with its kept and widened positions, EFF-2's pointer to it, and the two design-tree decisions in call-site-check.md and checker-facts.md.
+
+Summary: Each place a callee's contract reads through a reference parameter joins the call's pairwise overlap comparison as a read supplied by that argument while staying erased proof syntax, because the callee's proof treats reference parameters as separate roots and the call must guarantee that separation for the storage its contract reads, instead of dropping the separate-root assumption and killing facts on every possibly overlapping parameter. Captured offsets of erased contract positions take call and position identities whose substituted expressions exist only in a temporary call-entry proof state, so the comparison reads the call's values without adding runtime captures.
+
 ## 2026-10-12 Cursor transport through mixed joins
 
 Nodes: compiler/match-dispatch-lowering
