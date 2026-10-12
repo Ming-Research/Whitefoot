@@ -105,9 +105,9 @@ fn main() -> status: std::process::ExitStatus pure {
         .map(|offset| helper_start + offset + 3)
         .expect("drop helper must close");
     let helper = &llvm[helper_start..helper_end];
-    assert!(helper.contains("switch i32 %tag"));
-    assert!(helper.contains("i32 0, label %variant.0"));
-    assert!(helper.contains("i32 1, label %variant.1"));
+    assert!(helper.contains("switch i8 %tag"));
+    assert!(helper.contains("i8 0, label %variant.0"));
+    assert!(helper.contains("i8 1, label %variant.1"));
     assert_eq!(helper.matches("call void @wf__heap_give").count(), 2);
     assert_eq!(abandon.matches(&format!("call void @{cleanup}")).count(), 1);
     let consume = emitted_function(&llvm, "consume");
@@ -139,7 +139,7 @@ fn main() -> status: std::process::ExitStatus pure {
     assert_ne!(renamed, llvm);
     let dirty = "ptr inttoptr (i64 -6510615555426900571 to ptr)";
     let linked_constructor = format!(
-        "{renamed}\ndefine {result} @wf_make_empty() {{\n  %tag = insertvalue {result} poison, i32 0, 0\n  %left = insertvalue {result} %tag, {dirty}, 1, 0\n  %right = insertvalue {result} %left, {dirty}, 1, 1\n  ret {result} %right\n}}\n"
+        "{renamed}\ndefine {result} @wf_make_empty() {{\n  %tag = insertvalue {result} poison, i8 0, 0\n  %left = insertvalue {result} %tag, {dirty}, 1, 0\n  %right = insertvalue {result} %left, {dirty}, 1, 1\n  ret {result} %right\n}}\n"
     );
     for module in [&llvm, &linked_constructor] {
         let observed = super::owned_places::retain_calls(module)

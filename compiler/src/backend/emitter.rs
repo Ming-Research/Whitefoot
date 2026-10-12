@@ -2,8 +2,9 @@
 //!
 //! Emission consumes typed IR after optional loop shapes have been selected for
 //! the same target. It preserves every retained
-//! check, emits only checked storage alias promises, and initializes aggregate
-//! values while leaving unoccupied window storage alone.
+//! check, emits only checked storage alias promises and no overflow promises,
+//! initializes aggregate values while leaving unoccupied window storage alone,
+//! and keeps an unreachable edge for enum discriminants.
 
 mod array;
 mod boxes;
@@ -957,7 +958,7 @@ fn emit_nominal_declarations(
                 }
             }
             IrNominalKind::Enum { variants } => {
-                output.push_str("i32");
+                output.push_str(&enum_tag_type(nominal)?);
                 for variant in variants {
                     for field in variant.fields() {
                         output.push_str(", ");
@@ -3066,14 +3067,10 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                     return Err(BackendFailure::InvalidIr);
                 };
                 let tag_only = data.is_tag_only_enum();
+                let tag_ty = enum_tag_type(data)?;
                 let enum_llvm = self
                     .output
                     .type_name(self.program, IrType::Nominal(nominal))?;
-                let tag_ty = if tag_only {
-                    enum_llvm.clone()
-                } else {
-                    "i32".to_owned()
-                };
                 if !addressed {
                     if tag_only {
                         return Ok((self.value_name(scrutinee), tag_ty));
@@ -3086,7 +3083,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                         let field =
                             self.aggregate_field_pointer(IrType::Nominal(nominal), &address, 0)?;
                         let temporary = self.next_temporary()?;
-                        writeln!(self.output, "  %{temporary} = load i32, ptr {field}")
+                        writeln!(self.output, "  %{temporary} = load {tag_ty}, ptr {field}")
                             .map_err(|_| BackendFailure::TextEmission)?;
                         return Ok((format!("%{temporary}"), tag_ty));
                     }
@@ -3107,7 +3104,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 } else {
                     let field =
                         self.aggregate_field_pointer(IrType::Nominal(nominal), &address, 0)?;
-                    writeln!(self.output, "  %{temporary} = load i32, ptr {field}")
+                    writeln!(self.output, "  %{temporary} = load {tag_ty}, ptr {field}")
                         .map_err(|_| BackendFailure::TextEmission)?;
                 }
                 Ok((format!("%{temporary}"), tag_ty))
@@ -3444,16 +3441,27 @@ pub(super) fn llvm_type_with_references(
                 return Ok("{ i128, i128 }".to_owned());
             }
             if nominal.is_tag_only_enum() {
-                let IrNominalKind::Enum { variants } = nominal.kind() else {
-                    return Err(BackendFailure::InvalidIr);
-                };
-                Ok(if variants.len() <= 2 { "i1" } else { "i32" }.to_owned())
+                enum_tag_type(nominal)
             } else {
                 references.insert(format!("wf.t.{}", nominal.link_name()));
                 Ok(nominal_symbol(nominal))
             }
         }
     }
+}
+
+/// Nominal wrapper around target layout's single physical-width selector.
+fn enum_tag_width(nominal: &IrNominal) -> Result<u8, BackendFailure> {
+    let IrNominalKind::Enum { variants } = nominal.kind() else {
+        return Err(BackendFailure::InvalidIr);
+    };
+    let count = u64::try_from(variants.len()).map_err(|_| BackendFailure::CounterOverflow)?;
+    crate::target::enum_tag_width(count, nominal.is_tag_only_enum())
+        .map_err(BackendFailure::TargetLayout)
+}
+
+fn enum_tag_type(nominal: &IrNominal) -> Result<String, BackendFailure> {
+    Ok(format!("i{}", enum_tag_width(nominal)?))
 }
 
 fn is_tag_only_type(program: &IrProgram, ty: IrType) -> Result<bool, BackendFailure> {

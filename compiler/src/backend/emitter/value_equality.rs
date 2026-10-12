@@ -123,26 +123,27 @@ impl FunctionEmitter<'_, '_> {
                         }
                     }
                     IrNominalKind::Enum { variants } => {
+                        let tag_ty = enum_tag_type(self.nominal(id)?)?;
                         let a = self.aggregate_field_pointer(ty, left, 0)?;
                         let b = self.aggregate_field_pointer(ty, right, 0)?;
                         let tag_a = self.next_temporary()?;
                         let tag_b = self.next_temporary()?;
                         writeln!(
                             self.output,
-                            "  %{tag_a} = load i32, ptr {a}\n  %{tag_b} = load i32, ptr {b}"
+                            "  %{tag_a} = load {tag_ty}, ptr {a}\n  %{tag_b} = load {tag_ty}, ptr {b}"
                         )?;
                         self.equality_guard(
-                            "i32",
+                            &tag_ty,
                             &format!("%{tag_a}"),
                             &format!("%{tag_b}"),
                             mismatch,
                         )?;
                         let done = format!("eq.{tag_a}.done");
-                        writeln!(self.output, "  switch i32 %{tag_a}, label %{mismatch} [")?;
+                        writeln!(self.output, "  switch {tag_ty} %{tag_a}, label %{mismatch} [")?;
                         for variant in &variants {
                             writeln!(
                                 self.output,
-                                "    i32 {}, label %eq.{tag_a}.v{}",
+                                "    {tag_ty} {}, label %eq.{tag_a}.v{}",
                                 variant.tag(),
                                 variant.tag()
                             )?;

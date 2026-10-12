@@ -2,6 +2,48 @@
 use super::*;
 
 impl Walker<'_> {
+    /// [ENT-5, RANGE-2] relocation changes the grown window's capacity,
+    /// preserving its length and the complete storage below filled elements.
+    pub(super) fn relocate_window_call(
+        &mut self,
+        state: &mut State,
+        node: &NodePath,
+        arguments: &[Value],
+    ) -> bool {
+        let Some(Value::Ref(view)) = arguments.first() else {
+            return false;
+        };
+        match view {
+            View::Place(location) => {
+                let location = location.child(Step::BoxContent);
+                let Some(container) = state.container(&mut self.world, location, 1) else {
+                    return false;
+                };
+                state.relocate_container(&mut self.world, container);
+            }
+            View::Element {
+                container,
+                indices,
+                projection,
+            } => {
+                let mut path = projection.clone().unwrap_or_default();
+                path.push(CheckedRangeProjection::BoxContent);
+                path.push(CheckedRangeProjection::Measure(CheckedMeasure::Capacity));
+                state.write_element(
+                    &mut self.world,
+                    *container,
+                    indices.clone(),
+                    path,
+                    BTreeMap::new(),
+                );
+            }
+            _ => return false,
+        }
+        // Permission still observes a whole-cell descriptor write.
+        self.unplaced_view(view, true, node, state);
+        true
+    }
+
     pub(super) fn place_window_call(
         &mut self,
         state: &mut State,

@@ -2,8 +2,30 @@
 
 Newest first. One entry per approved change of the tree: a dated title,
 `Nodes:` naming every node changed, `Owner-approved:` and `Summary:`;
-`skill/SKILL.md` owns the form. Older entries also record refused amendments,
+the owner's agent instructions own the form. Older entries also record refused amendments,
 a mechanism since retired.
+
+## 2026-10-11 Payload enum tags sized by variant count
+
+Nodes: compiler/payload-enum-layout, compiler/storage-placement, compiler/tag-only-lowering
+
+Owner-approved: On the shared status board on 2026-10-11, the owner chose option A, "approve" (translated), on the card wfbl-06-01-351-approve, "approve Whitefoot#351 (head 80c1d9b06)'s enum tag width design changes: two added and four changed decisions?" (translated), whose background quoted every added and changed decision verbatim.
+
+Summary: Payload enums and tag-only enums of more than two variants use the smallest of 8, 16 and 32 bits that represents their variant ordinals, keeping the tag first and fields in declaration order, because count-sized tags reduce stored size within OP-9's unchanged ceilings; Halo's instruction Cell shrinks from 12 to 8 bytes. A union's carrier, initialization and bounded transfer combine the tag with the leading padding common to every variant into one 1-, 2- or 4-byte prefix, because exposing that gap as a separate three-byte interval slowed Halo by 5-11%, instead of widening the physical tag or moving the padding separately; with the prefix the 14900K retest ratios were 0.983-1.016. Union layout, memory-only transfer and the bounded struct transfer follow the count-sized tag and the prefix, their other content unchanged.
+## 2026-10-11 Growth keeps length and filled-element facts
+
+Nodes: compiler/checker-facts, language/checks-and-proofs/automatic-facts, language/checks-and-proofs/range-facts
+
+Owner-approved: On the shared status board on 2026-10-11, the owner chose option A, "approve" (translated), on the card paged-grow-352-approve, "approve Whitefoot#352 (head 174c2cd36)'s specification and design tree changes: keep facts on length and filled elements across growth (grow, grow_paged)?" (translated), whose background quoted every added and changed decision and Rejected item verbatim.
+
+Summary: Growing a boxed Slots or Paged window preserves facts supported by its length and filled elements while capacity and invalidated-reference support die and the whole-cell row stays, because growth moves storage without changing those values; per-element equality postconditions, a capacity-only effect row and re-proving facts in a loop were rejected. The checker marks canonical growth calls' proof write events as relocations, keeping their full resolved write places, and one support classifier applies the mark to every fact component and range version. The range walk places growth by that classification next to `place_back` and `take_back`.
+## 2026-10-11 The gate runs macOS where it decides a merge
+
+Nodes: compiler/verification
+
+Owner-approved: On the shared status board on 2026-10-11, written in Chinese, the owner chose option A, "approve" (translated), on the card wf-gate-368-approve, which asked "approve the design-tree change in Whitefoot #368 (head f6d7da395) recording that the gate's macOS jobs run only for ready pull requests, main and manual runs?" (translated); the direction was the owner's choice of A on the card coord-gate-macos-queue the same day.
+
+Summary: The hosted gate runs every group on Linux for each push and adds macOS for a push to a ready pull request, the ready event, main and a manual run, and a final job passes only when the revision's latest check runs show every group green on both platforms, because macOS jobs waited far longer than Linux jobs for hosted runners in busy hours while a macOS-only fault must still be caught before the main line ([macOS runner queue](../research/investigations/test-economy/time-budgets.md#macos-runner-queue)). Both platforms on every push with sessions asked to push less was rejected because nothing enforces fewer pushes.
 
 ## 2026-10-11 Goal data admit integer terms by the place as written
 
