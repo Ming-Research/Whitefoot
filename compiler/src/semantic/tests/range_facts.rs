@@ -533,7 +533,6 @@ fn certified_fill(callee: &str, extra: &str) -> Vec<u8> {
     format!(
         "{callee}fn fill(out: &[u64]) -> result: unit writes(out) {{
   let n = out^.len;
-  let off = False();
   for (
     k in 0_u64..n,
     apart(i, j) {{
@@ -570,8 +569,10 @@ fn fill_verdict(source: &[u8]) -> LoopVerdict {
 fn a_read_the_certificate_skipped_keeps_the_loop_sequential() {
     // The read of out^[0_u64] sits in an arm the entry state excludes, so
     // the certificate's walk never records it while the permission survey
-    // sees it: PAR-2 admits only reads the certificate placed.
-    let dead = "    if off {\n      let x = out^[0_u64];\n      let y = x +wrap 1_u64;\n    }\n";
+    // sees it: PAR-2 admits only reads the certificate placed. The arm is
+    // the payload arm of a `match` on a value constructed as `None`; an `if`
+    // on a Bool the state fixes is a decided condition [OP-5].
+    let dead = "    let off = None<u64>();\n    match off {\n      Some(value: on) => {\n        let x = out^[0_u64];\n        let y = x +wrap 1_u64;\n      }\n      None() => {\n      }\n    }\n";
     let LoopVerdict::Denied(denial) = fill_verdict(&certified_fill("", dead)) else {
         panic!("an unplaced read of the certified root must deny");
     };
@@ -637,7 +638,10 @@ fn main() -> status: std::process::ExitStatus pure {
 /// A loop whose write to `cells` waits behind a chain of `flags` flags,
 /// each set an iteration after the one before, so each dry walk of the
 /// header reaches one more of them. `header` opens the loop; an ordinary
-/// `loop` ends its body with a `break`.
+/// `loop` ends its body by leaving once the last flag is set, so its body
+/// reaches the header again. An unconditional `break` would leave after one
+/// iteration, where every flag is still false and each test of one is a
+/// decided condition [OP-5].
 fn flag_chain(flags: usize, header: &str) -> Vec<u8> {
     let mut lets = String::new();
     let mut steps = format!(
@@ -666,9 +670,9 @@ fn flag_chain(flags: usize, header: &str) -> Vec<u8> {
 ",
     );
     let close = if header.starts_with("  loop") {
-        "    break;\n"
+        format!("    if f{flags} {{\n      break;\n    }}\n")
     } else {
-        ""
+        String::new()
     };
     format!(
         "fn zeros(cells: &[u64]) -> result: u64 reads(cells) contract {{

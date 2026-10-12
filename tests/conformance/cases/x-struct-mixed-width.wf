@@ -13,7 +13,7 @@ fn main() -> status: ExitStatus pure {
   let a_part = cvt::<i32, u8>(m.a);
   let c_rest = m.c - 990_u64;
   let c_part = cvt::<u64, u8>(c_rest);
-  let partial = a_part + m.b;
-  let code = partial + c_part;
+  let partial = a_part +wrap m.b;
+  let code = partial +wrap c_part;
   return exit_status(code: code);
 }

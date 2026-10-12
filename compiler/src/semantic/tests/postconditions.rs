@@ -983,10 +983,12 @@ fn counted_append_proves_the_admitted_result_and_refutes_only_the_blinded_invali
     // Both runs reach the function as [REF-4] range references, whose one
     // measure `len` is the [OP-15] member of the referent; the callee's row
     // carries the write permission the retiring `&uniq MutSlice<u8>` marker
-    // used to carry [REF-1, EFF-1].
+    // used to carry [REF-1, EFF-1]. The fill is not required to be within
+    // the capacity, so the admission test is a run-time choice rather than a
+    // condition the requirements decide [OP-5], and a fill past the capacity
+    // reports the capacity: each of the three exits is proved.
     let source = br#"fn append_bytes(destination: &[u8], capacity: u64, filled: u64, text: &[u8]) -> result: u64 reads(text), writes(destination) contract {
   requires capacity == destination^.len;
-  requires filled <= capacity;
   ensures result <= capacity;
 } {
   let spare = destination^.len;
@@ -1004,7 +1006,7 @@ fn counted_append_proves_the_admitted_result_and_refutes_only_the_blinded_invali
     }
     return spare;
   } else {
-    return filled;
+    return spare;
   }
 }
 
@@ -1514,6 +1516,10 @@ fn main() -> status: std::process::ExitStatus pure {
     );
 }
 
+/// The branch establishes `observed == expected` as an ordinary fact beside
+/// the call's S12 candidate for the same relation, which dies when the owner
+/// moves. A test of the comparison alone is decided by that candidate [OP-5],
+/// so the branch also requires the caller's confirmation.
 #[test]
 fn an_ordinary_fallback_survives_when_a_neighboring_s12_candidate_dies() {
     let source = br#"fn observe(value: i32) -> result: i32 pure contract {
@@ -1532,11 +1538,13 @@ fn guard(left: i32, right: i32) -> result: unit pure contract {
   return unit;
 }
 
-fn caller() -> result: unit pure {
+fn caller(confirmed: Bool) -> result: unit pure {
   let owner = box_new::<i32>(value: 1_i32);
   let expected = owner.inner;
   let observed = observe(value: owner.inner);
-  if observed == expected {
+  let same = observed == expected;
+  let agreed = band(same, confirmed);
+  if agreed {
     sink(owner: move owner);
     guard(left: observed, right: expected);
   } else {

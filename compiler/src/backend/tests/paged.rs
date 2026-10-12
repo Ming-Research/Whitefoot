@@ -2,11 +2,7 @@
 
 use super::*;
 
-const GROWTH: &[u8] = br#"fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
-  let std::process::Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
-  let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
-  std::fs::close_directory_write(factory: &entry_factory, directory: move unused_cwd_write);
-  std::fs::close_directory(factory: &entry_factory, directory: move unused_cwd);
+const GROWTH: &[u8] = br#"fn main() -> status: std::process::ExitStatus pure {
   let p = box_paged_new::<u64>(capacity: 1_u64);
   place_back(window: &p.inner, value: 73_u64);
   grow_paged(cell: &p, capacity: 2_u64);
@@ -30,25 +26,6 @@ const GROWTH: &[u8] = br#"fn main(inputs: std::process::Inputs) -> status: std::
   }
   grow_paged(cell: &p, capacity: 8193_u64);
   let grown = p.inner.cap;
-  let low_word = iand(grown, 255_u64);
-  let high_word = ishr(grown, 8_u32);
-  let report = array_filled::<u8, 2>(value: 255_u8);
-  match cvt.checked::<u64, u8>(low_word) {
-    Ok(value: low_byte) => {
-      set report[0_u64] = low_byte;
-    }
-    Err(error: low_refused) => {
-      return std::process::exit_status(code: 5_u8);
-    }
-  }
-  match cvt.checked::<u64, u8>(high_word) {
-    Ok(value: high_byte) => {
-      set report[1_u64] = high_byte;
-    }
-    Err(error: high_refused) => {
-      return std::process::exit_status(code: 6_u8);
-    }
-  }
   if p.inner[0_u64] != 73_u64 {
     return std::process::exit_status(code: 2_u8);
   }
@@ -61,26 +38,19 @@ const GROWTH: &[u8] = br#"fn main(inputs: std::process::Inputs) -> status: std::
   if last != 1024_u64 {
     return std::process::exit_status(code: 4_u8);
   }
-  let report_bytes = &report[0_u64..2_u64];
-  let no_deadline = None<std::time::Instant>();
-  let wait_cancel_1 = std::time::cancel_never();
-  let wait_outcome_1 = std::io::write_once(factory: &entry_factory, output: &out, source: report_bytes, start: 0_u64, end: 2_u64, deadline: no_deadline, cancel: &wait_cancel_1);
-  std::time::close_cancel_watch(watch: move wait_cancel_1);
-  match wait_outcome_1 {
-    Ok(value: accepted) => {
-      return std::process::exit_status(code: 0_u8);
-    }
-    Err(error: problem) => {
-      return std::process::exit_status(code: 1_u8);
-    }
-  }
+  let excess = grown -wrap 8193_u64;
+  let code = cvt.wrap::<u64, u8>(excess);
+  return std::process::exit_status(code: code);
 }
 "#;
 
 /// Allocation identities and release order are observed independently of the
 /// cell implementation. Page zero grows through 1, 2, 4 and 512 slots,
 /// copying only its 1, 2 and 3 filled elements. Later growth copies only
-/// directory pointers and leaves all 17 final page owners in place.
+/// directory pointers and leaves all 17 final page owners in place. The
+/// grown capacity's excess over the requested 8193 is the fixture's exit
+/// status, which the host requires to be zero; the program takes no inputs
+/// and writes no output, so every allocation the host counts is the cell's.
 #[test]
 fn paged_growth_moves_only_small_page_zero_and_releases_every_allocation() {
     let llvm = compile(GROWTH);
@@ -149,8 +119,6 @@ int main(int argc, char **argv) {
 "#;
     let output = compile_link_and_run(&observed, Some(host), &[]);
     assert_eq!(output.status.code(), Some(0), "{output:?}");
-    // The grown capacity, 8193, as its two low-order bytes, low first.
-    assert_eq!(output.stdout, 8193_u16.to_le_bytes(), "{output:?}");
     assert!(output.stderr.is_empty(), "{output:?}");
 }
 

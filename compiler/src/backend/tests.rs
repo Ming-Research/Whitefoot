@@ -1275,9 +1275,6 @@ fn exercise(flag: Bool) -> status: std::process::ExitStatus pure {
   if selected != 43_i32 {
     return std::process::exit_status(code: 3_u8);
   }
-  if number != 43_i32 {
-    return std::process::exit_status(code: 4_u8);
-  }
   let preserved_code = cvt::<i32, u8>(preserved);
   return std::process::exit_status(code: preserved_code);
 }
@@ -1290,7 +1287,9 @@ fn main() -> status: std::process::ExitStatus pure {
     // `exercise` takes the branch selector as its parameter, so both
     // assignment branches and both value-if arms are emitted and joined. Its
     // exit status is the untouched sibling field `outer.other`, which the
-    // harness compares with the constructed 7.
+    // harness compares with the constructed 7. The value-if delivers
+    // `number` itself, so the checked `selected` also observes the root
+    // local's assignment.
     let llvm = emit(source);
     let exercise = emitted_function(&llvm, "exercise");
     assert!(exercise.contains(" = phi i32 "));

@@ -1744,6 +1744,9 @@ void *wf_test_reallocate(void *allocation, uint64_t old_bytes, uint64_t size) {{
 /// checks that the removed owner leaves before A5, the remaining owners leave
 /// in logical order, and the outer cell leaves last. The runtime shape drains
 /// explicitly; a boxed inline shape leaves a wrapped partial window to cleanup.
+/// The checker proves the wrapped ring's length and capacity and the drained
+/// length, so the full program folds them into its exit status, zero when
+/// they are 3, 3 and 0, and the trace keeps standard output.
 #[test]
 fn boxed_runtime_ring_wraps_and_releases_each_owner_in_order() {
     let source = include_str!("../../../../tests/programs/runtime_ring_wrap.wf");

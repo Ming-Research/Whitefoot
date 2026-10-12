@@ -43,7 +43,8 @@ fn update(flag: Bool) -> result: Outcome pure {
 
 fn main() -> status: ExitStatus pure {
   doc "The true flag selects 42 for the nested field and 43 for the value join and the local, and the untouched sibling stays 7.";
-  let outcome = update(flag: True());
+  let flag = True();
+  let outcome = update(flag: flag);
   if outcome.observed == 42_i32 {
   } else {
     return exit_status(code: 1_u8);

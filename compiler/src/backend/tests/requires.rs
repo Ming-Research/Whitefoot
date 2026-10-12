@@ -177,6 +177,7 @@ fn contract_define_is_symbolic_and_not_emitted_as_runtime_work() {
 }
 
 fn main() -> status: std::process::ExitStatus pure {
+  let bits = ipopcount(0_u8);
   let zero = identity(value: 0_u8);
   return std::process::exit_status(code: zero);
 }
@@ -233,7 +234,8 @@ fn ordinary_requirement_is_not_emitted_as_a_callee_prologue() {
 fn main() -> status: std::process::ExitStatus pure {
   let value = 7_i32;
   let returned = bounded(value: value);
-  return std::process::exit_status(code: cvt::<i32, u8>(returned));
+  let returned_code = cvt::<i32, u8>(returned);
+  return std::process::exit_status(code: returned_code);
 }
 "#,
     );

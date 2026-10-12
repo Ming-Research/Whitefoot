@@ -2212,7 +2212,8 @@ fn main() -> status: std::process::ExitStatus pure {
     return std::process::exit_status(code: 4_u8);
   }
   set first.left = 41_u64;
-  return std::process::exit_status(code: cvt::<u64, u8>(second.left));
+  let second_code = cvt::<u64, u8>(second.left);
+  return std::process::exit_status(code: second_code);
 }
 "#;
 

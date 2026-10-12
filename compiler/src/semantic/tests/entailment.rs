@@ -5877,20 +5877,26 @@ fn computed_give_delivers_the_grid_index_bound() {
 
 /// S7 need not establish an operation image in a contradictory state. Its
 /// give edge must nevertheless stay neutral when the delivery images join,
-/// exactly as spelling the computation with an ordinary let does.
+/// exactly as spelling the computation with an ordinary let does. The give
+/// sits in a zero-trip counted loop, whose body entry is contradictory, beside
+/// two live gives: a branch whose condition contradicts its entering state is
+/// a decided condition [OP-5].
 #[test]
 fn a_computed_give_on_a_contradictory_edge_is_neutral_at_the_join() {
     for delivery in [
-        "    give value + 0_i32;",
-        "    let copied = value + 0_i32;\n    give copied;",
+        "      give value + 0_i32;",
+        "      let copied = value + 0_i32;\n      give copied;",
     ] {
         let source = format!(
-            "fn pick(value: i32) -> result: i32 pure contract {{
+            "fn pick(value: i32, early: Bool) -> result: i32 pure contract {{
   requires value < 8_i32;
   ensures result < 8_i32;
 }} {{
-  let picked = if value >= 8_i32 {{
+  let picked = if early {{
+    for (unreached in 0_u64..0_u64) {{
 {delivery}
+    }}
+    give value;
   }} else {{
     give value;
   }}
@@ -10712,9 +10718,10 @@ fn assert_real_raw_append_routes(program: &CheckedProgramData) {
 /// from source, never from the module: every site has the direct-receiver
 /// form `set x = append_slice(filled: x, ...)`. `assemble_failure` appends the
 /// prefix and then, after the A10 clamp, the separator and ten reasons —
-/// twelve sites. `exercise` has the three startup-message sites plus the
-/// defensive root-length route introduced when `append_slice` gained its
-/// static input contract — four more sites.
+/// twelve sites. `exercise` has the three startup-message sites — three
+/// more. Its former defensive root-length site went with the root-length
+/// guard it reported from: the copy's own postcondition already bounds the
+/// root length there, so the checker decides that guard [OP-5].
 fn assert_real_wfgrep_routes(program: &CheckedProgramData) {
     let proof_nodes: u64 = program
         .functions
@@ -10840,8 +10847,8 @@ fn assert_real_wfgrep_routes(program: &CheckedProgramData) {
                 DerivationRootKind::PostconditionDirectReceiver { .. }
             ))
             .count(),
-        16,
-        "wfgrep has exactly sixteen append_slice receiver routes",
+        15,
+        "wfgrep has exactly fifteen append_slice receiver routes",
     );
 
     let report = program
@@ -11193,15 +11200,16 @@ fn main() -> status: std::process::ExitStatus pure {
     )));
 }
 
+/// An established positive domain goal whose normalization is false closes
+/// to a goal contradiction. The goal is a requirement: an `if` testing it in
+/// a noncontradictory state is a decided condition [OP-5].
 #[test]
 fn impossible_integer_domain_true_edge_closes_to_contradiction() {
-    let source = br#"fn impossible_branch(value: u8) -> result: u8 pure {
-  if ishl.defined(value, 8_u32) {
-    let shifted = ishl(value, 8_u32);
-    return shifted;
-  } else {
-    return value;
-  }
+    let source = br#"fn impossible_branch(value: u8) -> result: u8 pure contract {
+  requires ishl.defined(value, 8_u32);
+} {
+  let shifted = ishl(value, 8_u32);
+  return shifted;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -11239,15 +11247,17 @@ fn main() -> status: std::process::ExitStatus pure {
     });
 }
 
+/// An established negative domain goal whose normalization is true closes to
+/// a goal contradiction, required here as the true edge's goal is.
 #[test]
 fn impossible_integer_domain_false_edge_closes_to_contradiction() {
-    let source = br#"fn impossible_branch(value: u8) -> result: u8 pure {
-  if ishl.defined(value, 1_u32) {
-    return value;
-  } else {
-    let shifted = ishl(value, 1_u32);
-    return shifted;
-  }
+    let source = br#"fn impossible_branch(value: u8) -> result: u8 pure contract {
+  define shift_defined = ishl.defined(value, 1_u32);
+  define shift_undefined = bnot(shift_defined);
+  requires shift_undefined;
+} {
+  let shifted = ishl(value, 1_u32);
+  return shifted;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -11664,6 +11674,10 @@ fn main() -> status: std::process::ExitStatus pure {
     }
 }
 
+/// Contradictory requirements close the entering state to a goal or an L0
+/// contradiction; an `if` whose edge contradicts a noncontradictory state is a
+/// decided condition [OP-5]. The `set` then kills the contradiction's goal
+/// and L0 support before the call, which the promoted contradiction survives.
 #[test]
 fn combined_contradiction_survives_ordinary_set_kills_of_goal_and_l0_support() {
     let source = br#"fn guarded(value: u64) -> result: unit pure contract {
@@ -11675,34 +11689,25 @@ fn combined_contradiction_survives_ordinary_set_kills_of_goal_and_l0_support() {
   return unit;
 }
 
-fn signed(value: u64) -> result: unit pure {
-  let positive = value > 0_u64;
-  let small = value < 10_u64;
-  let complete = band(positive, small);
-  if complete {
-    if complete {
-      return unit;
-    } else {
-      set value = value +wrap 1_u64;
-      guarded(value: value);
-    }
-  } else {
-    return unit;
-  }
+fn signed(value: u64) -> result: unit pure contract {
+  define positive = value > 0_u64;
+  define small = value < 10_u64;
+  define complete = band(positive, small);
+  define incomplete = bnot(complete);
+  requires complete;
+  requires incomplete;
+} {
+  set value = value +wrap 1_u64;
+  guarded(value: value);
   return unit;
 }
 
-fn l0(value: u64) -> result: unit pure {
-  if value < 5_u64 {
-    if value >= 5_u64 {
-      set value = value +wrap 1_u64;
-      guarded(value: value);
-    } else {
-      return unit;
-    }
-  } else {
-    return unit;
-  }
+fn l0(value: u64) -> result: unit pure contract {
+  requires value < 5_u64;
+  requires value >= 5_u64;
+} {
+  set value = value +wrap 1_u64;
+  guarded(value: value);
   return unit;
 }
 
@@ -11734,6 +11739,8 @@ fn main() -> status: std::process::ExitStatus pure {
     }
 }
 
+/// The contradiction comes from the caller's requirements, since an `if`
+/// edge contradicting a noncontradictory state is a decided condition [OP-5].
 #[test]
 fn contradiction_survives_effectful_prepared_call_writes_before_fn8() {
     let source = br#"fn rewrite(out: &i32) -> result: i32 writes(out) contract {
@@ -11749,17 +11756,12 @@ fn need_negative(value: i32) -> result: unit pure contract {
   return unit;
 }
 
-fn caller(slot: i32) -> result: unit pure {
-  if slot < 5_i32 {
-    if slot >= 5_i32 {
-      let rewritten = rewrite(out: &slot);
-      need_negative(value: slot);
-    } else {
-      return unit;
-    }
-  } else {
-    return unit;
-  }
+fn caller(slot: i32) -> result: unit pure contract {
+  requires slot < 5_i32;
+  requires slot >= 5_i32;
+} {
+  let rewritten = rewrite(out: &slot);
+  need_negative(value: slot);
   return unit;
 }
 
@@ -11781,6 +11783,8 @@ fn main() -> status: std::process::ExitStatus pure {
     );
 }
 
+/// The contradiction comes from the caller's requirements, as in
+/// `contradiction_survives_effectful_prepared_call_writes_before_fn8`.
 #[test]
 fn contradiction_survives_direct_receiver_set_target_kill_before_fn8() {
     let source = br#"fn choose(ignored: i32, value: i32) -> result: i32 pure contract {
@@ -11795,17 +11799,12 @@ fn need_negative(value: i32) -> result: unit pure contract {
   return unit;
 }
 
-fn caller(slot: i32, replacement: i32) -> result: unit pure {
-  if slot < 5_i32 {
-    if slot >= 5_i32 {
-      set slot = choose(ignored: slot, value: replacement);
-      need_negative(value: slot);
-    } else {
-      return unit;
-    }
-  } else {
-    return unit;
-  }
+fn caller(slot: i32, replacement: i32) -> result: unit pure contract {
+  requires slot < 5_i32;
+  requires slot >= 5_i32;
+} {
+  set slot = choose(ignored: slot, value: replacement);
+  need_negative(value: slot);
   return unit;
 }
 

@@ -26,8 +26,8 @@ fn main() -> status: std::process::ExitStatus pure {
   if elements[0_u64] != 17_u64 {
     return std::process::exit_status(code: 6_u8);
   }
-  let stamps = source_stamp + again.stamp;
-  let total = stamps + copied.stamp;
-  let code = cvt::<u64, u8>(total);
+  let stamps = source_stamp +wrap again.stamp;
+  let total = stamps +wrap copied.stamp;
+  let code = cvt.wrap::<u64, u8>(total);
   return std::process::exit_status(code: code);
 }

@@ -15,7 +15,8 @@ fn pick(flag: Bool) -> result: Box<i32> pure {
 
 fn main() -> status: ExitStatus pure {
   doc "The field inner returns the payload of the cell the true flag selects.";
-  let picked = pick(flag: True());
+  let flag = True();
+  let picked = pick(flag: flag);
   let v = picked.inner;
   if v != 11_i32 {
     return exit_status(code: 1_u8);

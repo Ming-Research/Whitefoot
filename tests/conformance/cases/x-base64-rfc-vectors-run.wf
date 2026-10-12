@@ -171,6 +171,10 @@ fn main() -> status: ExitStatus pure {
   let man_output = array_filled::<u8, 4>(value: 0_u8);
   let man_source = &man_input[0_u64..3_u64];
   let man_window = &man_output[0_u64..4_u64];
+  let man_required_out_length = man_window^.len;
+  let man_required_input_length = man_source^.len;
+  let man_required_out_groups = ishr.wrap(man_required_out_length, 2_u32);
+  let man_required_covered_input = man_required_out_groups *wrap 3_u64;
   let man_length_ok = False();
   match encode(out: man_window, input: man_source) {
     Ok(value: man_length) => {
@@ -192,6 +196,10 @@ fn main() -> status: ExitStatus pure {
   let m_output = array_filled::<u8, 4>(value: 0_u8);
   let m_source = &m_input[0_u64..1_u64];
   let m_window = &m_output[0_u64..4_u64];
+  let m_required_out_length = m_window^.len;
+  let m_required_input_length = m_source^.len;
+  let m_required_out_groups = ishr.wrap(m_required_out_length, 2_u32);
+  let m_required_covered_input = m_required_out_groups *wrap 3_u64;
   let m_length_ok = False();
   match encode(out: m_window, input: m_source) {
     Ok(value: m_length) => {
@@ -215,6 +223,10 @@ fn main() -> status: ExitStatus pure {
   let ma_output = array_filled::<u8, 4>(value: 0_u8);
   let ma_source = &ma_input[0_u64..2_u64];
   let ma_window = &ma_output[0_u64..4_u64];
+  let ma_required_out_length = ma_window^.len;
+  let ma_required_input_length = ma_source^.len;
+  let ma_required_out_groups = ishr.wrap(ma_required_out_length, 2_u32);
+  let ma_required_covered_input = ma_required_out_groups *wrap 3_u64;
   let ma_length_ok = False();
   match encode(out: ma_window, input: ma_source) {
     Ok(value: ma_length) => {
