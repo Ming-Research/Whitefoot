@@ -1756,8 +1756,9 @@ stay reverted.
 Whitefoot run 38231805057 on the 14900K (main at `51c5f4263`, CPU 2,
 CoreMark 2000 iterations, `perf` cpu-clock sampling at 20 kHz, wasmi
 2.0.0): v2h scores 5362 iterations/s in all three launches and wasmi 5618,
-5618 and 5571, so v2h is 0.957 of wasmi (0.946 on 2026-10-11, before the
-cursor transport through mixed joins). Task-clock medians are 387.3 ms and
+5618 and 5571, so v2h is 0.957 of wasmi (main measured 0.941 on 2026-10-11, before
+the cursor transport through mixed joins; a comparison across runs, not
+an attribution of that change). Task-clock medians are 387.3 ms and
 357.6 ms: 29.7 ms, 8.3% of wasmi's time, remains.
 
 The two instruction sets differ (wasmi fuses a compare into its branch and
