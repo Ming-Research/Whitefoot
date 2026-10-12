@@ -89,10 +89,13 @@ The five storage shapes have different invariants [TYPE-9, WIN-1]:
   built, stored as one contiguous run of elements. It has only the `Box`
   content form.
 
-`Paged<T>` is a prefix window whose elements stay in their pages when capacity
-grows; its home is `Box<Paged<T>>`. Choose `Slots<T>` when consumers need one
-contiguous `&[T]`, and `Paged<T>` when appending and growing must copy no
-earlier payload. Both use ordinary logical subscripts, length proofs and
+`Paged<T>` is a prefix window whose home is `Box<Paged<T>>`. Growth may
+replace its small first page, copying at most B - 1 initialized elements in
+total; once that page has space for B elements, later growth keeps every existing
+element
+address [OP-10, OP-13]. Choose `Slots<T>` when consumers need one contiguous
+`&[T]`, and `Paged<T>` for bounded initial copying followed by growth that
+appends pages. Both use ordinary logical subscripts, length proofs and
 element separation [OP-4, OWN-7]. A paged access reaches an element through
 the page directory; this is a representation cost, not a different index
 proof.
@@ -617,7 +620,7 @@ A `nodrop` owner must be consumed on every exit [PROV-6]. Destructure a
 non-opaque aggregate whole when its parts need different consumers:
 
 ```whitefoot
-let std::process::Inputs(args: args, cwd: cwd_directory, stdout: out, stderr: err, handles: factory, stdin: input, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+let std::process::Inputs(args: args, drivers: unused_driver_count, cwd: cwd_directory, stdout: out, stderr: err, handles: factory, stdin: input, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
 let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
 std::fs::close_directory_write(factory: &factory, directory: move cwd_write);
 std::fs::close_directory(factory: &factory, directory: move cwd);

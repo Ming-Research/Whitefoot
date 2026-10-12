@@ -71,6 +71,11 @@ impl Reasoning<'_, '_, '_> {
                 proof,
                 &self.vocabulary.derivations,
             );
+            self.vocabulary.establish_postcondition_affine(
+                &instantiated.relation,
+                proof,
+                &mut state.affine,
+            );
         }
     }
 }
@@ -105,6 +110,7 @@ impl Judging<'_, '_, '_> {
                 state.establish_goal(
                     *goal,
                     GoalSign::Positive,
+                    &self.vocabulary.goals,
                     &mut self.vocabulary.derivations,
                     event.expect("goal arm has an S1 proof event"),
                 );
@@ -120,6 +126,7 @@ impl Judging<'_, '_, '_> {
                 state.establish_goal(
                     *goal,
                     GoalSign::Negative,
+                    &self.vocabulary.goals,
                     &mut self.vocabulary.derivations,
                     event.expect("goal arm has an S1 proof event"),
                 );
@@ -345,6 +352,7 @@ impl Analyzer<'_, '_> {
             self.reasoning().establish_measure_datums(
                 node_path,
                 destination,
+                Some((target, &[])),
                 carry,
                 &mut state.facts,
             );
@@ -372,6 +380,7 @@ impl Analyzer<'_, '_> {
             self.reasoning().establish_construct_placements(
                 node_path,
                 &base,
+                Some(target),
                 &constructed,
                 &mut state.facts,
             );
@@ -612,6 +621,7 @@ impl Analyzer<'_, '_> {
                     self.reasoning().establish_construct_placements(
                         node_path,
                         &base,
+                        None,
                         &constructed,
                         &mut state.facts,
                     );
@@ -735,6 +745,7 @@ impl Analyzer<'_, '_> {
                         self.reasoning().establish_measure_datums(
                             node_path,
                             destination,
+                            None,
                             carry,
                             &mut state.facts,
                         );
@@ -1738,6 +1749,7 @@ impl Analyzer<'_, '_> {
                         },
                         element: false,
                         source: node_path.clone(),
+                        relocation: false,
                         narrowed: None,
                     }]);
                     kills.set_bindings.insert(*binder);
@@ -1943,6 +1955,7 @@ impl Analyzer<'_, '_> {
                 self.reasoning().establish_measure_datums(
                     &binder.node_path,
                     destination,
+                    None,
                     carry,
                     &mut state.facts,
                 );

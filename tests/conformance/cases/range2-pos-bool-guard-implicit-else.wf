@@ -1,0 +1,20 @@
+fn need_false(nodes: &[Bool], enabled: Bool) -> result: unit pure contract {
+  requires forall impossible(k in 0_u64..nodes^.len) when enabled: k == 99_u64;
+} {
+  return unit;
+}
+
+fn inspect(nodes: &[Bool], enabled: Bool) -> result: unit reads(nodes) contract {
+  requires nodes^.len == 1_u64;
+  requires forall same(k in 0_u64..nodes^.len): nodes^[k] == enabled;
+} {
+  if nodes^[0_u64] {
+    return unit;
+  }
+  need_false(nodes: nodes, enabled: enabled);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

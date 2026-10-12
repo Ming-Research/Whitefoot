@@ -171,12 +171,16 @@ impl TypeContext<'_> {
         Ok(())
     }
 
+    /// Restore every element's nominal dependencies when selecting a retained
+    /// signature, including the implicit `Option<V>` of `Entries<V>`
+    /// [SHARE-2]. A reference parameter keeps those type dependencies [REF-1].
     pub(super) fn activate_type(&mut self, ty: CheckedType) -> Result<(), CheckStop> {
         match ty {
             CheckedType::Nominal(id) => self.activate_nominal(id),
             CheckedType::Array { element, .. }
             | CheckedType::Buffer { element }
             | CheckedType::Segments { element }
+            | CheckedType::Entries { element }
             | CheckedType::Window { element, .. } => {
                 self.activate_type(self.element_type(element)?)
             }
@@ -224,6 +228,7 @@ impl Checker<'_, '_> {
             functions[id.0 as usize] = Some(checked);
             cursor += 1;
         }
+        self.check_effect_rows()?;
         functions
             .into_iter()
             .map(|function| {

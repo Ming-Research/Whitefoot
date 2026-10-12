@@ -3061,7 +3061,9 @@ fn path_subscripts(path: &[CheckedPlaceStep]) -> Vec<(&NodePath, bool)> {
             CheckedPlaceStep::Subscript(index) => {
                 Some((&index.obligation, checked_type_is_ring(index.base_type)))
             }
-            CheckedPlaceStep::Field(_) | CheckedPlaceStep::BoxReferent(_) => None,
+            CheckedPlaceStep::Field(_)
+            | CheckedPlaceStep::BoxReferent(_)
+            | CheckedPlaceStep::Measure(_) => None,
         })
         .collect()
 }

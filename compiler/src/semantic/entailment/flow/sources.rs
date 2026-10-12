@@ -22,7 +22,7 @@ use super::super::super::places::CapturedTerm;
 use super::super::fragment_type;
 use super::super::state::{
     DerivationId, DerivationNode, DistinctKey, FactState, FlowEventId, FlowEventKind,
-    ImplicitBoundKind, Relation, close, distinct_key, implicit_bound_between,
+    ImplicitBoundKind, Relation, close, distinct_key, implicit_bound_between, implicit_derives,
     zero_distinct_candidate,
 };
 use super::super::term::{
@@ -75,6 +75,12 @@ struct OperationShape<'a> {
     result: IntegerType,
     operands: &'a [CheckedExpression],
     carrier: &'a crate::NodePath,
+}
+
+struct OperationOperands {
+    intervals: Vec<Interval>,
+    related: Vec<Option<TermId>>,
+    parents: Vec<DerivationId>,
 }
 
 /// The three preheader relations after their complete S11 snapshot has been
@@ -300,6 +306,7 @@ impl Judging<'_, '_, '_> {
         state.establish_goal(
             goal,
             super::super::state::GoalSign::Positive,
+            &self.vocabulary.goals,
             &mut self.vocabulary.derivations,
             event,
         );
@@ -318,6 +325,81 @@ impl Judging<'_, '_, '_> {
 }
 
 impl Analyzer<'_, '_> {
+    /// [RANGE-2] retains only the [ENT-3.S7] intervals the later range walk
+    /// needs, read after evaluating the operands and before a target kill.
+    pub(super) fn capture_operation_intervals(
+        &mut self,
+        expression: &CheckedExpression,
+        state: &FactState,
+    ) {
+        if !self.input.range_participant {
+            return;
+        }
+        let Some(shape) = operation_shape(expression) else {
+            return;
+        };
+        let intervals = self
+            .operation_operands(&shape, state)
+            .map(|operands| operands.intervals);
+        self.output
+            .operation_intervals
+            .insert(shape.carrier.clone(), intervals);
+    }
+
+    /// The shared closed-state operand reader [ENT-3.S7]. Both judgments
+    /// consume these intervals; ordinary facts also retain their term and
+    /// derivation parents [DIAG-2].
+    fn operation_operands(
+        &mut self,
+        shape: &OperationShape<'_>,
+        state: &FactState,
+    ) -> Option<OperationOperands> {
+        let terms = shape
+            .operands
+            .iter()
+            .map(|operand| self.reasoning().copy_operand(operand))
+            .collect::<Vec<_>>();
+        let view = close(
+            state,
+            &self.vocabulary.terms,
+            &self.vocabulary.goals,
+            &mut self.vocabulary.derivations,
+        );
+        if view.contradictory() {
+            return None;
+        }
+        let mut intervals = Vec::with_capacity(terms.len());
+        let mut related = Vec::with_capacity(terms.len());
+        let mut parents = Vec::new();
+        for (operand, term) in shape.operands.iter().zip(terms) {
+            let span = Span::of(fragment_type(operand.ty())?).interval();
+            let Some(term) = term else {
+                intervals.push(span);
+                related.push(None);
+                continue;
+            };
+            if let Some(value) = self.vocabulary.constant_term_value(term) {
+                intervals.push(Interval::value(value));
+                related.push(None);
+                continue;
+            }
+            let high = view.tight_bound(term, ZERO).unwrap_or(span.high);
+            let low = view
+                .tight_bound(ZERO, term)
+                .and_then(i128::checked_neg)
+                .unwrap_or(span.low);
+            parents.extend(view.bound_proof(term, ZERO, high, &mut self.vocabulary.derivations));
+            parents.extend(view.bound_proof(ZERO, term, -low, &mut self.vocabulary.derivations));
+            intervals.push(Interval::new(low, high));
+            related.push(Some(term));
+        }
+        Some(OperationOperands {
+            intervals,
+            related,
+            parents,
+        })
+    }
+
     // ------------------------------------------------------------------
     // Establishment of one evaluated value's image: S5, S6, S7, S9
     // ------------------------------------------------------------------
@@ -625,7 +707,9 @@ impl Reasoning<'_, '_, '_> {
                 .vocabulary
                 .proof_event(FlowEventKind::S5, Some(node_path));
             let mut datums = Vec::with_capacity(4);
-            for measure in MEASURES {
+            for measure in MEASURES.into_iter().filter(|measure| {
+                *measure != CheckedMeasure::Bytes || measured == MeasuredKind::KeySet
+            }) {
                 let live = self.place_measure_term(measure, place.clone(), measured, constant);
                 let datum = self.vocabulary.terms.intern(TermKind::MeasureDatum {
                     statement: node_path.components().to_vec(),
@@ -1001,16 +1085,19 @@ impl Reasoning<'_, '_, '_> {
         state: &mut FactState,
     ) {
         let target = bound_place(binding);
-        self.establish_measure_datums(node_path, target, rebind, state);
+        self.establish_measure_datums(node_path, target, None, rebind, state);
     }
 
     /// [MSR-3] the second half of every placement: after the statement's own
     /// kills, the destination place's measures equal the datums minted before
-    /// them.
+    /// them. Integer endpoints require [ENT-2] admission at the written set
+    /// target plus the constructor and carried projections. A fresh binder
+    /// has no written subscript and needs no set-target check.
     pub(super) fn establish_measure_datums(
         &mut self,
         node_path: &crate::NodePath,
         destination: ResolvedPlace,
+        written: Option<(&CheckedSetTarget, &[PlaceStep])>,
         carry: &MeasureCarry,
         state: &mut FactState,
     ) {
@@ -1020,7 +1107,13 @@ impl Reasoning<'_, '_, '_> {
         for carried in &carry.carried {
             let mut place = destination.clone();
             place.path.extend(carried.path.iter().copied());
-            for (measure, datum) in MEASURES.into_iter().zip(&carried.datums) {
+            for (measure, datum) in MEASURES
+                .into_iter()
+                .filter(|measure| {
+                    *measure != CheckedMeasure::Bytes || carried.measured == MeasuredKind::KeySet
+                })
+                .zip(&carried.datums)
+            {
                 let left = self.place_measure_term(
                     measure,
                     place.clone(),
@@ -1039,6 +1132,16 @@ impl Reasoning<'_, '_, '_> {
             }
         }
         for value in &carry.values {
+            if let Some((target, prefix)) = written {
+                let projections = prefix
+                    .iter()
+                    .chain(&value.path)
+                    .copied()
+                    .collect::<Vec<_>>();
+                if !self.input.set_integer_place_admitted(target, &projections) {
+                    continue;
+                }
+            }
             let mut place = destination.clone();
             place.path.extend(value.path.iter().copied());
             let left = self
@@ -1320,55 +1423,11 @@ impl Analyzer<'_, '_> {
         state: &mut FactState,
         shared_event: &mut Option<(FlowEventKind, FlowEventId)>,
     ) -> Option<EstablishedUnsignedDivision> {
-        let terms = shape
-            .operands
-            .iter()
-            .map(|operand| self.reasoning().copy_operand(operand))
-            .collect::<Vec<_>>();
-        let mut closed = None;
-        let mut intervals = Vec::with_capacity(terms.len());
-        let mut related = Vec::with_capacity(terms.len());
-        let mut parents = Vec::new();
-        for (operand, term) in shape.operands.iter().zip(&terms) {
-            let ty = fragment_type(operand.ty())?;
-            let span = Span::of(ty).interval();
-            let Some(term) = *term else {
-                intervals.push(span);
-                related.push(None);
-                continue;
-            };
-            if let Some(value) = self.vocabulary.constant_term_value(term) {
-                intervals.push(Interval::value(value));
-                related.push(None);
-                continue;
-            }
-            let view = match &closed {
-                Some(view) => Rc::clone(view),
-                None => {
-                    let view = close(
-                        state,
-                        &self.vocabulary.terms,
-                        &self.vocabulary.goals,
-                        &mut self.vocabulary.derivations,
-                    );
-                    closed = Some(Rc::clone(&view));
-                    view
-                }
-            };
-            // At a contradictory point every relation is already derivable.
-            if view.contradictory() {
-                return None;
-            }
-            let high = view.tight_bound(term, ZERO).unwrap_or(span.high);
-            let low = view
-                .tight_bound(ZERO, term)
-                .and_then(i128::checked_neg)
-                .unwrap_or(span.low);
-            parents.extend(view.bound_proof(term, ZERO, high, &mut self.vocabulary.derivations));
-            parents.extend(view.bound_proof(ZERO, term, -low, &mut self.vocabulary.derivations));
-            intervals.push(Interval::new(low, high));
-            related.push(Some(term));
-        }
+        let OperationOperands {
+            intervals,
+            related,
+            mut parents,
+        } = self.operation_operands(shape, state)?;
         let single = intervals
             .iter()
             .all(|interval| interval.low == interval.high);
@@ -1433,7 +1492,10 @@ impl Analyzer<'_, '_> {
         if shape.row != Row::Divide
             || shape.operand.signed()
             || matches!(destination, ValueImage::ResultPayload(_))
-            || terms.iter().any(Option::is_none)
+            || shape
+                .operands
+                .iter()
+                .any(|operand| self.reasoning().copy_operand(operand).is_none())
         {
             return None;
         }
@@ -1638,11 +1700,12 @@ pub(super) fn comparison_relation(
     })
 }
 
-/// The three [MSR-1] measures, in the order every former reads them.
-const MEASURES: [CheckedMeasure; 3] = [
+/// The [MSR-1] measures, in the order every placement reads them.
+const MEASURES: [CheckedMeasure; 4] = [
     CheckedMeasure::Length,
     CheckedMeasure::Capacity,
     CheckedMeasure::Head,
+    CheckedMeasure::Bytes,
 ];
 
 /// [MSR-3] one placement's datums, held between the mint before the
@@ -1790,21 +1853,31 @@ impl Vocabulary {
             );
         }
         let mut image = FactState::new();
-        let mut explicit = HashMap::new();
         let carried = closed
             .delivery_relations()
             .into_iter()
-            .filter(|(relation, parent)| {
+            .filter(|(relation, _)| {
                 // No fact on the fresh receiver takes part in selecting c -> x
                 // [ENT-5]: its only relations in the edge's state are implicit.
                 // A self-bound `c - c` says nothing about x, whichever proof
                 // the closure keeps for it.
-                relation.terms().contains(&context.carrier)
-                    && !relation.terms().contains(&context.receiver)
+                relation.terms().iter().any(|term| {
+                    self.terms.any_leaf(*term, &|leaf| leaf == context.carrier)
+                }) && !relation.terms().iter().any(|term| {
+                    self.terms.any_leaf(*term, &|leaf| leaf == context.receiver)
+                })
                     && !matches!(relation, Relation::Bound { left, right, .. } if left == right)
-                    && self
-                        .derivations
-                        .depends_on_explicit_relation(*parent, &mut explicit)
+                    // A universally implicit relation is reconstructed at
+                    // the same-typed receiver, regardless of which equal
+                    // witness the source closure selected [ENT-4, DIAG-2].
+                    && !implicit_derives(
+                        &self.terms,
+                        &substitute_delivery_relation(
+                            relation,
+                            context.carrier,
+                            context.receiver,
+                        ),
+                    )
             })
             .collect::<Vec<_>>();
         // [ENT-5] the join reads every image as closed. A bound between the
@@ -1824,6 +1897,9 @@ impl Vocabulary {
         };
         let upper = zero_bound(context.carrier, ZERO);
         let lower = zero_bound(ZERO, context.carrier);
+        let substitutions = self
+            .terms
+            .expand_substitutions(&[(context.carrier, context.receiver)]);
         for (source_relation, parent) in carried {
             if let Relation::Bound { left, right, bound } = source_relation {
                 let through_zero = if left == context.carrier && right != ZERO {
@@ -1839,8 +1915,10 @@ impl Vocabulary {
                     continue;
                 }
             }
-            let relation =
-                substitute_delivery_relation(&source_relation, context.carrier, context.receiver);
+            let mut relation = source_relation.clone();
+            for (from, to) in &substitutions {
+                relation = substitute_delivery_relation(&relation, *from, *to);
+            }
             let proof = self.derivations.intern(DerivationNode::PostconditionGive {
                 statement: context.statement.clone(),
                 carrier: context.carrier,
@@ -2487,6 +2565,15 @@ impl Vocabulary {
             .map(|image| image.facts.clone())
             .collect::<Vec<_>>();
         self.establish_delivery_join(&facts, &context, &mut target.facts);
+        for (relation, parent) in target.facts.l0_candidates() {
+            if matches!(
+                &self.derivations.nodes[parent.0 as usize],
+                DerivationNode::PostconditionDeliveryJoin { detail }
+                    if detail.statement == frame.node_path
+            ) {
+                self.establish_postcondition_affine(&relation, parent, &mut target.affine);
+            }
+        }
     }
 
     /// Captures one unsigned division for the fixed product consequence and
@@ -2553,7 +2640,7 @@ impl Reasoning<'_, '_, '_> {
             let parent = state
                 .facts
                 .opaque_proofs
-                .get(&(goal, sign))
+                .get(&(self.vocabulary.goals.canonical(goal), sign))
                 .copied()
                 .expect("every S4 decomposition member is established");
             let parent = self.vocabulary.derivations.intern(
@@ -2704,14 +2791,16 @@ impl Reasoning<'_, '_, '_> {
         &mut self,
         node_path: &crate::NodePath,
         base: &ResolvedPlace,
+        target: Option<&CheckedSetTarget>,
         carried: &[(PlaceStep, MeasureCarry)],
         state: &mut FactState,
     ) {
         for (step, carry) in carried {
             let mut destination = base.clone();
             destination.path.push(*step);
-            let destination = destination;
-            self.establish_measure_datums(node_path, destination, carry, state);
+            let prefix = [*step];
+            let written = target.map(|target| (target, prefix.as_slice()));
+            self.establish_measure_datums(node_path, destination, written, carry, state);
         }
     }
 

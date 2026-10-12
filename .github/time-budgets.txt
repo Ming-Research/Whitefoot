@@ -37,9 +37,9 @@ compiler/test-unit              140    175    -
 
 # gate.yml, corpus group: the ordinary library, the CLI and corpus harnesses,
 # then their cases
-check/corpus                    305    330    -
-compiler/test-build-corpus      135    165    -
-compiler/test-corpus            175    175    -
+check/corpus                    305    340    -
+compiler/test-build-corpus      135    175    -
+compiler/test-corpus            175    185    -
 
 # gate.yml, runtime group
 check/runtime                   20     30     -
@@ -53,14 +53,14 @@ linux-runtime-tsan              10     -      -
 
 # map-sanitizers.yml, on changes to the concurrent map's runtime or test
 map-asan                        30     20     -
-map-tsan                        35     45     -
+map-tsan                        45     45     -
 
 # compute-regression.yml: two cold compiler builds at two Cargo jobs, their
 # images, then the host control, the instrument's slowdown and placement
 # controls with the shifted images the latter builds, and the paired
 # comparison
 performance-candidate-compiler  130    -      -
-performance-baseline-compiler   105    -      -
+performance-baseline-compiler   115    -      -
 performance-candidate-images    10     -      -
 performance-baseline-images     10     -      -
 performance-null                45     -      -

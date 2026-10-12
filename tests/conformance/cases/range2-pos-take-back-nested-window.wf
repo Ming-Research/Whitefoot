@@ -1,0 +1,23 @@
+struct Block {
+  parent: u32;
+}
+
+struct Holder {
+  members: Slots<Block, 1>;
+}
+
+fn transfer_nested(source: &Slots<Holder, 1>, destination: &Slots<Block, 1>) -> result: unit writes(source), writes(destination) contract {
+  requires source^.len == 1_u64;
+  requires source^[0_u64].members.len == 1_u64;
+  requires destination^.len == 0_u64;
+  requires forall old_parent(k in 0_u64..source^.len, j in 0_u64..source^[k].members.len): source^[k].members[j].parent == 0_u32;
+  ensures forall new_parent(k in 0_u64..destination^.len): destination^[k].parent == 0_u32;
+} {
+  let taken = take_back(window: &source^[0_u64].members);
+  place_back(window: destination, value: taken);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

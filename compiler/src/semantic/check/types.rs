@@ -18,7 +18,7 @@ use super::super::model::{
 use super::super::places::WindowPart;
 use super::floats::parse_float_literal;
 use super::generics::GenericSubstitution;
-use super::{CheckStop, Checker, EffectSet, ParameterSignature, PreludeType};
+use super::{CheckStop, Checker, EffectSet, FunctionSignature, ParameterSignature, PreludeType};
 
 /// [TYPE-5]'s two sides where a type spelling that takes no type arguments
 /// carries a written `<...>` list.
@@ -1251,6 +1251,7 @@ pub(super) fn measure_named(spelling: &str) -> Option<CheckedMeasure> {
         "len" => Some(CheckedMeasure::Length),
         "cap" => Some(CheckedMeasure::Capacity),
         "head" => Some(CheckedMeasure::Head),
+        "bytes" => Some(CheckedMeasure::Bytes),
         _ => None,
     }
 }
@@ -1494,13 +1495,35 @@ impl<'unit> DeclarationInventory<'unit> {
 impl<'unit> TypeContext<'unit> {
     /// The element type of a storage shape [TYPE-9], or `None` where the type
     /// is not one.
-    fn container_element_type(&self, ty: CheckedType) -> Result<Option<CheckedType>, CheckStop> {
-        Ok(match ty {
-            CheckedType::Array { element, .. } | CheckedType::Window { element, .. } => {
-                Some(self.element_type(element)?)
+    pub(in crate::semantic::check) fn container_element_type(
+        &self,
+        ty: CheckedType,
+    ) -> Result<Option<CheckedType>, CheckStop> {
+        ty.storage_element()
+            .map(|element| self.element_type(element))
+            .transpose()
+    }
+    /// Select a row position by the same stored element as ordinary path
+    /// typing. A segment or page selects a run; indexing a run selects T.
+    fn effect_selected_position(
+        &self,
+        selected: SelectedPlaceType,
+        run: bool,
+    ) -> Result<SelectedPlaceType, CheckStop> {
+        let (element, segment) = match selected {
+            SelectedPlaceType::Range(element) => (element, false),
+            SelectedPlaceType::Value(ty) => (
+                self.container_element_type(ty)?.unwrap_or(ty),
+                matches!(ty, CheckedType::Segments { .. }),
+            ),
+            SelectedPlaceType::UnresolvedWindowElement => {
+                return Err(SemanticCompilerFailure::InvalidResolution.into());
             }
-            CheckedType::Buffer { element } => Some(self.element_type(element)?),
-            _ => None,
+        };
+        Ok(if run || segment {
+            SelectedPlaceType::Range(element)
+        } else {
+            SelectedPlaceType::Value(element)
         })
     }
     pub(super) fn constant(&self, id: CheckedConstantId) -> Result<&CheckedConstant, CheckStop> {
@@ -2352,6 +2375,116 @@ impl<'unit> TypeContext<'unit> {
         }
         Ok(paths)
     }
+    /// One checked effect path in its canonical source spelling [EFF-1].
+    /// Keep the selected value or range type through every selector, so
+    /// fields and payloads below an indexed Box retain their declared names.
+    /// A checked path with no matching declaration is an internal resolution
+    /// failure, never a source repair containing field or payload ordinals.
+    pub(super) fn render_effect_path(
+        &self,
+        path: &CheckedStatePath,
+        signature: &FunctionSignature,
+    ) -> Result<String, CheckStop> {
+        let parameter = signature
+            .parameters
+            .iter()
+            .find(|parameter| parameter.declaration == path.root)
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        let mut rendered = parameter.name.clone();
+        let mut selected = if parameter.mode.is_range() {
+            SelectedPlaceType::Range(parameter.ty)
+        } else {
+            SelectedPlaceType::Value(parameter.ty)
+        };
+        for step in &path.steps {
+            match *step {
+                CheckedEffectStep::Field(field) => {
+                    let SelectedPlaceType::Value(CheckedType::Nominal(nominal)) = selected else {
+                        return Err(SemanticCompilerFailure::InvalidResolution.into());
+                    };
+                    let CheckedNominalKind::Struct { fields } = &self.nominal(nominal)?.kind else {
+                        return Err(SemanticCompilerFailure::InvalidResolution.into());
+                    };
+                    let field = fields
+                        .get(field as usize)
+                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                    rendered.push('.');
+                    rendered.push_str(&field.name);
+                    selected = SelectedPlaceType::Value(field.ty);
+                }
+                CheckedEffectStep::Deref => {
+                    let SelectedPlaceType::Value(ty) = selected else {
+                        return Err(SemanticCompilerFailure::InvalidResolution.into());
+                    };
+                    let referent = self
+                        .box_content(ty)?
+                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                    rendered.push_str(".inner");
+                    selected = SelectedPlaceType::Value(referent);
+                }
+                CheckedEffectStep::Payload { variant, field } => {
+                    let SelectedPlaceType::Value(CheckedType::Nominal(nominal)) = selected else {
+                        return Err(SemanticCompilerFailure::InvalidResolution.into());
+                    };
+                    let CheckedNominalKind::Enum { variants } = &self.nominal(nominal)?.kind else {
+                        return Err(SemanticCompilerFailure::InvalidResolution.into());
+                    };
+                    let variant = variants
+                        .get(variant as usize)
+                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                    let field = variant
+                        .fields
+                        .get(field as usize)
+                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                    rendered.push_str(&format!(".{}.{}", variant.name, field.name));
+                    selected = SelectedPlaceType::Value(field.ty);
+                }
+                CheckedEffectStep::Page(index)
+                | CheckedEffectStep::Index(index)
+                | CheckedEffectStep::Range { start: index, .. } => {
+                    selected = self.effect_selected_position(
+                        selected,
+                        !matches!(*step, CheckedEffectStep::Index(_)),
+                    )?;
+                    let index = self.declarations.declaration_spelling(index)?;
+                    match *step {
+                        CheckedEffectStep::Page(_) => {
+                            rendered.push_str(&format!(".pages[{index}]"));
+                        }
+                        CheckedEffectStep::Range { end, .. } => {
+                            rendered.push_str(&format!(
+                                "[{index}..{}]",
+                                self.declarations.declaration_spelling(end)?
+                            ));
+                        }
+                        _ => {
+                            rendered.push_str(&format!("[{index}]"));
+                        }
+                    };
+                }
+                CheckedEffectStep::Part(part) => {
+                    let SelectedPlaceType::Value(ty) = selected else {
+                        return Err(SemanticCompilerFailure::InvalidResolution.into());
+                    };
+                    rendered.push('.');
+                    rendered.push_str(part.spelling());
+                    selected = if matches!(ty, CheckedType::Generic(declaration)
+                        if self.declarations.is_window_type_parameter(declaration)?)
+                    {
+                        SelectedPlaceType::UnresolvedWindowElement
+                    } else {
+                        SelectedPlaceType::Value(self.container_element_type(ty)?.unwrap_or(ty))
+                    };
+                }
+                CheckedEffectStep::Measure(measure) => {
+                    rendered.push('.');
+                    rendered.push_str(measure.spelling());
+                    selected = SelectedPlaceType::Value(CheckedType::Integer(IntegerType::U64));
+                }
+            }
+        }
+        Ok(rendered)
+    }
     /// One `effect_path := epbase epsuffix*` [EFF-1], with the type its last
     /// step selects.
     ///
@@ -2521,7 +2654,8 @@ impl<'unit> TypeContext<'unit> {
                         (spelling == "len").then_some(CheckedMeasure::Length)
                     }
                     SelectedPlaceType::Value(ty) => measure_named(spelling).filter(|measure| {
-                        (symbolic_window && *measure != CheckedMeasure::Head)
+                        (symbolic_window
+                            && matches!(measure, CheckedMeasure::Length | CheckedMeasure::Capacity))
                             || ty.measured().is_some_and(|measured| {
                                 !matches!(
                                     measure.cell(measured),
@@ -2674,22 +2808,15 @@ impl<'unit> TypeContext<'unit> {
             }
             endpoints.push(declaration);
         }
-        let element = match selected {
-            // An index into a range selects the range's element itself. It
-            // must not project through that element again when T is Array or
-            // another container.
-            SelectedPlaceType::Range(element) => element,
-            SelectedPlaceType::Value(ty) => self.container_element_type(ty)?.unwrap_or(ty),
-            SelectedPlaceType::UnresolvedWindowElement => {
-                return self
-                    .declarations
-                    .invalid_effect_row(suffix, EFF1_FIELD_OF_NON_STRUCT);
-            }
-        };
+        if matches!(selected, SelectedPlaceType::UnresolvedWindowElement) {
+            return self
+                .declarations
+                .invalid_effect_row(suffix, EFF1_FIELD_OF_NON_STRUCT);
+        }
         match endpoints.as_slice() {
             [index] => Ok((
                 CheckedEffectStep::Index(*index),
-                SelectedPlaceType::Value(element),
+                self.effect_selected_position(selected, false)?,
             )),
             // A range position names a run of elements [REF-4], so every step
             // below it is relative to that run and reads the element type.
@@ -2698,7 +2825,7 @@ impl<'unit> TypeContext<'unit> {
                     start: *start,
                     end: *end,
                 },
-                SelectedPlaceType::Range(element),
+                self.effect_selected_position(selected, true)?,
             )),
             _ => Err(SemanticCompilerFailure::InvalidCanonicalTree.into()),
         }

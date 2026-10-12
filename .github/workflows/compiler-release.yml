@@ -11,7 +11,8 @@
 # that compiler-release-cleanup.yml removed. An unmerged compiler change a
 # downstream wants to try, such as a performance experiment, gets an
 # experiment release, `wf-exp-` and the commit's first 12 hex digits, of any
-# commit whose own gate run passed:
+# commit whose own gate run passed on both platforms (a draft push runs only
+# Linux; dispatch gate.yml on the branch to qualify its tip):
 #
 #   gh workflow run compiler-release.yml -R Ming-Research/Whitefoot -f commit=<hash> -f experiment=true
 #
@@ -159,14 +160,23 @@ jobs:
           else
             echo "dry run: $commit changes workflow files, so a dispatch would refuse it"
           fi
-          gate_run=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/gate.yml/runs?head_sha=$commit&status=success&per_page=1" \
-            --jq '.workflow_runs[0].id // empty')
+          # A successful gate run qualifies the revision when its matrix
+          # included macOS: a draft push runs the groups on Linux only.
+          gate_run=
+          for run in $(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/workflows/gate.yml/runs?head_sha=$commit&status=success&per_page=100" --jq '.workflow_runs[].id'); do
+            macos=$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$run/jobs?filter=latest&per_page=100" \
+              --jq '.jobs[] | select(.name | endswith("(macos-15)")) | .id')
+            if [ -n "$macos" ]; then
+              gate_run=$run
+              break
+            fi
+          done
           if [ -z "$gate_run" ]; then
             if [ "$publish" = true ]; then
-              echo "::error::no successful gate run for $commit; dispatch gate.yml on main or choose another commit"
+              echo "::error::no gate run qualified $commit on both platforms; dispatch gate.yml on its branch or choose another commit"
               exit 1
             fi
-            echo "dry run: no successful gate run for $commit yet"
+            echo "dry run: no gate run has qualified $commit on both platforms yet"
             gate_run=none
           fi
           build=true

@@ -1,0 +1,16 @@
+struct Row {
+  values: Box<Array<u64>>;
+}
+
+fn masked(rows: &Slots<Row>, x: u64) -> result: unit reads(rows) contract {
+  requires 0_u64 < rows^.len;
+  requires forall lengths(k in 0_u64..rows^.len): rows^[k].values.inner.len == 8_u64;
+} {
+  let m = iand(x, 7_u64);
+  let value = rows^[0_u64].values.inner[m];
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

@@ -216,7 +216,7 @@ pub(super) fn program_uses_shared(program: &IrProgram) -> Result<bool, BackendFa
 /// The runtime's shared-object entries (`completion/bridge.h`).
 pub(super) fn shared_runtime_declarations() -> Module {
     let mut module = Module::default();
-    let declarations: [(&str, &str, &[&str]); 46] = [
+    let declarations: [(&str, &str, &[&str]); 47] = [
         ("wf__frozen_new", "ptr", &["i64"]),
         ("wf__frozen_share", "void", &["ptr"]),
         ("wf__frozen_release", "i32", &["ptr"]),
@@ -268,7 +268,11 @@ pub(super) fn shared_runtime_declarations() -> Module {
         ),
         ("wf__table_unlock_entry", "void", &["ptr", "i32"]),
         ("wf__atomic_group_take", "void", &["ptr", "i64"]),
-        ("wf__atomic_group_release", "void", &["ptr", "i64"]),
+        (
+            "wf__atomic_group_release",
+            "void",
+            &["ptr", "i64", "i64", "i32", "i64"],
+        ),
         ("wf__table_hold_read", "void", &["ptr"]),
         ("wf__table_held_entry", "ptr", &["ptr", "ptr", "i64", "i32"]),
         (
@@ -289,6 +293,7 @@ pub(super) fn shared_runtime_declarations() -> Module {
         ),
         ("wf__key_set_new", "void", &["ptr", "i64"]),
         ("wf__key_set_insert", "i64", &["ptr", "ptr", "i64"]),
+        ("wf__key_set_bytes", "i64", &["ptr"]),
         ("wf__key_set_free", "void", &["ptr"]),
         ("wf__key_set_read_key", "i64", &["ptr", "i64", "ptr", "i64"]),
         ("wf__watch_begin", "void", &["ptr"]),
@@ -1134,22 +1139,23 @@ fn emit_enum_cleanup_body(
     aggregate_ty: &str,
 ) -> Result<(), BackendFailure> {
     let ty = IrType::Nominal(nominal);
+    let tag_ty = super::enum_tag_type(program.nominal(nominal).ok_or(BackendFailure::InvalidIr)?)?;
     {
         output.open_block("entry".to_string());
         // The tag is at offset 0 in every enum layout.
         if by_address {
-            writeln!(output, "  %tag = load i32, ptr %value")
+            writeln!(output, "  %tag = load {tag_ty}, ptr %value")
         } else {
             writeln!(output, "  %tag = extractvalue {aggregate_ty} %value, 0")
         }
         .map_err(|_| BackendFailure::TextEmission)?;
     };
-    writeln!(output, "  switch i32 %tag, label %invalid [")
+    writeln!(output, "  switch {tag_ty} %tag, label %invalid [")
         .map_err(|_| BackendFailure::TextEmission)?;
     for variant in variants {
         writeln!(
             output,
-            "    i32 {}, label %variant.{}",
+            "    {tag_ty} {}, label %variant.{}",
             variant.tag(),
             variant.tag()
         )
@@ -1245,6 +1251,17 @@ fn emit_paged_drop_helper(
         output.push_str("  br label %pages.start\n");
     }
     output.open_block("pages.start".to_owned());
+    let first_extent = super::paged::first_page_extent(&mut output, "%cap", b, "first")?;
+    let first_bytes = if stride == 0 {
+        "1".to_owned()
+    } else {
+        writeln!(
+            output,
+            "  %first.bytes = mul nuw i64 {first_extent}, {stride}"
+        )
+        .map_err(|_| BackendFailure::TextEmission)?;
+        "%first.bytes".to_owned()
+    };
     writeln!(output, "  %quotient = lshr i64 %cap, {shift}\n  %remainder = and i64 %cap, {mask}\n  %partial = icmp ne i64 %remainder, 0\n  %carry = zext i1 %partial to i64\n  %count = add nuw i64 %quotient, %carry\n  br label %pages").map_err(|_| BackendFailure::TextEmission)?;
     output.open_block("pages".to_owned());
     output.push_str("  %p = phi i64 [ 0, %pages.start ], [ %p.next, %page.free ]\n  %allocated = icmp ult i64 %p, %count\n  br i1 %allocated, label %page.free, label %done\n");
@@ -1254,7 +1271,7 @@ fn emit_paged_drop_helper(
         .ok_or(BackendFailure::InvalidIr)?
         .max(1);
     output.symbol("wf__heap_give");
-    writeln!(output, "  %slot = getelementptr inbounds ptr, ptr %dir, i64 %p\n  %allocation = load ptr, ptr %slot\n  call void @wf__heap_give(ptr %allocation, i64 {page_bytes})\n  %p.next = add nuw i64 %p, 1\n  br label %pages").map_err(|_| BackendFailure::TextEmission)?;
+    writeln!(output, "  %slot = getelementptr inbounds ptr, ptr %dir, i64 %p\n  %allocation = load ptr, ptr %slot\n  %is.first = icmp eq i64 %p, 0\n  %page.bytes = select i1 %is.first, i64 {first_bytes}, i64 {page_bytes}\n  call void @wf__heap_give(ptr %allocation, i64 %page.bytes)\n  %p.next = add nuw i64 %p, 1\n  br label %pages").map_err(|_| BackendFailure::TextEmission)?;
     output.open_block("done".to_owned());
     output.push_str("  ret void\n");
     signature.references = output.references.clone();

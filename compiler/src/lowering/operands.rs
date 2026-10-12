@@ -151,6 +151,7 @@ macro_rules! operation_operands {
                 position: value, ..
             }
             | IrOperation::KeySetNew { capacity: value }
+            | IrOperation::KeySetBytes { set: value }
             | IrOperation::WatchObject { object: value, .. }
             | IrOperation::WatchTable { table: value, .. } => vec![$value(value)],
             IrOperation::ConcurrentHashMapSwap { first, second } => {
@@ -280,6 +281,7 @@ macro_rules! operation_operands {
                 projection,
             } => match projection {
                 super::IrPlaceStep::Field { .. }
+                | super::IrPlaceStep::Measure { .. }
                 | super::IrPlaceStep::BoxReferent { .. }
                 | super::IrPlaceStep::EnumVariant { .. } => vec![$value(address)],
                 super::IrPlaceStep::RunElement { offset, .. }

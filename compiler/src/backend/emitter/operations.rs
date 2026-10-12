@@ -44,10 +44,12 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             let emitted_type_1 = self.output.type_name(self.program, ty)?;
             writeln!(
                 self.output,
-                "  {} = load {}, ptr {}",
+                "  {} = load {}, ptr {}{}{}",
                 self.value_name(result),
                 emitted_type_1,
-                self.value_name(address)
+                self.value_name(address),
+                storage_alias::source_read(self.program, ty),
+                self.owner_alias.read(address)
             )
         }
         .map_err(|_| BackendFailure::TextEmission)
@@ -65,7 +67,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             return Err(BackendFailure::InvalidIr);
         }
         let destination = self.value_name(address);
-        self.store_value_at(value, &destination)
+        self.store_source_value_at(value, &destination)
     }
 
     fn referent_is_stored(&self, referent: IrAddressed) -> Result<bool, BackendFailure> {
@@ -125,6 +127,53 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         // transfer or a host operation's start and finish (`frames`).
         if target.waits() {
             return self.emit_waiting_call(result, ty, function, arguments);
+        }
+        // Expose an exact primitive body in this activation so access facts
+        // apply to its writes, rather than promising all reads of a call
+        // disjoint (two empty owners can read the same static header).
+        if self.owner_alias.scopes().next().is_some()
+            && let [block] = target.blocks()
+            && block.parameters().is_empty()
+            && let [IrInstruction::Define {
+                result: returned,
+                ty: IrType::Unit,
+                operation:
+                    IrOperation::RunBoundary {
+                        row,
+                        run,
+                        value: Some(value),
+                    },
+            }] = block.instructions()
+            && row.places()
+            && let IrTerminator::Return {
+                value: actual_return,
+                drops,
+            } = block.terminator()
+            && actual_return == returned
+            && drops.is_empty()
+            && target.result() == ty
+            && target.parameters().len() == arguments.len()
+            && target
+                .parameters()
+                .iter()
+                .zip(arguments)
+                .all(|((_, formal), actual)| self.value_type(*actual) == Some(*formal))
+            && let Some(run_index) = target
+                .parameters()
+                .iter()
+                .position(|(formal, _)| formal == run)
+            && let Some(value_index) = target
+                .parameters()
+                .iter()
+                .position(|(formal, _)| formal == value)
+        {
+            return self.emit_run_boundary(
+                result,
+                ty,
+                *row,
+                arguments[run_index],
+                Some(arguments[value_index]),
+            );
         }
         let abi = FunctionAbi::build(self.program, target)?;
         if abi.result().ty() != ty || abi.parameters().len() != arguments.len() {
@@ -389,6 +438,10 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         inserts: Vec<(usize, Option<IrValueId>)>,
     ) -> Result<(), BackendFailure> {
         let aggregate_ty = self.output.type_name(self.program, ty)?;
+        let IrType::Nominal(nominal) = ty else {
+            return Err(BackendFailure::InvalidIr);
+        };
+        let tag_ty = enum_tag_type(self.nominal(nominal)?)?;
         let mut base = "zeroinitializer".to_owned();
         let total = inserts.len();
         for (ordinal, (index, value)) in inserts.into_iter().enumerate() {
@@ -417,7 +470,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 None => {
                     writeln!(
                         self.output,
-                        "  {output} = insertvalue {aggregate_ty} {base}, i32 {tag}, {index}"
+                        "  {output} = insertvalue {aggregate_ty} {base}, {tag_ty} {tag}, {index}"
                     )
                     .map_err(|_| BackendFailure::TextEmission)?;
                 }

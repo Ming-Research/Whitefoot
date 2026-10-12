@@ -2,7 +2,7 @@
 //!
 //! Construction functions [OP-13], window operations [OP-10],
 //! `swap` [OP-11], `free_empty` [OP-14], the shared-object functions and
-//! the map's five and key set's three [SHARE-1] are declared body-less
+//! the map's five and key set's four [SHARE-1] are declared body-less
 //! exactly as a host function is [PRE-2], but no trusted-base object defines
 //! them: the compiler emits
 //! their bodies. Each body is built here, at the row's own physical function
@@ -82,6 +82,7 @@ impl IrBuilder<'_> {
             "map_clear" => self.row_map_clear(),
             "key_set_new" => self.row_key_set_new(),
             "key_set_insert" => self.row_key_set_insert(),
+            "key_set_bytes" => self.row_key_set_bytes(),
             "key_set_read_key" => self.row_key_set_read_key(),
             _ => Err(LoweringFailure::UnimplementedPreludeRow(
                 crate::lowering::COMPILER_OWNED_PRELUDE_ROWS
@@ -325,6 +326,17 @@ impl IrBuilder<'_> {
         }
         let index = self.define(U64, IrOperation::KeySetInsert { set, key })?;
         self.return_value(index)
+    }
+
+    /// `key_set_bytes(keys: &KeySet) -> u64`: the heap bytes the set's
+    /// storage holds, including unused allocated capacity [SHARE-1].
+    fn row_key_set_bytes(&mut self) -> Result<(), LoweringFailure> {
+        let [set] = self.row_parameters()?;
+        if self.value_type(set)? != IrType::Address(IrAddressed::KeySet) || self.result != U64 {
+            return Err(LoweringFailure::InvalidCheckedProgram);
+        }
+        let bytes = self.define(U64, IrOperation::KeySetBytes { set })?;
+        self.return_value(bytes)
     }
 
     /// The shared and frozen share rows: retain the object the argument

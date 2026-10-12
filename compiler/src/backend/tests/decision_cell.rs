@@ -27,6 +27,10 @@ fn decision_cell_operations_use_independent_leaf_calls_and_shared_lifetime() {
         assert!(!body.contains("@wf__shared_acquire"), "{body}");
         assert!(!body.contains("@wf__shared_take"), "{body}");
         assert!(!body.contains("llvm.coro.suspend"), "{body}");
+        assert!(
+            body.contains("= trunc i32 ") && body.contains(" to i8"),
+            "the runtime's i32 answer narrows to DecisionState's i8 tag: {body}"
+        );
     }
     assert!(module.contains("call void @wf__shared_share(ptr"));
     assert!(module.contains("call i32 @wf__shared_release(ptr"));

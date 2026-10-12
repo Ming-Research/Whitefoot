@@ -907,6 +907,12 @@ impl TypeContext<'_> {
                 TYPE11_ONE_DATUM_A_SIDE,
             );
         };
+        if left.parameter.is_some() || right.parameter.is_some() {
+            return invalid(
+                "a side is not one datum displaced by a constant",
+                TYPE11_ONE_DATUM_A_SIDE,
+            );
+        }
         if !left.datum.is_exit_state() && !right.datum.is_exit_state() {
             return invalid(
                 "no side names a field or measure of its binder",
@@ -1011,6 +1017,7 @@ fn binder_goal(expression: &GoalExpression, binding: BindingId) -> Option<GoalEx
             root: binding,
             projections: projections.clone(),
             ty: *ty,
+            admission: Default::default(),
         })),
         GoalExpression::Datum(GoalDatum::Parameter { .. }) => None,
         GoalExpression::Datum(datum) => Some(GoalExpression::Datum(datum.clone())),
@@ -1051,6 +1058,10 @@ pub(super) fn substitute_relation(
     let term = |term: &RelationTerm| RelationTerm {
         datum: substitute_relation_datum(&term.datum, subject),
         displacement: term.displacement,
+        parameter: term
+            .parameter
+            .as_ref()
+            .map(|datum| substitute_relation_datum(datum, subject)),
     };
     RelationTemplate {
         operation: relation.operation,

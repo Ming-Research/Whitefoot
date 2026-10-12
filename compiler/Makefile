@@ -262,7 +262,7 @@ $(eval $(call completion-image,core-read-probe-sanitize,$(COMPLETION_CORE_READ_S
 $(eval $(call completion-image,harness-tsan,$(COMPLETION_SOURCES),$(COMPLETION_TSAN_FLAGS) $(COMPLETION_DEFINES) $(COMPLETION_HARNESS_DEFINES)))
 $(eval $(call completion-image,bridge-default-probe-tsan,$(COMPLETION_DEFAULT_ROUTE_SOURCES),$(COMPLETION_TSAN_FLAGS)))
 
-completion-test: $(COMPLETION_TMP)/harness completion-core-read-test completion-default-route-test sched-smoke sched-deque-test sched-policy-test floor-test concurrent-map-test shared-object-test decision-cell-test cancel-test driver-service-test driver-service-native-test completion-native-test completion-fork-capsule-test
+completion-test: $(COMPLETION_TMP)/harness completion-core-read-test completion-default-route-test sched-smoke sched-deque-test sched-policy-test floor-test concurrent-map-test shared-object-test decision-cell-test cancel-test driver-service-test driver-service-native-test driver-count-test completion-native-test completion-fork-capsule-test
 	@mkdir -p "$(COMPLETION_TMP)"
 	$(NO_CORE_DUMPS) $(NATIVE_REQUIREMENT) WF_IO_HELPERS=1 "$(COMPLETION_TMP)/harness" "$(COMPLETION_TMP)" all
 	$(NO_CORE_DUMPS) $(NATIVE_REQUIREMENT) WF_IO_HELPERS=0 "$(COMPLETION_TMP)/harness" "$(COMPLETION_TMP)" bridge
@@ -390,6 +390,31 @@ sched-policy-test: sched-split-policy-cases $(COMPLETION_TMP)/sched-policy $(COM
 		WF_WORKERS=$$workers "$(COMPLETION_TMP)/sched-policy-clamped" budget 24; \
 	done
 
+# The Linux affinity probe shares the ordinary scheduler entry/core objects;
+# only its included host primitive substitutes the kernel/mapping answers.
+ifeq ($(shell uname -s),Linux)
+$(SCHED_PROBE_OBJECT_DIR)/cpu_affinity_probe.o: $(SCHED_DIR)/prim_host.c
+$(COMPLETION_TMP)/cpu-affinity-probe: $(SCHED_PROBE_OBJECT_DIR)/entry.o $(SCHED_PROBE_OBJECT_DIR)/core.o $(SCHED_PROBE_OBJECT_DIR)/cpu_affinity_probe.o
+	$(CC) $(COMPLETION_BASE_CFLAGS) $^ -o "$@"
+.PHONY: cpu-affinity-test
+cpu-affinity-test: $(COMPLETION_TMP)/cpu-affinity-probe $(SCHED_PROBE_OBJECT_DIR)/prim_host.o
+	nm -u "$(SCHED_PROBE_OBJECT_DIR)/prim_host.o" > "$(COMPLETION_TMP)/cpu-affinity-symbols.txt"
+	@pattern='[[:space:]](malloc|free|calloc|realloc|aligned_alloc|posix_memalign|__sched_cpualloc|__sched_cpufree)(@.*)?$$'; \
+		for symbol in malloc free calloc realloc aligned_alloc posix_memalign __sched_cpualloc __sched_cpufree 'malloc@GLIBC_2.2.5'; do \
+			printf '%s\n' " U $$symbol" > "$(COMPLETION_TMP)/cpu-affinity-symbol-control.txt"; \
+			grep -Eq "$$pattern" "$(COMPLETION_TMP)/cpu-affinity-symbol-control.txt" || exit 1; \
+		done; \
+		printf '%s\n' ' U mmap' > "$(COMPLETION_TMP)/cpu-affinity-symbol-control.txt"; \
+		if grep -Eq "$$pattern" "$(COMPLETION_TMP)/cpu-affinity-symbol-control.txt"; then \
+			echo 'cpu-affinity-test: allocator import check refused mmap' >&2; exit 1; \
+		else status=$$?; test $$status = 1 || exit $$status; fi; \
+		if grep -E "$$pattern" "$(COMPLETION_TMP)/cpu-affinity-symbols.txt"; then \
+			echo 'cpu-affinity-test: production CPU queries import the program allocator' >&2; exit 1; \
+		else status=$$?; test $$status = 1 || exit $$status; fi
+	"$(COMPLETION_TMP)/cpu-affinity-probe"
+sched-policy-test: cpu-affinity-test
+endif
+
 # Shared on POSIX and native Windows; each environment is a fresh process.
 SCHED_POLICY_EXE ?= $(COMPLETION_TMP)/sched-policy
 sched-split-policy-cases: $(SCHED_POLICY_EXE)
@@ -433,11 +458,24 @@ floor-test: $(COMPLETION_TMP)/floor-probe $(COMPLETION_TMP)/floor-probe-hooks
 CONCURRENT_MAP_SOURCES := src/backend/concurrent_map.c src/backend/keyed_table.c src/backend/concurrent_map_test.c \
 	src/backend/concurrent_map.h $(COMPLETION_DIR)/bridge.h
 CONCURRENT_MAP_VARIANTS := copy-out locked collide
-concurrent-map-test: $(foreach v,$(CONCURRENT_MAP_VARIANTS),$(COMPLETION_TMP)/concurrent-map-test-$(v))
+concurrent-map-test: $(foreach v,$(CONCURRENT_MAP_VARIANTS),$(COMPLETION_TMP)/concurrent-map-test-$(v)) $(COMPLETION_TMP)/concurrent-map-test-ignore-activity
 	@set -e; for v in $(CONCURRENT_MAP_VARIANTS); do \
 		"$(COMPLETION_TMP)/concurrent-map-test-$$v" selection; \
 		"$(COMPLETION_TMP)/concurrent-map-test-$$v"; \
 	done
+	@set +e; result=$$("$(COMPLETION_TMP)/concurrent-map-test-copy-out" key-set-bytes-omit-store-growth 2>&1); status=$$?; set -e; \
+	if [ "$$status" != 1 ]; then \
+		printf '%s\n' "retained-byte oracle did not reject omitted storage growth (exit $$status)" "$$result"; exit 1; \
+	fi; \
+	case "$$result" in \
+		"concurrent-map-test: key_set_bytes disagreed with the heap meter after insertion "*) ;; \
+		*) printf '%s\n' "retained-byte negative variant failed for the wrong reason" "$$result"; exit 1 ;; \
+	esac
+	@status=0; "$(COMPLETION_TMP)/concurrent-map-test-ignore-activity" reserve-retired \
+		> "$(COMPLETION_TMP)/concurrent-map-ignore-activity.log" 2>&1 || status=$$?; \
+	cat "$(COMPLETION_TMP)/concurrent-map-ignore-activity.log"; \
+	test "$$status" -eq 1 && grep -q '^concurrent-map-test: retired reserve release did not collect the exited users' \
+		"$(COMPLETION_TMP)/concurrent-map-ignore-activity.log"
 $(COMPLETION_TMP)/concurrent-map-test-copy-out: $(CONCURRENT_MAP_SOURCES) Makefile
 	@mkdir -p "$(dir $@)"
 	$(CC) $(COMPLETION_BASE_CFLAGS) src/backend/concurrent_map_test.c -o "$@"
@@ -448,6 +486,11 @@ $(COMPLETION_TMP)/concurrent-map-test-locked: $(CONCURRENT_MAP_SOURCES) Makefile
 $(COMPLETION_TMP)/concurrent-map-test-collide: $(CONCURRENT_MAP_SOURCES) Makefile
 	@mkdir -p "$(dir $@)"
 	$(CC) $(COMPLETION_BASE_CFLAGS) -DWF_CMAP_TAG_MASK=15 src/backend/concurrent_map_test.c -o "$@"
+# The retired-table regression must reject ignoring statement activity.
+# Only its focused path runs: an unrelated failure is not a passing control.
+$(COMPLETION_TMP)/concurrent-map-test-ignore-activity: $(CONCURRENT_MAP_SOURCES) Makefile
+	@mkdir -p "$(dir $@)"
+	$(CC) $(COMPLETION_BASE_CFLAGS) -DWF_CMAP_IGNORE_ACTIVITY src/backend/concurrent_map_test.c -o "$@"
 
 # The same test built to check every read and write of memory, which is the
 # only witness of a read of a freed node: such a read's result is discarded,
@@ -583,6 +626,48 @@ driver-service-native-tsan: $(COMPLETION_TMP)/driver-service-native-tsan
 driver-service-sanitize: driver-service-native-sanitize
 driver-service-tsan: driver-service-native-tsan
 
+# Linux execution-input selection: observe real tasks before entry, count
+# actual secondary executor starts after environment/affinity changes, and
+# require each selected-driver resource refusal to stop with its diagnostic.
+ifeq ($(shell uname -s),Linux)
+DRIVER_COUNT_TEST_OBJECTS := \
+	$(patsubst src/backend/%.c,$(COMPLETION_TMP)/objects/bridge-default-probe/%.o,$(filter-out $(COMPLETION_DIR)/bridge.c,$(COMPLETION_RUNTIME_SOURCES))) \
+	$(COMPLETION_TMP)/objects/bridge-default-probe/completion/driver_count_test.o
+$(COMPLETION_TMP)/objects/bridge-default-probe/completion/driver_count_test.o: $(COMPLETION_DIR)/bridge.c
+$(COMPLETION_TMP)/driver-count-test: $(DRIVER_COUNT_TEST_OBJECTS)
+	$(CC) $(COMPLETION_BASE_CFLAGS) $^ -o "$@"
+driver-count-test: $(COMPLETION_TMP)/driver-count-test
+	$(NO_CORE_DUMPS) "$(COMPLETION_TMP)/driver-count-test" singleton
+	@$(NO_CORE_DUMPS) status=0; $(NATIVE_REQUIREMENT) "$(COMPLETION_TMP)/driver-count-test" frozen || status=$$?; \
+		if [ $$status -eq 77 ] && [ "$(REQUIRE_NATIVE)" != 1 ] && [ "$${WF_REQUIRE_LINUX_IO_URING:-0}" != 1 ]; then \
+			echo "driver count io_uring: unavailable on this host (not native evidence)"; \
+		else exit $$status; fi
+	@# Install capture redirections inside the exec'd child: the recipe shell's
+	@# signal annotation belongs in the CI log, outside byte-exact runtime stderr.
+	@$(NO_CORE_DUMPS) for mode in wake-refused ring-refused callback-refused unknown-count; do \
+		echo "driver-count-test: $$mode"; \
+		status=0; $(NATIVE_REQUIREMENT) sh -c 'exec "$$1" "$$2" > "$$3" 2> "$$4"' \
+			driver-count-refusal "$(COMPLETION_TMP)/driver-count-test" "$$mode" \
+			"$(COMPLETION_TMP)/driver-count.out" "$(COMPLETION_TMP)/driver-count.err" || status=$$?; \
+		if [ $$status -eq 77 ] && [ "$(REQUIRE_NATIVE)" != 1 ] && [ "$${WF_REQUIRE_LINUX_IO_URING:-0}" != 1 ]; then \
+			cat "$(COMPLETION_TMP)/driver-count.err"; \
+		else \
+			cat "$(COMPLETION_TMP)/driver-count.err"; \
+			test $$status = 134 && test ! -s "$(COMPLETION_TMP)/driver-count.out" || exit 1; \
+			case $$mode in \
+				wake-refused) reason='cannot initialize a selected driver wake';; \
+				ring-refused) reason='cannot initialize a selected driver ring';; \
+				callback-refused) reason='cannot initialize a selected driver ring wake';; \
+				unknown-count) reason='cannot determine the available CPU count';; \
+			esac; \
+			printf '%s\n' "whitefoot completion: $$reason" | \
+				cmp - "$(COMPLETION_TMP)/driver-count.err" || exit 1; \
+		fi; \
+	done
+endif
+.PHONY: driver-count-test
+driver-count-test:
+
 # The executables completion-test runs, which the runtime group builds with
 # every processor before it runs their cases one at a time: compiling them
 # one after another was about two thirds of the group's time, while several
@@ -594,8 +679,11 @@ COMPLETION_TEST_IMAGES = $(COMPLETION_TMP)/harness $(COMPLETION_TMP)/core-read-p
 	$(COMPLETION_TMP)/sched-policy-disabled $(COMPLETION_TMP)/sched-policy-clamped \
 	$(COMPLETION_TMP)/floor-probe $(COMPLETION_TMP)/floor-probe-hooks \
 	$(foreach v,$(CONCURRENT_MAP_VARIANTS),$(COMPLETION_TMP)/concurrent-map-test-$(v)) \
+	$(COMPLETION_TMP)/concurrent-map-test-ignore-activity \
 	$(COMPLETION_TMP)/shared-object-test $(COMPLETION_TMP)/decision-cell-test $(COMPLETION_TMP)/cancel-test $(COMPLETION_TMP)/driver-service-test \
 	$(COMPLETION_TMP)/driver-service-native-test $(COMPLETION_TMP)/driver-service-native-no-reap \
+	$(if $(filter Linux,$(shell uname -s)),$(COMPLETION_TMP)/driver-count-test) \
+	$(if $(filter Linux,$(shell uname -s)),$(COMPLETION_TMP)/cpu-affinity-probe) \
 	$(if $(filter Linux,$(shell uname -s)),$(COMPLETION_TMP)/linux-native-probe) \
 	$(addprefix $(COMPLETION_TMP)/,$(FORK_CAPSULE_IMAGES))
 completion-test-images: $(COMPLETION_TEST_IMAGES)
