@@ -1,0 +1,28 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn append_run_length(window: &Slots<u64, 8>, lo: u64, hi: u64) -> result: unit reads(window[lo..hi]), writes(window.next), writes(window.len) contract {
+  requires lo <= hi;
+  requires hi <= window^.len;
+  requires window^.len < window^.cap;
+} {
+  doc "Appends the length of window[lo..hi] through the same reference parameter.";
+  let run = &window^[lo..hi];
+  let count = run^.len;
+  place_back(window: window, value: count);
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "EFF-5, WIN-2: the repair supplies reads(window[lo..hi]), writes(window.next) and writes(window.len) through one reference parameter. Its contract length reads belong to that argument, while the run ends before the append slot. The program observes the same appended run length.";
+  let window = slots_new::<u64, 8>();
+  place_back(window: &window, value: 1_u64);
+  place_back(window: &window, value: 2_u64);
+  append_run_length(window: &window, lo: 0_u64, hi: 2_u64);
+  if window.len == 3_u64 {
+    if window[2_u64] == 2_u64 {
+      return exit_status(code: 0_u8);
+    }
+  }
+  return exit_status(code: 1_u8);
+}
