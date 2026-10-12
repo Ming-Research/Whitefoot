@@ -450,13 +450,17 @@ fn aliased(root: PlaceRoot, aliases: &Aliases) -> bool {
 
 /// [RANGE-1] whether a `match` scrutinee is an element projection, so that
 /// each reference payload binder's referent is one too. These are the
-/// scrutinee forms whose selected storage the walk names as an element.
+/// scrutinee forms whose selected storage the walk names as an element: a
+/// subscripted place is checked as storage or as a run element, whatever
+/// collection it indexes, and the remaining `ArrayIndex` form is a named
+/// const's element, which a match copies rather than borrows [OWN-13].
 fn scrutinee_element(expression: &CheckedExpression, aliases: &Aliases) -> bool {
     match expression {
         CheckedExpression::ReadStorage { .. }
         | CheckedExpression::RangeIndex { .. }
         | CheckedExpression::DerefAddressed { .. } => element(expression, aliases),
-        CheckedExpression::ProjectValue { value, .. } => scrutinee_element(value, aliases),
+        CheckedExpression::ProjectValue { value, .. }
+        | CheckedExpression::BoxDeref { value, .. } => scrutinee_element(value, aliases),
         _ => false,
     }
 }

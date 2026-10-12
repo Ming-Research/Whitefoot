@@ -4,9 +4,11 @@
 //!
 //! A range term is formed here from its syntax and resolved names alone. No
 //! read below is executed and no subscript owes [OP-4] where it is written:
-//! an instance of a range clause claims its relations only where every read
-//! it forms selects an existing element, and every user of an instance proves
-//! that where it uses one [RANGE-3].
+//! an instance of a range clause claims each conclusion only where every read
+//! that conclusion depends on is defined, its own reads and those of the
+//! clause's ranges and guards, each selecting an existing element and each
+//! payload step the variant its enum holds; every user of an instance proves
+//! that where it uses the conclusion [RANGE-1, RANGE-3].
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;

@@ -960,7 +960,15 @@ impl<'program> Walker<'program> {
     /// below a dereference extends that view without reading a snapshot.
     fn match_view(&mut self, state: &mut State, scrutinee: &CheckedExpression) -> View {
         match scrutinee {
-            CheckedExpression::ProjectValue { value, field, .. } => {
+            // A field or `Box` content below the matched storage [RANGE-1].
+            CheckedExpression::ProjectValue { value, .. }
+            | CheckedExpression::BoxDeref { value, .. } => {
+                let (projected, step) = match scrutinee {
+                    CheckedExpression::ProjectValue { field, .. } => {
+                        (CheckedRangeProjection::Field(*field), Step::Field(*field))
+                    }
+                    _ => (CheckedRangeProjection::BoxContent, Step::BoxContent),
+                };
                 match self.match_view(state, value) {
                     View::Element {
                         container,
@@ -968,7 +976,7 @@ impl<'program> Walker<'program> {
                         mut projection,
                     } => {
                         if let Some(path) = &mut projection {
-                            path.push(CheckedRangeProjection::Field(*field));
+                            path.push(projected);
                         }
                         View::Element {
                             container,
@@ -976,7 +984,7 @@ impl<'program> Walker<'program> {
                             projection,
                         }
                     }
-                    View::Place(location) => View::Place(location.child(Step::Field(*field))),
+                    View::Place(location) => View::Place(location.child(step)),
                     _ => View::Unknown,
                 }
             }

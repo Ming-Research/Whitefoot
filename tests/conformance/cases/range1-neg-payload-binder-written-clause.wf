@@ -1,0 +1,28 @@
+enum Instr {
+  Jump(t: u64);
+  Halt();
+}
+
+fn follow(code: &Box<Slots<Instr>>, pc: u64) -> r: u64 reads(code) contract {
+  requires pc < code^.inner.len;
+} {
+  doc "A loop header invariant written in the Jump arm names the payload binder's referent jump_to^ as a range term. Only a goal the range judgment reads takes that referent as an element projection; in a written range clause it is no range term.";
+  let n = code^.inner.len;
+  match code^.inner[pc] {
+    Jump(t: jump_to) => {
+      loop (
+        invariant forall below(k in 0_u64..1_u64): jump_to^ < n
+      ) {
+        break;
+      }
+      return pc;
+    }
+    Halt() => {
+      return pc;
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
