@@ -1927,7 +1927,9 @@ impl Reasoning<'_, '_, '_> {
             }) else {
                 continue;
             };
-            let Some(projections) = call_projections(&projections, goal_arguments) else {
+            let Some(projections) =
+                call_projections(self.input.context, &projections, goal_arguments)
+            else {
                 continue;
             };
             let kind = call_datum_kind(call, ordinal, &projections, measure, datum_type);
@@ -2006,7 +2008,8 @@ impl Reasoning<'_, '_, '_> {
                     } => {
                         let mode = *parameter_modes.get(*ordinal as usize)?;
                         let actual = arguments.get(*ordinal as usize)?;
-                        let projections = &call_projections(projections, arguments)?;
+                        let projections =
+                            &call_projections(self.input.context, projections, arguments)?;
                         match denotation {
                             // [MSR-3] a bare place of a written reference
                             // parameter is the actual's resolved exit place.
@@ -2068,7 +2071,11 @@ impl Reasoning<'_, '_, '_> {
                     }
                     RelationDatum::Measure(measure, place) => match place.root {
                         PostconditionPlaceRoot::Parameter { ordinal } => {
-                            let projections = call_projections(&place.projections, arguments)?;
+                            let projections = call_projections(
+                                self.input.context,
+                                &place.projections,
+                                arguments,
+                            )?;
                             match self.vocabulary.interned_call_datum(
                                 call_path,
                                 ordinal,
@@ -2092,7 +2099,11 @@ impl Reasoning<'_, '_, '_> {
                         PostconditionPlaceRoot::ExitParameter { ordinal } => (
                             self.call_parameter_term(
                                 arguments.get(ordinal as usize)?,
-                                &call_projections(&place.projections, arguments)?,
+                                &call_projections(
+                                    self.input.context,
+                                    &place.projections,
+                                    arguments,
+                                )?,
                                 place.ty,
                                 Some(*measure),
                                 *parameter_modes.get(ordinal as usize)?,
@@ -2756,9 +2767,225 @@ impl Analyzer<'_, '_> {
             let mut context = states.clone();
             context.facts =
                 selected_return_facts(selected, states, forwarded, &self.vocabulary.derivations);
-            self.judge_clause_places(&postcondition.places, &mut context);
+            for place in &postcondition.places {
+                match &place.expression {
+                    CheckedExpression::ContainerMeasure { root, .. }
+                    | CheckedExpression::ReadStorage { root, .. } => {
+                        self.walk_postcondition_place(statement, root, place.entry, &mut context);
+                    }
+                    other => self.judge_clause_places(std::slice::from_ref(other), &mut context),
+                }
+            }
         }
     }
+
+    /// [MSR-3, FN-9] mints at body entry the immutable entry datums the
+    /// subscripts of each postcondition place are judged over: the value of
+    /// each formal offset, and the length of each base a place denoting
+    /// function-entry state indexes, each equal to its term at entry.
+    pub(super) fn establish_place_entry_datums(&mut self, state: &mut ProofFlowState) {
+        let function = self.input.function;
+        for postcondition in &function.postconditions {
+            for place in &postcondition.places {
+                if let CheckedExpression::ContainerMeasure { root, .. }
+                | CheckedExpression::ReadStorage { root, .. } = &place.expression
+                {
+                    self.mint_postcondition_place_datums(root, place.entry, state);
+                }
+            }
+        }
+    }
+
+    /// The entry datums one place's subscripts read, one entry per measured
+    /// subscript in path order: the formal offset's value datum and, when
+    /// the place denotes entry state, its base's length datum, each with the
+    /// term it equals at body entry.
+    fn postcondition_place_datums(
+        &mut self,
+        root: &CheckedContainerRoot,
+        entry: bool,
+    ) -> Vec<SubscriptDatums> {
+        let mut datums = Vec::new();
+        let parameters = &self.input.function.parameters;
+        let root_parameter = root.binding().and_then(|binding| {
+            parameters
+                .iter()
+                .position(|parameter| parameter.binding == binding)
+                .map(|ordinal| (ordinal, parameters[ordinal].mode.is_reference()))
+        });
+        let mut base = root.proof_prefix();
+        let mut identity = match root_parameter {
+            Some((_, true)) => vec![PlaceStep::Deref],
+            _ => Vec::new(),
+        };
+        for step in &root.path {
+            let (step, subscript) = match step {
+                CheckedPlaceStep::Field(field) => (PlaceStep::Field(*field), None),
+                CheckedPlaceStep::BoxReferent(_) => (PlaceStep::Deref, None),
+                CheckedPlaceStep::Measure(measure) => (PlaceStep::Measure(*measure), None),
+                CheckedPlaceStep::Subscript(subscript) => {
+                    (PlaceStep::Index(subscript.captured), Some(subscript))
+                }
+            };
+            if let Some(subscript) = subscript
+                && let Some(measured) = measured_kind(subscript.base_type)
+            {
+                let offset = match (
+                    offset_parameter(self.input.function, &subscript.offset),
+                    fragment_type(subscript.offset.ty()),
+                ) {
+                    (Some(ordinal), Some(fragment)) => self
+                        .reasoning()
+                        .read_operand(&subscript.offset)
+                        .map(|live| (entry_datum_kind(ordinal, &[], None, fragment), live)),
+                    _ => None,
+                };
+                let length = match root_parameter {
+                    Some((ordinal, _)) if entry => {
+                        let live = self.reasoning().place_measure_term(
+                            CheckedMeasure::Length,
+                            base.clone(),
+                            measured,
+                            type_constant(subscript.base_type),
+                        );
+                        Some((
+                            TermKind::EntryDatum {
+                                formal: u32::try_from(ordinal)
+                                    .expect("parameter ordinal exceeds the u32 identity space"),
+                                projections: identity.clone(),
+                                measure: Some(CheckedMeasure::Length),
+                                ty: IntegerType::U64,
+                            },
+                            live,
+                        ))
+                    }
+                    _ => None,
+                };
+                datums.push(SubscriptDatums { offset, length });
+            }
+            base.path.push(step);
+            identity.push(match step {
+                PlaceStep::Index(captured) => PlaceStep::Index(captured.goal_identity()),
+                other => other,
+            });
+        }
+        datums
+    }
+
+    fn mint_postcondition_place_datums(
+        &mut self,
+        root: &CheckedContainerRoot,
+        entry: bool,
+        state: &mut ProofFlowState,
+    ) {
+        let datums = self
+            .postcondition_place_datums(root, entry)
+            .into_iter()
+            .flat_map(|datums| datums.offset.into_iter().chain(datums.length))
+            .collect::<Vec<_>>();
+        if datums.is_empty() {
+            return;
+        }
+        let event = self.vocabulary.proof_event(FlowEventKind::Entry, None);
+        for (kind, live) in datums {
+            if self.vocabulary.terms.interned(&kind).is_some() {
+                continue;
+            }
+            let datum = self.vocabulary.terms.intern(kind);
+            self.vocabulary
+                .adopt_measure_atom(datum, live, &state.affine);
+            state.facts.establish(
+                &Relation::Equal {
+                    left: datum,
+                    right: live,
+                    difference: 0,
+                },
+                &mut self.vocabulary.derivations,
+                event,
+            );
+        }
+    }
+
+    /// [OP-4, FN-9] judges each subscript of one postcondition place over
+    /// what the place denotes: a formal offset is the formal's entry value,
+    /// and the base a place denoting entry state indexes is that base at
+    /// function entry [MSR-3].
+    fn walk_postcondition_place(
+        &mut self,
+        statement: &crate::NodePath,
+        root: &CheckedContainerRoot,
+        entry: bool,
+        states: &mut ProofFlowState,
+    ) {
+        let mut datums = self.postcondition_place_datums(root, entry).into_iter();
+        let mut base = root.proof_prefix();
+        for step in &root.path {
+            match step {
+                CheckedPlaceStep::Field(field) => base.path.push(PlaceStep::Field(*field)),
+                CheckedPlaceStep::BoxReferent(_) => base.path.push(PlaceStep::Deref),
+                CheckedPlaceStep::Measure(measure) => base.path.push(PlaceStep::Measure(*measure)),
+                CheckedPlaceStep::Subscript(subscript) => {
+                    let Some(measured) = measured_kind(subscript.base_type) else {
+                        self.judge_children_reach_parent(
+                            std::iter::once(&subscript.offset),
+                            states,
+                        );
+                        base.path.push(PlaceStep::Index(subscript.captured));
+                        continue;
+                    };
+                    let read = datums.next().unwrap_or_default();
+                    let offset = read
+                        .offset
+                        .and_then(|(kind, _)| self.vocabulary.terms.interned(&kind));
+                    let length = read
+                        .length
+                        .and_then(|(kind, _)| self.vocabulary.terms.interned(&kind));
+                    if self.judge_children_reach_parent(std::iter::once(&subscript.offset), states)
+                    {
+                        self.reasoning().establish_index_capture(
+                            subscript.captured,
+                            &subscript.offset,
+                            states,
+                        );
+                        self.judge_index_measure_over(
+                            base.clone(),
+                            measured,
+                            type_constant(subscript.base_type),
+                            CheckedMeasure::Length,
+                            &subscript.offset,
+                            super::judge::IndexTerms { offset, length },
+                            subscript.obligation.clone(),
+                            states,
+                        );
+                        if let Some(outcome) = self.output.obligations.last_mut() {
+                            outcome.selected_return = Some(statement.clone());
+                        }
+                    }
+                    base.path.push(PlaceStep::Index(subscript.captured));
+                }
+            }
+        }
+    }
+}
+
+/// The entry datums one measured subscript of a postcondition place reads,
+/// each with the term it equals at body entry [MSR-3].
+#[derive(Default)]
+struct SubscriptDatums {
+    offset: Option<(TermKind, TermId)>,
+    length: Option<(TermKind, TermId)>,
+}
+
+/// The ordinal of the parameter one clause offset reads, when it reads one.
+fn offset_parameter(function: &CheckedFunction, offset: &CheckedExpression) -> Option<u32> {
+    let CheckedExpression::Binding { binding, .. } = offset else {
+        return None;
+    };
+    let ordinal = function
+        .parameters
+        .iter()
+        .position(|parameter| parameter.binding == *binding)?;
+    u32::try_from(ordinal).ok()
 }
 
 /// [FN-9] whether one selected return reads its routed ordinal's success
@@ -2848,16 +3075,21 @@ pub(super) fn call_datum_kind(
 /// supplies [`actual_offset`]. An actual that supplies none leaves the place
 /// no [ENT-2] term, which makes only the relations naming it unavailable.
 pub(super) fn call_projections(
+    context: &EntailmentContext<'_>,
     projections: &[GoalProjection],
     arguments: &[GoalExpression],
 ) -> Option<Vec<GoalProjection>> {
+    let named = |declaration| match context.constant(declaration)?.value {
+        CheckedValue::Integer { bits, .. } => Some(bits),
+        _ => None,
+    };
     projections
         .iter()
         .map(|projection| {
             projection.instantiate_formal(|ordinal| {
                 arguments
                     .get(ordinal as usize)
-                    .and_then(super::super::super::goal::actual_offset)
+                    .and_then(|argument| super::super::super::goal::actual_offset(argument, &named))
             })
         })
         .collect()

@@ -364,34 +364,6 @@ impl<'unit> DeclarationInventory<'unit> {
             request: None,
         })
     }
-    /// Whether a node lies in an `ensures_clause`, whose places are formed at
-    /// every return that selects it [FN-9].
-    fn in_postcondition(&self, path: &NodePath) -> Result<bool, CheckStop> {
-        let mut node = self.tree.node_with_path(path);
-        while let Some(current) = node {
-            if self.tree.production(current)? == Production::EnsuresClause {
-                return Ok(true);
-            }
-            node = self.tree.parent(current)?;
-        }
-        Ok(false)
-    }
-    /// Whether a node lies in a `requires_clause` or a `contract_define`,
-    /// whose places a requirement forms at body entry and which evaluate
-    /// nothing [FN-8].
-    fn in_requirement(&self, path: &NodePath) -> Result<bool, CheckStop> {
-        let mut node = self.tree.node_with_path(path);
-        while let Some(current) = node {
-            if matches!(
-                self.tree.production(current)?,
-                Production::RequiresClause | Production::ContractDefine
-            ) {
-                return Ok(true);
-            }
-            node = self.tree.parent(current)?;
-        }
-        Ok(false)
-    }
 }
 
 impl<'unit> TypeContext<'unit> {
@@ -630,15 +602,22 @@ impl<'unit> TypeContext<'unit> {
                     Some(TermRead::Constant)
                 );
                 let calls = self.killing_calls(function, &outcome.killed_by)?;
-                let mechanical_fix = if self.declarations.in_requirement(&outcome.node_path)? {
-                    repairs::clause_bounds(&case, constant_offset)
-                } else if self.declarations.in_postcondition(&outcome.node_path)? {
-                    repairs::postcondition_bounds(&case, constant_offset)
-                } else if let (Some(note), false) = (outcome.killed_by.first(), calls.is_empty()) {
-                    repairs::bounds_after_kill(&case, &note.measure, &calls)
-                } else {
-                    repairs::bounds(&case, constant_offset)
-                };
+                // A definition's place is formed by the first requirement
+                // reaching it, and otherwise at the returns of the
+                // postconditions reaching it [ENT-2].
+                let mechanical_fix =
+                    if super::obligations::requirement_forms_site(function, &outcome.node_path) {
+                        repairs::clause_bounds(&case, constant_offset)
+                    } else if let Some(exit) = &outcome.selected_return {
+                        let (_, line) = self.declarations.tree.source_line(exit)?;
+                        repairs::postcondition_bounds(&case, constant_offset, line)
+                    } else if let (Some(note), false) =
+                        (outcome.killed_by.first(), calls.is_empty())
+                    {
+                        repairs::bounds_after_kill(&case, &note.measure, &calls)
+                    } else {
+                        repairs::bounds(&case, constant_offset)
+                    };
                 SemanticIssueKind::UndischargedBoundsObligation {
                     mechanical_fix,
                     residual,

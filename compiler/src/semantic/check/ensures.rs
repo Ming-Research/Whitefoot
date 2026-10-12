@@ -23,8 +23,8 @@ use super::super::postcondition::{
     CheckedPostcondition, CheckedPostconditionSelector, NormalizedRelation, ParameterDenotation,
     PostconditionConstantOrigin, PostconditionFieldIdentity, PostconditionPlace,
     PostconditionPlaceRoot, PostconditionReturnDatum, PostconditionReturnPlace,
-    PostconditionReturnPlaceRoot, RelationDatum, RelationTemplate, RelationTerm,
-    SelectedPostconditionReturn,
+    PostconditionFormedPlace, PostconditionReturnPlaceRoot, RelationDatum, RelationTemplate,
+    RelationTerm, SelectedPostconditionReturn,
 };
 use super::generics::GenericArgument;
 use super::publication;
@@ -73,6 +73,39 @@ pub(super) fn parameter_has_exit_state(
             .writes
             .iter()
             .any(|path| path.root == parameter.declaration)
+}
+
+/// [MSR-3, FN-9] whether one place a postcondition forms denotes
+/// function-entry state: every place of a parameter that has no exit state,
+/// and a place of one that has, written through `entry(parameter)`, whose
+/// subscripts' psuffix nodes `entry_suffixes` holds. A place rooted at a
+/// named const, and a range place, are read where the return reads them.
+fn place_denotes_entry(
+    function: &FunctionSignature,
+    bindings: &HashMap<DeclarationId, LocalBinding>,
+    place: &CheckedExpression,
+    entry_suffixes: &HashSet<crate::NodePath>,
+) -> bool {
+    let (CheckedExpression::ContainerMeasure { root, .. }
+    | CheckedExpression::ReadStorage { root, .. }) = place
+    else {
+        return false;
+    };
+    let Some(binding) = root.binding() else {
+        return false;
+    };
+    let Some(parameter) = function.parameters.iter().find(|parameter| {
+        bindings
+            .get(&parameter.declaration)
+            .is_some_and(|local| local.binding == binding)
+    }) else {
+        return false;
+    };
+    !parameter_has_exit_state(function, parameter)
+        || root.path.iter().any(|step| {
+            matches!(step, CheckedPlaceStep::Subscript(subscript)
+                if entry_suffixes.contains(&subscript.obligation))
+        })
 }
 
 /// [FN-9] a comparison's direction-normalized relation; no other
@@ -602,7 +635,7 @@ impl<'unit> Checker<'_, 'unit> {
         selector: &CheckedPostconditionSelector,
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         counters: &mut ControlCounters<'_>,
-    ) -> Result<(RelationTemplate, Vec<CheckedExpression>), CheckStop> {
+    ) -> Result<(RelationTemplate, Vec<PostconditionFormedPlace>), CheckStop> {
         let (expanded, places) =
             self.expand_postcondition_clause(context, selector, bindings, counters)?;
         let clause = self
@@ -634,7 +667,7 @@ impl<'unit> Checker<'_, 'unit> {
         selector: &CheckedPostconditionSelector,
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         counters: &mut ControlCounters<'_>,
-    ) -> Result<(ExpandedClauseExpression, Vec<CheckedExpression>), CheckStop> {
+    ) -> Result<(ExpandedClauseExpression, Vec<PostconditionFormedPlace>), CheckStop> {
         let FunctionContext {
             check_context,
             function,
@@ -813,8 +846,17 @@ impl<'unit> Checker<'_, 'unit> {
                 &expanded_bindings,
             )?;
             // [ENT-2, FN-9] each clause forms every place its expansion
-            // reaches, at every return that selects it.
-            let places = clause_places.clause(&condition.expression, &mut HashSet::new());
+            // reaches, at every return that selects it, each over the state
+            // it denotes [MSR-3].
+            let entry_suffixes = self.types.declarations.entry_former_suffixes(contract)?;
+            let places = clause_places
+                .clause(&condition.expression, &mut HashSet::new())
+                .into_iter()
+                .map(|expression| PostconditionFormedPlace {
+                    entry: place_denotes_entry(function, bindings, &expression, &entry_suffixes),
+                    expression,
+                })
+                .collect();
             Ok((expanded, places))
         }
     }
@@ -1388,6 +1430,27 @@ impl<'unit> DeclarationInventory<'unit> {
             .map_or(context.result_type, |(_, ty)| ty);
         Ok(Some((usage.origin.clone(), ty)))
     }
+    /// The psuffix nodes of every place written through `entry(parameter)`
+    /// in one `contract_block` [MSR-3].
+    pub(super) fn entry_former_suffixes(
+        &self,
+        contract: NodeId,
+    ) -> Result<HashSet<crate::NodePath>, CheckStop> {
+        let mut suffixes = HashSet::new();
+        for base in self.tree.descendants_with(contract, Production::Pbase)? {
+            if !self.tree.has_fixed(base, FixedTerminal::Entry)? {
+                continue;
+            }
+            let Some(place) = self.tree.parent(base)? else {
+                continue;
+            };
+            for suffix in self.tree.children_with(place, Production::Psuffix)? {
+                suffixes.insert(self.tree.path(suffix)?.clone());
+            }
+        }
+        Ok(suffixes)
+    }
+
     /// `entry` selects proof state, never an executable place expression.
     /// Its argument must be the declaration's own exclusive parameter.
     pub(super) fn check_entry_formers(

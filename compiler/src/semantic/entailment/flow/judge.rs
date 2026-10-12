@@ -320,6 +320,7 @@ impl Judging<'_, '_, '_> {
             range_partitions: Vec::new(),
             written_before: state.written_before(discharged),
             killed_by: Vec::new(),
+            selected_return: None,
         });
         discharged
     }
@@ -479,6 +480,7 @@ impl Judging<'_, '_, '_> {
             range_partitions: Vec::new(),
             written_before: states.written_before(discharged),
             killed_by: Vec::new(),
+            selected_return: None,
         });
     }
 
@@ -1418,16 +1420,71 @@ impl Analyzer<'_, '_> {
         node_path: crate::NodePath,
         states: &ProofFlowState,
     ) {
+        self.judge_index_measure_over(
+            base,
+            measured,
+            array_length,
+            measure,
+            offset,
+            IndexTerms::default(),
+            node_path,
+            states,
+        );
+    }
+
+    /// [OP-4] one bounds obligation, with `terms` replacing the offset's and
+    /// the length's ordinary terms where the place the subscript occurs in
+    /// denotes another state than the current one [FN-9, MSR-3].
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn judge_index_measure_over(
+        &mut self,
+        base: ResolvedPlace,
+        measured: MeasuredKind,
+        array_length: Option<CheckedConst>,
+        measure: CheckedMeasure,
+        offset: &CheckedExpression,
+        terms: IndexTerms,
+        node_path: crate::NodePath,
+        states: &ProofFlowState,
+    ) {
         // [OP-4] the obligation is against `len_of(p)` in logical coordinates
         // [MSR-1], never against `cap_of(p)`.
-        let length_term =
+        let length_term = terms.length.unwrap_or_else(|| {
             self.reasoning()
-                .place_measure_term(measure, base.clone(), measured, array_length);
-        let offset_term = self.reasoning().read_operand(offset);
-        let affine_offset = self
-            .input
-            .direct_goal_expression(offset)
-            .and_then(|offset| self.reasoning().affine_goal_value(&offset, &states.affine));
+                .place_measure_term(measure, base.clone(), measured, array_length)
+        });
+        let (offset_term, affine_offset, fixed_array_affine) = match terms.offset {
+            Some(term) => {
+                let affine = self.vocabulary.measure_atom(term, &states.affine);
+                let fixed = match array_length {
+                    Some(CheckedConst::Value(length)) => {
+                        i128::from(length).checked_sub(1).and_then(|last| {
+                            AffineInequality::from_forms(
+                                &affine,
+                                &AffineForm::constant(last),
+                                &mut AffineCheckState::new(),
+                            )
+                            .ok()
+                        })
+                    }
+                    Some(CheckedConst::Parameter(_) | CheckedConst::Derived(_)) | None => None,
+                };
+                (Some(term), Some(affine), fixed)
+            }
+            None => {
+                let offset_term = self.reasoning().read_operand(offset);
+                let affine_offset = self
+                    .input
+                    .direct_goal_expression(offset)
+                    .and_then(|offset| self.reasoning().affine_goal_value(&offset, &states.affine));
+                let fixed_array_affine = self.reasoning().affine_fixed_array_index_target(
+                    offset,
+                    array_length,
+                    &states.affine,
+                );
+                (offset_term, affine_offset, fixed_array_affine)
+            }
+        };
         // [MSR-4] the subscript submits its own normalized target to the one
         // disposition, so steps 4 and 5 range over the measure's own affine
         // atom instead of being reachable only through the L0-right bridge.
@@ -1436,9 +1493,6 @@ impl Analyzer<'_, '_> {
             let mut check = AffineCheckState::new();
             AffineInequality::from_bounded_forms(offset, &length, -1, &mut check).ok()
         });
-        let fixed_array_affine =
-            self.reasoning()
-                .affine_fixed_array_index_target(offset, array_length, &states.affine);
         let rendered_residual = format!(
             "{} < {}.{}",
             self.input.render_expression(offset),
@@ -1554,6 +1608,7 @@ impl Analyzer<'_, '_> {
             range_partitions: Vec::new(),
             written_before: states.written_before(discharged),
             killed_by,
+            selected_return: None,
         });
     }
 
@@ -1785,6 +1840,7 @@ impl Analyzer<'_, '_> {
             range_partitions: Vec::new(),
             written_before: states.written_before(discharged),
             killed_by: Vec::new(),
+            selected_return: None,
         });
     }
 
@@ -1873,4 +1929,14 @@ pub(super) fn set_target_place(target: &CheckedSetTarget) -> Option<ResolvedPlac
 /// subscript by its captured offset [REF-1].
 fn judged_place(root: &CheckedContainerRoot) -> ResolvedPlace {
     root.proof_place()
+}
+
+/// [FN-9, MSR-3] the terms a postcondition place's subscript is judged over
+/// in place of the current offset and base length: the function-entry value
+/// of a formal offset, and the entry length of a base the place reads at
+/// function entry. `None` keeps the ordinary current term.
+#[derive(Clone, Copy, Default)]
+pub(super) struct IndexTerms {
+    pub(super) offset: Option<TermId>,
+    pub(super) length: Option<TermId>,
 }

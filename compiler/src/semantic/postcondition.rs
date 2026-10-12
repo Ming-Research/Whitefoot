@@ -314,5 +314,17 @@ pub(crate) struct CheckedPostcondition {
     pub(crate) selected_returns: Vec<SelectedPostconditionReturn>,
     /// The [ENT-2] clause (b) places the clause forms, each owing its
     /// subscripts' [OP-4] obligations at every selected return [FN-9].
-    pub(crate) places: Vec<super::model::CheckedExpression>,
+    pub(crate) places: Vec<PostconditionFormedPlace>,
+}
+
+/// One [ENT-2] clause (b) place a postcondition forms at each of its
+/// selected returns [FN-9].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct PostconditionFormedPlace {
+    pub(crate) expression: super::model::CheckedExpression,
+    /// Whether the place denotes function-entry state [MSR-3], so that each
+    /// base it indexes is that base at function entry. A place that denotes
+    /// a written reference parameter's exit state, and a place rooted at a
+    /// named const, index their bases as the return reads them.
+    pub(crate) entry: bool,
 }

@@ -429,9 +429,14 @@ impl GoalProjection {
 
 /// [ENT-2, FN-8] the offset one written actual supplies for a formal-valued
 /// subscript of a declaration template: a written integer literal, an
-/// in-scope const generic, or a bare binding, each with the identity a goal
-/// datum carries for it. Any other actual names no offset term.
-pub(crate) fn actual_offset(argument: &GoalExpression) -> Option<super::places::CapturedValue> {
+/// integer named const, whose value `named` gives, an in-scope const
+/// generic, or a bare binding, each with the identity a goal datum carries
+/// for it, the identity a body place written with that offset carries. Any
+/// other actual names no offset term.
+pub(crate) fn actual_offset(
+    argument: &GoalExpression,
+    named: &dyn Fn(DeclarationId) -> Option<u64>,
+) -> Option<super::places::CapturedValue> {
     use super::places::{CapturedTerm, CapturedValue};
     let GoalExpression::Datum(datum) = argument else {
         return None;
@@ -444,6 +449,11 @@ pub(crate) fn actual_offset(argument: &GoalExpression) -> Option<super::places::
         GoalDatum::Place {
             root, projections, ..
         } if projections.is_empty() => CapturedTerm::Binding(*root),
+        GoalDatum::NamedConst {
+            declaration,
+            projections,
+            ..
+        } if projections.is_empty() => CapturedTerm::Literal(named(*declaration)?),
         _ => return None,
     };
     Some(CapturedValue::new(CapturedValue::unknown().capture, term).goal_identity())

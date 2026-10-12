@@ -1158,15 +1158,19 @@ pub(super) fn clause_bounds(case: &GoalCase<'_>, constant_offset: bool) -> Strin
 /// place is formed at every return that selects the clause, in the state that
 /// return leaves with, so a requirement or the facts before each such return
 /// establish the bound.
-pub(super) fn postcondition_bounds(case: &GoalCase<'_>, constant_offset: bool) -> String {
+pub(super) fn postcondition_bounds(
+    case: &GoalCase<'_>,
+    constant_offset: bool,
+    return_line: u64,
+) -> String {
     match case.disposition {
         Disposition::Refuted => format!(
-            "`{}` is false at a `return` that selects this postcondition: {}",
+            "`{}` is false at the `return` on line {return_line}, which selects this postcondition: {}",
             case.text,
             refuted_index(constant_offset, false)
         ),
         Disposition::Unproved => format!(
-            "add `requires {};` to the `contract` of `{}`, which each caller then establishes, or establish it before every `return` that selects this postcondition",
+            "add `requires {};` to the `contract` of `{}`, which each caller then establishes, or establish it before the `return` on line {return_line} and every other `return` that selects this postcondition",
             case.text, case.function
         ),
     }

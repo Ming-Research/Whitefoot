@@ -410,6 +410,10 @@ pub(crate) struct ObligationOutcome {
     /// [ENT-5]; its repair names them [DIAG-1]. Every other occurrence
     /// retains none.
     pub(crate) killed_by: Vec<MeasureKillNote>,
+    /// [FN-9] for a subscript of a place a postcondition forms, the selected
+    /// return it was judged at; its repair names that return [DIAG-1].
+    /// Every other occurrence retains none.
+    pub(crate) selected_return: Option<NodePath>,
 }
 
 /// [DIAG-1] one write whose kill of a measure's facts an undischarged bounds

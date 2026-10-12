@@ -5,11 +5,11 @@ fn width(rows: &Array<Slots<u8, 8>, 4>, i: u64) -> r: u64 reads(rows) contract {
   requires i < 4_u64;
   ensures r <= rows^[i].len;
 } {
-  doc "Returns zero, which the relation bounds by the length of element i.";
+  doc "Returns a bound on the length of element i.";
   if rows^[i].len > 9_u64 {
     return 0_u64;
   }
-  return 0_u64;
+  return rows^[i].len;
 }
 
 fn relay(rows: &Array<Slots<u8, 8>, 4>, k: u64) -> r: u64 reads(rows) contract {

@@ -2688,10 +2688,10 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                     // over is the value that argument names here.
                     let projection = match projection {
                         GoalProjection::FormalSubscript { ordinal } => GoalProjection::Subscript(
-                            Checker::goal_argument_offset(arguments.get(*ordinal as usize))?,
+                            self.goal_argument_offset(arguments.get(*ordinal as usize))?,
                         ),
                         GoalProjection::FormalPage { ordinal } => GoalProjection::Page(
-                            Checker::goal_argument_offset(arguments.get(*ordinal as usize))?,
+                            self.goal_argument_offset(arguments.get(*ordinal as usize))?,
                         ),
                         other => *other,
                     };
@@ -2764,10 +2764,20 @@ impl<'check, 'unit> Checker<'check, 'unit> {
     /// which no admitted family separates -- the conservative reading in
     /// both directions [OWN-7].
     fn goal_argument_offset(
+        &self,
         argument: Option<&GoalExpression>,
     ) -> Result<super::places::CapturedValue, CheckStop> {
+        let named = |declaration| {
+            let constant = self
+                .types
+                .constant(*self.types.constants.get(&declaration)?);
+            match constant.ok()?.value {
+                CheckedValue::Integer { bits, .. } => Some(bits),
+                _ => None,
+            }
+        };
         Ok(argument
-            .and_then(super::goal::actual_offset)
+            .and_then(|argument| super::goal::actual_offset(argument, &named))
             .unwrap_or_else(super::places::CapturedValue::unknown))
     }
 
