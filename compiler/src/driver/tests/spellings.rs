@@ -30,13 +30,15 @@ fn relative_to_working_directory(path: &std::path::Path) -> std::path::PathBuf {
 }
 
 /// The graph record spelled through a symbolic link `root/linked` to the
-/// project directory `root/app`; the link lives inside the test's tree and is
+/// directory above the package root, as a host whose temporary directory is
+/// itself a link spells it; [MOD-2] refuses a link at the package root or
+/// below it, not above it. The link lives inside the test's tree and is
 /// removed with it. Hosts without symbolic links have no such spelling.
 #[cfg(unix)]
 fn symlinked_spelling(root: &std::path::Path) -> Vec<std::path::PathBuf> {
     let link = root.join("linked");
-    std::os::unix::fs::symlink(root.join("app"), &link).expect("create the symbolic link");
-    vec![link.join("modules.wfg")]
+    std::os::unix::fs::symlink(root, &link).expect("create the symbolic link");
+    vec![link.join("app/modules.wfg")]
 }
 
 #[cfg(not(unix))]
@@ -76,7 +78,7 @@ fn display_of(sources: &[crate::ModuleSourceFile], logical: &str) -> String {
 /// [MOD-8, MOD-9] the host paths an invocation spells its records by are no
 /// part of a record's identity: one graph built through a relative path, an
 /// absolute path, an absolute path with a `..` component and (on Unix) a path
-/// through a symbolic link to the project directory reuses the entry build
+/// through a symbolic link above the package root reuses the entry build
 /// recorded by the first, emits the same module and recomputes no
 /// analysis, while an edit to a record or to the graph still prevents reuse.
 #[test]
@@ -175,7 +177,7 @@ fn an_entry_build_is_reused_across_spellings_of_the_same_paths() {
 /// records by, never the paths of the invocation that recorded it: the same
 /// rejected graph checked through a relative path, an absolute path, an
 /// absolute path with a `..` component and (on Unix) a path through a symbolic
-/// link to the project directory reports each spelling's own paths, as a
+/// link above the package root reports each spelling's own paths, as a
 /// run without a cache does, from module verdicts and from the entry's
 /// composition alike.
 #[test]
