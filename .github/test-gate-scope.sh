@@ -39,14 +39,22 @@ for my $group ('unit', 'corpus') {
             name => "$group $index/3", os => 'ubuntu-24.04'};
     }
 }
-for my $group ('static', 'unit', 'corpus', 'runtime') {
+for my $group ('static', 'runtime') {
     push @ordinary, {group => $group, shard => '1/1', name => $group, os => 'macos-15'};
+}
+for my $group ('unit', 'corpus') {
+    for my $index (1 .. 2) {
+        push @ordinary, {group => $group, shard => "$index/2",
+            name => "$group $index/2", os => 'macos-15'};
+    }
 }
 my @expected = (
     'static (ubuntu-24.04)', 'runtime (ubuntu-24.04)',
     'unit 1/3 (ubuntu-24.04)', 'unit 2/3 (ubuntu-24.04)', 'unit 3/3 (ubuntu-24.04)',
     'corpus 1/3 (ubuntu-24.04)', 'corpus 2/3 (ubuntu-24.04)', 'corpus 3/3 (ubuntu-24.04)',
-    'static (macos-15)', 'unit (macos-15)', 'corpus (macos-15)', 'runtime (macos-15)',
+    'static (macos-15)', 'runtime (macos-15)',
+    'unit 1/2 (macos-15)', 'unit 2/2 (macos-15)',
+    'corpus 1/2 (macos-15)', 'corpus 2/2 (macos-15)',
 );
 for my $main (0, 1) {
     my @groups = @ordinary;
@@ -77,11 +85,17 @@ names_equal([map { "$_->{name} ($_->{os})" } @$draft],
 my $macos = decode_json(jq('-cn', '--argjson', 'groups', encode_json(\@ordinary),
     '--argjson', 'platforms', '["macos-15"]', $matrix));
 names_equal([map { "$_->{name} ($_->{os})" } @$macos],
-    ['static (macos-15)', 'unit (macos-15)', 'corpus (macos-15)', 'runtime (macos-15)'],
-    'four whole macOS groups');
+    ['static (macos-15)', 'runtime (macos-15)', 'unit 1/2 (macos-15)', 'unit 2/2 (macos-15)',
+        'corpus 1/2 (macos-15)', 'corpus 2/2 (macos-15)'],
+    'six macOS jobs with two unit and corpus shards');
 for my $job (@$macos) {
-    $job->{shard} eq '1/1' && $job->{name} eq $job->{group}
-        or die "gate matrix: macOS must run whole groups with unsharded names\n";
+    if ($job->{group} eq 'unit' || $job->{group} eq 'corpus') {
+        $job->{shard} =~ /^[12]\/2$/ && $job->{name} eq "$job->{group} $job->{shard}"
+            or die "gate matrix: macOS unit and corpus must use two named shards\n";
+    } else {
+        $job->{shard} eq '1/1' && $job->{name} eq $job->{group}
+            or die "gate matrix: macOS static and runtime must stay whole\n";
+    }
 }
 print "gate matrix: regular platforms, main-only Linux group and qualification agree\n";
 MATRIX

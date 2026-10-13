@@ -27,6 +27,8 @@ CHECK_NAME_receipts-whole := proof receipts, all cases
 CHECK_HOST_receipts-whole := ubuntu-24.04
 CHECK_SHARDS_ubuntu-24.04_unit := 3
 CHECK_SHARDS_ubuntu-24.04_corpus := 3
+CHECK_SHARDS_macos-15_unit := 2
+CHECK_SHARDS_macos-15_corpus := 2
 SHARD ?= 1/1
 ifeq ($(strip $(CHECK_GROUPS)),)
 $(error the correctness group inventory must not be empty)

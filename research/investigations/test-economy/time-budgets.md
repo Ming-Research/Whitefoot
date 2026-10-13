@@ -962,9 +962,27 @@ was green on Linux and macOS, including the whole receipt-cache job in
 The account allowed at most five concurrent hosted macOS jobs, while the
 sharded matrix requested eight: macOS corpus 2/3 started at +3.5 min, runtime
 at +5.9 min and corpus 1/3 at +6.2 min from the run's start. Before sharding,
-its four macOS jobs did not queue on themselves. Keep the Linux shards and
-restore four whole macOS groups; the optional main-push receipt job remains
-Linux-only. The new scheduling still needs a gate run on the changed revision.
+its four macOS jobs did not queue on themselves, motivating the trial with
+whole macOS groups.
+
+At the [whole-macOS scheduling revision](https://github.com/Ming-Research/Whitefoot/commit/b55ea829cb7460e07689ff04a7cfd38a22ecd355),
+the [Linux push run](https://github.com/Ming-Research/Whitefoot/actions/runs/38458067419)
+was reported to finish in about 4 min 50 s; its only failure was the known,
+unrelated runtime edge-stage overrun of 15.6 s against 15 s. The
+[manual both-platform run](https://github.com/Ming-Research/Whitefoot/actions/runs/38458077773)
+reported macOS unit at 336 s (208 s build and 127 s tests) and corpus at
+314 s (146 s build and 168 s tests), plus about 35 s setup each. Whole unit
+therefore needed about 6.2 min without queueing, exceeding the six-minute goal.
+Keep three Linux shards per unit/corpus group and use two on macOS: the
+predicted slowest macOS job is about 35 + 208 + 64 = 307 s, or 5.1 min.
+Six macOS jobs share five concurrent slots; with no external queue, the
+expected sixth job is a short group (runtime about 1 min, static about
+2 min), waiting for another short group and finishing before the unit
+shards. This prediction assumes a short sixth job; CI must check the actual
+start order and completion time. Three shards would restore the eight-job matrix
+whose queue reached about six minutes in the forced main-matrix trial above.
+The optional main-push receipt job remains Linux-only. The two-shard macOS
+scheduling prediction still needs a gate run on the changed revision.
 
 ## Daily loop
 
