@@ -95,6 +95,16 @@ pub(super) enum WriteIndex {
 }
 
 impl WriteIndex {
+    /// Whether a selector retains a marked unresolved formal-row offset.
+    pub(super) fn has_offset_in(&self, atoms: &BTreeSet<AtomId>) -> bool {
+        let contains = |value: &Linear| value.terms.iter().any(|(atom, _)| atoms.contains(atom));
+        match self {
+            Self::Point(value) | Self::From(value) => contains(value),
+            Self::Range { start, end } => contains(start) || contains(end),
+            Self::Any => false,
+        }
+    }
+
     /// Exactly OWN-7's index/range separation questions, plus WIN-2's live
     /// index question. A range's emptiness separates every descendant.
     pub(super) fn separations(&self, index: Option<&Linear>) -> Vec<Literal> {
@@ -216,6 +226,9 @@ pub(super) struct World {
     container_index: HashMap<Location, ContainerId>,
     pub(super) versions: Vec<Version>,
     pub(super) call_footprint_losses: HashMap<VersionId, CallFootprintLoss>,
+    /// Opaque formal-row positions, used only to identify diagnostic losses
+    /// when an actual storage-version write retains one of these terms.
+    pub(super) unresolved_call_offsets: BTreeSet<AtomId>,
     initial: HashMap<ContainerId, VersionId>,
     copies: HashMap<(ContainerId, ReadSource), (VersionId, u32)>,
     descriptor_copies: HashMap<(ContainerId, u32), ReadSource>,

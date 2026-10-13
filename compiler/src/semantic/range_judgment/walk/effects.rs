@@ -29,7 +29,6 @@ impl Walker<'_> {
         values: &[Value],
         ordinal: usize,
         steps: &[CheckedEffectStep],
-        node: &NodePath,
     ) -> Write {
         let parameter = &callee.parameters[ordinal];
         let Some(Value::Ref(mut view)) = values.get(ordinal).cloned() else {
@@ -61,12 +60,7 @@ impl Walker<'_> {
                     _ => unreachable!(),
                 }
                 precise_values[ordinal] = Value::Ref(precise_view);
-                // Resolving a diagnostic-only suffix must not turn a fully
-                // captured containing range into an unsupported real write.
-                let saved_imprecise = self.imprecise_call.take();
-                let precise = self.call_write(state, callee, &precise_values, ordinal, steps, node);
-                let unresolved = self.imprecise_call.take().is_some();
-                self.imprecise_call = saved_imprecise;
+                let precise = self.call_write(state, callee, &precise_values, ordinal, steps);
                 let loss = match precise {
                     Write::View(view) => match *view {
                         View::Element {
@@ -91,7 +85,15 @@ impl Walker<'_> {
                     }),
                     _ => None,
                 };
-                let loss = if unresolved { None } else { loss };
+                // An unresolved diagnostic suffix supplies no precise
+                // same-frame footprint. Its offsets are not part of the
+                // actual containing-range write and cannot mark that write.
+                let loss = loss.filter(|loss| {
+                    !loss
+                        .indices
+                        .iter()
+                        .any(|index| index.has_offset_in(&self.world.unresolved_call_offsets))
+                });
                 let mut indices: Vec<_> = barrier
                     .prefix
                     .iter()
@@ -124,19 +126,6 @@ impl Walker<'_> {
             }
         };
         for step in steps {
-            // Function-formal rows currently retain their original offset
-            // declaration IDs in some instances. Such an unresolved index
-            // must widen the write, never omit it or name another argument.
-            let unresolved = match step {
-                CheckedEffectStep::Index(declaration) => actual(*declaration).is_none(),
-                CheckedEffectStep::Range { start, end } => {
-                    actual(*start).is_none() || actual(*end).is_none()
-                }
-                _ => false,
-            };
-            if unresolved {
-                self.imprecise_call.get_or_insert_with(|| node.clone());
-            }
             if let CheckedEffectStep::Measure(measure) = step {
                 return match view {
                     View::Place(location) => {
@@ -170,8 +159,7 @@ impl Walker<'_> {
             if let CheckedEffectStep::Index(declaration) = step {
                 // A missing symbolic capture cannot establish separation.
                 // Retain a fresh unknown point rather than dropping its write.
-                let index = actual(*declaration)
-                    .unwrap_or_else(|| self.world.opaque(Some(IntegerType::U64)));
+                let index = actual(*declaration).unwrap_or_else(|| self.unresolved_call_offset());
                 let selected = self.goal_subscript(state, Value::Ref(view.clone()), ty, index);
                 let Some(Value::Ref(selected)) = selected else {
                     return Write::view(view);
@@ -191,9 +179,8 @@ impl Walker<'_> {
             }
             let region = match step {
                 CheckedEffectStep::Range { start, end } => Some(WriteIndex::Range {
-                    start: actual(*start)
-                        .unwrap_or_else(|| self.world.opaque(Some(IntegerType::U64))),
-                    end: actual(*end).unwrap_or_else(|| self.world.opaque(Some(IntegerType::U64))),
+                    start: actual(*start).unwrap_or_else(|| self.unresolved_call_offset()),
+                    end: actual(*end).unwrap_or_else(|| self.unresolved_call_offset()),
                 }),
                 CheckedEffectStep::Part(WindowPart::Next | WindowPart::Free) => {
                     let target = effect_target(&view);
@@ -277,6 +264,17 @@ impl Walker<'_> {
             return self.call_region(state, view, ty, WriteIndex::Any);
         }
         Write::view(view)
+    }
+
+    /// A function-formal row can retain an offset declaration from its
+    /// template. Keep its unknown value in the real write, and mark only
+    /// this term so diagnostics can trace queries through affected versions.
+    fn unresolved_call_offset(&mut self) -> Linear {
+        let value = self.world.opaque(Some(IntegerType::U64));
+        self.world
+            .unresolved_call_offsets
+            .extend(value.terms.iter().map(|(atom, _)| *atom));
+        value
     }
 
     fn call_region(

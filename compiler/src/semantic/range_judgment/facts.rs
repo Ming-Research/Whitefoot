@@ -71,6 +71,7 @@ pub(super) enum PlaceView {
 pub(super) struct Frame {
     pub(super) places: BTreeMap<CheckedRangePlace, PlaceView>,
     pub(super) values: BTreeMap<CheckedRangeRoot, Linear>,
+    pub(super) value_reads: BTreeMap<CheckedRangeRoot, Vec<ReadProvenance>>,
     pub(super) aggregates: BTreeMap<CheckedRangeRoot, VersionId>,
 }
 
@@ -163,7 +164,17 @@ impl Former<'_> {
             CheckedRangeTerm::Iteration(position) => {
                 self.iterations.get(*position as usize).cloned()
             }
-            CheckedRangeTerm::Value(root) => self.frame.values.get(root).cloned(),
+            CheckedRangeTerm::Value(root) => {
+                self.reads.extend(
+                    self.frame
+                        .value_reads
+                        .get(root)
+                        .into_iter()
+                        .flatten()
+                        .cloned(),
+                );
+                self.frame.values.get(root).cloned()
+            }
             CheckedRangeTerm::ValueProjection {
                 root,
                 indices,
@@ -176,7 +187,15 @@ impl Former<'_> {
                     .collect::<Option<Vec<_>>>()?;
                 let version = *self.frame.aggregates.get(root)?;
                 let implicit: Vec<_> = (0..values.len() as u32).collect();
-                Some(self.projected_read(version, values, projection, *element, &implicit, Some(0)))
+                Some(self.projected_read(
+                    version,
+                    values,
+                    projection,
+                    *element,
+                    &implicit,
+                    Some(0),
+                    None,
+                ))
             }
             CheckedRangeTerm::Measure { place, measure, .. } => {
                 if *measure == CheckedMeasure::Length
@@ -185,7 +204,17 @@ impl Former<'_> {
                     return Some(length);
                 }
                 match (self.frame.places.get(place)?, measure) {
-                    (PlaceView::Run { length, .. }, CheckedMeasure::Length) => Some(length.clone()),
+                    (
+                        PlaceView::Run {
+                            length, barrier, ..
+                        },
+                        CheckedMeasure::Length,
+                    ) => {
+                        let length = length.clone();
+                        let barrier = barrier.clone();
+                        self.record_read(&length, barrier.as_ref());
+                        Some(length)
+                    }
                     (
                         PlaceView::Run {
                             container,
@@ -237,7 +266,7 @@ impl Former<'_> {
                         version,
                         mut indices,
                         mut projection,
-                        ..
+                        barrier,
                     } => {
                         projection.push(CheckedRangeProjection::Index(indices.len() as u32));
                         indices.push(row);
@@ -249,6 +278,7 @@ impl Former<'_> {
                             super::super::model::IntegerType::U64,
                             &[],
                             None,
+                            barrier.as_ref(),
                         ))
                     }
                     _ => None,
@@ -282,6 +312,7 @@ impl Former<'_> {
                     ) => {
                         let index = values.first()?;
                         let length = self.fixed_length(place).unwrap_or(length);
+                        self.record_read(&length, barrier.as_ref());
                         self.within(index, &length);
                         let guarded = guarded_from.map(|at| at + path.len());
                         path.extend(super::world::shift_projection(projection, 0, prefix.len()));
@@ -293,10 +324,15 @@ impl Former<'_> {
                         let mut selected = prefix;
                         selected.push(offset.plus(index)?);
                         selected.extend_from_slice(&values[1..]);
-                        let value = self
-                            .projected_read(version, selected, &path, *element, &implicit, guarded);
-                        self.record_read(&value, barrier.as_ref());
-                        Some(value)
+                        Some(self.projected_read(
+                            version,
+                            selected,
+                            &path,
+                            *element,
+                            &implicit,
+                            guarded,
+                            barrier.as_ref(),
+                        ))
                     }
                     (
                         PlaceView::Segments {
@@ -321,6 +357,7 @@ impl Former<'_> {
                             *element,
                             implicit_indices,
                             *guarded_from,
+                            None,
                         ))
                     }
                     (
@@ -352,10 +389,15 @@ impl Former<'_> {
                         }
                         let mut indices = prefix;
                         indices.extend(values);
-                        let value = self
-                            .projected_read(version, indices, &path, *element, &implicit, guarded);
-                        self.record_read(&value, barrier.as_ref());
-                        Some(value)
+                        Some(self.projected_read(
+                            version,
+                            indices,
+                            &path,
+                            *element,
+                            &implicit,
+                            guarded,
+                            barrier.as_ref(),
+                        ))
                     }
                     _ => None,
                 }
@@ -371,13 +413,11 @@ impl Former<'_> {
     }
 
     fn record_read(&mut self, value: &Linear, barrier: Option<&RangeBarrier>) {
-        if let Some(barrier) = barrier {
-            self.reads
-                .extend(value.terms.iter().map(|(atom, _)| ReadProvenance {
-                    atom: *atom,
-                    frames: barrier.frames.clone(),
-                }));
-        }
+        self.reads
+            .extend(value.terms.iter().map(|(atom, _)| ReadProvenance {
+                atom: *atom,
+                frames: barrier.map_or_else(Vec::new, |barrier| barrier.frames.clone()),
+            }));
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -389,6 +429,7 @@ impl Former<'_> {
         element: super::super::model::IntegerType,
         implicit_indices: &[u32],
         guarded_from: Option<usize>,
+        barrier: Option<&RangeBarrier>,
     ) -> Linear {
         let mut depth = projection
             .iter()
@@ -412,6 +453,7 @@ impl Former<'_> {
                     length_path,
                     Some(super::super::model::IntegerType::U64),
                 );
+                self.record_read(&length, barrier);
                 self.within(&indices[position], &length);
                 depth = position + 1;
             }
@@ -424,6 +466,7 @@ impl Former<'_> {
                 let tag = self
                     .world
                     .read(version, indices[..depth].to_vec(), tag_path, None);
+                self.record_read(&tag, barrier);
                 let guards = if guarded_from.is_some_and(|start| at >= start) {
                     &mut self.guards
                 } else {
@@ -436,8 +479,11 @@ impl Former<'_> {
                 ));
             }
         }
-        self.world
-            .read(version, indices, projection.to_vec(), Some(element))
+        let value = self
+            .world
+            .read(version, indices, projection.to_vec(), Some(element));
+        self.record_read(&value, barrier);
+        value
     }
 
     fn within(&mut self, index: &Linear, length: &Linear) {
@@ -662,7 +708,7 @@ pub(super) struct ReadProvenance {
     pub(super) frames: Vec<RangeFrame>,
 }
 
-/// A same-frame precision loss and the conditions that keep it relevant.
+/// A call-footprint precision loss and the conditions that keep it relevant.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct CallFootprintCandidate {
     pub(super) guards: Vec<Literal>,
@@ -671,8 +717,8 @@ pub(super) struct CallFootprintCandidate {
     pub(super) restore: Literal,
 }
 
-/// Trace an owed read to a widened call. Later writes contribute OWN-7
-/// separation conditions and joins contribute their selected arm guards.
+/// Trace a query dependency's read to a widened call. Later writes contribute
+/// OWN-7 separation conditions and joins contribute their selected arm guards.
 /// Restoring equalities is confined to a counterfactual diagnostic query.
 pub(super) fn call_footprint_losses(
     world: &mut World,
@@ -696,6 +742,41 @@ pub(super) fn call_footprint_losses(
         let ty = world.atoms[read.atom as usize].ty;
         let mut pending = vec![(version, Vec::new(), Vec::new())];
         while let Some((version, guards, conditions)) = pending.pop() {
+            // An unresolved formal offset can widen only the write that
+            // actually retained it. Optimistically remove that write in the
+            // diagnostic query; this is never a definition for acceptance.
+            let unresolved_previous = match &world.versions[version as usize].def {
+                VersionDef::Write {
+                    previous, indices, ..
+                } if indices.iter().any(|index| {
+                    index
+                        .terms
+                        .iter()
+                        .any(|(atom, _)| world.unresolved_call_offsets.contains(atom))
+                }) =>
+                {
+                    Some(*previous)
+                }
+                VersionDef::Havoc {
+                    previous, indices, ..
+                } if indices
+                    .iter()
+                    .any(|index| index.has_offset_in(&world.unresolved_call_offsets)) =>
+                {
+                    Some(*previous)
+                }
+                _ => None,
+            };
+            if let Some(previous) = unresolved_previous {
+                let before = world.read(previous, indices.clone(), projection.clone(), ty);
+                losses.push(CallFootprintCandidate {
+                    guards: guards.clone(),
+                    conditions: conditions.clone(),
+                    restore: Literal::new(Linear::atom(read.atom), Relation::Equal, before),
+                });
+                pending.push((previous, guards, conditions));
+                continue;
+            }
             if let Some(loss) = world.call_footprint_losses.get(&version).cloned()
                 && loss.frames.len() == read.frames.len()
                 && loss.frames.iter().zip(&read.frames).all(|(written, read)| {

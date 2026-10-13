@@ -248,15 +248,9 @@ pub(crate) fn judge_program(
                 .iter()
                 .any(|(_, answer)| *answer != walk::DeferredAnswer::Proved);
             let imprecise = walker
-                .imprecise_call
+                .imprecise
                 .take()
-                .map(|node| (node, super::UnsupportedSemanticFeature::RangeCallFootprint))
-                .or_else(|| {
-                    walker
-                        .imprecise
-                        .take()
-                        .map(|node| (node, super::UnsupportedSemanticFeature::RangeLoopNesting))
-                });
+                .map(|node| (node, super::UnsupportedSemanticFeature::RangeLoopNesting));
             let issues = match imprecise {
                 Some((node, feature)) if !walker.issues.is_empty() || unproved => {
                     vec![RangeIssue::Unsupported { node, feature }]

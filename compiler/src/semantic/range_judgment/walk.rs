@@ -115,8 +115,6 @@ pub(super) struct Walker<'program> {
     /// deeper, or its written set took more walks to settle, than this
     /// checker follows.
     pub(super) imprecise: Option<NodePath>,
-    /// First call whose write region needed a conservative widening.
-    pub(super) imprecise_call: Option<NodePath>,
     pub(super) certified: Vec<CertifiedLoop>,
     pub(super) deferred: Vec<(usize, DeferredAnswer)>,
     /// Whether each visited or excluded control-flow region was ever entered
@@ -234,7 +232,6 @@ impl<'program> Walker<'program> {
             facts: Vec::new(),
             issues: Vec::new(),
             imprecise: None,
-            imprecise_call: None,
             certified: Vec::new(),
             dry: 0,
             recording: None,
@@ -324,10 +321,15 @@ impl<'program> Walker<'program> {
         }
         for clause in &function.range_facts.requirements {
             let roots = state.values.clone();
-            let frame = self.frame(&mut state, clause, &|root| match root {
-                CheckedRangeRoot::Binding(binding) => roots.get(&binding).cloned(),
-                _ => None,
-            });
+            let frame = self.frame(
+                &mut state,
+                clause,
+                &|root| match root {
+                    CheckedRangeRoot::Binding(binding) => roots.get(&binding).cloned(),
+                    _ => None,
+                },
+                &|_| Vec::new(),
+            );
             let id = self.add_fact(clause.clone(), frame);
             state.facts.push(id);
         }
@@ -378,62 +380,6 @@ impl<'program> Walker<'program> {
     }
 
     // ----- frames -----
-
-    /// What each place and value of `clause` denotes in `state`, with each
-    /// root's value given by `roots`.
-    pub(super) fn frame(
-        &mut self,
-        state: &mut State,
-        clause: &CheckedRangeClause,
-        roots: &dyn Fn(CheckedRangeRoot) -> Option<Value>,
-    ) -> Frame {
-        let mut frame = Frame::default();
-        let mut segments: BTreeSet<CheckedRangePlace> = BTreeSet::new();
-        let mut terms: Vec<&CheckedRangeTerm> = Vec::new();
-        for binder in &clause.binders {
-            terms.push(&binder.start);
-            terms.push(&binder.end);
-        }
-        for relation in clause.relations() {
-            terms.push(&relation.left);
-            terms.push(&relation.right);
-        }
-        for term in &terms {
-            segment_places(term, &mut segments);
-        }
-        for place in clause.places() {
-            let view = self.place_view(state, &place, segments.contains(&place), roots);
-            frame.places.insert(place, view);
-        }
-        let mut values = Vec::new();
-        for term in &terms {
-            term.collect_values(&mut values);
-        }
-        values.sort();
-        values.dedup();
-        for root in values {
-            match roots(root) {
-                Some(Value::Int(value)) => {
-                    frame.values.insert(root, value);
-                }
-                Some(
-                    value @ (Value::Owned(_)
-                    | Value::Struct(_)
-                    | Value::Variant { .. }
-                    | Value::Bool(..)),
-                ) => {
-                    // Symbolic type-parameter values still form integer terms.
-                    frame.values.insert(root, self.world.opaque(None));
-                    let version = self.snapshot_aggregate(state, &value);
-                    frame.aggregates.insert(root, version);
-                }
-                _ => {
-                    frame.values.insert(root, self.world.opaque(None));
-                }
-            }
-        }
-        frame
-    }
 
     fn place_view(
         &mut self,
@@ -620,11 +566,24 @@ impl<'program> Walker<'program> {
                 query,
             )?;
             if verdict != Verdict::Refuted {
+                // Bounds, clause guards and this conclusion's read domains
+                // all decide whether this one conclusion is owed. Other
+                // conclusions and state premises supply no read provenance.
+                let dependencies: Vec<_> = formed
+                    .premises
+                    .iter()
+                    .chain(formed.conditions.iter().flat_map(|condition| {
+                        condition.guards.iter().chain(&condition.conclusions)
+                    }))
+                    .chain(&conclusion.guards)
+                    .chain(&conclusion.conclusions)
+                    .cloned()
+                    .collect();
                 if let Some(mut counterfactual) = counterfactual
                     && counterfactual.restore_call_footprints(
                         &mut self.world,
                         &formed.reads[position],
-                        &conclusion.conclusions,
+                        &dependencies,
                     )
                     && !matches!(
                         facts::judge(
@@ -708,7 +667,6 @@ impl<'program> Walker<'program> {
                 // nothing after it. A stopped walk does not prove that the
                 // continuation is unreachable.
                 if self.imprecise.is_none()
-                    && self.imprecise_call.is_none()
                     && !self.issues[prior_issues..]
                         .iter()
                         .any(|issue| matches!(issue, RangeIssue::Unsupported { .. }))
@@ -876,8 +834,15 @@ impl<'program> Walker<'program> {
             } => {
                 self.cite = node_path.clone();
                 let returned = self.eval(&mut state, value);
+                let returned_reads = self.last_reads.clone();
                 self.owe_atomic(&state, node_path, true);
-                self.owe_postconditions(&mut state, Some(&returned), node_path, "a return");
+                self.owe_postconditions(
+                    &mut state,
+                    Some(&returned),
+                    &returned_reads,
+                    node_path,
+                    "a return",
+                );
                 None
             }
             CheckedStatement::Match {
@@ -2849,9 +2814,12 @@ impl<'program> Walker<'program> {
                 self.place_fields(state, &location, &values, None);
                 if let Some(clauses) = self.function.range_facts.constructions.get(carrier) {
                     for clause in clauses {
-                        let frame = self.frame(state, clause, &|_| {
-                            Some(Value::Ref(View::Place(location.clone())))
-                        });
+                        let frame = self.frame(
+                            state,
+                            clause,
+                            &|_| Some(Value::Ref(View::Place(location.clone()))),
+                            &|_| Vec::new(),
+                        );
                         self.require(state, clause, &frame, carrier, "a construction");
                     }
                 }
@@ -3147,14 +3115,14 @@ impl<'program> Walker<'program> {
         let node = self.cite.clone();
         for clause in &invariants {
             let mut scratch = entry.clone();
-            let frame = self.frame(&mut scratch, clause, &|root| binding_value(&entry, root));
+            let frame = self.binding_frame(&mut scratch, clause, &entry);
             self.require(&entry, clause, &frame, &node, "a loop entry");
         }
         let mut header = self.header(&entry, &modified);
         self.assume_affine(&mut header, affine);
         for clause in &invariants {
             let mut scratch = header.clone();
-            let frame = self.frame(&mut scratch, clause, &|root| binding_value(&header, root));
+            let frame = self.binding_frame(&mut scratch, clause, &header);
             let fact = self.add_fact(clause.clone(), frame);
             header.facts.push(fact);
         }
@@ -3167,7 +3135,7 @@ impl<'program> Walker<'program> {
             self.ordinary_invariants(&mut end, affine);
             for clause in &invariants {
                 let mut scratch = end.clone();
-                let frame = self.frame(&mut scratch, clause, &|root| binding_value(&end, root));
+                let frame = self.binding_frame(&mut scratch, clause, &end);
                 self.require(&end, clause, &frame, &node, "a loop back edge");
             }
         }
@@ -3203,7 +3171,7 @@ impl<'program> Walker<'program> {
             let mut at_entry = entry.clone();
             at_entry.values.insert(binder, Value::Int(low.clone()));
             let mut scratch = at_entry.clone();
-            let frame = self.frame(&mut scratch, clause, &|root| binding_value(&at_entry, root));
+            let frame = self.binding_frame(&mut scratch, clause, &at_entry);
             self.require(&at_entry, clause, &frame, node, "a loop entry");
         }
         // [RANGE-5] the certificate, over the entry state.
@@ -3232,7 +3200,7 @@ impl<'program> Walker<'program> {
         let mut facts_added = Vec::new();
         for clause in &invariants {
             let mut scratch = header.clone();
-            let frame = self.frame(&mut scratch, clause, &|root| binding_value(&header, root));
+            let frame = self.binding_frame(&mut scratch, clause, &header);
             let fact = self.add_fact(clause.clone(), frame);
             facts_added.push(fact);
         }
@@ -3253,7 +3221,7 @@ impl<'program> Walker<'program> {
             self.ordinary_invariants(&mut end, affine);
             for clause in &invariants {
                 let mut scratch = end.clone();
-                let frame = self.frame(&mut scratch, clause, &|root| binding_value(&end, root));
+                let frame = self.binding_frame(&mut scratch, clause, &end);
                 self.require(&end, clause, &frame, node, "a loop back edge");
             }
         }
@@ -3542,7 +3510,7 @@ impl<'program> Walker<'program> {
         };
         let _ = frame;
         let mut scratch = entry.clone();
-        let own = self.frame(&mut scratch, &clause, &|root| binding_value(entry, root));
+        let own = self.binding_frame(&mut scratch, &clause, entry);
         let formed = facts::form(&mut self.world, &clause, &own, &[], iterations)?;
         formed
             .conclusions

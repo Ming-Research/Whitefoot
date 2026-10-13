@@ -554,9 +554,7 @@ impl Walker<'_> {
                         DeferredAnswer::Inconclusive
                     }
                     Ok((Verdict::Refuted, false)) => DeferredAnswer::Proved,
-                    Ok((Verdict::Open, false))
-                        if self.imprecise.is_some() || self.imprecise_call.is_some() =>
-                    {
+                    Ok((Verdict::Open, false)) if self.imprecise.is_some() => {
                         DeferredAnswer::Inconclusive
                     }
                     Ok((Verdict::Open, false)) => DeferredAnswer::Unproved,

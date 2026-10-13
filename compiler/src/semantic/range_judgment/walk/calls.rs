@@ -100,7 +100,14 @@ impl Walker<'_> {
         if self.dry == 0 {
             for clause in &callee.range_facts.requirements {
                 let mut scratch = state.clone();
-                let frame = self.frame(&mut scratch, clause, &argument_of);
+                let frame = self.frame(&mut scratch, clause, &argument_of, &|root| match root {
+                    CheckedRangeRoot::Binding(binding) => parameters
+                        .iter()
+                        .position(|parameter| *parameter == binding)
+                        .and_then(|position| argument_reads.get(position).cloned())
+                        .unwrap_or_default(),
+                    _ => Vec::new(),
+                });
                 self.require(state, clause, &frame, call, "a call");
             }
         }
@@ -159,7 +166,7 @@ impl Walker<'_> {
                 .iter()
                 .filter(|path| path.root == parameter.declaration)
             {
-                targets.push(self.call_write(state, callee, &values, position, &path.steps, call));
+                targets.push(self.call_write(state, callee, &values, position, &path.steps));
             }
         }
         for target in targets {
@@ -171,7 +178,14 @@ impl Walker<'_> {
             CheckedType::Unit | CheckedType::Float(_) => Value::Unknown,
             _ => Value::Owned(Location::root(Origin::CallResult(self.world.new_origin()))),
         });
-        self.assume_postconditions(state, callee, &values, &value, &entry_frames);
+        self.assume_postconditions(
+            state,
+            callee,
+            &values,
+            &argument_reads,
+            &value,
+            &entry_frames,
+        );
         value
     }
 
@@ -184,6 +198,7 @@ impl Walker<'_> {
         state: &mut State,
         callee: &CheckedFunction,
         arguments: &[Value],
+        argument_reads: &[Vec<facts::ReadProvenance>],
         result: &Value,
         entry_frames: &[BTreeMap<CheckedRangePlace, PlaceView>],
     ) {
@@ -218,7 +233,16 @@ impl Walker<'_> {
                 CheckedRangeRoot::Result(ordinal) => results.get(ordinal as usize).cloned()?,
                 CheckedRangeRoot::Entry(_) => None,
             };
-            let mut frame = self.frame(state, &post.clause, &roots);
+            let mut frame = self.frame(state, &post.clause, &roots, &|root| match root {
+                CheckedRangeRoot::Binding(binding) => parameters
+                    .iter()
+                    .position(|parameter| *parameter == binding)
+                    .and_then(|position| argument_reads.get(position).cloned())
+                    .unwrap_or_default(),
+                // Imported result values are supplied by the callee. These
+                // fact frames are instantiated as premises, never owed queries.
+                _ => Vec::new(),
+            });
             frame.places.extend(entry_frame.clone());
             let id = self.add_fact(post.clause.clone(), frame);
             match routed {
@@ -335,6 +359,7 @@ impl Walker<'_> {
         self.owe_postconditions(
             &mut forked,
             Some(&returned),
+            &[],
             node,
             "a propagated error exit",
         );
@@ -346,6 +371,7 @@ impl Walker<'_> {
         &mut self,
         state: &mut State,
         returned: Option<&Value>,
+        returned_reads: &[facts::ReadProvenance],
         node: &NodePath,
         site: &'static str,
     ) {
@@ -413,7 +439,20 @@ impl Walker<'_> {
                 CheckedRangeRoot::Result(ordinal) => results.get(ordinal as usize).cloned()?,
                 CheckedRangeRoot::Entry(_) => None,
             };
-            let mut frame = self.frame(state, &post.clause, &roots);
+            let mut frame = self.frame(state, &post.clause, &roots, &|root| {
+                // A scalar expression is exactly result zero. Aggregate and
+                // routed returns need per-component origins before they can
+                // supply diagnostic provenance; never merge their reads.
+                if root == CheckedRangeRoot::Result(0)
+                    && post.route.is_none()
+                    && post.results.is_empty()
+                    && matches!(returned, Some(Value::Int(_)))
+                {
+                    returned_reads.to_vec()
+                } else {
+                    Vec::new()
+                }
+            });
             frame.places.extend(self.entry_places.clone());
             for (root, version) in &self.entry_aggregates {
                 if let Some(entry) = frame.aggregates.get_mut(root) {
