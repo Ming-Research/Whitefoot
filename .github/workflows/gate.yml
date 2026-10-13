@@ -214,8 +214,15 @@ jobs:
             version=$(tr -d '[:space:]' < .github/llvm-major)
             if [ "$LLVM_CACHE_HIT" = true ]; then
               # A missing, damaged or incomplete cache fails installation;
-              # it never substitutes a different host toolchain.
-              sudo dpkg -i "$RUNNER_TEMP/llvm-apt"/*.deb
+              # it never substitutes a different host toolchain. The gate
+              # needs clang and lld only; lldb's Python package conflicts with
+              # the image's own, so lldb packages are not reinstalled.
+              set --
+              for deb in "$RUNNER_TEMP/llvm-apt"/*.deb; do
+                case "${deb##*/}" in *lldb*) ;; *) set -- "$@" "$deb" ;; esac
+              done
+              test "$#" -gt 0
+              sudo dpkg -i "$@"
             else
               curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
               sudo mkdir -p "$RUNNER_TEMP/llvm-apt/partial"

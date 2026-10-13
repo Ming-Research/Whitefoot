@@ -1,6 +1,6 @@
 # Time budgets for daily and CI verification
 
-## Hosted gate caching baseline (2026-10-13)
+## Hosted gate caching baseline
 
 ### Question and rejection criterion
 
