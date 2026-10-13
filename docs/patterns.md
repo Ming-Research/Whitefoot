@@ -989,7 +989,7 @@ releases everything it took when the block ends. [SHARE-3] permits this
 behavior; it does not guarantee this lock timing in every implementation.
 
 Here `keys` is a `Shared<ConcurrentHashMap<Entry>>`, `key` is a `&[u8]`,
-`entry` is a prepared `Entry` value, and `meta` is a `Shared<Meta>`. `Meta` is
+`record` is a prepared `Entry` value, and `meta` is a `Shared<Meta>`. `Meta` is
 a source struct containing a commit sequence and a counter. This fragment
 reads `m` on the block's first line, so every execution locks `meta`, even
 when both `logged` and `timed` are false:
@@ -998,7 +998,7 @@ when both `logged` and `timed` are false:
 let held = bor(logged, timed);
 atomic slot = &keys[key], m = &meta {
   let previous = m^.commit_sequence;
-  set slot^ = Some<Entry>(value: entry);
+  set slot^ = Some<Entry>(value: record);
   if held {
     let next = previous +wrap 1_u64;
     set m^.commit_sequence = next;
@@ -1014,7 +1014,7 @@ false finishes without taking `meta`:
 ```whitefoot
 let held = bor(logged, timed);
 atomic slot = &keys[key], m = &meta {
-  set slot^ = Some<Entry>(value: entry);
+  set slot^ = Some<Entry>(value: record);
   if held {
     let next = m^.commit_sequence +wrap 1_u64;
     set m^.commit_sequence = next;

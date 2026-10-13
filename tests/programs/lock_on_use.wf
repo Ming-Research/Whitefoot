@@ -36,8 +36,8 @@ fn set_key(space: &Keyspace, key: &[u8], timed: Bool) -> result: unit reads(spac
       set m^.commits = m^.commits +wrap 1_u64;
       set sequence = next;
     }
-    let entry = Entry(stores: stores, sequence: sequence);
-    set slot^ = Some<Entry>(value: entry);
+    let record = Entry(stores: stores, sequence: sequence);
+    set slot^ = Some<Entry>(value: record);
   }
   return unit;
 }
