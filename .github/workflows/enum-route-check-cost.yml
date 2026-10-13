@@ -63,6 +63,8 @@ jobs:
             # Freeze the fetched main once; all compiler invocations below use
             # this exact worktree without refetching or modifying source.
             git -C "$RUNNER_TEMP/firn" checkout --quiet --detach HEAD
+            # Firn binds Halo through its deps/halo-wf submodule [MOD-11].
+            git -C "$RUNNER_TEMP/firn" submodule update --init --quiet deps/halo-wf
           fi
           {
             printf 'before=%s\nafter=%s\nfix=%s\n' "$BEFORE_REVISION" "$AFTER_REVISION" "$(git rev-parse HEAD)"
