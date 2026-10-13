@@ -1,5 +1,170 @@
 # Time budgets for daily and CI verification
 
+## Hosted gate caching baseline (2026-10-13)
+
+### Question and rejection criterion
+
+Can Cargo construction reuse and less repeated host preparation shorten the
+push-to-complete-result interval toward 360 s on idle hosted runners, without
+changing the Makefile group inventory, assertions or their verdicts? Compare
+the unchanged gate with this workflow on the same source, compiler versions,
+runner image and CPU model. Reject the change if at least three warm-cache
+runs show no saving beyond the matched uncached runs' run-to-run spread,
+including cache restore/save time. A cache that changes the assertion
+inventory or verdict fails independently of timing. This step keeps the four
+groups; partitioning their cases is a separate experiment.
+
+### Before: ten successful main runs
+
+These are the latest ten successful main `gate.yml` runs returned by the
+GitHub API at collection time, all push events on 2026-10-13. The jobs endpoint
+was read once per run, with `per_page=100`; no polling was used. Shell
+`gh api` could not connect in this environment, so the GitHub connector read
+the same REST jobs resources. One repository-wide run-list request supplied
+the ten gate runs. The steps' timestamps have one-second resolution.
+
+| Run | Revision | Created (UTC) | Attempt |
+|---|---|---|---:|
+| [38379231794](https://github.com/Ming-Research/Whitefoot/actions/runs/38379231794) | `60c8a3fc2089b05411e2a5b4da256eba0e5c859a` | 2026-10-13T09:50:48Z | 1 |
+| [38377113211](https://github.com/Ming-Research/Whitefoot/actions/runs/38377113211) | `5dd90db143b143881d92dbde266619681ba77a00` | 2026-10-13T09:33:00Z | 1 |
+| [38375105384](https://github.com/Ming-Research/Whitefoot/actions/runs/38375105384) | `4826ee7a2604e394392ca44b6e2eb986327a90b1` | 2026-10-13T09:16:17Z | 1 |
+| [38373581838](https://github.com/Ming-Research/Whitefoot/actions/runs/38373581838) | `1f29e1b1dfe8b0fe255d591be0809317126046d4` | 2026-10-13T09:03:18Z | 1 |
+| [38369649297](https://github.com/Ming-Research/Whitefoot/actions/runs/38369649297) | `f0903241325885e1704a7212524a8c8f1eeedc3e` | 2026-10-13T08:29:53Z | 1 |
+| [38367756382](https://github.com/Ming-Research/Whitefoot/actions/runs/38367756382) | `072a4eddda646a28431a82cd728951f71a6eba33` | 2026-10-13T08:13:04Z | 1 |
+| [38366032391](https://github.com/Ming-Research/Whitefoot/actions/runs/38366032391) | `ad8ea57f7cbb0bfd099c9924f7b52639e172e04f` | 2026-10-13T07:57:34Z | 1 |
+| [38361379528](https://github.com/Ming-Research/Whitefoot/actions/runs/38361379528) | `a755d4e3bb9be245a44d754c65c8e774752e2097` | 2026-10-13T07:14:04Z | 1 |
+| [38357364356](https://github.com/Ming-Research/Whitefoot/actions/runs/38357364356) | `168f0b186ca37ab9b74a554bbdf44ddf1f7b9907` | 2026-10-13T06:33:21Z | 1 |
+| [38355522334](https://github.com/Ming-Research/Whitefoot/actions/runs/38355522334) | `c842d16d4068469fcae3592392924c50eb0895c5` | 2026-10-13T06:13:33Z | 1 |
+
+Every cell below is **median (minimum–maximum)** in seconds, with ten samples
+per group/platform. Setup is the sum of successful steps before the named
+group step, including job initialization, checkout, scratch/ref/base setup,
+toolchain setup, dependency fetch, core-dump disposition and host recording.
+It excludes queueing, the group itself and post-job cleanup. Checkout and
+toolchain are components of setup, not additional time.
+
+| Platform | Group | Setup | Checkout | Toolchain | Entire group |
+|---|---|---:|---:|---:|---:|
+| ubuntu-24.04 | static | 37.0 (35–56) | 17.0 (15–18) | 19.0 (17–37) | 54.0 (51–60) |
+| ubuntu-24.04 | unit | 40.5 (35–55) | 15.5 (13–30) | 23.5 (18–26) | 251.5 (183–292) |
+| ubuntu-24.04 | corpus | 37.5 (35–50) | 18.0 (13–19) | 19.5 (16–28) | 289.0 (185–308) |
+| ubuntu-24.04 | runtime | 39.5 (33–55) | 16.0 (13–22) | 20.0 (15–38) | 18.5 (12–20) |
+| macos-15 | static | 27.5 (20–39) | 22.5 (18–35) | 2.0 (1–3) | 83.5 (75–104) |
+| macos-15 | unit | 28.0 (24–39) | 23.5 (20–34) | 2.0 (1–3) | 341.5 (283–398) |
+| macos-15 | corpus | 29.0 (22–40) | 24.0 (18–35) | 2.0 (2–3) | 300.0 (270–323) |
+| macos-15 | runtime | 32.0 (24–36) | 26.5 (20–31) | 2.0 (2–3) | 18.0 (14–26) |
+
+The jobs API exposes one step for the whole group, not the nested Cargo
+construction and test phases. To bound API use, the six static/unit/corpus
+job logs of the newest run were also read once; the phase table below has
+**one sample**, not ten. A ten-run construction/execution distribution is
+still unmeasured. Its source is the existing `== END <label>` records, not a
+subtraction from rounded step times.
+
+| Platform | Group | Standalone compiler build | Test-binary build (s) | Test run (s) |
+|---|---|---|---:|---:|
+| ubuntu-24.04 | static | none (clippy: 31.74 s) | none | none (static assertions) |
+| ubuntu-24.04 | unit | included in test build | 145.95 | 140.82 |
+| ubuntu-24.04 | corpus | included in test build | 95.76 | 201.15 |
+| macos-15 | static | none (clippy: 56.95 s) | none | none (static assertions) |
+| macos-15 | unit | included in test build | 233.45 | 130.07 |
+| macos-15 | corpus | included in test build | 133.08 | 183.59 |
+| ubuntu-24.04 | runtime | none | C/LLVM build and run combined | C/LLVM build and run combined |
+| macos-15 | runtime | none | C/LLVM build and run combined | C/LLVM build and run combined |
+
+Unit and corpus no longer invoke `compiler/build`. Unit constructs the
+library in test mode; corpus constructs the ordinary library, CLI tests and
+integration harnesses in one Cargo invocation. Their compiler construction
+cannot be split from test-binary construction using these records. Static
+uses clippy's default dev profile; runtime builds and executes C/LLVM
+completion images and uses no Cargo artifacts.
+
+The newest run's sampled Linux jobs used AMD EPYC 7763 and rustc 1.99.0;
+macOS used Apple M1 (Virtual) and rustc 1.98.1. These are observations of that
+run alone. The ten-run aggregate mixes hosts/revisions and includes queue
+delays only in the overall workflow interval, so it is a descriptive baseline,
+not attribution evidence. Continue to interpret stage budgets by CPU model,
+as the [per-CPU policy](#per-cpu-linux-budgets-and-report-only-macos-overruns)
+specifies.
+
+### Selected construction reuse and expected saving
+
+The workflow retains all Makefile invocations and existing run-check labels.
+Registry/git downloads and Cargo target artifacts use official
+[`actions/cache`](https://github.com/actions/cache) only. Target keys isolate
+platform, architecture, runner image, group, actual Rust compiler identity,
+lockfile, requested toolchain, workflow, LLVM pin and Cargo profile settings.
+An exact source revision completes the key; a compatibility-prefix restore
+can reuse dependencies after a source edit. Different groups save separate
+targets because their artifact inventories differ. The dependency cache
+never replaces the unconditional locked fetch.
+
+Every Cargo check/build/test command still runs. Cargo's fingerprints and
+fresh-checkout source timestamps decide construction; the build script
+explicitly tracks the active specification and grammar inputs.
+`CARGO_INCREMENTAL=0` remains in force: this experiment reuses ordinary
+dependency/build artifacts, without introducing Rust incremental state.
+No test verdicts, stage logs, scratch roots, WF semantic caches or generated
+native program images are restored. See the
+[Cargo build-cache documentation](https://doc.rust-lang.org/cargo/reference/build-cache.html).
+
+Only static needs complete history, the design checker submodule and the
+local main ref. The other jobs use shallow normal checkouts. Runtime omits
+Rust provisioning and Cargo dependency fetching because its Makefile recipe
+uses C/LLVM. Each job still needs its own host toolchain and workspace; sharing
+a setup job would require another runner and transfer, so it is not introduced.
+
+Linux toolchain setup costs a median 19–23.5 s per group, against only 2 s
+on macOS. Cache Linux's downloaded LLVM package archives by runner image and
+LLVM/workflow inputs, and still install them with dependency validation;
+do not restore selected executable files without their shared libraries.
+macOS toolchain setup remains uncached because its measured cost is small.
+Linux Rust setup remains uncached in this step; its separate cost was not
+measured within the combined LLVM/Rust preparation step.
+
+The expected gross opportunity is part of Linux's 19–23.5 s toolchain
+preparation and the non-static checkout's 15.5–26.5 s median. These are upper
+bounds, not additive guaranteed savings: checkout still transfers current
+sources and the cached packages still install. Cargo dependency downloads
+are small, and a fresh checkout normally rebuilds the local crate and its
+test binaries even with a target hit. Therefore this step does **not** predict
+removing the sampled 95.76–233.45 s local construction costs or reaching
+360 s by itself. A provisional expectation is seconds to tens of seconds per
+job; target archive transfer can outweigh dependency reuse and must be
+included in the rejection criterion.
+
+### After measurement and validation
+
+1. Push the work branch with its Draft PR open; run the ordinary gate once
+   to populate each applicable cache. Do not count that first run as warm.
+2. On an unchanged revision, take at least three further ordinary gate runs
+   per platform (manual dispatch includes macOS). Record actual cache keys
+   and hits, CPU model, image version, rustc/LLVM versions, event, revision,
+   assertion counts and every stage's exit status. No hit may skip a group.
+3. For matched uncached controls, run the base workflow on the same sources
+   and toolchain/image/CPU class, alternating base and candidate when feasible.
+   A twin uncached control distinguishes runner noise. Separate queue time
+   from execution; report push/run creation to final gate completion as well
+   as each job, preparation, cache restore/save, construction and execution.
+4. Use one run-list query and one jobs query per selected run. Obtain the
+   selected runs' log archives in a batch with `gh api` to extract the existing
+   run-check labels; the jobs endpoint alone cannot provide nested phase times.
+   Downloading archives avoids one log request per matrix job. Never use
+   `gh run watch`; if another query is needed, wait at least five minutes.
+5. Confirm a source edit after a restore causes current-source compilation;
+   include a deliberately failing existing assertion in a temporary CI
+   control, then restore it before the reviewed revision. Compare assertion
+   counts and normal verdicts between cache miss, exact hit and prefix restore.
+   A cache miss must build normally. Run the complete ordinary gate in CI;
+   this Mac runs no build, make target, compiler or test suite.
+6. Apply the stated rejection criterion, then reconsider budgets only from
+   measured stage data under the existing per-CPU rule. This patch changes
+   no run-check label and adds no budget row.
+
+At authoring time the workflow changes have not been run in CI. Warm-cache
+savings, package-cache installation and unchanged assertion results remain
+unverified; the tables above are before measurements.
+
 The owner asked that every command run in daily work and every CI job finish
 in a time its content justifies, and that a gate stop ordinary changes from
 making them much slower. This record measures where the time goes, states

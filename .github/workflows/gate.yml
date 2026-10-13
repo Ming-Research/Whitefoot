@@ -68,7 +68,8 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: never
-  # A fresh checkout gains nothing from incremental state (compiler/Cargo.toml).
+  # Cache dependency artifacts, retaining the measured CI construction mode.
+  # Rust incremental compilation remains off (compiler/Cargo.toml).
   CARGO_INCREMENTAL: 0
 
 jobs:
@@ -138,9 +139,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-          fetch-depth: 0
+          # Only static compares history and runs the design-tree checker.
+          fetch-depth: ${{ matrix.stage == 'static' && '0' || '1' }}
           # The design-tree skill's lint and CI base script, design/skill.
-          submodules: true
+          submodules: ${{ matrix.stage == 'static' }}
 
       # Everything the gate writes outside the checkout goes under one scratch
       # root. Naming it here keeps generated experiment files in runner-owned
@@ -159,6 +161,7 @@ jobs:
       # a branch the worktree has checked out, so the ref is only created when
       # it is missing.
       - name: Name main as a local ref
+        if: matrix.stage == 'static'
         run: |
           git fetch --no-tags --prune origin +refs/heads/main:refs/remotes/origin/main
           if git symbolic-ref -q HEAD | grep -qx refs/heads/main; then
@@ -188,12 +191,44 @@ jobs:
       # built with, including the dispatch parts' preserve_none convention,
       # which LLVM 19 added. Raising the pin is its own change
       # (compiler/verification).
+      - name: Identify the runner image
+        id: image
+        run: echo "identity=${ImageOS:?}-${ImageVersion:?}" >> "$GITHUB_OUTPUT"
+
+      # Cache complete downloaded packages rather than standalone LLVM
+      # binaries: dpkg still installs and checks every dependency. A different
+      # runner image starts cold because its preinstalled dependencies differ.
+      - name: Restore LLVM packages
+        if: runner.os == 'Linux'
+        id: llvm-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/llvm-apt
+          key: gate-llvm-${{ runner.os }}-${{ runner.arch }}-${{ steps.image.outputs.identity }}-${{ hashFiles('.github/llvm-major', '.github/workflows/gate.yml') }}
+
       - name: Install the host toolchain
+        env:
+          LLVM_CACHE_HIT: ${{ steps.llvm-cache.outputs.cache-hit }}
         run: |
           if [ "$RUNNER_OS" = Linux ]; then
-            curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
             version=$(tr -d '[:space:]' < .github/llvm-major)
-            sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+            if [ "$LLVM_CACHE_HIT" = true ]; then
+              # A missing, damaged or incomplete cache fails installation;
+              # it never substitutes a different host toolchain.
+              sudo dpkg -i "$RUNNER_TEMP/llvm-apt"/*.deb
+            else
+              curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+              sudo mkdir -p "$RUNNER_TEMP/llvm-apt/partial"
+              trap 'sudo rm -f /etc/apt/apt.conf.d/99-whitefoot-cache' EXIT
+              printf 'Dir::Cache::archives "%s";\nAPT::Keep-Downloaded-Packages "true";\nBinary::apt::APT::Keep-Downloaded-Packages "true";\n' \
+                "$RUNNER_TEMP/llvm-apt" | sudo tee /etc/apt/apt.conf.d/99-whitefoot-cache >/dev/null
+              sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+              sudo rm -f /etc/apt/apt.conf.d/99-whitefoot-cache
+              trap - EXIT
+              set -- "$RUNNER_TEMP/llvm-apt"/*.deb
+              test -f "$1"
+              sudo chmod -R a+rX "$RUNNER_TEMP/llvm-apt"
+            fi
             sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
             sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
             ld.lld --version
@@ -201,11 +236,45 @@ jobs:
           test -x /usr/bin/clang
           /usr/bin/clang --version
           python3 --version
+
+      # Runtime constructs C/LLVM images; only the Rust groups need Cargo.
+      - name: Set up Rust
+        if: matrix.stage != 'runtime'
+        id: rust
+        run: |
           rustup default stable
           rustup component add clippy rustfmt
           cargo --version
+          # The toolchain file selects stable, whose actual version can move.
+          identity=$(rustc -vV | shasum -a 256 | cut -d ' ' -f 1)
+          echo "identity=$identity" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Cargo dependencies
+        if: matrix.stage != 'runtime'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: gate-cargo-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust.outputs.identity }}-gate-inc0-${{ hashFiles('compiler/Cargo.lock', 'compiler/rust-toolchain.toml', 'compiler/Cargo.toml', '.github/workflows/gate.yml') }}
+
+      # Cache construction only: Cargo always fingerprints current Rust source,
+      # included fixtures and build.rs inputs (including the active spec), then
+      # compiles changed inputs. Fresh checkout mtimes are not rewritten. Every
+      # Make/Cargo invocation and test assertion still runs on a cache hit;
+      # neither verdicts nor test scratch files are cached. Separate group keys
+      # keep concurrent writers from saving different inventories under one key.
+      - name: Restore Cargo build artifacts
+        if: matrix.stage != 'runtime'
+        uses: actions/cache@v4
+        with:
+          path: compiler/target
+          key: gate-target-${{ runner.os }}-${{ runner.arch }}-${{ steps.image.outputs.identity }}-${{ matrix.stage }}-${{ steps.rust.outputs.identity }}-gate-inc0-${{ hashFiles('compiler/Cargo.lock', 'compiler/rust-toolchain.toml', 'compiler/Cargo.toml', '.github/workflows/gate.yml', '.github/llvm-major') }}-${{ github.event.pull_request.head.sha || github.sha }}
+          restore-keys: |
+            gate-target-${{ runner.os }}-${{ runner.arch }}-${{ steps.image.outputs.identity }}-${{ matrix.stage }}-${{ steps.rust.outputs.identity }}-gate-inc0-${{ hashFiles('compiler/Cargo.lock', 'compiler/rust-toolchain.toml', 'compiler/Cargo.toml', '.github/workflows/gate.yml', '.github/llvm-major') }}-
 
       - name: Fetch locked compiler dependencies
+        if: matrix.stage != 'runtime'
         run: cargo fetch --locked --manifest-path compiler/Cargo.toml
 
       # The active gate runs offline against formal fixtures. Research
