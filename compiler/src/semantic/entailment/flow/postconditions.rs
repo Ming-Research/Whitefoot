@@ -122,25 +122,44 @@ impl Input<'_, '_> {
             .is_some_and(|parameter| parameter.mode.is_range())
     }
 
+    /// The relations a direct call of `function` may publish [FN-9]: its
+    /// published summaries, or, while its component is being verified and
+    /// the caller is a member of it, all of its postconditions as
+    /// induction hypotheses [DIAG-2].
     pub(super) fn available_postconditions(
         &self,
         function: super::super::super::model::FunctionId,
     ) -> Vec<AvailablePostcondition> {
+        let available = |postcondition: &CheckedPostcondition,
+                         summary: super::super::VerifiedPostconditionSummary| {
+            AvailablePostcondition {
+                relation: postcondition.relation.clone(),
+                route: postcondition.selector.route,
+                variant: postcondition.selector.variant,
+                field: postcondition
+                    .selector
+                    .field
+                    .as_ref()
+                    .map(|field| field.declaration),
+                authority: super::super::RelationProvenance::Verified(summary),
+            }
+        };
+        if let Some(component) = self
+            .context
+            .component_postconditions(self.function.id, function)
+        {
+            return component
+                .hypotheses
+                .iter()
+                .map(|(postcondition, summary)| available(postcondition, summary.clone()))
+                .collect();
+        }
         self.context
             .verified_postconditions(function)
             .unwrap_or_default()
             .into_iter()
             .filter_map(|(postcondition, proof)| {
-                Some(AvailablePostcondition {
-                    relation: postcondition.relation.clone(),
-                    variant: postcondition.selector.variant,
-                    field: postcondition
-                        .selector
-                        .field
-                        .as_ref()
-                        .map(|field| field.declaration),
-                    authority: super::super::RelationProvenance::Verified(proof.summary.clone()?),
-                })
+                Some(available(postcondition, proof.summary.clone()?))
             })
             .collect()
     }
@@ -148,8 +167,9 @@ impl Input<'_, '_> {
     /// The relations one exact call may publish [FN-5]. A direct call uses
     /// its actual's verified FN-9 surface. A bound call uses the retained
     /// formal surface only when its exact FN-4 query is discharged and every
-    /// actual premise selected by that query has an earlier-component FN-9
-    /// summary. A zero-premise implication needs only its retained query.
+    /// actual premise selected by that query has an FN-9 summary or a
+    /// same-component induction hypothesis [DIAG-2]. A zero-premise
+    /// implication needs only its retained query.
     pub(super) fn available_call_postconditions(
         &self,
         function: super::super::super::model::FunctionId,
@@ -179,9 +199,20 @@ impl Input<'_, '_> {
                     .iter()
                     .zip(&query.premises)
                     .map(|(ordinal, clause)| {
-                        let (postcondition, proof) =
-                            self.context.verified_postcondition(function, *ordinal)?;
-                        let summary = proof.summary.as_ref()?;
+                        let (postcondition, summary) = if let Some(component) = self
+                            .context
+                            .component_postconditions(self.function.id, function)
+                        {
+                            component
+                                .hypotheses
+                                .iter()
+                                .find(|(_, summary)| summary.relation_ordinal == *ordinal)
+                                .map(|(postcondition, summary)| (*postcondition, summary))?
+                        } else {
+                            let (postcondition, proof) =
+                                self.context.verified_postcondition(function, *ordinal)?;
+                            (postcondition, proof.summary.as_ref()?)
+                        };
                         (postcondition.selector.block == *clause
                             && summary.function == function
                             && summary.relation_ordinal == *ordinal)
@@ -190,6 +221,7 @@ impl Input<'_, '_> {
                     .collect::<Option<Vec<_>>>()?;
                 Some(AvailablePostcondition {
                     relation: boundary.relation.clone(),
+                    route: boundary.selector.route,
                     variant: boundary.selector.variant,
                     field: boundary
                         .selector
@@ -845,6 +877,7 @@ impl Reasoning<'_, '_, '_> {
         block: &crate::NodePath,
         relation_ordinal: u32,
         parents: Option<Vec<DerivationId>>,
+        vacuous: bool,
     ) -> PostconditionAggregate {
         if self.input.function.formal_hypothesis || self.input.function.body.is_none() {
             let node = self.vocabulary.derivations.intern(
@@ -862,7 +895,7 @@ impl Reasoning<'_, '_, '_> {
                 derivation: Some(node),
             };
         }
-        let Some(parents) = parents.filter(|parents| !parents.is_empty()) else {
+        let Some(parents) = parents.filter(|parents| vacuous || !parents.is_empty()) else {
             return PostconditionAggregate {
                 discharged: false,
                 derivation: None,
@@ -1184,8 +1217,18 @@ impl Reasoning<'_, '_, '_> {
         results: &[Option<TermId>],
         returns: &[Option<PostconditionReturnDatum>],
     ) -> Option<Relation> {
-        let operands = postcondition
-            .relation
+        self.instantiate_relation_template(&postcondition.relation, results, returns)
+    }
+
+    /// One relation template with each result ordinal read from `results`
+    /// and `returns` [FN-9, CALL-4].
+    pub(super) fn instantiate_relation_template(
+        &mut self,
+        template: &RelationTemplate,
+        results: &[Option<TermId>],
+        returns: &[Option<PostconditionReturnDatum>],
+    ) -> Option<Relation> {
+        let operands = template
             .operands
             .iter()
             .map(|operand| {
@@ -1205,7 +1248,7 @@ impl Reasoning<'_, '_, '_> {
         // difference bound carries: `l + a <cmp> r + b` is
         // `l - r <cmp> b - a`.
         let gap = second.1.checked_sub(first.1)?;
-        match postcondition.relation.normalized {
+        match template.normalized {
             NormalizedRelation::Equal => Some(Relation::Equal {
                 left: first.0,
                 right: second.0,
@@ -2250,7 +2293,7 @@ impl Reasoning<'_, '_, '_> {
             Vec::new(),
         ));
         for available in prepared.postconditions.iter().cloned() {
-            if available.variant.is_some()
+            if available.routed()
                 || !available
                     .relation
                     .operands
@@ -2338,7 +2381,7 @@ impl Reasoning<'_, '_, '_> {
         for available in prepared.postconditions.iter().cloned() {
             // A variant-routed relation is restricted to its arm [CALL-6];
             // a binder or target list enters no arm.
-            if available.variant.is_some()
+            if available.routed()
                 || !available
                     .relation
                     .operands
@@ -2407,7 +2450,7 @@ impl Reasoning<'_, '_, '_> {
             .iter()
             .cloned()
             .filter_map(|available| {
-                if available.variant.is_some()
+                if available.routed()
                     || !available
                         .relation
                         .operands
@@ -2552,6 +2595,7 @@ impl Judging<'_, '_, '_> {
                     .expect("postcondition relation ordinal exceeds u32"),
                 summary: None,
                 exits: Vec::new(),
+                vacuous: postcondition.selector.vacuous_when_unselected(),
                 aggregate: aggregate(),
             })
             .collect();
@@ -2570,9 +2614,13 @@ impl Judging<'_, '_, '_> {
                         .flatten()
                 })
                 .collect::<Option<Vec<_>>>();
+            // [TYPE-11] a routed relation a type invariant generates holds
+            // vacuously where no exit selects it: no value the instance
+            // returns holds its variant.
+            let vacuous = self.output.postconditions[index].vacuous;
             self.output.postconditions[index].aggregate = self
                 .reasoning()
-                .retain_postcondition_aggregate(&block, relation_ordinal, parents);
+                .retain_postcondition_aggregate(&block, relation_ordinal, parents, vacuous);
         }
     }
 
@@ -2582,7 +2630,7 @@ impl Judging<'_, '_, '_> {
         states: &ProofFlowState,
         affine_result: Option<&AffineForm>,
         value_reached: bool,
-        forwarded: &[Option<ResultEvidence>],
+        forwarded: &[Vec<ResultEvidence>],
     ) {
         if self.output.postconditions.is_empty() {
             return;
@@ -2597,9 +2645,21 @@ impl Judging<'_, '_, '_> {
             else {
                 continue;
             };
+            // [FN-9, TYPE-11] the forwarded value's context for the route
+            // this clause is restricted to: its written success variant, or
+            // the variant field a type invariant's route names.
+            let route = postcondition.selector.route;
             let forwarded = forwarded
                 .get(postcondition.selector.ordinal as usize)
-                .and_then(Option::as_ref);
+                .and_then(|held| {
+                    held.iter().find(|result| match route {
+                        Some(route) => {
+                            result.route.variant == route.variant
+                                && result.route.field == route.field
+                        }
+                        None => result.success,
+                    })
+                });
             let conditional = selected
                 .values
                 .iter()

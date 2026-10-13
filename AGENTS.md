@@ -244,20 +244,25 @@ leaves Cargo and the test harness at every available processor unless
 system time every 30 seconds, and stops a command after 30 minutes unless
 `WHITEFOOT_CHECK_TIMEOUT` gives another limit in seconds. It compares each
 labeled stage with its budget in `.github/time-budgets.txt` without changing
-the command's status: CI fails the job in a final verdict step. On a
-self-hosted runner, inspect an existing lock owner's PID instead of starting
-another heavy command, and after an uncatchable stop inspect the recorded
-PID and command before removing a stale lock.
+the command's status. Linux budgets are per CPU model: the maximum of at least
+its 20 most recent recorded runs plus 10%, rounded up to 5 s, with a 10 s floor.
+Models with fewer runs have no column; unknown models use the stage's largest
+Linux budget, with a note. macOS overruns are report-only; Windows rows keep their rule.
+The final CI verdict fails on Linux and Windows overruns and on a missing row
+for any host. On a self-hosted runner, inspect an existing lock owner's PID
+instead of starting another heavy command, and after an uncatchable stop
+inspect the recorded PID and command before removing a stale lock.
 
 When a stage exceeds its budget, look at what the change adds to it and at the
 job's slowest cases and host; fix a cause you find or bring the raise to the
 owner, and re-run once when you cannot tell; an overrun the change plainly
-cannot cause is reported as runner variance and cleared by a passing re-run.
-A raise is the owner's decision and adds 10 s to the stage and to its group
-stage, if any; lower a budget when a change makes its stage much faster, and
-give a new labeled stage a budget. The `gate` Cargo profile builds the Rust
-compiler with optimization, debug assertions and overflow checks; it does
-not change how WF source is compiled. `WHITEFOOT_TEST_TIMINGS=<scratch TSV>`
+cannot cause is reported as runner variance, and an enforced overrun is
+cleared by a passing re-run. A raise is the owner's decision; recompute Linux
+values by the rule above; Windows raises add 10 s to the stage and its group,
+if any. Lower a budget when a change makes its stage much faster, and give a
+new labeled stage a budget. The `gate` Cargo profile builds the Rust compiler
+with optimization, debug assertions and overflow checks; it does not change
+how WF source is compiled. `WHITEFOOT_TEST_TIMINGS=<scratch TSV>`
 records the phases of the shared test helpers for a slow compiler test.
 
 `WHITEFOOT_CHECK_WORK=<scratch TSV>` appends the checker's per-join,

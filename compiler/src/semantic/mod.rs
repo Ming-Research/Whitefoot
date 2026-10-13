@@ -1247,6 +1247,11 @@ pub enum SemanticIssueKind {
         /// The repair [DIAG-1].
         mechanical_fix: &'static str,
     },
+    /// A guard calls a boundary that can reach a one-shot decision cell [SHARE-2].
+    AtomicGuardDecisionCell {
+        /// The repair [DIAG-1].
+        mechanical_fix: &'static str,
+    },
     /// An atomic statement's guard whose call reads or writes a path with a
     /// self-changing host handle part [SHARE-2, PRE-2].
     AtomicGuardReadsSelfChanging {

@@ -470,6 +470,15 @@ fn shared_maps_keep_every_update_on_one_driver_and_on_four() {
     run_on_one_driver_and_on_four("shared_maps.wf", 3);
 }
 
+/// Four contexts cover every logging/timing combination. Only the three
+/// held writers advance metadata, while all four preserve their entry updates
+/// and publish a sequence exactly on held writes. This checks the program's
+/// results; lock timing itself is not observable from these final counts.
+#[test]
+fn conditional_metadata_keeps_only_held_commits_on_one_driver_and_on_four() {
+    run_on_one_driver_and_on_four("lock_on_use.wf", 3);
+}
+
 /// A value read under a read-only whole-map hold must not lock its cell:
 /// that hold's release only opens the map gate. The old lowering left the
 /// first read's cell locked and the second read spun forever, so the shared

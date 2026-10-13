@@ -70,11 +70,18 @@ const FORM3_LABEL_FIX: &str = "a LABEL slot admits only [FORM-3]'s LABEL `@[a-z]
 /// without ever stating the order that was broken.
 const GRAM2_CONTRACT_ORDER_FIX: &str = "a `contract_block` is written in one fixed order: all `define` definitions first, then all `requires` requirements, then all `ensures` postconditions. A clause of an earlier section written after a later one is not admitted, so move it above the first clause of the later section";
 
+/// [RANGE-1] a range guard is one comparison or one variant relation; a range
+/// postcondition conclusion may also state `unchanged`. A `Bool` datum written
+/// alone leaves the frontier after its expression, whose expectation list names
+/// the operators and `is` without saying how a `Bool` is tested.
+const RANGE1_BARE_BOOL_FIX: &str = "a range guard is one comparison or one variant relation, and a range postcondition conclusion may also state `unchanged` [RANGE-1]; a Bool datum written alone does not derive: test it with `is True` or `is False`, as in `when nodes^[k].live is True:`";
+
 /// The repair the failing production admits, when the production itself fixes
 /// one. The decision is the grammar position, never the text of the line.
 const fn production_fix(production: Production) -> Option<&'static str> {
     match production {
         Production::ContractBlock => Some(GRAM2_CONTRACT_ORDER_FIX),
+        Production::RangeRelation => Some(RANGE1_BARE_BOOL_FIX),
         _ => None,
     }
 }

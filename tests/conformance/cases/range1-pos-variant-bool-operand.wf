@@ -1,0 +1,54 @@
+fn need_below(value: u64, bound: u64) -> result: unit pure contract {
+  requires value < bound;
+} {
+  return unit;
+}
+
+fn live_bound(flags: &Slots<Bool, 8>, vals: &Slots<u64, 8>, i: u64, n: u64) -> result: unit reads(flags), reads(vals) contract {
+  requires i < flags^.len;
+  requires i < vals^.len;
+  requires forall live(k in 0_u64..flags^.len) when flags^[k] is True: vals^[k] < n;
+} {
+  doc "The guard is True holds in the then-block of an if on flags^[i], so the instance at i bounds vals^[i].";
+  if flags^[i] {
+    need_below(value: vals^[i], bound: n);
+  }
+  return unit;
+}
+
+fn dead_bound(flags: &Slots<Bool, 8>, vals: &Slots<u64, 8>, i: u64, n: u64) -> result: unit reads(flags), reads(vals) contract {
+  requires i < flags^.len;
+  requires i < vals^.len;
+  requires forall dead(k in 0_u64..flags^.len) when flags^[k] is False: vals^[k] < n;
+} {
+  doc "The guard is False holds past an if on flags^[i] whose then-block returns, so the instance at i bounds vals^[i].";
+  if flags^[i] {
+    return unit;
+  }
+  need_below(value: vals^[i], bound: n);
+  return unit;
+}
+
+fn end_true(flags: &Slots<Bool, 4>) -> result: unit writes(flags) contract {
+  requires flags^.len < 4_u64;
+  ensures forall ends(j in 0_u64..flags^.len) when j + 1_u64 == flags^.len: flags^[j] is True;
+} {
+  doc "Appends True, so the conclusion that the last flag is True holds at the exit.";
+  let last = True();
+  place_back(window: flags, value: last);
+  return unit;
+}
+
+fn end_false(flags: &Slots<Bool, 4>) -> result: unit writes(flags) contract {
+  requires flags^.len < 4_u64;
+  ensures forall ends(j in 0_u64..flags^.len) when j + 1_u64 == flags^.len: flags^[j] is False;
+} {
+  doc "Appends False, so the conclusion that the last flag is False holds at the exit.";
+  let last = False();
+  place_back(window: flags, value: last);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

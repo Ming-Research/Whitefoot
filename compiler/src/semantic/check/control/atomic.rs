@@ -306,6 +306,12 @@ impl Checker<'_, '_> {
             targets.push(CheckedTarget {
                 lock_order: self.types.atomic_type_order(state)?,
                 node_path: self.types.declarations.tree.path(*place)?.clone(),
+                ledger_name: declaration.spelling().to_owned(),
+                ledger_state: self.types.checked_type_name(state)?,
+                ledger_site: self
+                    .types
+                    .declarations
+                    .lock_ledger_site(declaration.origin().coordinate()),
                 binding,
                 handle: Box::new(target.expression),
                 borrowed,
@@ -464,6 +470,9 @@ impl Checker<'_, '_> {
         let CheckedType::Nominal(nominal) = ty else {
             return Ok(None);
         };
+        if self.types.is_decision_cell(nominal)? {
+            return Ok(None);
+        }
         let CheckedNominalKind::Shared {
             state,
             shape: CheckedShared::Object,
@@ -726,6 +735,15 @@ impl Checker<'_, '_> {
             Some(expression_node) => {
                 let condition =
                     self.check_condition(context, expression_node, bindings, scope.loops.len())?;
+                if self.guard_has_decision_cell(&condition.expression)? {
+                    return self.types.declarations.issue_node(
+                        SemanticRule::Share2,
+                        expression_node,
+                        SemanticIssueKind::AtomicGuardDecisionCell {
+                            mechanical_fix: "read or claim the decision cell in the atomic body; use ordinary shared state for a waiting guard dependency",
+                        },
+                    );
+                }
                 if let Some((call, handle)) =
                     self.guard_self_changing_part(&condition.expression)?
                 {
@@ -857,6 +875,20 @@ impl Checker<'_, '_> {
         expression_children(expression)
             .into_iter()
             .any(|child| self.guard_writes(child))
+    }
+
+    fn guard_has_decision_cell(&self, expression: &CheckedExpression) -> Result<bool, CheckStop> {
+        if let CheckedExpression::UserCall { function, .. } = expression
+            && self.types.decision_cell_boundary(*function)?
+        {
+            return Ok(true);
+        }
+        for child in expression_children(expression) {
+            if self.guard_has_decision_cell(child)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 }
 

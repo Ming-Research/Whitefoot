@@ -1,0 +1,28 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Counter {
+  doc "One count.";
+  count: u64;
+}
+
+fn scramble(value: u64) -> result: u64 pure {
+  doc "Returns three times value, wrapped.";
+  let mixed = value *wrap 3_u64;
+  return mixed;
+}
+
+fn advance(counter: &Counter, delta: u64) -> result: unit writes(counter) contract {
+  requires counter^.count + delta <= 800_u64;
+} {
+  doc "The in-place update commits a call result to the count, whose image is a fresh atom; the count read afterward is unbounded, so the sum may overflow.";
+  set counter^.count = scramble(value: counter^.count);
+  let count = counter^.count;
+  let total = count + delta;
+  set counter^.count = total;
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

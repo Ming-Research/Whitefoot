@@ -26,9 +26,18 @@ public struct AcceptedConnection {
   public peer: SocketAddress;
 }
 
+public enum IpAddress {
+  Ipv4(public a: u8, public b: u8, public c: u8, public d: u8);
+  Ipv6(public a: u16, public b: u16, public c: u16, public d: u16, public e: u16, public f: u16, public g: u16, public h: u16);
+}
+
 public fn socket_address_v4(a: u8, b: u8, c: u8, d: u8, port: u16) -> result: SocketAddress pure doc "Returns the IPv4 socket address a.b.c.d with port.";
 
 public fn socket_address_v6(a: u16, b: u16, c: u16, d: u16, e: u16, f: u16, g: u16, h: u16, port: u16) -> result: SocketAddress pure doc "Returns the IPv6 socket address whose eight groups are a to h, with port.";
+
+public fn socket_address_ip(address: &SocketAddress) -> result: IpAddress reads(address) doc "Returns the family and the address of address: Ipv4 with its four octets, or Ipv6 with its eight groups, each in written order [PRE-2].";
+
+public fn socket_address_port(address: &SocketAddress) -> result: u16 reads(address) doc "Returns the port of address [PRE-2].";
 
 public fn tcp_listen(factory: &HandleFactory, address: &SocketAddress) -> result: Result<TcpListener, IoError> reads(address), writes(factory) waits doc "Opens a TCP listener bound to address.";
 
@@ -49,6 +58,8 @@ public fn send_once(send: &TcpSend, source: &[u8], start: u64, end: u64, deadlin
   ensures when Ok(value: next): start <= next;
   ensures when Ok(value: next): next <= end;
 } doc "Sends bytes of source from start toward end with one host send; Ok carries the index after the last byte sent, and DeadlinePassed or Cancelled reports that the wait ended with no byte sent.";
+
+public fn local_address(receive: &TcpReceive) -> result: Result<SocketAddress, IoError> reads(receive) doc "Returns the address of this end of the connection whose receiving half is receive, as the host reports it [PRE-2].";
 
 public fn close_listener(factory: &HandleFactory, listener: TcpListener) -> result: Result<unit, IoError> writes(factory) waits doc "Closes listener.";
 

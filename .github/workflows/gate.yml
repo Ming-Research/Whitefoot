@@ -99,6 +99,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          if [ ! -f .github/gate-scope.sh ]; then
+            echo "::error::.github/gate-scope.sh is missing from the checked-out head: the branch was cut from main before main gained it. Merge main into the branch and push again."
+            exit 1
+          fi
           scope=$(sh .github/gate-scope.sh)
           echo "$scope"
           echo "$scope" >> "$GITHUB_OUTPUT"
@@ -300,12 +304,22 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           cat "$GITHUB_STEP_SUMMARY"
 
-      # run-check.pl appended every stage over its budget in
-      # .github/time-budgets.txt, or without one, to this record; the stages
+      # Include report-only macOS overruns and unknown Linux CPU notes in the
+      # summary; the verdict fails only on enforcing entries. The stages
       # themselves kept their own statuses.
       - name: Hold every stage to its time budget
         if: always()
-        run: perl .github/run-check.pl --budget-verdict "$WHITEFOOT_TIME_BUDGET_RECORD"
+        run: |
+          if [ -s "$WHITEFOOT_TIME_BUDGET_RECORD" ]; then
+            {
+              echo "### ${{ matrix.stage }} (${{ matrix.os }}) — time budget reports"
+              echo
+              echo '```text'
+              cat "$WHITEFOOT_TIME_BUDGET_RECORD"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          perl .github/run-check.pl --budget-verdict "$WHITEFOOT_TIME_BUDGET_RECORD"
 
   # The merge precondition, read from the revision's own check runs rather
   # than from this run's matrix: every group green on both platforms. Draft

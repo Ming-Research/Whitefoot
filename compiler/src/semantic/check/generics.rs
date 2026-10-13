@@ -1377,6 +1377,7 @@ impl<'unit> Checker<'_, 'unit> {
     ) -> Result<Option<CheckStop>, CheckStop> {
         let optimistic_batch = functions.iter().any(|checked| {
             !checked.function.postconditions.is_empty()
+                || !checked.function.range_facts.postconditions.is_empty()
                 || Checker::statements_contain_value_if(
                     checked.function.body.as_deref().unwrap_or_default(),
                 )
@@ -2311,6 +2312,7 @@ impl<'unit> TypeContext<'unit> {
                         PreludeType::DivError => out.push_str("DivError"),
                         PreludeType::NarrowError => out.push_str("NarrowError"),
                         PreludeType::ScanStep => out.push_str("ScanStep"),
+                        PreludeType::DecisionState => out.push_str("DecisionState"),
                     }
                     if ordering {
                         out.push(')');

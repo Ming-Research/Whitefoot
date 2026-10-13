@@ -20,6 +20,7 @@ mod containers;
 /// The §9.1 cost census, every case of which compiles `wfgrep`.
 mod cost_shape;
 mod counted_ranges;
+mod decision_cell;
 mod deterministic_target;
 mod division_obligations;
 mod effect_attributes;
@@ -54,6 +55,7 @@ mod payload_enums;
 mod ranges;
 mod read_through;
 mod value_equality;
+mod wake;
 // Retired with [OWN-6] and [OWN-14]: the `reborrows` module's four tests all
 // had the reborrow as their subject - a callee taking `&uniq 'r T` and
 // returning `&uniq 'r target^`, the child chain through a `box<u64>`
@@ -73,6 +75,7 @@ mod reinterpret;
 mod requires;
 mod resource_enums;
 mod result_abi;
+mod shared_environment;
 mod shared_maps;
 mod stack_ledger;
 mod storage_alias;
@@ -805,14 +808,20 @@ fn emitted_function<'module>(module: &'module str, name: &str) -> &'module str {
 /// The definition that carries one source function's emitted body: the
 /// function's own definition, or, for a result returned in registers, the
 /// internal destination-form body its public entry calls
-/// (compiler/src/backend/abi.rs).
+/// (compiler/src/backend/abi.rs), in the internal environment form of a
+/// recursive group's member where it has one
+/// (compiler/recursive-environment).
 fn emitted_body<'module>(module: &'module str, name: &str) -> &'module str {
-    let body = format!("{name}.body");
-    if module.contains(&format!(" @wf_{body}(")) {
-        emitted_function(module, &body)
-    } else {
-        emitted_function(module, name)
+    for candidate in [
+        format!("_env_{name}.body"),
+        format!("_env_{name}"),
+        format!("{name}.body"),
+    ] {
+        if module.contains(&format!(" @wf_{candidate}(")) {
+            return emitted_function(module, &candidate);
+        }
     }
+    emitted_function(module, name)
 }
 
 /// The first-class aggregate type one emitted definition returns in

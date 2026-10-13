@@ -1,0 +1,40 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn shift_right_digits(digits: &Array<u8, 6>, shift: u32, other: u32) -> result: u64 writes(digits) contract {
+  requires shift <= 60_u32;
+  requires other <= 60_u32;
+} {
+  doc "The multiplier is built from the amount while it holds the shift, then the amount is replaced by the other amount before the digits are shifted. The power atom belongs to the shift's value image, not to the binding that held it, so the replaced amount names another atom and the byte conversion stays unproved.";
+  let amount = shift;
+  let multiplier = ishl(1_u64, amount);
+  let mask = multiplier - 1_u64;
+  set amount = other;
+  let remainder = 0_u64;
+  for (
+    index in 0_u64..6_u64,
+    invariant remainder_bound: remainder <= mask
+  ) {
+    let digit = digits^[index];
+    if digit <= 9_u8 {
+    } else {
+      return multiplier;
+    }
+    let wide = cvt::<u8, u64>(digit);
+    let scaled = remainder * 10_u64;
+    let total = scaled + wide;
+    invariant total_bound: total <= 10_u64 * mask + 9_u64 {
+      use 10 times remainder_bound;
+    }
+    let quotient = ishr(total, amount);
+    let kept = iand(total, mask);
+    let narrow = cvt::<u64, u8>(quotient);
+    set digits^[index] = narrow;
+    set remainder = kept;
+  }
+  return remainder;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

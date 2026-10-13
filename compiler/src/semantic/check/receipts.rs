@@ -30,7 +30,7 @@ use super::{CheckStop, CheckedFunctionInventory, Checker};
 use crate::semantic::entailment::operation_facts::Interval;
 use crate::semantic::entailment::{
     DerivationId, EntailmentCallee, FunctionEntailment, FunctionPostconditionProof,
-    PostconditionAggregate,
+    PostconditionAggregate, PostconditionSchedule,
 };
 use crate::semantic::model::{
     CheckedBodyDisposition, CheckedContractQuery, CheckedFunction, CheckedType, IntegerType,
@@ -569,6 +569,7 @@ fn analyzed_rendering(function: &CheckedFunction) -> String {
         declared_state_reads,
         requirements,
         requirement_places,
+        routed_requirements,
         postconditions,
         range_facts,
         body,
@@ -585,7 +586,7 @@ fn analyzed_rendering(function: &CheckedFunction) -> String {
         "{formal_hypothesis:?}\n{id:?}\n{declaration:?}\n{module:?}\n{name:?}\n{symbol:?}\n\
          {function_actuals:?}\n{region_parameters:?}\n{parameters:?}\n{result_mode:?}\n\
          {result:?}\n{declared_state_writes:?}\n{declared_state_reads:?}\n{requirements:?}\n\
-         {requirement_places:?}\n\
+         {requirement_places:?}\n{routed_requirements:?}\n\
          {postconditions:?}\n{range_facts:?}\n{body:?}\n{reference_origins:?}\n\
          {body_disposition:?}\n{call_separations:?}\n{permission_separation_queries:?}\n\
          {waiting:?}"
@@ -613,7 +614,7 @@ fn claims_rendering(function: &CheckedFunction) -> String {
         })
         .collect::<Vec<_>>();
     format!(
-        "{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{postconditions:?}\n{:?}\n{:?}\n{:?}",
+        "{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{postconditions:?}\n{:?}\n{:?}\n{:?}",
         function.formal_hypothesis,
         function.symbol,
         function.module,
@@ -623,6 +624,7 @@ fn claims_rendering(function: &CheckedFunction) -> String {
         function.declared_state_writes,
         function.declared_state_reads,
         function.requirements,
+        function.routed_requirements,
         function.function_actuals,
         function.range_facts.requirements,
         function.range_facts.postconditions,
@@ -787,8 +789,8 @@ impl Checker<'_, '_> {
                 IdKind::Nominal => {
                     let nominal = self.types.nominals.get(position)?;
                     format!(
-                        "nominal\n{:?}\n{:?} {:?}",
-                        nominal.kind, nominal.linear, nominal.nocopy
+                        "nominal\n{:?}\n{:?} {:?} {:?}",
+                        nominal.kind, nominal.linear, nominal.nocopy, nominal.type_invariant
                     )
                 }
                 IdKind::Element => {
@@ -884,9 +886,15 @@ impl Checker<'_, '_> {
         recorded
     }
 
-    /// Records the receipt of every function analyzed afresh whose analysis
-    /// no rejection names.
-    pub(super) fn record_receipts(&mut self, functions: &[&CheckedFunction], rejected: &[bool]) {
+    /// Records accepted fresh analyses only after every member of their
+    /// component has verified, including the range judgment [DIAG-2, MOD-8].
+    /// A failed component leaves unrelated components' receipts available.
+    pub(super) fn record_receipts(
+        &mut self,
+        functions: &[&CheckedFunction],
+        rejected: &[bool],
+        schedule: &PostconditionSchedule,
+    ) {
         let Some(store) = self.receipts else {
             return;
         };
@@ -896,6 +904,20 @@ impl Checker<'_, '_> {
         let Ok(items) = self.types.declarations.receipt_items() else {
             return;
         };
+        let mut rejected = rejected.to_vec();
+        for component in &schedule.components {
+            if component
+                .functions
+                .iter()
+                .any(|function| rejected.get(function.0 as usize).copied().unwrap_or(true))
+            {
+                for function in &component.functions {
+                    if let Some(rejected) = rejected.get_mut(function.0 as usize) {
+                        *rejected = true;
+                    }
+                }
+            }
+        }
         for (index, key) in std::mem::take(&mut self.analysis.receipt_keys) {
             if rejected.get(index).copied().unwrap_or(true) {
                 continue;
@@ -987,6 +1009,7 @@ impl<'unit> DeclarationInventory<'unit> {
                     relation_ordinal: u32::try_from(ordinal).ok()?,
                     summary: None,
                     exits: Vec::new(),
+                    vacuous: postcondition.selector.vacuous_when_unselected(),
                     aggregate: PostconditionAggregate {
                         discharged: true,
                         derivation: None,
