@@ -860,7 +860,9 @@ fn main() -> status: std::process::ExitStatus pure {
         assert!(!body.1.contains(&format!("  {base} = ")), "{base} in {same}");
     }
 
-    // The splitter's pointer arguments exist before its budget query.
+    // The splitter's arguments taken from the function body exist before its
+    // budget query; the private leaf range and the budget it passes are the
+    // splitter's own, made after that query.
     let count = emitted_function(&llvm, "count_words");
     let budget = count
         .find("@wf__par_split_budget(")
@@ -869,7 +871,18 @@ fn main() -> status: std::process::ExitStatus pure {
         .lines()
         .find(|line| line.contains("call ") && line.contains("@wf__par_split_count_words."))
         .expect("the split call");
-    for operand in call_operands(call).into_iter().filter(|op| op.starts_with("%")) {
+    let splitter_own = |operand: &str| {
+        operand.starts_with("%indexed.")
+            || count.lines().any(|line| {
+                line.starts_with(&format!("  {operand} = ")) && line.contains("%indexed.")
+            })
+    };
+    let body_operands: Vec<_> = call_operands(call)
+        .into_iter()
+        .filter(|op| op.starts_with("%") && !splitter_own(op))
+        .collect();
+    assert!(body_operands.len() >= 3, "the captures and the counts array: {call}");
+    for operand in body_operands {
         let defined = count.find(&format!("  {operand} = ")).or_else(|| {
             header(count).contains(&format!(" {operand}")).then_some(0)
         });
