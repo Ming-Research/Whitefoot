@@ -98,7 +98,7 @@ fn main() -> status: ExitStatus pure {
 }
 "#;
 
-fn scalar_interpreter() -> String {
+pub(super) fn scalar_interpreter() -> String {
     INTERPRETER
         .replace("RESULT", "u64")
         .replace("FAILED", "0_u64")

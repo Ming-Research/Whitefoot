@@ -2338,6 +2338,7 @@ pub fn build_module_entry_for_emission(
         (&modules, &selected),
         overlap,
         crate::toolchain::facts(),
+        crate::backend::emitter::call_branch_weights_enabled(),
     );
     // Only a build that composed is recorded, so a recorded module implies
     // that every module verdict of its closure held for these inputs.
@@ -2377,12 +2378,13 @@ fn entry_module_material(
     inputs: (&[crate::ModuleId], &[SourceInput<'_>]),
     overlap: crate::OverlapLowering,
     toolchain: &crate::toolchain::ToolchainFacts,
+    call_branch_weights: bool,
 ) -> Vec<u8> {
     let mut material =
         composition_material(ENTRY_MODULES, graph, selection, inputs, RecordOrder::Read);
     material.extend_from_slice(
         format!(
-            "overlap {overlap:?}\nfragments {}\npreserve-none {}\nno-capture {}\ncoro-end {}\n",
+            "overlap {overlap:?}\nfragments {}\npreserve-none {}\nno-capture {}\ncoro-end {}\ncall-branch-weights {call_branch_weights}\n",
             selection.fragments,
             toolchain.preserve_none, toolchain.no_capture_attribute, toolchain.coro_end_result,
         )

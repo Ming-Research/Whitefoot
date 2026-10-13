@@ -8,6 +8,7 @@
 
 mod array;
 mod boxes;
+mod branch_weights;
 mod buffer;
 mod cleanup;
 mod constants;
@@ -231,6 +232,33 @@ pub(crate) fn emit_prepared_llvm(
         target,
         WindowAddressFacts::Emit,
         &prepared.plan,
+        call_branch_weights_enabled(),
+    )
+}
+
+/// Temporary experiment switch for the halo-call-path study's E2 comparison:
+/// `WHITEFOOT_BRANCH_WEIGHTS=C1` emits S1+S2; `C2` (the default, also for an
+/// unrecognized value) adds S3. Remove after E2 selects the retained policy.
+/// It affects placement hints only, never acceptance or target qualification.
+/// The emitted-module cache includes this setting. All supported builds use
+/// the driver's fixed optimizing level; there is no unoptimized build mode.
+pub(crate) fn call_branch_weights_enabled() -> bool {
+    std::env::var_os("WHITEFOOT_BRANCH_WEIGHTS").as_deref() != Some(std::ffi::OsStr::new("C1"))
+}
+
+#[cfg(test)]
+pub(crate) fn emit_llvm_with_branch_weights(
+    program: &IrProgram,
+    target: TargetLayout,
+    calls: bool,
+) -> Result<LlvmModule, BackendFailure> {
+    let selected = prepare_dispatch_layout(program, target, false)?;
+    emit_module(
+        &selected.program,
+        target,
+        WindowAddressFacts::Emit,
+        &selected.plan,
+        calls,
     )
 }
 
@@ -256,6 +284,7 @@ pub(super) fn emit_llvm_with_window_address_facts(
         target,
         window_address_facts,
         &selected.plan,
+        call_branch_weights_enabled(),
     )
 }
 
@@ -264,6 +293,7 @@ fn emit_module(
     target: TargetLayout,
     window_address_facts: WindowAddressFacts,
     dispatch_layout: &handler_words::DispatchLayoutPlan,
+    call_branch_weights: bool,
 ) -> Result<LlvmModule, BackendFailure> {
     validate_program(target, program).map_err(BackendFailure::TargetLayout)?;
     let mut intrinsics = BTreeSet::new();
@@ -312,6 +342,7 @@ fn emit_module(
                 grain: None,
                 window_address_facts,
                 dispatch_layout,
+                call_branch_weights,
             },
         )?;
         let emitted = emitter.emit()?;
@@ -352,6 +383,7 @@ fn emit_module(
                     grain: Some(grain),
                     window_address_facts,
                     dispatch_layout,
+                    call_branch_weights,
                 },
             )?
             .emit()?,
@@ -388,6 +420,7 @@ fn emit_module(
                         grain: None,
                         window_address_facts,
                         dispatch_layout,
+                        call_branch_weights,
                     },
                 )?
                 .emit()?,
@@ -1471,6 +1504,8 @@ fn push_function_slot(
 struct FunctionEmitter<'program, 'state> {
     program: &'program IrProgram,
     function: &'program IrFunction,
+    branch_weights: branch_weights::BranchWeights,
+    call_branch_weights: bool,
     /// The selected target, for the extents a proved fact states in bytes
     /// (compiler/backend-facts).
     target: TargetLayout,
@@ -1579,6 +1614,7 @@ struct ModuleState<'state> {
     grain: Option<Grain>,
     window_address_facts: WindowAddressFacts,
     dispatch_layout: &'state handler_words::DispatchLayoutPlan,
+    call_branch_weights: bool,
 }
 
 impl<'program, 'state> FunctionEmitter<'program, 'state> {
@@ -1598,6 +1634,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             grain,
             window_address_facts,
             dispatch_layout,
+            call_branch_weights,
         } = module;
         let mut overlaps = Vec::new();
         let mut ordinary_lane_frames = HashMap::new();
@@ -1643,6 +1680,8 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         Ok(Self {
             program,
             function,
+            branch_weights: branch_weights::BranchWeights::new(program, function),
+            call_branch_weights,
             target,
             window_address_facts,
             intrinsics,
@@ -3030,7 +3069,14 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 {
                     let emission_argument_0 = invalid_tag_label(block);
 
-                    writeln!(self.output, "  ]").map_err(|_| BackendFailure::TextEmission)?;
+                    write!(self.output, "  ]")?;
+                    if let Some(weights) = self.match_branch_weights(block) {
+                        // LLVM's switch metadata lists the default first,
+                        // then cases in textual order. The invalid enum tag
+                        // has no executions; all real edges keep positive weights.
+                        self.emit_branch_weights(std::iter::once(0).chain(weights))?;
+                    }
+                    writeln!(self.output)?;
                     // Every value of an enum type carries one of its declared
                     // tags, so no execution reaches this default
                     // (compiler/backend-facts).
@@ -3040,6 +3086,30 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 }
             }
         }
+    }
+
+    /// Analyze the original CFG even when this block is copied into a part.
+    /// Only an actually selected split restores the loop-exit prediction.
+    fn match_branch_weights(&self, block: IrBlockId) -> Option<Vec<u32>> {
+        let header = self.dispatch.as_ref().and_then(|dispatch| {
+            dispatch.plan.region[block.index()].then_some(dispatch.plan.header)
+        });
+        self.branch_weights
+            .for_match(self.function, block, header, self.call_branch_weights)
+    }
+
+    /// Inline metadata travels with the instruction through module splitting
+    /// and serialization, without module-global metadata IDs to relocate.
+    fn emit_branch_weights(
+        &mut self,
+        weights: impl IntoIterator<Item = u32>,
+    ) -> Result<(), BackendFailure> {
+        self.output.push_str(", !prof !{!\"branch_weights\"");
+        for weight in weights {
+            write!(self.output, ", i32 {weight}")?;
+        }
+        self.output.push('}');
+        Ok(())
     }
 
     fn match_tag(

@@ -1112,11 +1112,26 @@ fn an_entry_build_is_reused_for_an_unchanged_composition() {
                     (&modules, &selected),
                     OverlapLowering::Off,
                     &foreign,
+                    crate::backend::emitter::call_branch_weights_enabled(),
                 );
                 cache
                     .store(super::ENTRY_MODULES, &material, &cold.encode())
                     .expect("seed an entry module under foreign toolchain forms");
             }
+            // A different branch-weight experiment must miss too, even when
+            // source, compiler and toolchain are unchanged. Seed the opposite
+            // mode without mutating the test process's environment.
+            let material = super::entry_module_material(
+                &graph,
+                &selection,
+                (&modules, &selected),
+                OverlapLowering::Off,
+                &facts,
+                !crate::backend::emitter::call_branch_weights_enabled(),
+            );
+            cache
+                .store(super::ENTRY_MODULES, &material, &cold.encode())
+                .expect("seed an entry module under the other branch-weight experiment");
             // The fragment layout plan is empty. If its mode is omitted
             // from the key, this seed makes the whole-program lookup hit.
             selection.fragments = true;
@@ -1126,6 +1141,7 @@ fn an_entry_build_is_reused_for_an_unchanged_composition() {
                 (&modules, &selected),
                 OverlapLowering::Off,
                 &facts,
+                crate::backend::emitter::call_branch_weights_enabled(),
             );
             cache
                 .store(super::ENTRY_MODULES, &material, &cold.encode())
