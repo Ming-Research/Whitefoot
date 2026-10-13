@@ -780,3 +780,563 @@ so the Stage 1 estimate assumes E2 passes without a gap.
 - The board item states the integer limit as "< 2^62"; Redis's `double2ll`
   admits ±2^62 itself (confidence 3). Disposition: E1 settles it, then the
   Firn/Halo item's text.
+
+## Ordinary contracts over integer elements (decision brief, 2026-10-13)
+
+### Observation and independent witness
+
+This section proposes a language decision; it changes no specification,
+compiler, module source or verdict. The current reading is specification
+v0.144. Rule names below refer to the [active specification](../../../spec/kernel-spec.md);
+line numbers are reading coordinates in that revision, not stable rule identities.
+
+The corpus at [the tracked-field range amendment](https://github.com/Ming-Research/Whitefoot/commit/d2060013556f5979a8424cb97c7fe1f5ab3467da)
+reported `Source / FN-8 / InvalidRequires` at
+[`decimal_left`'s requirement](../../../lib/std/float_text/decimal.wf)
+(line 203): `requires 1_u8 <= decimal^.digits[0_u64];`.
+Both float-text program tests stopped during compilation, before integer
+formatting executed or the floating-point oracle ran. Both compile programs
+using the same library module, including its decimal declarations
+([test entry points](../../../compiler/tests/programs/float_text.rs),
+lines 100 and 115; [embedded library records](../../../compiler/src/library.rs),
+lines 94–111). At [the earlier corpus revision](https://github.com/Ming-Research/Whitefoot/commit/71b750270a94430a3b535622355f3257f19753a8),
+both already stopped at the preceding RANGE-1 field guard in the same file,
+line 50. The library sources and the ordinary requirement validator are
+unchanged between these revisions. The newly reached refusal is therefore a
+previously masked source-form restriction, not evidence of a runtime regression.
+
+This complete, independent program isolates the declaration form. Its
+predicted current result is FN-8 at `requires`; this smaller program has not
+been compiled. The uncalling `main` isolates declaration and body checking from call-site
+proof. The body needs the element bound to prove its subtraction; removing
+the requirement would leave that OP-2 obligation unproved.
+
+```wf
+struct DigitCell {
+  digits: Array<u8, 1>;
+}
+
+fn first_minus_one(cell: &DigitCell) -> result: u8 reads(cell.digits) contract {
+  requires 1_u8 <= cell^.digits[0_u64];
+} {
+  let digit = cell^.digits[0_u64];
+  let decreased = digit - 1_u8;
+  return decreased;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+```
+
+The direct normative reason is FN-8 (line 1404): “a subscript outside a
+clause (b) place” is inadmissible “even when another clause states their
+domain”. ENT-2(b) (line 3234) requires that the place's “final step selects a
+readonly field”. Here the final step is `[0_u64]`, not a field selection.
+The fact that `0 < 1` is statically known does not change that classification.
+The [ordinary clause validator](../../../compiler/src/semantic/check/requires.rs)
+(lines 954–980) implements precisely this boundary: a subscript ending the
+place yields `InvalidRequires` at its clause. This is declaration admission,
+not FN-8's later call-site `Unproved` or `Refuted` disposition.
+
+FN-9 independently excludes “subscript” from its ordinary relation datums
+(line 1463), and CALL-4 excludes subscripts from result projections (line
+1531). Relaxing the FN-8 syntax check alone would therefore leave the term,
+copy, support and publication rules incomplete. The float module also writes
+the ordinary element requirement in `decimal_right` and
+`decimal_binary_bits`; their equivalent declarations remain subject to the
+same rule. The separate unrun witnesses for missing trim nonemptiness,
+assignment count publication and scan induction
+([trim](witnesses/w6d_trim_nonempty_contract.wf),
+[assignment](witnesses/w6e_nonempty_call_contract.wf),
+[scan](witnesses/w6h_scan_leading_digit.wf)) describe later questions and are
+not evidence for the present formation refusal.
+
+### Recorded grounds and what they do not establish
+
+The [readonly-field investigation](../readonly-field-terms/DESIGN.md#soundness-every-change-is-an-overlapping-write)
+starts with the condition that every change of a storage value kills facts
+supported by that value. Its table includes direct field assignment inside
+the declaring module, whole-element or ancestor replacement, projected
+callee writes, offset reassignment, reference rebinding, consumption and
+scope exit. Readonly fields are ordinary writable fields inside their own
+module, so readonly syntax was never the argument that such facts could
+survive writes indefinitely.
+
+Its [alternatives](../readonly-field-terms/DESIGN.md#alternatives) table
+(line 162) calls admitting every integer field below a subscript “yes, same
+kills”. The following discussion (lines 169–172) says that their facts die
+unless a write's index is proved distinct, so they may offer little retained
+precision while adding overlap checks. It explicitly calls their closure-size
+cost unmeasured. The [checks-and-proofs decision](../../../design/language/checks-and-proofs.md)
+records that choice against every subscripted integer place. These are
+historical design grounds, not proof that mutable element facts are unsound,
+nor measurements of their cost in float text. The new evidence is a needed
+ordinary boundary fact about one element, before any overlapping write.
+It does not establish that all mutable-element workloads need the extension.
+
+The same investigation's [offset analysis](../readonly-field-terms/DESIGN.md#offsets)
+explains an actual support requirement: changing `idx[0]` changes the place
+selected by `table[idx[0]]`. Its nonrecursive offset rule admits only an
+ENT-2(a) tracked place or ENT-2(c) constant, whose support is already tracked.
+Its [boundary analysis](../readonly-field-terms/DESIGN.md#boundary-of-this-change)
+(lines 189–195) separately records why FN-9 subscripted datums were deferred:
+formal offsets must denote the same selection in the body and in caller
+substitution. The then-current measure implementation lost that identity;
+this was not a proof that publication is inherently unsound.
+
+A different [range-fact decision](../../../design/language/checks-and-proofs/range-facts.md)
+rejects moving quantified range facts into ordinary entailment because
+ordinary overlap kills would discard an entire quantified fact and duplicate
+the range judgment's activation and version model. Admitting finitely many
+ordinary scalar terms would not move quantifiers into L0. RANGE-1–3 would
+still own quantified facts, their instances and their version definitions.
+
+The [constitution](../../../docs/constitution.md#safety) requires proof of
+partial-operation domains and allows no runtime substitute. Its
+[compatibility clause](../../../docs/constitution.md#compatibility-and-evolution)
+gives no reason here to select a language design by the number of files
+that must change. The alternatives below are compared by semantics, proof
+precision and mechanism boundaries, not migration effort.
+
+### Shared obligations for an ordinary-term extension
+
+The following are proposed requirements on options A and B, not claims that
+the current language admits their new forms. They keep the existing
+judgments and make the boundaries of the proposed amendment explicit.
+
+1. **A term must name an existing integer value.** Extend ENT-2(b)'s final
+   selection as stated by the chosen option. Keep its current root, typed
+   place, proof-path identity and nonrecursive offset rules. Every subscript
+   still owes OP-4. A requirement forms its places at body entry using only
+   earlier requirements, and an expanded definition at the first requirement
+   that uses it (ENT-2, lines 3270–3273). Its own conclusion cannot prove its
+   subscript in bounds. Body reads form their own ordinary places. No guessed
+   alias identity, unchecked index or implicit runtime test is added.
+2. **Support follows the whole selected place and every offset.** Generalize
+   ENT-5's clause-(b) support sentence (line 3755) from the selected readonly
+   field to the selected integer storage. Keep support for offset values,
+   every reference holder and every Box binding traversed. Use that same
+   support through requirement establishment, ordinary copying, conditional
+   result transport, value delivery, callee publication and loop continuing
+   kills. A direct or ancestor write, unproved-distinct element write,
+   projected callee write, changed offset, changed holder, consume or scope
+   exit kills the affected fact. A proved-disjoint sibling or element write
+   preserves it. A copied integer remains its copied value; surviving facts
+   about that value do not retarget a later read of the storage.
+3. **Entry meaning is not a promise of a snapshot.** The proposal selects
+   function-entry meaning for every admitted subscript offset, including
+   offsets that are fields of reference parameters, and corresponding
+   pre-transfer actual values at the caller. This selector rule is a proposed
+   language choice, not a consequence uniquely selected by current FN-9.
+   Even when a row writes the reference parameter that supplies an offset,
+   that offset is an entry selector, not an unqualified exit-state datum.
+   Retain the existing
+   entry-image stability rule (FN-9, lines 1476–1484; ENT-2, lines 3288–3289;
+   ENT-5, lines 3783–3787): a referenced entry image has no new snapshot term,
+   and an overlapping support kill makes it permanently unavailable. In
+   particular, rebinding a formal index must not retarget an `ensures` read
+   to its new body value; that clause's required index image is unavailable.
+   An unqualified datum of a reference parameter with no write rooted at it
+   retains the ordinary entry-image rule, not an invented immutable capture.
+4. **Exit reads have their own membership proof.** For an ordinary
+   postcondition over a reference parameter whose row writes it, select the
+   referent as it stands at each selected return, with the formal index
+   meaning fixed as above. Prove each new subscript's OP-4 membership in that
+   exit state before querying the clause; its own desired conclusion cannot
+   prove membership. An entry bound alone cannot justify a read after the
+   collection shrinks. At the caller, apply projected effects and kills
+   before publishing a verified exit relation at that same actual selection;
+   unavailable selector support supplies no relation. Keep FN-9's existing
+   restrictions on relation shape and its result-or-written-reference datum.
+5. **Keep MSR-3 and CALL-4's separate boundaries.** This proposal adds no
+   immutable index/element capture family. Explicit `entry` of a newly
+   admitted subscripted integer stays outside ordinary MSR-3's
+   field-and-dereference projection set (lines 3414–3435). Existing explicit
+   entry datums and range entry reads retain their current meanings. Extending
+   ordinary `entry(cell^.digits[i])` to a frozen element value is a separate
+   unselected question. Owned result-array elements remain excluded as
+   relation sources by
+   CALL-4; neither option adds result projections or placement capture
+   families. Already-admitted scalar result fields and owned descendants
+   may nevertheless transport to a newly admitted element destination
+   through existing ENT-3 and MSR-3 transports. That destination extension
+   is intended and needs cases; it is distinct from admitting a result
+   array subscript as a source datum.
+6. **Effects stay ordinary.** Erased clauses add no exhibited runtime access
+   (EFF-2, lines 1589–1592), but their actual reads join the existing contract
+   footprint and separation judgment (EFF-5, lines 1622–1624). A `writes`
+   path covers its reads, and a row lists `reads` before `writes` (EFF-1).
+   Dynamic formal indices in rows retain their existing actual-value
+   substitution. No readonly-for-the-call assumption follows from merely
+   writing an element in a contract.
+
+The minimal requirement and the subtraction example below need ordinary L0
+bounds, ENT-3's copy equality and their existing consumers; they do not need
+an affine image for every element. The proposed generalization therefore
+does not enlarge ENT-6's tracked-field image category or INV-1's written
+factor grammar. An element used in a body may be copied into an own integer
+binding under the ordinary rules; that is not a substitute spelling demanded
+for its contract. Direct composite affine reasoning over element images
+would be an additional choice, with its own example and grounds. Existing
+subscripted readonly fields already demonstrate this L0-only boundary. No
+ordinary FN-9 obligation is assumed to be discharged by RANGE-2's deferred
+ordinary-obligation route, whose enumerated families do not include FN-9.
+
+### Option A: ordinary integer element terms with tracked offsets (recommended for consideration)
+
+**Proposed scope.** Generalize ENT-2(b) to any fragment-integer final selected
+value below one or more subscripts on a place otherwise admitted there:
+bare integer elements and mutable or readonly integer descendant fields.
+Keep each offset restricted to ENT-2(a) or ENT-2(c), excluding nested
+subscript reads used as offsets and unbound arithmetic expressions. This is
+one ordinary term rule used by body facts and FN-8, not a special spelling
+recognized only inside a requirement. Extend FN-9 parameter datums to these
+formed places under the shared obligations above, including existing
+readonly-field cases; do not extend result datums. Keep quantified clauses
+and their derivation unchanged.
+
+**Proposed rule-text sketch.** These clauses outline the amendment, not
+replacement normative text already selected:
+
+- ENT-2(b): a subscripted integer place has the existing clause-(b) roots
+  and projections, at least one subscript, and a final selected fragment
+  integer; each offset remains an (a) or (c) term. Its formation keeps OP-4
+  and the existing earlier-requirement rule.
+- FN-8: admit exactly those ENT-2(b) places among ordinary clause datums;
+  retain the other totality and clause-expression conditions.
+- ENT-5: a (b) term is supported by its selected integer storage and every
+  offset, reference-holder and Box-binding support, with the existing
+  transport and survival rules. The measure-descriptor boundary is unchanged.
+- FN-9: parameter datums may project through these admitted subscripts;
+  result projection admission is unchanged. Each selector denotes its
+  function-entry term, substituted with its pre-transfer actual term, and
+  stays available only while its entry-image support remains stable. Prove
+  subscript membership independently at the selected return in the datum's
+  selected state before proving its relation. Written-reference data read
+  exit storage at that stable entry selector. Unavailable selection is an
+  unproved postcondition, never a fresh snapshot or current-selector read.
+
+**Before and after.** The following complete program shows
+A's additional variable-index scope and a body operation that consumes the
+ordinary requirement. It is currently predicted to fail FN-8 at its second
+requirement; after A the identical complete source is intended to check.
+This code
+block is both the before-program and after-program; no source rewrite is
+proposed. Neither result has been run.
+The main function again isolates declaration/body checking rather than a
+caller; call transport gets separate conformance cases below.
+
+```wf
+struct DigitCell {
+  digits: Array<u8, 1>;
+}
+
+fn first_minus_one(cell: &DigitCell, index: u64) -> result: u8 reads(cell.digits[index]) contract {
+  requires index < cell^.digits.len;
+  requires 1_u8 <= cell^.digits[index];
+} {
+  let digit = cell^.digits[index];
+  let decreased = digit - 1_u8;
+  return decreased;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+```
+
+A treats the literal index in float text and an already-tracked variable
+index by the same storage and support rule. Its soundness argument is that
+each established scalar fact names existing storage and every possible
+change either overlaps that storage or changes included selector support;
+all those events kill it. This argument depends on complete implementation
+of those paths, including formal-body and caller substitutions, rather than
+on the element being immutable. Ordinary kills sacrifice precision when
+index distinctness is unproved; they do not re-establish a fact about another
+element. No read-congruence solver or quantified premise is added.
+
+The design cost is more ordinary terms, overlap queries and closure input in
+programs that read mutable elements. No timing establishes its size. The
+new boundary-contract use supplies a reason to reopen the former rejection;
+it does not cancel the earlier observation that many update-loop facts will
+die. Adoption would amend the readonly-only decision and explain that change
+on its approval card. The recommendation is to consider this general rule
+because tracked offsets already supply the required identity and kills;
+zero being a constant is not an independent soundness reason to admit only
+float text's first element.
+
+### Option B: admit new ordinary element terms only at constant offsets
+
+**Proposed scope.** Keep all currently admitted ENT-2(b) readonly-field
+terms. Add bare or descendant fragment-integer element terms only when every
+subscript offset is an ENT-2(c) constant: an integer literal, integer named
+const or an in-scope integer const-generic parameter with OP-4's required
+u64 type. Symbolic const generics are immutable within an instance; they
+still require a bound proof. No new mutable-element term with an ENT-2(a)
+variable offset is added. The new terms have the same support and copy
+behavior in bodies and contracts, not a second contract-only fact category.
+FN-9's newly admitted element projections are limited to these constant
+selections; its existing non-subscripted datums remain unchanged. The shared
+entry/exit obligations apply, with no mutable offset to snapshot in the new
+postcondition cases. Existing readonly-field terms with variable offsets
+remain outside ordinary FN-9's newly added projection scope.
+
+**Proposed rule-text sketch.** Use A's FN-8 and ENT-5 sketches, with this
+ENT-2(b) admission: retain every current readonly-field term; additionally
+admit any otherwise qualifying fragment-integer place when every subscript
+is an ENT-2(c) constant. Use A's FN-9 formation, stability and substitution
+sketch only for parameter projections whose subscripts are all constants;
+variable-indexed readonly-field parameter postconditions remain excluded.
+The complete constant scope includes literal, named-const and const-generic
+terms, each independently owing OP-4. No new `entry` or result datum is added.
+
+**Before and after.** This complete program, also unrun, is predicted to
+fail FN-8 now and to check after B. The identical block is both the before
+and after source. Its `0_u64` is an ordinary integer constant, not a distinguished first-element operation. The variable-index
+program of A would remain refused, even with a preceding bound requirement.
+
+```wf
+struct DigitCell {
+  digits: Array<u8, 1>;
+}
+
+fn first_minus_one(cell: &DigitCell) -> result: u8 reads(cell.digits) contract {
+  requires 1_u8 <= cell^.digits[0_u64];
+} {
+  let digit = cell^.digits[0_u64];
+  let decreased = digit - 1_u8;
+  return decreased;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+```
+
+B limits the new selector forms and avoids mutable-selector substitution for
+new postconditions, while retaining the same checks for writes to the
+selected element and its ancestors. It makes no readonly-duration promise;
+a helper may overwrite the element, and the old fact then dies. Its cost is
+a semantic split between constant and tracked-variable selections despite
+both having support the current system can name. It also retains two
+FN-9 subscript boundaries: new constant element datums and excluded
+variable-index readonly-field datums. This narrower experiment could be
+chosen, but no soundness result or measured checking cost currently favors
+it over A.
+
+### Ordinary postcondition and caller witness for A and B
+
+This complete source is another before-and-after witness for both ordinary
+options: its spelling is unchanged. The ordinary subscripted `ensures` is
+currently outside FN-9's relation datums; after either proposal the body must
+verify it and the caller must obtain the new bound after the call's write.
+All of those outcomes are predictions; this source has not been compiled.
+The caller begins with zero, so retaining only a pre-call fact cannot prove
+its final subtraction. Changing the helper's stored value to zero must fail
+the postcondition, not merely change the program's exit status.
+
+```wf
+struct DigitCell {
+  digits: Array<u8, 1>;
+}
+
+fn establish_first(cell: &DigitCell) -> result: unit writes(cell.digits) contract {
+  ensures 1_u8 <= cell^.digits[0_u64];
+} {
+  set cell^.digits[0_u64] = 1_u8;
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let digits = array_filled::<u8, 1>(value: 0_u8);
+  let cell = DigitCell(digits: digits);
+  establish_first(cell: &cell);
+  let digit = cell.digits[0_u64];
+  let decreased = digit - 1_u8;
+  return std::process::exit_status(code: decreased);
+}
+```
+
+A's variable-selector variant must additionally require `index <
+cell^.digits.len`, store at `[index]`, and publish that same selection. The
+shared selector and membership obligations above govern that variant; B
+continues to refuse it. The conformance plan below separates selected-return
+verification from caller substitution and from selector invalidation.
+
+### Option C: keep the ordinary rule and use singleton range clauses
+
+**Proposed scope.** Change no language or checker rule. Use RANGE-1–3's
+existing integer element terms and versioned facts for this library
+requirement. This is an alternative writer form for the natural ordinary
+requirement the compiler refuses, so applying it to the module needs the
+owner's explicit exception to the no-workaround rule; this brief does not
+apply it or presume that exception.
+
+**Proposed rule-text sketch.** None: retain FN-8, FN-9, ENT-2 and RANGE-1–3
+unchanged. Any module rewrite is an owner-approved exception, not an
+amendment to the language or approval inferred by this brief.
+
+**Before.** This complete ordinary program is predicted to fail FN-8:
+
+```wf
+struct DigitCell {
+  digits: Array<u8, 1>;
+}
+
+fn first_minus_one(cell: &DigitCell) -> result: u8 reads(cell.digits) contract {
+  requires 1_u8 <= cell^.digits[0_u64];
+} {
+  let digit = cell^.digits[0_u64];
+  let decreased = digit - 1_u8;
+  return decreased;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+```
+
+**After.** This complete program states the requirement over the one
+existing element of `Array<u8, 1>`. The conclusion reads the bare bound
+variable `k`, so the body read at zero is a trigger for the range instance.
+It is predicted to check under the current range rules, but has not run.
+There is no ordinary `ensures` claim: RANGE-2 may discharge the body's
+subtraction obligation, not an ordinary FN-9 result relation.
+
+```wf
+struct DigitCell {
+  digits: Array<u8, 1>;
+}
+
+fn first_minus_one(cell: &DigitCell) -> result: u8 reads(cell.digits) contract {
+  requires forall first(k in 0_u64..1_u64): 1_u8 <= cell^.digits[k];
+} {
+  let digit = cell^.digits[0_u64];
+  let decreased = digit - 1_u8;
+  return decreased;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+```
+
+The fixed one-element Array makes the range instance's element exist. For a
+variable-length collection, a singleton range requirement alone does not
+prove that an element exists: RANGE-1 conditions its conclusions on read
+definedness. An independent length precondition and OP-4 proof would remain
+necessary. The gain is using the existing range semantics, including their
+write definitions and instantiation. The cost is requiring quantification
+for a scalar boundary property and making the function participate in the
+range judgment. It leaves the ordinary-term restriction unresolved. Its
+soundness rests on the existing range judgment, not ordinary overlap-killed
+L0 facts, and is a different design direction from A and B.
+
+### Proposed amendment map and discriminating acceptance checks
+
+These are proposed implementation and conformance obligations for a chosen
+option, not edits already made and not a new test manifest. A and B must
+state the same admitted set in each affected rule. C changes no rule.
+
+| Rule or decision | Proposed work for A; B's difference |
+|---|---|
+| ENT-2 | Generalize clause (b)'s final selected value, keep proof-path identity and nonrecursive offset admission, and retain body-entry formation under earlier requirements. B adds only constant-offset mutable element terms. |
+| FN-8 | Admit that complete ordinary term set and keep totality and own-clause bound restrictions. B's variable-offset mutable elements remain refusals. |
+| ENT-3, ENT-5 | Let established comparisons, requirements, copies and verified publications use the new terms with complete storage/offset/holder support on every transport and kill. Keep conservative unproved-alias kills. |
+| FN-9 | Add the selected parameter subscript datums; retain relation-shape and written-reference/result conditions, entry-image stability, selected-return membership and caller pre-transfer selector identity. B adds constant selections only. |
+| MSR-3, CALL-4 | Preserve explicit entry projection and result-datum boundaries; no new immutable element/index or placement capture family; existing scalar result/placement transports may gain admitted element destinations. |
+| ENT-6, INV-1 | Keep current image and written affine factor eligibility; ordinary L0/copy consumers suffice for this proposal. No new affine element-factor family is selected. |
+| OP-4, EFF-1/2/5, OWN-7 | Reuse ordinary bounds, row order and exactness, contract-read separation and overlap judgments; exercise new terms through them without weakening them. |
+| RANGE-1/2/3 | Keep their quantified semantics and deferred-obligation list; A/B add no quantified ordinary facts, and C uses the existing singleton form. |
+| Design tree | A/B replace the readonly-only ordinary-term choice in checks-and-proofs and update requires/postcondition rationale; C keeps it and records the owner's library exception. |
+
+The existing [conformance manifest](../../../tests/conformance/manifest.jsonl)
+also contains boundary cases affected by a chosen amendment. Their current
+verdicts are evidence of the present rule, not results to flip mechanically:
+
+| Existing case | Proposed disposition if A/B is selected |
+|---|---|
+| `fn8-neg-writable-field-below-subscript-requirement` | A admits its term category, but the existing source lacks a preceding index bound and has an unexhibited `reads(entries)` row. A positive successor must add the earlier bound and exhibit a body read (or remove that row); preserve a separate OP-4 missing-bound negative. B keeps its variable-offset refusal. |
+| `fn9-neg-readonly-field-below-subscript-relation` | A admits its variable-index readonly-field datum; B keeps the FN-9 refusal. The existing body returns zero without exhibiting `reads(entries)`, because the contract is erased. An A positive successor must make the row exact, for example by reading the field in the body, rather than changing only the verdict. |
+| `ent2-neg-indexed-writable-goal-datum` | Its constant-offset mutable-field comparison becomes an admitted ordinary fact under A/B; reassess the later addition through the exact reference alias as a positive consumer; validate that the proposed L0 facts suffice at this direct use. Change its doc and verdict only alongside the amendment. |
+| `ent2-neg-placement-moved-owned-integer-field` | A/B admit the constant-offset destination, so existing owned-descendant placement transport should carry its integer bound. Promote a positive transport case; do not add a new capture family. |
+| `call4-neg-result-field-stored-in-array-element` | A/B admit the destination for the already-admitted scalar result field. Its publication can then justify the later subscript. This changes destination transport, while a clause reading an owned result array element remains refused. |
+| `ent2-neg-requirement-readonly-field-unbounded-subscript`, `ent2-neg-requirement-measure-unbounded-subscript`, `fn8-neg-formal-requirement-place-unbounded-subscript` | Keep their OP-4 missing-bound expectations. New element-term formation uses the same diagnostic owner. |
+
+These are prospective case revisions, with no manifest edits or claimed
+new verdicts from execution. A future amendment must read each source in
+context and distinguish the intended rule from an earlier effect or bound
+refusal. The additional proposed cases distinguish the domain, proof and
+invalidation questions:
+
+- The independent fixed-index declaration above: current FN-8 refusal;
+  acceptance after A or B. Its bounds follow from `Array<u8, 1>` alone.
+- A variable-index requirement after an independent earlier bound: accept
+  under A; reject FN-8 under B. Removing the earlier bound, or placing it
+  after the element clause, must reject at the element's OP-4 formation
+  under A; the clause's own asserted value must not discharge that bound.
+- A constant index equal to the length, and a symbolic const-generic offset
+  lacking a proved bound: reject OP-4 after A/B, even when a contradictory
+  element value is asserted. Literal, named-const and proved const-generic
+  positive pairs check the full constant set of B.
+- Use an admitted requirement through a copied integer to discharge the
+  subtraction above. A producer and caller pair must independently verify
+  a positive call and reject the call after the caller stores zero at the
+  selected element; no callee body may be unfolded to supply its contract.
+- After a requirement, write zero to that element, replace its whole Array,
+  replace its containing struct, or call a helper whose projected row writes
+  it. Each separate case must lose the old bound and reject the later
+  subtraction with OP-2. A sibling write and a proved-distinct element write
+  must preserve the bound; an unproved-distinct write must not.
+- Under A, reassign the offset binding, change a holder, and exercise a loop
+  that can do either on its continuing edge. Old facts must not discharge
+  operations at the new selection. Consumption and scope exit must leave
+  the supported facts inaccessible; a surviving earlier integer copy must
+  retain only its own established value facts.
+- A helper with `writes(cell.digits)` must verify an ordinary exit-element
+  postcondition after storing one, and a caller must receive that bound
+  after the call's writes kill its old bound. Storing zero must fail FN-9 at
+  the selected return. The helper's index and caller's actual index must
+  name the same selection, with two different actual indices exposing a
+  substitution that incorrectly hard-codes one element.
+- Under A, reassign a postcondition's formal index before return: the old
+  entry image must become unavailable, never silently select the new index.
+  A postcondition on a collection that shrinks must separately prove its
+  exit subscript exists before its conclusion is queried; an entry-only
+  length guarantee is insufficient.
+- Use two reference actuals such that one callee effect can change the
+  other's contract-read element or offset support. EFF-5 must reject the
+  overlap; proved separation must admit the paired case. A read-only row
+  does not turn the value into an immutable entry snapshot.
+- Ordinary explicit `entry` over an element and an owned result Array's
+  element remain formation refusals under both proposals. Existing range
+  entry/read cases keep their current verdicts.
+- The complete singleton-range program above must preserve its requirement
+  through the ordinary-to-range deferred OP-2 path under C. A zero-element
+  Array variant must fail at the body's OP-4 read rather than obtain a bound
+  from a vacuous quantified clause.
+
+### Recommendation and remaining uncertainty
+
+Recommend considering A as the language decision, with B and C presented
+as real alternatives. Its added expressibility follows the existing support
+abstraction and addresses an observed ordinary interface need; the prior
+rejection's limited-survival argument does not distinguish a constant
+selection before mutation from another supported selection before mutation.
+This is not a claim that the implementation or its checking cost has been
+validated. The fixed families must remain deterministic and terminating,
+and no timing or work budget may select source acceptance.
+
+Confidence 3/5. The current declaration refusal and its normative reason
+are settled by the observed CI error and unchanged validator. The ordinary
+support argument has recorded precedent, but the complete proposed FN-9
+selector substitution, formation-at-exit and transfer behavior still needs
+independent review and the discriminating CI cases above. In particular, a
+requirement-only relaxation is insufficient evidence for postcondition
+publication. If those obligations need a different abstraction, bring that
+back as a language choice rather than narrowing expected verdicts or
+silently minting snapshots. No performance prediction is made, and no
+measurement has selected between A and B. All complete programs in this
+section are unrun source witnesses; only the library CI failure above is
+reported as observed.
