@@ -280,8 +280,9 @@ impl From<CheckedTargetDomainObligation> for IrTargetDomainObligation {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum CallGrain {
     /// Offer a permitted call only when its callee belongs to or reaches a
-    /// cyclic call component, or its static work summary reaches the runtime
-    /// work unit that prices a range split.
+    /// cyclic call component that offers its own calls, or its static work
+    /// summary reaches the work unit that prices a range split; a join site
+    /// below the same grain leaves its group and runs after the join.
     #[default]
     WorkUnit,
     /// Offer every permitted call, for tests of the offer path.

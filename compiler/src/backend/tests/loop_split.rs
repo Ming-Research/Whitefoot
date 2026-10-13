@@ -929,11 +929,14 @@ fn synthesized_symbols(module: &str, prefix: &str) -> Vec<String> {
     found
 }
 
-/// Force only the scheduling inputs of transport probes: request at each
-/// source/chunk entry to a driver and raise a cheap price just to the grain.
-/// Production-priced runs above remain the source-result reference. Keeping
-/// the original large price avoids turning large ranges into single iterations.
+/// Force only the scheduling inputs of transport probes: enter every parallel
+/// body, request at each source/chunk entry to a driver and raise a cheap
+/// price just to the grain. Production-priced runs above remain the
+/// source-result reference. Keeping the original large price avoids turning
+/// large ranges into single iterations.
 fn control_range_transport(module: &str) -> String {
+    let module = super::without_entry_selection(module);
+    let module = module.as_str();
     let mut controlled = String::new();
     let mut source_or_chunk = false;
     let mut protected = Vec::new();
@@ -2261,7 +2264,8 @@ fn every_admitted_combine_splits_and_publishes_the_unsplit_bytes() {
 
     // Each row's caller brackets a fully joined fold. Interposition delays
     // the owner's join until one actual nonowner callback has entered.
-    let mut observed = super::parallel::observe_worker_schedule(&split);
+    let mut observed =
+        super::parallel::observe_worker_schedule(&super::without_entry_selection(&split));
     let mut controlled = 0;
     for combine in ADMITTED_COMBINES {
         let symbol = format!("@wf_fold_{}", combine.name);
@@ -2536,7 +2540,11 @@ fn a_degenerate_range_folds_to_the_accumulator_it_arrived_with() {
         &format!("{entry}\n  call void @wf_test_edge_entry()"),
         1,
     );
-    let observed = module.replacen(body, &changed, 1) + "\ndeclare void @wf_test_edge_entry()\n";
+    // `folded` selects its ordinary closure for these spans at entry; the
+    // observer enters the parallel body so every degenerate range reaches
+    // the driver.
+    let observed = super::without_entry_selection(&module).replacen(body, &changed, 1)
+        + "\ndeclare void @wf_test_edge_entry()\n";
     let observer = r#"#include <stdint.h>
 #include <stdatomic.h>
 #include <stdio.h>

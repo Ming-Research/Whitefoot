@@ -33,6 +33,49 @@ fn driver_bodies<'module>(module: &'module str, function: &str) -> Vec<&'module 
         .collect()
 }
 
+/// A fixture whose named literal loop extents are read from a parameter
+/// instead, so a call-free loop that the compile-time small-site rule makes
+/// ordinary code keeps its range driver. Each replaced text occurs once.
+fn with_runtime_extents(source: &[u8], replacements: &[(&str, &str)]) -> Vec<u8> {
+    let mut text = std::str::from_utf8(source)
+        .expect("UTF-8 fixture")
+        .to_owned();
+    for (literal, runtime) in replacements {
+        assert_eq!(text.matches(literal).count(), 1, "{literal}");
+        text = text.replacen(literal, runtime, 1);
+    }
+    text.into_bytes()
+}
+
+/// `direct`, the alias case's one call-free loop, with its extent a parameter.
+const RUNTIME_DIRECT: &[(&str, &str)] = &[
+    (
+        "fn direct() -> result: u64 pure {",
+        "fn direct(limit: u64) -> result: u64 pure {",
+    ),
+    (
+        "  for (i in 0_u64..16_u64) {\n    set first^[0_u64]",
+        "  for (i in 0_u64..limit) {\n    set first^[0_u64]",
+    ),
+    (
+        "let updated = direct();",
+        "let updated = direct(limit: 16_u64);",
+    ),
+];
+
+/// The field case's call-free `reduce` loop with its extent a parameter.
+const RUNTIME_FIELDS: &[(&str, &str)] = &[
+    (
+        "fn reduce() -> result: u64 pure {",
+        "fn reduce(limit: u64) -> result: u64 pure {",
+    ),
+    ("for (i in 0_u64..128_u64)", "for (i in 0_u64..limit)"),
+    (
+        "let result = reduce();",
+        "let result = reduce(limit: 128_u64);",
+    ),
+];
+
 fn position(body: &str, needle: &str) -> usize {
     body.find(needle)
         .unwrap_or_else(|| panic!("missing {needle}:\n{body}"))
@@ -141,8 +184,10 @@ fn a_call_updated_root_acquires_one_block_shared_by_its_families() {
 }
 
 /// See the module comment. Private allocations and frees are counted; a
-/// heap-exhaustion termination is checked against the acquired prefix.
+/// heap-exhaustion termination is checked against the acquired prefix. Every
+/// entry choice enters the parallel body, so each forced driver is reached.
 fn observed(module: &str) -> String {
+    let module = super::without_entry_selection(module);
     let mut output = String::new();
     let mut source_or_chunk = false;
     let mut ordinal = 0;
@@ -388,10 +433,12 @@ fn indexed_helper_calls_execute_private_blocks_and_preserve_sequential_values() 
 
 #[test]
 fn indexed_aliases_acquire_one_private_storage_per_resolved_root() {
-    let source =
-        include_bytes!("../../../../tests/conformance/cases/par2-pos-indexed-aliased-updates.wf");
+    let source = with_runtime_extents(
+        include_bytes!("../../../../tests/conformance/cases/par2-pos-indexed-aliased-updates.wf"),
+        RUNTIME_DIRECT,
+    );
     let directory = test_directory();
-    let executable = observed_executable(source, &directory);
+    let executable = observed_executable(&source, &directory);
     // One dense family and four call-updated roots; aliased sibling fields
     // share one block.
     assert_eq!(
@@ -406,24 +453,31 @@ fn indexed_aliases_acquire_one_private_storage_per_resolved_root() {
     std::fs::remove_dir_all(directory).expect("remove alias observer artifacts");
 }
 
-const TWO_ROOTS: &str = r#"fn main() -> status: std::process::ExitStatus pure {
+/// The extent is a parameter: over a literal range this call-free loop is a
+/// compile-time small site and keeps no driver.
+const TWO_ROOTS: &str = r#"fn two_roots(limit: u64) -> result: u8 pure {
   doc "Two live private roots exercise release when the second allocation fails.";
   let low = box_array_filled::<i64>(count: 4_u64, value: 100_i64);
   let high = box_array_filled::<i64>(count: 4_u64, value: -100_i64);
-  for (i in 0_u64..4096_u64) {
+  for (i in 0_u64..limit) {
     set low.inner[0_u64] = imin(low.inner[0_u64], 7_i64);
     set high.inner[0_u64] = imax(high.inner[0_u64], -7_i64);
   }
   if low.inner[0_u64] != 7_i64 {
-    return std::process::exit_status(code: 1_u8);
+    return 1_u8;
   }
   if high.inner[0_u64] != -7_i64 {
-    return std::process::exit_status(code: 2_u8);
+    return 2_u8;
   }
   if low.inner[3_u64] != 100_i64 {
-    return std::process::exit_status(code: 3_u8);
+    return 3_u8;
   }
-  return std::process::exit_status(code: 0_u8);
+  return 0_u8;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let code = two_roots(limit: 4096_u64);
+  return std::process::exit_status(code: code);
 }
 "#;
 
@@ -803,11 +857,11 @@ const INNER: u64 = 4096;
 
 /// The outer loop and the inner loop both update `cells`, so the inner split
 /// runs inside an outer leaf and must combine into that leaf's private range.
-const SHARED_CELLS: &str = r#"fn shared_cells() -> made: Box<Array<u64>> pure {
+const SHARED_CELLS: &str = r#"fn shared_cells(inner: u64) -> made: Box<Array<u64>> pure {
   doc "Both counted loops update the same cells; the inner updates reach the enclosing leaf's private range.";
   let cells = box_array_filled::<u64>(count: 8_u64, value: 5_u64);
   for (batch in 0_u64..32_u64) {
-    for (offset in 0_u64..4096_u64) {
+    for (offset in 0_u64..inner) {
       let base = batch *wrap 4096_u64;
       let item = base +wrap offset;
       let bucket = item % 5_u64;
@@ -821,12 +875,12 @@ const SHARED_CELLS: &str = r#"fn shared_cells() -> made: Box<Array<u64>> pure {
 "#;
 
 /// Each outer iteration owns a row; only the inner loop updates it by index.
-const OWNED_ROWS: &str = r#"fn owned_rows() -> result: u64 pure {
+const OWNED_ROWS: &str = r#"fn owned_rows(inner: u64) -> result: u64 pure {
   doc "Every outer iteration owns a four-cell row that its inner loop updates by index; the outer loop folds the rows into a scalar.";
   let total = 0_u64;
   for (batch in 0_u64..64_u64) {
     let row = array_filled::<u64, 4>(value: 0_u64);
-    for (offset in 0_u64..4096_u64) {
+    for (offset in 0_u64..inner) {
       let bucket = offset % 4_u64;
       let amount = batch +wrap offset;
       set row[bucket] = row[bucket] +wrap amount;
@@ -875,7 +929,7 @@ fn owned_rows_expectation() -> u64 {
 
 fn nested_source() -> String {
     let mut source = format!("{SHARED_CELLS}\n{OWNED_ROWS}\n");
-    source.push_str("fn main() -> status: std::process::ExitStatus pure {\n  let res_shared = shared_cells();\n  let len_shared = res_shared.inner.len;\n  if len_shared != 8_u64 {\n    return std::process::exit_status(code: 1_u8);\n  }\n");
+    source.push_str("fn main() -> status: std::process::ExitStatus pure {\n  let res_shared = shared_cells(inner: 4096_u64);\n  let len_shared = res_shared.inner.len;\n  if len_shared != 8_u64 {\n    return std::process::exit_status(code: 1_u8);\n  }\n");
     for (cell, value) in shared_cells_expectation().into_iter().enumerate() {
         source.push_str(&format!(
             "  if res_shared.inner[{cell}_u64] != {value}_u64 {{\n    return std::process::exit_status(code: {}_u8);\n  }}\n",
@@ -883,7 +937,7 @@ fn nested_source() -> String {
         ));
     }
     source.push_str(&format!(
-        "  let rows = owned_rows();\n  if rows != {}_u64 {{\n    return std::process::exit_status(code: 2_u8);\n  }}\n  return std::process::exit_status(code: 0_u8);\n}}\n",
+        "  let rows = owned_rows(inner: 4096_u64);\n  if rows != {}_u64 {{\n    return std::process::exit_status(code: 2_u8);\n  }}\n  return std::process::exit_status(code: 0_u8);\n}}\n",
         owned_rows_expectation()
     ));
     source
@@ -1162,9 +1216,12 @@ fn indexed_marks_and_fields_execute_private_dense_slabs_and_nested_joins() {
 
 #[test]
 fn indexed_field_family_acquisition_failure_releases_earlier_sibling_slabs() {
-    let source = include_bytes!("../../../../tests/conformance/cases/par2-pos-indexed-fields.wf");
+    let source = with_runtime_extents(
+        include_bytes!("../../../../tests/conformance/cases/par2-pos-indexed-fields.wf"),
+        RUNTIME_FIELDS,
+    );
     let directory = test_directory();
-    let executable = observed_executable(source, &directory);
+    let executable = observed_executable(&source, &directory);
     assert_failures_terminate(&executable, &[1, 2]);
     std::fs::remove_dir_all(directory).expect("remove field acquisition artifacts");
 }

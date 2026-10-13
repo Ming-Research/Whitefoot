@@ -217,10 +217,12 @@ fn conditional_call_grain_omits_a_tiny_guard() {
     .expect("conditional calls compile with call grain");
     let module = module.into_string();
     assert!(!function_body(&module, "@wf_both").contains("@wf__par_publish("));
+    // The retained `fill` is priced first: below the grain, it runs after the
+    // join, and the guard left alone dissolves the group.
     assert!(
-        ledger
-            .iter()
-            .any(|line| line.contains("omitted offer of _par_cond_both.0")),
+        ledger.iter().any(|line| line.starts_with(
+            "PAR actualization  both  call grain: join site fill runs after the join (kept static work "
+        )),
         "{ledger:?}"
     );
 }
@@ -2873,11 +2875,12 @@ fn main() -> status: std::process::ExitStatus pure waits {
     std::fs::remove_dir_all(&directory).expect("remove the test directory");
 }
 
-/// Omitting offers below the call grain must preserve the last join site and
+/// Omitting offers below the call grain must preserve a join boundary and
 /// the ordinary evaluation of every removed member, including members inside
 /// a mixed run. `counted` is a recursion that offers its own calls, so its
 /// offers stay; `increment` is a few instructions and loses its offers; `e`,
-/// the join site, is never published.
+/// the join site the caller would keep, is below the grain too, so it runs
+/// after the join and `d` becomes the join site. Only `b` is handed out.
 #[test]
 fn call_grain_keeps_mixed_chain_results_and_join_boundary() {
     let source = br#"fn increment(x: u64) -> result: u64 pure {
@@ -2926,13 +2929,13 @@ fn main() -> status: std::process::ExitStatus pure {
         function_body(&filtered, "@wf_mixed")
             .matches("call void @wf__par_publish(")
             .count(),
-        2
+        1
     );
     assert_eq!(
         function_body(&filtered, "@wf_mixed")
             .matches("call void @wf__par_join(")
             .count(),
-        2
+        1
     );
     for module in [&all, &filtered] {
         let output = compile_and_run(module);
@@ -2946,7 +2949,7 @@ fn main() -> status: std::process::ExitStatus pure {
         function_body(&renamed, "@wf_mixed")
             .matches("call void @wf__par_publish(")
             .count(),
-        2
+        1
     );
     let (_, ledger) = crate::compile_with_permission_ledger(
         &[crate::SourceInput::new("test.wf", source)],
@@ -2963,6 +2966,79 @@ fn main() -> status: std::process::ExitStatus pure {
             .count(),
         2,
         "each omitted offer is named with its callee's static work: {ledger:?}"
+    );
+    assert_eq!(
+        ledger
+            .iter()
+            .filter(|line| line.starts_with(
+                "PAR actualization  mixed  call grain: join site increment runs after the join (kept static work "
+            ))
+            .count(),
+        1,
+        "the cheap join site is named too: {ledger:?}"
+    );
+}
+
+/// A single costly call whose caller keeps only a tiny call before the join
+/// offers nothing: the kept side cannot cover a hand-out, so the pair runs as
+/// the source's ordinary calls, while a balanced pair of the same recursion
+/// keeps its offer. Under the former rule only the handed-out side was priced
+/// and the chain published `counted` beside the one-instruction `increment`.
+#[test]
+fn call_grain_prices_the_kept_side_of_a_chain() {
+    let source = br#"fn increment(x: u64) -> result: u64 pure {
+  return x +wrap 1_u64;
+}
+
+fn counted(x: u64, steps: u64) -> result: u64 pure {
+  if steps == 0_u64 {
+    return x;
+  }
+  let fewer = steps -wrap 1_u64;
+  let left = counted(x: x, steps: fewer);
+  let right = counted(x: x, steps: fewer);
+  return left +wrap right;
+}
+
+fn chain(x: u64) -> result: u64 pure {
+  let a = counted(x: x, steps: 4_u64);
+  let e = increment(x: x);
+  return a +wrap e;
+}
+
+fn balanced(x: u64) -> result: u64 pure {
+  let a = counted(x: x, steps: 4_u64);
+  let b = counted(x: x, steps: 3_u64);
+  return a +wrap b;
+}
+"#;
+    let all = super::emit_lowered(source, crate::OverlapLowering::On);
+    let filtered = super::emit_lowered(source, crate::OverlapLowering::OnWithCallGrain);
+    assert!(function_body(&all, "@wf_chain").contains("call void @wf__par_publish("));
+    let chain = function_body(&filtered, "@wf_chain");
+    assert!(!chain.contains("@wf__par_publish("), "{chain}");
+    assert!(!chain.contains("@wf__par_join("), "{chain}");
+    assert!(
+        function_body(&filtered, "@wf_balanced").contains("call void @wf__par_publish("),
+        "a kept call reaching the offered recursion keeps the group"
+    );
+    let (_, ledger) = crate::compile_with_permission_ledger(
+        &[crate::SourceInput::new("test.wf", source)],
+        crate::CompilerLimits::default(),
+        crate::OverlapLowering::OnWithCallGrain,
+    )
+    .expect("the chain compiles");
+    assert!(
+        ledger.iter().any(|line| line.starts_with(
+            "PAR actualization  chain  call grain: join site increment runs after the join (kept static work "
+        )),
+        "{ledger:?}"
+    );
+    assert!(
+        !ledger
+            .iter()
+            .any(|line| line.starts_with("PAR actualization  balanced  call grain:")),
+        "{ledger:?}"
     );
 }
 
@@ -3130,12 +3206,14 @@ fn main() -> status: std::process::ExitStatus pure {
         crate::OverlapLowering::OnWithCallGrain,
     )
     .expect("the linear recursion compiles");
+    // The second lookup is the join site and is priced first; leaving the
+    // group, it dissolves it, so no handed-out member remains to omit.
     assert!(
         ledger.iter().any(|line| line.starts_with(
-            "PAR actualization  main  call grain: omitted offer of lookup (static work "
+            "PAR actualization  main  call grain: join site lookup runs after the join (kept static work "
         ) && line
             .ends_with(", reaches only recursion that offers none of its own calls)")),
-        "the omitted offer names the recursion it reaches: {ledger:?}"
+        "the cheap join site names the recursion it reaches: {ledger:?}"
     );
     let forking = String::from_utf8(linear.to_vec()).unwrap().replace(
         "  let below = descend(n: m);\n  return below +wrap 1_u64;",

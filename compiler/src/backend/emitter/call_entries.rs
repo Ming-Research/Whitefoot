@@ -1240,6 +1240,7 @@ mod tests {
         });
         let program = IrProgram {
             canonical_sequential: None,
+            entry_versions: Default::default(),
             nominal_ceilings: Vec::new(),
             nominals: Vec::new(),
             elements: Vec::new(),

@@ -7,6 +7,7 @@ mod buffers;
 mod call_grain;
 mod contexts;
 mod demand;
+mod entry_versions;
 mod indexed;
 mod lock_ledger;
 mod loops;
@@ -251,6 +252,12 @@ fn lower_checked_in_world(
     if call_grain == CallGrain::WorkUnit {
         call_grain::prune(&mut functions, &weights, &mut actualization);
     }
+    // After call grain: a group it dissolved no longer blocks entry choice.
+    let entry_versions = if overlap == OverlapLowering::Off {
+        Default::default()
+    } else {
+        entry_versions::plan(&functions)
+    };
     let nominal_ceilings = nominals
         .iter()
         .map(|nominal| {
@@ -260,6 +267,7 @@ fn lower_checked_in_world(
         .collect::<Result<Vec<_>, _>>()?;
     Ok(IrProgram {
         canonical_sequential: None,
+        entry_versions,
         nominal_ceilings,
         nominals,
         elements,

@@ -16,6 +16,7 @@ mod constants;
 mod contexts;
 mod conversion;
 pub(super) mod dispatch;
+mod entry_versions;
 mod floating;
 mod floor;
 mod frames;
@@ -391,7 +392,7 @@ fn emit_module(
     // Retain captured-ABI fallback helpers, but import every ordinary entrance
     // and its complete dependencies from the graph before optional extraction.
     // The bootstrap and recursion cuts keep their existing entry selection.
-    let mut clones = if thunks.is_used() {
+    let mut clones = if thunks.is_used() || thunks.selects_entry_versions {
         sequential_clone_set(program)
     } else if frontiers.is_used() {
         frontier_clones
@@ -2209,6 +2210,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 .push(Parameter::named("i64", "%wf.budget"));
         }
         self.emit_grain_entry(&public)?;
+        self.emit_entry_version(&public)?;
         if waiting {
             self.emit_frame_entry()?;
         }

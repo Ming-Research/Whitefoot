@@ -1754,11 +1754,117 @@ fn indexed_drivers_pass_destinations_and_carry_their_families_on_the_far_offer()
     });
 }
 
+/// A fixture whose named literal loop extents are read from a parameter
+/// instead, so a call-free loop that the compile-time small-site rule makes
+/// ordinary code keeps its range split. Each replaced text occurs once.
+fn with_runtime_extents(source: &[u8], replacements: &[(&str, &str)]) -> Vec<u8> {
+    let mut text = std::str::from_utf8(source)
+        .expect("UTF-8 fixture")
+        .to_owned();
+    for (literal, runtime) in replacements {
+        assert_eq!(text.matches(literal).count(), 1, "{literal}");
+        text = text.replacen(literal, runtime, 1);
+    }
+    text.into_bytes()
+}
+
+/// `direct`, the case's one call-free loop, with its extent a parameter.
+const RUNTIME_DIRECT: &[(&str, &str)] = &[
+    (
+        "fn direct() -> result: u64 pure {",
+        "fn direct(limit: u64) -> result: u64 pure {",
+    ),
+    (
+        "  for (i in 0_u64..16_u64) {\n    set first^[0_u64]",
+        "  for (i in 0_u64..limit) {\n    set first^[0_u64]",
+    ),
+    (
+        "let updated = direct();",
+        "let updated = direct(limit: 16_u64);",
+    ),
+];
+
+/// Both call-free loops of the field case, with their extents parameters.
+const RUNTIME_FIELDS: &[(&str, &str)] = &[
+    (
+        "fn reduce() -> result: u64 pure {",
+        "fn reduce(limit: u64) -> result: u64 pure {",
+    ),
+    ("for (i in 0_u64..128_u64)", "for (i in 0_u64..limit)"),
+    (
+        "let result = reduce();",
+        "let result = reduce(limit: 128_u64);",
+    ),
+    (
+        "fn different_maps() -> result: u64 pure {",
+        "fn different_maps(limit: u64) -> result: u64 pure contract {\n  requires limit <= 4_u64;\n} {",
+    ),
+    (
+        "for (i in 0_u64..4_u64) {\n    let next",
+        "for (i in 0_u64..limit) {\n    let next",
+    ),
+    (
+        "let maps = different_maps();",
+        "let maps = different_maps(limit: 4_u64);",
+    ),
+];
+
+/// A call-free indexed loop over a literal range whose complete work is below
+/// the grain is ordinary code, like any other compile-time small site: no
+/// split, driver or chunk remains for `direct`. `calls` keeps its split over
+/// the same sixteen iterations, because a short literal count does not bound
+/// a helper's work.
 #[test]
-fn indexed_aliases_select_one_private_family_and_one_block_per_resolved_root() {
+fn a_compile_time_small_indexed_loop_keeps_ordinary_code() {
     let source =
         include_bytes!("../../../tests/conformance/cases/par2-pos-indexed-aliased-updates.wf");
     with_ir_mode(source, OverlapLowering::On, |program| {
+        let splits = |name: &str| {
+            function(program, name)
+                .blocks()
+                .iter()
+                .flat_map(|block| block.instructions())
+                .filter(|instruction| {
+                    matches!(
+                        instruction,
+                        IrInstruction::Define {
+                            operation: IrOperation::LoopSplit { .. },
+                            ..
+                        }
+                    )
+                })
+                .count()
+        };
+        assert_eq!(splits("direct"), 0);
+        assert_eq!(splits("calls"), 1);
+        assert!(
+            program.functions().iter().all(|function| {
+                !function.name().starts_with("_par_split_direct.")
+                    && !function.name().starts_with("_par_chunk_direct.")
+            }),
+            "a proven-small site reserves no helper"
+        );
+        assert!(
+            program
+                .actualization_ledger()
+                .iter()
+                .any(|line| line.contains("direct")
+                    && line.contains(
+                        "sequential: constant range is indivisible or below the split grain"
+                    )),
+            "{:?}",
+            program.actualization_ledger()
+        );
+    });
+}
+
+#[test]
+fn indexed_aliases_select_one_private_family_and_one_block_per_resolved_root() {
+    let source = with_runtime_extents(
+        include_bytes!("../../../tests/conformance/cases/par2-pos-indexed-aliased-updates.wf"),
+        RUNTIME_DIRECT,
+    );
+    with_ir_mode(&source, OverlapLowering::On, |program| {
         for (name, count, blocked) in [
             ("calls", 1, true),
             ("direct", 1, false),
@@ -2978,8 +3084,11 @@ fn run_borrows_below_range_elements_keep_the_outer_projection() {
 
 #[test]
 fn indexed_field_families_share_the_root_length_and_keep_distinct_projections() {
-    let source = include_bytes!("../../../tests/conformance/cases/par2-pos-indexed-fields.wf");
-    with_ir_mode(source, OverlapLowering::On, |program| {
+    let source = with_runtime_extents(
+        include_bytes!("../../../tests/conformance/cases/par2-pos-indexed-fields.wf"),
+        RUNTIME_FIELDS,
+    );
+    with_ir_mode(&source, OverlapLowering::On, |program| {
         for name in ["reduce", "different_maps"] {
             let function = program
                 .functions()

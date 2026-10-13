@@ -456,6 +456,9 @@ pub(crate) struct ParallelThunks {
     /// numbers the next one's symbol within that function alone.
     local: std::collections::HashMap<String, u32>,
     pub(super) queries_demand: bool,
+    /// Some function selects its ordinary closure at entry, so the module
+    /// carries that closure even when no hand-out was emitted.
+    pub(super) selects_entry_versions: bool,
     /// The thunks of started contexts [WAIT-3], which name the bridge's context
     /// entry points and no compute scheduler symbol.
     context_definitions: Module,
@@ -890,7 +893,7 @@ impl FunctionEmitter<'_, '_> {
     /// would never execute. Scalars and range descriptors are already
     /// captured; a Box-array header load additionally relies on its exhibited
     /// typed read and the retained no-write fact for the original formal.
-    fn emit_work_estimate(
+    pub(super) fn emit_work_estimate(
         &mut self,
         work: &IrWorkEstimate,
         memo: &mut std::collections::HashMap<IrWorkEstimate, String>,
@@ -1008,7 +1011,7 @@ impl FunctionEmitter<'_, '_> {
         Ok(value)
     }
 
-    fn emit_work_binary(
+    pub(super) fn emit_work_binary(
         &mut self,
         intrinsic: &str,
         left: &str,

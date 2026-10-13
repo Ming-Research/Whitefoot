@@ -904,6 +904,24 @@ pub enum IrWorkEstimate {
     Quotient(Box<Self>, u64),
 }
 
+/// One reachable range site's split decision, stated over the entry values of
+/// the function that selects its computation once
+/// (compiler/parallel-lowering/two-worlds).
+///
+/// `span` bounds every remaining range the site's driver can see from above
+/// and `price` bounds its positive iteration price from above, so the site
+/// can never hand out work when `span` is below
+/// `max(2, floor(149999 / max(price, 1)) + 1)`. `cells`, present only for an
+/// indexed site whose family counts are entry values, is the sum the driver
+/// charges three times for a far contribution; a far half no larger than
+/// that charge divided by the price can never pay for its storage either.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct IrEntryPredicate {
+    pub(crate) span: IrWorkEstimate,
+    pub(crate) price: IrWorkEstimate,
+    pub(crate) cells: Option<IrWorkEstimate>,
+}
+
 /// [SHARE-3] A wake test: a condition over one object target's state that
 /// the statement's guard implies, which the runtime evaluates for the watch
 /// after a statement writes the object (compiler/waiting-contexts/state-locks).
@@ -2185,6 +2203,11 @@ pub struct IrProgram {
     /// Ordinary lowering from the same checked input and roots, retained before
     /// optional parallel extraction. Its own canonical graph is always absent.
     pub(crate) canonical_sequential: Option<Box<Self>>,
+    /// Functions that select the ordinary computation once at entry, by
+    /// name: every reachable split of each stays below its grain whenever all
+    /// of its predicates hold. An empty list means every reachable split is
+    /// below its grain for every entry. Empty without parallel extraction.
+    pub(crate) entry_versions: std::collections::BTreeMap<String, Vec<IrEntryPredicate>>,
     /// OP-9 ceilings before target representation choices, indexed by nominal.
     pub(crate) nominal_ceilings: Vec<IrLayoutCeiling>,
     pub(crate) nominals: Vec<IrNominal>,

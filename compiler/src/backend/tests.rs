@@ -24,6 +24,7 @@ mod decision_cell;
 mod deterministic_target;
 mod division_obligations;
 mod effect_attributes;
+mod entry_versions;
 mod enumeration_records;
 mod exhaustion;
 mod float_conversion;
@@ -197,6 +198,28 @@ fn emit(source: &[u8]) -> String {
 /// what `whitefootc --par --par-call-grain off` compiles.
 fn emit_with_overlap(source: &[u8]) -> String {
     emit_lowered(source, OverlapLowering::On)
+}
+
+/// `module` with every function-entry choice of the ordinary closure sent
+/// to the parallel body (compiler/parallel-lowering/two-worlds).
+///
+/// An observer that forces scheduling inputs at range-driver calls must still
+/// reach those calls when the real inputs are below the grain; the entry
+/// choice itself is checked in `entry_versions`.
+fn without_entry_selection(module: &str) -> String {
+    const SELECTION: &str = ", label %par.region.sequential, label %";
+    let mut rewritten = String::with_capacity(module.len());
+    for line in module.split_inclusive('\n') {
+        match line.split_once(SELECTION) {
+            Some((condition, body)) if condition.trim_start().starts_with("br i1 ") => {
+                rewritten.push_str("  br i1 false");
+                rewritten.push_str(SELECTION);
+                rewritten.push_str(body);
+            }
+            _ => rewritten.push_str(line),
+        }
+    }
+    rewritten
 }
 
 /// The developer-channel permission ledger of one source, compiled the way

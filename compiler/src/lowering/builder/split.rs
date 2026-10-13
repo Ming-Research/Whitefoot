@@ -538,7 +538,10 @@ impl<'program> IrBuilder<'program> {
         }
         // Literal endpoints permit a complete cheap-site proof only after
         // the candidate exposes its ordinary instructions. Delay reservations
-        // so a proven-small site can reuse that CFG without dead helpers.
+        // so a proven-small site can reuse that CFG without dead helpers. An
+        // indexed site qualifies too: its far-half setup charge only makes a
+        // split rarer, and the reused CFG updates the current destinations
+        // exactly as a refused far half or a declined frame does.
         let literal = |value| {
             self.blocks
                 .iter()
@@ -552,10 +555,8 @@ impl<'program> IrBuilder<'program> {
                     _ => None,
                 })
         };
-        let constant_span = indexed
-            .is_empty()
-            .then(|| literal(lower).zip(literal(upper)))
-            .flatten()
+        let constant_span = literal(lower)
+            .zip(literal(upper))
             .map(|(lower, upper)| upper.saturating_sub(lower));
         let prune_captures = self.frame_decline(result_type, &captures)?.is_some();
         // Preserve the established preorder names and complete fitting ABI.

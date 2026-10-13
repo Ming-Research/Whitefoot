@@ -136,6 +136,44 @@ Its resource-record writer remains the shared worker-safe latched writer.
 Actual linked computation identity, including the two three-element loop
 workloads, is checked separately from IR identity and entry-dispatch cost.
 
+### Step 6 as built
+
+The step-6 implementation makes these choices; none of them is measured yet.
+
+- Entry choice coverage. Lowering summarizes, per function, every split
+  decision it reaches as an upper bound of the span and the per-iteration
+  price and, for an indexed site, a lower bound of its families' cells, over
+  the function's own formals, range-reference lengths and read-only Box
+  array lengths. A reached call substitutes its actual arguments into the
+  callee's summary; a chunk's seed and endpoints change per slice and are
+  never substituted. `lo +wrap e` as an upper endpoint bounds the span by
+  `e`, which covers a window walked across a loop. A function keeps local
+  decisions when it has a remaining call group (its offers already reached
+  the grain), waits, opens a context, is recursive, or reaches a bound that
+  is unavailable or varies after entry. Any single reached site qualifies;
+  the prototype's repeated-scheduling restriction and its `unversioned`
+  ablation are not carried over. Constant predicates fold: all cheap enters
+  the ordinary closure unconditionally, and any constant expensive site
+  removes the choice. The emitted test is the driver's own arithmetic, so
+  the choice never selects ordinary computation for a span the driver would
+  divide; only performance depends on it, since both bodies compute the
+  same result.
+- Both-sides grain. The join site, the member the caller keeps, is priced
+  by the offer grain; one below it runs after the join and the member before
+  it is repriced, so a costly call beside a tiny kept call offers nothing
+  while a balanced recursion keeps its group. The prototype's `one-sided`
+  ablation is not carried over.
+- Indexed small sites. The compile-time small-site rule (literal endpoints,
+  call-free, unnested, span times price below the grain) now applies to
+  indexed reductions too; such a site keeps ordinary code and no private
+  family setup.
+- Ranges that can never reach the split span. A stencil row whose width the
+  caller's contract bounds by 4096 has no bound in the row function itself,
+  and lowering carries no value-range facts from contracts, so the bound is
+  not provable at compile time there. The row function's entry choice reads
+  its output range's length instead and enters ordinary computation with one
+  comparison per call, removing the driver from the executed path.
+
 ### Lane requests
 
 World selection remains based on the requested worker width. Before entering

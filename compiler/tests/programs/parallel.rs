@@ -66,7 +66,10 @@ fn the_quadrature_program_publishes_the_analytic_integral_under_each_policy() {
         assert_eq!(
             ledger
                 .iter()
-                .filter(|line| line.contains("call grain: omitted offer"))
+                .filter(|line| {
+                    line.contains("call grain: omitted offer")
+                        || line.contains("call grain: join site")
+                })
                 .count(),
             omitted_leaves
         );
