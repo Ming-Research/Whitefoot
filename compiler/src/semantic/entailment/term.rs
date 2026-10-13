@@ -197,7 +197,7 @@ pub(crate) const ZERO: TermId = TermId(0);
 
 /// The bound on a constant term's magnitude. A constant term comes only from
 /// a fragment-typed value, a type limit or a length, each within plus or
-/// minus 2^65, while a clause's or a range formation's folded constant goes
+/// minus 2^64, while a clause's or a range formation's folded constant goes
 /// through Z into a fact's constant [ENT-2]. The bound keeps every term
 /// within the plus or minus 2^66 on which the closure's saturating
 /// arithmetic is exact (see `DistinctKey`): a constant term `c` at
