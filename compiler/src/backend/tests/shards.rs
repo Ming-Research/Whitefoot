@@ -16,6 +16,35 @@ fn shards_emit_inline_ticket_paths_and_no_watch_protocol() {
     assert!(llvm.contains("@wf__map_user = external thread_local global i32"));
     assert!(llvm.contains("load i32, ptr @wf__map_user"));
     assert!(
+        llvm.contains("@wf__context_boundary = external thread_local global { ptr, ptr, i64 }")
+    );
+    assert!(llvm.contains(".next = add i32 "));
+    assert!(llvm.contains(".threshold = icmp uge i32 "));
+    assert!(llvm.contains(".identity = and i64 "));
+    assert!(llvm.contains(".check = or i1 "));
+    assert!(llvm.contains("call i32 @wf__context_pass_counted("));
+    let lines = llvm.lines().collect::<Vec<_>>();
+    let resumes = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, line)| line.starts_with("wf.atomic.pass.") && line.ends_with(".resume:"))
+        .collect::<Vec<_>>();
+    assert!(!resumes.is_empty());
+    for (index, label) in resumes {
+        let done = label.trim_end_matches(".resume:");
+        assert_eq!(
+            lines[index + 1].trim(),
+            format!("br label %{done}.done"),
+            "resume must reach acquisition without counting this pass again"
+        );
+    }
+    let boundary = llvm.find("call i32 @wf__context_pass_counted(").unwrap();
+    let selection = llvm.find("load i32, ptr @wf__map_user").unwrap();
+    assert!(
+        boundary < selection,
+        "choose the executor's shard after possible migration"
+    );
+    assert!(
         llvm.lines().any(|line| line.contains("atomicrmw add ptr")
             && line.contains("i64 1 monotonic"))
     );

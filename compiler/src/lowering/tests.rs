@@ -482,6 +482,27 @@ fn main() -> status: std::process::ExitStatus pure waits {
                             record.kind(),
                             crate::IrRecordKind::ShardsGroup { count: 2 }
                         ));
+                        let passes = body
+                            .instructions()
+                            .iter()
+                            .filter(|instruction| {
+                                matches!(
+                                    instruction,
+                                    IrInstruction::Define {
+                                        operation: IrOperation::AtomicPass,
+                                        ..
+                                    }
+                                )
+                            })
+                            .count();
+                        assert_eq!(passes, 1, "each lazy take counts behind its held flag");
+                        assert!(matches!(
+                            body.instructions().first(),
+                            Some(IrInstruction::Define {
+                                operation: IrOperation::AtomicPass,
+                                ..
+                            })
+                        ));
                         acquisitions.push((gate(block, true), targets));
                     }
                     IrInstruction::Define {

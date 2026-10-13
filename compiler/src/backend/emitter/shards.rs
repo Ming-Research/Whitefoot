@@ -1,6 +1,7 @@
 //! Shards keep their immutable header separate from each ticket lock and value.
 //! The lock fast paths and same-type identity ordering are emitted inline;
-//! only a contended ticket calls the runtime, without suspending the frame.
+//! acquisition first counts the statement's waiting boundary. After that
+//! boundary, only a contended ticket calls the runtime, without suspending.
 
 use super::shared::{record_name, record_storage};
 use super::*;

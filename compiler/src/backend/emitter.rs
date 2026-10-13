@@ -2934,6 +2934,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             }
             IrOperation::SnapshotAtomicBegin => self.emit_snapshot_atomic(result, true),
             IrOperation::SnapshotAtomicEnd => self.emit_snapshot_atomic(result, false),
+            IrOperation::AtomicPass => self.emit_atomic_pass(result),
             IrOperation::SharedAcquire { object } => {
                 self.emit_shared_wait(result, *object, "wf__shared_acquire", "acquire", "")
             }

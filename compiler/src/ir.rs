@@ -1383,6 +1383,9 @@ pub enum IrOperation {
     SnapshotAtomicBegin,
     /// Activates prepared captures after all atomic targets are released.
     SnapshotAtomicEnd,
+    /// [WAIT-2] one statement acquisition boundary, before any target is held.
+    /// The inline pass may suspend; resume continues without counting again.
+    AtomicPass,
     /// [SHARE-2, SHARE-3] waits until this context holds the object alone.
     /// Defines `Unit`.
     SharedAcquire {

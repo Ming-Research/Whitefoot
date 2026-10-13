@@ -87,3 +87,115 @@ fn the_first_group_parks_and_a_later_group_does_not() {
         assert_eq!(group_takes(program), [(true, 2), (false, 3)]);
     });
 }
+
+#[test]
+fn map_first_counts_one_boundary_before_taking_any_target() {
+    with_ir(
+        include_bytes!("../../../../tests/conformance/cases/share-pos-shards-beside-map-entry.wf"),
+        |program| {
+            let lookup = function(program, "lookup");
+            let operations = lookup
+                .blocks()
+                .iter()
+                .flat_map(IrBlock::instructions)
+                .filter_map(|instruction| match instruction {
+                    IrInstruction::Define { operation, .. } => Some(operation),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                operations
+                    .iter()
+                    .filter(|operation| matches!(operation, IrOperation::AtomicPass))
+                    .count(),
+                1
+            );
+            assert!(!operations.iter().any(|operation| matches!(
+                operation,
+                IrOperation::SharedAcquire { .. } | IrOperation::AtomicGroupAcquire { .. }
+            )));
+            let pass = operations
+                .iter()
+                .position(|operation| matches!(operation, IrOperation::AtomicPass))
+                .unwrap();
+            let entry = operations
+                .iter()
+                .position(|operation| matches!(operation, IrOperation::TableLockEntry { .. }))
+                .unwrap();
+            let shard = operations
+                .iter()
+                .position(|operation| matches!(operation, IrOperation::ShardsTake { .. }))
+                .unwrap();
+            assert!(pass < entry && entry < shard);
+        },
+    );
+    with_ir(
+        include_bytes!("../../../../tests/conformance/cases/share-pos-map-two-handles-one-entry.wf"),
+        |program| {
+            assert_eq!(group_takes(program), [(false, 2)]);
+            let operations = function(program, "main")
+                .blocks()
+                .iter()
+                .flat_map(IrBlock::instructions)
+                .filter_map(|instruction| match instruction {
+                    IrInstruction::Define { operation, .. } => Some(operation),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            // The eager grouped statement counts once before either target.
+            // Later whole-map uses have separate static take sites behind
+            // one lazy held flag; they need not have one static pass site.
+            let grouped = function(program, "main")
+                .blocks()
+                .iter()
+                .find(|block| {
+                    block.instructions().iter().any(|instruction| {
+                        matches!(
+                            instruction,
+                            IrInstruction::Define {
+                                operation: IrOperation::AtomicGroupTake { .. },
+                                ..
+                            }
+                        )
+                    })
+                })
+                .expect("the fixture has one eager grouped map take");
+            let passes = grouped
+                .instructions()
+                .iter()
+                .enumerate()
+                .filter_map(|(index, instruction)| {
+                    matches!(
+                        instruction,
+                        IrInstruction::Define {
+                            operation: IrOperation::AtomicPass,
+                            ..
+                        }
+                    )
+                    .then_some(index)
+                })
+                .collect::<Vec<_>>();
+            let [pass] = passes.as_slice() else {
+                panic!("the grouped statement counts exactly one boundary");
+            };
+            let take = grouped
+                .instructions()
+                .iter()
+                .position(|instruction| {
+                    matches!(
+                        instruction,
+                        IrInstruction::Define {
+                            operation: IrOperation::AtomicGroupTake { .. },
+                            ..
+                        }
+                    )
+                })
+                .unwrap();
+            assert!(*pass < take);
+            assert!(!operations.iter().any(|operation| matches!(
+                operation,
+                IrOperation::SharedAcquire { .. } | IrOperation::AtomicGroupAcquire { .. }
+            )));
+        },
+    );
+}

@@ -187,6 +187,64 @@ static void fixture_end(void) {
     atomic_store(&wf_drivers[0], NULL);
 }
 
+/* The emitted inline boundary has already incremented the context's word.
+ * Exercise the same cold helper's no-peer, threshold and displacement cases
+ * with explicit tokens and queue contents, without a timing assumption. */
+static void counted_atomic_boundaries(void) {
+    uint64_t saved_outside = wf_context_outside;
+    int saved_parked = wf_context_parked_away;
+    fixture_begin();
+    service_frame frame = {0};
+    wf_context peer = {.driver = &wf_driver_root};
+    wf_context_outside = WF_DRIVER_EPOCH_STEP | WF_DRIVER_OUTSIDE;
+    atomic_store(&wf_driver_root.service_token, wf_context_outside);
+    wf_context_set_current(&wf_context_root);
+    wf_context_parked_away = 0;
+    CHECK(wf__context_boundary.passes == &wf_context_root.passes);
+    CHECK(wf__context_boundary.service_token == &wf_driver_root.service_token);
+    CHECK(wf__context_boundary.outside == wf_context_outside);
+
+    *wf__context_boundary.passes = WF_CONTEXT_YIELD_PASSES - 1u;
+    CHECK(wf__context_pass(&frame) == 0);
+    CHECK(wf_context_root.passes == 0u);
+    *wf__context_boundary.passes = WF_CONTEXT_YIELD_PASSES;
+    CHECK(wf__context_pass_counted(&frame) == 0);
+    CHECK(wf_context_root.passes == 0u && !wf_context_parked_away);
+
+    wf_run_push(&wf_driver_root, &peer);
+    *wf__context_boundary.passes = WF_CONTEXT_YIELD_PASSES - 1u;
+    CHECK(wf__context_pass_counted(&frame) == 0);
+    CHECK(wf_context_root.passes == WF_CONTEXT_YIELD_PASSES - 1u);
+    *wf__context_boundary.passes += 1u;
+    CHECK(wf__context_pass_counted(&frame) == 1);
+    CHECK(wf_context_root.passes == 0u && wf_context_root.resume == &frame);
+    CHECK(wf_context_parked_away);
+    CHECK(atomic_load(&wf_context_root.wake_gate) == WF_WAKE_EARLY);
+    wf_context_commit_wake(&wf_context_root);
+    CHECK(wf_run_take(&wf_driver_root) == &peer);
+    CHECK(wf_run_take(&wf_driver_root) == &wf_context_root);
+    CHECK(wf_run_take(&wf_driver_root) == NULL);
+
+    wf_context_parked_away = 0;
+    *wf__context_boundary.passes = 1u;
+    atomic_store(&wf_driver_root.service_token,
+        WF_DRIVER_EPOCH_STEP | WF_DRIVER_BORROWED_SERVICE);
+    CHECK(wf__context_pass_counted(&frame) == 0);
+    CHECK(wf_context_root.passes == 1u && !wf_context_parked_away);
+    atomic_store(&wf_driver_root.service_token,
+        (2u * WF_DRIVER_EPOCH_STEP) | WF_DRIVER_OUTSIDE);
+    CHECK(wf__context_pass_counted(&frame) == 1);
+    CHECK(wf_context_root.passes == 1u && wf_context_parked_away);
+    CHECK(wf_context_root.resume == &frame);
+    wf_context_commit_wake(&wf_context_root);
+    CHECK(wf_run_take(&wf_driver_root) == &wf_context_root);
+    CHECK(wf_run_take(&wf_driver_root) == NULL);
+    wf_context_outside = saved_outside;
+    wf_context_parked_away = saved_parked;
+    fixture_end();
+    wf_context_set_current(NULL);
+}
+
 typedef struct startup_park {
     uint64_t epoch;
     enum wf_completion_park_result result;
@@ -726,6 +784,8 @@ int main(void) {
     wf_test_guard_start(30);
     wf_bridge_require();
     CHECK(!wf_bridge_ring_ready()); /* deterministic service-only fixture */
+    wf_test_guard_phase("counted atomic boundaries share threshold and displacement handling");
+    counted_atomic_boundaries();
     wf_test_guard_phase("startup publication wakes an obsolete unbounded park");
     startup_publication();
     wf_test_guard_phase("ready-queue steals have separate attribution");

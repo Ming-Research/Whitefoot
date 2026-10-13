@@ -1137,6 +1137,62 @@ impl FunctionEmitter<'_, '_> {
         self.emit_parking_call(result, "wf__atomic_group_acquire", &arguments, "group", true)
     }
 
+    /// The first shard/keyed acquisition is a waiting boundary even when its
+    /// lock is uncontended. Only the context-local count is written here;
+    /// displacement is checked at every pass, like the native wait path.
+    pub(super) fn emit_atomic_pass(&mut self, result: IrValueId) -> Result<(), BackendFailure> {
+        if !self.function.waits() || self.grain.is_some() {
+            return Err(BackendFailure::InvalidIr);
+        }
+        let prefix = labels("atomic.pass", result);
+        self.names(&[
+            "wf__context_boundary",
+            "wf__context_pass_counted",
+            "llvm.coro.save",
+        ]);
+        writeln!(
+            self.output,
+            "  %{prefix}.passes.ptr = load ptr, ptr @wf__context_boundary, align 8\n  \
+             %{prefix}.passes = load i32, ptr %{prefix}.passes.ptr, align 4\n  \
+             %{prefix}.next = add i32 %{prefix}.passes, 1\n  \
+             store i32 %{prefix}.next, ptr %{prefix}.passes.ptr, align 4\n  \
+             %{prefix}.threshold = icmp uge i32 %{prefix}.next, 64\n  \
+             %{prefix}.token.ptr = load ptr, ptr getelementptr ({{ ptr, ptr, i64 }}, ptr @wf__context_boundary, i32 0, i32 1), align 8\n  \
+             %{prefix}.token = load atomic i64, ptr %{prefix}.token.ptr acquire, align 8\n  \
+             %{prefix}.outside = load i64, ptr getelementptr ({{ ptr, ptr, i64 }}, ptr @wf__context_boundary, i32 0, i32 2), align 8\n  \
+             %{prefix}.changed = xor i64 %{prefix}.token, %{prefix}.outside\n  \
+             %{prefix}.identity = and i64 %{prefix}.changed, -8\n  \
+             %{prefix}.displaced = icmp ne i64 %{prefix}.identity, 0\n  \
+             %{prefix}.check = or i1 %{prefix}.threshold, %{prefix}.displaced\n  \
+             br i1 %{prefix}.check, label %{prefix}.slow, label %{prefix}.done\n\
+             {prefix}.slow:\n  \
+             %{prefix}.saved = call token @llvm.coro.save(ptr null)\n  \
+             %{prefix}.parked = call i32 @wf__context_pass_counted(ptr {HANDLE})\n  \
+             %{prefix}.suspends = icmp ne i32 %{prefix}.parked, 0\n  \
+             br i1 %{prefix}.suspends, label %{prefix}.suspend, label %{prefix}.done\n\
+             {prefix}.suspend:"
+        )?;
+        let snapshot = snapshot::required(self.program);
+        if snapshot {
+            self.names(&["wf_snapshot_atomic_end", "wf_snapshot_atomic_begin"]);
+            writeln!(self.output, "  call void @wf_snapshot_atomic_end()")?;
+        }
+        self.emit_suspension(
+            &format!("%{prefix}.saved"),
+            &prefix,
+            &format!("{prefix}.resume"),
+        )?;
+        self.output.open_block(format!("{prefix}.resume"));
+        if snapshot {
+            // Suspension restored the old executor's mask; the resumed
+            // context may now be on another executor, before any hold.
+            writeln!(self.output, "  call void @wf_snapshot_atomic_begin()")?;
+        }
+        writeln!(self.output, "  br label %{prefix}.done")?;
+        self.output.open_block(format!("{prefix}.done"));
+        self.emit_constant(result, IrType::Unit, IrConstant::Unit)
+    }
+
     /// A call of `entry` that answers 1 when it has parked the frame, which
     /// then suspends, and 0 otherwise; the resumed frame calls again when
     /// `retries`, and otherwise continues.

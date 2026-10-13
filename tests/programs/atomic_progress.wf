@@ -1,0 +1,124 @@
+const progress_key: Array<u8, 1> =[97_u8];
+
+fn progress_empty_shard() -> result: u64 pure {
+  return 0_u64;
+}
+
+fn progress_worker(started: Shared<u64>, stop: DecisionCell, mode: u8) -> result: unit pure waits {
+  let shards = shared_shards_new::<u64, fn progress_empty_shard>();
+  let store = shared_map_new::<u64>(capacity: 1_u64);
+  let store_two = shared_map_new::<u64>(capacity: 1_u64);
+  let ordinary = shared_new::<u64>(value: 0_u64);
+  let key = &progress_key[0_u64..1_u64];
+  let keys = key_set_new(capacity: 1_u64);
+  key_set_insert(keys: &keys, key: key);
+  let mine = any_shard();
+  atomic ready = &started {
+    set ready^ = ready^ +wrap 1_u64;
+  }
+  let open = Open();
+  loop @update {
+    if mode == 0_u8 {
+      atomic part = &shards[mine] {
+        set part^ = part^ +wrap 1_u64;
+      }
+    } else {
+      if mode == 1_u8 {
+        atomic slot = &store[key] {
+          set slot^ = Some<u64>(value: 1_u64);
+        }
+      } else {
+        if mode == 2_u8 {
+          atomic entries = &store[keys] {
+            for @key (at in 0_u64..entries^.len) {
+              set entries^[at] = Some<u64>(value: 1_u64);
+            }
+          }
+        } else {
+          if mode == 3_u8 {
+            atomic all = &shards {
+              for @shard (at in 0_u64..all^.len) {
+                set all^[at] = all^[at] +wrap 1_u64;
+              }
+            }
+          } else {
+            if mode == 4_u8 {
+              atomic slot = &store[key], part = &shards[mine] {
+                set slot^ = Some<u64>(value: 1_u64);
+                set part^ = part^ +wrap 1_u64;
+              }
+            } else {
+              if mode == 5_u8 {
+                atomic first = &store[key], second = &store_two[key] {
+                  set first^ = Some<u64>(value: 1_u64);
+                  set second^ = Some<u64>(value: 1_u64);
+                }
+              } else {
+                atomic value = &ordinary {
+                  set value^ = value^ +wrap 1_u64;
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    let verdict = decision_cell_read(cell: &stop);
+    if verdict != open {
+      break @update;
+    }
+  }
+  return unit;
+}
+
+fn progress_stop(started: Shared<u64>, stop: DecisionCell, clock: std::time::Clock) -> result: unit pure waits {
+  atomic ready = &started when ready^ == 8_u64 {
+  }
+  let begin = std::time::now(clock: &clock);
+  let wake = std::time::instant_after(instant: begin, nanoseconds: 1000000_u64);
+  let never = std::time::cancel_never();
+  std::time::sleep_until(deadline: wake, cancel: &never);
+  std::time::close_cancel_watch(watch: move never);
+  atomic ready = &started {
+    set ready^ = 9_u64;
+    let winner = claim_written(cell: &stop);
+  }
+  return unit;
+}
+
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
+  let std::process::Inputs(cwd: directory, handles: handles, stdin: input, clock: clock, ..) = move inputs;
+  let std::fs::Directory(read: readable, write: writable) = move directory;
+  std::fs::close_directory_write(factory: &handles, directory: move writable);
+  std::fs::close_directory(factory: &handles, directory: move readable);
+  let bytes = array_filled::<u8, 1>(value: 0_u8);
+  let no_deadline = None<std::time::Instant>();
+  let never = std::time::cancel_never();
+  let outcome = std::io::read_next(factory: &handles, input: &input, destination: &bytes[0_u64..1_u64], start: 0_u64, end: 1_u64, deadline: no_deadline, cancel: &never);
+  std::time::close_cancel_watch(watch: move never);
+  match outcome {
+    Ok(value: count) => {
+      if count != 1_u64 {
+        return std::process::exit_status(code: 1_u8);
+      }
+    }
+    Err(error: failure) => {
+      return std::process::exit_status(code: 2_u8);
+    }
+  }
+  let mode = bytes[0_u64];
+  if mode > 6_u8 {
+    return std::process::exit_status(code: 3_u8);
+  }
+  let started = shared_new::<u64>(value: 0_u64);
+  let stop = decision_cell_new();
+  let watched = shared_share::<u64>(shared: &started);
+  let setter = decision_cell_share(cell: &stop);
+  spawn progress_stop(started: move watched, stop: move setter, clock: move clock);
+  for @worker (at in 0_u64..8_u64) {
+    let ready = shared_share::<u64>(shared: &started);
+    let observer = decision_cell_share(cell: &stop);
+    spawn progress_worker(started: move ready, stop: move observer, mode: mode);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

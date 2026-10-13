@@ -1740,6 +1740,24 @@ _Thread_local unsigned wf__map_user;
 _Static_assert(sizeof(wf__map_user) == 4u, "the emitted map-user TLS is i32");
 static _Thread_local uint64_t wf_context_outside;
 static _Thread_local wf_context *wf_context_current;
+_Thread_local wf_context_boundary wf__context_boundary;
+_Static_assert(offsetof(wf_context_boundary, passes) == 0u
+    && offsetof(wf_context_boundary, service_token) == 8u
+    && offsetof(wf_context_boundary, outside) == 16u
+    && sizeof(wf_context_boundary) == 24u,
+    "inline atomic boundary uses { ptr, ptr, i64 }");
+_Static_assert(WF_DRIVER_PHASE_MASK == UINT64_C(7),
+    "inline atomic boundary masks the service token's three phase bits");
+
+/* Keep the generated boundary tied to the same context as native waits,
+ * including frame creation/destruction's temporary context switches. */
+static void wf_context_set_current(wf_context *context) {
+    wf_context_current = context;
+    wf__context_boundary.passes = context == NULL ? NULL : &context->passes;
+    wf__context_boundary.service_token = wf_driver_self == NULL
+        ? NULL : &wf_driver_self->service_token;
+    wf__context_boundary.outside = wf_context_outside;
+}
 /* Set when suspension registered an external wake or a fairness yield.
  * Its wake gate is committed only after the native resume returns. */
 static _Thread_local int wf_context_parked_away;
@@ -1957,6 +1975,8 @@ static void wf_context_commit_wake(wf_context *context) {
 /* How many waits in a row a context may have answered at once before it
  * offers its driver to another ready context. */
 #define WF_CONTEXT_YIELD_PASSES 64u
+_Static_assert(WF_CONTEXT_YIELD_PASSES == 64u,
+    "inline atomic boundary compares the pass count with 64");
 
 /* [WAIT-2] one more wait the host, an object or a join answered without
  * suspending the running context. Drivers do not preempt, so a context whose
@@ -1966,8 +1986,9 @@ static void wf_context_commit_wake(wf_context *context) {
  * another context is ready on this driver, the context goes to the back of
  * the run queue and answers 1, and its frame suspends as for any wait; the
  * driver resets the count whenever it resumes the context. A context alone on
- * its driver continues, since there is no one to yield to. */
-static int wf_context_pass(wf_context *self, void *frame) {
+ * its driver continues, since there is no one to yield to. Both the native
+ * wrapper and the generated inline boundary count before entering here. */
+static int wf_context_pass_counted(wf_context *self, void *frame) {
     wf_driver *driver = wf_driver_self;
     if (driver == NULL) return 0;
     /* Only legal waiting boundaries reach here, before any shared/keyed
@@ -1976,7 +1997,6 @@ static int wf_context_pass(wf_context *self, void *frame) {
     uint64_t token = atomic_load_explicit(&driver->service_token, memory_order_acquire);
     int displaced = (token & ~WF_DRIVER_PHASE_MASK)
         != (wf_context_outside & ~WF_DRIVER_PHASE_MASK);
-    self->passes += 1u;
     if (!displaced) {
         if (self->passes < WF_CONTEXT_YIELD_PASSES) return 0;
         self->passes = 0u;
@@ -1987,6 +2007,12 @@ static int wf_context_pass(wf_context *self, void *frame) {
     wf_context_arm_wake(self);
     wf_context_ready(self);
     return 1;
+}
+
+static int wf_context_pass(wf_context *self, void *frame) {
+    if (wf_driver_self == NULL) return 0;
+    self->passes += 1u;
+    return wf_context_pass_counted(self, frame);
 }
 
 /* Moves about half of another driver's ready contexts here. A ready context has no
@@ -2638,6 +2664,14 @@ int wf__context_pass(void *frame) {
     return wf_context_pass(self, frame);
 }
 
+int wf__context_pass_counted(void *frame) {
+    wf_context *self = wf_context_current;
+    if (self == NULL || frame == NULL) {
+        wf_bridge_fail("an atomic boundary ran outside every context");
+    }
+    return wf_context_pass_counted(self, frame);
+}
+
 /* [WAIT-3] reserves a new context and returns the block its call's arguments
  * are stored in; `wf__context_launch` starts it.  No source outcome can
  * refuse a start, so memory the host will not reserve ends the program. */
@@ -2718,9 +2752,9 @@ void wf__context_launch(uint64_t *group, void *arguments, void *(*start)(void *a
         wf_bridge_fail("a context was started without its group, arguments or call");
     }
     wf_context_prepared = NULL;
-    wf_context_current = context;
+    wf_context_set_current(context);
     frame = start(arguments);
-    wf_context_current = starter;
+    wf_context_set_current(starter);
     if (frame == NULL) {
         wf_bridge_fail("a started context has no frame");
     }
@@ -2816,9 +2850,9 @@ static void wf_context_finish(wf_context *context) {
     if (context->watching != NULL) {
         wf_bridge_fail("a context finished between registering a guard's watch and parking it");
     }
-    wf_context_current = context;
+    wf_context_set_current(context);
     wf__coro_destroy(context->root);
-    wf_context_current = previous;
+    wf_context_set_current(previous);
     wf_context_release_arena(context);
     /* Return all context storage before publishing the join: a starter
      * reading memory after that join must not count a finished context.
@@ -4600,13 +4634,13 @@ static int wf_context_run(wf_driver *driver, wf_context *next) {
     next->resume = NULL;
     next->driver = driver;
     next->passes = 0u;
-    wf_context_current = next;
     wf_context_parked_away = 0;
     atomic_fetch_add_explicit(&wf_active_invocations, 1u, memory_order_seq_cst);
     uint64_t outside = wf_driver_leave_service(driver);
     wf_context_outside = outside;
+    wf_context_set_current(next);
     wf__coro_resume(frame);
-    wf_context_current = NULL;
+    wf_context_set_current(NULL);
     if (!wf_context_parked_away && wf__coro_done(next->root)
         && (next->shared_turn != NULL || next->shared_holds != 0u)) {
         wf_bridge_fail("a context finished with a shared hold or a guard turn");
@@ -5060,7 +5094,7 @@ void wf__context_root_begin(void) {
     wf_driver_self = &wf_driver_root;
     wf_driver_service = &wf_driver_root;
     wf_context_root.driver = &wf_driver_root;
-    wf_context_current = &wf_context_root;
+    wf_context_set_current(&wf_context_root);
 }
 
 void wf__context_root_run(void *frame) {
@@ -5071,16 +5105,16 @@ void wf__context_root_run(void *frame) {
     wf_context_root.root = frame;
     wf_context_root.resume = frame;
     wf_context_ready(&wf_context_root);
-    wf_context_current = NULL;
+    wf_context_set_current(NULL);
     wf_executor_loop(&wf_executors[0], &wf_driver_root);
     wf_drivers_end();
 #if WF_GUARD_COUNTERS
     wf_guard_report();
 #endif
-    wf_context_current = &wf_context_root;
+    wf_context_set_current(&wf_context_root);
     wf__coro_destroy(frame);
     wf_context_release_arena(&wf_context_root);
-    wf_context_current = NULL;
+    wf_context_set_current(NULL);
 }
 
 /* ------------------------------------------------------------- the join */

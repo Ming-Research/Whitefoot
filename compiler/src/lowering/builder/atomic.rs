@@ -507,6 +507,13 @@ impl IrBuilder<'_> {
                 .flag
                 .map(|flag| self.group_flag(flag, true))
                 .transpose()?;
+            // Ordinary first-object acquisition already counts the waiting
+            // boundary. Shards and keyed holds do not park while acquiring:
+            // count once before their first group, never before later holds.
+            let ordinary = matches!(region.targets[group.targets[0]].lock, Lock::Object);
+            if index == 0 && !ordinary {
+                self.define(IrType::Unit, IrOperation::AtomicPass)?;
+            }
             if let Some(record) = group.record {
                 let shards = match &region.targets[group.targets[0]].lock {
                     Lock::Shards { element, .. } => Some(*element),
@@ -559,7 +566,7 @@ impl IrBuilder<'_> {
                     IrType::Unit,
                     if let Some(element) = shards {
                         IrOperation::ShardsGroupTake { record, element }
-                    } else if index == 0 {
+                    } else if index == 0 && ordinary {
                         IrOperation::AtomicGroupAcquire { record }
                     } else {
                         IrOperation::AtomicGroupTake { record }

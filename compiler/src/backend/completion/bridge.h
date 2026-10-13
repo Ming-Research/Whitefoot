@@ -366,6 +366,24 @@ int wf__context_wait(void *operation, void *frame);
  * when it continues. */
 int wf__context_pass(void *frame);
 
+/* Private generated-code ABI: the running invocation's context-local pass
+ * counter and service token. The token address remains valid until native
+ * unwind; a displaced invocation must yield even below the pass threshold.
+ * `outside` retains the invocation token, including its phase bits. */
+typedef struct wf_context_boundary {
+    uint32_t *passes;
+    void *service_token;
+    uint64_t outside;
+} wf_context_boundary;
+#if defined(__cplusplus)
+extern thread_local wf_context_boundary wf__context_boundary;
+#else
+extern _Thread_local wf_context_boundary wf__context_boundary;
+#endif
+/* The inline boundary has counted this pass already. Shares ordinary wait
+ * displacement, threshold, queue and suspension handling without recounting. */
+int wf__context_pass_counted(void *frame);
+
 /* [WAIT-3] a context start: `wf__context_prepare` makes the context and
  * returns an argument block of `bytes` from its arena, and
  * `wf__context_launch` calls `start` on that block, in the new context, to

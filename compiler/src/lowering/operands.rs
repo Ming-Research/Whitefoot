@@ -102,6 +102,7 @@ macro_rules! operation_operands {
             | IrOperation::ContextJoin
             | IrOperation::SnapshotAtomicBegin
             | IrOperation::SnapshotAtomicEnd
+            | IrOperation::AtomicPass
             | IrOperation::SharedNew { .. }
             | IrOperation::ShardsNew { .. }
             | IrOperation::ShardsGroupTake { .. }

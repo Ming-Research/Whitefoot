@@ -247,7 +247,9 @@ pub(super) fn program_uses_shared(program: &IrProgram) -> Result<bool, BackendFa
 pub(super) fn shared_runtime_declarations() -> Module {
     let mut module = Module::default();
     module.declare_thread_local("wf__map_user".to_owned(), "i32", 4);
-    let declarations: [(&str, &str, &[&str]); 54] = [
+    module.declare_thread_local("wf__context_boundary".to_owned(), "{ ptr, ptr, i64 }", 8);
+    let declarations: [(&str, &str, &[&str]); 55] = [
+        ("wf__context_pass_counted", "i32", &["ptr"]),
         ("wf__shards_new", "ptr", &["i64"]),
         ("wf__shards_free", "void", &["ptr"]),
         ("wf__shards_wait", "void", &["ptr", "i64"]),
