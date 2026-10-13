@@ -73,3 +73,8 @@ performance-comparison          45     -      -
 # Provisional 30-minute acquisition cap, not a calibrated gate budget or
 # performance criterion. Remove this row with the workflow before ready.
 v2h-handler-samples             1800   -      -
+
+# Temporary v2h-handler-code.yml IR evidence on a hosted runner. Unsampled
+# operational ceilings. Remove these rows with the workflow before ready.
+v2h-handler-ir-emission         300    -      -
+v2h-handler-ir-optimization     300    -      -

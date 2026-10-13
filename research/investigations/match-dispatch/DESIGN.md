@@ -2148,36 +2148,36 @@ form/check the next numeric PC, load the handler word, advance its cursor,
 assign the numeric PC and jump; wasmi uses three to preserve the old IP,
 advance it and jump through the next cell. Two of the four are v2h's
 `cmp`/`jae` next-PC guard. This guard is authored because the current
-contracts do not establish a valid fallthrough successor; its presence is
-not a demonstrated language gap. The other two reflect separate numeric-PC
+contracts do not establish a valid fallthrough successor; the range-variant
+expressibility gap and sibling proof work are identified below. The other two reflect separate numeric-PC
 and cursor bookkeeping.
 
 For ordinary binary slot forms, the additional surrounding instructions are
 four for dispatch, one stack-base reload, three frame-base additions, two
 for destination decoding/storing, and two or four ABI pushes/pops. These
-are intentional representation and supported-host calling-convention
-differences in this artifact. Variable shifts/rotates save and restore
+have different sources: retained interpreter choices, a host-compatibility
+fallback, and deferred backend/proof work, separated below. Variable shifts/rotates save and restore
 `%rcx` on **both** sides; those two moves are not extra v2h work.
 
 | Candidate / v2h arm | Refreshed attribution placement | v2h count and successful range | wasmi handler, count and range | Count difference and extra work; reason |
 |---|---|---|---|---|
-| `Select` / 12 | Select family: +2.2 ms, ≈7.4% of gap; variant share/cutoff unknown | 21, `0x33640–0x3368b` | `u64_select_rsss`: 9, `0x423f30–0x423f50` | +12: dispatch, stack reload, three frame-base additions, destination decode/store, `%rbx` push/pop. Intentional design difference. |
-| `GlobalGet` / 15 | Individual share/cutoff not reported | 18, `0x337c0–0x337fa` | `global_get_u64_r`: 8, `0x424f90–0x424fac` | +10: global-index and next-PC guards, frame destination and ABI traffic; wasmi instead resolves a validated cached-global pointer. Intentional validation/storage difference. |
-| `GlobalSet` / 16 | Individual share/cutoff not reported | 18, `0x33840–0x3387a` | `global_set_u64_s`: 12, `0x425090–0x4250b5` | +6 net: +4 dispatch, +2 global bounds guard, +2 stack reload/frame-base addition, minus 2 for wasmi's instance-cache pointer resolution. Both save `%rbx`. Intentional design difference. |
-| `I32Eqz` / 53 | Individual share/cutoff not reported | 18, `0x35000–0x3503b` | `i32_eq_rsi` with zero immediate: 8, `0x41bb00–0x41bb1a` | +10: dispatch, stack reload, frame addressing/destination and `%rbx` save/restore; wasmi decodes a comparison immediate. Intentional design difference. |
-| `I32EqzA` / 253 | Individual share/cutoff not reported | 16, `0x3c480–0x3c4b1` | `i32_eq_rri` with zero immediate: 7, `0x41bac0–0x41bad5` | +9: common dispatch and slot-result traffic despite accumulator input. Intentional design difference. |
-| `I32Clz` / 87 | Individual share/cutoff not reported | 23 nonzero / 21 zero, `0x36100–0x3614b` | `i32_clz_rs`: 7 either, `0x41ba60–0x41ba7a` | +16 / +14: slot/ABI/dispatch work, dedicated code-length reload at `0x36101`, explicit zero test/branch, nonzero-path jump and result zero-extension; wasmi preinitializes 63, uses memory `bsr`, then XORs 31. Intrinsic-lowering cause unknown. |
-| `I32Ctz` / 88 | Individual share/cutoff not reported | 22 nonzero / 21 zero, `0x36180–0x361c9` | `i32_ctz_rs`: 6 either, `0x41baa0–0x41bab7` | +16 / +15: slot/ABI/dispatch work, dedicated code-length reload at `0x36181`, explicit zero test/branch, nonzero-path jump and result zero-extension; wasmi preinitializes 32 then uses memory `tzcnt`. Intrinsic-lowering cause unknown. |
-| `I32Popcnt` / 89 | Individual share/cutoff not reported | 31, `0x36200–0x36269` | `i32_popcnt_rs`: 20, `0x421fc0–0x422013` | +11 surrounding slot/ABI/dispatch instructions; both use the same 15-instruction software bit-count sequence. Intentional design difference, no population-count-specific gap observed. |
-| `I32Sub` / 91 | Individual share/cutoff not reported | 21, `0x36340–0x36386` | `i32_sub_rss`: 7, `0x41e8f0–0x41e907` | +14: binary overhead with `%r14`/`%rbx` pushes/pops; one SUB each. Intentional design difference. |
-| `I32Mul` / 92 | Individual share/cutoff not reported | 19, `0x363c0–0x36403` | `i32_mul_rss`: 7, `0x41e4b0–0x41e4c8` | +12: binary overhead with `%rbx` push/pop; one IMUL each. Intentional design difference. |
-| `I32And` / 97 | Bitwise-and family: +6.9 ms, ≈23.2% of gap; variant share/cutoff unknown | 21, `0x366c0–0x36706` | `i32_bitand_rss`: 7, `0x422e80–0x422e97` | +14: binary overhead with `%r14`/`%rbx` pushes/pops; one AND each. Intentional design difference. |
-| `I32Or` / 98 | Individual share/cutoff not reported | 19, `0x36740–0x36782` | `i32_bitor_rss`: 7, `0x421f50–0x421f67` | +12: binary overhead with `%rbx` push/pop; one OR each. Intentional design difference. |
-| `I32Xor` / 99 | Individual share/cutoff not reported | 19, `0x367c0–0x36802` | `i32_bitxor_rss`: 7, `0x422f00–0x422f17` | +12: binary overhead with `%rbx` push/pop; one XOR each. Intentional design difference. |
-| `I32ShrS` / 101 | Individual share/cutoff not reported | 24, `0x368c0–0x36910` | `i32_shr_rss`: 10, `0x41e840–0x41e860` | +14: binary overhead with `%r14`/`%rbx` pushes/pops; one SAR each and `%rcx` save/restore on both. Intentional design difference. |
-| `I32ShrU` / 102 | Individual share/cutoff not reported | 24, `0x36940–0x36990` | `u32_shr_rss`: 10, `0x41fed0–0x41fef0` | +14: same surrounding work as ShrS; one SHR each. Intentional design difference. |
-| `I32Rotl` / 103 | Individual share/cutoff not reported | 24, `0x369c0–0x36a10` | `i32_rotl_rss`: 10, `0x420f20–0x420f40` | +14: same surrounding work as ShrS; one ROL each. Intentional design difference. |
-| `I32Rotr` / 104 | Individual share/cutoff not reported | 24, `0x36a40–0x36a90` | `i32_rotr_rss`: 10, `0x421010–0x421030` | +14: same surrounding work as ShrS; one ROR each. Intentional design difference. |
+| `Select` / 12 | Select family: +2.2 ms, ≈7.4% of gap; variant share/cutoff unknown | 21, `0x33640–0x3368b` | `u64_select_rsss`: 9, `0x423f30–0x423f50` | +12: dispatch, stack reload, three frame-base additions, destination decode/store, `%rbx` push/pop. Mixed sources; classified below. |
+| `GlobalGet` / 15 | Individual share/cutoff not reported | 18, `0x337c0–0x337fa` | `global_get_u64_r`: 8, `0x424f90–0x424fac` | +10: global-index and next-PC guards, frame destination and ABI traffic; wasmi instead resolves a validated cached-global pointer. Authored validation/storage plus backend costs; classified below. |
+| `GlobalSet` / 16 | Individual share/cutoff not reported | 18, `0x33840–0x3387a` | `global_set_u64_s`: 12, `0x425090–0x4250b5` | +6 net: +4 dispatch, +2 global bounds guard, +2 stack reload/frame-base addition, minus 2 for wasmi's instance-cache pointer resolution. Both save `%rbx`. Mixed sources; classified below. |
+| `I32Eqz` / 53 | Individual share/cutoff not reported | 18, `0x35000–0x3503b` | `i32_eq_rsi` with zero immediate: 8, `0x41bb00–0x41bb1a` | +10: dispatch, stack reload, frame addressing/destination and `%rbx` save/restore; wasmi decodes a comparison immediate. Mixed sources; classified below. |
+| `I32EqzA` / 253 | Individual share/cutoff not reported | 16, `0x3c480–0x3c4b1` | `i32_eq_rri` with zero immediate: 7, `0x41bac0–0x41bad5` | +9: common dispatch and slot-result traffic despite accumulator input. Mixed sources; classified below. |
+| `I32Clz` / 87 | Individual share/cutoff not reported | 23 nonzero / 21 zero, `0x36100–0x3614b` | `i32_clz_rs`: 7 either, `0x41ba60–0x41ba7a` | +16 / +14: slot/ABI/dispatch work, dedicated code-length reload at `0x36101`, explicit zero test/branch, nonzero-path jump and result zero-extension; wasmi preinitializes 63, uses memory `bsr`, then XORs 31. Older LLVM lowering; classified below. |
+| `I32Ctz` / 88 | Individual share/cutoff not reported | 22 nonzero / 21 zero, `0x36180–0x361c9` | `i32_ctz_rs`: 6 either, `0x41baa0–0x41bab7` | +16 / +15: slot/ABI/dispatch work, dedicated code-length reload at `0x36181`, explicit zero test/branch, nonzero-path jump and result zero-extension; wasmi preinitializes 32 then uses memory `tzcnt`. Older LLVM lowering; classified below. |
+| `I32Popcnt` / 89 | Individual share/cutoff not reported | 31, `0x36200–0x36269` | `i32_popcnt_rs`: 20, `0x421fc0–0x422013` | +11 surrounding slot/ABI/dispatch instructions; both use the same 15-instruction software bit-count sequence. Mixed surrounding causes below; no population-count-specific gap observed. |
+| `I32Sub` / 91 | Individual share/cutoff not reported | 21, `0x36340–0x36386` | `i32_sub_rss`: 7, `0x41e8f0–0x41e907` | +14: binary overhead with `%r14`/`%rbx` pushes/pops; one SUB each. Mixed sources; classified below. |
+| `I32Mul` / 92 | Individual share/cutoff not reported | 19, `0x363c0–0x36403` | `i32_mul_rss`: 7, `0x41e4b0–0x41e4c8` | +12: binary overhead with `%rbx` push/pop; one IMUL each. Mixed sources; classified below. |
+| `I32And` / 97 | Bitwise-and family: +6.9 ms, ≈23.2% of gap; variant share/cutoff unknown | 21, `0x366c0–0x36706` | `i32_bitand_rss`: 7, `0x422e80–0x422e97` | +14: binary overhead with `%r14`/`%rbx` pushes/pops; one AND each. Mixed sources; classified below. |
+| `I32Or` / 98 | Individual share/cutoff not reported | 19, `0x36740–0x36782` | `i32_bitor_rss`: 7, `0x421f50–0x421f67` | +12: binary overhead with `%rbx` push/pop; one OR each. Mixed sources; classified below. |
+| `I32Xor` / 99 | Individual share/cutoff not reported | 19, `0x367c0–0x36802` | `i32_bitxor_rss`: 7, `0x422f00–0x422f17` | +12: binary overhead with `%rbx` push/pop; one XOR each. Mixed sources; classified below. |
+| `I32ShrS` / 101 | Individual share/cutoff not reported | 24, `0x368c0–0x36910` | `i32_shr_rss`: 10, `0x41e840–0x41e860` | +14: binary overhead with `%r14`/`%rbx` pushes/pops; one SAR each and `%rcx` save/restore on both. Mixed sources; classified below. |
+| `I32ShrU` / 102 | Individual share/cutoff not reported | 24, `0x36940–0x36990` | `u32_shr_rss`: 10, `0x41fed0–0x41fef0` | +14: same surrounding work as ShrS; one SHR each. Mixed sources; classified below. |
+| `I32Rotl` / 103 | Individual share/cutoff not reported | 24, `0x369c0–0x36a10` | `i32_rotl_rss`: 10, `0x420f20–0x420f40` | +14: same surrounding work as ShrS; one ROL each. Mixed sources; classified below. |
+| `I32Rotr` / 104 | Individual share/cutoff not reported | 24, `0x36a40–0x36a90` | `i32_rotr_rss`: 10, `0x421010–0x421030` | +14: same surrounding work as ShrS; one ROR each. Mixed sources; classified below. |
 
 Clz's nonzero path skips `0x36127`; its zero path takes
 `0x3611d → 0x36127` and skips `0x3611f`, `0x36122`, `0x36125`.
@@ -2186,10 +2186,281 @@ Ctz's nonzero path skips `0x361a5`; its zero path takes
 the executed branches and result `mov %ebx,%ebx` zero-extension.
 Whitefoot emits total `llvm.ctlz`/`llvm.cttz` intrinsics with `i1 false`
 (`compiler/src/backend/emitter/integer.rs`), so these branches are not
-required source guards. The different LLVM versions prevent assigning
-backend causation from these two binaries alone. Wasmi's `i32_and` and
+required source guards. The binaries alone do not isolate a toolchain change; the upstream LLVM
+lowering evidence and required qualification are given below. Wasmi's `i32_and` and
 `i32_or` are Boolean operations; the bitwise counterparts in the table
 are deliberately `i32_bitand`, `i32_bitor` and `i32_bitxor`.
+
+#### Sources of the small-handler overhead
+
+**Scope and evidence.** The inventory above is not one uniform v2h design
+penalty. Class **(a)** below means a retained interpreter representation or
+translation choice; **(b)** means a backend/toolchain cause, distinguishing an
+implemented compatibility fallback from a missing optimization; **(c)** means
+a source-language expressibility gap. A backend cost is not necessarily a
+backend correctness defect. Addresses refer only to the retained
+[handler-code run](https://github.com/Ming-Research/Whitefoot/actions/runs/38398253864)
+and its `v2h-handlers.asm`, `wasmi-handlers.asm`, generated `v2h.wf`,
+`v2h-compile.log` and `inputs.txt`. The latter records Clang 18.1.3 for v2h
+and LLVM 23.1.1 inside rustc for wasmi. Repository source line numbers below
+refer to the source inspected for this subsection; generated-source line
+numbers refer to that artifact. No LLVM module was retained in the old
+artifact, so there are **no observed emitted-IR line numbers yet**. The
+emitter locations identify what it writes, not a substitute IR artifact.
+No timing, speedup, new compilation result or exact correspondence to the
+historical 14900K executable is claimed.
+
+**1. Callee-saved pushes/pops — (b), existing host-compatibility fallback.**
+`I32Sub` saves `%r14` and `%rbx` at `0x36340`/`0x36342`, restores them at
+`0x36383`/`0x36384`, then tail-jumps at `0x36386`; its cold return also
+restores them at `0x363a3`/`0x363a4`. The source does not request saves.
+The artifact's dispatch ledger says C convention, six integer argument
+registers, eight invariant values kept in the enclosing frame.
+[The convention selector](../../../compiler/src/backend/emitter/dispatch.rs)
+(lines 52–72) chooses `preserve_nonecc` when
+[the running host's probe](../../../compiler/src/toolchain.rs) (132–158)
+accepts it, otherwise C. LLVM 18 takes the fallback. Handler definitions
+receive that convention at dispatch emitter line 1321, as do `musttail`
+calls at 1185–1191 and 1276–1281. `alwaysinline` marks the dispatch header
+(1323–1325), not every handler.
+
+A C tail call still owes the original caller its callee-saved registers;
+`musttail` guarantees bounded stack growth, not a different preservation
+contract ([LLVM's call rules](https://releases.llvm.org/18.1.8/docs/LangRef.html#call-instruction)).
+Using those registers as scratch therefore requires restoring them before
+the jump. The
+[dispatch decision](../../../design/compiler/match-dispatch-lowering.md)
+already selects the no-callee-save convention where supported; its enclosing
+entry can preserve the external ABI once around the whole chain. This does
+not conflict with [result-registers](../../../design/compiler/result-registers.md),
+which governs ordinary function result ABIs, not the private split-family
+convention. **Minimal action: no compiler change.** Qualify the already
+implemented path with the repository's LLVM pin, 22, rather than the custom
+collector's Ubuntu default; the
+[verification decision](../../../design/compiler/verification.md) (line 33)
+already requires that pin for Linux gates. CI should retain definitions,
+call conventions, the ledger and disassembly, and check whether these
+particular ABI save/restore pairs disappear. It must not assert that every
+possible handler stack access disappears. Supporting a different convention
+on LLVM 18 would be a new backend design choice, not a source repair.
+Wasmi also declares its x86-64 handler as `extern "sysv64"`
+(archived `handler/dispatch/backend/tail.rs:39–51`); fewer saves in its
+small bodies do not imply a no-callee-save ABI. Its different carried state
+and instruction selection leave different temporary-register needs.
+
+**2. Stack-base reload versus frame-base additions — two backend causes.**
+The reload is **(b), deliberate invariant placement under the C register
+budget**, not a source-required repeated Box read or an LLVM register
+allocator spill. The enclosing `wf_run` reads the stack Box once at
+`0x32e00 mov (%r9),%r9`, stores its referent at
+`0x32e22 mov %r9,0x48(%rsp)`, and passes the shared activation frame with
+`0x32e3a lea 0x8(%rsp),%r9`. `I32Sub`'s
+`0x36343 mov 0x40(%r9),%r10` reads precisely that saved pointer. Its slot
+loads/store at `0x36359`, `0x36361`, `0x36371` address the Array data eight
+bytes beyond it. The dispatch emitter selects invariant spills at 815–839,
+allocates their enclosing slots/removes their parameters at 880–896,
+stores them once at 1159–1175, and emits each part's loads at 1455–1459.
+
+The six C integer arguments are the result destination, numeric PC, numeric
+VM frame base, accumulator, instruction cursor and shared activation-frame
+pointer. The VM base is `%rdx`; the backend activation frame is `%r9`.
+The handler word supplies the dispatch address in the instruction and the
+cursor supplies the current instruction address: neither promises that all
+value-stack state stays in registers. `preserve_none` increases the available
+integer budget from six to eleven; CI must inspect which invariants remain
+spilled, rather than assume all eight existing spills vanish. Wasmi explicitly
+puts its instance pointer in an `f64` representation on x86-64 to save an integer argument register (archived
+`handler/state.rs:251–269`). Whitefoot counts pointer/integer and floating
+arguments in their own classes; changing pointer classes to imitate that
+packing is not the recorded design. The minimal first action is the existing
+convention path from answer 1, not a new source representation.
+
+The separate additions at `0x36356`, `0x3635e`, `0x36366` implement
+`fp + a`, `fp + b`, `fp + d`. [The generator](../../experiments/match-dispatch/wasm/gen.py)
+(lines 278–292) writes those expressions; generated `op_i32_sub` has them
+at lines 13785, 13789 and 13795. Wasmi instead receives the current frame's
+data pointer and encoded byte offsets (`0x41e8ff`, `0x41e903`). These are
+**(b), a known deferred derived-address optimization**, not a language gap
+or three additions intrinsic to the v2h representation. A general backend
+could derive the frame pointer once and address each slot from it. That
+exact direction was tried: [the recorded comparison](../../experiments/match-dispatch/RESULTS.md#frame-slots-addressed-from-a-derived-pointer)
+removed 3.3% of instructions but improved the score only 0.9%, below its 2%
+adoption criterion. The dispatch tree explicitly defers it. A future change
+would reuse proved base-plus-slot addressing generally; CI would check a
+single derived base replacing repeated additions and retain semantic checks.
+Static instruction removal alone does not reopen or satisfy that performance
+decision. No source spelling change is needed or proposed here.
+
+**3. Code-length reload and next-PC guard — (c) for the missing variant
+fact in this branch; (b) for where that required bound is held.**
+`I32Clz` loads `0x18(%r9)` at `0x36101`, computes `pc + 1` at `0x36136`,
+compares that value with the loaded length at `0x3613a`, and branches to the
+trap at `0x3613d`. `I32Ctz` does the same at `0x36181`, `0x361b4`,
+`0x361b8`, `0x361bb`. This is exactly the sequential successor guard, not
+an operand-zero check, a bit-count bound or a second code allocation.
+[The interpreter header](../../experiments/match-dispatch/wasm/interp_head.wf)
+loads `n` at line 172; `gen.py:228` emits `next < n`, and 305–307 puts it
+after the numeric helper. Other small handlers can compare the same bound
+directly from memory; the separate `mov` here is not another proof obligation.
+
+The intended proof is that the last translated instruction is `Return`, so
+a current non-Return instruction cannot be the last one. This branch's
+[RANGE-1](../../../spec/kernel-spec.md) (4295–4310) does not admit a named
+variant relation as a range conclusion. The sibling
+[sequential-successor change](https://github.com/Ming-Research/Whitefoot/blob/3ef115c6ae9c6b505eaf18990a0291936accd432/research/investigations/match-dispatch/DESIGN.md#sequential-successor-bounds-proved-at-load)
+uses the range-variant extension and an actual terminal-Return validation
+contract. Its inspected research record has no CI result yet. Thus this is
+the **same** language/proof work, not another proposed gap, and merely
+upgrading the backend cannot remove an authored branch with observable trap
+behavior. The code-length load and comparison should disappear in these
+arms only after that proof and source change are accepted; bounds needed by
+other paths remain.
+
+A minimal complete semantic witness, adapted from the sibling's
+[fieldless-variant case](https://github.com/Ming-Research/Whitefoot/blob/3ef115c6ae9c6b505eaf18990a0291936accd432/tests/conformance/cases/range3-pos-variant-final-stop.wf),
+is below. It is **the proposed form, unavailable in this branch**, not a
+program compiled in this task. If the current instruction is `Next`, the
+terminal `Stop` fact entails that its successor is in range. Acceptance and
+transport of this fact must be checked in the sibling; its syntax alone
+is not proof that the whole interpreter is accepted.
+
+```whitefoot
+enum Step {
+  Next();
+  Stop();
+}
+
+fn walk(steps: &Box<Slots<Step>>, pc0: u64) -> r: u64 reads(steps) contract {
+  requires pc0 < steps^.inner.len;
+  requires forall ends(j in 0_u64..steps^.inner.len) when j + 1_u64 == steps^.inner.len: steps^.inner[j] is Stop;
+} {
+  let n = steps^.inner.len;
+  let pc = pc0;
+  loop (
+    invariant in_steps: pc < n
+  ) {
+    match steps^.inner[pc] {
+      Next() => {
+        set pc = pc + 1_u64;
+        continue;
+      }
+      Stop() => {
+        return pc;
+      }
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+```
+
+**4. Clz/Ctz zero branches — (b), older LLVM instruction selection, not
+partial source intrinsics.** `gen.py:68–72` emits `iclz`/`ictz`; the
+[integer emitter](../../../compiler/src/backend/emitter/integer.rs) (501–545) writes `llvm.ctlz.i32`/`llvm.cttz.i32` with `i1 false`,
+as [OP-8] requires: zero returns 32. There is no authored zero guard here.
+The old machine code tests the operand and branches at
+`0x3611b`/`0x3611d` and `0x3619b`/`0x3619d`; it supplies 32 at
+`0x36127`/`0x361a5` on the zero paths. The other paths contain BSR/XOR
+or TZCNT and a jump over that initialization. The later zero-extension
+`mov %ebx,%ebx` at `0x3612c`/`0x361aa` serves v2h's full-width `u64` slot
+representation; its separate placement is code generation, not an extra
+language proof.
+
+Wasmi's Clz initializes 63 at `0x41ba6b`, executes memory BSR at
+`0x41ba71`, then XOR 31 at `0x41ba76`; its Ctz initializes 32 at
+`0x41baab`, then executes the instruction objdump prints as TZCNT at
+`0x41bab1`. The relevant upstream change is
+[LLVM's zero-input BSF/BSR passthrough lowering](https://github.com/llvm/llvm-project/pull/123623),
+merged after LLVM 18: it can seed the zero result rather than branch.
+The generic x86-64 lowering is present in
+[LLVM 22's X86 lowering source](https://github.com/llvm/llvm-project/blob/release/22.x/llvm/lib/Target/X86/X86ISelLowering.cpp)
+(`LowerCTLZ`, `LowerCTTZ`). This explains the available lowering difference;
+it does not substitute for compiling this exact v2h module with LLVM 22.
+LLVM 18 can introduce the zero branch during machine-code preparation,
+after the retained optimized IR; that module alone will not locate that pass.
+The collector supplies no `-march` or target-feature override, and the driver
+uses `-O2 -falign-functions=64` (`driver.rs:56`). LZCNT requires an enabled
+CPU feature. A TZCNT disassembly spelling alone does not establish BMI1
+was requested: its encoding has a BSF-compatible interpretation on older
+CPUs, which the preset-destination form can use.
+
+**Minimal action:** retain the total intrinsic and qualify the existing newer
+host toolchain, including optimized IR and disassembly. An eventual CI check
+must cover zero, one, the high bit and all-ones, and verify the zero-input
+branch is gone without a new target-feature requirement. Setting
+`is_zero_poison=true` would miscompile valid zero input; forcing LZCNT/BMI1
+would change target requirements, so neither is the demonstrated fix.
+`I32Popcnt` has no count-specific discrepancy in this artifact: both engines
+use the same 15-instruction software sequence. No compiler or feature flags
+are changed here.
+
+**5. Result-slot traffic — (a), source-selected result location, actually
+extra relative to the listed wasmi bodies.** These v2h forms must write their
+frame destination. `gen.py:292` writes the base numeric result; 506–515
+separately implements accumulator destinations for the variants that select
+them. `I32Sub` decodes `d` at `0x36347`, adds the frame base at `0x36366`,
+and stores at `0x36371`. Wasmi `i32_sub_rss` computes in `%r9d` at
+`0x41e8ff`/`0x41e903`, then dispatches at `0x41e907` with no result-slot
+store. Likewise Select stores at `0x33678` versus wasmi's register result
+at `0x423f4c`; GlobalGet stores at `0x337e7` versus `0x424fa9`; EqzA
+stores at `0x3c49e` versus `0x41bad2`. An accumulator **input** does not
+make EqzA an accumulator **destination**.
+
+The reason is v2h's retained frame-slot semantics with selective accumulator
+forms, described at `interp_head.wf:171`; a destination slot stays available
+to other readers and control-flow paths. Wasmi's archived
+`handler/utils.rs:310–323` returns a changed `Ireg`; 378–392 separately writes
+`SlotAndReg`. These forms are distinct, so “both are register machines” does
+not make these paired native bodies destination-equivalent. The ordinary function
+[result-register ABI](../../../design/compiler/result-registers.md) cannot
+erase an observable stack write inside a handler. Existing accumulator `D`
+forms demonstrate that this is not a language expressibility gap. Broadening
+accumulator lifetime was already tried and reverted (the step-4 result
+above); that decision is not overturned by counting these stores. A wasmi
+copy may be necessary later, but the five-instruction `u64_copy_sr` at
+`0x41ff50–0x41ff5f` must not be charged without an actual translated
+instruction sequence. Whole-sequence cost remains unestablished.
+
+**Other inventory components and disposition.** Keeping both numeric PC and
+instruction cursor is (a) a retained representation choice with an explicit
+rejected cursor-only alternative in the dispatch tree. Operand/destination
+field decoding follows the selected interpreter format; destination decoding
+is extra here because the paired wasmi result has no slot destination.
+GlobalGet/GlobalSet's global-index guards are authored current validation
+work (a), not demonstrated compiler-inserted checks or a newly established
+language gap; the loader/contract proof needed to remove them was not part
+of this investigation. The common shift-count register moves occur on both
+sides. The blanket “intentional design difference” labels in the old table
+therefore do not classify the ABI fallback, invariant spills, deferred
+address reuse, successor proof gap or older bit-scan lowering correctly.
+
+**IR collection and remaining evidence.** The temporary handler-code workflow
+now additionally writes full `v2h.ll` using `whitefootc --emit-llvm
+--dispatch-ledger`, then `v2h.opt.ll` using the same `/usr/bin/clang` and
+`-O2 -falign-functions=64 -Wno-override-module`, with `-x ir -S -emit-llvm`.
+It retains both modules, both command logs and hashes alongside the existing
+arm map and disassembly; the whole module preserves all 17 handlers, their
+helpers, enclosing-frame initialization and declarations. Emission is a
+separate same-source invocation, not captured linker input, and the optimized
+module stops before instruction selection. Compare its ledger with the
+binary's ledger and use the new run's own addresses, never the old addresses
+as if they belonged to the new IR.
+
+The workflow deliberately retains its existing host setup for this evidence
+collection. A comparison using the repository's pinned LLVM is the next
+qualification proposed above, not an additional run configured or performed
+here. The owner will commit, push and supply CI artifacts. On receipt, record
+actual raw/optimized IR line ranges for signatures/tail calls, invariant
+stores/loads, each bound's uses, total count intrinsics and result stores;
+confirm all 17 bodies or document optimized aliases. The added research
+commands use the host-lock wrapper, but have no measured time budgets yet;
+this collection supplies their first durations and claims no budget or gate
+verdict. No compiler, interpreter, specification or approval log is changed.
+The deferred address optimization stays deferred, the variant proof stays
+with its sibling, and toolchain qualification and IR line attribution remain
+unverified.
 
 ### Constructor and runtime-boundary audit
 

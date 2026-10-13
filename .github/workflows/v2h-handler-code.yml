@@ -29,10 +29,17 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-      - name: Build the branch compiler, generated v2h and pinned wasmi
+      - name: Build the branch compiler, generated v2h, emitted IR and pinned wasmi
         run: |
           set -euo pipefail
-          sudo apt-get install -y -qq lld binutils >/dev/null
+          # The LLVM major .github/llvm-major pins, as the gate and the releases use.
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version" >/dev/null
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          sudo apt-get install -y -qq binutils >/dev/null
+          /usr/bin/clang --version
           out="$RUNNER_TEMP/v2h-handler-code"
           mkdir -p "$out/evidence"
           echo "V2H_CODE_OUT=$out" >> "$GITHUB_ENV"
@@ -49,6 +56,18 @@ jobs:
             cat "$out/evidence/v2h-compile.log"
             exit "$status"
           }
+          # Separate emission of the same source, not captured linker stdin.
+          perl .github/run-check.pl v2h-handler-ir-emission compiler/target/gate/whitefootc --emit-llvm --dispatch-ledger "$out/evidence/v2h.wf" -o "$out/evidence/v2h.ll" > "$out/evidence/v2h-ir-compile.log" 2>&1 || {
+            status=$?
+            cat "$out/evidence/v2h-ir-compile.log"
+            exit "$status"
+          }
+          # Match driver.rs HOST_OPTIMIZATION_ARGUMENTS without changing the host.
+          perl .github/run-check.pl v2h-handler-ir-optimization /usr/bin/clang -x ir -S -emit-llvm -O2 -falign-functions=64 -Wno-override-module "$out/evidence/v2h.ll" -o "$out/evidence/v2h.opt.ll" > "$out/evidence/v2h-ir-opt.log" 2>&1 || {
+            status=$?
+            cat "$out/evidence/v2h-ir-opt.log"
+            exit "$status"
+          }
           git clone --quiet https://github.com/wasmi-labs/wasmi "$out/wasmi-source"
           git -C "$out/wasmi-source" checkout --quiet "$WASMI_REV"
           test "$(git -C "$out/wasmi-source" rev-parse HEAD)" = "$WASMI_REV"
@@ -58,6 +77,8 @@ jobs:
           {
             printf 'Whitefoot/source %s\nwasmi/source %s\n' "$(git rev-parse HEAD)" "$WASMI_REV"
             printf 'v2h: gen.py default; whitefootc --dispatch-ledger; compiler profile gate\n'
+            printf 'v2h IR: separate same-source whitefootc --emit-llvm --dispatch-ledger emission; not captured linker stdin\n'
+            printf 'v2h optimized IR: /usr/bin/clang -x ir -S -emit-llvm -O2 -falign-functions=64 -Wno-override-module\n'
             printf 'wasmi: cargo build --release --locked --package wasmi_cli; no profile overrides\n'
             printf 'RUSTFLAGS=%s\nCARGO_ENCODED_RUSTFLAGS=%s\n' "${RUSTFLAGS-}" "${CARGO_ENCODED_RUSTFLAGS-}"
             uname -m
@@ -65,7 +86,7 @@ jobs:
             cargo --version
             /usr/bin/clang --version
             objdump --version
-            sha256sum compiler/target/gate/whitefootc "$out/v2h" "$out/wasmi-source/target/release/wasmi" "$out/evidence/v2h.wf"
+            sha256sum compiler/target/gate/whitefootc "$out/v2h" "$out/wasmi-source/target/release/wasmi" "$out/evidence/v2h.wf" "$out/evidence/v2h.ll" "$out/evidence/v2h.opt.ll"
           } > "$out/evidence/inputs.txt"
           tar -czf "$out/evidence/wasmi-source.tar.gz" -C "$out/wasmi-source" \
             Cargo.toml Cargo.lock crates/cli/Cargo.toml crates/wasmi/Cargo.toml \
@@ -174,7 +195,7 @@ jobs:
               (evidence / f"wasmi-build-script-{index}.txt").write_bytes(path.read_bytes())
           PY
 
-      - name: Retain disassembly, maps, identities and build source
+      - name: Retain LLVM IR, disassembly, maps, identities and build source
         if: always() && env.V2H_CODE_OUT != ''
         uses: actions/upload-artifact@v4
         with:
