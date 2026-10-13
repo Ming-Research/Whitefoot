@@ -6,6 +6,8 @@ Decision: Graph segments use a diagnostic-only generated grammar entry and compl
 
 Decision: The diagnostic machine computes expected terminals from the continuation of the production instances actually on its parse stack, while recognition retains the generated strong-LL(2) grammar, because a writer needs only tokens that can occur at the failing position and grammar-wide caller unions include impossible repairs, instead of grammar-wide FOLLOW sets for diagnostic frontiers.
 
+Decision: Match keeps one arm production with a flat choice between the existing TYPEID-and-parentheses variant label, literal, IDENT and else, with semantic admission selecting the scrutinee's label class, because those four starts have disjoint terminal predicates and need no new lexer class or semantic lookahead, instead of separate competing match productions or a parser that resolves a constant name to recognize an arm.
+
 Rejected:
 - Full-text recovery that inserts or skips tokens anywhere, as in rustc-style recovery: rejected because recovery produces cascaded false errors and needs a separate recovery rule set.
 - Keeping one error per compile: rejected because a writer repairing the defect reported by each compile fixes one defect per round, so n independent declaration defects take n rounds, while one unique rejection per declaration exposes them together without token insertion or skipping for recovery.

@@ -38,10 +38,12 @@ pub(super) fn run_pairs() {
     for pair in super::REPAIRS
         .iter()
         .chain(super::call_separations::CALL_SEPARATIONS)
+        .chain(super::cell_consumption::CELL_CONSUMPTION)
         .chain(super::content_moves::CONTENT_MOVES)
         .chain(super::prelude_opaque::PRELUDE_OPAQUE)
         .chain(super::qualified_constants::QUALIFIED_CONSTANTS)
         .chain(super::recursive_effects::RECURSIVE_EFFECTS)
+        .chain(super::remaining_repairs::REMAINING_REPAIRS)
         .chain(super::storage_destructuring::STORAGE_DESTRUCTURING)
         .chain(super::shared_maps::SHARED_MAPS)
         .chain(super::floats::FLOATS)
@@ -50,7 +52,12 @@ pub(super) fn run_pairs() {
         .chain(super::qualified_names::QUALIFIED_NAMES)
         .chain(super::selector_scope::SELECTOR_SCOPE)
         .chain(super::enum_routed_ensures::ENUM_ROUTED_ENSURES)
+        .chain(super::entry_formers::ENTRY_FORMERS)
         .chain(super::collisions_and_killed_facts::COLLISIONS_AND_KILLED_FACTS)
+        .chain(super::clause_requirements::CLAUSE_REQUIREMENTS)
+        .chain(super::writer_operations::WRITER_OPERATIONS)
+        .chain(super::writer_ownership::WRITER_OWNERSHIP)
+        .chain(super::writer_references::WRITER_REFERENCES)
         .chain(super::postcondition_places::POSTCONDITION_PLACES)
         .chain(super::common_syntax::COMMON_SYNTAX)
     {
@@ -59,6 +66,7 @@ pub(super) fn run_pairs() {
             CompilerLimits::default(),
         )
         .expect_err(pair.name);
+        super::entry_formers::assert_span(pair, &failure);
         assert_eq!(
             failure.kind(),
             CompilationFailureKind::Source,

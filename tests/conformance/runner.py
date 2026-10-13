@@ -25,7 +25,7 @@ Verdict = ("accept",) | ("reject", [DIAGNOSTIC...]) | ("run", exit) | ("unsuppor
 Manifest line (JSON):
   {"id": str, "rules": [rule_id...], "expect": EXPECT, "arrange": ARRANGE?,
    "status": "runnable", "doc": str}
-  EXPECT = {"kind":"accept"} | {"kind":"reject","rule":R}
+  EXPECT = {"kind":"accept"} | {"kind":"reject","rule":R,"span":SPAN?}
          | {"kind":"reject","diagnostics":[DIAGNOSTIC...]} | {"kind":"run","exit":N}
          | {"kind":"unsupported","why":str}
   DIAGNOSTIC = {"rule":R, "source_ordinal":N, "byte_start":N, "byte_end":N,
@@ -33,6 +33,12 @@ Manifest line (JSON):
   A rule-only rejection asserts exactly one diagnostic. A diagnostics list is
   nonempty and fixes every rejection in report order; expected, when present,
   fixes the exact ordered terminal labels rather than diagnostic prose.
+
+  SPAN = {"start":N,"end":N}: zero-based, half-open byte offsets in the
+         case's single `.wf` source, as DIAG-1 defines them. Only a reject
+         case may assert a span; module-form cases cannot yet assert one.
+         The rule and span must belong to the same rejection. An adapter
+         supplies no span when that rejection belongs to another source.
 
   status: runnable = must match expect. It is the only status. There is no
           skipped and no expected-failure status: a case whose declared verdict
@@ -102,9 +108,18 @@ def matches(v, expect):
                     and len(reached) == len(expect["diagnostics"])
                     and all(all(actual.get(key) == value for key, value in wanted.items())
                             for actual, wanted in zip(reached, expect["diagnostics"])))
-        return (v[1] == expect["rule"] if isinstance(v[1], str)
-                else isinstance(v[1], list) and len(v[1]) == 1
-                and v[1][0].get("rule") == expect["rule"])
+        if isinstance(v[1], str):
+            # A rule-only verdict may carry the rejection's span as a third element.
+            return (v[1] == expect["rule"]
+                    and ("span" not in expect or (len(v) > 2 and v[2] == expect["span"])))
+        if not (isinstance(v[1], list) and len(v[1]) == 1
+                and v[1][0].get("rule") == expect["rule"]):
+            return False
+        # The span is in the case's single source, bundle ordinal 0.
+        return ("span" not in expect
+                or (v[1][0].get("source_ordinal") == 0
+                    and v[1][0].get("byte_start") == expect["span"]["start"]
+                    and v[1][0].get("byte_end") == expect["span"]["end"]))
     return ((k == "accept" and v[0] == "accept")
             or (k == "run" and v[0] == "run" and v[1] == expect["exit"])
             # `why` is the adapter's prose; the corpus asserts the verdict kind,
@@ -342,8 +357,12 @@ def validate_manifest(cases, annots, root=ROOT, cases_dir=CASES):
             if set(expect) != {"kind", "diagnostics"}:
                 errors.append(f"{case_id}: reject expectation needs exactly one of rule, diagnostics")
             errors += diagnostic_errors(case_id, expect["diagnostics"], case_rules)
-        elif set(expect) != expectation_fields[kind]:
+        elif set(expect) != expectation_fields[kind] and not (
+            kind == "reject" and set(expect) == expectation_fields[kind] | {"span"}
+        ):
             fields = " ".join(sorted(expectation_fields[kind]))
+            if kind == "reject":
+                fields += " (with optional span)"
             errors.append(
                 f"{case_id}: {kind} expectation fields must be exactly: {fields}"
             )
@@ -351,6 +370,17 @@ def validate_manifest(cases, annots, root=ROOT, cases_dir=CASES):
             reject_rule = expect.get("rule")
             if reject_rule not in case_rules:
                 errors.append(f"{case_id}: reject rule must appear in case rules")
+            if "span" in expect:
+                span = expect["span"]
+                if not isinstance(span, dict) or set(span) != {"start", "end"} or not all(
+                    type(span[key]) is int and span[key] >= 0 for key in ("start", "end")
+                ) or span["start"] > span["end"]:
+                    errors.append(f"{case_id}: span needs nonnegative integer start <= end")
+                elif f"{case_id}/" in actual_sources:
+                    errors.append(f"{case_id}: span requires a single .wf source")
+                elif f"{case_id}.wf" in actual_sources:
+                    if span["end"] > len((cases_dir / f"{case_id}.wf").read_bytes()):
+                        errors.append(f"{case_id}: span exceeds source byte length")
         elif kind == "run" and type(expect.get("exit")) is not int:
             errors.append(f"{case_id}: run expectation requires an integer exit")
         elif kind == "unsupported" and not expect.get("why"):

@@ -12,12 +12,13 @@ use std::path::{Path, PathBuf};
 use super::json::{self, Value};
 
 /// The verdict space the corpus fixes:
-/// `accept | reject(rule) | run(exit) | unsupported`.
+/// `accept | reject(diagnostics, each with rule and position) | run(exit) | unsupported`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Verdict {
     /// The unit reached complete target-independent source acceptance.
     Accept,
-    /// The unit violates the named numbered rule, or an unnamed one.
+    /// The unit's reported source rejections in order, each with its rule
+    /// (absent for an uncited stop) and exact source coordinate.
     Reject(Vec<RejectedDiagnostic>),
     /// The program ran to completion with this command status.
     Run(i32),
@@ -51,10 +52,11 @@ impl Expectation {
         matches!(self, Self::Run(_))
     }
 
-    /// The corpus's own match rule, restated exactly as `runner.py` states it:
-    /// a rejection must cite the declared rule, a run must reach the declared
+    /// The verdict-kind portion of the corpus's match rule: a rejection must
+    /// cite the declared rule, a run must reach the declared
     /// status, and an `unsupported` expectation asserts the verdict kind only,
-    /// never a diagnostic's wording.
+    /// never a diagnostic's wording. `Case::matches_span` adds an opted-in
+    /// position assertion to this verdict check.
     pub fn matched_by(&self, verdict: &Verdict) -> bool {
         match (self, verdict) {
             (Self::Accept, Verdict::Accept) => true,
@@ -111,6 +113,39 @@ pub struct DiagnosticExpectation {
     pub expected: Option<Vec<String>>,
 }
 
+/// A checked half-open byte interval in a case's single source record.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Span {
+    /// First byte of the interval.
+    pub start: u64,
+    /// First byte after the interval.
+    pub end: u64,
+}
+
+impl Span {
+    /// Read the same closed span object the Python manifest validator accepts.
+    pub fn read(value: &Value) -> Result<Self, String> {
+        let Value::Object(fields) = value else {
+            return Err("span must be an object".to_owned());
+        };
+        if fields.len() != 2 || !fields.contains_key("start") || !fields.contains_key("end") {
+            return Err("span fields must be exactly start and end".to_owned());
+        }
+        let start = value
+            .get("start")
+            .and_then(Value::integer)
+            .ok_or("span start must be an integer")?;
+        let end = value
+            .get("end")
+            .and_then(Value::integer)
+            .ok_or("span end must be an integer")?;
+        if start > end {
+            return Err("span start must not exceed end".to_owned());
+        }
+        Ok(Self { start, end })
+    }
+}
+
 /// One fixture object placed under the invocation's initial directory.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Fixture {
@@ -140,6 +175,8 @@ pub struct Case {
     pub id: String,
     /// The verdict the specification requires.
     pub expect: Expectation,
+    /// Optional position assertion, in this case's single `.wf` source.
+    pub span: Option<Span>,
     /// The prose the manifest line carries, when it carries any. It is
     /// context for a report and never selects a path.
     pub reason: Option<String>,
@@ -148,6 +185,21 @@ pub struct Case {
 }
 
 impl Case {
+    /// A rule-only case leaves the position unconstrained. An opted-in case
+    /// requires its single rejection to carry the span in its one source
+    /// (bundle ordinal 0).
+    pub fn matches_span(&self, verdict: &Verdict) -> bool {
+        self.span.is_none_or(|expected| {
+            matches!(verdict, Verdict::Reject(reached)
+                if reached.len() == 1
+                    && reached[0].coordinate == Some(DiagnosticCoordinate {
+                        source_ordinal: 0,
+                        byte_start: expected.start,
+                        byte_end: expected.end,
+                    }))
+        })
+    }
+
     /// Reads this case's canonical source bytes.
     pub fn source(&self) -> Vec<u8> {
         let path = cases_directory().join(format!("{}.wf", self.id));
@@ -215,6 +267,25 @@ fn case(value: &Value) -> Result<Case, String> {
         .ok_or("id must be a string")?
         .to_owned();
     let expect = expectation(value.get("expect").ok_or("missing expect")?)?;
+    let span = value
+        .get("expect")
+        .and_then(|expect| expect.get("span"))
+        .map(Span::read)
+        .transpose()?;
+    if let Some(span) = span {
+        if !matches!(expect, Expectation::Reject(_)) {
+            return Err("only a reject expectation may carry a span".to_owned());
+        }
+        let directory = cases_directory();
+        if directory.join(&id).join("modules.wfg").is_file() {
+            return Err("span requires a single .wf source".to_owned());
+        }
+        let source = std::fs::read(directory.join(format!("{id}.wf")))
+            .map_err(|error| format!("cannot read span source: {error}"))?;
+        if span.end > u64::try_from(source.len()).map_err(|error| error.to_string())? {
+            return Err("span exceeds source byte length".to_owned());
+        }
+    }
     // `runnable` is the only status a manifest line may carry, and it is the
     // default when the line omits the key. The readiness axis is gone: a case
     // whose declared verdict the toolchain does not reach is a defect, not a
@@ -232,6 +303,7 @@ fn case(value: &Value) -> Result<Case, String> {
     Ok(Case {
         id,
         expect,
+        span,
         reason,
         arrange,
     })
@@ -466,4 +538,82 @@ fn hex_bytes(value: &Value) -> Result<Vec<u8>, String> {
             u8::from_str_radix(digits, 16).map_err(|error| error.to_string())
         })
         .collect()
+}
+
+#[test]
+fn span_schema_requires_exact_ordered_integer_endpoints() {
+    for text in [r#"{"start":0,"end":3}"#, r#"{"start":3,"end":3}"#] {
+        assert!(Span::read(&json::parse(text).expect("JSON")).is_ok());
+    }
+    for text in [
+        r#"{}"#,
+        r#"{"start":0}"#,
+        r#"{"start":2,"end":1}"#,
+        r#"{"start":true,"end":1}"#,
+        r#"{"start":0,"end":"1"}"#,
+        r#"{"start":0,"end":1,"file":"sample.wf"}"#,
+    ] {
+        assert!(
+            Span::read(&json::parse(text).expect("JSON")).is_err(),
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn span_assertions_require_the_same_rejections_rule_source_and_interval() {
+    let span = Span { start: 12, end: 40 };
+    let case = Case {
+        id: "sample".to_owned(),
+        expect: Expectation::Reject("PROV-6".to_owned()),
+        span: Some(span),
+        reason: None,
+        arrange: None,
+    };
+    let verdict = |rule: &str, position: Option<(u64, Span)>| {
+        Verdict::Reject(vec![RejectedDiagnostic {
+            rule: Some(rule.to_owned()),
+            coordinate: position.map(|(source_ordinal, span)| DiagnosticCoordinate {
+                source_ordinal,
+                byte_start: span.start,
+                byte_end: span.end,
+            }),
+            expected: None,
+        }])
+    };
+    let matches = |reached: &Verdict| case.expect.matched_by(reached) && case.matches_span(reached);
+    assert!(matches(&verdict("PROV-6", Some((0, span)))));
+    for reached in [
+        verdict("PROV-6", None),
+        verdict("PROV-6", Some((1, span))),
+        verdict("PROV-6", Some((0, Span { start: 20, end: 26 }))),
+        verdict("TYPE-5", Some((0, span))),
+        Verdict::Accept,
+    ] {
+        assert!(!matches(&reached), "{reached:?}");
+    }
+    let mut unconstrained = case;
+    unconstrained.span = None;
+    assert!(unconstrained.matches_span(&verdict("PROV-6", None)));
+}
+
+#[test]
+fn manifest_span_assertions_require_single_source_rejections_in_bounds() {
+    for (text, expected) in [
+        (
+            r#"{"id":"sample","expect":{"kind":"accept","span":{"start":0,"end":1}}}"#,
+            "only a reject",
+        ),
+        (
+            r#"{"id":"fn9-pos-recursive-cross-module-written","expect":{"kind":"reject","rule":"FN-9","span":{"start":0,"end":1}}}"#,
+            "single .wf source",
+        ),
+        (
+            r#"{"id":"prov6-neg-copy-bound-call-span","expect":{"kind":"reject","rule":"PROV-6","span":{"start":0,"end":999999}}}"#,
+            "exceeds source byte length",
+        ),
+    ] {
+        let error = case(&json::parse(text).expect("JSON")).expect_err("invalid span assertion");
+        assert!(error.contains(expected), "{error}");
+    }
 }

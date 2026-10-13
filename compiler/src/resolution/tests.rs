@@ -3409,3 +3409,14 @@ fn uses_under_a_subtree_match_a_scan_of_every_use() {
         }
     });
 }
+
+#[test]
+fn match_constant_identifier_and_variant_label_have_separate_roles() {
+    with_one_resolution(b"const code: u8 = 1_u8;\n\nenum Flag {\n  A();\n}\n\nfn select(value: u8, flag: Flag) -> result: unit pure {\n  match value {\n    code => {\n    }\n    else => {\n    }\n  }\n  match flag {\n    A() => {\n    }\n  }\n  return unit;\n}\n", |outcome| {
+        let ResolutionOutcome::Complete(resolved) = outcome else { panic!("integer named const and enum label must resolve: {outcome:?}"); };
+        let value = resolved.lexical_uses().iter().find(|usage| usage.role() == LexicalUseRole::IntegerMatchValue).unwrap();
+        assert_eq!(value.spelling(), "code");
+        assert!(matches!(value.target(), ResolvedTarget::Source { class: DeclarationClass::NamedConst, .. }));
+        assert!(resolved.deferred_uses().iter().any(|usage| usage.role() == DeferredUseRole::ArmVariant && usage.spelling() == "A"));
+    });
+}

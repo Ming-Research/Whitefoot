@@ -162,6 +162,9 @@ fn reach(case: &Case) -> Reached {
 
 /// Links and runs one emitted module under the case's own arrangement.
 fn execute(module: &str, arrange: Option<&Arrangement>) -> Verdict {
+    if let Err(failure) = whitefoot::require_executable_runner(module) {
+        return Verdict::Stopped(failure);
+    }
     let default = Arrangement::default();
     let arrange = arrange.unwrap_or(&default);
     let directory = invocation_directory();
@@ -299,6 +302,42 @@ fn link(module: &str, directory: &Path) -> PathBuf {
     executable
 }
 
+#[test]
+fn executable_case_without_a_runner_stops_before_linking() {
+    let source = b"fn main() -> result: u8 pure {\n  return 7_u8;\n}\n";
+    let module = compile(
+        &[SourceInput::new("entry.wf", source)],
+        CompilerLimits::default(),
+    )
+    .expect("a u8 entry is valid library source");
+    let Verdict::Stopped(failure) = execute(&module, None) else {
+        panic!("a library has no executable case runner");
+    };
+    assert_eq!(
+        failure,
+        whitefoot::require_executable_runner(&module).expect_err("no executable runner")
+    );
+    assert!(failure.contains("repair: select a function"), "{failure}");
+}
+
+#[test]
+fn executable_cases_with_unit_and_exit_status_keep_running() {
+    for (source, expected) in [
+        (&b"fn main() -> result: unit pure {\n  return unit;\n}\n"[..], 0),
+        (
+            &b"fn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 7_u8);\n}\n"[..],
+            7,
+        ),
+    ] {
+        let module = compile(
+            &[SourceInput::new("entry.wf", source)],
+            CompilerLimits::default(),
+        )
+        .expect("the executable entry checks");
+        assert_eq!(execute(&module, None), Verdict::Run(expected));
+    }
+}
+
 /// One case's outcome, named as `runner.py` names it.
 ///
 /// x1 retires the readiness axis with the manifest statuses that carried it:
@@ -318,7 +357,7 @@ fn outcome(case: &Case, reached: &Verdict) -> Outcome {
     if matches!(reached, Verdict::Unsupported(_)) && case.expect != Expectation::Unsupported {
         return Outcome::Fail;
     }
-    if case.expect.matched_by(reached) {
+    if case.expect.matched_by(reached) && case.matches_span(reached) {
         Outcome::Pass
     } else {
         Outcome::Fail
@@ -362,7 +401,10 @@ fn the_corpus_reaches_its_declared_verdict_through_the_ordinary_compiler_path() 
     assert_eq!(failed, 0, "conformance adapter: {summary}");
 }
 
-/// One failure's corpus verdict, as `reach` reduces it.
+/// One failure's corpus verdict, as `reach` reduces it: every reported
+/// diagnostic with its rule and source coordinate. Module verdicts retained
+/// as text cannot supply byte spans; the manifest therefore limits span
+/// assertions to single-source cases, including caches.
 fn failure_verdict(failure: &CompilationFailure) -> Verdict {
     match failure.kind() {
         CompilationFailureKind::Source => {
@@ -508,7 +550,7 @@ fn a_shared_proof_receipt_cache_reaches_every_declared_source_verdict() {
         };
         checked += 1;
         let reached = reach_with_receipts(case, &cache);
-        if !expected.matched_by(&reached) {
+        if !expected.matched_by(&reached) || !case.matches_span(&reached) {
             reports.push(format!(
                 "  {} want {expected:?} reached {reached:?}",
                 case.id

@@ -412,13 +412,18 @@ pub(super) fn resolve_uses_deferred(
                             role: use_record.role,
                             admissible,
                             origins: invisible,
-                            mechanical_fix: (use_record.role == LexicalUseRole::InvariantFact
-                                && invisible_headers_only)
-                                .then(|| {
-                                    crate::semantic::header_invariant_scope_repair(
-                                        &use_record.spelling,
-                                    )
-                                }),
+                            mechanical_fix: if use_record.role == LexicalUseRole::IntegerMatchValue
+                            {
+                                Some("write an in-scope named const or integer literal of the scrutinee's exact integer type".to_owned())
+                            } else {
+                                (use_record.role == LexicalUseRole::InvariantFact
+                                    && invisible_headers_only)
+                                    .then(|| {
+                                        crate::semantic::header_invariant_scope_repair(
+                                            &use_record.spelling,
+                                        )
+                                    })
+                            },
                         },
                     }),
                 ));
@@ -654,7 +659,9 @@ fn admissible_classes(role: LexicalUseRole, spelling: &str) -> Vec<DeclarationCl
         LexicalUseRole::Const => {
             vec![DeclarationClass::NamedConst, DeclarationClass::ConstGeneric]
         }
-        LexicalUseRole::ConstValue => vec![DeclarationClass::NamedConst],
+        LexicalUseRole::ConstValue | LexicalUseRole::IntegerMatchValue => {
+            vec![DeclarationClass::NamedConst]
+        }
         LexicalUseRole::PlaceBase => {
             // [MSR-6] a `pbase` admits an in-scope const generic beside a
             // named const: a const generic is a monomorphization-time
@@ -731,6 +738,7 @@ fn universe_classes(role: LexicalUseRole) -> Vec<DeclarationClass> {
         LexicalUseRole::BreakLabel => vec![DeclarationClass::Label],
         LexicalUseRole::Const
         | LexicalUseRole::ConstValue
+        | LexicalUseRole::IntegerMatchValue
         | LexicalUseRole::PlaceBase
         | LexicalUseRole::FunctionBinding => vec![
             DeclarationClass::Function,
@@ -776,6 +784,7 @@ fn use_rule(role: LexicalUseRole) -> ResolutionRule {
         LexicalUseRole::EffectRoot | LexicalUseRole::EffectIndex => ResolutionRule::Eff1,
         LexicalUseRole::Const => ResolutionRule::Const1,
         LexicalUseRole::ConstValue => ResolutionRule::Const2,
+        LexicalUseRole::IntegerMatchValue => ResolutionRule::Gram12,
         LexicalUseRole::IdentifierCallee | LexicalUseRole::OperationCallee => ResolutionRule::Op1,
         // FN-3 selects the function named by a binding group's member;
         // FN-4 checks its compatibility after resolution.
