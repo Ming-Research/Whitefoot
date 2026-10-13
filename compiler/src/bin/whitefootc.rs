@@ -2854,7 +2854,7 @@ mod tests {
     #[test]
     fn fragment_workers_preserve_objects_link_order_and_program() {
         use whitefoot::{CompilerLimits, FragmentGranularity, SourceInput, compile};
-        let source = b"fn first(value: u64) -> result: u64 pure {\n  return value *wrap 3_u64;\n}\n\nfn second(value: u64) -> result: u64 pure {\n  return first(value: value) +wrap 1_u64;\n}\n\nfn main() -> status: std::process::ExitStatus pure {\n  let chosen = second(value: 2_u64);\n  match cvt.checked::<u64, u8>(chosen) {\n    Ok(value: code) => {\n      return std::process::exit_status(code: code);\n    }\n    Err(error: refused) => {\n      return std::process::exit_status(code: 255_u8);\n    }\n  }\n}\n";
+        let source = b"fn first(value: u64) -> result: u64 pure {\n  return value *wrap 3_u64;\n}\n\nfn second(value: u64) -> result: u64 pure {\n  let tripled = first(value: value);\n  return tripled +wrap 1_u64;\n}\n\nfn main() -> status: std::process::ExitStatus pure {\n  let chosen = second(value: 2_u64);\n  match cvt.checked::<u64, u8>(chosen) {\n    Ok(value: code) => {\n      return std::process::exit_status(code: code);\n    }\n    Err(error: refused) => {\n      return std::process::exit_status(code: 255_u8);\n    }\n  }\n}\n";
         let llvm = compile(
             &[SourceInput::new("pool.wf", source)],
             CompilerLimits::default(),
