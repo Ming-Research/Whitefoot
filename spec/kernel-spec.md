@@ -1604,13 +1604,27 @@ One row states each access once. An entry is covered by another entry of the row
 [EFF-2] A concrete function declaration exhibits the union of its resolved body accesses and calls.
 The body contribution is syntactic over the complete function body. Erased definitions and contracts [FN-8, FN-9], proofs, and the compiler-owned captures, comparison and update of a counted loop contribute nothing. Contract-read separation at a call is governed by [EFF-5].
 Every source occurrence contributes even in an FN-8 uninhabited instance. No path condition, constant evaluation, proof, optimizer result, or backend reachability narrows the conservative structural normal-control graph [FN-1].
-An allocation or a release contributes no path [STOR-8].
+
+Body operations contribute the following access categories; target, operand, offset and endpoint evaluations contribute through their own operations, and the following paragraphs attribute and project the resulting paths.
+
+| body operation | exhibited access categories |
+|---|---|
+| Reading a value from a place [TYPE-7, OP-15] | Read of the selected storage |
+| Committing a value assignment to a target live at statement entry [SET-1] | Write of the target storage |
+| Reinitializing a complete binding dead at statement entry [SET-1] | No target-storage access contribution |
+| Read-modify-write `set p = p +wrap x;` [SET-1, OP-2] | Read of p through the right-hand side and write of p at commit |
+| Atomic in-place update [OP-12] | Read of the old target value and write of the target at commit |
+| Handing over a value by `move`, `give`, `return`, or structural repacking [GIVE-1, FN-1, OWN-1] | Contributions of value evaluation; the transfer adds no read or write |
+| Forming a reference to a path or range [REF-1, REF-4] | Contributions of offset and endpoint evaluation; naming the referent adds no read or write of its contents |
+| Forming a page reference `&p.pages[k]` [REF-4] | The read specified by [REF-4] |
+| Calling a callable [EFF-1, EFF-5] | Read for each projected `reads` entry and write for each projected `writes` entry |
+| Allocation or release [STOR-8] | No access contribution |
 
 At a function-kind parameter or named member call [FN-5], the instantiated formal's written row is the authoritative callable boundary. Its paths undergo the same resolved-place projection and ENT-5 support kill as ordinary callee paths; the selected actual's narrower covered row never substitutes for that boundary. Generic spelling checking retains formal-rooted contributions under the written bounds, including an owned parameter that later has a copy instance. Concrete rechecking verifies the fixed containing declaration's row under the same formal interface and independently checks each actual against FN-4 and its own row. No adapter, dummy read, widened runtime access, or law supplies an exhibited path.
 
 Every read or write is attributed after ordinary place resolution [REF-1]. A reference parameter's effect path names the path the reference names rather than the reference variable. An access rooted in a formal contributes the most precise static path EFF-1 admits for that resolved place; a dynamic element or range maps to its nearest statically nameable enclosing path.
 An unknown descendant cover maps to its nearest statically nameable containing prefix by the same rule; no wildcard is written in an effect row. Substitution retains the actual's captured target and the declared finite suffix for [OWN-7], rather than treating the actual as equal to its anchor.
-Moving, returning, or structurally repacking an owner contributes no read or write merely by transferring it. After transfer into a local binding or aggregate field, subsequent accesses are attributed to that destination's resolved storage. A whole-place replacement changes the value at that place without changing the place's effect root. No effect root follows an owned value through moves, results, or replacements.
+After transfer into a local binding or aggregate field, subsequent accesses are attributed to that destination's resolved storage. A whole-place replacement changes the value at that place without changing the place's effect root. No effect root follows an owned value through moves, results, or replacements.
 A const root and `immutable-const` contribute no read effect. An access rooted only in local storage contributes no enclosing formal-rooted effect, including through a local reference; the checked access and its ordinary footprint remain.
 A write is admitted only where ordinary ownership already admits it [SET-1]. An effect path grants no permission.
 
@@ -1618,8 +1632,14 @@ At a call, each declared effect path selects its root formal's actual argument a
 The actuals' call data are captured after argument evaluation and before the call. Each projected write applies [ENT-5]'s support-survival classification, then CALL-6 instantiates entry terms from that call datum and exit terms from the actual's resolved return place. This substitution does not inspect the callee body and retains no owned-result or exclusive-referent ancestry.
 Framing an action out of an enclosing row removes no checked action or ordinary effect footprint. Optimization is governed by EFF-3 and the source's value, ownership and control semantics.
 
-A SET-1 commit contributes a write. SET-1's reinitialization of a complete binding already dead at statement entry keeps its no-previous-owner exception. Target and right-hand-side evaluation contribute ordinarily.
-A declared entry is exhibited when the body accesses storage at or below its path. Rows are checked both ways against this complete exhibited set — every declared entry is exhibited in that sense, and every exhibited access lies under some declared entry — so undeclared-but-exhibited and declared-but-unexhibited are both EFF-2 errors. A declaration with no exhibited contribution writes `pure`, whether or not it carries erased contracts.
+A declared entry is exhibited by an access at or below its path whose category is admitted by this table:
+
+| declared entry | exhibited access categories |
+|---|---|
+| `writes(path)` | Write |
+| `reads(path)` | Read or write |
+
+Rows are checked both ways against this complete exhibited set — every declared entry is exhibited in that sense, and every exhibited access lies under some declared entry — so undeclared-but-exhibited and declared-but-unexhibited are both EFF-2 errors. A declaration with no exhibited contribution writes `pure`, whether or not it carries erased contracts.
 A PRE-1 or PRE-2 function signature is the ordinary declared boundary; its supplied definition must satisfy the same boundary [SCOPE-3, PRE-1, PRE-2]. No source body is fabricated for it and no alternate effect rule applies to its calls.
 
 [EFF-3] A call whose row is `pure`, whose boundary is decision-cell-free [SHARE-3], which is not a waiting call [WAIT-1], and which allocates nothing licenses deduplication and reordering with equal arguments.
