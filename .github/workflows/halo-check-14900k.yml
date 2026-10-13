@@ -1,0 +1,630 @@
+# Temporary Halo checker experiment on claude/halo-check-14900k; never merge.
+# research-boundary: manual-only
+# This explicitly requested timing panel is independent of the correctness gate.
+# Wrapper budgets are report-only; samples have not established stage budgets.
+# A push to this branch whose commit message contains [14900k] runs it; the
+# head under test is read from .github/halo-check-14900k.head when not dispatched.
+name: halo-check-14900k
+
+on:
+  push:
+    branches: [claude/halo-check-14900k]
+  workflow_dispatch:
+    inputs:
+      main_ref:
+        description: Main baseline, resolved after fetching main at dispatch
+        type: string
+        default: origin/main
+      head_sha:
+        description: Exact full 40-hex head of PR 429 (claude/affine-failed-reuse)
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: halo-check-14900k
+  cancel-in-progress: false
+
+jobs:
+  compare:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[14900k]')
+    runs-on: [self-hosted, 14900k]
+    timeout-minutes: 180
+    defaults:
+      run:
+        shell: bash
+    env:
+      LC_ALL: C
+      MAIN_REF: ${{ inputs.main_ref || 'origin/main' }}
+      HEAD_SHA: ${{ inputs.head_sha }}
+      OLD_PREFIX: d837678c6905
+      OLD_TAG: wf-d837678c6905
+      HALO_REF: 80f0ee4
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Initialize private scratch and record the prior criterion
+        run: |
+          set -euo pipefail
+          root=$(mktemp -d "$RUNNER_TEMP/halo-check-14900k-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-XXXXXX")
+          mkdir "$root/artifact" "$root/targets" "$root/binaries" "$root/downloads"
+          echo "HALO_EXPERIMENT_ROOT=$root" >> "$GITHUB_ENV"
+          echo "HALO_EXPERIMENT_OUT=$root/artifact" >> "$GITHUB_ENV"
+          printf '%s\n' "head passes if its median CPU time is at or below old's median plus the twin's spread, and its verdict equals main's" \
+            > "$root/artifact/criterion.txt"
+          printf '%s\n' 'Twin spread is max(abs(main-twin CPU - main CPU)) over the five paired rounds; CPU is user + system.' \
+            >> "$root/artifact/criterion.txt"
+          cat "$root/artifact/criterion.txt" >> "$GITHUB_STEP_SUMMARY"
+          cat > "$root/clean-env.sh" <<'SH'
+          # Each build uses the repository's gate profile, with no runner overrides.
+          for variable in $(compgen -e); do
+            case "$variable" in
+              CARGO_PROFILE_*|CARGO_TARGET_*|CARGO_BUILD_*|GIT_TRACE*|GIT_CURL_VERBOSE)
+                unset "$variable" ;;
+            esac
+          done
+          unset RUSTFLAGS CARGO_ENCODED_RUSTFLAGS RUSTC_WRAPPER RUSTC_WORKSPACE_WRAPPER
+          unset RUSTC RUSTDOC RUSTC_BOOTSTRAP
+          unset WHITEFOOT_CHECK_WORK WHITEFOOT_TEST_TIMINGS WHITEFOOT_CHECK_OWNER WHITEFOOT_CHECK_PGID
+          unset WHITEFOOT_CHECK_LOCK_DIR WHITEFOOT_TIME_BUDGET_RECORD WHITEFOOT_TIME_BUDGET_FILE
+          unset WHITEFOOT_CPUINFO WHITEFOOT_CHECK_TIMEOUT
+          export CARGO_INCREMENTAL=0 CARGO_TERM_COLOR=never RUSTUP_TOOLCHAIN=stable
+          # Share fetched dependency sources, never inherited runner Cargo config.
+          export CARGO_HOME="$HALO_EXPERIMENT_ROOT/cargo-home"
+          SH
+
+      - name: Check the idle host and resolve immutable compiler revisions
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          source "$HALO_EXPERIMENT_ROOT/clean-env.sh"
+          out="$HALO_EXPERIMENT_OUT"
+          if [ -d "$HOME/.cargo/bin" ]; then
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+          test "$(uname -s)" = Linux
+          test "$(uname -m)" = x86_64
+          for command in clang ld.lld taskset rustup cargo rustc python3 perl gh jq sha256sum; do
+            command -v "$command"
+          done
+          test -x /usr/bin/clang
+          test -x /usr/bin/time
+          taskset -c 2 true
+          lock="/tmp/whitefoot-check-$(id -u).lock"
+          if [ -d "$lock" ]; then
+            cat "$lock/pid" "$lock/command"
+            pid=$(cat "$lock/pid")
+            ps -p "$pid" -o pid=,args= || true
+            echo 'Inspect the existing host lock owner; this experiment will not remove it.' >&2
+            exit 75
+          fi
+          rustup toolchain install stable --profile minimal
+          # Authenticate Whitefoot fetches only for these commands; store no token.
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          echo "::add-mask::$auth"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" \
+            fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          if [ -z "$HEAD_SHA" ]; then HEAD_SHA=$(tr -d '[:space:]' < .github/halo-check-14900k.head); fi
+          echo "HEAD_SHA=$HEAD_SHA" >> "$GITHUB_ENV"
+          [[ "$HEAD_SHA" =~ ^[0-9a-fA-F]{40}$ ]] || { echo 'head_sha must be a full 40-hex commit SHA' >&2; exit 1; }
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" \
+            fetch --no-tags origin "$HEAD_SHA"
+          main=$(git rev-parse --verify "${MAIN_REF}^{commit}")
+          head=$(git rev-parse --verify "${HEAD_SHA}^{commit}")
+          test "$head" = "${HEAD_SHA,,}"
+          git merge-base --is-ancestor "$main" origin/main
+          old=$(git rev-parse --verify "${OLD_PREFIX}^{commit}")
+          printf '%s\n' "$main" > "$out/main-sha.txt"
+          printf '%s\n' "$head" > "$out/head-sha.txt"
+          printf '%s\n' "$old" > "$out/old-sha.txt"
+          clang_major=$(/usr/bin/clang -dumpversion | cut -d. -f1)
+          lld_major=$(ld.lld --version | sed -n 's/.*LLD \([0-9][0-9]*\).*/\1/p')
+          for name in old main head; do
+            sha=$(cat "$out/$name-sha.txt")
+            pin=$(git show "$sha:.github/llvm-major" | tr -d '[:space:]')
+            [[ "$pin" =~ ^[0-9]+$ ]]
+            printf '%s LLVM major %s\n' "$name" "$pin" >> "$out/llvm-pins.txt"
+            if [ "$pin" != "$clang_major" ] || [ "$pin" != "$lld_major" ]; then
+              echo "::error::$name pins LLVM $pin, installed /usr/bin/clang is $clang_major and ld.lld is $lld_major"
+              exit 1
+            fi
+          done
+          {
+            printf 'workflow revision %s\nmain input %s\nmain %s\nhead %s\nold %s\n' \
+              "$(git rev-parse HEAD)" "$MAIN_REF" "$main" "$head" "$old"
+            printf 'profile=gate (repository settings); CARGO_INCREMENTAL=0; affinity=2\n'
+            printf 'command=whitefootc --graph lib/halo/modules.wfg --check-module pkg::vm\n'
+            printf 'cache disabled by omission of --cache; instrumentation disabled\n'
+            printf 'wrapper budgets report-only; no measured stage budget\n'
+            uname -a
+            lscpu
+            /usr/bin/clang --version
+            ld.lld --version
+            /usr/bin/time --version
+            rustup show active-toolchain
+            rustc --version --verbose
+            cargo --version
+            cat "$out/llvm-pins.txt"
+          } > "$out/metadata.txt" 2>&1
+          cat "$out/metadata.txt"
+          for name in main head; do
+            git worktree add --detach "$HALO_EXPERIMENT_ROOT/$name" "$(cat "$out/$name-sha.txt")"
+          done
+
+      - name: Obtain the old release or confirm why a source build is needed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          source "$HALO_EXPERIMENT_ROOT/clean-env.sh"
+          root="$HALO_EXPERIMENT_ROOT"
+          out="$HALO_EXPERIMENT_OUT"
+          release=false
+          if gh release view "$OLD_TAG" --repo "$GITHUB_REPOSITORY" \
+              --json tagName,targetCommitish,assets,url,publishedAt \
+              > "$out/old-release.json" 2> "$out/old-release-view.stderr"; then
+            release=true
+          else
+            # A successful authenticated listing distinguishes absence from an API
+            # or permission failure. A failed listing never enables a build fallback.
+            gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+              --jq '.[] | .tag_name' > "$out/release-tags.txt" 2> "$out/release-list.stderr"
+            if grep -Fxq "$OLD_TAG" "$out/release-tags.txt"; then
+              echo 'Old release exists but release metadata could not be read; refusing fallback.' >&2
+              exit 1
+            fi
+            printf 'built: authenticated release listing confirms %s is absent\n' "$OLD_TAG" > "$out/old-origin.txt"
+          fi
+          if [ "$release" = true ]; then
+            if jq -e '.assets | any(.name == "whitefootc-linux-x86_64.tar.gz")' "$out/old-release.json" > /dev/null; then
+              auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+              echo "::add-mask::$auth"
+              git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" \
+                fetch --no-tags origin "refs/tags/$OLD_TAG"
+              test "$(git rev-parse 'FETCH_HEAD^{commit}')" = "$(cat "$out/old-sha.txt")"
+              gh release download "$OLD_TAG" --repo "$GITHUB_REPOSITORY" \
+                --pattern whitefootc-linux-x86_64.tar.gz --dir "$root/downloads"
+              archive="$root/downloads/whitefootc-linux-x86_64.tar.gz"
+              test "$(tar -tzf "$archive")" = whitefootc
+              mkdir "$root/binaries/old"
+              tar -xzf "$archive" -C "$root/binaries/old" --no-same-owner
+              test -x "$root/binaries/old/whitefootc"
+              sha256sum "$archive" > "$out/old-archive-sha256.txt"
+              printf 'release: %s / whitefootc-linux-x86_64.tar.gz; tag resolves to pinned old SHA\n' "$OLD_TAG" > "$out/old-origin.txt"
+            else
+              printf 'built: %s exists but metadata confirms no Linux x86_64 asset\n' "$OLD_TAG" > "$out/old-origin.txt"
+            fi
+          fi
+          if [ ! -x "$root/binaries/old/whitefootc" ]; then
+            git worktree add --detach "$root/old" "$(cat "$out/old-sha.txt")"
+          fi
+          cat "$out/old-origin.txt"
+
+      - name: Fetch one pinned Halo checkout without persisting its credential
+        env:
+          HALO_READ_TOKEN: ${{ secrets.HALO_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          source "$HALO_EXPERIMENT_ROOT/clean-env.sh"
+          root="$HALO_EXPERIMENT_ROOT"
+          out="$HALO_EXPERIMENT_OUT"
+          token="${HALO_READ_TOKEN:-}"
+          if [ -z "$token" ]; then
+            # Do not confuse the repository-scoped workflow token with runner login.
+            token=$(env -u GH_TOKEN -u GITHUB_TOKEN gh auth token --hostname github.com 2>/dev/null) || true
+          fi
+          if [ -z "$token" ]; then
+            echo '::error::Halo requires secrets.HALO_READ_TOKEN or an existing runner gh login with Halo read access.'
+            exit 1
+          fi
+          echo "::add-mask::$token"
+          export HALO_GIT_TOKEN="$token"
+          unset token HALO_READ_TOKEN GH_TOKEN GITHUB_TOKEN
+          cat > "$root/halo-askpass.sh" <<'SH'
+          #!/usr/bin/env bash
+          case "$1" in
+            *Username*) printf '%s\n' x-access-token ;;
+            *Password*) printf '%s\n' "$HALO_GIT_TOKEN" ;;
+            *) exit 1 ;;
+          esac
+          SH
+          chmod 700 "$root/halo-askpass.sh"
+          trap 'unset HALO_GIT_TOKEN; rm -f "$root/halo-askpass.sh"' EXIT
+          GIT_ASKPASS="$root/halo-askpass.sh" GIT_TERMINAL_PROMPT=0 GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
+            git -c credential.helper= -c "core.askPass=$root/halo-askpass.sh" \
+              clone --quiet https://github.com/Ming-Research/Halo-wf.git "$root/halo" \
+              > "$out/halo-fetch.stdout" 2> "$out/halo-fetch.stderr"
+          unset HALO_GIT_TOKEN
+          git -C "$root/halo" checkout --quiet --detach "$HALO_REF"
+          git -C "$root/halo" rev-parse HEAD > "$out/halo-sha.txt"
+          [[ "$(cat "$out/halo-sha.txt")" = "$HALO_REF"* ]]
+          printf 'Halo %s\n' "$(cat "$out/halo-sha.txt")" >> "$out/metadata.txt"
+          test -f "$root/halo/lib/halo/modules.wfg"
+
+      - name: Build fresh main and head compilers with the release profile
+        run: |
+          set -euo pipefail
+          source "$HALO_EXPERIMENT_ROOT/clean-env.sh"
+          root="$HALO_EXPERIMENT_ROOT"
+          out="$HALO_EXPERIMENT_OUT"
+          printf 'stage\texit_status\n' > "$out/build-status.tsv"
+          for name in main head old; do
+            if [ "$name" = old ] && [ -x "$root/binaries/old/whitefootc" ]; then continue; fi
+            export CARGO_TARGET_DIR="$root/targets/$name"
+            (
+              cd "$root/$name"
+              status=0
+              perl "$GITHUB_WORKSPACE/.github/run-check.pl" "halo-check-14900k/fetch-$name" \
+                cargo fetch --manifest-path compiler/Cargo.toml --locked \
+                > "$out/$name-dependencies.log" 2>&1 || status=$?
+              printf 'fetch-%s\t%s\n' "$name" "$status" >> "$out/build-status.tsv"
+              cat "$out/$name-dependencies.log"
+              test "$status" -eq 0
+              status=0
+              perl "$GITHUB_WORKSPACE/.github/run-check.pl" "halo-check-14900k/build-$name" \
+                cargo build --manifest-path compiler/Cargo.toml --profile gate --locked --offline --bin whitefootc \
+                > "$out/$name-build.log" 2>&1 || status=$?
+              printf 'build-%s\t%s\n' "$name" "$status" >> "$out/build-status.tsv"
+              cat "$out/$name-build.log"
+              test "$status" -eq 0
+            )
+            mkdir -p "$root/binaries/$name"
+            cp "$CARGO_TARGET_DIR/gate/whitefootc" "$root/binaries/$name/whitefootc"
+          done
+          # The twin runs this exact main file, not another build or a copied image.
+          for name in old main head; do
+            test -x "$root/binaries/$name/whitefootc"
+            sha256sum "$root/binaries/$name/whitefootc" >> "$out/compiler-sha256.txt"
+          done
+          printf 'main-twin executable is exactly main executable\n' >> "$out/compiler-sha256.txt"
+
+      - name: Warm each compiler then measure five rotating rounds under one host lock
+        run: |
+          set -euo pipefail
+          source "$HALO_EXPERIMENT_ROOT/clean-env.sh"
+          root="$HALO_EXPERIMENT_ROOT"
+          out="$HALO_EXPERIMENT_OUT"
+          cat > "$out/measure.py" <<'PY'
+          import csv
+          import json
+          import math
+          import pathlib
+          import subprocess
+          import sys
+
+          root = pathlib.Path(sys.argv[1])
+          out = root / "artifact"
+          names = ["old", "main", "head", "main-twin"]
+          binaries = {name: root / "binaries" / ("main" if name == "main-twin" else name) / "whitefootc"
+                      for name in names}
+          command = ["--graph", "lib/halo/modules.wfg", "--check-module", "pkg::vm"]
+          with (out / "runs.tsv").open("w", newline="") as record:
+              writer = csv.writer(record, delimiter="\t")
+              writer.writerow(["phase", "round", "position", "compiler", "wall", "user", "system", "cpu", "exit", "valid", "error", "stem"])
+
+              def launch(name, phase, round_number, position):
+                  stem = f"{phase}-{round_number}-{name}"
+                  status = None
+                  times = [None] * 3
+                  error = ""
+                  try:
+                      # Compiler byte streams are distinct from wrapper and GNU time logs.
+                      with (out / f"{stem}.stdout").open("wb") as stdout, (out / f"{stem}.stderr").open("wb") as stderr:
+                          result = subprocess.run(
+                              ["/usr/bin/time", "-q", "-f", "%e %U %S", "-o", str(out / f"{stem}.time"),
+                               "taskset", "-c", "2", str(binaries[name]), *command],
+                              cwd=root / "halo", stdout=stdout, stderr=stderr, check=False, timeout=900)
+                      status = result.returncode
+                      (out / f"{stem}.exit").write_text(f"{status}\n")
+                      fields = (out / f"{stem}.time").read_text().split()
+                      if len(fields) != 3:
+                          raise ValueError("missing or invalid GNU time record")
+                      times = [float(value) for value in fields]
+                      if not all(math.isfinite(value) and value >= 0 for value in times) or sum(times[1:]) <= 0:
+                          raise ValueError("nonfinite, negative or zero CPU timing")
+                      # A checker refusal (1) is a verdict, not an experiment failure.
+                      # Signals, GNU time launch errors, panic (101), etc. are infrastructure failures.
+                      if status not in (0, 1):
+                          raise ValueError(f"abnormal exit status {status}")
+                  except (OSError, ValueError, subprocess.TimeoutExpired) as failure:
+                      error = str(failure)
+                  cpu = sum(times[1:]) if all(value is not None for value in times) else None
+                  writer.writerow([phase, round_number, position, name, *times, cpu, status, not error, error, stem])
+                  record.flush()
+                  (out / f"{stem}.record.json").write_text(json.dumps({"exit": status, "times": times, "error": error}) + "\n")
+                  print(f"{stem}: wall/user/system={times}, exit={status}, valid={not error}", flush=True)
+                  if status is None:
+                      # End the panel immediately. The host-lock wrapper reaps the
+                      # owned process group, including children left by a deadline.
+                      raise RuntimeError(f"{stem}: compiler exit was not observed: {error}")
+
+              # Warm-ups are timed and archived but excluded from every statistic.
+              for position, name in enumerate(["old", "main", "head"], 1):
+                  launch(name, "warmup", 0, position)
+              for index in range(5):
+                  offset = index % 4
+                  order = names[offset:] + names[:offset]
+                  for position, name in enumerate(order, 1):
+                      launch(name, "measured", index + 1, position)
+          PY
+          status=0
+          # Operational deadline only; timeout means INVALID, never source rejection.
+          export WHITEFOOT_CHECK_TIMEOUT=7200
+          perl .github/run-check.pl halo-check-14900k/measure python3 "$out/measure.py" "$root" \
+            > "$out/measurement-wrapper.log" 2>&1 || status=$?
+          printf '%s\n' "$status" > "$out/measurement-wrapper.exit"
+          cat "$out/measurement-wrapper.log"
+          exit "$status"
+
+      - name: Always publish timings, exact verdicts and validity
+        if: always() && env.HALO_EXPERIMENT_OUT != ''
+        env:
+          PREVIOUS_STATUS: ${{ job.status }}
+        run: |
+          set -euo pipefail
+          out="$HALO_EXPERIMENT_OUT"
+          cat > "$out/summarize.py" <<'PY'
+          import csv
+          import json
+          import math
+          import os
+          import pathlib
+          import statistics
+
+          out = pathlib.Path(os.environ["HALO_EXPERIMENT_OUT"])
+          criterion = "head passes if its median CPU time is at or below old's median plus the twin's spread, and its verdict equals main's"
+          lines = [criterion,
+                   "Twin spread is max(abs(main-twin CPU - main CPU)) over the five paired rounds; CPU is user + system.",
+                   "", "## Halo VM checker comparison", "",
+                   f"Earlier steps: {os.environ['PREVIOUS_STATUS']}.",
+                   "CPU seconds = user + system; CPU affinity 2. Warm-ups are discarded from statistics.",
+                   "Raw stdout/stderr byte files and exit files in the artifact are authoritative; readable verdicts below use byte-string escapes.", ""]
+          errors = []
+          rows = []
+
+          required_fields = {"phase", "round", "position", "compiler", "wall", "user", "system", "cpu", "exit", "valid", "error", "stem"}
+
+          def require_panel(panel):
+              names = ["old", "main", "head", "main-twin"]
+              expected = [("warmup", "0", str(position), name)
+                          for position, name in enumerate(names[:3], 1)]
+              for index in range(5):
+                  offset = index % 4
+                  order = names[offset:] + names[:offset]
+                  expected.extend(("measured", str(index + 1), str(position), name)
+                                  for position, name in enumerate(order, 1))
+              actual = [(row["phase"], row["round"], row["position"], row["compiler"]) for row in panel]
+              if actual != expected:
+                  raise ValueError("Need all three warm-ups and twenty measured runs in the declared rotating order")
+
+          def require_timing(status, fields):
+              if status not in (0, 1) or len(fields) != 3:
+                  raise ValueError("abnormal exit status or missing timing")
+              values = [float(value) for value in fields]
+              if any(not math.isfinite(value) or value < 0 for value in values) or sum(values[1:]) <= 0:
+                  raise ValueError("nonfinite, negative or zero CPU timing")
+              return dict(zip(("wall", "user", "system", "cpu"), [*values, sum(values[1:])]))
+
+          def require_verdicts(values, reference, count):
+              if reference is None or len(values) != count or any(value != reference for value in values):
+                  raise ValueError("exit/stdout/stderr verdict mismatch or missing verdict")
+
+          def require_module_verdict(status, stdout):
+              publications = [line for line in stdout.splitlines() if line.startswith(b"pkg::vm: accepted")
+                              or line.startswith(b"pkg::vm: rejected:")]
+              if len(publications) != 1:
+                  raise ValueError("missing or ambiguous pkg::vm verdict publication")
+              publication = publications[0]
+              accepted = publication == b"pkg::vm: accepted" or publication.startswith(b"pkg::vm: accepted, pending ")
+              rejected = publication.startswith(b"pkg::vm: rejected: ") and len(publication) > len(b"pkg::vm: rejected: ")
+              if not ((status == 0 and accepted) or (status == 1 and rejected)):
+                  raise ValueError("pkg::vm verdict publication disagrees with exit status")
+
+          # CI-only controls use the same validators as real results; they run no compiler.
+          def rejects(action):
+              try:
+                  action()
+              except ValueError:
+                  return
+              raise RuntimeError("Summary validator accepted deliberately damaged evidence")
+
+          good_verdict = (1, b"refused\n", b"diagnostic\n")
+          require_verdicts([good_verdict], good_verdict, 1)
+          for bad_verdict in [(0, good_verdict[1], good_verdict[2]),
+                              (1, b"different stdout", good_verdict[2]),
+                              (1, good_verdict[1], b"different stderr")]:
+              rejects(lambda: require_verdicts([bad_verdict], good_verdict, 1))
+          rejects(lambda: require_verdicts([], good_verdict, 1))
+          require_module_verdict(0, b"pkg::vm: accepted\n")
+          require_module_verdict(1, b"pkg::vm: rejected: required proof missing\n")
+          rejects(lambda: require_module_verdict(1, b""))
+          rejects(lambda: require_module_verdict(1, b"pkg::vm: accepted\n"))
+          rejects(lambda: require_module_verdict(0, b"pkg::vm: rejected: required proof missing\n"))
+          require_timing(1, ["1.00", "0.80", "0.10"])
+          for status, fields in [(101, ["1", "1", "0"]), (1, []), (1, ["nan", "1", "0"]),
+                                 (1, ["1", "-1", "0"]), (1, ["1", "0", "0"])]:
+              rejects(lambda: require_timing(status, fields))
+          control_names = ["old", "main", "head", "main-twin"]
+          control_panel = [dict(phase="warmup", round="0", position=str(position), compiler=name)
+                           for position, name in enumerate(control_names[:3], 1)]
+          for index in range(5):
+              offset = index % 4
+              order = control_names[offset:] + control_names[:offset]
+              control_panel.extend(dict(phase="measured", round=str(index + 1), position=str(position), compiler=name)
+                                   for position, name in enumerate(order, 1))
+          require_panel(control_panel)
+          rejects(lambda: require_panel(control_panel[:-1]))
+          (out / "validator-controls.txt").write_text("CI-only controls reject verdict mismatch, missing verdict/run/timing, invalid time, abnormal status and infrastructure errors without a module verdict.\n")
+          lines.extend([(out / "validator-controls.txt").read_text().strip(), ""])
+          try:
+              with (out / "runs.tsv").open() as record:
+                  reader = csv.DictReader(record, delimiter="\t")
+                  if not required_fields.issubset(reader.fieldnames or []):
+                      raise ValueError("Run CSV is missing required header fields")
+                  for number, row in enumerate(reader, 2):
+                      if any(row[field] is None for field in required_fields):
+                          errors.append(f"Run CSV line {number}: truncated row")
+                      else:
+                          rows.append(row)
+              require_panel(rows)
+              if (out / "measurement-wrapper.exit").read_text().strip() != "0":
+                  errors.append("Measurement host-lock wrapper failed")
+          except (OSError, ValueError, KeyError, TypeError, csv.Error) as failure:
+              errors.append(str(failure))
+          if os.environ["PREVIOUS_STATUS"] != "success":
+              errors.append("An earlier workflow step failed or was cancelled")
+
+          def table(title, headers, values):
+              lines.extend([f"### {title}", "", "| " + " | ".join(headers) + " |",
+                            "| " + " | ".join(["---"] * len(headers)) + " |"])
+              for value in values:
+                  lines.append("| " + " | ".join(str(cell).replace("|", "\\|") for cell in value) + " |")
+              lines.append("")
+
+          for filename, label in [("main-sha.txt", "main SHA"), ("head-sha.txt", "head SHA"),
+                                  ("old-sha.txt", "old SHA"), ("halo-sha.txt", "Halo SHA"),
+                                  ("old-origin.txt", "old compiler source")]:
+              try:
+                  lines.append(f"{label}: `{(out / filename).read_text().strip()}`")
+              except OSError:
+                  errors.append(f"Missing {label}")
+          lines.append("")
+          for filename, label in [("compiler-sha256.txt", "Compiler SHA-256"), ("metadata.txt", "Toolchain and host")]:
+              if (out / filename).exists():
+                  lines.extend([f"### {label}", "", "```text", (out / filename).read_text().rstrip(), "```", ""])
+              else:
+                  errors.append(f"Missing {label}")
+
+          verdicts = {}
+          parsed = {}
+          for row in rows:
+              stem = row["stem"]
+              try:
+                  if row["valid"] != "True":
+                      raise ValueError(row["error"] or "invalid run")
+                  status = int(row["exit"])
+                  values = require_timing(status, (out / f"{stem}.time").read_text().split())
+                  if any(float(row[key]) != value for key, value in values.items()):
+                      raise ValueError("timing file disagrees with run record")
+                  if int((out / f"{stem}.exit").read_text()) != status:
+                      raise ValueError("exit file disagrees with run record")
+                  stdout = (out / f"{stem}.stdout").read_bytes()
+                  stderr = (out / f"{stem}.stderr").read_bytes()
+                  require_module_verdict(status, stdout)
+                  verdicts[stem] = (status, stdout, stderr)
+                  parsed[stem] = values
+              except (OSError, ValueError, KeyError, TypeError) as failure:
+                  errors.append(f"{stem}: {failure}")
+
+          measured = {name: [row for row in rows if row["phase"] == "measured" and row["compiler"] == name]
+                      for name in ("old", "main", "head", "main-twin")}
+          for name, runs in measured.items():
+              if len(runs) != 5 or {row["round"] for row in runs} != {"1", "2", "3", "4", "5"}:
+                  errors.append(f"{name}: missing or duplicate measured rounds")
+              values = [[row["round"], row["position"], *(row[key] for key in ("wall", "user", "system", "cpu", "exit")), row["valid"]]
+                        for row in runs]
+              table(f"{name}: every measured run (seconds)", ["Round", "Position", "Wall", "User", "System", "CPU", "Exit", "Valid"], values)
+              if len(runs) == 5 and all(row["stem"] in parsed for row in runs):
+                  stats = []
+                  for key in ("wall", "user", "system", "cpu"):
+                      samples = [parsed[row["stem"]][key] for row in runs]
+                      stats.append([key, f"{statistics.median(samples):.6f}", f"{min(samples):.6f}", f"{max(samples):.6f}", f"{max(samples) - min(samples):.6f}"])
+                  table(f"{name}: timing statistics (seconds)", ["Timing", "Median", "Min", "Max", "Range"], stats)
+
+          reference = verdicts.get("warmup-0-main")
+          required = ["warmup-0-main", "warmup-0-head"] + [row["stem"] for name in ("main", "head", "main-twin") for row in measured[name]]
+          agreement = True
+          try:
+              require_verdicts([verdicts.get(stem) for stem in required], reference, 17)
+          except ValueError:
+              agreement = False
+              errors.append("Main/head/twin warm-up and measured exit/stdout/stderr do not all agree exactly")
+          old_reference = verdicts.get("warmup-0-old")
+          old_stable = old_reference is not None and len(measured["old"]) == 5 and all(verdicts.get(row["stem"]) == old_reference for row in measured["old"])
+          if not old_stable:
+              errors.append("Old compiler verdict is missing or unstable across warm-up and measured runs")
+          lines.extend([f"Main/head/twin exact verdict agreement: **{agreement}**.",
+                        f"Old verdict stability: **{old_stable}** (old may differ from main).", ""])
+          for name, verdict in [("main", reference), ("old", old_reference)]:
+              lines.extend([f"### Exact {name} verdict (readable byte escapes)", ""])
+              if verdict is None:
+                  lines.append("Unavailable.")
+              else:
+                  status, stdout, stderr = verdict
+                  lines.extend([f"Exit: {status}", "", "```text", f"stdout: {stdout!r}", f"stderr: {stderr!r}", "```"])
+              lines.append("")
+
+          passed = False
+          if not errors:
+              pairs = []
+              for round_number in range(1, 6):
+                  cpu = {name: parsed[f"measured-{round_number}-{name}"]["cpu"] for name in measured}
+                  pairs.append({"round": round_number, **cpu,
+                                "head-main": cpu["head"] - cpu["main"], "head-old": cpu["head"] - cpu["old"],
+                                "twin-main": cpu["main-twin"] - cpu["main"],
+                                "head/main": cpu["head"] / cpu["main"], "head/old": cpu["head"] / cpu["old"],
+                                "twin/main": cpu["main-twin"] / cpu["main"]})
+              headers = ["round", "old", "main", "head", "main-twin", "head-main", "head-old", "twin-main", "head/main", "head/old", "twin/main"]
+              with (out / "paired.tsv").open("w", newline="") as record:
+                  writer = csv.DictWriter(record, fieldnames=headers, delimiter="\t")
+                  writer.writeheader()
+                  writer.writerows(pairs)
+              table("Paired CPU differences (seconds) and ratios", headers,
+                    [[pair["round"], *(f"{pair[key]:.6f}" for key in headers[1:])] for pair in pairs])
+              table("Paired differences and ratios: spread about their median",
+                    ["Metric", "Median", "Min", "Max", "Min minus median", "Max minus median", "Max absolute deviation"],
+                    [[key, f"{statistics.median(values):.6f}", f"{min(values):.6f}", f"{max(values):.6f}",
+                      f"{min(values) - statistics.median(values):+.6f}", f"{max(values) - statistics.median(values):+.6f}",
+                      f"{max(abs(value - statistics.median(values)) for value in values):.6f}"]
+                     for key in headers[5:] for values in [[pair[key] for pair in pairs]]])
+              medians = {name: statistics.median(pair[name] for pair in pairs) for name in measured}
+              twin_spread = max(abs(pair["twin-main"]) for pair in pairs)
+              twin_range = max(pair["main-twin"] for pair in pairs) - min(pair["main-twin"] for pair in pairs)
+              limit = medians["old"] + twin_spread
+              passed = agreement and medians["head"] <= limit
+              lines.extend([f"Median CPU head/main: **{medians['head'] / medians['main']:.6f}**; head/old: **{medians['head'] / medians['old']:.6f}**.",
+                            f"Twin spread = max(abs(twin CPU − main CPU)) over the five paired rounds: **{twin_spread:.6f} s**.",
+                            f"Twin's own CPU range (max − min), separately: **{twin_range:.6f} s**.",
+                            f"Threshold: old median {medians['old']:.6f} s + twin spread {twin_spread:.6f} s = {limit:.6f} s; head median {medians['head']:.6f} s.",
+                            f"Prior criterion: **{'PASS' if passed else 'FAIL'}**.", ""])
+          else:
+              lines.extend(["Experiment **INVALID**; no PASS/FAIL performance conclusion.", "",
+                            *[f"- {error}" for error in errors], ""])
+          lines.extend(["This panel measures one pinned Halo module on this host; it runs no correctness suite and does not qualify a merge.",
+                        "Wrapper logs report budgets only; no unmeasured budget has been invented.", ""])
+          summary = "\n".join(lines)
+          (out / "summary.md").write_text(summary)
+          (out / "result.json").write_text(json.dumps({"valid": not errors, "passed": passed, "errors": errors}) + "\n")
+          print(summary)
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as record:
+              record.write(summary)
+          raise SystemExit(0 if not errors and passed else 1)
+          PY
+          python3 "$out/summarize.py"
+
+      - name: Retain raw verdicts, timing files and failure details
+        if: always() && env.HALO_EXPERIMENT_OUT != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: halo-check-14900k-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.HALO_EXPERIMENT_OUT }}/
+          if-no-files-found: error
+
+      - name: Remove only this experiment's worktrees and scratch
+        if: always() && env.HALO_EXPERIMENT_ROOT != ''
+        run: |
+          set -euo pipefail
+          root="$HALO_EXPERIMENT_ROOT"
+          for name in main head old; do
+            if [ -d "$root/$name" ]; then
+              git worktree remove --force "$root/$name"
+            fi
+          done
+          rm -rf -- "$root"
