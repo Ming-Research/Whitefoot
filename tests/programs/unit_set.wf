@@ -47,14 +47,16 @@ fn fill(store: Shared<ConcurrentHashMap<unit>>, missing: Shared<u64>, a: u64) ->
     }
   }
   for @column (b in 0_u64..16_u64) {
-    if b % 2_u64 == 1_u64 {
+    let parity = b % 2_u64;
+    if parity == 1_u64 {
       unmark(store: &store, a: a, b: b);
     }
   }
   let wrong = 0_u64;
   for @column (b in 0_u64..16_u64) {
     let present = is_marked(store: &store, a: a, b: b);
-    let wanted = b % 2_u64 == 0_u64;
+    let parity = b % 2_u64;
+    let wanted = parity == 0_u64;
     if present != wanted {
       set wrong = wrong +wrap 1_u64;
     }
@@ -115,7 +117,8 @@ fn main() -> status: ExitStatus pure waits {
       let before = keys.len;
       key_set_insert(keys: &keys, key: &key[0_u64..2_u64]);
       let grew = keys.len != before;
-      let odd = b % 2_u64 == 1_u64;
+      let parity = b % 2_u64;
+      let odd = parity == 1_u64;
       if grew != odd {
         return exit_status(code: 4_u8);
       }
