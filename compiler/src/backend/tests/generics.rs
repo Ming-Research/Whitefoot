@@ -16,10 +16,14 @@ fn compile_program(name: &str) -> String {
 
 /// Whether `line` defines a public symbol with `symbol` in its name. A
 /// register-returned instance is emitted as its public entry and an internal
-/// destination-form body (compiler/src/backend/abi.rs); it counts once, by
-/// its entry.
+/// destination-form body (compiler/src/backend/abi.rs), and a
+/// destination-form instance as its public entry and an internal `.source`
+/// entry (compiler/result-registers); each counts once, by its public entry.
 fn public_definition(line: &str, symbol: &str) -> bool {
-    line.starts_with("define ") && line.contains(symbol) && !line.contains(".body(")
+    line.starts_with("define ")
+        && line.contains(symbol)
+        && !line.contains(".body(")
+        && !line.contains(".source(")
 }
 
 const GENERIC_LIBRARY: &[u8] = br#"struct Pair<T: Int> {

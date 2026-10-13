@@ -245,12 +245,15 @@ fn call_results_read_at_their_source_keep_their_values() {
         calls_source(emitted_function(&module, "read_forwarded"), "forward"),
         "{module}"
     );
-    // A call whose result is both returned and read on another path is not
-    // forwarded, and a return is not a read in place: the caller keeps the
-    // public symbol.
-    let choose = emitted_function(&module, "choose");
+    // A call built in this activation's destination is forwarded even when
+    // another path reads its fields to build a new value there: the reads
+    // precede that construction, so the returned address stays valid
+    // through them (exit statuses 3 and 4 check both paths' values).
+    let choose = emitted_function(&module, "choose.source");
     assert!(
-        calls_public(choose, "item_at") && !calls_source(choose, "item_at"),
+        choose.contains("call ptr @wf_item_at.source(ptr %wf.result,")
+            && choose.contains(".result.source\n")
+            && choose.contains("ret ptr %wf.result"),
         "{choose}"
     );
     // The element path returns the element's address and copies nothing.

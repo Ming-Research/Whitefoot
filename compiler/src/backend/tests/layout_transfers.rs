@@ -916,13 +916,20 @@ fn main() -> status: std::process::ExitStatus pure {
         "the later observation must use the captured snapshot: {replacement}"
     );
     let main = super::emitted_body(&module, "main");
+    // `replace_snapshot` has a reference parameter, so main may read its
+    // result through `.source`; that entry takes the same arguments.
     for name in ["unchanged_snapshot", "replace_snapshot"] {
-        let call = main
+        let (call, callee) = main
             .lines()
-            .find(|line| line.contains(&format!("@wf_{name}(")))
+            .find_map(|line| {
+                [format!("@wf_{name}("), format!("@wf_{name}.source(")]
+                    .into_iter()
+                    .find(|callee| line.contains(callee.as_str()))
+                    .map(|callee| (line, callee))
+            })
             .expect("main calls the union-result callee");
         let arguments = call
-            .split_once(&format!("@wf_{name}("))
+            .split_once(&callee)
             .unwrap()
             .1
             .split(')')

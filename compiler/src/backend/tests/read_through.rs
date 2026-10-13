@@ -359,11 +359,10 @@ fn assert_tag_through(body: &str, address: &str) {
     }
     assert!(
         body.lines().any(|line| {
-            line.split_once("load i8, ptr ")
-                .is_some_and(|(_, source)| {
-                    let pointer = source.split([',', ' ']).next().expect("load pointer");
-                    tags.iter().any(|tag| tag == pointer)
-                })
+            line.split_once("load i8, ptr ").is_some_and(|(_, source)| {
+                let pointer = source.split([',', ' ']).next().expect("load pointer");
+                tags.iter().any(|tag| tag == pointer)
+            })
         }),
         "tag must read through {address}: {body}"
     );
@@ -1078,17 +1077,35 @@ fn main() -> status: std::process::ExitStatus pure {
         call.ends_with(&format!(", ptr %v{})", addresses[2].ordinal())),
         "pass the original element address: {destination}"
     );
-    let returned = emitted_function(&module, "return_snapshot");
-    let copy = snapshot_copy_line(returned, addresses[3]);
-    let lines: Vec<_> = returned.lines().collect();
+    // A returned snapshot materializes only at the return, directly into
+    // the result: the source entry returns the element's address without a
+    // copy (compiler/storage-placement), and the public entry's one
+    // transfer from that address into its destination is the copy.
+    let source = emitted_function(&module, "return_snapshot.source");
     assert!(
-        lines[copy].contains("(ptr %wf.result,") || lines[copy].ends_with(" to %wf.result"),
+        !source
+            .lines()
+            .any(|line| copy_from(line, &format!("%v{}", addresses[3].ordinal()))),
+        "no copy inside the source entry: {source}"
+    );
+    assert!(
+        source.contains(&format!("  ret ptr %v{}\n", addresses[3].ordinal())),
+        "return the element's address: {source}"
+    );
+    let returned = emitted_function(&module, "return_snapshot");
+    let lines: Vec<_> = returned.lines().collect();
+    let copy = lines
+        .iter()
+        .position(|line| is_copy_end(line))
+        .expect("the public entry's transfer");
+    assert!(
+        lines[copy].ends_with(" from %wf.source to %wf.result"),
         "copy directly to the result: {returned}"
     );
     assert_eq!(
-        lines[copy + 1].trim(),
-        "ret void",
-        "materialize at the return: {returned}"
+        lines.iter().filter(|line| is_copy_end(line)).count(),
+        1,
+        "one copy: {returned}"
     );
     let boundary = emitted_function(&module, "call_boundary");
     let copy = snapshot_copy_line(boundary, addresses[4]);
