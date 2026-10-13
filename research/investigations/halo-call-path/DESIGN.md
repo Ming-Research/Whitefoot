@@ -459,3 +459,519 @@ logs, divided by fib(32)'s 7,049,155 Lua calls.
   172, `SubRK` 350 to 338, `LtJmpRK` 338 to 290, `GetUpval` 206 to 136).
   These count every path of the arm, most of which fib(32) does not
   execute.
+
+## Call entries for calls made from parts (R3 follow-up)
+
+**Question.** Does sending every ordinary call a split part makes through a
+`preserve_most` entry of its callee remove the spill, frame and copy
+overhead of kinds (b) to (e) from SubRK, LtJmpRK and GetUpval?
+
+**Change.** The call-entry decision proposed in compiler/match-dispatch-lowering
+(Whitefoot#410): a call from the dispatch function or an arm to a
+module-defined function returning a value or through a destination names an
+internal preserve_mostcc entry that calls the callee with a call-site
+alwaysinline; the callee keeps the C convention.
+
+**Comparison.** The halo-call-path workflow (hosted x86-64, pinned LLVM,
+Halo-wf c900a68b2f06, full LTO, callgrind of fib(32)), run on a base B (this
+branch with main at 58743a931 merged, the base of Whitefoot#410) and on C = B
+plus only Whitefoot#410. Both runs build identical Halo sources; the only
+difference is the compiler change.
+
+**Measure.** Executed instructions per Lua call of the SubRK, LtJmpRK and
+GetUpval arms (re-identified from hot-arms.tsv) and the program total per Lua
+call, from callgrind/summary.txt.
+
+**Rejection criterion** (written before C ran). The change is rejected if
+the three arms' summed executed instructions per Lua call fall by fewer than
+10 from B to C.
+
+**Prior from reading the code.** None of the arms' surviving calls (slow,
+heap.intern, unwind, restore_stopped_stack) is a call the arm makes in
+source; each lies in a helper the arm calls (fast_instruction_sub_rk,
+instruction_sub_rk, instruction_get_upval) that the host inlines into the
+arm. The entry for such a helper is an internal single-caller copy of it,
+which the host inlines the same way, leaving the inner calls in the C
+convention. This predicts no change in the three arms and a rejection; a
+reduction would show that the entries keep a helper out of line that the
+base inlined.
+
+### Result: runs 38329105320 (B) and 38329170660 (C)
+
+Rejected. fib(32), 7,049,155 Lua calls, executed instructions per Lua call:
+
+| Measure | B | C | C − B |
+|---|---|---|---|
+| Program total | 841.53 | 845.03 | +3.50 |
+| SubRK (arm 25) | 60.0 | 59.0 | −1.0 |
+| LtJmpRK (arm 54) | 53.0 | 55.0 | +2.0 |
+| GetUpval (arm 5) | 61.0 | 61.0 | 0 |
+| Three-arm sum | 174.0 | 175.0 | +1.0 |
+| Call (arm 63) / Return (arm 65) | 101.0 / 112.0 | 101.0 / 112.0 | 0 |
+
+The emitted module of C defines eight `preserve_mostcc` entries for the
+dispatch helpers (checked_step, fast_instruction_sub_rk, instruction_sub_rk,
+fast_instruction_lt_jmp_rk, instruction_lt_jmp_rk, instruction_get_upval,
+instruction_call, instruction_return); none survives as a symbol or a
+callgrind row: the host inlines every entry into the arm, as the prior
+predicted, and the slow calls inside stay C calls. The three-arm sum moved by
++1, far from the −10 the change needed. The runs ran on different hosted CPUs
+(EPYC 9V74 and 9V45); instruction counts do not depend on that.
+
+### Result: out-of-line entries, run 38332324517 (D)
+
+The entries became `noinline` `preserve_mostcc` wrappers that call the
+original with the C convention. Executed instructions per Lua call, fib(32):
+
+| Measure | B | C | D |
+|---|---|---|---|
+| Program total | 841.53 | 845.03 | 1150.03 |
+| SubRK + LtJmpRK + GetUpval | 174.0 | 175.0 | 137.0 |
+| Call (arm 63) | 101.0 | 101.0 | 51.0 |
+| Return (arm 65) | 112.0 | 112.0 | 37.0 |
+| Stores to the stack in the five hot arms | 43.0 | — | 21.0 |
+| `wf__most_*` self instructions | 0 | 0 | 474.5 |
+
+The pre-written arm criterion is met (−37 against −10), but the program is
+36.7% slower: every call a part makes now crosses a wrapper, including the
+fast-path helpers (`fast_instruction_sub_rk`, `fast_instruction_lt_jmp_rk`,
+`checked_step`, `instruction_get_upval`, `instruction_call`,
+`instruction_return`) that B inlined into the arms, and each wrapper pushes
+and pops about ten registers. The rule as stated, every call from a part
+through an entry, cannot tell a call the host would inline from one it
+keeps out of line. D ran on an Intel Xeon 6973P-C, B and C on AMD EPYC;
+instruction counts do not depend on the host.
+
+### D's arm counts move work, they do not remove it
+
+Each D wrapper holds its callee's inlined body, so the fast-path work left
+the arms for the `wf__most_*` rows. Counting each arm with the wrapper it
+calls, per Lua call: SubRK 60 → 105, LtJmpRK 53 → 106, GetUpval 61 → 114,
+Call 101 → 133, Return 112 → 132. No run yet shows an arm whose fast helpers
+stay inlined while only the calls that survive inlining use preserve_most.
+
+B's post-LTO module has 89 `preserve_none` parts with 449 surviving non-tail
+calls to 30 callees (426 `fastcc`, 23 C). The hot arms' survivors are the
+slow paths (`slow`, `heap.intern`, `unwind`, `restore_stopped_stack`) plus
+`prepare`, `collect_if_due` in Call and `finish` in Return. SubRK's
+prologue is `push rbp; sub rsp,0xd0` with nine spills in the entry block:
+spill code the register allocator hoisted to a point dominating six slow
+call sites, which shrink-wrapping cannot move.
+
+### Probe before building: the convention on the surviving calls only
+
+Question: does the preserve_most convention on exactly the calls that
+survive host inlining remove the arm-entry preparation, or does the cost
+come from spill placement under unknown branch frequency?
+
+Method: one step on this experiment's workflow takes B's post-LTO module
+(`precodegen.ll`, save-temps), rewrites text variants, runs host code
+generation only, links and runs callgrind on fib(32):
+
+- V0, control: unchanged; must reproduce 841.53 per Lua call exactly.
+- V1: in parts, every surviving `call fastcc @f` calls a `preserve_mostcc`
+  clone of `f` whose own calls go to clones as well (the convention on
+  surviving calls; the ceiling for transitive twins).
+- V2: the slow callees (`slow`, `heap.intern`, `unwind`,
+  `restore_stopped_stack`) marked `cold`, convention unchanged.
+- V3: V1 and V2 together.
+
+Rejection, written before the run: if V1 lowers neither the three-arm sum
+(SubRK + LtJmpRK + GetUpval) by at least 10 nor the program total by at
+least 10 per Lua call against V0, the convention premise behind every
+preserve_most option is rejected. If V2 alone reaches V1's three-arm sum
+within 3, the cost is spill placement, not the convention. Also recorded:
+SubRK's entry-block stack stores (9 in B), and Call and Return each counted
+with their callees.
+
+### Result: probe run 38335991774
+
+Instructions per Lua call (callgrind self counts, fib(32), 7,049,155 Lua
+calls; hosted ubuntu-24.04; artifact `halo-probe`, `table.md`). V0
+reproduced B's 841.53 exactly, and every variant printed 2178309.
+
+| Measure | V0 | V1 | V2 | V3 |
+|---|---|---|---|---|
+| SubRK | 60 | 56 | 47 | 47 |
+| LtJmpRK | 53 | 49 | 48 | 46 |
+| GetUpval | 61 | 58 | 56 | 54 |
+| Three-arm sum | 174 | 163 (−11) | 151 (−23) | 147 (−27) |
+| Call | 101 | 100 | 101 | 102 |
+| Return | 112 | 112 | 112 | 112 |
+| Program total | 841.53 | 899.03 (+57.50) | 806.03 (−35.50) | 885.03 (+43.50) |
+| Executed in `.most` clones | 0 | 498 | 0 | 501 |
+
+Against the criteria written before the run:
+
+- The rejection rule is not triggered by its letter: V1 lowers the
+  three-arm sum by 11, one past the threshold of 10. Its program total rises
+  by 57.5 per Lua call, because 15 of the 150 clones run and execute 498
+  instructions per call that the inlined originals did not need.
+- The spill-placement rule holds: V2 alone, with the convention unchanged,
+  lowers the three-arm sum to 151, 12 below V1's 163 rather than merely
+  within 3 of it, and lowers the program total by 35.5 (4.2%). V3 adds the
+  convention to V2 and gains 4 in the arms while losing 79 in the program.
+
+Conclusion: the arm-entry preparation is spill placement under unknown
+branch frequency. Telling code generation which callees are slow removes
+more of it than any preserve_most variant, and the convention's clones cost
+more than they save. Every preserve_most option (in-place, out-of-line
+entries, transitive twins) is rejected on this evidence for this workload.
+What remains open is how the compiler learns which callees are slow without
+the hand-picked list V2 used (`slow`, `heap.intern`, `unwind`,
+`restore_stopped_stack`).
+
+Instrument note: the probe's static count of SubRK entry-block stack
+stores reads 0 for every variant, B included, while the disassembly read
+above shows nine spills after `sub rsp,0xd0`. The static counter's pattern
+does not match this code; the callgrind counts above do not depend on it.
+
+## Which callees are cold: a study
+
+**Question.** The probe's V2 marked four callees `cold` by hand (`slow`,
+`heap.intern`, `unwind`, `restore_stopped_stack`) and lowered fib(32) from
+841.53 to 806.03 instructions per Lua call. By what general rule, with no
+case for any program, can the compiler learn the same thing?
+
+Everything below is read from Halo-wf `c900a68b2f06` (the measured source)
+and the compiler at main `58743a931`. Nothing was built or run.
+
+### Where the four calls sit in Halo
+
+Each hot arm calls a helper that the host inlines; the slow calls are inside
+those helpers.
+
+| call (inlined into the arm) | how the path to it is selected | what the path ends in |
+|---|---|---|
+| `slow` in `instruction_sub_rk` / `instruction_lt_jmp_rk` | the arm's `Ok(cursor)` with `cursor.handled` false, then the `Not()` arm of `num_of` (operand not a number) | a normal `Step` result that usually continues the loop (a metamethod or coercion succeeded) |
+| `unwind`, `restore_stopped_stack` in `instruction_get_upval` | `if bnot(ok)` (and `vm^.host_stopped`) | `return Err<u64, Step>(...)` |
+| the same two in `instruction_sub_rk` / `instruction_lt_jmp_rk` | `if bnot(ok)` after `slow` | `return` of a `Step` (not a `Result`), which the join's `checked_step` may turn into a continue (a `pcall` catch) |
+| `heap.intern`, through `raise_text` | `next >= n` in the fast helpers and `instruction_get_upval`; the `None()` arm of `upvalue_handle` | `return Err(...)` for the first; the `None()` arm sets `ok` false and reaches `Err` only through the later `bnot(ok)` test |
+
+Four structural facts follow:
+
+1. `heap.intern` is not cold. It is the string-interning entry, called from
+   72 sites in Halo, including string creation in `concat` and table keys.
+   What is cold is `raise_text`, its caller on 172 error sites, which always
+   returns `False()`. Marking the function `heap.intern` cold, as V2 did, is
+   right for fib and is a risk for Halo's `concat` and `string-key` kernels.
+   A rule must work on call sites or branches, not on whole callees picked by
+   name.
+2. Halo signals failure three ways: `Result::Err` (the fast helpers,
+   `instruction_get_upval`), a `Bool` flag (`ok`, the result of `slow` and
+   `raise_text`), and its own enum (`Step::Error | Stop | Budget`). The
+   language knows only the first is a failure [ERR-1, ERR-4].
+3. `slow` is not a failure. It is the general, valid path for non-number
+   operands (metamethods, string coercion). That it is rare in fib is a
+   property of the Lua program being run, not of Halo: a Lua program doing
+   vector arithmetic with `__add` runs `slow` on every `SubRK`. Whitefoot's
+   source states this expectation only in names (`fast_`, `handled`).
+4. `slow` re-enters the interpreter (`callback_values` → `dispatch_step` →
+   `run`), so it is in `run`'s recursive call-graph component.
+
+### Why LLVM's static heuristics miss it
+
+LLVM's branch-probability analysis predicts from loops (back edges and exits
+likely/unlikely), `unreachable` and `noreturn` successors, calls to `cold`
+functions, and comparisons of pointers, zero and floats. On Halo's arms:
+
+- **No seeds.** A C or Rust error path usually ends in a `noreturn` call
+  (abort, `longjmp`, panic) that LLVM marks cold and propagates back through
+  the blocks before it, and since LLVM 17 `FunctionAttrs` marks a function
+  `cold` when every path calls a cold function. Whitefoot has no panic and no
+  unwinding [ERR-1]; its failure paths end in an ordinary `ret`. The only
+  `noreturn` the compiler emits is the resource-exhaustion abort, which is
+  not on these paths. LLVM's propagation has nothing to start from.
+- **No loop.** The split dispatch turns the interpreter loop into parts
+  chained by guaranteed tail calls (compiler/match-dispatch-lowering). LLVM
+  sees no loop in any part, so its loop-exit heuristic, which would weight a
+  path leaving `run` against one continuing it, cannot apply.
+- **Tags and flags.** The remaining branches are `switch` on an enum tag and
+  `i1` flags. Switch successors get equal weight. A zero comparison may get
+  LLVM's zero heuristic, which says `x == 0` is unlikely; if `num_of`'s `Is`
+  tag is 0 and lowers to `icmp eq ... 0`, that heuristic predicts the number
+  path unlikely, the wrong way. This is unverified; it can be read in
+  `B.precodegen.ll` from the probe's artifact.
+
+So every branch around the slow calls is roughly 50/50 to the register
+allocator, and placing the spills in the entry block looks as cheap as
+placing them on the slow path. A Whitefoot construct can carry the missing
+weight directly: every conditional in the emitted module is the one
+`switch` written for `IrTerminator::Match` in `compiler/src/backend/emitter.rs`
+(a Bool `if` is a Match on `i1`), so a `!prof !{!"branch_weights", ...}` on
+that `switch` reaches every branch, and branch weights survive host inlining
+scaled into the caller. `llvm.expect` is only a front-end spelling that LLVM
+lowers to the same metadata; emitting `!prof` directly is simpler. Branch
+weights carry no correctness contract: a wrong weight changes code placement,
+never behavior. They are therefore not a "fact" under compiler/backend-facts,
+whose first decision governs attributes and metadata that promise something,
+and they need their own node.
+
+### Approaches
+
+**S1. Result failure edges (structural, grounded in ERR-4).** In each
+function, an edge is unlikely when it enters the `Err` arm of a `match` on a
+`Result` (an ERR-3 propagation edge included), or when every path from its
+target reaches a `return` whose value is constructed as `Err` of the
+function's `Result` result (a backward pass over the IR's blocks, no value
+reasoning). The weight is LLVM's own `__builtin_expect` ratio, 1:2000. Ground:
+ERR-4 classifies `Err` as the expected-failure outcome of an operation, and
+ERR-1 removes the panic seeds C and Rust error paths carry; S1 restores in
+Whitefoot's terms the seed the language removed.
+
+- Halo's four: catches `unwind` and `restore_stopped_stack` in
+  `instruction_get_upval`, `raise_text` (hence its `heap.intern` call) on the
+  `next >= n` paths of the fast helpers and `instruction_get_upval`, and the
+  arms' own `Err(error: failure)` branches. It misses `slow` and every call
+  inside `instruction_sub_rk` / `instruction_lt_jmp_rk`, which return `Step`,
+  not `Result`; and it misses `raise_text` in `None()` of `upvalue_handle`
+  until LLVM threads the constant `ok` (then LLVM's backward propagation of
+  unlikely weights covers it).
+- Risk: a program that uses `Err` for a common outcome, such as a polling
+  `try_pop` returning `Err` on empty, gets that path laid out cold. The cost
+  is the misplacement V2 removed, in reverse, on that one branch; behavior is
+  unchanged.
+- Generality: any Whitefoot program with `Result` error paths: Firn's error
+  replies, v2h's traps, Snowghost's parse failures.
+- Size: one analysis over `IrFunction` blocks (about 150 lines) and the
+  metadata on the existing `switch` emission (about 60 lines), plus tests;
+  a new design node (compiler/branch-weights). No spec change.
+
+**S2. Restored loop exits under the split (structural).** In a split
+dispatch loop, an edge is unlikely when every path from its target leaves the
+loop (returns from the enclosing function) without reaching the header: the
+weight LLVM's loop-exit heuristic would have given the unsplit loop. Ground:
+the split is the compiler's own transformation and should not remove what the
+whole-function form told the host.
+
+- Halo's four: none directly. In Halo it weights only the join's `Err` arm
+  after `checked_step`, since the arms' failure paths pass through the join,
+  whose `Ok` side continues.
+- Risk: none beyond the unsplit form's; it is LLVM's own prediction.
+- Size: small, inside `compiler/src/backend/emitter/dispatch.rs`, which
+  already classifies the loop's blocks. No spec change.
+
+**S3. The call heuristic (structural, Ball and Larus).** At a two-way branch
+where one successor region reaches the loop's back edge or the function's
+return without a call and the other contains a call and does not
+post-dominate the branch, the call side is unlikely; ties get no weight;
+branches LLVM will still see as loop branches get no weight. This is one of
+Ball and Larus's static heuristics; GCC's predictor and Go's
+`likelyadjust` implement versions of it, while LLVM does not. At the
+Whitefoot level it applies before host inlining.
+
+- Halo's four: all of them in the three arms. In `SubRK` and `LtJmpRK` the
+  `cursor.handled` side `continue`s with no call, the other side calls
+  `instruction_sub_rk` / `instruction_lt_jmp_rk`, so the whole inlined slow
+  helper (`slow`, `unwind`, `restore_stopped_stack`, `raise_text`) lands in
+  an unlikely region. In `instruction_get_upval` `Some` (calls `read_upvalue`)
+  against `None` (calls `raise_text`) is a tie and gets nothing, while
+  `bnot(ok)` and `next >= n` get weights, as under S1.
+- Risk: it is a guess with no semantic ground. Its typical failure is a
+  branch whose call side is the common one, such as `if is_table { get(...) }
+  else { return nil }` on table-heavy input, and a call to a tiny helper that
+  the host inlines counts as a call because Whitefoot emits before inlining.
+  A wrong weight puts spills and block layout on the hot side. Halo's
+  `concat`, `string-key` and `sort` kernels and v2h exercise exactly such
+  branches, so the experiment must include them.
+- Generality: any program; interpreters with a fast/slow split benefit most.
+- Size: about 100 lines beside S1's analysis (the call-containing regions
+  and a post-dominance test). No spec change.
+
+**S4. Re-entrant callees (structural), rejected.** Mark a call from a loop
+body cold when the callee reaches the loop's own function (`slow` →
+`callback_values` → `run`). Rejected: a tree-walking interpreter re-enters
+its `eval` on every node, and a bytecode interpreter's call opcode may
+re-enter on every native call, so the rule marks the hottest calls cold. It
+also leaves `unwind` and `raise_text`, which do not re-enter, unmarked.
+
+**S5. Callee-level propagation.** Downward: a function every one of whose
+call sites lies in an unlikely region gets the `cold` attribute (section
+placement, smaller inlining budget at its sites). Upward: LLVM's
+`FunctionAttrs` already does it once seeds exist. S5 adds nothing to spill
+placement, which V2's effect is, beyond what S1 to S3's weights already give
+the caller, and it would never mark `heap.intern` (hot sites elsewhere),
+which is correct. It is an optional follow-up, not a candidate on its own.
+
+**P. Profile-guided optimization.** Instrument the emitted modules
+(`-fprofile-generate`), run a training workload, rebuild with
+`-fprofile-use`. No compiler change is needed to test it: the halo-call-path
+workflow already passes options to every clang command through
+`CCC_OVERRIDE_OPTIONS`.
+
+- Halo's four: yes for any training run that resembles the measured one; it
+  sees actual counts, including that `slow` is rare in fib, which no static
+  rule can know.
+- Risk: the profile is the workload. Trained on fib it would lay out
+  `slow` cold for a metamethod-heavy Lua program. It is also a second build
+  and a training run per project, a build input that the cache identity must
+  include (compiler/build-inputs), and hard to collect on cross-compiled
+  embedded targets.
+- Generality: universal, and the upper bound on what weights can buy.
+- Against this project's goals: it hides rather than finds a gap. A Halo
+  built with PGO against PUC Lua 5.1.5 built without it is not a like-for-like
+  comparison, and the result would not say whether the language or the
+  compiler can express the expectation. It belongs as an experiment ceiling
+  and an optional build mode, not as the answer.
+- No spec change.
+
+**H. A writer's frequency hint (language change).** The proposal, stated so
+the owner can rule on it, not adopted here:
+
+```
+rare fn slow<interface Host<E>>(code: &Box<Slots<Cell>>, ...) -> r: Bool ... {
+  ...
+}
+```
+
+Semantics: `rare` before `fn` states the writer's expectation that a call to
+this function executes much less often than the code around its call sites.
+It changes no judgment, no acceptance verdict and no observable behavior; it
+is not a fact source [SCOPE-2]; an implementation may use it only for code
+placement (branch weights on the paths to its calls, the callee's own
+placement). Halo would write it on `slow`, `raise_text`, `unwind` and
+`restore_stopped_stack` (not on `heap.intern`).
+
+- Halo's four: yes, by the writer's word; it is the information fib's
+  coldness of `slow` actually rests on.
+- Risk: an unchecked claim. A wrong hint costs what a wrong S3 weight costs,
+  and nothing reports it; a profile could audit hints later, but that is
+  more machinery.
+- Fit with the constitution: it serves "the language must provide the
+  capabilities needed to meet its target projects' performance
+  requirements", and the dispatch decision's objection to a source marker
+  (acceptance would depend on the host) does not apply, since `rare` decides
+  nothing. It conflicts with AGENTS.md's rule that surface names label checked
+  invariants: `rare` labels an expectation that no checker can verify. The
+  only precedent for unchecked surface text is `doc`, which labels
+  documentation and claims nothing about execution. `cold` itself is
+  excluded by the same paragraph's ban on backend terms naming lowering
+  consequences. Adopting H therefore needs the owner to admit a class of
+  non-judgment hint items, or it is rejected.
+
+Minimal semantic witness of the gap H would close, apart from Halo:
+
+```
+enum Num { Is(x: f64), Not() }
+
+fn sub(a: Value, b: Value) -> r: Value {
+  match num_of(v: a) {
+    Is(x: n) => { ... return Value::Num(n: d); }
+    Not() => { return general_sub(a: a, b: b); }
+  }
+}
+```
+
+Both arms are total, neither is a failure, both return the same type. Which
+one runs more often depends only on the values the program receives. No
+type, effect, contract or proof distinguishes them, so no rule grounded in
+the checked program can rank them; only a guess (S3), a measurement (P) or
+the writer's statement (H) can.
+
+### Recommendation
+
+Build S1 with S2 now: both are grounded (ERR-4's failure classification and
+the split's own loop), cheap, need no spec change and cannot mark a
+non-failure path cold by design. Measure S3 on top of it as the general
+candidate for valid-but-rare paths such as `slow`, and keep it only if it
+passes the harm criteria below. Do not adopt PGO as the answer; run it once
+as the ceiling. Bring H to the owner only if the experiment shows that the
+part of V2's gain S1 cannot reach is large and S3 fails its harm criteria;
+that card's witness is the one above.
+
+### Experiments, criteria written before measuring
+
+All on the halo-call-path workflow (hosted x86-64, the pinned LLVM, Halo-wf
+`c900a68b2f06`, full LTO, callgrind), instructions per Lua call or per
+kernel; the 14900K for any timing, with the base's twin as noise control.
+
+**E1. Which of the four carries the gain (no compiler change).** Add
+variants to `probe/variants.py` on B's post-LTO module: V2s (`slow` cold
+only), V2e (`unwind` and `restore_stopped_stack` cold only, the calls S1
+mostly reaches), V2i (`heap.intern` cold only). Prediction: V2s gives at
+least 60% of V2's 35.5 instructions per Lua call (at most 820.2), V2e plus
+V2i together at most 40%. If V2e alone reaches 80% of V2 (at most 813.1),
+S3 and H are not needed for Halo's fib and E2 stops after S1. Also run V2
+on `concat` and `string-key`: if V2 raises either kernel's instruction count
+by more than 1%, function-level `cold` on `heap.intern` is confirmed harmful
+and stays excluded from every rule. (V2e marks `unwind` cold at the
+`Step`-returning sites too, which S1 would not reach; E1 bounds S1 from
+above.)
+
+**E2. The rules (experiment branch, compiler change).** C1 = B + S1 + S2;
+C2 = C1 + S3. Workloads: fib(32) per Lua call, and every kernel of Halo's
+bench set (binary-trees, concat, fib, integer-table, loop, sort, string-key)
+in total instructions; v2h CoreMark through `compute-regression.yml`.
+Rejection, per change:
+
+- C1 is rejected if fib(32) falls by fewer than 5 instructions per Lua call
+  against B (841.53), or any kernel's count rises by more than 1%.
+- C2 is rejected if fib(32) is above 814.9 (less than 75% of V2's 35.5
+  gain), or any Halo kernel or v2h's CoreMark instruction count rises by more
+  than 1% against C1.
+- A change passing both then gets 14900K timing on fib and CoreMark,
+  interleaved against B with a twin of B; it is rejected if it is not faster
+  than B beyond the twin's spread on fib, or slower beyond it on CoreMark.
+
+**E3. Profile ceiling (no compiler change).** B built with
+`-fprofile-generate`, trained (a) on fib(32) and (b) on the six other
+kernels, then rebuilt with `-fprofile-use`; measured on fib(32). Prediction:
+(a) at or below V2's 806.03. If (b) recovers less than half of V2's gain
+(above 823.8), a profile does not transfer across Lua workloads, which
+confirms that `slow`'s coldness is a property of the input and that P is not
+a default build mode. E3 decides nothing about S1 to S3; it calibrates how
+far they are from what counts can reach.
+
+### What this study does not settle
+
+- Whether branch weights on the paths to a call reproduce what the callee's
+  `cold` attribute did in V2. Both feed the same block frequencies, but V2
+  also shrank inlining budgets at those sites; E2 measures the weights
+  themselves.
+- The direction of LLVM's zero heuristic on `num_of`'s tag test (above).
+- Whether `prepare`, called on every Lua call, reaches `run`; S4's rejection
+  does not depend on it.
+- Whether the 1:2000 weight is too strong for S3's guesses; a weaker ratio
+  is the first thing to try if C2 fails only on harm.
+
+### Result: E1 and E3, run 38338456381
+
+Instructions per Lua call on fib(32) (callgrind, hosted ubuntu-24.04,
+artifact `halo-probe`); harm kernels as whole-run instruction totals at the
+reduced sizes. V0 reproduced 841.53.
+
+| Variant | Three-arm sum | Program total | concat vs V0 | string-key vs V0 |
+|---|---|---|---|---|
+| V0 | 174 | 841.53 | — | — |
+| V2 (all four cold) | 151 | 806.03 | −2.68% | −4.84% |
+| V2s (`slow` only) | 156 | 820.53 | −1.20% | −3.63% |
+| V2e (`unwind`, `restore_stopped_stack`) | 177 | 844.53 | −0.11% | +0.00% |
+| V2i (`heap.intern` only) | 163 | 822.03 | −1.04% | −0.69% |
+| PGOa (profile from fib) | 118.58 | 523.61 | — | — |
+| PGOb (profile from the six other kernels) | 436.00 | 626.52 | — | — |
+
+Against the criteria written before the run:
+
+- V2s ≤ 820.2: fails by 0.33 (820.53). `slow` carries 21.0 of V2's 35.5,
+  59%, just under the 60% predicted.
+- V2e ≤ 813.1: fails (844.53, +3.0). Marking the error-path callees cold
+  gains nothing on fib, so S1 alone, which reaches only those, cannot meet
+  the item's 25-instruction condition; S3 (or H) stays in play.
+- `heap.intern` harm: not harmful. V2 lowers both kernels (concat −2.7%,
+  string-key −4.8%), and V2i alone lowers them too, so the study's warning
+  that marking `heap.intern` cold would slow concatenation and string keys
+  is not borne out at function level on these kernels.
+- E3 (a) ≤ 806.03: holds by far (523.61, −37.8%).
+- E3 (b) above 823.8 would show profiles do not transfer: not confirmed.
+  A profile trained only on the other six kernels gives 626.52 (−25.6%),
+  so most of the gain transfers across Lua workloads on this interpreter.
+
+Reading: on fib, profile-guided optimization removes several times what
+any cold marking does, and much of it survives training on different
+programs. The arm table shows PGO rearranges the dispatch code wholesale
+(SubRK and Call fold into their neighbours; LtJmpRK drops to 24), so its
+gain is not the spill placement this item addresses alone. The study's
+objections to PGO as a default stand (a build input, a training set, and an
+unfair comparison against PUC Lua built without one); whether an opt-in
+profile-guided build mode is worth offering is a separate question for the
+owner. For this item, the next step is E2: S1 + S2 + S3 in the compiler.
