@@ -541,3 +541,45 @@ and pops about ten registers. The rule as stated, every call from a part
 through an entry, cannot tell a call the host would inline from one it
 keeps out of line. D ran on an Intel Xeon 6973P-C, B and C on AMD EPYC;
 instruction counts do not depend on the host.
+
+### D's arm counts move work, they do not remove it
+
+Each D wrapper holds its callee's inlined body, so the fast-path work left
+the arms for the `wf__most_*` rows. Counting each arm with the wrapper it
+calls, per Lua call: SubRK 60 → 105, LtJmpRK 53 → 106, GetUpval 61 → 114,
+Call 101 → 133, Return 112 → 132. No run yet shows an arm whose fast helpers
+stay inlined while only the calls that survive inlining use preserve_most.
+
+B's post-LTO module has 89 `preserve_none` parts with 449 surviving non-tail
+calls to 30 callees (426 `fastcc`, 23 C). The hot arms' survivors are the
+slow paths (`slow`, `heap.intern`, `unwind`, `restore_stopped_stack`) plus
+`prepare`, `collect_if_due` in Call and `finish` in Return. SubRK's
+prologue is `push rbp; sub rsp,0xd0` with nine spills in the entry block:
+spill code the register allocator hoisted to a point dominating six slow
+call sites, which shrink-wrapping cannot move.
+
+### Probe before building: the convention on the surviving calls only
+
+Question: does the preserve_most convention on exactly the calls that
+survive host inlining remove the arm-entry preparation, or does the cost
+come from spill placement under unknown branch frequency?
+
+Method: one step on this experiment's workflow takes B's post-LTO module
+(`precodegen.ll`, save-temps), rewrites text variants, runs host code
+generation only, links and runs callgrind on fib(32):
+
+- V0, control: unchanged; must reproduce 841.53 per Lua call exactly.
+- V1: in parts, every surviving `call fastcc @f` calls a `preserve_mostcc`
+  clone of `f` whose own calls go to clones as well (the convention on
+  surviving calls; the ceiling for transitive twins).
+- V2: the slow callees (`slow`, `heap.intern`, `unwind`,
+  `restore_stopped_stack`) marked `cold`, convention unchanged.
+- V3: V1 and V2 together.
+
+Rejection, written before the run: if V1 lowers neither the three-arm sum
+(SubRK + LtJmpRK + GetUpval) by at least 10 nor the program total by at
+least 10 per Lua call against V0, the convention premise behind every
+preserve_most option is rejected. If V2 alone reaches V1's three-arm sum
+within 3, the cost is spill placement, not the convention. Also recorded:
+SubRK's entry-block stack stores (9 in B), and Call and Return each counted
+with their callees.
