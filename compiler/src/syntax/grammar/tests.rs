@@ -357,52 +357,54 @@ fn complete_inventory_is_pinned() {
     assert_eq!(DECISIONS[117].kind(), DecisionKind::Optional);
     assert_eq!(DECISIONS[118].production(), Production::ContinueStmt);
     assert_eq!(DECISIONS[118].kind(), DecisionKind::Optional);
+    // v0.141 inserts the arm-label choice at decision 124 [GRAM-4].
+    // Preorder decision numbering shifts every following decision by one.
     // The call-site marker optional, and v0.82's `atomic_stmt` guard and
     // statement repeat, shift the later place/effect choices; v0.82's
     // retired `for_stmt` marker moves every decision after it back by one,
     // and v0.84's range decisions and v0.86's entry bindings move them
     // forward again.
-    assert_eq!(DECISIONS[136].production(), Production::Call);
-    assert_eq!(DECISIONS[136].kind(), DecisionKind::Optional);
+    assert_eq!(DECISIONS[137].production(), Production::Call);
+    assert_eq!(DECISIONS[137].kind(), DecisionKind::Optional);
     // `psuffix` carries the field, payload and index-or-range choice, and the
     // factored `range_tail?` that keeps the index and range steps
     // strong-LL(2) [GRAM-1, GRAM-5].
     // The projected entry former adds the repeat immediately before these
     // suffix decisions; later decision identities move by one [MSR-3]. Its
     // rows include the `unchanged` suffix that may follow a place [RANGE-1].
-    assert_eq!(DECISIONS[157].production(), Production::Pbase);
-    assert_eq!(DECISIONS[157].kind(), DecisionKind::Repeat0);
-    assert_eq!(DECISIONS[157].rows().len(), 95);
-    assert_eq!(DECISIONS[158].production(), Production::Psuffix);
-    assert_eq!(DECISIONS[158].kind(), DecisionKind::Choice);
+    assert_eq!(DECISIONS[158].production(), Production::Pbase);
+    assert_eq!(DECISIONS[158].kind(), DecisionKind::Repeat0);
+    assert_eq!(DECISIONS[158].rows().len(), 95);
     assert_eq!(DECISIONS[159].production(), Production::Psuffix);
-    assert_eq!(DECISIONS[159].kind(), DecisionKind::Optional);
+    assert_eq!(DECISIONS[159].kind(), DecisionKind::Choice);
+    assert_eq!(DECISIONS[160].production(), Production::Psuffix);
+    assert_eq!(DECISIONS[160].kind(), DecisionKind::Optional);
     // v0.84's `range_clause` [RANGE-1]: the binder repeat, the optional guard
     // list and its repeat, and the conclusion repeat.
     for (index, kind) in [
-        (160, DecisionKind::Repeat0),
-        (161, DecisionKind::Optional),
-        (162, DecisionKind::Repeat0),
+        (161, DecisionKind::Repeat0),
+        (162, DecisionKind::Optional),
         (163, DecisionKind::Repeat0),
+        (164, DecisionKind::Repeat0),
     ] {
         assert_eq!(DECISIONS[index].production(), Production::RangeClause);
         assert_eq!(DECISIONS[index].kind(), kind);
     }
     // v0.128 [GRAM-5, RANGE-1] the guard's optional comparison.
-    assert_eq!(DECISIONS[164].production(), Production::RangeGuard);
-    assert_eq!(DECISIONS[164].kind(), DecisionKind::Optional);
-    // v0.136's admitted and diagnostic-only unchanged suffixes [RANGE-1].
-    assert_eq!(DECISIONS[153].production(), Production::ClauseExpr);
-    assert_eq!(DECISIONS[153].kind(), DecisionKind::Choice);
     assert_eq!(DECISIONS[165].production(), Production::RangeGuard);
-    assert_eq!(DECISIONS[165].kind(), DecisionKind::Choice);
-    assert_eq!(DECISIONS[166].production(), Production::RangeRelation);
+    assert_eq!(DECISIONS[165].kind(), DecisionKind::Optional);
+    // v0.136's admitted and diagnostic-only unchanged suffixes [RANGE-1].
+    assert_eq!(DECISIONS[154].production(), Production::ClauseExpr);
+    assert_eq!(DECISIONS[154].kind(), DecisionKind::Choice);
+    assert_eq!(DECISIONS[166].production(), Production::RangeGuard);
     assert_eq!(DECISIONS[166].kind(), DecisionKind::Choice);
+    assert_eq!(DECISIONS[167].production(), Production::RangeRelation);
+    assert_eq!(DECISIONS[167].kind(), DecisionKind::Choice);
     // `epsuffix` mirrors it inside an effect row [EFF-1].
-    assert_eq!(DECISIONS[181].production(), Production::Epsuffix);
-    assert_eq!(DECISIONS[181].kind(), DecisionKind::Choice);
     assert_eq!(DECISIONS[182].production(), Production::Epsuffix);
-    assert_eq!(DECISIONS[182].kind(), DecisionKind::Optional);
+    assert_eq!(DECISIONS[182].kind(), DecisionKind::Choice);
+    assert_eq!(DECISIONS[183].production(), Production::Epsuffix);
+    assert_eq!(DECISIONS[183].kind(), DecisionKind::Optional);
 }
 
 /// `borrow_expr` is `"&" place` and owns no decision.
