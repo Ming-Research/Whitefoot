@@ -1,0 +1,114 @@
+alias ExitStatus = std::process::ExitStatus;
+alias Inputs = std::process::Inputs;
+alias exit_status = std::process::exit_status;
+
+fn local_time_send(factory: &std::io::HandleFactory, output: &std::io::OutputStream, negative: Bool, magnitude: u64) -> result: u8 writes(factory), writes(output) waits {
+  doc "Prints a decimal number, with a leading minus sign when negative is true, and a newline.";
+  let digits = array_filled::<u8, 20>(value: 0_u8);
+  let count = 0_u64;
+  let rest = magnitude;
+  loop @digits {
+    let low = rest % 10_u64;
+    let narrow = cvt.wrap::<u64, u8>(low);
+    let glyph = narrow +wrap 48_u8;
+    if count < 20_u64 {
+      set digits[count] = glyph;
+      set count = count +wrap 1_u64;
+    }
+    set rest = rest / 10_u64;
+    if rest == 0_u64 {
+      break @digits;
+    }
+  }
+  let line = slots_new::<u8, 24>();
+  if negative {
+    if line.len < line.cap {
+      place_back(window: &line, value: 45_u8);
+    }
+  }
+  for @emit (index in 0_u64..count) {
+    let back = count -wrap index;
+    let from = back -wrap 1_u64;
+    let glyph = 48_u8;
+    if from < 20_u64 {
+      set glyph = digits[from];
+    }
+    if line.len < line.cap {
+      place_back(window: &line, value: glyph);
+    }
+  }
+  if line.len < line.cap {
+    place_back(window: &line, value: 10_u8);
+  }
+  let length = line.len;
+  let source = &line[0_u64..length];
+  let sent = 0_u64;
+  let unbounded = None<std::time::Instant>();
+  let cancel = std::time::cancel_never();
+  loop @publish {
+    if sent < length {
+    } else {
+      break @publish;
+    }
+    match std::io::write_once(factory: factory, output: output, source: source, start: sent, end: length, deadline: unbounded, cancel: &cancel) {
+      Ok(value: endpoint) => {
+        set sent = endpoint;
+      }
+      Err(error: failure) => {
+        std::time::close_cancel_watch(watch: move cancel);
+        return 12_u8;
+      }
+    }
+  }
+  std::time::close_cancel_watch(watch: move cancel);
+  return 0_u8;
+}
+
+fn local_time_report(factory: &std::io::HandleFactory, output: &std::io::OutputStream, clock: &std::time::WallClock, at: i64) -> result: u8 reads(clock), writes(factory), writes(output) waits {
+  doc "Prints the local offset in seconds at an instant given in nanoseconds since the Unix epoch, or answers 21 when the host gives none.";
+  let status = 21_u8;
+  let reading = std::time::local_offset_seconds(clock: clock, at: at);
+  match reading {
+    Some(value: offset) => {
+      let negative = offset < 0_i64;
+      let magnitude = cvt.wrap::<i64, u64>(offset);
+      if negative {
+        set magnitude = 0_u64 -wrap magnitude;
+      }
+      let sent = local_time_send(factory: factory, output: output, negative: negative, magnitude: magnitude);
+      set status = sent;
+    }
+    None() => {
+    }
+  }
+  return status;
+}
+
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  doc "Prints the invocation's process identifier, then the local offsets at 2026-01-15T12:00Z, at 2026-07-01T12:00Z and one nanosecond before 1969-10-26T06:00Z. The host test compares the identifier with the process it started and the offsets with the zone TZ names.";
+  let Inputs(cwd: directory, stdout: output, handles: factory, wall_clock: calendar, process_id: identity, ..) = move inputs;
+  let std::fs::Directory(read: directory_read, write: directory_write) = move directory;
+  std::fs::close_directory_write(factory: &factory, directory: move directory_write);
+  std::fs::close_directory(factory: &factory, directory: move directory_read);
+  match identity {
+    Some(value: identifier) => {
+      let sent = local_time_send(factory: &factory, output: &output, negative: False(), magnitude: identifier);
+      if sent != 0_u8 {
+        return exit_status(code: sent);
+      }
+    }
+    None() => {
+      return exit_status(code: 20_u8);
+    }
+  }
+  let winter = local_time_report(factory: &factory, output: &output, clock: &calendar, at: 1768478400000000000_i64);
+  if winter != 0_u8 {
+    return exit_status(code: winter);
+  }
+  let summer = local_time_report(factory: &factory, output: &output, clock: &calendar, at: 1782907200000000000_i64);
+  if summer != 0_u8 {
+    return exit_status(code: summer);
+  }
+  let boundary = local_time_report(factory: &factory, output: &output, clock: &calendar, at: -5767200000000001_i64);
+  return exit_status(code: boundary);
+}

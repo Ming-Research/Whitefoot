@@ -23,6 +23,7 @@
 #include "windows_runtime.h"
 #include <io.h>
 #include <shellapi.h>
+#include <time.h>
 #else
 #include <fcntl.h>
 #include <locale.h>
@@ -1602,6 +1603,47 @@ int64_t wf__body_unix_nanoseconds(const wf_value *clock) {
 #endif
 }
 
+/* Days from 1970-01-01 to a proleptic Gregorian date, counting March as the
+ * first month of a 400-year era so that February's leap day ends the year;
+ * the method is Howard Hinnant's days_from_civil
+ * (https://howardhinnant.github.io/date_algorithms.html). */
+static int64_t wf_days_from_civil(int64_t year, int64_t month, int64_t day) {
+    int64_t shifted = month <= 2 ? year - 1 : year;
+    int64_t era = (shifted >= 0 ? shifted : shifted - 399) / 400;
+    int64_t year_of_era = shifted - era * 400;
+    int64_t day_of_year = (153 * (month > 2 ? month - 3 : month + 9) + 2) / 5 + day - 1;
+    int64_t day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    return era * 146097 + day_of_era - 719468;
+}
+
+/* [PRE-2] The offset is the host conversion's local date and time, read as a
+ * UTC date and time, minus the second it converted, the greatest second not
+ * after `at`. `localtime` implies `tzset`; `localtime_r` does not, so the
+ * reading calls it, which also observes a changed system zone. */
+void wf__body_local_offset_seconds(wf_optional_i64 *result, const wf_value *clock, int64_t at) {
+    int64_t second = at / INT64_C(1000000000);
+    struct tm local;
+    (void)clock;
+    memset(result, 0, sizeof(*result));
+    if (at % INT64_C(1000000000) < 0) second -= 1;
+#if defined(_WIN32)
+    __time64_t moment = (__time64_t)second;
+    _tzset();
+    if (_localtime64_s(&local, &moment) != 0) return;
+#else
+    time_t moment = (time_t)second;
+    if ((int64_t)moment != second) return;
+    tzset();
+    if (localtime_r(&moment, &local) == NULL) return;
+#endif
+    int64_t days = wf_days_from_civil((int64_t)local.tm_year + 1900, (int64_t)local.tm_mon + 1,
+                                      (int64_t)local.tm_mday);
+    int64_t wall = days * INT64_C(86400) + (int64_t)local.tm_hour * 3600 +
+                   (int64_t)local.tm_min * 60 + (int64_t)local.tm_sec;
+    result->tag = WF_OPTION_SOME;
+    result->value = wall - second;
+}
+
 /* [PRE-2] no host operation: the driver ends the sleep at its deadline
  * or when its watch fires. */
 int wf__body_sleep_until_start(wf_sleep_result *result, const wf_instant *deadline, const wf_cancel_handle *cancel,
@@ -1926,6 +1968,12 @@ int wf__ordinary_inputs(wf_inputs *inputs, int argc, void *argv) {
     uint64_t capacity;
     memset(inputs, 0, sizeof(*inputs));
     inputs->drivers = wf__context_driver_count();
+    inputs->process_id.tag = WF_OPTION_SOME;
+#if defined(_WIN32)
+    inputs->process_id.value = (uint64_t)GetCurrentProcessId();
+#else
+    inputs->process_id.value = (uint64_t)getpid();
+#endif
     if (wf__stop_initialize() != 0) return 0;
 #if defined(_WIN32)
     /* The build launcher has an ordinary narrow-argv main. Recover Windows'

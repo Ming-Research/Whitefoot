@@ -753,6 +753,16 @@ entry:
   ret i64 %value
 }
 
+declare void @wf__body_local_offset_seconds(ptr, ptr, i64)
+
+define { i8, i64 } @wf_std.time.local_offset_seconds(ptr %clock, i64 %at) align 64 {
+entry:
+  %result = alloca { i8, i64 }, align 8
+  call void @wf__body_local_offset_seconds(ptr %result, ptr %clock, i64 %at)
+  %offset = load { i8, i64 }, ptr %result, align 8
+  ret { i8, i64 } %offset
+}
+
 declare void @wf__body_exit_status(ptr, i8 zeroext)
 
 define void @wf_std.process.exit_status(ptr %result, i8 %code) align 64 {

@@ -24,6 +24,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #if defined(_WIN32)
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -1270,6 +1271,70 @@ static void subdirectory_probe(wf_inputs *inputs, wf_probe_open_directory_write 
 
 /* [PRE-2] two reads through one clock do not go back, a sleep outside every
  * context lasts until its deadline, and every instant operation is total. */
+/* [PRE-2] each local offset equals the host C library's own answer for the
+ * same second: `tm_gmtoff` from `localtime_r` on POSIX, and on Windows the
+ * `_localtime64_s` date and time read back as UTC by `_mkgmtime64`. The
+ * seconds are 2026-01-15T12:00Z, 2026-07-01T12:00Z and the second before
+ * 1969-10-26T06:00Z, when New York left daylight saving time; the last is
+ * reached from one nanosecond before that boundary, so truncating instead
+ * of flooring converts the boundary second and disagrees in New York. */
+static void local_offset_probe(wf_inputs *inputs) {
+#if defined(_WIN32)
+    static const char *const zones[] = {"UTC0", "CST-8", "EST5EDT"};
+#else
+    static const char *const zones[] = {"UTC", "Asia/Shanghai", "America/New_York"};
+#endif
+    static const int64_t seconds[] = {INT64_C(1768478400), INT64_C(1782907200), INT64_C(-5767201)};
+    static const int64_t instants[] = {
+        INT64_C(1768478400000000000), INT64_C(1782907200000000000), INT64_C(-5767200000000001)};
+    const char *saved = getenv("TZ");
+    char previous[256];
+    int had_previous = saved != NULL;
+    if (had_previous) {
+        assert(strlen(saved) < sizeof(previous));
+        strcpy(previous, saved);
+    }
+    for (size_t zone = 0; zone < sizeof(zones) / sizeof(zones[0]); zone++) {
+#if defined(_WIN32)
+        assert(_putenv_s("TZ", zones[zone]) == 0);
+        _tzset();
+#else
+        assert(setenv("TZ", zones[zone], 1) == 0);
+        tzset();
+#endif
+        for (size_t index = 0; index < sizeof(seconds) / sizeof(seconds[0]); index++) {
+            struct tm local;
+            wf_optional_i64 offset;
+            int converted;
+            int64_t expected = 0;
+#if defined(_WIN32)
+            __time64_t moment = (__time64_t)seconds[index];
+            converted = _localtime64_s(&local, &moment) == 0;
+            if (converted) expected = (int64_t)_mkgmtime64(&local) - seconds[index];
+#else
+            time_t moment = (time_t)seconds[index];
+            converted = localtime_r(&moment, &local) != NULL;
+            if (converted) expected = (int64_t)local.tm_gmtoff;
+#endif
+            wf__body_local_offset_seconds(&offset, &inputs->wall_clock, instants[index]);
+            if (converted) {
+                assert(offset.tag == WF_OPTION_SOME);
+                assert(offset.value == expected);
+            } else {
+                assert(offset.tag != WF_OPTION_SOME);
+            }
+        }
+    }
+#if defined(_WIN32)
+    assert(_putenv_s("TZ", had_previous ? previous : "") == 0);
+    _tzset();
+#else
+    if (had_previous) assert(setenv("TZ", previous, 1) == 0);
+    else assert(unsetenv("TZ") == 0);
+    tzset();
+#endif
+}
+
 static void time_probe(wf_inputs *inputs) {
     wf_instant first, second, deadline, later, latest;
     wf_sleep_result slept;
@@ -1290,6 +1355,10 @@ static void time_probe(wf_inputs *inputs) {
     assert(!wf__body_instant_reached(&latest, &later));
     /* 2020-01-01T00:00:00Z. */
     assert(wf__body_unix_nanoseconds(&inputs->wall_clock) > INT64_C(1577836800000000000));
+    /* [PRE-2] the invocation's process identifier is the host's. */
+    assert(inputs->process_id.tag == WF_OPTION_SOME);
+    assert(inputs->process_id.value == (uint64_t)wf_pid());
+    local_offset_probe(inputs);
 }
 
 typedef void (*wf_probe_stop_open)(wf_open_result *, wf_value *, const wf_value *);

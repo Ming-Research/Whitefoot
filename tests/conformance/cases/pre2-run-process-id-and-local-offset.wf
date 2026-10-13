@@ -1,0 +1,26 @@
+alias ExitStatus = std::process::ExitStatus;
+alias Inputs = std::process::Inputs;
+alias exit_status = std::process::exit_status;
+
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  let Inputs(cwd: directory, handles: factory, wall_clock: calendar, process_id: identity, ..) = move inputs;
+  let std::fs::Directory(read: read_directory, write: write_directory) = move directory;
+  std::fs::close_directory_write(factory: &factory, directory: move write_directory);
+  std::fs::close_directory(factory: &factory, directory: move read_directory);
+  match identity {
+    Some(value: identifier) => {
+    }
+    None() => {
+      return exit_status(code: 1_u8);
+    }
+  }
+  let reading = std::time::local_offset_seconds(clock: &calendar, at: 1768478400000000000_i64);
+  match reading {
+    Some(value: offset) => {
+    }
+    None() => {
+      return exit_status(code: 2_u8);
+    }
+  }
+  return exit_status(code: 0_u8);
+}

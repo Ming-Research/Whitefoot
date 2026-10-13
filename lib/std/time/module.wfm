@@ -24,6 +24,8 @@ public fn sleep_until(deadline: Instant, cancel: &CancelWatch) -> result: Result
 
 public fn unix_nanoseconds(clock: &WallClock) -> result: i64 reads(clock) doc "Returns the calendar time as nanoseconds since 1970-01-01T00:00:00Z.";
 
+public fn local_offset_seconds(clock: &WallClock, at: i64) -> result: Option<i64> reads(clock) doc "Returns Some with the seconds by which local time is ahead of UTC at the second containing at nanoseconds since 1970-01-01T00:00:00Z, or None when the host gives no local time for that second.";
+
 public opaque struct CancelSource {
   state: Shared<CancelState>;
 }
