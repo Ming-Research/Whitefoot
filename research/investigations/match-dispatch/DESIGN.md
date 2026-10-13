@@ -1856,9 +1856,9 @@ is, so the step is kept.
 ### Return checks and small handlers: machine-code attribution
 
 **Question and method.** Identify the extra instructions on the return path
-and in the handlers contributing less than 0.3% in the refreshed CoreMark
-attribution. This task reads source and machine code; it runs no interpreter,
-test, profiler or timing experiment. An instruction count describes work on
+and in the handlers below the refreshed CoreMark attribution's 0.3%
+sample-share cutoff. This task reads source and machine code; it runs no
+interpreter, test, profiler or timing experiment. An instruction count describes work on
 one path, not its cycle cost or the time a change would save.
 
 The temporary
@@ -1883,13 +1883,30 @@ fuel-closure selection was not evidence of an inlined handler. This wasmi
 build has separate tail handlers; `execute_until_done` is its entry wrapper,
 not a monolithic function containing these bodies.
 
-The call-frame paragraph above records the supplied refreshed totals, but
-its per-handler table is absent from this checkout. The older eight-row
-attribution has a different revision and denominator; all eight recorded
-shares exceed 0.3%. Neither table membership nor historical build equivalence
-can be inferred from the totals. The comparisons below establish code in
-this artifact, not the exact instructions or costs of the historical 14900K
-attribution. No new timing is claimed.
+The refreshed attribution is cited from
+[`origin/claude/v2h-attribution-1012` at `73f237aa115340d8815bb82e600968def5b499c8`](https://github.com/Ming-Research/Whitefoot/blob/73f237aa115340d8815bb82e600968def5b499c8/research/investigations/match-dispatch/DESIGN.md#attribution-refreshed-on-2026-10-12),
+without merging it. Its 2026-10-12 14900K observation is 387.3 ms v2h
+against 357.6 ms wasmi, a 29.7 ms gap. The added table groups handlers by
+operation kind, and explicitly applies 0.3% to each engine's **sample
+share**, not to each handler's share of the time gap. It reports select as
+6.0 ms against 3.8 ms (+2.2 ms, approximately 7.4% of the total gap), bitwise
+and as 22.9 ms against 16.0 ms (+6.9 ms, approximately 23.2% of the gap), and
+the below-cutoff residual as 30.4 ms against 12.9 ms (+17.5 ms,
+approximately 58.9% of the gap). These percentages use the published rounded
+differences, and belong to operation groups or the entire residual, not to
+the individual handler variants examined below.
+
+That branch's
+[`RESULTS.md`](https://github.com/Ming-Research/Whitefoot/blob/73f237aa115340d8815bb82e600968def5b499c8/research/experiments/match-dispatch/RESULTS.md#stage-3-where-v2hs-time-goes-against-wasmi)
+contains the older M5 per-execution cycle comparison, not the refreshed
+per-handler sample reports. The branch adds only the 73-line grouped
+attribution to `DESIGN.md`; no refreshed granular counts or reports are
+committed there. Thus the select and bitwise-and operation families can be
+placed, but no individual candidate can yet be assigned an exact gap share
+or a below-/above-0.3% sample classification. The older eight-row attribution
+has a different revision and denominator. The comparisons below establish
+code in this hosted artifact, not the exact instructions or costs of the
+historical 14900K attribution. No new timing is claimed.
 
 **Return checks.** The generated `run` map assigns Return to
 `wf_run.arm.8`, beginning at `0x33240`. It loads the saved PC at `0x33263`
@@ -1926,72 +1943,128 @@ frame condition. The absence of a release guard follows from those internal
 preconditions; it does not mean wasmi has proved the same invariant in
 Whitefoot.
 
-**Can the natural form state the property?** Yes: [TYPE-11] permits a range
-type invariant over a private typed frame stack, and [RANGE-1] through
-[RANGE-3] can instantiate its element relations for ordinary index and
-arithmetic obligations. The following is an independent declaration fragment,
-source-reviewed against those rules, not compiled in this task and not a
-proposal to rewrite v2h:
+**Invariant needed in the actual representation.** The property is a
+protected live continuation chain inside the existing mixed `Array<u64>`,
+not a bound on every word. For every non-root link in that chain, the saved
+PC is below the same code allocation's length and the saved caller frame
+base plus 65536 is at most the stack length. The current function's
+`Return.l` identifies the two cells containing that function's saved link;
+following its caller link selects the next live frame. The root uses the
+existing sentinel. Ordinary payload words remain unrestricted, and every
+write must preserve the links still live after that operation.
+
+The true source of `enter`, `run` and the Return arm is
+[`interp_head.wf`](../../experiments/match-dispatch/wasm/interp_head.wf).
+[`gen.py`](../../experiments/match-dispatch/wasm/gen.py) combines that
+header and its control handlers with generated arithmetic/load/store arms
+and [`interp_tail.wf`](../../experiments/match-dispatch/wasm/interp_tail.wf),
+which contains the loader and driver. Consequently this proof must cover
+both authored and generated stack writes, plus the driver's resumptions.
+No interpreter source has changed and neither Return guard has been removed.
+
+**Natural predicate formation is unavailable.** A range type invariant can
+state bounds for elements of a separately typed contiguous link collection.
+It does not identify the live links in this mixed array or establish their
+preservation. The natural contract here names an inductive predicate over
+the frame chain. Current [FN-8] excludes ordinary function calls in
+contracts, including pure or read-only functions; [RANGE-1] also excludes
+calls from range terms. The implementation in
+[`check/requires.rs`](../../../compiler/src/semantic/check/requires.rs)
+rejects an ordinary function callee as `InvalidRequires` before it can
+consider the intended proof. Existing source evidence is
+[`fn8-neg-requires-user-call.wf`](../../../tests/conformance/cases/fn8-neg-requires-user-call.wf)
+and the corresponding
+[`requires` tests](../../../compiler/src/semantic/tests/requires.rs).
+These are inspected rule and implementation evidence, not runs in this task.
+
+The following complete independent declaration fragment isolates that
+restriction. It describes variable-sized packed frames: zero denotes the
+root, and a frame's final cell stores the previous frame end; interior
+payload cells are arbitrary. It is not a runnable program and has not been
+compiled. It deliberately uses the ordinary function spelling whose use in
+a contract is refused by [FN-8].
 
 ```whitefoot
-struct Link {
-  pc: u64;
-  caller: u64;
+fn valid_chain(words: &Array<u64, 16>, top: u64) -> ok: Bool reads(words) {
+  let end = top;
+  loop {
+    if end == 0_u64 { return True(); }
+    if end > words^.len { return False(); }
+    let at = end - 1_u64;
+    let previous = words^[at];
+    if previous >= end { return False(); }
+    set end = previous;
+  }
 }
 
-struct Frames {
-  code: Box<Array<u8>>;
-  words: Box<Array<u64>>;
-  links: Slots<Link, 8>;
-  invariant(s): forall bounded(i in 0_u64..s^.links.len):
-    s^.links[i].pc < s^.code.inner.len,
-    s^.links[i].caller + 65536_u64 <= s^.words.inner.len;
-}
-
-fn resume_code(s: &Frames, i: u64) -> value: u8 reads(s) contract {
-  requires i < s^.links.len;
+fn pop_frame(words: &Array<u64, 16>, top: u64) -> previous: u64 reads(words) contract {
+  requires top > 0_u64;
+  requires top <= words^.len;
+  requires valid_chain(words: words, top: top);
+  ensures valid_chain(words: words, top: previous);
 } {
-  let link = s^.links[i];
-  return s^.code.inner[link.pc];
-}
-
-fn resume_word(s: &Frames, i: u64) -> value: u64 reads(s) contract {
-  requires i < s^.links.len;
-} {
-  let link = s^.links[i];
-  let last = link.caller + 65535_u64;
-  return s^.words.inner[last];
+  let at = top - 1_u64;
+  return words^[at];
 }
 ```
 
-The named `last` makes the arithmetic offset an ordinary proved value before
-using it as an index. Existing evidence includes
-[`type11-pos-range-implicit-caller.wf`](../../../tests/conformance/cases/type11-pos-range-implicit-caller.wf)
-and the source-reviewed
-[`range_type_invariants` tests](../../../compiler/src/semantic/tests/range_type_invariants.rs);
-those are supporting cases, not an executed validation of this fragment.
-The active specification remains the authority.
+The intended predicate terminates because each followed parent end is a
+strictly smaller nonnegative integer. Its first node being valid means the
+parent chain is valid, so removing that first node preserves the predicate.
+This is the missing construction/decomposition principle; it is not a
+request to run `valid_chain` on every return. The fragment does not itself
+prove v2h's richer saved-PC and frame-layout facts. The contract's ordinary
+call is a source-predicted formation refusal under the explicit rule and
+implementation, not an observed checker diagnostic. This establishes the
+narrow gap in expressing the natural named inductive predicate, not that
+every possible pointwise encoding is impossible.
 
-A type invariant does not invent the live-link identity or prove arbitrary
-writes safe. Checked writers must establish a bounded new link on push,
-preserve existing links, restrict pop to the active span, keep code identity
-and length fixed, and avoid shrinking words below a saved frame's extent.
-The range rules' write-version tracking and the contracts on `place_back`
-and `take_back` provide ways to express preservation. The root sentinel is
-outside the non-root property. Current v2h mixes saved links with ordinary
-`Array<u64>` values, publishes no invariant identifying its live link cells,
-and lets `enter` accept arbitrary `ret` and `fp`; `pc < n` alone also permits
-Call's saved `pc + 1` to equal `n`. Its current contracts therefore do not
-justify removal of either guard. No complete proof for that representation
-has been executed here, and no language refusal has been demonstrated.
-Neither return guard is established as a language gap, so this analysis does
-not invent a rejected witness or prescribe a language change.
+A candidate language change would admit proof-erased structural predicates
+or finite models, with explicit checked construction, decomposition and
+framing lemmas. Its local proof rules must be deterministic and terminating;
+no runtime guard or SMT search supplies acceptance. The
+[logical-function and finite-model proposal in the unique-keys investigation](../unique-keys/DESIGN.md#candidate-source-form-an-erased-field-tied-to-storage-by-an-invariant)
+is related research, not an implemented feature, a selected design or a
+registered board disposition for this witness. Adopting a separate runtime
+link stack, tags or a different contract spelling would change or conceal
+the problem rather than discharge this representation's proof obligations.
+
+**Obligations and stop point.** The current PC, current frame extent and
+jump-table relations are already checked in the original program. None of
+the new live-chain obligations below has been discharged in this task.
+
+| Boundary | Required proof in the existing representation | Status |
+|---|---|---|
+| Root construction | The sentinel terminates the chain and root link cells match the root function layout. | Unresolved. |
+| Direct and indirect Call / `enter` | The saved successor satisfies `pc + 1 < code.len`; the caller frame is bounded; installing the new link preserves every older live link. | Unresolved. |
+| Generated slot writes, `zero_range`, `move_slot` and Return's result copy | The write targets ordinary payload or retired cells and preserves all continuation cells that remain live. | Unresolved. |
+| Return and predecessor selection | `Return.l` selects the current function's link; decomposing the chain yields bounded caller and saved PC; popping preserves the predecessor chain. | Unresolved. |
+| Host/Grow and driver reentry | The returned state preserves the same live-chain relation before the next `run`. | Unresolved. |
+| Code lifetime and stack extent | Every saved PC refers to the same live code allocation; stack extent never shrinks below a live caller's required 65536 slots. | Unresolved. |
+
+Work stops at formation of the natural predicate contract. There is no
+interpreter diff or measurement candidate to claim, and no proof has been
+executed. The temporary hosted workflow prints the compiler diagnostic and
+fails with its original status if compilation rejects a future candidate;
+it does not currently contain an altered v2h proof to validate.
+The owner-requested temporary push workflow is outside the research-input
+static checker's dispatch-only exemption. This inherited gate conflict is
+resolved by removing the temporary workflow before readiness, not by
+weakening that checker; no passing static result is claimed here.
 
 **Small-handler instruction inventory.** Each count follows a successful
 handler entry through its indirect tail jump, including pushes/pops and
-conditional branches, excluding cold traps and alignment. All 17 candidates
-below remain **unplaced** in the refreshed attribution. They are an inventory
-of the examined candidates, not a claim to cover its exact below-0.3% group.
+conditional branches, excluding cold traps and alignment. The placement column
+places `Select` and `I32And` in their reported operation families; the
+family percentages cannot be attributed to these particular variants.
+All 17 candidates lack an individual gap share and sample-cutoff classification:
+`Select`, `GlobalGet`, `GlobalSet`, `I32Eqz`, `I32EqzA`, `I32Clz`, `I32Ctz`,
+`I32Popcnt`, `I32Sub`, `I32Mul`, `I32And`, `I32Or`, `I32Xor`, `I32ShrS`,
+`I32ShrU`, `I32Rotl` and `I32Rotr`. The source reports no qualifying operation
+row for the other 15 candidates, but that absence alone does not establish
+their membership in the below-cutoff residual: variant names and the two
+engines' sample reports are not supplied. This remains an inventory of the
+examined candidates, not a claim to cover the exact small-handler group.
 
 Pairing preserves operand sources: slot forms use wasmi's slot inputs,
 Eqz uses an encoded zero immediate, and EqzA uses an accumulator input.
@@ -2019,25 +2092,25 @@ are intentional representation and supported-host calling-convention
 differences in this artifact. Variable shifts/rotates save and restore
 `%rcx` on **both** sides; those two moves are not extra v2h work.
 
-| Candidate / v2h arm | Share | v2h count and successful range | wasmi handler, count and range | Count difference and extra work; reason |
+| Candidate / v2h arm | Refreshed attribution placement | v2h count and successful range | wasmi handler, count and range | Count difference and extra work; reason |
 |---|---|---|---|---|
-| `Select` / 12 | unplaced | 21, `0x33640–0x3368b` | `u64_select_rsss`: 9, `0x423f30–0x423f50` | +12: dispatch, stack reload, three frame-base additions, destination decode/store, `%rbx` push/pop. Intentional design difference. |
-| `GlobalGet` / 15 | unplaced | 18, `0x337c0–0x337fa` | `global_get_u64_r`: 8, `0x424f90–0x424fac` | +10: global-index and next-PC guards, frame destination and ABI traffic; wasmi instead resolves a validated cached-global pointer. Intentional validation/storage difference. |
-| `GlobalSet` / 16 | unplaced | 18, `0x33840–0x3387a` | `global_set_u64_s`: 12, `0x425090–0x4250b5` | +6 net: +4 dispatch, +2 global bounds guard, +2 stack reload/frame-base addition, minus 2 for wasmi's instance-cache pointer resolution. Both save `%rbx`. Intentional design difference. |
-| `I32Eqz` / 53 | unplaced | 18, `0x35000–0x3503b` | `i32_eq_rsi` with zero immediate: 8, `0x41bb00–0x41bb1a` | +10: dispatch, stack reload, frame addressing/destination and `%rbx` save/restore; wasmi decodes a comparison immediate. Intentional design difference. |
-| `I32EqzA` / 253 | unplaced | 16, `0x3c480–0x3c4b1` | `i32_eq_rri` with zero immediate: 7, `0x41bac0–0x41bad5` | +9: common dispatch and slot-result traffic despite accumulator input. Intentional design difference. |
-| `I32Clz` / 87 | unplaced | 23 nonzero / 21 zero, `0x36100–0x3614b` | `i32_clz_rs`: 7 either, `0x41ba60–0x41ba7a` | +16 / +14: slot/ABI/dispatch work, dedicated code-length reload at `0x36101`, explicit zero test/branch, nonzero-path jump and result zero-extension; wasmi preinitializes 63, uses memory `bsr`, then XORs 31. Intrinsic-lowering cause unknown. |
-| `I32Ctz` / 88 | unplaced | 22 nonzero / 21 zero, `0x36180–0x361c9` | `i32_ctz_rs`: 6 either, `0x41baa0–0x41bab7` | +16 / +15: slot/ABI/dispatch work, dedicated code-length reload at `0x36181`, explicit zero test/branch, nonzero-path jump and result zero-extension; wasmi preinitializes 32 then uses memory `tzcnt`. Intrinsic-lowering cause unknown. |
-| `I32Popcnt` / 89 | unplaced | 31, `0x36200–0x36269` | `i32_popcnt_rs`: 20, `0x421fc0–0x422013` | +11 surrounding slot/ABI/dispatch instructions; both use the same 15-instruction software bit-count sequence. Intentional design difference, no population-count-specific gap observed. |
-| `I32Sub` / 91 | unplaced | 21, `0x36340–0x36386` | `i32_sub_rss`: 7, `0x41e8f0–0x41e907` | +14: binary overhead with `%r14`/`%rbx` pushes/pops; one SUB each. Intentional design difference. |
-| `I32Mul` / 92 | unplaced | 19, `0x363c0–0x36403` | `i32_mul_rss`: 7, `0x41e4b0–0x41e4c8` | +12: binary overhead with `%rbx` push/pop; one IMUL each. Intentional design difference. |
-| `I32And` / 97 | unplaced | 21, `0x366c0–0x36706` | `i32_bitand_rss`: 7, `0x422e80–0x422e97` | +14: binary overhead with `%r14`/`%rbx` pushes/pops; one AND each. Intentional design difference. |
-| `I32Or` / 98 | unplaced | 19, `0x36740–0x36782` | `i32_bitor_rss`: 7, `0x421f50–0x421f67` | +12: binary overhead with `%rbx` push/pop; one OR each. Intentional design difference. |
-| `I32Xor` / 99 | unplaced | 19, `0x367c0–0x36802` | `i32_bitxor_rss`: 7, `0x422f00–0x422f17` | +12: binary overhead with `%rbx` push/pop; one XOR each. Intentional design difference. |
-| `I32ShrS` / 101 | unplaced | 24, `0x368c0–0x36910` | `i32_shr_rss`: 10, `0x41e840–0x41e860` | +14: binary overhead with `%r14`/`%rbx` pushes/pops; one SAR each and `%rcx` save/restore on both. Intentional design difference. |
-| `I32ShrU` / 102 | unplaced | 24, `0x36940–0x36990` | `u32_shr_rss`: 10, `0x41fed0–0x41fef0` | +14: same surrounding work as ShrS; one SHR each. Intentional design difference. |
-| `I32Rotl` / 103 | unplaced | 24, `0x369c0–0x36a10` | `i32_rotl_rss`: 10, `0x420f20–0x420f40` | +14: same surrounding work as ShrS; one ROL each. Intentional design difference. |
-| `I32Rotr` / 104 | unplaced | 24, `0x36a40–0x36a90` | `i32_rotr_rss`: 10, `0x421010–0x421030` | +14: same surrounding work as ShrS; one ROR each. Intentional design difference. |
+| `Select` / 12 | Select family: +2.2 ms, ≈7.4% of gap; variant share/cutoff unknown | 21, `0x33640–0x3368b` | `u64_select_rsss`: 9, `0x423f30–0x423f50` | +12: dispatch, stack reload, three frame-base additions, destination decode/store, `%rbx` push/pop. Intentional design difference. |
+| `GlobalGet` / 15 | Individual share/cutoff not reported | 18, `0x337c0–0x337fa` | `global_get_u64_r`: 8, `0x424f90–0x424fac` | +10: global-index and next-PC guards, frame destination and ABI traffic; wasmi instead resolves a validated cached-global pointer. Intentional validation/storage difference. |
+| `GlobalSet` / 16 | Individual share/cutoff not reported | 18, `0x33840–0x3387a` | `global_set_u64_s`: 12, `0x425090–0x4250b5` | +6 net: +4 dispatch, +2 global bounds guard, +2 stack reload/frame-base addition, minus 2 for wasmi's instance-cache pointer resolution. Both save `%rbx`. Intentional design difference. |
+| `I32Eqz` / 53 | Individual share/cutoff not reported | 18, `0x35000–0x3503b` | `i32_eq_rsi` with zero immediate: 8, `0x41bb00–0x41bb1a` | +10: dispatch, stack reload, frame addressing/destination and `%rbx` save/restore; wasmi decodes a comparison immediate. Intentional design difference. |
+| `I32EqzA` / 253 | Individual share/cutoff not reported | 16, `0x3c480–0x3c4b1` | `i32_eq_rri` with zero immediate: 7, `0x41bac0–0x41bad5` | +9: common dispatch and slot-result traffic despite accumulator input. Intentional design difference. |
+| `I32Clz` / 87 | Individual share/cutoff not reported | 23 nonzero / 21 zero, `0x36100–0x3614b` | `i32_clz_rs`: 7 either, `0x41ba60–0x41ba7a` | +16 / +14: slot/ABI/dispatch work, dedicated code-length reload at `0x36101`, explicit zero test/branch, nonzero-path jump and result zero-extension; wasmi preinitializes 63, uses memory `bsr`, then XORs 31. Intrinsic-lowering cause unknown. |
+| `I32Ctz` / 88 | Individual share/cutoff not reported | 22 nonzero / 21 zero, `0x36180–0x361c9` | `i32_ctz_rs`: 6 either, `0x41baa0–0x41bab7` | +16 / +15: slot/ABI/dispatch work, dedicated code-length reload at `0x36181`, explicit zero test/branch, nonzero-path jump and result zero-extension; wasmi preinitializes 32 then uses memory `tzcnt`. Intrinsic-lowering cause unknown. |
+| `I32Popcnt` / 89 | Individual share/cutoff not reported | 31, `0x36200–0x36269` | `i32_popcnt_rs`: 20, `0x421fc0–0x422013` | +11 surrounding slot/ABI/dispatch instructions; both use the same 15-instruction software bit-count sequence. Intentional design difference, no population-count-specific gap observed. |
+| `I32Sub` / 91 | Individual share/cutoff not reported | 21, `0x36340–0x36386` | `i32_sub_rss`: 7, `0x41e8f0–0x41e907` | +14: binary overhead with `%r14`/`%rbx` pushes/pops; one SUB each. Intentional design difference. |
+| `I32Mul` / 92 | Individual share/cutoff not reported | 19, `0x363c0–0x36403` | `i32_mul_rss`: 7, `0x41e4b0–0x41e4c8` | +12: binary overhead with `%rbx` push/pop; one IMUL each. Intentional design difference. |
+| `I32And` / 97 | Bitwise-and family: +6.9 ms, ≈23.2% of gap; variant share/cutoff unknown | 21, `0x366c0–0x36706` | `i32_bitand_rss`: 7, `0x422e80–0x422e97` | +14: binary overhead with `%r14`/`%rbx` pushes/pops; one AND each. Intentional design difference. |
+| `I32Or` / 98 | Individual share/cutoff not reported | 19, `0x36740–0x36782` | `i32_bitor_rss`: 7, `0x421f50–0x421f67` | +12: binary overhead with `%rbx` push/pop; one OR each. Intentional design difference. |
+| `I32Xor` / 99 | Individual share/cutoff not reported | 19, `0x367c0–0x36802` | `i32_bitxor_rss`: 7, `0x422f00–0x422f17` | +12: binary overhead with `%rbx` push/pop; one XOR each. Intentional design difference. |
+| `I32ShrS` / 101 | Individual share/cutoff not reported | 24, `0x368c0–0x36910` | `i32_shr_rss`: 10, `0x41e840–0x41e860` | +14: binary overhead with `%r14`/`%rbx` pushes/pops; one SAR each and `%rcx` save/restore on both. Intentional design difference. |
+| `I32ShrU` / 102 | Individual share/cutoff not reported | 24, `0x36940–0x36990` | `u32_shr_rss`: 10, `0x41fed0–0x41fef0` | +14: same surrounding work as ShrS; one SHR each. Intentional design difference. |
+| `I32Rotl` / 103 | Individual share/cutoff not reported | 24, `0x369c0–0x36a10` | `i32_rotl_rss`: 10, `0x420f20–0x420f40` | +14: same surrounding work as ShrS; one ROL each. Intentional design difference. |
+| `I32Rotr` / 104 | Individual share/cutoff not reported | 24, `0x36a40–0x36a90` | `i32_rotr_rss`: 10, `0x421010–0x421030` | +14: same surrounding work as ShrS; one ROR each. Intentional design difference. |
 
 Clz's nonzero path skips `0x36127`; its zero path takes
 `0x3611d → 0x36127` and skips `0x3611f`, `0x36122`, `0x36125`.

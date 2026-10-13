@@ -1,0 +1,28 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn valid_chain(words: &Array<u64, 16>, top: u64) -> ok: Bool reads(words) {
+  let end = top;
+  loop {
+    if end == 0_u64 { return True(); }
+    if end > words^.len { return False(); }
+    let at = end - 1_u64;
+    let previous = words^[at];
+    if previous >= end { return False(); }
+    set end = previous;
+  }
+}
+
+fn pop_frame(words: &Array<u64, 16>, top: u64) -> previous: u64 reads(words) contract {
+  requires top > 0_u64;
+  requires top <= words^.len;
+  requires valid_chain(words: words, top: top);
+  ensures valid_chain(words: words, top: previous);
+} {
+  let at = top - 1_u64;
+  return words^[at];
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

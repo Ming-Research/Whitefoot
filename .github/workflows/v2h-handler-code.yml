@@ -1,8 +1,8 @@
 # Temporary phase-3 machine-code collection. Remove before this branch is ready.
-# research-boundary: manual-only
+# Temporary research collection on the owner's work branch, including pushes.
 # Static inspection only: no interpreter execution, tests, profiling or timing.
-# The refreshed small-handler inventory is absent from this checkout, so retain
-# all run arms and wasmi executor handlers as a bounded superset.
+# The refreshed attribution supplies family aggregates only; retain all run arms
+# and wasmi executor handlers as a bounded superset.
 name: v2h-handler-code
 
 on:
@@ -39,8 +39,16 @@ jobs:
           # Same compiler profile as make -C compiler build, without its timing wrapper.
           cargo fetch --locked --manifest-path compiler/Cargo.toml
           cargo build --manifest-path compiler/Cargo.toml --profile gate --bin whitefootc --locked --offline
+          # The natural frame-chain contract; its diagnostic is evidence, not a job failure.
+          compiler/target/gate/whitefootc research/experiments/match-dispatch/wasm/frame-chain-witness.wf -o "$out/frame-chain-witness" > "$out/evidence/frame-chain-witness.log" 2>&1 && echo "frame-chain witness accepted" >> "$out/evidence/frame-chain-witness.log" || echo "frame-chain witness status $?" >> "$out/evidence/frame-chain-witness.log"
+          cat "$out/evidence/frame-chain-witness.log"
           python3 research/experiments/match-dispatch/wasm/gen.py "$out/evidence/v2h.wf"
-          compiler/target/gate/whitefootc --dispatch-ledger "$out/evidence/v2h.wf" -o "$out/v2h" > "$out/evidence/v2h-compile.log" 2>&1
+          # A rejected natural frame proof fails the job with the compiler diagnostic.
+          compiler/target/gate/whitefootc --dispatch-ledger "$out/evidence/v2h.wf" -o "$out/v2h" > "$out/evidence/v2h-compile.log" 2>&1 || {
+            status=$?
+            cat "$out/evidence/v2h-compile.log"
+            exit "$status"
+          }
           git clone --quiet https://github.com/wasmi-labs/wasmi "$out/wasmi-source"
           git -C "$out/wasmi-source" checkout --quiet "$WASMI_REV"
           test "$(git -C "$out/wasmi-source" rev-parse HEAD)" = "$WASMI_REV"
