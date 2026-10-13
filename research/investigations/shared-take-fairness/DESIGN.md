@@ -528,6 +528,30 @@ within 0.99-1.01, so no cell is inconclusive. Part 3 holds for this
 compiler pair, one machine and one workload shape; the scope limits of the
 [Uncontended-cost procedure](#uncontended-cost-procedure) apply.
 
+**Uncontended cost after main's lazy locking** (run 38399321490, same
+machine, settings and procedure, 6 blocks). The run above preceded the
+branch's merge of main's lazy-locking change, which rewrote the shared
+object's lock path this measurement exercises, so it was repeated on the
+merged branch: base `f8801ea4b` (main) against candidate `8731a220b`, whose
+overhead workloads differ from the earlier run only in renaming a binding
+once `held` became a reserved word. Both programs' emitted LLVM was again
+identical between base and candidate.
+
+| Program | Drivers | t | Overhead | w | ns per statement (base) | Reading |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| take | 1 | 1.0020 | +0.20% | 1.0000 | 44.77 | pass |
+| take | 2 | 1.0019 | +0.19% | 1.0017 | 45.62 | pass |
+| take | 4 | 1.0087 | +0.87% | 1.0075 | 45.20 | pass |
+| take | 8 | 0.9994 | -0.06% | 0.9981 | 45.38 | pass |
+| own | 1 | 1.0063 | +0.63% | 1.0000 | 21.70 | pass |
+| own | 2 | 1.0070 | +0.70% | 1.0000 | 21.68 | pass |
+| own | 4 | 1.0069 | +0.69% | 0.9996 | 21.67 | pass |
+| own | 8 | 1.0087 | +0.87% | 1.0001 | 21.73 | pass |
+
+The registered verdict is pass, +0.20% against the 2% limit, and the
+every-cell extension is pass, every cell within 0.87% and every twin within
+0.99-1.01, with the same scope as above.
+
 **Still open.** All trials within B(N) establish only the stated sampled
 bound; the argument for every schedule, both borrowers and parked contexts,
 remains the static progress argument (see Progress argument and scope), so
