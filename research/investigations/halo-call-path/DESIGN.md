@@ -495,3 +495,25 @@ which the host inlines the same way, leaving the inner calls in the C
 convention. This predicts no change in the three arms and a rejection; a
 reduction would show that the entries keep a helper out of line that the
 base inlined.
+
+### Result: runs 38329105320 (B) and 38329170660 (C)
+
+Rejected. fib(32), 7,049,155 Lua calls, executed instructions per Lua call:
+
+| Measure | B | C | C − B |
+|---|---|---|---|
+| Program total | 841.53 | 845.03 | +3.50 |
+| SubRK (arm 25) | 60.0 | 59.0 | −1.0 |
+| LtJmpRK (arm 54) | 53.0 | 55.0 | +2.0 |
+| GetUpval (arm 5) | 61.0 | 61.0 | 0 |
+| Three-arm sum | 174.0 | 175.0 | +1.0 |
+| Call (arm 63) / Return (arm 65) | 101.0 / 112.0 | 101.0 / 112.0 | 0 |
+
+The emitted module of C defines eight `preserve_mostcc` entries for the
+dispatch helpers (checked_step, fast_instruction_sub_rk, instruction_sub_rk,
+fast_instruction_lt_jmp_rk, instruction_lt_jmp_rk, instruction_get_upval,
+instruction_call, instruction_return); none survives as a symbol or a
+callgrind row: the host inlines every entry into the arm, as the prior
+predicted, and the slow calls inside stay C calls. The three-arm sum moved by
++1, far from the −10 the change needed. The runs ran on different hosted CPUs
+(EPYC 9V74 and 9V45); instruction counts do not depend on that.
