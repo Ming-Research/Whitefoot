@@ -1089,6 +1089,273 @@ Halo kernel or v2h CoreMark, or the pending explanation contradicts the
 instruction-reduction grounds. The evidence here covers the listed
 workloads, sizes, compiler revisions and x86-64 settings only.
 
+#### Why the arm entries still prepare
+
+This is a static attribution of the supplied E2 artifacts, not a new
+code-generation or timing result. Artifact line numbers below refer to
+`ir/C2.ll`, `probe/*.json` and `probe/*.arm-*.txt` from the
+[E2 instruction-count run](https://github.com/Ming-Research/Whitefoot/actions/runs/38352516256),
+as supplied for this investigation. The scratch copies are not repository
+inputs. The three functions have the common symbol prefix
+`wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.` and suffixes
+`25` (SubRK), `54` (LtJmpRK) and `5` (GetUpval).
+
+**Evidence boundary.** Despite its description as optimized pre-codegen IR,
+the supplied `ir/C2.ll` is an earlier module: it still calls
+`fast_instruction_sub_rk` at line 163468 and the always-inlined dispatch at
+163549, while the measured SubRK machine path contains neither call.
+GetUpval likewise still calls `instruction_get_upval` at 159996. Its only
+numbered function attribute group is `"probe-stack"="inline-asm"`
+(198886). These bytes show what Whitefoot handed to LLVM, not which
+metadata survived full LTO. A true post-LTO module and machine-pass dump
+are missing. Consequently, neither “LLVM ignored the right weights” nor
+“eleven live states make every remaining spill unavoidable” follows from
+these artifacts.
+
+**Where the other instructions went.** Positive savings below mean base
+minus C2, in executed instructions per Lua call. JSON lines 5, 11, 23,
+35, 47–51 and 61–65 in each variant give these totals. The helper rows
+are inclusive contributions charged to the indicated caller, not helper
+self counts; they are added to arm self counts exactly once.
+
+| Disjoint contribution | Base | C1 | C2 | Base − C2 |
+|---|---:|---:|---:|---:|
+| SubRK self | 59.999991 | 49.999993 | 48.999993 | 10.999998 |
+| LtJmpRK self | 53.000000 | 55.000000 | 55.000000 | −2.000000 |
+| GetUpval self | 60.999991 | 59.999991 | 59.999991 | 1.000000 |
+| Call self | 101.000014 | 98.000014 | 100.000014 | 1.000000 |
+| `prepare` subtree called by Call | 335.002427 | 335.002427 | 262.002485 | 72.999943 |
+| Return self | 112.000015 | 109.000015 | 109.000015 | 3.000000 |
+| `finish` subtree called by Return | 93.000006 | 93.000006 | 93.000006 | 0.000000 |
+| Remaining executable self, by subtraction | 26.522684 | 25.522703 | 24.023894 | 2.498790 |
+| Total | 841.525130 | 825.525150 | 752.026399 | 89.498731 |
+
+Thus the saving outside the three hot arms is **79.498733**: about 73
+in the `prepare` subtree, 1 in Call itself, 3 in Return itself and
+2.498790 elsewhere. C1 leaves the `prepare` contribution unchanged;
+C2 accounts for its entire reduction. Call's own code actually costs
+2 more instructions than C1. The JSON contains only these five arms and
+their listed callees: it cannot identify the remaining arms or divide
+`prepare` between its own code and nested helpers. Naming that residual,
+or calling the 73 a `prepare` self saving, would invent evidence. A raw
+per-function callgrind self table is needed to finish that decomposition.
+
+The Call disassembly also locates a small gain outside entry preparation:
+base's five-instruction normal-result jump-table dispatch at lines 89–93
+becomes `test al,al; jne` in C2 at 108–109. The ordinary `prepare` call
+still executes 1.000 times per Lua call (base line 79, C2 line 94).
+This explains a local three-instruction saving, not the entire net Call
+delta: C2's frame grows from 0x60 to 0x70 and its allocation changes too.
+
+**Every C2 entry store.** The table gives store address → hot read address,
+with line numbers in the corresponding annotated disassembly. Counts
+rounded to 1.000 identify the measured fast path. A displayed 0.000
+cannot by itself rule out rare executions rounded away; the classifications
+also follow the numeric-success CFG. They are not claims that the other
+paths are unreachable for other Lua inputs.
+
+| Arm and entry slot | Evidence | Classification |
+|---|---|---|
+| SubRK `[rsp+0x20] = r11` | `5f988` → `5fa54`, lines 5, 47 | Hot save/reload; `r11d` is overwritten at `5f9a0` for an operand. |
+| SubRK `[rsp] = r15` | `5f98d` → `5fa0f`, lines 6, 33 | Hot save/reload; `r15` becomes the constant address at `5f9d2`. |
+| SubRK `[rsp+0x18] = r12` | `5f991` → `5fa4c`, lines 7, 45 | Hot save/reload; `r12` becomes the constant storage pointer at `5f9ca`. |
+| SubRK `[rsp+0x28] = r8` | `5f996`, line 8; only address/read at `5fa7a`, `5fabc`, lines 57, 78 | Slow-only addressable pinned-pointer slot. |
+| SubRK `[rsp+0x10] = r14` | `5f9ae` → `5fa28`, lines 13, 38 | Hot read, but no intervening hot definition of `r14`; this pair is redundant on the measured fast trace. |
+| LtJmpRK `[rsp+0x70] = rdi` | `6668e` → `66749`, lines 7, 50 | Hot save/reload; `edi` is overwritten by the jump target at `666ab`. |
+| LtJmpRK `[rsp+0x18] = r8` | `66693`, line 8; consumers `667d1`, `66869`, `668c2`, `66ad7` all count zero | Slow-only addressable pinned-pointer slot. |
+| LtJmpRK `[rsp+0x7] = al` | `6669d` → `66701`, lines 10, 35 | Hot operand byte; `eax` is overwritten at `666a1`. |
+| LtJmpRK `[rsp+0x68] = rcx` | `666b2` → `66754`, lines 15, 53 | Hot save/reload; `rcx` is reused for an address and the comparison. |
+| LtJmpRK `[rsp+0x8] = r13` | `666ba` → `6673f`, lines 17, 48 | Hot read with no intervening hot definition of `r13`; redundant on this trace. |
+| LtJmpRK `[rsp+0x10] = r14` | `666d5` → `66744`, lines 23, 49 | Hot read with no intervening hot definition of `r14`; redundant on this trace. |
+| GetUpval | No entry stack data store, lines 3–11 | Later spills at `5b886`/`5b88a`, lines 36–37, execute only on the error path. |
+
+The three pairs that reload an unchanged register demonstrate why a hot
+consumer alone is insufficient evidence of necessary register pressure.
+Cold clobbers and joined register-allocation regions can affect the hot
+allocation. The other saves protect actual hot clobbers in this allocation,
+but that still is not a lower-bound proof that another allocation must spill.
+
+The two slow-only stores have a more direct cause than register pressure.
+SubRK's input IR explicitly emits
+`%wf.pin.8 = alloca ptr; store ptr %v25, ptr %wf.pin.8` at 163439–163440;
+LtJmpRK does the same at 167920–167921. The slow calls pass that slot's
+address at 163541 and 168027; `checked_step` also consumes it at 163449
+and 167930. `%v25` is the hoisted code pointer. The general dispatch
+emitter initializes such local reference slots in each part's prelude
+([dispatch.rs](../../../compiler/src/backend/emitter/dispatch.rs),
+lines 1466–1476). LLVM retained an existing entry initializer after inlining
+removed its hot address users; it did not invent these two stores to spill
+eleven parameters. GetUpval emits the same initializer at 159970–159971,
+but its machine code eliminates the slot, passing the code pointer in
+`rbp` directly to `checked_step` (`5b920`, disassembly line 70).
+
+**Frames and shrink-wrapping.** SubRK and LtJmpRK have real hot stack
+accesses before their first conditional jump. Their existing frames must
+therefore be available at entry for this generated allocation. The full
+0x80/0xc0 allocations also accommodate cold temporaries; their sizes are
+not a measured minimum for the hot path. Merely sinking the single
+slow-only initializer cannot remove their remaining hot saves.
+
+GetUpval's 0x80 local allocation has no hot data access at all. Its cold
+slots include the two saved states, interning output, `checked_step`
+input/output and `unwind` output (`5b886`–`5b938`, lines 36–76).
+However, `push rbp` is not slow-only: the hot code overwrites `rbp` with
+the code pointer at `5b808`, reads through it at `5b99a`, and uses it to
+form the next instruction and transfer arguments at `5b9cb`/`5b9e1`.
+LLVM 22's `preserve_none` still saves RBP:
+[X86RegisterInfo.cpp](https://github.com/llvm/llvm-project/blob/llvmorg-22.1.8/llvm/lib/Target/X86/X86RegisterInfo.cpp#L257-L258)
+selects the list whose sole member is RBP in
+[X86CallingConv.td](https://github.com/llvm/llvm-project/blob/llvmorg-22.1.8/llvm/lib/Target/X86/X86CallingConv.td#L1079).
+The hot tail goes through `add rsp,0x80; pop rbp` at `5b96e`/`5b975`
+(lines 87–89). Separating cold storage could remove the 0x80 adjustment
+without necessarily removing this save/restore pair.
+
+Shrink-wrapping moves the save/restore region subject to dominance of
+frame and callee-saved-register uses; it does not give each path its own
+independently sized frame. These hot uses block moving the whole prologue
+cold. The generic algorithm's
+[frame/register-use test](https://llvm.org/doxygen/ShrinkWrap_8cpp_source.html)
+explains the constraint; LLVM 22's
+[x86 enablement](https://github.com/llvm/llvm-project/blob/llvmorg-22.1.8/llvm/lib/Target/X86/X86FrameLowering.cpp#L3627-L3640)
+does not categorically exclude this Linux convention. A machine-pass dump
+would establish the actual pass decision. Turning shrink-wrapping on is
+not evidence that these hot uses cease to constrain it.
+
+**The weights reached the arm boundary, but not uniformly the numeric
+tests.** Metadata is inline here: the initial zero is the impossible
+default switch edge, followed by the listed cases, not a measured count.
+
+| C2 IR location | Weight and meaning |
+|---|---|
+| SubRK 163471–163474, 163497–163500 | `0,2000,1`: successful helper result, then successful fast continuation, preferred over error/fallback. The continuation tail is at 163549. |
+| LtJmpRK 167955–167958, 167981–167984 | `0,2000,1`: same outer preference; slow helper at 168027, fast tail at 168035. |
+| GetUpval 159999–160002, 159983–159986 | `0,2000,1`: success preferred over error, including the copied `checked_step` join. |
+| SubRK helper 64627–64630 and 64653–64656 | `0,1,2000`: numeric case **less** likely than non-number. `num_of` returns tag 0 for a number (7655–7663), tag 1 otherwise. |
+| LtJmpRK helper 65611–65614 and 65640–65643 | Numeric tag tests have no `!prof`. |
+| LtJmpRK helper 65626–65630 | `!numeric_ready` true is weighted 2000, false 1. The true successor returns “not handled” at 65682–65701; the numeric case sets ready=true at 65661. This also points opposite to fib. |
+| GetUpval's `upvalue_handle` helper 120234–120237, 120270–120273, 120302–120305 | The three bounds/error tests have no `!prof`; outer success weighting does not directly annotate these tests. |
+
+Therefore increasing every ratio would not necessarily help: it could
+strengthen contradictory local predictions. The outer weights are present,
+but the supplied IR cannot show how inlining and CFG simplification
+reconciled them with the helper weights before register allocation. The
+entry initializer and the hot register/frame uses are established causes;
+the exact contribution of these conflicting predictions remains unverified.
+
+**General changes that could remove the preparation.** These are candidates,
+not adopted compiler decisions or source-language rules.
+
+| Candidate | Expected effect on these arms | Cost, risk and discriminating probe |
+|---|---|---|
+| Sink local pinned-reference initialization to the paths needing its address, after inlining | Directly targets SubRK's `[rsp+0x28]` and LtJmpRK's `[rsp+0x18]`. GetUpval has already eliminated its pin slot. | Smallest causal test: move only these stores in a copy of true post-LTO IR, before every surviving address consumer, preserving all-path initialization. Compare codegen with its untouched twin. A pre-inlining move is insufficient while the fast helper itself still takes the address; later optimization may hoist the store again. Does not promise frame removal. |
+| LLVM IR HotColdSplitting, late after inlining | A genuinely separate function can own cold locals and reduce allocator coupling. Best frame-size candidate is GetUpval; SubRK/LtJmpRK may retain hot spills. | Extra call/return and argument/result traffic on cold paths; parameter or extraction restrictions may reject the region. Count moved allocations and remaining entry stores, not just new `.cold` symbols. |
+| Compiler emits a cold continuation as a separate dispatch part | Can place the pin initializer, slow temporaries and copied join wholly in the cold part, leaving hot allocation independent. | Larger general lowering change. Preserve the dispatch signature/convention and `musttail`; pass live values, never addresses into a destroyed hot frame. Splits inside inlined helpers require access to their CFG; splitting only the existing outer fallback leaves helper-internal errors. Keep cold parts from being inlined back. A hand-transformed post-LTO arm tests feasibility before compiler work. |
+| Mark selected surviving slow **call sites** `cold` | Could improve frequency/inlining decisions for SubRK's fallback, LtJmpRK's `slow`, and GetUpval's error helpers, without marking every use of string interning cold. | Still one frame, still hot stack/RBP uses. It does not directly sink pin stores, and conflicting explicit weights need inspection. Compare a call-site-only variant separately, preserving calling conventions and recording inlining changes. |
+| MachineFunctionSplitter | Moves cold machine blocks into separate text sections; it does not create an independent activation/frame for these arms. | Primarily a code-locality probe, with possible extra jumps. Branch hints alone are not the function profile it normally requires; expect no useful split on this unprofiled module. Do not select it as the frame-removal mechanism. |
+
+LLVM 22's
+[HotColdSplitting implementation](https://github.com/llvm/llvm-project/blob/llvmorg-22.1.8/llvm/lib/Transforms/IPO/HotColdSplitting.cpp)
+uses a default cold probability threshold of 1/100 and a four-parameter
+limit, counts inputs and outputs in its profitability penalty, recognizes
+cold call sites, and rejects `noinline` source functions. Its static
+metadata analysis handles conditional branches, not switches: 1:2000
+meets its threshold if it survives onto a conditional branch, but the
+supplied switches alone do not establish recognition. Eleven loop states can make a
+large extraction unattractive. Its
+[CodeExtractor](https://github.com/llvm/llvm-project/blob/llvmorg-22.1.8/llvm/lib/Transforms/Utils/CodeExtractor.cpp#L155-L162)
+refuses regions containing `musttail`, and its allocation sinking depends
+on eligible uses/lifetimes. Extracting only helper calls may leave their
+address-taken slots in the hot caller; outputs may introduce new caller
+allocations. A successful extraction is therefore not a successful
+frame-removal result.
+
+The ordinary LLVM 22
+[pass pipeline](https://github.com/llvm/llvm-project/blob/llvmorg-22.1.8/llvm/lib/Passes/PassBuilderPipelines.cpp#L2062-L2064)
+adds HotColdSplitting late in full LTO only when explicitly enabled; `-O2`
+alone does not select it. Whitefoot supplies `-O2` in
+[driver.rs](../../../compiler/src/driver.rs) and full LTO in
+[whitefootc.rs](../../../compiler/src/bin/whitefootc.rs). Enabling the pass
+at the final LTO stage is a plausible small integration if the isolated
+probe succeeds; running it only before inlining tests a different boundary.
+The [`cold` attribute](https://llvm.org/docs/LangRef.html#function-attributes)
+is a frequency hint, not a new calling convention. LLVM 22's
+[MachineFunctionSplitter](https://github.com/llvm/llvm-project/blob/llvmorg-22.1.8/llvm/lib/CodeGen/MachineFunctionSplitter.cpp#L121-L132)
+requires function profile data except for its optional EH treatment and
+groups blocks into sections rather than separate stack activations.
+
+**Next probe and prior criterion (written before execution).** First obtain
+the actual C2 post-LTO/pre-codegen module from the same E2 link with saved
+temporaries. Retain an untouched twin and all original target/codegen
+options. Inspect the resulting numeric branches, `!prof` and computed
+block frequencies. Reproduce the recorded arm shapes with the untouched
+module before comparing transformations; if it does not reproduce them,
+stop attribution to E2 and label the new pipeline a separate experiment.
+
+Then try late HotColdSplitting, with the initializer-sinking variant as the
+small causal control. **Success for slow preparation** means both slow-only
+pin stores execute zero times on the fast path and GetUpval's cold 0x80
+local allocation is absent there; its hot RBP save is counted separately.
+**Success for the stronger original arm-entry condition** still means no
+entry frame preparation in all three arms. A smaller frame or a `.cold`
+symbol alone does not pass either condition. Record each arm independently;
+if splitting happens but the stores/allocations remain, reject “enable
+this pass alone” as the remedy. If no region is extracted, inspect the
+rejection and distinguish missing coldness recognition, profitability
+and `musttail`/lifetime legality;
+it does not refute explicit cold-part emission. In all variants require
+valid IR and unchanged fast, slow, error and resumed-dispatch behavior.
+
+The following commands describe a hosted x86-64 CI probe with LLVM 22.1.8;
+none ran on this Mac. Here `C2.precodegen.ll` means the recovered optimized
+module, **not** the supplied `ir/C2.ll`. The shown target/PIC/O2 options
+must match the recovered link; carry through any additional original CPU,
+feature and relocation settings. Run each heavy command under the usual
+CI stage wrapper, for example:
+
+```sh
+perl .github/run-check.pl cold-split-opt opt-22 \
+  -passes='hotcoldsplit,verify' -verify-each \
+  -pass-remarks=hotcoldsplit -pass-remarks-missed=hotcoldsplit \
+  -S C2.precodegen.ll -o C2.hcs.ll
+perl .github/run-check.pl cold-split-base llc-22 \
+  -O2 -mtriple=x86_64-unknown-linux-gnu -relocation-model=pic \
+  C2.precodegen.ll -o C2.control.s
+perl .github/run-check.pl cold-split-codegen llc-22 \
+  -O2 -mtriple=x86_64-unknown-linux-gnu -relocation-model=pic \
+  C2.hcs.ll -o C2.hcs.s
+```
+
+The LLVM 22 [pass registry](https://github.com/llvm/llvm-project/blob/llvmorg-22.1.8/llvm/lib/Passes/PassRegistry.def#L87)
+names the textual pass `hotcoldsplit`; `-hot-cold-split` is the separate
+option enabling it in a default pipeline. Start with this one codegen
+pair, not a benchmark matrix. A separately
+labelled diagnostic variant can raise `-hotcoldsplit-max-params=16` only
+after the default refuses for that reason; do not silently replace the
+default result. The layout-only control uses `llc-22
+-split-machine-functions` with the same input/options (the LLVM 22
+[command flag](https://github.com/llvm/llvm-project/blob/llvmorg-22.1.8/llvm/lib/CodeGen/CommandFlags.cpp)
+is `-split-machine-functions`, not `-enable-machine-function-splitter`).
+An emitted-module-only exploratory probe can use
+`opt-22 -passes='default<O2>,hotcoldsplit,verify' -S ir/C2.ll -o C2.hcs.ll`,
+but lacks full-LTO runtime context and cannot establish an E2 delta.
+
+If the assembly criterion passes, link identically and use a short
+correctness/count pilot before fib(32). Preserve the original stronger
+condition separately; for candidate adoption, also require total fib
+instructions to fall against its reproduced C2 control and no greater
+than 1% instruction increase on the other six Halo kernels or v2h
+CoreMark at the declared input size. Any wall-time claim still requires
+the 14900K interleaved base/twin protocol; none follows from a smaller
+frame or fewer instructions alone.
+
+**Confidence.** High (4/5) in the classified stores, hot RBP constraint,
+pin-initializer origin and the 73-instruction `prepare`-subtree attribution.
+Moderate (3/5) that outlining plus moving cold-owned initialization will
+remove the avoidable preparation without new hot spills. The missing
+post-LTO metadata/MIR, extraction legality and residual function counts
+prevent a stronger causal or performance claim. No compiler, specification,
+design-tree or test change is selected by this subsection.
+
 **E3. Profile ceiling (no compiler change).** B built with
 `-fprofile-generate`, trained (a) on fib(32) and (b) on the six other
 kernels, then rebuilt with `-fprofile-use`; measured on fib(32). Prediction:
