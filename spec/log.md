@@ -11,6 +11,14 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-13 v0.152: borrowing a measure with no field declaration is refused under MSR-1, and EFF-2 tabulates exhibited access categories
+
+Rules: changed MSR-1, TYPE-10, EFF-2
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve both, keep the reads exhibition rule as it is" (translated), on the card "approve the two specification clarifications of Whitefoot#462 (the ground for refusing a measure borrow is written into MSR-1; EFF-2 states that a declared write must be exhibited by a write) and its design-tree decision?" (translated), shown at head commit 13b5d5dd9; option C, which would have let a declared `reads` be exhibited only by a read, was not chosen.
+
+Summary: MSR-1 adds that a `borrow_expr` selecting a measure with no field declaration (the length of a range or run reference, the length of a run-selecting place, or a Paged page count) is a hard error citing MSR-1 at the complete place, with a repair reading the measure by value; before, no rule named the ground, and the compiler cited TYPE-5 or TYPE-10. TYPE-10 now hands each admitted use of the `pages` selector to the rule that judges it (MSR-1, OP-4, EFF-1) and keeps every other use. EFF-2 replaces its scattered statements with two tables: one giving the access categories each body operation exhibits, and one stating that a declared `writes` entry is exhibited only by a write and a declared `reads` entry by a read or a write, matching the checker, where the old wording let any access exhibit any entry. No conformance verdict changes; new cases pin the borrow refusals and the write-only exhibition of a declared write.
+
 ## 2026-10-13 v0.151: key sets and concurrent hash maps have nonempty release, and the executable release graph is defined apart from the type ownership closure
 
 Rules: changed PROV-6, STOR-3, SHARE-1

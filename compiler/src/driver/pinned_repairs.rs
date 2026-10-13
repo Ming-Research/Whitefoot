@@ -17,6 +17,8 @@ mod cell_consumption;
 mod clause_requirements;
 mod collisions_and_killed_facts;
 mod content_moves;
+mod derived_measures;
+mod effect_row_categories;
 mod enum_routed_ensures;
 mod entry_formers;
 mod floats;
@@ -3806,6 +3808,8 @@ fn each_pinned_repair_is_carried_out_by_its_programs() {
         .chain(call_separations::CALL_SEPARATIONS)
         .chain(cell_consumption::CELL_CONSUMPTION)
         .chain(content_moves::CONTENT_MOVES)
+        .chain(derived_measures::DERIVED_MEASURES)
+        .chain(effect_row_categories::EFFECT_ROW_CATEGORIES)
         .chain(prelude_opaque::PRELUDE_OPAQUE)
         .chain(qualified_constants::QUALIFIED_CONSTANTS)
         .chain(recursive_effects::RECURSIVE_EFFECTS)

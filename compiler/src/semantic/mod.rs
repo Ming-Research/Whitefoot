@@ -226,6 +226,8 @@ pub enum SemanticRule {
     Err3,
     /// Counted endpoint admission to the closed term-or-constant vocabulary.
     Ent2,
+    /// Borrowing a measure without a field declaration.
+    Msr1,
     /// One denotation per operand position, keyed on the parameter's mode.
     Msr3,
     /// Publication: where a declared relation is instantiated, where it is
@@ -314,6 +316,7 @@ impl SemanticRule {
             Self::Err2 => "ERR-2",
             Self::Err3 => "ERR-3",
             Self::Ent2 => "ENT-2",
+            Self::Msr1 => "MSR-1",
             Self::Msr3 => "MSR-3",
             Self::Call6 => "CALL-6",
             Self::Inv1 => "INV-1",
@@ -404,7 +407,8 @@ impl SemanticRule {
             Self::Share1 => Self::Share2,
             Self::Share2 => Self::Snap1,
             Self::Snap1 => Self::Ent2,
-            Self::Ent2 => Self::Msr3,
+            Self::Ent2 => Self::Msr1,
+            Self::Msr1 => Self::Msr3,
             Self::Msr3 => Self::Call6,
             Self::Call6 => Self::Inv1,
             Self::Inv1 => Self::Prf1,
@@ -489,14 +493,15 @@ impl SemanticRule {
             Self::Share2 => 59,
             Self::Snap1 => 60,
             Self::Ent2 => 61,
-            Self::Msr3 => 62,
-            Self::Call6 => 63,
-            Self::Inv1 => 64,
-            Self::Prf1 => 65,
-            Self::Range1 => 66,
-            Self::Range3 => 67,
-            Self::Range4 => 68,
-            Self::Range5 => 69,
+            Self::Msr1 => 62,
+            Self::Msr3 => 63,
+            Self::Call6 => 64,
+            Self::Inv1 => 65,
+            Self::Prf1 => 66,
+            Self::Range1 => 67,
+            Self::Range3 => 68,
+            Self::Range4 => 69,
+            Self::Range5 => 70,
         }
     }
 }
@@ -732,6 +737,11 @@ pub enum SemanticIssueKind {
         found: String,
         /// A construct-specific repair when the mismatch identifies one.
         mechanical_fix: Option<String>,
+    },
+    /// [MSR-1] a derived measure has no declared storage field to borrow.
+    BorrowOfDerivedMeasure {
+        /// The by-value observation in the source's own path spelling.
+        mechanical_fix: String,
     },
     /// [OP-10, OP-14] an operand whose shape is outside the operation's
     /// admitted set.
