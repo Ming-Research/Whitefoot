@@ -76,3 +76,12 @@ performance-slow-control        55         55         55         -      -
 performance-shifted-images      10         10         10         -      -
 performance-placement-control   45         45         45         -      -
 performance-comparison          45         45         45         -      -
+
+# tmp-shared-counters.yml: temporary, unsampled allowances for the branch
+# compiler, all selected arm builds plus emitted LLVM, and the registered
+# 12-block run of 19 arms at four lists with 5 s cells. The pilot records
+# actual costs; these rows are not measured timing claims.
+shared-counters/compiler        300        300        300        -      -
+shared-counters/images          1200       1200       1200       -      -
+shared-counters/measure         7200       7200       7200       -      -
+shared-counters/summary         120        120        120        -      -

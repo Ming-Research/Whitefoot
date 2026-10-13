@@ -1,0 +1,161 @@
+alias Clock = std::time::Clock;
+alias ExitStatus = std::process::ExitStatus;
+alias Inputs = std::process::Inputs;
+alias Instant = std::time::Instant;
+
+const aof_name: Array<u8, 3> =[97_u8, 111_u8, 102_u8];
+
+struct AofPart {
+  log: Box<Slots<u8>>;
+}
+
+fn aof_part_new() -> made: AofPart pure {
+  doc "An empty owned log with 1,048,576 bytes of room, replaced on every drain.";
+  let log = box_slots_new::<u8>(capacity: 1048576_u64);
+  return AofPart(log: move log);
+}
+
+fn aof_key(index: u64) -> key: Array<u8, 8> pure {
+  doc "The low three bytes of the index followed by five zero bytes, distinct for the 100,000 keys used here.";
+  let key = array_filled::<u8, 8>(value: 0_u8);
+  set key[0_u64] = cvt.wrap::<u64, u8>(index);
+  let middle = ishr.wrap(index, 8_u32);
+  set key[1_u64] = cvt.wrap::<u64, u8>(middle);
+  let high = ishr.wrap(index, 16_u32);
+  set key[2_u64] = cvt.wrap::<u64, u8>(high);
+  return key;
+}
+
+fn aof_keys_new() -> keys: Shared<ConcurrentHashMap<u64>> pure waits {
+  doc "Makes and populates the 100,000-key map before the timed run; writes replace existing values.";
+  let keys = shared_map_new::<u64>(capacity: 100000_u64);
+  for @populate (index in 0_u64..100000_u64) {
+    let key = aof_key(index: index);
+    let bytes = &key[0_u64..8_u64];
+    atomic slot = &keys[bytes] {
+      set slot^ = Some<u64>(value: 1_u64);
+    }
+  }
+  return move keys;
+}
+
+fn aof_write_batch(keys: &Shared<ConcurrentHashMap<u64>>, parts: &Shared<Shards<AofPart>>, state: u64) -> next: u64 reads(keys), reads(parts) waits {
+  doc "1024 random writes over 100,000 keys. Each write and byte append occupy one statement naming the entry and the writer's shard.";
+  let mine = any_shard();
+  let current = state;
+  for @batch (turn in 0_u64..1024_u64) {
+    let index = current % 100000_u64;
+    let key = aof_key(index: index);
+    let bytes = &key[0_u64..8_u64];
+    let byte = cvt.wrap::<u64, u8>(current);
+    atomic slot = &keys^[bytes], part = &parts^[mine] {
+      set slot^ = Some<u64>(value: 1_u64);
+      if part^.log.inner.len < part^.log.inner.cap {
+        place_back(window: &part^.log.inner, value: byte);
+      }
+    }
+    set current = step(state: current);
+  }
+  return current;
+}
+
+fn aof_writer_context(keys: Shared<ConcurrentHashMap<u64>>, parts: Shared<Shards<AofPart>>, totals: Shared<Totals>, gate: Shared<Gate>, clock: Clock, index: u64) -> result: unit pure waits {
+  doc "Counts completed write statements in batches of 1024 until the gate's deadline. The LCG supplies keys and appended bytes; check is reserved for drained byte accounting.";
+  let deadline = gate_pass(gate: &gate, clock: &clock);
+  let state = index;
+  let done = 0_u64;
+  loop @run {
+    set state = aof_write_batch(keys: &keys, parts: &parts, state: state);
+    set done = done +wrap 1024_u64;
+    let at = std::time::now(clock: &clock);
+    if std::time::instant_reached(deadline: deadline, instant: at) {
+      break @run;
+    }
+  }
+  tally(totals: &totals, done: done, state: 0_u64);
+  return unit;
+}
+
+fn aof_drain(parts: &Shared<Shards<AofPart>>) -> taken: u64 reads(parts) waits {
+  doc "In one whole-target statement exchanges each shard's owned log for a fresh buffer and counts the bytes in the old buffers.";
+  let total = 0_u64;
+  atomic all = &parts^ {
+    for @shard (i in 0_u64..all^.len) {
+      let fresh = box_slots_new::<u8>(capacity: 1048576_u64);
+      swap(first: &all^[i].log, second: &fresh);
+      set total = total +wrap fresh.inner.len;
+    }
+  }
+  return total;
+}
+
+fn aof_drain_context(parts: Shared<Shards<AofPart>>, totals: Shared<Totals>, gate: Shared<Gate>, clock: Clock) -> result: unit pure waits {
+  doc "About every 10 ms drains all shards in one whole-target statement and times it. Reports drained bytes as check and the drain count and time as the reader fields.";
+  let deadline = gate_pass(gate: &gate, clock: &clock);
+  let never = std::time::cancel_never();
+  let taken = 0_u64;
+  let count = 0_u64;
+  let total = 0_u64;
+  let longest = 0_u64;
+  loop @run {
+    let begun = std::time::now(clock: &clock);
+    let wake = std::time::instant_after(instant: begun, nanoseconds: 10000000_u64);
+    std::time::sleep_until(deadline: wake, cancel: &never);
+    let before = std::time::now(clock: &clock);
+    let drained = aof_drain(parts: &parts);
+    let after = std::time::now(clock: &clock);
+    let span = std::time::nanoseconds_from(earlier: before, later: after);
+    set taken = taken +wrap drained;
+    set count = count +wrap 1_u64;
+    set total = total +wrap span;
+    set longest = imax(longest, span);
+    if std::time::instant_reached(deadline: deadline, instant: after) {
+      break @run;
+    }
+  }
+  std::time::close_cancel_watch(watch: move never);
+  tally_reads(totals: &totals, count: count, nanoseconds: total, longest: longest, state: taken);
+  return unit;
+}
+
+fn aof_start(keys: &Shared<ConcurrentHashMap<u64>>, parts: &Shared<Shards<AofPart>>, totals: &Shared<Totals>, clock: &Clock, millis: u64) -> started: Instant reads(keys), reads(parts), reads(totals), writes(clock) waits {
+  doc "Spawns 64 writers and one drain context, opens their common gate and returns the start after all 65 contexts join.";
+  let gate = gate_new(clock: clock);
+  for @start (index in 0_u64..64_u64) {
+    let keys_handle = shared_share::<ConcurrentHashMap<u64>>(shared: keys);
+    let parts_handle = shared_share::<Shards<AofPart>>(shared: parts);
+    let tally_handle = shared_share::<Totals>(shared: totals);
+    let gate_handle = shared_share::<Gate>(shared: &gate);
+    let ticks = std::time::clock_share(clock: clock);
+    spawn aof_writer_context(keys: move keys_handle, parts: move parts_handle, totals: move tally_handle, gate: move gate_handle, clock: move ticks, index: index);
+  }
+  let drain_parts = shared_share::<Shards<AofPart>>(shared: parts);
+  let drain_totals = shared_share::<Totals>(shared: totals);
+  let drain_gate = shared_share::<Gate>(shared: &gate);
+  let drain_clock = std::time::clock_share(clock: clock);
+  spawn aof_drain_context(parts: move drain_parts, totals: move drain_totals, gate: move drain_gate, clock: move drain_clock);
+  let started = gate_open(gate: &gate, clock: clock, millis: millis);
+  return started;
+}
+
+fn aof_main(inputs: Inputs) -> status: ExitStatus pure waits {
+  doc "A1: 64 random writers over 100,000 map keys, each atomically appending to its owned shard buffer, with a 10 ms whole-shards drain. The final residual drain is outside timing and included only in check.";
+  let bench = bench_begin(inputs: move inputs);
+  if bench.valid {
+  } else {
+    return std::process::exit_status(code: 2_u8);
+  }
+  if bench.contexts != 64_u64 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  let keys = aof_keys_new();
+  let parts = shared_shards_new::<AofPart, fn aof_part_new>();
+  let totals = totals_new();
+  let started = aof_start(keys: &keys, parts: &parts, totals: &totals, clock: &bench.clock, millis: bench.millis);
+  let ended = std::time::now(clock: &bench.clock);
+  let residual = aof_drain(parts: &parts);
+  atomic counted = &totals {
+    set counted^.check = counted^.check +wrap residual;
+  }
+  return bench_end(bench: move bench, name: &aof_name[0_u64..3_u64], totals: &totals, started: started, ended: ended);
+}

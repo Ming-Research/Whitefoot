@@ -9,18 +9,18 @@
 #               --skip-build)
 #   PILOT       1 runs one block at the 8-P-core list only; otherwise the main
 #               run (default: main)
-#   BLOCKS      blocks of the main run (default 6, provisional)
+#   BLOCKS      blocks of the main run (default 12, registered)
 #   CONTEXTS    contexts or threads each arm starts (default 64)
 #   MILLIS      milliseconds each cell lasts (default 5000)
 #   ARMS        arms to build and run, in rotation order (default
-#               "W0 W1 W2 W2t W2r W6 W3 W3rd W5 W5p"); the C model's run
+#               "W0 W1 W2 W2t W2r W6 W3 W3rd W4 W4t W4r W4rd M1 M2 M3 M4 A1 W5 W5p"); the C model's run
 #               (DESIGN.md section 8.6) is ARMS="W5p W5pN W7 W7t W7rd", which
 #               builds with clang alone and needs no WHITEFOOTC
 #   CPU_LISTS   taskset CPU lists (default "0,2 0,2,4,6 0,2,4,6,8,10,12,14 0-15")
 #   ORDER       rotate: each block starts the arm order one position later
-#               than the block before (default, section 8.3); alternate: the
+#               than the block before (section 8.3); alternate: the
 #               same rotation, run backwards in odd blocks, so that each pair
-#               of arms runs in both orders equally often (section 8.6)
+#               of arms runs in both orders equally often (default, section 8.6)
 #   READER_CPU  the CPU W7rd's reader thread is pinned to, outside every CPU
 #               list (default 16, the first E-core of the i9-14900K)
 #   CLANG       the C compiler (default /usr/bin/clang)
@@ -58,12 +58,12 @@ done
 [ -n "$out" ] || { echo "usage: run.sh --out DIR [--build-only | --skip-build]" >&2; exit 2; }
 
 PILOT=${PILOT:-0}
-BLOCKS=${BLOCKS:-6}
+BLOCKS=${BLOCKS:-12}
 CONTEXTS=${CONTEXTS:-64}
 MILLIS=${MILLIS:-5000}
-ARMS=${ARMS:-"W0 W1 W2 W2t W2r W6 W3 W3rd W5 W5p"}
+ARMS=${ARMS:-"W0 W1 W2 W2t W2r W6 W3 W3rd W4 W4t W4r W4rd M1 M2 M3 M4 A1 W5 W5p"}
 CPU_LISTS=${CPU_LISTS:-"0,2 0,2,4,6 0,2,4,6,8,10,12,14 0-15"}
-ORDER=${ORDER:-rotate}
+ORDER=${ORDER:-alternate}
 READER_CPU=${READER_CPU:-16}
 case $ORDER in
     rotate | alternate) ;;
@@ -87,11 +87,36 @@ binary_of() {
         W6) echo w_read_shared ;;
         W3) echo w_shards ;;
         W3rd) echo w_shards_reader ;;
+        W4) echo w_sharded ;;
+        W4t) echo w_sharded_twin ;;
+        W4r) echo w_sharded_param ;;
+        W4rd) echo w_sharded_reader ;;
+        M1) echo w_max_exclusive ;;
+        M2) echo w_max_read ;;
+        M3) echo w_max_cache ;;
+        M4) echo w_max_sharded ;;
+        A1) echo w_aof ;;
         W5) echo w5 ;;
         W5p | W5pN) echo w5p ;;
         W7 | W7rd) echo w7 ;;
         W7t) echo w7_twin ;;
         *) echo "unknown arm $1" >&2; exit 2 ;;
+    esac
+}
+
+# Twins have distinct output paths and repeat the build of the same entry.
+entry_of() {
+    case $1 in
+        W2t) echo w_shared ;;
+        W4t) echo w_sharded ;;
+        *) binary_of "$1" ;;
+    esac
+}
+
+is_whitefoot() {
+    case $1 in
+        W5 | W5p | W5pN | W7 | W7t | W7rd) return 1 ;;
+        *) return 0 ;;
     esac
 }
 
@@ -135,28 +160,43 @@ if [ "$build" = 1 ]; then
             W5p | W5pN) "$clang" -O2 -pthread -DPADDED=1 -o "$out/bin/$bin" "$here/w5.c" ;;
             # W7t is W7's source built a second time into its own binary.
             W7 | W7t | W7rd) "$clang" -O2 -pthread -o "$out/bin/$bin" "$here/w7.c" ;;
-            W2t)
-                : "${WHITEFOOTC:?WHITEFOOTC names the compiler to build the Whitefoot arms with}"
-                "$WHITEFOOTC" --full-lto --graph "$here/modules.wfg" --entry w_shared -o "$out/bin/$bin" ;;
             *)
                 : "${WHITEFOOTC:?WHITEFOOTC names the compiler to build the Whitefoot arms with}"
-                "$WHITEFOOTC" --full-lto --graph "$here/modules.wfg" --entry "$bin" -o "$out/bin/$bin" ;;
+                "$WHITEFOOTC" --full-lto --graph "$here/modules.wfg" --entry "$(entry_of "$arm")" -o "$out/bin/$bin" ;;
         esac
     done
 
-    # Each atomic statement whose handle is not a read-only reference parameter
-    # counts the object's handles up with a call of wf__shared_share at its
-    # start. The counts are recorded, not enforced: W2 and W2r should differ by
-    # the one in the statement, and W3 shows whether a reference into an array
-    # element is counted.
-    share_calls() {
-        "$WHITEFOOTC" --emit-llvm --graph "$here/modules.wfg" --entry "$1" -o "$out/bin/$1.ll" ||
-            { echo unavailable; return 0; }
-        grep -c 'call void @wf__shared_share(' "$out/bin/$1.ll" || true
-    }
-    share_record="wf__shared_share calls: not recorded (no Whitefoot arm selected)"
-    if [ -n "${WHITEFOOTC:-}" ]; then
-        share_record="wf__shared_share calls: shared=$(share_calls w_shared) shared_param=$(share_calls w_shared_param) shards=$(share_calls w_shards) shards_reader=$(share_calls w_shards_reader)"
+    # Count static call sites, not runtime executions. Retain calls are direct;
+    # release calls occur inside compiler-generated wf.drop.t.* helpers. Emit
+    # each selected arm, including each twin, to its own retained LLVM file.
+    # Function-scoped counts distinguish hot workers from spawn-time sharing
+    # and cleanup; drop-helper call sites also include scope-exit cleanup.
+    counts="$out/handle-counts.txt"
+    : > "$counts"
+    for arm in $ARMS; do
+        is_whitefoot "$arm" || continue
+        bin=$(binary_of "$arm")
+        "$WHITEFOOTC" --emit-llvm --graph "$here/modules.wfg" --entry "$(entry_of "$arm")" -o "$out/bin/$bin.ll"
+        awk -v arm="$arm" -v llvm="bin/$bin.ll" '
+            /^define / {
+                name = $0; sub(/^.*@/, "", name); sub(/\(.*/, "", name)
+                functions[++n] = name
+            }
+            /call void @wf__shared_share\(/ { share++; shares[name]++ }
+            /call i32 @wf__shared_release\(/ { release++; releases[name]++ }
+            /call void @wf[.]drop[.]t[.]/ { drops[name]++ }
+            END {
+                printf "LLVM handle-count call sites %s (%s): wf__shared_share=%d wf__shared_release=%d\n", arm, llvm, share, release
+                for (i = 1; i <= n; i++) {
+                    name = functions[i]
+                    printf "  %s: wf__shared_share=%d wf__shared_release=%d wf.drop.t.*=%d\n", name, shares[name], releases[name], drops[name]
+                }
+            }' "$out/bin/$bin.ll" >> "$counts"
+    done
+    if [ ! -s "$counts" ]; then
+        echo "LLVM handle-count call sites: not recorded (no Whitefoot arm selected)" >> "$counts"
+    else
+        echo "Skip-confirm: W4 worker should have zero retain calls. W2 also keeps its value handle live under the current general skip; W2 is not a retaining-statement falsifier. Whole-program release counts include teardown." >> "$counts"
     fi
 
     twin_record="W2 and its twin: not built"
@@ -167,6 +207,10 @@ if [ "$build" = 1 ]; then
     if has_arm W7t && { has_arm W7 || has_arm W7rd; }; then
         model_twin_record="W7 and its twin: $(sha256sum "$out/bin/w7" "$out/bin/w7_twin" | awk '{print $1}' | tr '\n' ' ')"
     fi
+    shard_twin_record="W4 and its twin: not built"
+    if has_arm W4 && has_arm W4t; then
+        shard_twin_record="W4 and its twin: $(sha256sum "$out/bin/w_sharded" "$out/bin/w_sharded_twin" | awk '{print $1}' | tr '\n' ' ')"
+    fi
     {
         echo "kernel: $(uname -srvmo)"
         echo "cpus: $(nproc)"
@@ -175,10 +219,14 @@ if [ "$build" = 1 ]; then
         echo "governor: $(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null || echo unavailable)"
         echo "no_turbo: $(cat /sys/devices/system/cpu/intel_pstate/no_turbo 2>/dev/null || echo unavailable)"
         echo "compiler release: ${WF_RELEASE:-unnamed}"
+        if [ -n "${WHITEFOOTC:-}" ]; then
+            echo "compiler SHA-256: $(sha256sum "$WHITEFOOTC" | awk '{print $1}')"
+        fi
         echo "clang: $("$clang" --version | head -n 1)"
-        echo "$share_record"
+        cat "$counts"
         echo "$twin_record"
         echo "$model_twin_record"
+        echo "$shard_twin_record"
         echo "contexts: $CONTEXTS  millis: $MILLIS  blocks: $BLOCKS  pilot: $PILOT  order: $ORDER"
         echo "arms: $ARMS"
         echo "cpu lists: $CPU_LISTS"

@@ -1,0 +1,75 @@
+alias Clock = std::time::Clock;
+alias ExitStatus = std::process::ExitStatus;
+alias Inputs = std::process::Inputs;
+alias Instant = std::time::Instant;
+
+const sharded_reader_name: Array<u8, 14> =[115_u8, 104_u8, 97_u8, 114_u8, 100_u8, 101_u8, 100_u8, 95_u8, 114_u8, 101_u8, 97_u8, 100_u8, 101_u8, 114_u8];
+
+fn sharded_reader_context(counter: Shared<Shards<u64>>, totals: Shared<Totals>, gate: Shared<Gate>, clock: Clock) -> result: unit pure waits {
+  doc "Until the deadline, about every millisecond, sums every shard in one whole-target statement and times it, then adds its reads, total nanoseconds and longest read to the totals once.";
+  let deadline = gate_pass(gate: &gate, clock: &clock);
+  let never = std::time::cancel_never();
+  let state = 0_u64;
+  let count = 0_u64;
+  let total = 0_u64;
+  let longest = 0_u64;
+  loop @run {
+    let begun = std::time::now(clock: &clock);
+    let wake = std::time::instant_after(instant: begun, nanoseconds: 1000000_u64);
+    std::time::sleep_until(deadline: wake, cancel: &never);
+    let before = std::time::now(clock: &clock);
+    atomic all = &counter {
+      let seen = 0_u64;
+      for @shard (i in 0_u64..all^.len) {
+        set seen = seen +wrap all^[i];
+      }
+      set state = seen;
+    }
+    let after = std::time::now(clock: &clock);
+    let span = std::time::nanoseconds_from(earlier: before, later: after);
+    set count = count +wrap 1_u64;
+    set total = total +wrap span;
+    if span > longest {
+      set longest = span;
+    }
+    if std::time::instant_reached(deadline: deadline, instant: after) {
+      break @run;
+    }
+  }
+  std::time::close_cancel_watch(watch: move never);
+  tally_reads(totals: &totals, count: count, nanoseconds: total, longest: longest, state: state);
+  return unit;
+}
+
+fn sharded_reader_start(counter: &Shared<Shards<u64>>, totals: &Shared<Totals>, clock: &Clock, millis: u64, contexts: u64) -> started: Instant reads(counter), reads(totals), writes(clock) waits {
+  doc "Spawns the writer contexts of W4 and one reader context, opens the gate and returns the instant it opened, once every context has completed.";
+  let gate = gate_new(clock: clock);
+  for @start (index in 0_u64..contexts) {
+    let counter_handle = shared_share::<Shards<u64>>(shared: counter);
+    let tally_handle = shared_share::<Totals>(shared: totals);
+    let gate_handle = shared_share::<Gate>(shared: &gate);
+    let ticks = std::time::clock_share(clock: clock);
+    spawn sharded_context(counter: move counter_handle, totals: move tally_handle, gate: move gate_handle, clock: move ticks, index: index);
+  }
+  let reader_handle = shared_share::<Shards<u64>>(shared: counter);
+  let reader_totals = shared_share::<Totals>(shared: totals);
+  let reader_gate = shared_share::<Gate>(shared: &gate);
+  let reader_ticks = std::time::clock_share(clock: clock);
+  spawn sharded_reader_context(counter: move reader_handle, totals: move reader_totals, gate: move reader_gate, clock: move reader_ticks);
+  let started = gate_open(gate: &gate, clock: clock, millis: millis);
+  return started;
+}
+
+fn sharded_reader_main(inputs: Inputs) -> status: ExitStatus pure waits {
+  doc "W4rd: W4 plus one reader context that about every millisecond reads the total in one whole-target statement and reports its time.";
+  let bench = bench_begin(inputs: move inputs);
+  if bench.valid {
+  } else {
+    return std::process::exit_status(code: 2_u8);
+  }
+  let counter = shared_shards_new::<u64, fn sharded_zero>();
+  let totals = totals_new();
+  let started = sharded_reader_start(counter: &counter, totals: &totals, clock: &bench.clock, millis: bench.millis, contexts: bench.contexts);
+  let ended = std::time::now(clock: &bench.clock);
+  return bench_end(bench: move bench, name: &sharded_reader_name[0_u64..14_u64], totals: &totals, started: started, ended: ended);
+}

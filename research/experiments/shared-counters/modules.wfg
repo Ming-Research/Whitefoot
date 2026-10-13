@@ -13,3 +13,19 @@ entry w_read_shared = pkg::read_shared_main;
 entry w_shards = pkg::shards_main;
 
 entry w_shards_reader = pkg::shards_reader_main;
+
+entry w_sharded = pkg::sharded_main;
+
+entry w_sharded_param = pkg::sharded_param_main;
+
+entry w_sharded_reader = pkg::sharded_reader_main;
+
+entry w_max_exclusive = pkg::max_exclusive_main;
+
+entry w_max_read = pkg::max_read_main;
+
+entry w_max_cache = pkg::max_cache_main;
+
+entry w_max_sharded = pkg::max_sharded_main;
+
+entry w_aof = pkg::aof_main;

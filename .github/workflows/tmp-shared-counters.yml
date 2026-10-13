@@ -1,0 +1,280 @@
+# Temporary measurement workflow for the sharded-state implementation.
+# Remove before this branch is marked ready. Procedure and decision rule:
+# research/investigations/shared-counters/DESIGN.md, section 8.7.
+name: tmp-shared-counters
+
+on:
+  workflow_dispatch:
+    inputs:
+      PILOT:
+        description: "1: one block at 8 P-cores; 0: registered main run"
+        type: choice
+        options: ["1", "0"]
+        default: "1"
+      BLOCKS:
+        description: Main-run blocks (registered run uses 12; ignored for pilot)
+        type: string
+        default: "12"
+      ARMS:
+        description: Arms in initial rotation order (empty uses run.sh defaults)
+        type: string
+        default: ""
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: tmp-shared-counters-14900k
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  measure:
+    runs-on: [self-hosted, 14900k]
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the runner and set the output directory
+        run: |
+          if [ -d "$HOME/.cargo/bin" ]; then
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+          for tool in /usr/bin/clang cargo taskset perl python3 git awk sed timeout lscpu sha256sum; do
+            command -v "$tool"
+          done
+          awk -F ': ' '/^model name/ { print $2; exit }' /proc/cpuinfo | grep -F i9-14900K
+          lscpu
+          output_dir="$RUNNER_TEMP/shared-counters-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          mkdir -p "$output_dir"
+          echo "SHARED_COUNTERS_OUT=$output_dir" >> "$GITHUB_ENV"
+          echo "WHITEFOOT_TIME_BUDGET_RECORD=$output_dir/time-budgets.tsv" >> "$GITHUB_ENV"
+          echo "WHITEFOOT_SCRATCH_ROOT=$RUNNER_TEMP/shared-counters-scratch" >> "$GITHUB_ENV"
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            compiler/target
+          key: ${{ runner.os }}-${{ runner.arch }}-shared-counters-${{ hashFiles('compiler/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-shared-counters-
+
+      - name: Build this branch's compiler
+        run: |
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
+          perl .github/run-check.pl shared-counters/compiler \
+            cargo build --manifest-path compiler/Cargo.toml --profile gate --bin whitefootc --locked --offline
+
+      - name: Build the selected arms and retain their LLVM
+        env:
+          ARMS: ${{ inputs.ARMS }}
+          PILOT: ${{ inputs.PILOT }}
+          BLOCKS: ${{ inputs.BLOCKS }}
+          ORDER: alternate
+        run: |
+          export WHITEFOOTC="$GITHUB_WORKSPACE/compiler/target/gate/whitefootc"
+          export WF_RELEASE="branch-$(git rev-parse HEAD)"
+          perl .github/run-check.pl shared-counters/images \
+            bash research/experiments/shared-counters/run.sh --out "$SHARED_COUNTERS_OUT" --build-only
+
+      - name: Check idle and run the selected cells under the host-wide lock
+        env:
+          ARMS: ${{ inputs.ARMS }}
+          PILOT: ${{ inputs.PILOT }}
+          BLOCKS: ${{ inputs.BLOCKS }}
+          ORDER: alternate
+          WHITEFOOT_CHECK_TIMEOUT: "7200"
+        run: |
+          [[ "$BLOCKS" =~ ^[1-9][0-9]*$ ]]
+          export SHARED_COUNTERS_OUT
+          perl .github/run-check.pl shared-counters/measure bash -euo pipefail -c '
+            python3 - <<"PY"
+          import os
+          import time
+          from pathlib import Path
+
+          def counters():
+              values = list(map(int, Path("/proc/stat").read_text().splitlines()[0].split()[1:9]))
+              return sum(values), values[3] + values[4]
+
+          start_total, start_idle = counters()
+          time.sleep(5)
+          end_total, end_idle = counters()
+          elapsed = end_total - start_total
+          if elapsed <= 0:
+              raise SystemExit("idle check has no elapsed CPU ticks")
+          busy = 1 - (end_idle - start_idle) / elapsed
+          message = f"idle check: {busy:.4%} busy over 5 seconds; required <5%"
+          print(message)
+          with open(Path(os.environ["SHARED_COUNTERS_OUT"]) / "idle.txt", "w") as stream:
+              stream.write(message + "\n")
+          if busy >= 0.05:
+              raise SystemExit("runner is not idle; no measurement started")
+          PY
+            bash research/experiments/shared-counters/run.sh --out "$SHARED_COUNTERS_OUT" --skip-build
+          '
+
+      - name: Summarize the available cells
+        if: always()
+        env:
+          PILOT: ${{ inputs.PILOT }}
+        run: |
+          if [ -f "$SHARED_COUNTERS_OUT/raw.tsv" ]; then
+            perl .github/run-check.pl shared-counters/summary \
+              python3 -B - "$SHARED_COUNTERS_OUT/raw.tsv" "$PILOT" <<'PY' | tee "$SHARED_COUNTERS_OUT/summary.txt"
+          import contextlib
+          import copy
+          import csv
+          import importlib.util
+          import io
+          import math
+          import sys
+          import tempfile
+          from collections import defaultdict
+          from pathlib import Path
+
+          module_spec = importlib.util.spec_from_file_location(
+              "shared_counters_summary", "research/experiments/shared-counters/summarize.py")
+          summary = importlib.util.module_from_spec(module_spec)
+          module_spec.loader.exec_module(summary)
+          blocks = set(range(6))
+
+          def fixture(n=6):
+              cells = defaultdict(list)
+              for index, cpus in enumerate(summary.SHARDED_LISTS):
+                  rate = [100, 200, 400, 400][index]
+                  for arm, arm_rate in {
+                      "W4": rate, "W4t": rate, "W4rd": rate * 0.98,
+                      "W5p": rate * 2, "W3": rate * 0.5,
+                      "A1": [100, 180, 324, 324][index],
+                      "W1": rate, "W2": 10, "W2t": 10, "W5": rate * 1.2,
+                  }.items():
+                      for block in range(n):
+                          cells[arm, cpus].append(dict(
+                              block=block, drivers=[2, 4, 8, 16][index], rate=arm_rate,
+                              ops=1000, check=900 if arm == "A1" else 1000, busy=1.0,
+                              reads=10, read_ns=200000, read_max_ns=40000,
+                              read_med_ns=20000, read_p99_ns=40000))
+              return cells
+
+          def section(cells):
+              output = io.StringIO()
+              with contextlib.redirect_stdout(output):
+                  summary.sharded_section(cells, list(summary.SHARDED_LISTS), False)
+              return output.getvalue()
+
+          def line(output, prefix):
+              return next(text for text in output.splitlines() if text.startswith(prefix))
+
+          for values, expected in (([0.6] * 6, "PASS"), ([0.4] * 6, "FAIL"),
+                                   ([0.4, 0.4, 0.4, 0.6, 0.6, 0.6], "INCONCLUSIVE")):
+              reading = summary.sharded_reading(summary.bootstrap(values), 0.5, True, None, False)
+              assert reading.startswith(expected), (expected, reading)
+
+          cells = fixture()
+          positive = section(cells)
+          assert "-> PASS" in line(positive, "  W4 8 P-cores/2 P-cores")
+          assert "-> PASS" in line(positive, "  A1 4 P-cores/2 P-cores")
+          assert "skipped bytes=600" in positive
+          assert "total=0.900000" in positive
+
+          bad_twin = copy.deepcopy(cells)
+          for row in bad_twin["W4t", summary.P2_LIST]:
+              row["rate"] *= 2
+          _, error = summary.sharded_twin(bad_twin, summary.P2_LIST, blocks)
+          assert error == "W4t/W4 interval excludes 1"
+          assert "-> INCONCLUSIVE" in line(section(bad_twin), "  A1 4 P-cores/2 P-cores")
+
+          missing = copy.deepcopy(cells)
+          missing["W5p", summary.P2_LIST].pop()
+          interval, error = summary.sharded_pair(missing, "W4", "W5p", summary.P2_LIST, summary.P2_LIST, blocks)
+          assert "missing" in error
+          assert summary.sharded_reading(interval, 0.5, True, error, False).startswith("INCONCLUSIVE")
+          _, error = summary.sharded_twin(fixture(5), summary.P2_LIST, set(range(5)))
+          assert "need 6" in error
+
+          for field, value in (("rate", 0), ("rate", math.nan), ("drivers", 16)):
+              invalid = copy.deepcopy(cells)
+              invalid["W4", summary.P2_LIST][0][field] = value
+              _, error = summary.sharded_pair(invalid, "W4", "W5p", summary.P2_LIST, summary.P2_LIST, blocks)
+              assert "invalid" in error
+          duplicate = copy.deepcopy(cells)
+          duplicate["W4", summary.P2_LIST].append(duplicate["W4", summary.P2_LIST][0].copy())
+          _, error = summary.sharded_twin(duplicate, summary.P2_LIST, blocks)
+          assert "duplicate" in error
+
+          no_reads = copy.deepcopy(cells)
+          row = no_reads["W4rd", summary.P8_LIST][0]
+          row.update(reads=0, read_ns=0, read_max_ns=0)
+          output = section(no_reads)
+          assert "-> INCONCLUSIVE" in line(output, "  W4rd/W4 >= 0.95")
+          assert "-> INCONCLUSIVE" in line(output, "  W4rd longest whole read <= 50 us")
+          slow_read = copy.deepcopy(cells)
+          slow_read["W4rd", summary.P8_LIST][0]["read_max_ns"] = 60000
+          assert "60.00 us -> FAIL" in line(section(slow_read), "  W4rd longest whole read <= 50 us")
+
+          pairing = copy.deepcopy(cells)
+          bottom = [1, 100, 101, 1000, 1001, 10000]
+          top = [100, 200, 303, 4000, 5005, 60000]
+          for block in range(6):
+              pairing["W4", summary.P2_LIST][block]["rate"] = bottom[block]
+              pairing["W4", summary.P8_LIST][block]["rate"] = top[block]
+          interval, error = summary.sharded_pair(pairing, "W4", "W4", summary.P8_LIST, summary.P2_LIST, blocks)
+          assert error is None and interval[0] == 4.5
+          assert interval[0] != summary.median_rate(pairing, "W4", summary.P8_LIST) / summary.median_rate(pairing, "W4", summary.P2_LIST)
+
+          invalid_bytes = copy.deepcopy(cells)
+          invalid_bytes["A1", summary.P2_LIST][0]["check"] = 1001
+          assert "-> INCONCLUSIVE" in line(section(invalid_bytes), "  A1 4 P-cores/2 P-cores")
+
+          # Exercise raw.tsv reading and the legacy pilot conditions together.
+          with tempfile.TemporaryDirectory() as directory:
+              raw = Path(directory) / "pilot.tsv"
+              fields = ["arm", "cpus", "block", "drivers", "ops_per_s", "ops", "check",
+                        "user_frac", "sys_frac", "reads", "read_ns", "read_max_ns"]
+              with raw.open("w", newline="") as stream:
+                  writer = csv.DictWriter(stream, fields, delimiter="\t")
+                  writer.writeheader()
+                  for (arm, cpus), rows in fixture(1).items():
+                      if cpus != summary.P8_LIST:
+                          continue
+                      for row in rows:
+                          writer.writerow(dict(arm=arm, cpus=cpus, block=row["block"],
+                              drivers=row["drivers"], ops_per_s=row["rate"], ops=row["ops"],
+                              check=row["check"], user_frac=1, sys_frac=0, reads=row["reads"],
+                              read_ns=row["read_ns"], read_max_ns=row["read_max_ns"]))
+              output = io.StringIO()
+              with contextlib.redirect_stdout(output):
+                  assert summary.main(str(raw), pilot=True) == 0
+              text = output.getvalue()
+              assert "-> PASS" not in text and "-> FAIL" not in text
+              legacy = [item for item in text.splitlines() if item.startswith("  W5/W5p at 8 P-cores")]
+              assert len(legacy) == 2 and all("no verdict" in item for item in legacy)
+              assert "-> INCONCLUSIVE" in line(text, "  W4rd/W4 >= 0.95")
+
+          print("Reducer controls passed: passing, failing and borderline ratios; twin validity; missing, invalid, duplicate and insufficient cells; reader evidence and longest latency; paired cross-list scaling; saturation accounting; pilot without verdicts.")
+          print()
+          raise SystemExit(summary.main(sys.argv[1], pilot=sys.argv[2] == "1"))
+          PY
+            cat "$SHARED_COUNTERS_OUT/summary.txt" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Enforce the recorded time budgets
+        if: always()
+        run: |
+          if [ -n "${WHITEFOOT_TIME_BUDGET_RECORD:-}" ] && [ -f "$WHITEFOOT_TIME_BUDGET_RECORD" ]; then
+            perl .github/run-check.pl --budget-verdict "$WHITEFOOT_TIME_BUDGET_RECORD"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: shared-counters-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: warn
+          path: ${{ env.SHARED_COUNTERS_OUT }}/

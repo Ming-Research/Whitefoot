@@ -1,0 +1,65 @@
+alias Clock = std::time::Clock;
+alias ExitStatus = std::process::ExitStatus;
+alias Inputs = std::process::Inputs;
+alias Instant = std::time::Instant;
+
+const sharded_param_name: Array<u8, 13> =[115_u8, 104_u8, 97_u8, 114_u8, 100_u8, 101_u8, 100_u8, 95_u8, 112_u8, 97_u8, 114_u8, 97_u8, 109_u8];
+
+fn sharded_param_batch(counter: &Shared<Shards<u64>>, state: u64) -> next: u64 reads(counter) waits {
+  doc "One batch of 1024 W4 operations through a read-only reference parameter, with the same shard update and local step as the value-handle arm.";
+  let mine = any_shard();
+  let current = state;
+  for @batch (turn in 0_u64..1024_u64) {
+    atomic kept = &counter^[mine] {
+      set current = ixor(current, kept^);
+      set kept^ = kept^ +wrap 1_u64;
+    }
+    set current = step(state: current);
+  }
+  return current;
+}
+
+fn sharded_param_context(counter: Shared<Shards<u64>>, totals: Shared<Totals>, gate: Shared<Gate>, clock: Clock, index: u64) -> result: unit pure waits {
+  doc "W4r: runs batches through a read-only reference parameter and adds its operations and local number to the totals once.";
+  let deadline = gate_pass(gate: &gate, clock: &clock);
+  let state = index;
+  let done = 0_u64;
+  loop @run {
+    set state = sharded_param_batch(counter: &counter, state: state);
+    set done = done +wrap 1024_u64;
+    let at = std::time::now(clock: &clock);
+    if std::time::instant_reached(deadline: deadline, instant: at) {
+      break @run;
+    }
+  }
+  tally(totals: &totals, done: done, state: state);
+  return unit;
+}
+
+fn sharded_param_start(counter: &Shared<Shards<u64>>, totals: &Shared<Totals>, clock: &Clock, millis: u64, contexts: u64) -> started: Instant reads(counter), reads(totals), writes(clock) waits {
+  doc "Spawns the contexts, opens the gate and returns the instant it opened, once every context has completed.";
+  let gate = gate_new(clock: clock);
+  for @start (index in 0_u64..contexts) {
+    let counter_handle = shared_share::<Shards<u64>>(shared: counter);
+    let tally_handle = shared_share::<Totals>(shared: totals);
+    let gate_handle = shared_share::<Gate>(shared: &gate);
+    let ticks = std::time::clock_share(clock: clock);
+    spawn sharded_param_context(counter: move counter_handle, totals: move tally_handle, gate: move gate_handle, clock: move ticks, index: index);
+  }
+  let started = gate_open(gate: &gate, clock: clock, millis: millis);
+  return started;
+}
+
+fn sharded_param_main(inputs: Inputs) -> status: ExitStatus pure waits {
+  doc "W4r: W4 with each shard statement reaching the handle through a read-only reference parameter; the control for header writes.";
+  let bench = bench_begin(inputs: move inputs);
+  if bench.valid {
+  } else {
+    return std::process::exit_status(code: 2_u8);
+  }
+  let counter = shared_shards_new::<u64, fn sharded_zero>();
+  let totals = totals_new();
+  let started = sharded_param_start(counter: &counter, totals: &totals, clock: &bench.clock, millis: bench.millis, contexts: bench.contexts);
+  let ended = std::time::now(clock: &bench.clock);
+  return bench_end(bench: move bench, name: &sharded_param_name[0_u64..13_u64], totals: &totals, started: started, ended: ended);
+}

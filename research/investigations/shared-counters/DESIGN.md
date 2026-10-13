@@ -983,7 +983,9 @@ Firn-wf runtime-contention harness (`6c0e973`: its gate, deadline, batches of
 | W2r | W2 with the handle reached through a read-only reference parameter | attributes the handle count |
 | W3 `writer-shards` | `+wrap 1` on element `index mod 16` of an `Array<Shared<u64>, 16>` | existing-language control (d2) |
 | W4 `shards` | `+wrap 1` in a one-shard statement on one `Shared<Shards<u64>>`, value handle | the proposal |
+| W4t | W4 rebuilt from the same source as a separate binary | noise control for the implementation run (section 8.7) |
 | W4r | W4 through a read-only reference parameter | separates a header-write defect from the design |
+| W4rd | W4 plus one extra context reading the total in one whole-target statement about every 1 ms | write retention and longest whole read (section 8.7) |
 | W6 `read-shared` | read-only statement on one `Shared<u64>` | ties the reported row 3 to a source |
 | W7 `c-model` | C model of the planned layout: a lock word and a value on each thread's own line, plus a reader of the total every 1 ms (added 2026-10-12, [section 8.5](#85-criteria-for-the-implementation-registered-2026-10-12)) | gate before any implementation, against W5p |
 | W7t | W7 built twice from the same source | noise control for W7 |
@@ -1003,6 +1005,24 @@ that after warm-up almost no operation raises the maximum:
 | M2 | read statement, then exclusive `imax` only when `v` exceeds the value read (5.3) |
 | M3 | context-local cache, exclusive `imax` only above it (Firn's pattern) |
 | M4 | one-shard `imax` statement on `Shared<Shards<u64>>` |
+
+Owned-buffer arm, the second workload of the sharded-state board item:
+
+| Arm | Per operation | Role |
+|---|---|---|
+| A1 | 64 contexts write a random key among 100,000 in a `Shared<ConcurrentHashMap<u64>>` and append one byte, when room remains, to their shard of `Shared<Shards<AofPart>>` in the same atomic statement; `AofPart` owns a `Box<Slots<u8>>` | exercises owned values in shards, as Firn's pending AOF buffers do; an extra context swaps out all buffers about every 10 ms and counts drained bytes |
+
+A1 populates the map before the timed interval and counts completed write
+statements as operations. Its `check` counts drained bytes, including a final
+residual drain after timing ends; `check < ops` exposes bytes skipped by full
+buffers. The summary reports these counts and drained/write ratios alongside
+the throughput criteria, whose operations remain completed write statements.
+The reader fields count and time only periodic drains. Each shard buffer holds
+1,048,576 bytes. A nominal 10 ms interval fills it only above 104,857,600
+appends per second on one shard, conservative headroom for a path that also
+updates a random map entry. This is a sizing assumption, not a measurement;
+delayed drains can still fill a buffer. A1 is a witness of the shared map and
+owned-buffer path, not a measurement of AOF file I/O or durability.
 
 Calibration arm W5, a C program outside Whitefoot, pinned the same way:
 threads incrementing one 64-byte-aligned word with `atomic_fetch_add`
@@ -1297,6 +1317,76 @@ spare shards stay in the reader's cache.
 - W7rd / W7 below 0.95, or a median whole read above 50 µs: the reader's
   locks interfere more than estimated (the reader criteria fail on the
   model).
+
+### 8.7 Sharded-state implementation run (registered before measurement)
+
+This run measures the branch implementation directly, with the compiler built
+from the checked-out branch revision on the 14900K runner and each Whitefoot
+arm built with `--full-lto`. It adds W4, its separate-build twin W4t, W4r,
+W4rd, M1–M4 and A1 to the existing witness arms. The default rotation is
+`W0 W1 W2 W2t W2r W6 W3 W3rd W4 W4t W4r W4rd M1 M2 M3 M4 A1 W5 W5p`.
+An `ARMS` selection omitting a required comparison or twin leaves that
+criterion inconclusive. Firn F0–F3 remain a separate downstream run.
+
+**Procedure.** CI only on the i9-14900K, under the host-wide lock of
+`run-check.pl`, after checking under 5% CPU busy over 5 s. Record the branch
+revision, compiler and twin binary hashes, CPU map, governor, CPU lists and
+order in `host.txt`. Pilot first: one block of 5 s cells at
+`0,2,4,6,8,10,12,14`; it checks run length and wiring and decides nothing.
+The main run has 12 blocks, 5 s per cell, 64 writer contexts (64 threads for
+W5/W5p), at `0,2`, `0,2,4,6`, `0,2,4,6,8,10,12,14` and `0-15`, with
+`WF_DRIVERS` equal to the CPU count. Reader and drain contexts are extra,
+scheduled on the same drivers. Use `ORDER=alternate`: rotate the starting
+arm by one each block and reverse the rotated order in odd blocks, as section
+8.6 does. Record a changed block count before dispatch; fewer than six paired
+blocks decide nothing. The pilot precedes a main dispatch, rather than
+automatically launching a longer run. With all 19 arms, the main has 912
+cells, 4,560 s of nominal cell time, before startup and build costs.
+
+**Decision rule.** Reuse section 8.6's paired-block medians and 95%
+percentile bootstrap intervals: 10,000 resamples, `random.Random(20261012)`,
+the 251st through 9,750th sorted resample medians. At each CPU list the
+W4t/W4 interval must contain 1, with at least six complete paired blocks;
+otherwise that list's criteria are INCONCLUSIVE. A throughput lower-bound
+criterion is PASS when the interval's lower bound reaches the threshold,
+FAIL when the upper bound is below it, and INCONCLUSIVE otherwise. Missing
+cells within observed block numbers and nonpositive rates leave the affected
+criterion inconclusive. The reducer cannot infer a wholly absent block from
+`raw.tsv`; acceptance also requires a successful workflow and agreement with
+the block count recorded in `host.txt`. A partial artifact from a failed or
+interrupted run does not complete this procedure. Cross-list
+scaling ratios pair the same block at both lists and require valid twins at
+both endpoints. Report medians, intervals, sample counts and thresholds:
+
+- W4/W5p ≥ 0.5 at 2, 4 and 8 P-cores; the 16-hyperthread ratio is descriptive.
+- W4/W3 ≥ 1.25 at 8 P-cores and 16 hyperthreads; smaller lists are descriptive.
+- W4rd/W4 ≥ 0.95 at 8 P-cores; other lists are descriptive. The longest
+  W4rd whole read across all cells at 8 P-cores must be ≤ 50 µs. This is the
+  requested implementation criterion, rather than the C model's median-read
+  criterion: PASS only with valid twin evidence, at least six complete reader
+  blocks and at least one read in every cell, all maxima ≤ 50 µs; FAIL if
+  an observed maximum exceeds 50 µs under those evidence conditions.
+- W4(8 P-cores)/W4(2 P-cores) ≥ 3, the board's count-scaling criterion.
+- A1(4 P-cores)/A1(2 P-cores) ≥ 1.6 and
+  A1(8 P-cores)/A1(4 P-cores) ≥ 1.6, the board's owned-buffer criteria.
+
+The W4 twin controls noise in this run; it is not an A1 twin and cannot
+establish A1-specific variability. M1–M4 and W4r are descriptive controls.
+No new threshold replaces section 8.5's implementation thresholds. A failed
+criterion follows section 8.5's attribution steps. With inconclusive twin
+or interval evidence and no failed criterion, repeat the whole main run at
+most once; the repeat decides alone, both runs are reported, and unresolved
+evidence goes to the owner, as section 8.6 does.
+
+**Generated-code check.** Record emitted LLVM handle-count calls for every
+selected Whitefoot arm, distinguishing explicit handle sharing and teardown
+from the update statement. W4's shard statement must have no retain/release.
+The requested W2 statement falsifier is unavailable on this branch: the
+handle-place liveness optimization merged from PR #409 also skips W2's
+statement because its block does not overwrite or move its value handle.
+Program-wide sharing or teardown calls do not falsify that optimization.
+Keep the W2 workload unchanged and expose this limitation with its counts;
+do not attribute a throughput difference to retained W2 statement counts.
 
 ## 9. Results: the arms that need no language change
 

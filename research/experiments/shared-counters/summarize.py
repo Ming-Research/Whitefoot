@@ -3,7 +3,7 @@
 arms of this experiment can make (README.md; research/investigations/
 shared-counters/DESIGN.md, section 8).
 
-    python3 summarize.py [--smoke] RAW.tsv
+    python3 summarize.py [--smoke | --pilot] RAW.tsv
 
 It prints, per arm and CPU list, the median and the range of the rate over
 blocks; the noise e from the twin pair W2t and W2; the descriptive ratios; and
@@ -19,14 +19,21 @@ paired within each block, their median and a 95% percentile bootstrap
 interval, the twin's validity, the gate W7 / W5pN against 0.5 and the reader
 criteria. --smoke marks a wiring run on a host that is not the 14900K: it
 reads every CPU list as a decision list and labels every reading as no verdict.
+
+With sharded-state arms present, it also reports section 8.5's implementation
+criteria and the registered scaling checks using paired-block bootstrap
+intervals and W4t/W4 twins. Reader latency uses the longest observed read.
+--pilot reports an initial run on the 14900K without any acceptance verdict.
 """
 import csv
+import math
 import random
 import statistics
 import sys
 from collections import defaultdict
 
 ARMS = ["W0", "W1", "W2", "W2t", "W2r", "W6", "W3", "W3rd", "W5", "W5p",
+        "W4", "W4t", "W4r", "W4rd", "M1", "M2", "M3", "M4", "A1",
         "W5pN", "W7", "W7t", "W7rd"]
 MEANING = {
     "W0": "no atomic statement (runtime floor)",
@@ -37,6 +44,15 @@ MEANING = {
     "W6": "read-only statement on one Shared<u64>",
     "W3": "+wrap 1 on element index mod 16 of an array of 16 Shared<u64>",
     "W3rd": "W3 plus a reader of all 16 every millisecond",
+    "W4": "+wrap 1 on one shard of Shared<Shards<u64>>, value handle",
+    "W4t": "second build of W4's source (sharded-state noise control)",
+    "W4r": "W4 through a read-only reference parameter",
+    "W4rd": "W4 plus a whole-target reader every millisecond",
+    "M1": "exclusive imax on one Shared<u64>",
+    "M2": "read statement, then exclusive imax only above the reading",
+    "M3": "context-local cache, exclusive imax only above the cache",
+    "M4": "one-shard imax on Shared<Shards<u64>>",
+    "A1": "map-entry write and owned-buffer shard append; whole drain every 10 ms",
     "W5": "C: one 64-byte-aligned counter, atomic_fetch_add, seq_cst",
     "W5p": "C: each thread on its own padded line",
     "W5pN": "C: W5p's binary with one thread per CPU (the C model's comparison)",
@@ -63,6 +79,10 @@ READ_LIMIT_US = 50.0
 MIN_BLOCKS = 6
 DRAWS = 10000
 SEED = 20261012
+P2_LIST = "0,2"
+P4_LIST = "0,2,4,6"
+P8_LIST = "0,2,4,6,8,10,12,14"
+SHARDED_LISTS = {**MODEL_LISTS, "0-15": "16 hyperthreads"}
 
 
 def number(row, name):
@@ -80,6 +100,8 @@ def read(path):
                 "block": int(row["block"]),
                 "drivers": int(row["drivers"]),
                 "rate": float(row["ops_per_s"]),
+                "ops": number(row, "ops"),
+                "check": number(row, "check"),
                 "busy": float(row["user_frac"]) + float(row["sys_frac"]),
                 "reads": int(row["reads"]),
                 "read_ns": int(row["read_ns"]),
@@ -186,12 +208,174 @@ def interval_reading(interval, threshold, at_least):
     return "inconclusive: the interval contains the threshold"
 
 
-def model_section(cells, lists, drivers, smoke):
+def complete_rates(cells, arm, cpus, expected_blocks):
+    """Validate the cells before pairing; an absent cell is not a sample.
+
+    The registered lists name CPUs, not just a driver count. Missing rows
+    are detected against all block numbers present in this run. A completely
+    absent block cannot be inferred from raw.tsv and is covered by MIN_BLOCKS.
+    """
+    rows = cells.get((arm, cpus), [])
+    if not rows:
+        return {}, f"missing {arm} at {cpus}"
+    counts = [r["block"] for r in rows]
+    if len(set(counts)) != len(counts):
+        return {}, f"duplicate {arm} block at {cpus}"
+    expected_drivers = 16 if cpus == "0-15" else len(cpus.split(","))
+    if any(r["drivers"] != expected_drivers or
+           not math.isfinite(r["rate"]) or r["rate"] <= 0 for r in rows):
+        return {}, f"invalid {arm} rate or driver count at {cpus}"
+    values = {r["block"]: r["rate"] for r in rows}
+    if set(values) != expected_blocks:
+        return values, f"missing {arm} cells at {cpus}: {len(values)}/{len(expected_blocks)} blocks"
+    return values, None
+
+
+def sharded_pair(cells, top, bottom, top_cpus, bottom_cpus, blocks):
+    """Pair the same block, including for ratios across CPU lists."""
+    a, error_a = complete_rates(cells, top, top_cpus, blocks)
+    b, error_b = complete_rates(cells, bottom, bottom_cpus, blocks)
+    common = sorted(set(a) & set(b))
+    interval = bootstrap([a[k] / b[k] for k in common])
+    return interval, error_a or error_b
+
+
+def sharded_twin(cells, cpus, blocks):
+    interval, error = sharded_pair(cells, "W4t", "W4", cpus, cpus, blocks)
+    if error:
+        return interval, error
+    if interval[1] < MIN_BLOCKS:
+        return interval, f"only {interval[1]} twin blocks; need {MIN_BLOCKS}"
+    if not interval[2] <= 1 <= interval[3]:
+        return interval, "W4t/W4 interval excludes 1"
+    return interval, None
+
+
+def sharded_reading(interval, threshold, at_least, error, smoke):
+    if smoke:
+        return "INCONCLUSIVE (wiring or pilot run, no verdict)"
+    if error:
+        return f"INCONCLUSIVE ({error})"
+    reading = interval_reading(interval, threshold, at_least)
+    if reading == "met":
+        return "PASS"
+    if reading == "not met":
+        return "FAIL"
+    return "INCONCLUSIVE (" + reading.removeprefix("inconclusive: ") + ")"
+
+
+def aof_accounting_error(cells, cpus):
+    rows = cells.get(("A1", cpus), [])
+    if not rows:
+        return f"missing A1 at {cpus}"
+    if any(r["ops"] <= 0 or r["check"] < 0 or r["check"] > r["ops"] for r in rows):
+        return f"invalid A1 completed-write or drained-byte accounting at {cpus}"
+    return None
+
+
+def sharded_section(cells, lists, smoke, pilot=False):
+    """Implementation and owned-buffer criteria; historical C rules stay separate."""
+    if not any((arm, c) in cells for arm in ("W4", "W4t", "W4r", "W4rd", "M1", "M2", "M3", "M4", "A1") for c in lists):
+        return
+    blocks = {r["block"] for rows in cells.values() for r in rows}
+    no_verdict = smoke or pilot
+    print("Sharded-state implementation (DESIGN.md sections 8.5 and 8.7)")
+    print(f"Ratios pair the same block; median [95% percentile bootstrap interval], {DRAWS} draws, seed {SEED}.")
+    print(f"Every criterion requires complete valid cells, at least {MIN_BLOCKS} paired blocks, and a W4t/W4 twin interval containing 1.")
+    print("Cross-list scaling requires valid twins at both lists. Missing cells or no reader reads give INCONCLUSIVE.")
+    print("Whole-read latency is the longest observed read across all cells, not a median or a bootstrap interval.")
+    if smoke:
+        print("SMOKE RUN: a wiring check; all criteria are INCONCLUSIVE, with no verdict.")
+    if pilot:
+        print("PILOT RUN: initial cells on the 14900K; all criteria are INCONCLUSIVE, with no verdict.")
+    print()
+    twins = {}
+    for c, name in SHARDED_LISTS.items():
+        twin, twin_error = sharded_twin(cells, c, blocks)
+        twins[c] = twin_error
+        print(f"{name} ({c})")
+        print(f"  twin W4t/W4: {show(twin)} -> {'VALID' if twin_error is None else 'INCONCLUSIVE (' + twin_error + ')'}")
+
+        def compare(top, bottom, threshold=None, at_least=True, evidence_error=None):
+            interval, error = sharded_pair(cells, top, bottom, c, c, blocks)
+            if threshold is None:
+                print(f"  {top}/{bottom}: {show(interval)} (descriptive" + (f"; {error}" if error else "") + ")")
+                return
+            sign = ">=" if at_least else "<="
+            reading = sharded_reading(interval, threshold, at_least, error or evidence_error or twin_error, no_verdict)
+            print(f"  {top}/{bottom} {sign} {threshold}: {show(interval)} -> {reading}")
+
+        compare("W4", "W5p", 0.5 if c in MODEL_LISTS else None)
+        compare("W4", "W3", 1.25 if c in (P8_LIST, "0-15") else None)
+        compare("W4r", "W4")
+        rows = cells.get(("W4rd", c), [])
+        _, read_error = complete_rates(cells, "W4rd", c, blocks)
+        valid_reads = [r for r in rows if r["reads"] > 0 and
+                       r["read_max_ns"] > 0 and r["read_ns"] >= r["read_max_ns"]]
+        longest = max((r["read_max_ns"] / 1000 for r in valid_reads), default=None)
+        if len(valid_reads) != len(rows):
+            read_error = "a W4rd cell has no reads or invalid reader timing"
+        if len(valid_reads) < MIN_BLOCKS:
+            read_error = read_error or f"only {len(valid_reads)} reader blocks; need {MIN_BLOCKS}"
+        compare("W4rd", "W4", 0.95 if c == P8_LIST else None, evidence_error=read_error)
+        if c == P8_LIST:
+            error = read_error or twin_error
+            if no_verdict or error:
+                reading = "INCONCLUSIVE (" + ("wiring or pilot run, no verdict" if no_verdict else error) + ")"
+            else:
+                reading = "PASS" if longest <= READ_LIMIT_US else "FAIL"
+            print(f"  W4rd longest whole read <= {READ_LIMIT_US:.0f} us: {fmt(longest, 2)} us -> {reading}")
+        else:
+            print(f"  W4rd longest whole read: {fmt(longest, 2)} us (descriptive" + (f"; {read_error}" if read_error else "") + ")")
+        if valid_reads:
+            mean_us = statistics.median(r["read_ns"] / r["reads"] / 1000 for r in valid_reads)
+            print(f"  W4rd mean whole-read time, median over cells: {mean_us:.2f} us; total reads: {sum(r['reads'] for r in valid_reads)}")
+        print()
+
+    if any(("A1", c) in cells for c in lists):
+        print("A1 byte accounting (descriptive; scaling counts completed writes, including writes that skip appending to a full buffer)")
+        for c in lists:
+            rows = cells.get(("A1", c), [])
+            if not rows:
+                continue
+            error = aof_accounting_error(cells, c)
+            if error:
+                print(f"  {c}: INCONCLUSIVE ({error})")
+                continue
+            ops = sum(r["ops"] for r in rows)
+            drained = sum(r["check"] for r in rows)
+            fractions = [r["check"] / r["ops"] for r in rows]
+            print(f"  {c}: completed writes={ops}, drained bytes={drained}, skipped bytes={ops - drained}; drained_bytes/ops total={drained / ops:.6f}; per-cell median={statistics.median(fractions):.6f} [{min(fractions):.6f}-{max(fractions):.6f}]")
+        print("Saturation is an observed workload limit, separate from the throughput scaling thresholds.")
+        print()
+    print("Scaling, same block paired across CPU lists")
+    for arm, top, bottom, threshold in (("W4", P8_LIST, P2_LIST, 3.0),
+                                          ("A1", P4_LIST, P2_LIST, 1.6),
+                                          ("A1", P8_LIST, P4_LIST, 1.6)):
+        interval, error = sharded_pair(cells, arm, arm, top, bottom, blocks)
+        if arm == "A1":
+            error = error or aof_accounting_error(cells, top) or aof_accounting_error(cells, bottom)
+        reading = sharded_reading(interval, threshold, True, error or twins[top] or twins[bottom], no_verdict)
+        print(f"  {arm} {SHARDED_LISTS[top]}/{SHARDED_LISTS[bottom]} >= {threshold}: {show(interval)} -> {reading} ({top} / {bottom})")
+    if any(("W4", c) in cells for c in lists):
+        print()
+        print("R2, actual sharded-state comparison: W3/W4 >= 0.8 at every registered CPU list rejects the recommendation")
+        for c, name in SHARDED_LISTS.items():
+            interval, error = sharded_pair(cells, "W3", "W4", c, c, blocks)
+            reading = sharded_reading(interval, R2_THRESHOLD, True, error or twins[c], no_verdict)
+            print(f"  W3/W4 at {name} ({c}): {show(interval)} -> {reading}")
+    extra = [c for c in lists if c not in SHARDED_LISTS]
+    if extra:
+        print("Other CPU lists are descriptive only: " + ", ".join(extra))
+    print()
+
+
+def model_section(cells, lists, drivers, smoke, pilot=False):
     """The C model's reading under the rule of DESIGN.md section 8.6."""
     if not any(("W7", c) in cells for c in lists):
         return
     decides = [c for c in lists if smoke or c in MODEL_LISTS]
-    mark = "smoke run, no verdict: " if smoke else ""
+    mark = "smoke run, no verdict: " if smoke else "pilot run, no verdict: " if pilot else ""
     print("C model (DESIGN.md section 8.6, registered before measurement)")
     print("Each ratio is formed within a block, top arm over bottom arm on the same CPU list; shown is the median")
     print(f"over blocks with its 95% percentile bootstrap interval ({DRAWS} resamples, seed {SEED}) and n, the paired blocks.")
@@ -199,6 +383,8 @@ def model_section(cells, lists, drivers, smoke):
     print(f"Fewer than {MIN_BLOCKS} paired blocks decide nothing. Lists outside {', '.join(MODEL_LISTS)} are reported only.")
     if smoke:
         print("SMOKE RUN: a wiring check on a host that is not the 14900K. Nothing below is a verdict.")
+    if pilot:
+        print("PILOT RUN: initial cells on the 14900K. Nothing below is a verdict.")
     print()
     gate_readings = {}
     reader_readings = {}
@@ -260,7 +446,7 @@ def model_section(cells, lists, drivers, smoke):
     print()
 
 
-def main(path, smoke=False):
+def main(path, smoke=False, pilot=False):
     cells = read(path)
     lists, drivers = lists_in_order(cells)
     if not lists:
@@ -322,7 +508,8 @@ def main(path, smoke=False):
              ("W2r/W2", "W2r", "W2"), ("W6/W2", "W6", "W2"), ("W6/W1", "W6", "W1"),
              ("W3rd/W3", "W3rd", "W3"), ("W5/W5p", "W5", "W5p"),
              ("W5pN/W5p", "W5pN", "W5p"), ("W7/W5pN", "W7", "W5pN"), ("W7/W5p", "W7", "W5p"),
-             ("W7t/W7", "W7t", "W7"), ("W7rd/W7", "W7rd", "W7")]
+             ("W7t/W7", "W7t", "W7"), ("W7rd/W7", "W7rd", "W7"),
+             ("M2/M1", "M2", "M1"), ("M3/M1", "M3", "M1"), ("M4/M1", "M4", "M1")]
     print(f"{'ratio':<9}" + "".join(f"{drivers[c]:>3} CPUs  " for c in lists))
     for label, top, bottom in pairs:
         values = [ratio(cells, top, bottom, c) for c in lists]
@@ -341,7 +528,8 @@ def main(path, smoke=False):
             if not rows:
                 means.append(None); longest.append(None); counts.append(None)
                 continue
-            means.append(statistics.median(r["read_ns"] / r["reads"] / 1000 for r in rows if r["reads"]))
+            read_means = [r["read_ns"] / r["reads"] / 1000 for r in rows if r["reads"] > 0]
+            means.append(statistics.median(read_means) if read_means else None)
             longest.append(statistics.median(r["read_max_ns"] / 1000 for r in rows))
             counts.append(statistics.median(r["reads"] for r in rows))
         print(f"{'mean':<8}" + "".join(f"{fmt(v, 1):>9} " for v in means))
@@ -350,36 +538,45 @@ def main(path, smoke=False):
         print("About 5000 reads are expected in a 5 s cell; fewer means the reader fell behind its 1 ms period.")
         print()
 
-    model_section(cells, lists, drivers, smoke)
+    model_section(cells, lists, drivers, smoke, pilot)
+    sharded_section(cells, lists, smoke, pilot)
 
     if not any(("W3", c) in cells or ("W5", c) in cells for c in lists):
         return 0
 
     print("Registered conditions these arms can decide (all thresholds provisional; e as above)")
-    print()
-    print("R2, approximated. Registered: W3 >= 0.8 x W4 at every CPU list rejects the recommendation.")
-    print("  No sharded state exists yet, so there is no W4. Stand-in: W1 (private objects), taken as an upper bound")
-    print("  on what any sharded implementation could reach. This is an inference: W4 could in principle exceed W1,")
-    print("  and the stand-in decides only one direction. W3 >= 0.8 x W1 at every list implies W3 >= 0.8 x W4 if")
-    print("  W4 <= W1; a lower W3/W1 leaves R2 undecided, because W4 may sit below W1.")
-    r2_all = True
-    for c in lists:
-        value = ratio(cells, "W3", "W1", c)
-        reading = verdict(value, R2_THRESHOLD, True, noise)
-        print(f"  W3/W1 at {drivers[c]} CPUs ({c}): {fmt(value)}  vs {R2_THRESHOLD}: {reading}")
-        r2_all = r2_all and reading == "met"
-    print(f"  Stand-in reading: {'W3 >= 0.8 x W1 at every list (R2 would hold if W4 <= W1)' if r2_all else 'not met at some list: R2 stays undecided until W4 exists'}")
-    print()
+    if smoke or pilot:
+        print("Initial pilot or wiring run: no verdict from the legacy conditions below.")
 
-    key8 = next((c for c in lists if drivers[c] == P_CORE_DRIVERS), None)
+    def legacy_reading(value, threshold, at_least):
+        return "pilot or wiring run, no verdict" if smoke or pilot else verdict(value, threshold, at_least, noise)
+
+    print()
+    if not any(("W4", c) in cells for c in lists):
+        print("R2, approximated. Registered: W3 >= 0.8 x W4 at every CPU list rejects the recommendation.")
+        print("  No W4 rows are present. Stand-in: W1 (private objects), taken as an upper bound")
+        print("  on what any sharded implementation could reach. This is an inference: W4 could in principle exceed W1,")
+        print("  and the stand-in decides only one direction. W3 >= 0.8 x W1 at every list implies W3 >= 0.8 x W4 if")
+        print("  W4 <= W1; a lower W3/W1 leaves R2 undecided, because W4 may sit below W1.")
+        r2_all = True
+        for c in lists:
+            value = ratio(cells, "W3", "W1", c)
+            reading = legacy_reading(value, R2_THRESHOLD, True)
+            print(f"  W3/W1 at {drivers[c]} CPUs ({c}): {fmt(value)}  vs {R2_THRESHOLD}: {reading}")
+            r2_all = r2_all and reading == "met"
+        stand_in = "W3 >= 0.8 x W1 at every list (R2 would hold if W4 <= W1)" if r2_all else "not met at some list: R2 stays undecided without W4 data"
+        print("  Stand-in reading: " + ("pilot or wiring run, no verdict" if smoke or pilot else stand_in))
+        print()
+
+    key8 = P8_LIST if P8_LIST in lists else None
     if key8 is None:
         print("R3 and P3: no 8-P-core list in the data.")
         return 0
     value = ratio(cells, "W5", "W5p", key8)
     print(f"R3. Registered: W5 / W5p >= {R3_THRESHOLD} at 8 P-cores rejects the recommendation (a contended hardware add then serves counts).")
-    print(f"  W5/W5p at 8 P-cores ({key8}): {fmt(value)}  vs {R3_THRESHOLD}: {verdict(value, R3_THRESHOLD, True, noise)}")
+    print(f"  W5/W5p at 8 P-cores ({key8}): {fmt(value)}  vs {R3_THRESHOLD}: {legacy_reading(value, R3_THRESHOLD, True)}")
     print(f"P3. Registered: W5 / W5p <= {P3_THRESHOLD} at 8 P-cores (a contended hardware add stays far below private increments).")
-    print(f"  W5/W5p at 8 P-cores ({key8}): {fmt(value)}  vs {P3_THRESHOLD}: {verdict(value, P3_THRESHOLD, False, noise)}")
+    print(f"  W5/W5p at 8 P-cores ({key8}): {fmt(value)}  vs {P3_THRESHOLD}: {legacy_reading(value, P3_THRESHOLD, False)}")
     print("  e comes from the Whitefoot twin pair; the C arms have no twin, so it is applied to them as an approximation.")
     return 0
 
@@ -387,9 +584,10 @@ def main(path, smoke=False):
 if __name__ == "__main__":
     arguments = sys.argv[1:]
     smoke = arguments[:1] == ["--smoke"]
-    if smoke:
+    pilot = arguments[:1] == ["--pilot"]
+    if smoke or pilot:
         arguments = arguments[1:]
     if len(arguments) != 1:
         print(__doc__)
         sys.exit(2)
-    sys.exit(main(arguments[0], smoke))
+    sys.exit(main(arguments[0], smoke, pilot))

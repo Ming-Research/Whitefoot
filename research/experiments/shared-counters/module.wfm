@@ -14,3 +14,19 @@ public fn read_shared_main(inputs: Inputs) -> status: ExitStatus pure waits doc 
 public fn shards_main(inputs: Inputs) -> status: ExitStatus pure waits doc "W3: each of CONTEXTS contexts adds one to the element at its index modulo 16 of an array of sixteen shared objects, in one atomic statement per operation, for MILLISECONDS; the shard array a writer can build today.";
 
 public fn shards_reader_main(inputs: Inputs) -> status: ExitStatus pure waits doc "W3 with one more context that, about every millisecond, reads all sixteen shared objects in one atomic statement and reports how long each read took.";
+
+public fn sharded_main(inputs: Inputs) -> status: ExitStatus pure waits doc "W4: one-shard increment through a value handle.";
+
+public fn sharded_param_main(inputs: Inputs) -> status: ExitStatus pure waits doc "W4r: W4 through a read-only reference parameter.";
+
+public fn sharded_reader_main(inputs: Inputs) -> status: ExitStatus pure waits doc "W4rd: W4 with one whole-target reader context every millisecond.";
+
+public fn max_exclusive_main(inputs: Inputs) -> status: ExitStatus pure waits doc "M1: one exclusive imax statement per operation.";
+
+public fn max_read_main(inputs: Inputs) -> status: ExitStatus pure waits doc "M2: read then exclusive imax only above the snapshot.";
+
+public fn max_cache_main(inputs: Inputs) -> status: ExitStatus pure waits doc "M3: exclusive imax only above the context-local cache.";
+
+public fn max_sharded_main(inputs: Inputs) -> status: ExitStatus pure waits doc "M4: one-shard imax statement per operation.";
+
+public fn aof_main(inputs: Inputs) -> status: ExitStatus pure waits doc "A1: 64 map writers with owned shard logs and one 10 ms drain context.";
