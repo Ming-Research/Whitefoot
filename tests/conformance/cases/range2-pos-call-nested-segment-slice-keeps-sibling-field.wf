@@ -20,11 +20,12 @@ fn probe(rows: &[Row]) -> result: unit writes(rows) contract {
   requires forall held_markers(k in 0_u64..rows^.len): rows^[k].marker <= 7_u64;
   requires 1_u64 <= rows^.len;
   requires 1_u64 <= rows^[0_u64].values.inner.len;
-  requires 2_u64 <= rows^[0_u64].values.inner[0_u64].len;
 } {
-  doc "RANGE-2 retains the outer element's marker when a call writes a partial slice of its boxed Segments field; OWN-7 separates the fields before the segment and range steps.";
+  doc "A guard on the borrowed segment's captured length admits the partial slice under REF-4. RANGE-2 retains the outer marker across the conditional write because OWN-7 separates the fields before the segment and range steps.";
   let segment = &rows^[0_u64].values.inner[0_u64];
-  fill(part: &segment^[1_u64..2_u64]);
+  if 2_u64 <= segment^.len {
+    fill(part: &segment^[1_u64..2_u64]);
+  }
   need_markers(rows: rows);
   return unit;
 }
