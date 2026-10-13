@@ -119,19 +119,19 @@ fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure w
   let std::fs::Directory(read: reader, write: writer) = move directory;
   std::fs::close_directory_write(factory: &factory, directory: move writer);
   let outcome = 9_u8;
-  match std::fs::open_directory(factory: &factory, root: &reader, name: &top[0_u64..3_u64], start: 0_u64, end: 3_u64) {
-    Ok(value: base) => {
-      match move host_paths {
-        Some(value: paths) => {
+  match move host_paths {
+    Some(value: paths) => {
+      match std::fs::open_directory(factory: &factory, root: &reader, name: &top[0_u64..3_u64], start: 0_u64, end: 3_u64) {
+        Ok(value: base) => {
           set outcome = exercise(args: &args, factory: &factory, paths: &paths, cwd: &reader, base: &base);
+          std::fs::close_directory(factory: &factory, directory: move base);
         }
-        None() => {
+        Err(error: problem) => {
+          set outcome = 8_u8;
         }
       }
-      std::fs::close_directory(factory: &factory, directory: move base);
     }
-    Err(error: problem) => {
-      set outcome = 8_u8;
+    None() => {
     }
   }
   std::fs::close_directory(factory: &factory, directory: move reader);
