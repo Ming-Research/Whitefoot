@@ -1,6 +1,6 @@
 # Temporary: what the OP-5 redundant-condition rule itself adds to check time.
 # One runner builds this branch's compiler and main's at the merge base, then
-# checks the same pinned Snowghost oracle modules with each in alternating
+# checks this branch's program corpus with each in alternating
 # rounds. Remove before this branch is ready.
 name: main-check-compare
 
@@ -15,7 +15,6 @@ concurrency:
 env:
   CARGO_TERM_COLOR: never
   CARGO_INCREMENTAL: 0
-  SNOWGHOST_REVISION: 466e9843f7a0fe4926022be8718d4ab677cafed1
   ROUNDS: 3
 
 jobs:
@@ -38,27 +37,48 @@ jobs:
           cargo build --manifest-path "$RUNNER_TEMP/main/compiler/Cargo.toml" --profile gate --locked --offline
           printf 'branch %s\nmain %s\n' "$(git rev-parse HEAD)" "$base"
           lscpu | grep -E 'Model name'
-      - name: Check the oracle modules in alternating rounds
+      - name: Check this branch's program corpus in alternating rounds
         run: |
-          git clone --quiet https://github.com/Ming-Research/Snowghost-wf.git "$RUNNER_TEMP/snowghost"
-          git -C "$RUNNER_TEMP/snowghost" checkout --quiet --detach "$SNOWGHOST_REVISION"
-          find "$RUNNER_TEMP/snowghost/renderer/oracle" -name "*.wf" -exec perl -pi -e "s/\\bheld\\b/held_value/g" {} +
+          # The pinned Snowghost oracle modules hold redundant conditions this
+          # branch rejects, so their times compare a rejection with an
+          # acceptance. The branch's own migrated programs are accepted by both.
           branch=compiler/target/gate/whitefootc
           main="$RUNNER_TEMP/main/compiler/target/gate/whitefootc"
+          results="$RUNNER_TEMP/check-times.tsv"
+          printf 'round\tside\tprogram\tstatus\tseconds\n' > "$results"
           for round in $(seq 1 "$ROUNDS"); do
-            for module in pkg::oracle::style pkg::oracle::layout; do
-              for side in main branch; do
-                if [ "$side" = main ]; then compiler=$main; else compiler=$branch; fi
+            for side in main branch; do
+              if [ "$side" = main ]; then compiler=$main; else compiler=$branch; fi
+              for program in tests/programs/*.wf; do
                 start=$(date +%s.%N)
                 set +e
-                timeout 900 "$compiler" --graph "$RUNNER_TEMP/snowghost/renderer/modules.wfg" \
-                  --check-module "$module" --report > "$RUNNER_TEMP/out.txt" 2>&1
+                timeout 600 "$compiler" --check "$program" > /dev/null 2>&1
                 status=$?
                 set -e
                 end=$(date +%s.%N)
-                printf 'RESULT round=%s module=%s side=%s status=%s seconds=%.2f\n' \
-                  "$round" "$module" "$side" "$status" "$(echo "$end - $start" | bc)"
-                tail -1 "$RUNNER_TEMP/out.txt"
+                printf '%s\t%s\t%s\t%s\t%.3f\n' "$round" "$side" "$program" "$status" "$(echo "$end - $start" | bc)" >> "$results"
               done
             done
           done
+          python3 - "$results" <<'PY'
+          import collections, statistics, sys
+          rows = [line.rstrip('\n').split('\t') for line in open(sys.argv[1])][1:]
+          status = collections.defaultdict(set)
+          for _, side, program, code, _ in rows:
+              status[program].add((side, code))
+          both = {p for p, s in status.items() if s == {('main', '0'), ('branch', '0')}}
+          print(f'programs accepted by both compilers in every round: {len(both)} of {len(status)}')
+          for p, s in sorted(status.items()):
+              if p not in both:
+                  print(f'excluded {p}: {sorted(s)}')
+          totals = collections.defaultdict(float)
+          for round_, side, program, code, seconds in rows:
+              if program in both:
+                  totals[(side, round_)] += float(seconds)
+          for side in ('main', 'branch'):
+              values = [totals[(side, r)] for r in sorted({r for _, r in totals})]
+              print(f'RESULT side={side} rounds=' + ','.join(f'{v:.2f}' for v in values) + f' median={statistics.median(values):.2f}')
+          main = statistics.median([v for (s, _), v in totals.items() if s == 'main'])
+          branch = statistics.median([v for (s, _), v in totals.items() if s == 'branch'])
+          print(f'RESULT branch/main={branch / main:.3f}')
+          PY

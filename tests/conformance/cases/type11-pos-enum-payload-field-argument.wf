@@ -25,8 +25,11 @@ fn spread(item: Option<Span>) -> result: u64 pure {
 fn guarded(slot: Slot) -> result: u64 pure {
   match &slot.item {
     Some(value: r) => {
-      let d = spread(item: slot.item);
-      return d;
+      if r^.low <= r^.high {
+        let d = spread(item: slot.item);
+        return d;
+      }
+      return 0_u64;
     }
     None() => {
       return 0_u64;

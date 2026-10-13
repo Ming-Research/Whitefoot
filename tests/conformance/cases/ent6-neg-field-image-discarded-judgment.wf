@@ -17,10 +17,17 @@ fn clamp_to_limit(value: u64) -> result: u64 pure contract {
 }
 
 fn probe(counter: &Counter, bounded: u64, wild: u64) -> result: u64 writes(counter) contract {
-  requires bounded <= 800_u64;
   ensures counter^.count <= 800_u64;
 } {
-  doc "The call result is bounded by 800, while no fact bounds the untouched count. Its unrelated result image cannot prove the postcondition about that count.";
+  doc "Neither comparison is decided at entry. Their conjunction establishes contradictory bounds in the branch, where the subtraction first forms the count's image inside a discarded judgment. The later call result receives a fresh atom bounded by 800. A stale count image must not name that reused atom and prove the postcondition about the unbounded count.";
+  let above = 900_u64 < bounded;
+  let below = bounded <= 800_u64;
+  if band(above, below) {
+    let seen = counter^.count - 0_u64;
+    if seen <= 5_u64 {
+      set counter^.count = 0_u64;
+    }
+  }
   let small = clamp_to_limit(value: wild);
   return small;
 }
