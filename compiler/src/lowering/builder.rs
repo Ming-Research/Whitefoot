@@ -1722,7 +1722,7 @@ impl<'program> IrBuilder<'program> {
         // [WAIT-3] a context no later statement of its block used is joined
         // at the block's end, before the block's releases and its successor.
         if self.current.is_some() {
-            self.await_contexts_before(outer_pending, usize::MAX)?;
+            self.await_contexts_at_block_end(outer_pending)?;
         }
         self.pending_contexts.truncate(outer_pending);
         Ok(())
