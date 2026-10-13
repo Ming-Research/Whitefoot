@@ -480,3 +480,23 @@ fn mixed_float_contract_ordering_has_no_runtime_conversion_repair() {
         assert!(!rendered.contains("mechanical_fix:"), "{rendered}");
     }
 }
+
+#[test]
+fn mixed_float_type_invariant_ordering_has_no_runtime_conversion_repair() {
+    use super::{CompilationFailureKind, CompilerLimits, SourceInput, compile};
+
+    for (left_type, right_type) in [("f64", "f32"), ("f32", "f64")] {
+        let source = format!(
+            "struct Pair {{\n  first: {left_type};\n  second: {right_type};\n  invariant ordered(pair): pair.first < pair.second;\n}}\n"
+        );
+        let failure = compile(
+            &[SourceInput::new("mixed-type-invariant.wf", source.as_bytes())],
+            CompilerLimits::default(),
+        )
+        .expect_err("the clause comparison still rejects its first float operand");
+        assert_eq!(failure.kind(), CompilationFailureKind::Source);
+        assert_eq!(failure.rule_id(), Some("OP-1"), "{failure}");
+        let rendered = failure.to_string();
+        assert!(!rendered.contains("mechanical_fix:"), "{rendered}");
+    }
+}

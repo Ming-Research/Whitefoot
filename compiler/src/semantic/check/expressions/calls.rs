@@ -601,17 +601,19 @@ impl<'unit> TypeContext<'unit> {
                             _ => None,
                         };
                         // A mixed comparison needs a preceding conversion let.
-                        // Neither a contract clause nor a contract definition
-                        // can contain that statement.
+                        // A contract clause or definition cannot contain it,
+                        // and a type invariant's binder is visible only in
+                        // its relation, with no preceding statement slot.
                         let mut permits_conversion_binding = true;
                         if float_operation.is_some()
                             && right_float_type.is_some_and(|right| right != selected)
                         {
                             let mut ancestor = Some(node);
                             while let Some(current) = ancestor {
-                                if self.declarations.tree.production(current)?
-                                    == Production::ContractBlock
-                                {
+                                if matches!(
+                                    self.declarations.tree.production(current)?,
+                                    Production::ContractBlock | Production::TypeInvariant
+                                ) {
                                     permits_conversion_binding = false;
                                     break;
                                 }
