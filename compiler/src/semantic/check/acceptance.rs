@@ -958,9 +958,6 @@ impl<'unit> TypeContext<'unit> {
             return Ok(None);
         };
         match (index.capture, index.term) {
-            (CaptureId::LoopHeader { .. }, _) => {
-                Ok(Some(repairs::requirement_through_loop_capture(rendered)))
-            }
             (CaptureId::Source(occurrence), CapturedTerm::Superseded(_)) => {
                 let node = usize::try_from(occurrence)
                     .ok()

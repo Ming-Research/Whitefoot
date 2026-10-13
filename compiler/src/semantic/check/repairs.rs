@@ -42,7 +42,7 @@ use super::super::model::{
     CheckedFunction, CheckedIntegerOperation, CheckedStatement, FunctionId, expression_children,
 };
 use super::super::permission::visit_read_bindings;
-use super::super::places::{CaptureId, CapturedTerm, CapturedValue};
+use super::super::places::{CapturedTerm, CapturedValue};
 use crate::NodePath;
 
 /// [OP-16] name the first excluded part, without suggesting that copy alone
@@ -855,8 +855,8 @@ fn range_length_routes(
 }
 
 /// Existing capture provenance selects only diagnostic wording. A computed
-/// opaque index has no such repair: only a written binding's old value or
-/// a loop-carried capture explains these two losses of a source spelling.
+/// opaque index has no such repair: only a written binding's old value
+/// explains this loss of a source spelling.
 pub(super) fn unnameable_element_index(goal: &GoalExpression) -> Option<CapturedValue> {
     match goal {
         GoalExpression::Operation { arguments, .. } => {
@@ -872,8 +872,7 @@ pub(super) fn unnameable_element_index(goal: &GoalExpression) -> Option<Captured
             };
             projections.iter().find_map(|projection| match projection {
                 GoalProjection::Subscript(index) | GoalProjection::Page(index)
-                    if matches!(index.term, CapturedTerm::Superseded(_))
-                        || matches!(index.capture, CaptureId::LoopHeader { .. }) =>
+                    if matches!(index.term, CapturedTerm::Superseded(_)) =>
                 {
                     Some(*index)
                 }
@@ -886,12 +885,6 @@ pub(super) fn unnameable_element_index(goal: &GoalExpression) -> Option<Captured
 pub(super) fn requirement_after_index_write(goal: &str, index: &str) -> String {
     format!(
         "`{goal}` reads an element selected by the old value of `{index}`, which was rewritten after the reference was formed; before forming that reference, save the index in a fresh binding (for example `let {index}0 = {index};`), form the reference through the saved binding, establish the requirement through that reference before the write, and keep the saved binding unchanged so those facts survive the write"
-    )
-}
-
-pub(super) fn requirement_through_loop_capture(goal: &str) -> String {
-    format!(
-        "`{goal}` reads an element selected by a loop-carried reference whose old index has no current spelling; when this call is intended to use the current iteration's element, re-form the reference inside the loop after selecting that element's index, then establish the requirement through that reference before the call"
     )
 }
 
