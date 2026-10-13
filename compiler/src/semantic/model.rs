@@ -1062,6 +1062,11 @@ pub(crate) enum CheckedNominalKind {
 pub(crate) struct CheckedTarget {
     pub(crate) lock_order: Vec<String>,
     pub(crate) node_path: NodePath,
+    /// Source presentation for the non-normative lowering lock ledger.
+    pub(crate) ledger_name: String,
+    pub(crate) ledger_state: String,
+    /// The target binder's exact one-based `path:line:column` location.
+    pub(crate) ledger_site: String,
     pub(crate) binding: BindingId,
     pub(crate) handle: Box<CheckedExpression>,
     pub(crate) borrowed: bool,
@@ -2955,6 +2960,8 @@ pub(crate) enum CheckedStatement {
         drops: Vec<CheckedDrop>,
     },
     Match {
+        /// The complete written `match` or `if`, including a chained `else if`.
+        node_path: NodePath,
         scrutinee: CheckedExpression,
         match_type: CheckedMatchType,
         arms: Vec<CheckedMatchArm>,
@@ -3040,6 +3047,31 @@ pub(crate) enum CheckedStatement {
         /// Whether the block can reach its end [FN-1].
         continues: bool,
     },
+}
+
+impl CheckedStatement {
+    /// Source presentation for the non-normative lowering lock ledger.
+    /// Proof statements are erased and have no executable first-use site.
+    pub(crate) fn ledger_path(&self) -> Option<&NodePath> {
+        match self {
+            Self::Let { node_path, .. }
+            | Self::DestructuringLet { node_path, .. }
+            | Self::PropagateLet { node_path, .. }
+            | Self::Set { node_path, .. }
+            | Self::Evaluate { node_path, .. }
+            | Self::DropExpression { node_path, .. }
+            | Self::Return { node_path, .. }
+            | Self::Match { node_path, .. }
+            | Self::ValueMatchLet { node_path, .. }
+            | Self::Give { node_path, .. }
+            | Self::Loop { node_path, .. }
+            | Self::CountedRange { node_path, .. }
+            | Self::Break { node_path, .. }
+            | Self::Continue { node_path, .. }
+            | Self::Atomic { node_path, .. } => Some(node_path),
+            Self::Proof(_) => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -3448,6 +3480,11 @@ pub(crate) struct CheckedProgramData {
     /// compile, and no mandatory record, no normative output, and no lowering
     /// decision reads it.
     pub(crate) permission_ledger: Vec<super::permission_ledger::LedgerLine>,
+    /// Source nodes beneath executable atomic statements, including statement
+    /// and expression carriers, rendered as one-based `path:line:column`.
+    /// Lowering uses these only to present its non-normative lock ledger;
+    /// they retain no lock timing, permission or acceptance judgment.
+    pub(crate) lock_ledger_sources: std::collections::HashMap<NodePath, String>,
 }
 
 impl CheckedProgramData {

@@ -13,6 +13,13 @@ Owner-approved: On the shared status board on 2026-10-13, written in Chinese, th
 
 Summary: `match` takes integer constant arms (literals or consts of the scrutinee's type, pairwise distinct, `else` last unless the arms cover the type), because dispatch on integer codes, as in Firn's command table, otherwise needs a long `if` chain whose accumulated disequalities make checking quadratic; refused were a code-to-enum helper (itself an `if` chain) and matching on Bool. A value arm establishes `scrutinee == value` and `else` one shared exclusion-set fact, instead of one disequality per earlier arm. The compiler keeps an explicit integer selection in checked matches instead of synthetic enum tags, holds the exclusion as one expression with one sorted shared value set that joins intersect and queries consult by membership, advances endpoint tightening across a whole excluded run, represents `else` in the range judgment as one whole-set literal counted per RANGE-3, keeps integer-match loops on ordinary switch lowering instead of the nominal-enum split planner, and emits one LLVM switch over the once-evaluated scrutinee instead of an equality chain.
 
+## 2026-10-13 The lock ledger reports when each atomic target group is taken
+
+Nodes: compiler/waiting-contexts/state-locks
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve this decision" (translated), on the card "approve the design-tree change of Whitefoot#421 (head commit 0d2e4f75b)? It adds one decision: the compiler gains a `--lock-ledger` flag reporting when each atomic statement takes each lock group" (translated).
+
+Summary: One decision is added. `whitefootc --lock-ledger` reports, for each atomic statement, its ordered target groups with their bindings and state type, whether each is taken before the guard, on every body path, on some body paths or never, and the first use or later group that takes it, because a writer could not otherwise see that an early read or a preceding type group extends a hold, as Firn's write commands did. Lowering records the acquisition requests it emits and classifies them on its control-flow graph, instead of a warning on early use, which is often intended, or a separate source analysis that could disagree with the acquired groups; the report changes neither acceptance nor acquisition placement.
 ## 2026-10-13 A range fact can state an element's variant, and each conclusion stands on its own reads
 
 Nodes: language/checks-and-proofs/range-facts

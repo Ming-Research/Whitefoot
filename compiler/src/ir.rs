@@ -2031,6 +2031,8 @@ pub struct IrFunction {
     /// Only calls lowered from checked source; synthesized calls do not
     /// acquire invented source use or provenance records.
     pub(crate) source_calls: Vec<IrSourceCall>,
+    /// Developer-only atomic acquisition lines, recorded during lowering.
+    pub(crate) lock_ledger: Vec<String>,
     pub(crate) result: IrType,
     pub(crate) values: Vec<IrType>,
     pub(crate) blocks: Vec<IrBlock>,

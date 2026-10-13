@@ -363,6 +363,7 @@ impl<'unit> Checker<'_, 'unit> {
                 let matched = self.check_if(context, node, bindings, counters, scope, false)?;
                 Ok(StatementResult {
                     statement: CheckedStatement::Match {
+                        node_path: self.types.declarations.tree.path(node)?.clone(),
                         scrutinee: matched.scrutinee,
                         match_type: matched.match_type,
                         arms: matched.arms,
@@ -380,6 +381,7 @@ impl<'unit> Checker<'_, 'unit> {
                 let matched = self.check_match(context, node, bindings, counters, scope, false)?;
                 Ok(StatementResult {
                     statement: CheckedStatement::Match {
+                        node_path: self.types.declarations.tree.path(node)?.clone(),
                         scrutinee: matched.scrutinee,
                         match_type: matched.match_type,
                         arms: matched.arms,
