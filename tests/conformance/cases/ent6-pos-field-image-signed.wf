@@ -1,0 +1,53 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Reading {
+  doc "One signed reading.";
+  value: i32;
+}
+
+fn shift(reading: &Reading, step: i32) -> result: unit writes(reading) contract {
+  requires reading^.value + step <= 1000_i32;
+  requires -1000_i32 <= reading^.value + step;
+} {
+  doc "Adds a signed step to an i32 field. The i32 addition owes both of its bounds, which the two requirements state over the field's entry image plus step.";
+  let current = reading^.value;
+  let next = current + step;
+  set reading^.value = next;
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "Shifts -5 up by 10 and then down by 20 after checking the room each time.";
+  let reading = Reading(value: -5_i32);
+  let held = reading.value;
+  if held <= 990_i32 {
+  } else {
+    return exit_status(code: 1_u8);
+  }
+  if -990_i32 <= held {
+  } else {
+    return exit_status(code: 2_u8);
+  }
+  shift(reading: &reading, step: 10_i32);
+  let first = reading.value;
+  if first == 5_i32 {
+  } else {
+    return exit_status(code: 3_u8);
+  }
+  if first <= 990_i32 {
+  } else {
+    return exit_status(code: 4_u8);
+  }
+  if -980_i32 <= first {
+  } else {
+    return exit_status(code: 5_u8);
+  }
+  shift(reading: &reading, step: -20_i32);
+  let second = reading.value;
+  if second == -15_i32 {
+  } else {
+    return exit_status(code: 6_u8);
+  }
+  return exit_status(code: 0_u8);
+}

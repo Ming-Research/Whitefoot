@@ -405,6 +405,89 @@ impl<'unit> Checker<'_, 'unit> {
         )
     }
 
+    /// [INV-1, ENT-6] the read one written affine factor denotes when it is a
+    /// reference field place: its base names a `&T` reference parameter of
+    /// the function, followed by `^` and one or more field selections, and
+    /// the last selection is an integer field. `None` for every other place,
+    /// which the caller judges by its own rows.
+    pub(in crate::semantic::check) fn reference_field_factor(
+        &mut self,
+        check_context: &CheckContext<'_>,
+        parameters: &[super::super::ParameterSignature],
+        node: NodeId,
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+        root_role: LexicalUseRole,
+    ) -> Result<Option<(DeclarationId, CheckedExpression)>, CheckStop> {
+        use crate::syntax::views::PlaceSuffix;
+        let suffixes = self
+            .types
+            .declarations
+            .tree
+            .children_with(node, Production::Psuffix)?;
+        let Some((first, fields)) = suffixes.split_first() else {
+            return Ok(None);
+        };
+        if fields.is_empty()
+            || !matches!(
+                self.types.declarations.tree.place_suffix(*first)?,
+                PlaceSuffix::Dereference
+            )
+        {
+            return Ok(None);
+        }
+        for suffix in fields {
+            if !matches!(
+                self.types.declarations.tree.place_suffix(*suffix)?,
+                PlaceSuffix::Member(_)
+            ) {
+                return Ok(None);
+            }
+        }
+        let pbase = self
+            .types
+            .declarations
+            .tree
+            .first_child_with(node, Production::Pbase)?
+            .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
+        if !self.types.declarations.tree.children(pbase)?.is_empty() {
+            return Ok(None);
+        }
+        let usage = self
+            .types
+            .declarations
+            .use_at(check_context, pbase, root_role)?;
+        let ResolvedTarget::Source {
+            declaration,
+            class: DeclarationClass::Value,
+        } = usage.target()
+        else {
+            return Ok(None);
+        };
+        if !parameters.iter().any(|parameter| {
+            parameter.declaration == declaration && parameter.mode == CheckedMode::Reference
+        }) {
+            return Ok(None);
+        }
+        let place = self.elaborate_place_prefix(
+            check_context,
+            node,
+            node,
+            &suffixes,
+            bindings,
+            root_role,
+        )?;
+        let path = &place.resolved.identity.path;
+        if !matches!(place.ty, CheckedType::Integer(_))
+            || place.measure.is_some()
+            || place.range_referent
+            || path.is_empty()
+            || !path.iter().all(|step| matches!(step, PlaceStep::Field(_)))
+        {
+            return Ok(None);
+        }
+        Ok(Some((declaration, place.expression)))
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(super) fn elaborate_place_prefix(
         &mut self,

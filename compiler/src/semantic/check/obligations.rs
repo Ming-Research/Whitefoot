@@ -351,7 +351,8 @@ impl Records<'_> {
         for side in [&relation.left, &relation.right] {
             for expression in side.postorder() {
                 match &expression.kind {
-                    CheckedAffineExpressionKind::Measure(measure) => self.expression(measure),
+                    CheckedAffineExpressionKind::Measure(measure)
+                    | CheckedAffineExpressionKind::Field(measure) => self.expression(measure),
                     CheckedAffineExpressionKind::Constant { .. }
                     | CheckedAffineExpressionKind::Local { .. }
                     | CheckedAffineExpressionKind::ConstGeneric { .. }

@@ -596,6 +596,35 @@ impl<'unit> Checker<'_, 'unit> {
         // `p^.len`. A bare `p^` naming no measure is still no
         // affine atom, and the refusal for it stands below.
         let dereferenced = self.types.declarations.tree.place_has_dereference(place)?;
+        // [INV-1, ENT-6] a reference field place: a `&T` reference parameter,
+        // its `^`, and field selections ending at an integer field. The flow
+        // carries one current image for that place, as it does for a measure,
+        // so the factor reads that image and evaluates nothing.
+        if dereferenced
+            && let Some((declaration, expression)) = self.reference_field_factor(
+                check_context,
+                &function.parameters,
+                place,
+                bindings,
+                owner.value_role(),
+            )?
+        {
+            if !allowed_values.contains(&declaration) {
+                return self.types.declarations.invalid_affine_proof(
+                    owner,
+                    node,
+                    "an affine relation reads a value outside its admitted entry state",
+                    "read a field of a reference parameter that exists before this proof point",
+                );
+            }
+            return Ok((
+                CheckedAffineExpression {
+                    node_path: self.types.declarations.tree.path(node)?.clone(),
+                    kind: CheckedAffineExpressionKind::Field(Box::new(expression)),
+                },
+                None,
+            ));
+        }
         // [INV-1, OP-15] one `place` formed from an admitted measure place by
         // one measure-member `psuffix`. The relation evaluates nothing and
         // reads no storage, so the factor reaches the resolved place and the
@@ -949,10 +978,11 @@ enum AffineConversion<'expression> {
 fn checked_affine_expression(source: &CheckedAffineExpression) -> Option<AffineExpression> {
     let mut pending = vec![AffineConversion::Visit(source)];
     let mut values = Vec::new();
-    // [INV-1] the two factor shapes with no checker-visible term identity:
-    // a measure former's place, and a const generic at the symbolic
-    // instance. They share one descending index block so no two of them
-    // collide and neither collides with a binding's own ascending index.
+    // [INV-1] the factor shapes with no checker-visible term identity: a
+    // measure former's place or a reference field place, compared by their
+    // checked read, and a const generic at the symbolic instance. They share
+    // one descending index block so no two of them collide and none collides
+    // with a binding's own ascending index.
     enum Opaque<'expression> {
         Measure(&'expression CheckedExpression),
         ConstGeneric(DeclarationId),
@@ -967,7 +997,8 @@ fn checked_affine_expression(source: &CheckedAffineExpression) -> Option<AffineE
                 CheckedAffineExpressionKind::Local { binding, ty: _ } => {
                     values.push(AffineExpression::Term(AffineTermId::from_index(binding.0)));
                 }
-                CheckedAffineExpressionKind::Measure(measure) => {
+                CheckedAffineExpressionKind::Measure(measure)
+                | CheckedAffineExpressionKind::Field(measure) => {
                     let index = opaques
                         .iter()
                         .position(|seen| {

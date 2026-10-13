@@ -1,0 +1,20 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Counter {
+  doc "One count.";
+  count: u64;
+}
+
+fn advance(counter: Counter, delta: u64) -> result: u64 pure contract {
+  requires counter.count + delta <= 800_u64;
+} {
+  doc "A field of a by-value parameter is no reference field place, so the requirement gives its read no image and the sum stays unproved.";
+  let count = counter.count;
+  let total = count + delta;
+  return total;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

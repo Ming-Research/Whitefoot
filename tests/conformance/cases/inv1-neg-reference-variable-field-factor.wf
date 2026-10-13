@@ -1,0 +1,15 @@
+struct Bounds {
+  cap: u32;
+}
+
+fn inspect(limits: &Bounds) -> result: u32 reads(limits.cap) {
+  doc "A field read through a local reference variable is no reference field place factor: INV-1 admits only a field path written from a reference parameter.";
+  let view = &limits^;
+  invariant bounded: 0_u32 <= view^.cap;
+  let capacity = view^.cap;
+  return capacity;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
