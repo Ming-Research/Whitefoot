@@ -234,6 +234,10 @@ fn complete_inventory_is_pinned() {
     assert_eq!(productions()[99], Production::Epbase);
     assert_eq!(productions()[100], Production::Epsuffix);
     assert_eq!(productions()[101], Production::Erange);
+    // Above, `productions()` follows first definition in the specification.
+    // Below, `index()` follows the generator's independent `ENUM_ORDER`:
+    // RangeVariant is definition 93 but dense index 100; GraphSegment is
+    // definition 31 but dense index 101.
     assert_eq!(Production::ForStmt.index(), 63);
     assert_eq!(Production::ForBinding.index(), 64);
     assert_eq!(Production::HeaderInvariant.index(), 65);
@@ -270,9 +274,8 @@ fn complete_inventory_is_pinned() {
     assert_eq!(Production::PackageDecl.index(), 99);
     assert_eq!(Production::RangeVariant.index(), 100);
     assert_eq!(Production::GraphSegment.index(), 101);
-    // Index 2 is `struct_decl`'s `"opaque"?` optional [GRAM-2, TYPE-2], so
-    // every decision after `item` follows that optional before
-    // that modifier entered the grammar.
+    // Decision indices follow specification-definition order and EBNF
+    // preorder, independently of the dense production indices above.
     // `item`'s alias, public-item and declaration choice and the public
     // item's declaration group precede the alias header's own decisions,
     // among them v0.72's `"pkg" | "std"` root [MOD-10], which moves every

@@ -228,21 +228,59 @@ fn call_type_argument_does_not_suggest_an_expression_repair() {
 
 #[test]
 fn result_route_does_not_offer_match_arm_omission_syntax() {
-    let source = b"fn f() -> r: Option<u32> pure contract { ensures when Some(x): x == 0_u32; } { return Some<u32>(value: 0_u32); }";
-    let result = outcome(source, false);
-    let ParseOutcome::SourceIssue(issue) = result else {
-        panic!("positional result route must reject: {result:?}");
-    };
-    let start = usize::try_from(issue.coordinate().start().value()).expect("small source");
-    let end = usize::try_from(issue.coordinate().end().value()).expect("small source");
-    assert_eq!(&source[start..end], b")");
-    assert!(issue.expected.iter().any(|predicate| {
-        predicate
-            == crate::syntax::grammar::LookaheadPredicate::Terminal(
+    for result_selector in ["", "r is "] {
+        let source = format!(
+            "fn f() -> r: Option<u32> pure contract {{ ensures when {result_selector}Some(x): x == 0_u32; }} {{ return Some<u32>(value: 0_u32); }}"
+        );
+        let result = outcome(source.as_bytes(), false);
+        let ParseOutcome::SourceIssue(issue) = result else {
+            panic!("positional result route must reject: {result:?}");
+        };
+        assert_eq!(issue.rule(), SyntaxRule::Gram4);
+        assert_eq!(issue_bytes(source.as_bytes(), issue), b")");
+        assert!(issue.expected.iter().eq([
+            crate::syntax::grammar::LookaheadPredicate::Terminal(
                 crate::syntax::terminal::TerminalPredicate::Fixed(
                     crate::syntax::terminal::FixedTerminal::Colon,
                 ),
-            )
-    }));
-    assert_eq!(issue.mechanical_fix, None);
+            ),
+        ]));
+        assert_eq!(issue.mechanical_fix, None);
+    }
+}
+
+#[test]
+fn routed_range_conjunction_keeps_the_range_repair() {
+    for result_selector in ["", "r is "] {
+        for relations in [
+            "when payload is True && flag is True: payload is True",
+            "when payload is True: payload is True && flag is True",
+        ] {
+            let source = format!(
+                "fn f(flag: Bool) -> r: Option<Bool> pure contract {{ ensures when {result_selector}Some(value: payload): forall each(i in 0_u64 .. 1_u64) {relations}; }} {{ return Some<Bool>(value: flag); }}"
+            );
+            let result = outcome(source.as_bytes(), false);
+            let ParseOutcome::SourceIssue(issue) = result else {
+                panic!("range conjunction must reject: {result:?}");
+            };
+            // The optional `not` exit matches TYPEID `True`, then its
+            // caller's relation separators reject the following `&`.
+            assert_eq!(issue.rule(), SyntaxRule::Gram5);
+            assert_eq!(issue_bytes(source.as_bytes(), issue), b"&");
+            assert_eq!(
+                issue.coordinate().start().value(),
+                u64::try_from(source.find("&&").expect("conjunction in fixture"))
+                    .expect("small source")
+            );
+            assert_eq!(
+                issue.mechanical_fix,
+                Some(crate::diagnostic_repairs::RANGE1_BOOLEAN_AND_FIX)
+            );
+            let repaired = source.replace("&&", ",");
+            assert!(matches!(
+                outcome(repaired.as_bytes(), false),
+                ParseOutcome::Complete(_)
+            ));
+        }
+    }
 }
