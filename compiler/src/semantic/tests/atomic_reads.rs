@@ -82,6 +82,154 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "#;
 
+/// Guards use the projected read row, including calls on whole states and
+/// selected shards, rather than looking only for a direct dereference.
+#[test]
+fn guards_cannot_read_shards_through_callee_rows() {
+    for (referent, expression, target) in [
+        ("u8", "value^ != 0_u8", "part = &stats^[mine]"),
+        ("Shards<u8>", "value^.len > 1_u64", "part = &stats^"),
+    ] {
+        let source = format!(
+            r#"fn ready(value: &{referent}) -> result: Bool reads(value) {{
+  return {expression};
+}}
+
+fn inspect(stats: &Shared<Shards<u8>>, mine: AnyShard) -> result: unit reads(stats) waits {{
+  atomic {target} when ready(value: part) {{
+    let seen = part;
+  }}
+  return unit;
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
+}}
+"#
+        );
+        with_semantics(source.as_bytes(), |outcome| {
+            let SemanticOutcome::SourceIssue { issue } = outcome else {
+                panic!("a callee read of shards must be refused: {outcome:?}");
+            };
+            assert_eq!(issue.rule(), crate::SemanticRule::Share2);
+            assert!(matches!(
+                issue.kind(),
+                crate::SemanticIssueKind::AtomicGuardReadsShards { mechanical_fix }
+                    if mechanical_fix.contains("without a guard")
+            ));
+            let coordinate = issue.location().coordinate();
+            let start = usize::try_from(coordinate.start().value()).expect("source offset");
+            let end = usize::try_from(coordinate.end().value()).expect("source offset");
+            assert_eq!(&source[start..end], "ready(value: part)");
+        });
+    }
+}
+
+/// Forming a reference to a shard is no state read when the guard's callee
+/// has no read row. The target retains the selector expression for lowering.
+#[test]
+fn a_guard_that_does_not_read_its_shard_argument_checks() {
+    let source = r#"fn ready(value: &u8) -> result: Bool pure {
+  return True();
+}
+
+fn inspect(stats: &Shared<Shards<u8>>, mine: AnyShard) -> result: unit reads(stats) waits {
+  atomic part = &stats^[mine] when ready(value: part) {
+    set part^ = 1_u8;
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    with_semantics(source.as_bytes(), |outcome| {
+        let SemanticOutcome::Complete(checked) = outcome else {
+            panic!("a guard with no shard read must check: {outcome:?}");
+        };
+        let function = checked
+            .data
+            .functions
+            .iter()
+            .find(|function| function.name == "inspect")
+            .expect("inspect is checked");
+        let CheckedStatement::Atomic { targets, .. } =
+            &function.body.as_ref().expect("inspect has a body")[0]
+        else {
+            panic!("inspect starts with an atomic statement");
+        };
+        assert_eq!(targets.len(), 1);
+        assert!(matches!(
+            targets[0].kind,
+            super::super::model::CheckedTargetKind::Shard(_)
+        ));
+        assert_eq!(
+            targets[0].referent,
+            super::super::model::CheckedType::Integer(super::super::model::IntegerType::U8),
+        );
+    });
+}
+
+/// An owned noncopy index is refused by SHARE-2 before OWN-1 asks for move.
+#[test]
+fn a_shard_index_must_be_a_selector_before_ownership_is_checked() {
+    let source = r#"fn inspect(stats: &Shared<Shards<u8>>, bad: Box<u8>) -> result: unit reads(stats) waits {
+  atomic part = &stats^[bad] {
+    set part^ = 1_u8;
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    with_semantics(source.as_bytes(), |outcome| {
+        let SemanticOutcome::SourceIssue { issue } = outcome else {
+            panic!("a Box shard selector must be refused: {outcome:?}");
+        };
+        assert_eq!(issue.rule(), crate::SemanticRule::Share2);
+        assert!(matches!(
+            issue.kind(),
+            crate::SemanticIssueKind::AtomicTargetNotShared { mechanical_fix, .. }
+                if mechanical_fix.contains("let mine = any_shard();")
+        ));
+        let coordinate = issue.location().coordinate();
+        let start = usize::try_from(coordinate.start().value()).expect("source offset");
+        let end = usize::try_from(coordinate.end().value()).expect("source offset");
+        assert_eq!(&source[start..end], "bad");
+    });
+}
+
+/// Phase 1 checks the fixed run fixtures independently of their lowering.
+#[test]
+fn all_shards_run_cases_pass_the_checker() {
+    for source in [
+        include_bytes!("../../../../tests/conformance/cases/share-pos-shards-count.wf").as_slice(),
+        include_bytes!(
+            "../../../../tests/conformance/cases/share-pos-shards-start-from-maker.wf"
+        )
+        .as_slice(),
+        include_bytes!("../../../../tests/conformance/cases/share-pos-shards-owned-buffers.wf")
+            .as_slice(),
+        include_bytes!("../../../../tests/conformance/cases/share-pos-shards-maximum.wf").as_slice(),
+        include_bytes!(
+            "../../../../tests/conformance/cases/share-pos-shards-beside-map-entry.wf"
+        )
+        .as_slice(),
+        include_bytes!("../../../../tests/conformance/cases/share-pos-shards-whole-to-callee.wf")
+            .as_slice(),
+    ] {
+        with_semantics(source, |outcome| {
+            assert!(
+                matches!(outcome, SemanticOutcome::Complete(_)),
+                "{outcome:?}"
+            );
+        });
+    }
+}
+
 /// Every way a block writes through its binder makes the statement hold the
 /// entry alone.
 #[test]
@@ -281,6 +429,60 @@ fn reads_a_field(store: &Shared<ConcurrentHashMap<Pair>>) -> result: u8 reads(st
     assert!(
         writers.is_empty(),
         "these write nothing of their entry, so each reads it: {writers:?}"
+    );
+}
+
+/// Both source and internally formed prelude nominals follow PRE-1's order.
+#[test]
+fn atomic_prelude_type_order_keeps_enums_after_shards_and_the_selector() {
+    with_semantics(
+        br#"fn inspect(shards: &Shared<Shards<u8>>, selector: &Shared<AnyShard>, flag: &Shared<Bool>, option: &Shared<Option<u8>>, outcome: &Shared<Result<u8, u8>>, overflow: &Shared<Overflow>, division: &Shared<DivError>, narrow: &Shared<NarrowError>, scan: &Shared<ScanStep>) -> result: unit reads(shards), reads(selector), reads(flag), reads(option), reads(outcome), reads(overflow), reads(division), reads(narrow), reads(scan) waits {
+  atomic a = &shards^, b = &selector^, c = &flag^, d = &option^, e = &outcome^, f = &overflow^, g = &division^, h = &narrow^, i = &scan^ {
+    let count = a^.len;
+    let selected = b^;
+    let boolean = c^;
+    let optional = d^;
+    let returned = e^;
+    let overflowed = f^;
+    let divided = g^;
+    let narrowed = h^;
+    let scanned = i^;
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        |outcome| {
+            let SemanticOutcome::Complete(checked) = outcome else {
+                panic!("the prelude states must check: {outcome:?}");
+            };
+            let inspect = checked
+                .data
+                .executable_functions()
+                .find(|function| function.name == "inspect")
+                .expect("inspect");
+            let targets = inspect
+                .body
+                .as_deref()
+                .expect("body")
+                .iter()
+                .find_map(|statement| match statement {
+                    CheckedStatement::Atomic { targets, .. } => Some(targets),
+                    _ => None,
+                })
+                .expect("targets");
+            let ranks = targets
+                .iter()
+                .map(|target| target.lock_order[0].as_str())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                ranks,
+                ["023", "024", "025", "026", "027", "028", "029", "030", "031"]
+            );
+        },
     );
 }
 

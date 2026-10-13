@@ -50,6 +50,7 @@ pub(super) fn is_stored_aggregate(program: &IrProgram, ty: IrType) -> Result<boo
         | IrType::Segments { .. }
         | IrType::KeySet
         | IrType::Entries { .. }
+        | IrType::Shards { .. }
         | IrType::Window { capacity: None, .. }
         | IrType::Range { .. }
         | IrType::Run { .. }

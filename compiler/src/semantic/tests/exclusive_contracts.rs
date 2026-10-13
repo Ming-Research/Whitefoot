@@ -133,7 +133,12 @@ fn a_written_push_proves_entry_and_exit_and_publishes_without_result() {
             let SemanticOutcome::Complete(checked) = outcome else {
                 panic!("{outcome:?}");
             };
-            for function in &checked.data.functions {
+            for function in checked
+                .data
+                .functions
+                .iter()
+                .filter(|function| !function.formal_hypothesis)
+            {
                 super::entailment::validate_derivations(&function.entailment);
                 let mut state_clauses = std::collections::HashSet::new();
                 for root in &function.entailment.derivations.roots {

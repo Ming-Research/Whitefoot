@@ -2271,6 +2271,23 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         } else {
             None
         };
+        let source = self
+            .types
+            .declarations
+            .tree
+            .coordinate(signature.node)?
+            .source();
+        let calls_function_actuals = self
+            .types
+            .declarations
+            .resolved
+            .syntax()
+            .classified_bundle()
+            .source_bundle()
+            .file(source)
+            .is_some_and(|file| {
+                file.prelude() == Some(crate::source::PreludeSource::FunctionCallingActuals)
+            });
         let function = CheckedFunction {
             prelude_element,
             formal_hypothesis: signature.formal_parameter.is_some(),
@@ -2287,6 +2304,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             name: signature.name.clone(),
             symbol: signature.symbol.clone(),
             function_actuals: self.types.function_actual_ids(&signature.substitution)?,
+            calls_function_actuals,
             region_parameters: signature.region_parameters.clone(),
             parameters,
             result_mode: signature.result_mode,
@@ -3067,6 +3085,14 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                     regions,
                 )?,
             },
+            CheckedType::Shards { element } => CheckedType::Shards {
+                element: self.instantiate_goal_element(
+                    check_context,
+                    element,
+                    signature,
+                    regions,
+                )?,
+            },
             CheckedType::Nominal(id) => {
                 self.instantiate_goal_nominal(check_context, id, signature, regions)?
             }
@@ -3373,6 +3399,7 @@ impl<'unit> TypeContext<'unit> {
             for callee in calls
                 .iter()
                 .map(|call| call.callee)
+                .chain(checked.function.supplied_body_calls().iter().copied())
                 .chain(checked.function.summary_source)
             {
                 let Some(callee_callers) = callers.get_mut(callee.0 as usize) else {

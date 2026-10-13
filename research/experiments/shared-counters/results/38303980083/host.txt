@@ -1,0 +1,47 @@
+kernel: Linux 7.0.0-38-generic #38-Ubuntu SMP PREEMPT_DYNAMIC Fri Sep  4 09:10:14 UTC 2026 x86_64 GNU/Linux
+cpus: 32
+model: Intel(R) Core(TM) i9-14900K
+load: 0.22 0.05 0.02 1/551 1090685
+governor: performance
+no_turbo: 0
+compiler release: wf-29de8a21eef8
+clang: Ubuntu clang version 22.1.8 (++20260714015917+ca7933e47d3a-1~exp1~20260714135927.17)
+wf__shared_share calls: shared=4 shared_param=3 shards=4 shards_reader=20
+W2 and its twin: ef88e40006a27edd3d51135383789c9075abf60c27c0de28d57b1ad80cd7f1c9 ef88e40006a27edd3d51135383789c9075abf60c27c0de28d57b1ad80cd7f1c9 
+contexts: 64  millis: 5000  blocks: 1  pilot: 1
+arms: W0 W1 W2 W2t W2r W6 W3 W3rd W5 W5p
+cpu lists: 0,2,4,6,8,10,12,14
+cpu map (CPU, core, max MHz):
+CPU CORE    MAXMHZ
+  0    0 5700.0000
+  1    0 5700.0000
+  2    1 5700.0000
+  3    1 5700.0000
+  4    2 5700.0000
+  5    2 5700.0000
+  6    3 5700.0000
+  7    3 5700.0000
+  8    4 6000.0000
+  9    4 6000.0000
+ 10    5 6000.0000
+ 11    5 6000.0000
+ 12    6 5700.0000
+ 13    6 5700.0000
+ 14    7 5700.0000
+ 15    7 5700.0000
+ 16    8 4400.0000
+ 17    9 4400.0000
+ 18   10 4400.0000
+ 19   11 4400.0000
+ 20   12 4400.0000
+ 21   13 4400.0000
+ 22   14 4400.0000
+ 23   15 4400.0000
+ 24   16 4400.0000
+ 25   17 4400.0000
+ 26   18 4400.0000
+ 27   19 4400.0000
+ 28   20 4400.0000
+ 29   21 4400.0000
+ 30   22 4400.0000
+ 31   23 4400.0000

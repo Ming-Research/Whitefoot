@@ -139,7 +139,9 @@ impl<'unit> TypeContext<'unit> {
             CheckedType::Array { element, .. } | CheckedType::Window { element, .. } => {
                 (vec![], vec![self.element_type(element)?])
             }
-            CheckedType::Buffer { element } | CheckedType::Segments { element } => {
+            CheckedType::Buffer { element }
+            | CheckedType::Segments { element }
+            | CheckedType::Shards { element } => {
                 (vec![], vec![self.element_type(element)?])
             }
             _ => (vec![], vec![]),

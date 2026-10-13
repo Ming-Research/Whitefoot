@@ -48,6 +48,10 @@ struct Group {
 #[derive(Clone)]
 enum Lock {
     Object,
+    Shards {
+        element: crate::IrElement,
+        whole: bool,
+    },
     Map {
         nominal: IrNominalId,
         table: IrValueId,
@@ -198,6 +202,25 @@ impl IrBuilder<'_> {
                 }
                 let read = target.reads && !guard_roots.iter().any(|r| r.binding == target.binding);
                 let lock = match &target.kind {
+                    CheckedTargetKind::Object if matches!(state, IrType::Shards { .. }) => {
+                        let IrType::Shards { element } = state else {
+                            return Err(LoweringFailure::InvalidCheckedProgram);
+                        };
+                        self.bind_reference(target.binding, field)?;
+                        Lock::Shards {
+                            element,
+                            whole: true,
+                        }
+                    }
+                    CheckedTargetKind::Shard(_) => {
+                        let IrType::Shards { element } = state else {
+                            return Err(LoweringFailure::InvalidCheckedProgram);
+                        };
+                        Lock::Shards {
+                            element,
+                            whole: false,
+                        }
+                    }
                     CheckedTargetKind::Object => {
                         self.bind_reference(target.binding, field)?;
                         Lock::Object
@@ -296,12 +319,15 @@ impl IrBuilder<'_> {
                 )?)
             };
             let record = if grouped {
-                Some(
-                    self.record(IrRecordKind::AtomicGroup {
-                        count: u32::try_from(members.len())
-                            .map_err(|_| LoweringFailure::CounterOverflow)?,
-                    })?,
-                )
+                let count = u32::try_from(members.len())
+                    .map_err(|_| LoweringFailure::CounterOverflow)?;
+                Some(self.record(
+                    if matches!(region.targets[members[0]].lock, Lock::Shards { .. }) {
+                        IrRecordKind::ShardsGroup { count }
+                    } else {
+                        IrRecordKind::AtomicGroup { count }
+                    },
+                )?)
             } else {
                 None
             };
@@ -482,10 +508,30 @@ impl IrBuilder<'_> {
                 .map(|flag| self.group_flag(flag, true))
                 .transpose()?;
             if let Some(record) = group.record {
+                let shards = match &region.targets[group.targets[0]].lock {
+                    Lock::Shards { element, .. } => Some(*element),
+                    _ => None,
+                };
                 for (ordinal, member) in group.targets.iter().enumerate() {
                     let target = &region.targets[*member];
+                    if let Lock::Shards { whole, .. } = &target.lock {
+                        self.define(
+                            IrType::Unit,
+                            IrOperation::ShardsGroupTarget {
+                                record,
+                                index: u32::try_from(ordinal)
+                                    .map_err(|_| LoweringFailure::CounterOverflow)?,
+                                object: target.object,
+                                whole: *whole,
+                            },
+                        )?;
+                        continue;
+                    }
                     let hold = match &target.lock {
                         Lock::Object => None,
+                        Lock::Shards { .. } => {
+                            return Err(LoweringFailure::InvalidCheckedProgram);
+                        }
                         Lock::Map { table, take, .. } => {
                             self.prepare_hold(*table, take)?;
                             match take {
@@ -507,10 +553,13 @@ impl IrBuilder<'_> {
                     )?;
                 }
                 // The first group holds nothing before it, so it waits
-                // and suspends as a first object's acquire does.
+                // and suspends as a first object's acquire does. A shards
+                // group takes its ticket locks in its own order.
                 self.define(
                     IrType::Unit,
-                    if index == 0 {
+                    if let Some(element) = shards {
+                        IrOperation::ShardsGroupTake { record, element }
+                    } else if index == 0 {
                         IrOperation::AtomicGroupAcquire { record }
                     } else {
                         IrOperation::AtomicGroupTake { record }
@@ -519,6 +568,16 @@ impl IrBuilder<'_> {
             } else {
                 let target = &region.targets[group.targets[0]];
                 match &target.lock {
+                    Lock::Shards { element, whole } => {
+                        self.define(
+                            IrType::Unit,
+                            IrOperation::ShardsTake {
+                                object: target.object,
+                                element: *element,
+                                whole: *whole,
+                            },
+                        )?;
+                    }
                     Lock::Object => {
                         self.define(
                             IrType::Unit,
@@ -592,6 +651,20 @@ impl IrBuilder<'_> {
             };
             let target = &region.targets[target_index];
             let address = match &target.lock {
+                Lock::Shards {
+                    element,
+                    whole: false,
+                } => {
+                    let referent = IrAddressed::of(self.element_type(*element)?)
+                        .ok_or(LoweringFailure::InvalidCheckedProgram)?;
+                    Some(self.define(
+                        IrType::Address(referent),
+                        IrOperation::ShardsSelect {
+                            object: target.object,
+                            element: *element,
+                        },
+                    )?)
+                }
                 Lock::Map {
                     nominal,
                     take: TableTake::Entry { record, .. },
@@ -654,17 +727,34 @@ impl IrBuilder<'_> {
                 .map(|flag| self.group_flag(flag, false))
                 .transpose()?;
             if let Some(record) = group.record {
-                let nominal = match &region.targets[group.targets[0]].lock {
-                    Lock::Object => None,
-                    Lock::Map { nominal, .. } => Some(*nominal),
+                let operation = match &region.targets[group.targets[0]].lock {
+                    Lock::Shards { element, .. } => IrOperation::ShardsGroupRelease {
+                        record,
+                        element: *element,
+                    },
+                    Lock::Object => IrOperation::AtomicGroupRelease {
+                        record,
+                        nominal: None,
+                    },
+                    Lock::Map { nominal, .. } => IrOperation::AtomicGroupRelease {
+                        record,
+                        nominal: Some(*nominal),
+                    },
                 };
-                self.define(
-                    IrType::Unit,
-                    IrOperation::AtomicGroupRelease { record, nominal },
-                )?;
+                self.define(IrType::Unit, operation)?;
             } else {
                 let target = &region.targets[group.targets[0]];
                 match &target.lock {
+                    Lock::Shards { element, whole } => {
+                        self.define(
+                            IrType::Unit,
+                            IrOperation::ShardsRelease {
+                                object: target.object,
+                                element: *element,
+                                whole: *whole,
+                            },
+                        )?;
+                    }
                     Lock::Object => {
                         self.define(
                             IrType::Unit,
@@ -788,6 +878,7 @@ impl IrBuilder<'_> {
                 for member in &region.groups[index].targets {
                     let target = &region.targets[*member];
                     match &target.lock {
+                        Lock::Shards { .. } => {}
                         Lock::Object => {
                             let test =
                                 self.wake_test(guard, target.binding, target.state, &targets)?;

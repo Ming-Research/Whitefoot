@@ -22,9 +22,10 @@ use super::*;
 use crate::{IrRecord, IrRecordKind, IrShared, IrWakeTest};
 
 /// The frame storage of one record, by its kind.
-fn record_storage(kind: IrRecordKind) -> String {
+pub(super) fn record_storage(kind: IrRecordKind) -> String {
     match kind {
         IrRecordKind::AtomicGroup { count } => format!("[{count} x {{ ptr, ptr, i32 }}]"),
+        IrRecordKind::ShardsGroup { count } => format!("[{count} x {{ ptr, i64 }}]"),
         IrRecordKind::TableEntry => format!("[{} x i8]", crate::backend::TABLE_ENTRY_SIZE),
         IrRecordKind::TableHold => format!("[{} x i8]", crate::backend::TABLE_HOLD_SIZE),
         IrRecordKind::Entries => "{ ptr, i64, i64 }".to_owned(),
@@ -33,7 +34,7 @@ fn record_storage(kind: IrRecordKind) -> String {
 }
 
 /// The name of a record's storage.
-fn record_name(record: IrRecord) -> String {
+pub(super) fn record_name(record: IrRecord) -> String {
     format!("%wf.record.{}", record.index())
 }
 
@@ -88,6 +89,9 @@ pub(super) fn record_prelude(function: &IrFunction) -> String {
             | IrOperation::AtomicGroupTake { record }
             | IrOperation::AtomicGroupAcquire { record }
             | IrOperation::AtomicGroupRelease { record, .. }
+            | IrOperation::ShardsGroupTarget { record, .. }
+            | IrOperation::ShardsGroupTake { record, .. }
+            | IrOperation::ShardsGroupRelease { record, .. }
             | IrOperation::TableHoldRead { record }
             | IrOperation::TableHoldWhole { record }
             | IrOperation::TableHoldTake { record }
@@ -220,7 +224,7 @@ impl FunctionEmitter<'_, '_> {
         self.emit_unit_call(result, name, &arguments)
     }
     /// The state type of a shared-object nominal.
-    fn shared_state(&self, nominal: IrNominalId) -> Result<IrType, BackendFailure> {
+    pub(super) fn shared_state(&self, nominal: IrNominalId) -> Result<IrType, BackendFailure> {
         match self.nominal(nominal)?.kind() {
             IrNominalKind::Shared {
                 state,
@@ -986,7 +990,11 @@ impl FunctionEmitter<'_, '_> {
             "  {} = getelementptr inbounds i8, ptr {}, i64 {}",
             self.value_name(result),
             self.value_name(object),
-            crate::backend::SHARED_STATE_OFFSET
+            if matches!(state, IrType::Shards { .. }) {
+                8
+            } else {
+                crate::backend::SHARED_STATE_OFFSET
+            }
         )
         .map_err(|_| BackendFailure::TextEmission)
     }

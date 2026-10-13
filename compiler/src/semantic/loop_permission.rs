@@ -1885,8 +1885,8 @@ impl<'check, 'run> Survey<'check, 'run> {
         subscripts
             .into_iter()
             .enumerate()
-            .find_map(|(position, (obligation, ring))| {
-                (!ring)
+            .find_map(|(position, (obligation, excluded))| {
+                (!excluded)
                     .then(|| self.proven_affine_map_at(obligation))
                     .flatten()
                     .map(|map| (count - 1 - position, map))
@@ -3054,12 +3054,15 @@ fn element_prefix(place: &ResolvedPlace, after: usize) -> Option<(ResolvedPlace,
 }
 
 /// The subscripts of one typed storage path, outermost first, each with
-/// whether its base is a `Ring` [WIN-1].
+/// whether its base is excluded from the [PAR-2] affine element-map bases.
 fn path_subscripts(path: &[CheckedPlaceStep]) -> Vec<(&NodePath, bool)> {
     path.iter()
         .filter_map(|step| match step {
             CheckedPlaceStep::Subscript(index) => {
-                Some((&index.obligation, checked_type_is_ring(index.base_type)))
+                Some((
+                    &index.obligation,
+                    checked_type_excludes_element_map(index.base_type),
+                ))
             }
             CheckedPlaceStep::Field(_)
             | CheckedPlaceStep::BoxReferent(_)
@@ -3108,19 +3111,21 @@ fn same_element_root(left: &ResolvedPlace, right: &ResolvedPlace) -> bool {
     left.path.len() == right.path.len() && left.contains(right)
 }
 
-/// Whether a checked type is a `Ring` [TYPE-9].
+/// Whether a checked type is excluded from affine element maps [PAR-2].
 ///
 /// A `Ring` subscript selects the slot `(r.head + i) mod r.cap` [WIN-1], a
 /// wrapping map onto storage rather than a linear offset, so [PAR-2] denies
 /// it an element-map position. The checked window shape retains that
-/// distinction for both constant and runtime capacities.
-const fn checked_type_is_ring(ty: CheckedType) -> bool {
+/// distinction for both constant and runtime capacities. `Shards` is absent
+/// from the rule's admitted bases, so writes to shards remain sequential.
+const fn checked_type_excludes_element_map(ty: CheckedType) -> bool {
     matches!(
         ty,
         CheckedType::Window {
             shape: WindowShape::Ring,
             ..
         }
+            | CheckedType::Shards { .. }
     )
 }
 

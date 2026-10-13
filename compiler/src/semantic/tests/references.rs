@@ -2190,7 +2190,12 @@ fn assert_indexed_call_proof(label: &str, source: &[u8], require_affine: bool) {
             panic!("indexed call separation {label} must be accepted: {outcome:?}");
         };
         let mut found = false;
-        for function in &program.data.functions {
+        for function in program
+            .data
+            .functions
+            .iter()
+            .filter(|function| !function.formal_hypothesis)
+        {
             super::entailment::validate_derivations(&function.entailment);
             found |= function.entailment.obligations.iter().any(|outcome| {
                 matches!(

@@ -75,17 +75,20 @@ pub enum ContainerShape {
     /// over a key set, one `Option<V>` place per key, reached only as that
     /// binding's referent [SHARE-2, OP-4].
     Entries,
+    /// `Shards<T>`: the separated shards of one shared object, each holding
+    /// T, whose readonly length is fixed for the object's life [SHARE-1].
+    Shards,
     /// `Box<T>`: one heap object of any nameable T, carrying no brand and no
     /// measure at all, a cell being never empty [TYPE-9]. Its declaration is
     /// the prelude's opaque struct [TYPE-2, PRE-1], not a row below.
     Box,
 }
 
-/// The four storage nominals, in [TYPE-9] order, then the key set and the
-/// keyed entries [SHARE-1, SHARE-2], the two measured types [MSR-1] that are
+/// The five storage nominals, in [TYPE-9] order, then the key set, keyed
+/// entries and shards [SHARE-1, SHARE-2], the three measured types [MSR-1] that are
 /// not storage shapes. The cell is not one of them: it is declared by [PRE-1]
 /// and read through [`CELL_NOMINAL`].
-pub const CONTAINER_NOMINALS: [ContainerNominal; 7] = [
+pub const CONTAINER_NOMINALS: [ContainerNominal; 8] = [
     ContainerNominal {
         spelling: "Array",
         shape: ContainerShape::Array,
@@ -113,6 +116,10 @@ pub const CONTAINER_NOMINALS: [ContainerNominal; 7] = [
     ContainerNominal {
         spelling: "Entries",
         shape: ContainerShape::Entries,
+    },
+    ContainerNominal {
+        spelling: "Shards",
+        shape: ContainerShape::Shards,
     },
 ];
 
@@ -225,7 +232,7 @@ mod tests {
                 nominal.spelling
             );
         }
-        // [SHARE-1, PRE-1] the key set and the keyed entries are the two
+        // [SHARE-1, PRE-1] the key set, keyed entries and shards are the three
         // measured types that are not storage shapes, declared by the prelude
         // beside the keyed table.
         for nominal in measured {
@@ -241,7 +248,7 @@ mod tests {
                 nominal.spelling
             );
         }
-        assert_eq!(measured.len(), 2);
+        assert_eq!(measured.len(), 3);
     }
 
     /// [TYPE-2, PRE-1]: the cell is declared by the prelude, so it takes no

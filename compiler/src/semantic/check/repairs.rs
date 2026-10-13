@@ -1342,6 +1342,7 @@ pub(super) enum OpaqueStruct {
     SharedRead,
     DecisionCell,
     ConcurrentHashMap,
+    AnyShard,
     /// A host handle: a standard library module declares it with no fields,
     /// and only a host function forms one [PRE-2]. `linear` when its
     /// declaration writes `nodrop`, so that it leaves a scope only by moving
@@ -1382,6 +1383,9 @@ pub(super) fn opaque_struct_constructed(opaque: OpaqueStruct) -> &'static str {
         OpaqueStruct::ConcurrentHashMap => {
             "replace this construction with `shared_map_new::<V>(capacity: n)` and reach the map through an atomic target in a function marked `waits` [SHARE-1, SHARE-2]"
         }
+        OpaqueStruct::AnyShard => {
+            "replace this construction with `any_shard()` and use the selector in a shard target [SHARE-1, SHARE-2]"
+        }
         OpaqueStruct::HostHandle { .. } => {
             "a host handle is formed only by a host function [PRE-2]: replace this construction with a handle that a function of its module returns or that the program's entry receives"
         }
@@ -1411,6 +1415,9 @@ pub(super) fn opaque_struct_taken_apart(opaque: OpaqueStruct, owned: bool) -> &'
         }
         OpaqueStruct::ConcurrentHashMap => {
             "remove this destructuring statement and reach the map through an atomic target over a handle formed by `shared_map_new` [SHARE-1, SHARE-2]"
+        }
+        OpaqueStruct::AnyShard => {
+            "remove this destructuring statement and use the selector formed by `any_shard()` as the index atom of a shard target [SHARE-1, SHARE-2]"
         }
         OpaqueStruct::HostHandle { linear: true } if owned => {
             "a host handle has no fields to take apart [PRE-2], and a `nodrop` one leaves its scope only by moving out [PROV-6]: replace this statement with a call to the function of its module that closes the handle, which also takes a `HandleFactory` reference"

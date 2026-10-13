@@ -83,7 +83,8 @@ pub(super) fn base_elements(
         | CheckedType::Window { element, .. }
         | CheckedType::Buffer { element }
         | CheckedType::Segments { element }
-        | CheckedType::Entries { element } = ty
+        | CheckedType::Entries { element }
+        | CheckedType::Shards { element } = ty
             && needed.insert(element.index())
         {
             pending.push(
@@ -317,6 +318,11 @@ impl<'a> PhysicalTypes<'a> {
             }
             CheckedType::Entries { element } => {
                 return Ok(IrType::Entries {
+                    element: self.element(element)?,
+                });
+            }
+            CheckedType::Shards { element } => {
+                return Ok(IrType::Shards {
                     element: self.element(element)?,
                 });
             }

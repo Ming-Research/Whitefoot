@@ -33,6 +33,9 @@ pub(in crate::semantic::check) const SHARE2_WAIT_FOR_THE_TIME_OUTSIDE_THE_GUARD:
 pub(in crate::semantic::check) const SHARE2_HOLD_A_HANDLE_ONCE: &str = "hold a handle whole once, or name its entries with entry and key-set targets";
 pub(in crate::semantic::check) const SHARE2_PROVE_THE_HANDLE_PLACES_APART: &str = "prove before the statement that the positions of the two handle places are distinct, such as by a `requires` clause or an `if` around the statement, or hold the second handle in an atomic statement of its own";
 pub(in crate::semantic::check) const SHARE2_USE_THE_BINDING: &str = "remove the target, or the whole statement when no target is used; a statement holds what its targets name, so a target nothing uses holds a state or entries for nothing";
+const SHARE2_SHARD_SELECTOR: &str = "make a selector before the statement with `let mine = any_shard();` and name one shard with `part = &h[mine]`; to select an integer index, hold the whole state with `all = &h` and prove the index is below `all^.len` before indexing `all^`";
+const SHARE2_SHARD_ALONE: &str = "hold the shards handle once in this statement, or name the second target in a second atomic statement; a shard target stands alone on its handle place";
+const SHARE2_NO_SHARDS_GUARD: &str = "read the shards in an atomic statement without a guard; for a condition that must wait, keep that condition in a separate ordinary shared object and guard a target on that object";
 struct IndexHeader {
     atom: Option<NodeId>,
 }
@@ -178,18 +181,19 @@ impl Checker<'_, '_> {
                     },
                 );
             };
-            // [SHARE-2, OWN-7] two overlapping handle places each have an
-            // index step. A pair that overlaps only unless its positions
+            // [SHARE-2, OWN-7] overlapping handle places admit only pairs of
+            // map entry and key-set targets. A pair that overlaps unless its positions
             // differ, such as `&shards^[i]` beside `&shards^[j]`, is the fixed
             // families' question where the statement begins. A pair whose
             // every differing position holds one value there, such as
             // `&shards^[i]` beside `&shards^[i]`, is one handle place, which
             // no proof separates.
             for (prior, prior_target) in handles.iter().zip(&targets) {
-                if atom.is_some()
-                    && !matches!(
+                if self.table_entry_type(state).is_some()
+                    && atom.is_some()
+                    && matches!(
                         prior_target.kind,
-                        CheckedTargetKind::Object | CheckedTargetKind::MapWhole
+                        CheckedTargetKind::MapEntry(_) | CheckedTargetKind::MapSet(_)
                     )
                 {
                     continue;
@@ -208,8 +212,12 @@ impl Checker<'_, '_> {
                                 SemanticRule::Share2,
                                 *place,
                                 SemanticIssueKind::AtomicTargetNotShared {
-                                    found: "a whole target beside another target on an overlapping handle place".to_owned(),
-                                    mechanical_fix: SHARE2_HOLD_A_HANDLE_ONCE,
+                                    found: "a whole or shard target beside another target on an overlapping handle place".to_owned(),
+                                    mechanical_fix: if matches!(state, CheckedType::Shards { .. }) || matches!(prior_target.state, CheckedType::Shards { .. }) {
+                                        SHARE2_SHARD_ALONE
+                                    } else {
+                                        SHARE2_HOLD_A_HANDLE_ONCE
+                                    },
                                 },
                             );
                         };
@@ -255,11 +263,24 @@ impl Checker<'_, '_> {
             }
             let map_entry = self.table_entry_type(state);
             let earlier = targets.iter().map(|t| t.binding).collect::<Vec<_>>();
-            let (kind, referent, anchors) = match (map_entry, atom) {
-                (Some(entry), Some(_)) => self.check_target_index(context, node, &header, &earlier, &statement_roots, &mut block_bindings, scope.loops.len(), &mut effects, entry)?,
-                (Some(_), None) => (CheckedTargetKind::MapWhole, state, Vec::new()),
-                (None, None) => (CheckedTargetKind::Object, state, Vec::new()),
-                (None, Some(_)) => return self.types.declarations.issue_node(SemanticRule::Share2, *place, SemanticIssueKind::AtomicTargetNotShared { found: "an indexed handle whose state is no concurrent hash map".to_owned(), mechanical_fix: "write the target as `name = &handle` and reach the state through `name^`; an index step names entries of a `ConcurrentHashMap<V>` state alone" }),
+            let (kind, referent, anchors) = match (state, map_entry, atom) {
+                (CheckedType::Shards { element }, _, Some(_)) => {
+                    let shard_type = self.types.element_type(element)?;
+                    self.check_shard_target_index(
+                        context,
+                        &header,
+                        &earlier,
+                        &statement_roots,
+                        &mut block_bindings,
+                        scope.loops.len(),
+                        &mut effects,
+                        shard_type,
+                    )?
+                }
+                (_, Some(entry), Some(_)) => self.check_target_index(context, node, &header, &earlier, &statement_roots, &mut block_bindings, scope.loops.len(), &mut effects, entry)?,
+                (_, Some(_), None) => (CheckedTargetKind::MapWhole, state, Vec::new()),
+                (_, None, None) => (CheckedTargetKind::Object, state, Vec::new()),
+                (_, None, Some(_)) => return self.types.declarations.issue_node(SemanticRule::Share2, *place, SemanticIssueKind::AtomicTargetNotShared { found: "an indexed handle whose state is no concurrent hash map or shards state".to_owned(), mechanical_fix: "write the target as `name = &handle` and reach the state through `name^`; an index step names entries of a `ConcurrentHashMap<V>` or a shard of a `Shards<T>` state alone" }),
             };
             let binding = self.bind_atomic_reference(
                 counters,
@@ -281,7 +302,9 @@ impl Checker<'_, '_> {
                 reference.anchors = anchors;
                 if matches!(
                     kind,
-                    CheckedTargetKind::MapEntry(_) | CheckedTargetKind::MapSet(_)
+                    CheckedTargetKind::MapEntry(_)
+                        | CheckedTargetKind::MapSet(_)
+                        | CheckedTargetKind::Shard(_)
                 ) {
                     reference.paths[0]
                         .path
@@ -362,12 +385,29 @@ impl Checker<'_, '_> {
                 targets_alias_declarations(&declarations, &block_bindings, target.binding)
             })
             .collect::<Vec<_>>();
+        let shards_roots = declarations
+            .iter()
+            .zip(&targets)
+            .filter_map(|(declaration, target)| {
+                matches!(target.state, CheckedType::Shards { .. }).then_some(declaration.id())
+            })
+            .chain(block_bindings.values().filter_map(|local| {
+                matches!(local.ty, CheckedType::Shards { .. }).then_some(local.declaration)
+            }))
+            .collect::<Vec<_>>();
         self.body.atomic_depth += 1;
         self.body.held_atomic_roots = targets.iter().map(|target| target.binding).collect();
         self.body.held_atomic_node = Some(node_path.clone());
         let held_call_start = self.body.held_calls.len();
         let held_write_start = self.body.held_writes.len();
-        let checked = self.check_atomic_parts(context, node, &mut block_bindings, counters, scope);
+        let checked = self.check_atomic_parts(
+            context,
+            node,
+            &mut block_bindings,
+            counters,
+            scope,
+            &shards_roots,
+        );
         self.body.atomic_depth -= 1;
         self.body.held_atomic_roots.clear();
         self.body.held_atomic_node = None;
@@ -545,6 +585,108 @@ impl Checker<'_, '_> {
             },
         );
         Ok(binding)
+    }
+    /// [SHARE-2] a shard selector must name an ordinary place of the
+    /// prelude's AnyShard type. Reading it contributes the header footprint,
+    /// but its value gives no relation for the selected shard's index.
+    #[allow(clippy::too_many_arguments, clippy::type_complexity)]
+    fn check_shard_target_index(
+        &mut self,
+        context: FunctionContext<'_, '_>,
+        header: &IndexHeader,
+        earlier: &[BindingId],
+        statement_roots: &[DeclarationId],
+        block_bindings: &mut HashMap<DeclarationId, LocalBinding>,
+        loop_depth: usize,
+        effects: &mut EffectSet,
+        shard_type: CheckedType,
+    ) -> Result<(CheckedTargetKind, CheckedType, Vec<ResolvedPlace>), CheckStop> {
+        let atom = header
+            .atom
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        let place = self
+            .types
+            .declarations
+            .tree
+            .first_child_with(atom, Production::Place)?;
+        let moved = self
+            .types
+            .declarations
+            .tree
+            .has_fixed(atom, crate::syntax::terminal::FixedTerminal::Move)?;
+        if moved || place.is_none() {
+            return self.types.declarations.issue_node(
+                SemanticRule::Share2,
+                atom,
+                SemanticIssueKind::AtomicTargetNotShared {
+                    found: "a shard index atom that is not a place of type `AnyShard`".to_owned(),
+                    mechanical_fix: SHARE2_SHARD_SELECTOR,
+                },
+            );
+        }
+        // The target's own rule decides the selector type before OWN-1
+        // considers reading an owned noncopy value of some other type.
+        let selected = self.elaborate_value_place(
+            context.check_context,
+            atom,
+            place.ok_or(SemanticCompilerFailure::InvalidResolution)?,
+            block_bindings,
+        )?;
+        let is_selector = match selected.ty {
+            CheckedType::Nominal(id) if selected.mode == CheckedMode::Own => {
+                match self.types.source_nominal_instance_entry(id)? {
+                    Some((template, _)) => {
+                        let template = &self.types.nominal_templates[template];
+                        template.name == "AnyShard"
+                            && self.types.declarations.tree.is_prelude_node(template.node)?
+                    }
+                    None => false,
+                }
+            }
+            _ => false,
+        };
+        if !is_selector {
+            return self.types.declarations.issue_node(
+                SemanticRule::Share2,
+                atom,
+                SemanticIssueKind::AtomicTargetNotShared {
+                    found: self
+                        .types
+                        .checked_value_name(selected.mode, selected.ty)?,
+                    mechanical_fix: SHARE2_SHARD_SELECTOR,
+                },
+            );
+        }
+        let mut probe = block_bindings.clone();
+        let selector = self.check_atom(context, atom, &mut probe, loop_depth)?;
+        if selector
+            .effects
+            .reads
+            .iter()
+            .chain(&selector.effects.writes)
+            .any(|path| statement_roots.contains(&path.root))
+            || selector.reference.as_ref().is_some_and(|reference| {
+                reference.paths.iter().any(
+                    |place| matches!(place.root, PlaceRoot::Binding(root) if earlier.contains(&root)),
+                )
+            })
+        {
+            return self.types.declarations.issue_node(
+                SemanticRule::Share2,
+                atom,
+                SemanticIssueKind::AtomicKeyReadsTheState {
+                    mechanical_fix: SHARE2_KEY_BEFORE_THE_STATEMENT,
+                },
+            );
+        }
+        // check_atom has recorded every value read, including through a
+        // reference to an AnyShard place; no extra reference anchor is held.
+        *effects = effects.clone().union(selector.effects);
+        Ok((
+            CheckedTargetKind::Shard(Box::new(selector.expression)),
+            shard_type,
+            Vec::new(),
+        ))
     }
     #[allow(clippy::too_many_arguments, clippy::type_complexity)]
     fn check_target_index(
@@ -749,6 +891,7 @@ impl Checker<'_, '_> {
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         counters: &mut ControlCounters<'_>,
         scope: ControlScope<'_>,
+        shards_roots: &[DeclarationId],
     ) -> Result<(Option<(CheckedExpression, EffectSet)>, super::BlockResult), CheckStop> {
         let guard = match self
             .types
@@ -762,6 +905,20 @@ impl Checker<'_, '_> {
                     self.check_condition(context, expression_node, bindings, scope.loops.len());
                 self.body.held_guard = false;
                 let condition = condition?;
+                if condition
+                    .effects
+                    .reads
+                    .iter()
+                    .any(|path| shards_roots.contains(&path.root))
+                {
+                    return self.types.declarations.issue_node(
+                        SemanticRule::Share2,
+                        expression_node,
+                        SemanticIssueKind::AtomicGuardReadsShards {
+                            mechanical_fix: SHARE2_NO_SHARDS_GUARD,
+                        },
+                    );
+                }
                 if self.guard_has_decision_cell(&condition.expression)? {
                     return self.types.declarations.issue_node(
                         SemanticRule::Share2,

@@ -1609,14 +1609,18 @@ impl<'unit> Checker<'_, 'unit> {
         // opaque struct's", so the five cite one rule where the shapes used
         // to cite [TYPE-9] and the cell [TYPE-2].
         if let ResolvedTarget::Container(id) = usage.target() {
-            let _ =
+            let nominal =
                 crate::container_nominal(id).ok_or(SemanticCompilerFailure::InvalidResolution)?;
             return self.types.declarations.issue_node(
                 SemanticRule::Type2,
                 node,
                 SemanticIssueKind::ContainerConstruction {
                     nominal: constructor_name,
-                    mechanical_fix: "build it with a construction function [OP-13]".to_owned(),
+                    mechanical_fix: if nominal.shape == crate::ContainerShape::Shards {
+                        "build a shared shards object with `shared_shards_new::<T, fn make>()` and reach its state through an atomic target [SHARE-1, SHARE-2]".to_owned()
+                    } else {
+                        "build it with a construction function [OP-13]".to_owned()
+                    },
                 },
             );
         }
@@ -2239,6 +2243,10 @@ impl<'unit> TypeContext<'unit> {
                 )
             }
             CheckedType::KeySet => "KeySet".to_owned(),
+            CheckedType::Shards { element } => format!(
+                "Shards<{}>",
+                self.checked_type_name(self.element_type(element)?)?
+            ),
             // [PRE-1] `Entries<V>` is written with the value type, and
             // its element is the `Option<V>` each entry is [SHARE-2].
             CheckedType::Entries { element } => {

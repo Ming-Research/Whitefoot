@@ -1,0 +1,72 @@
+struct Part {
+  log: Box<Slots<u8>>;
+  write_count: u64;
+}
+
+fn part_new() -> made: Part pure {
+  let log = box_slots_new::<u8>(capacity: 16_u64);
+  return Part(log: move log, write_count: 0_u64);
+}
+
+fn append_byte(parts: Shared<Shards<Part>>, byte: u8) -> result: unit pure waits {
+  let mine = any_shard();
+  for @round (index in 0_u64..4_u64) {
+    atomic part = &parts[mine] {
+      if part^.log.inner.len < part^.log.inner.cap {
+        place_back(window: &part^.log.inner, value: byte);
+      }
+      set part^.write_count = part^.write_count +wrap 1_u64;
+    }
+  }
+  return unit;
+}
+
+fn append_three(parts: &Shared<Shards<Part>>) -> result: unit reads(parts) waits {
+  let first = shared_share::<Shards<Part>>(shared: parts);
+  spawn append_byte(parts: move first, byte: 1_u8);
+  let second = shared_share::<Shards<Part>>(shared: parts);
+  spawn append_byte(parts: move second, byte: 2_u8);
+  let third = shared_share::<Shards<Part>>(shared: parts);
+  spawn append_byte(parts: move third, byte: 3_u8);
+  return unit;
+}
+
+fn drain(parts: &Shared<Shards<Part>>) -> sum: u8 reads(parts) waits {
+  let total = 0_u8;
+  atomic all = &parts^ {
+    for @shard (i in 0_u64..all^.len) {
+      let fresh = box_slots_new::<u8>(capacity: 16_u64);
+      swap(first: &all^[i].log, second: &fresh);
+      for @byte (k in 0_u64..fresh.inner.len) {
+        set total = total +wrap fresh.inner[k];
+      }
+    }
+  }
+  return total;
+}
+
+fn writes_total(parts: &Shared<Shards<Part>>) -> count: u64 reads(parts) waits {
+  let total = 0_u64;
+  atomic all = &parts^ {
+    for @shard (i in 0_u64..all^.len) {
+      set total = total +wrap all^[i].write_count;
+    }
+  }
+  return total;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let parts = shared_shards_new::<Part, fn part_new>();
+  append_three(parts: &parts);
+  let first = drain(parts: &parts);
+  let again = shared_share::<Shards<Part>>(shared: &parts);
+  append_byte(parts: move again, byte: 5_u8);
+  let second = drain(parts: &parts);
+  let third = drain(parts: &parts);
+  let write_count = writes_total(parts: &parts);
+  let counted = cvt.wrap::<u64, u8>(write_count);
+  let drained = first +wrap second;
+  let all_drained = drained +wrap third;
+  let code = all_drained +wrap counted;
+  return std::process::exit_status(code: code);
+}

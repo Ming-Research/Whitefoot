@@ -145,7 +145,7 @@ static void fixture_begin(void) {
     memset(wf_executors, 0, sizeof(wf_executors));
     wf_executor_count = 0u;
     wf_monitor_started = 0u;
-    wf_executor_index = 0u;
+    wf__map_user = 0u;
     atomic_flag_clear(&wf_executor_lock);
     atomic_store(&wf_active_invocations, 0u);
     atomic_store(&destroyed_child, 0u);
@@ -350,7 +350,7 @@ static void timer_migration(void) {
     while (!atomic_load(&computing)) wf_prim_yield();
     wf_driver_self = &assistant;
     wf_driver_service = &assistant;
-    wf_executor_index = 1u;
+    wf__map_user = 1u;
     /* The production idle loop must discover, detach and run the root.
      * The computing invocation does not return until that continuation runs. */
     wf_context_drive(&assistant);
@@ -504,7 +504,7 @@ static void take_reservation(unsigned index) {
     CHECK(wf_executors[index].assignment == &wf_driver_root);
     wf_executors[index].assignment = NULL;
     wf_spin_unlock(&wf_executor_lock);
-    wf_executor_index = index;
+    wf__map_user = index;
     wf_driver_acquire_reserved(&wf_driver_root);
 }
 
@@ -528,8 +528,8 @@ static void reassignment_races(void) {
     uint64_t prior = 0u;
     for (unsigned monitor_first = 0; monitor_first < 2u; ++monitor_first) {
         for (unsigned repeat = 0; repeat < 3u; ++repeat) {
-            unsigned spare = 1u - wf_executor_index;
-            wf_executors[wf_executor_index].available = 0u;
+            unsigned spare = 1u - wf__map_user;
+            wf_executors[wf__map_user].available = 0u;
             wf_executors[spare].available = 1u;
             uint64_t outside = wf_driver_leave_service(&wf_driver_root);
             CHECK(!wf_driver_reassign(&wf_driver_root, WF_HANDOFF_TAU_NS + 1u));
@@ -565,8 +565,8 @@ static void reassignment_races(void) {
     wf_context_unpark(&wf_driver_root, &timer);
     wf_context_host_wait_ended(&wf_driver_root);
     wf_driver_release_borrow(&wf_driver_root, borrowed);
-    wf_executors[wf_executor_index].available = 0u;
-    wf_executors[1u - wf_executor_index].available = 1u;
+    wf_executors[wf__map_user].available = 0u;
+    wf_executors[1u - wf__map_user].available = 1u;
     CHECK(!wf_driver_reassign(&wf_driver_root, WF_HANDOFF_TAU_NS + 2u));
     CHECK(wf_driver_return_service(&wf_driver_root, outside));
     handoff_fixture_end();

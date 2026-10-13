@@ -49,7 +49,7 @@ impl PreludeInventory {
                 // built-in catalog, so phase 2 has no record.
                 let record_phase = match file.prelude() {
                     Some(PreludeSource::Opaque) => 0,
-                    Some(PreludeSource::Function) => 4,
+                    Some(PreludeSource::Function | PreludeSource::FunctionCallingActuals) => 4,
                     None => continue,
                 };
                 if record_phase != phase {

@@ -1632,7 +1632,8 @@ impl<'unit> Checker<'_, 'unit> {
             let mut element_type = match ty {
                 CheckedType::Array { element, .. }
                 | CheckedType::Window { element, .. }
-                | CheckedType::Entries { element } => self.types.element_type(element)?,
+                | CheckedType::Entries { element }
+                | CheckedType::Shards { element } => self.types.element_type(element)?,
                 CheckedType::Buffer { element } => self.types.element_type(element)?,
                 _ if table_entry.is_some() => table_entry.unwrap(),
                 _ => {
@@ -1717,6 +1718,34 @@ impl<'unit> Checker<'_, 'unit> {
                 }
                 Some(CapturedValue::unknown())
             } else {
+                if matches!(ty, CheckedType::Shards { .. })
+                    && offset.reference_value
+                    && self.types.reads_implicitly_through_holder(
+                        true,
+                        offset.expression.ty(),
+                        RequiredReferent::Exact(CheckedType::Integer(IntegerType::U64)),
+                    )?
+                {
+                    return self.types.declarations.issue_node(
+                        SemanticRule::Type7,
+                        offset_node,
+                        SemanticIssueKind::MissingDereference {
+                            mechanical_fix: "write `holder^`",
+                        },
+                    );
+                }
+                if matches!(ty, CheckedType::Shards { .. })
+                    && (offset.expression.ty() != CheckedType::Integer(IntegerType::U64)
+                        || offset.mode != CheckedMode::Own)
+                {
+                    return self.types.declarations.issue_node(
+                        SemanticRule::Op4,
+                        offset_node,
+                        SemanticIssueKind::ShardsOffsetNotIndex {
+                            mechanical_fix: "subscript the whole shards binding with a u64 offset proved less than `all^.len`; use `let mine = any_shard();` and a separate `atomic part = &h[mine]` statement to select an arbitrary shard",
+                        },
+                    );
+                }
                 self.check_place_offset(offset_node, &offset)?;
                 let captured = Checker::captured_of(offset_node, &offset.expression);
                 if require_named_offsets && captured.is_none() {

@@ -72,6 +72,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
 
     fn referent_is_stored(&self, referent: IrAddressed) -> Result<bool, BackendFailure> {
         Ok(match referent {
+            IrAddressed::Shards { .. } => false,
             IrAddressed::Nominal(nominal) => matches!(
                 self.nominal(nominal)?.kind(),
                 IrNominalKind::Struct { .. }

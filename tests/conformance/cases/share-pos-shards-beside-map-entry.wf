@@ -1,0 +1,54 @@
+const names: Array<u8, 2> =[97_u8, 98_u8];
+
+struct Stats {
+  hits: u8;
+  misses: u8;
+}
+
+fn stats_zero() -> made: Stats pure {
+  return Stats(hits: 0_u8, misses: 0_u8);
+}
+
+fn lookup(store: &Shared<ConcurrentHashMap<u8>>, stats: &Shared<Shards<Stats>>, key: &[u8]) -> found: u8 reads(store), reads(stats), reads(key) waits {
+  let mine = any_shard();
+  let got = 0_u8;
+  atomic slot = &store^[key], st = &stats^[mine] {
+    match slot^ {
+      Some(value: kept) => {
+        set got = kept^;
+        set st^.hits = st^.hits +wrap 1_u8;
+      }
+      None() => {
+        set st^.misses = st^.misses +wrap 1_u8;
+      }
+    }
+  }
+  return got;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let store = shared_map_new::<u8>(capacity: 1_u64);
+  let stats = shared_shards_new::<Stats, fn stats_zero>();
+  let present = &names[0_u64..1_u64];
+  let absent = &names[1_u64..2_u64];
+  atomic slot = &store[present] {
+    set slot^ = Some<u8>(value: 5_u8);
+  }
+  let a = lookup(store: &store, stats: &stats, key: present);
+  let b = lookup(store: &store, stats: &stats, key: absent);
+  let c = lookup(store: &store, stats: &stats, key: present);
+  let hits = 0_u8;
+  let misses = 0_u8;
+  atomic all = &stats {
+    for @shard (i in 0_u64..all^.len) {
+      set hits = hits +wrap all^[i].hits;
+      set misses = misses +wrap all^[i].misses;
+    }
+  }
+  let tens = hits *wrap 10_u8;
+  let counted = tens +wrap misses;
+  let found = a +wrap b;
+  let found_all = found +wrap c;
+  let code = counted +wrap found_all;
+  return std::process::exit_status(code: code);
+}

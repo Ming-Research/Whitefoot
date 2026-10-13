@@ -1,0 +1,13 @@
+fn waited_zero() -> made: u8 pure waits {
+  let cell = shared_new::<u8>(value: 0_u8);
+  let seen = 0_u8;
+  atomic kept = &cell {
+    set seen = kept^;
+  }
+  return seen;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let counts = shared_shards_new::<u8, fn waited_zero>();
+  return std::process::exit_status(code: 0_u8);
+}

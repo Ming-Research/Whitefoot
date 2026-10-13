@@ -95,6 +95,10 @@ pub const CONCURRENT_MAP_SOURCE: &str = include_str!("concurrent_map.c");
 /// `keyed_table.c`, the emitted module's `wf__keyed_table_*`, `wf__table_*`,
 /// `wf__key_set_*` and `wf__watch_table` ABI (`completion/bridge.h`).
 pub const KEYED_TABLE_SOURCE: &str = include_str!("keyed_table.c");
+/// Sharded shared states, compiled into the completion bridge.
+pub const SHARDED_STATE_HEADER: &str = include_str!("sharded_state.h");
+/// The shard ticket locks and aligned object allocation.
+pub const SHARDED_STATE_SOURCE: &str = include_str!("sharded_state.c");
 
 /// Windows host primitives used by ordinary linked function definitions.
 pub const WINDOWS_RUNTIME_HEADER: &str = include_str!("windows_runtime.h");
@@ -200,6 +204,8 @@ mod tests {
             ("concurrent_map_layout.h", CONCURRENT_MAP_LAYOUT_HEADER),
             ("concurrent_map.c", CONCURRENT_MAP_SOURCE),
             ("keyed_table.c", KEYED_TABLE_SOURCE),
+            ("sharded_state.h", SHARDED_STATE_HEADER),
+            ("sharded_state.c", SHARDED_STATE_SOURCE),
             ("wf_floor.c", super::super::emitter::FLOOR_RUNTIME_SOURCE),
             (
                 "wf_floor_windows.c",

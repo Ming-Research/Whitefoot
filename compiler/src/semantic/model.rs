@@ -620,6 +620,10 @@ pub(crate) enum CheckedType {
     Entries {
         element: CheckedElement,
     },
+    /// [SHARE-1] a fixed, nonempty set of independently held shard values.
+    Shards {
+        element: CheckedElement,
+    },
 }
 
 /// Which of [TYPE-9]'s two window shapes a [`CheckedType::Window`] is.
@@ -658,7 +662,8 @@ impl CheckedType {
             | Self::Buffer { element }
             | Self::Window { element, .. }
             | Self::Segments { element }
-            | Self::Entries { element } => Some(element),
+            | Self::Entries { element }
+            | Self::Shards { element } => Some(element),
             Self::Unit
             | Self::Bool
             | Self::Integer(_)
@@ -687,7 +692,10 @@ impl CheckedType {
                     .is_some_and(|ty| ty.is_concrete(elements))
                     && capacity.is_none_or(|capacity| capacity.is_concrete())
             }
-            Self::Buffer { element } | Self::Segments { element } | Self::Entries { element } => {
+            Self::Buffer { element }
+            | Self::Segments { element }
+            | Self::Entries { element }
+            | Self::Shards { element } => {
                 elements
                     .get(element.index())
                     .is_some_and(|ty| ty.is_concrete(elements))
@@ -710,6 +718,7 @@ impl CheckedType {
             Self::Segments { .. } => Some(MeasuredKind::Segments),
             Self::KeySet => Some(MeasuredKind::KeySet),
             Self::Entries { .. } => Some(MeasuredKind::Entries),
+            Self::Shards { .. } => Some(MeasuredKind::Shards),
             Self::Window {
                 shape: WindowShape::Slots,
                 capacity: Some(_),
@@ -861,8 +870,12 @@ impl CheckedMeasure {
             // `Segments<T>`: the segment count its block stores.
             // `Entries<V>`: the named entries, as many as its set's keys,
             // which no operation changes while the binding lives.
+            // `Shards<T>`: the object's fixed shard count [SHARE-1].
             (
-                MeasuredKind::Range | MeasuredKind::Segments | MeasuredKind::Entries,
+                MeasuredKind::Range
+                | MeasuredKind::Segments
+                | MeasuredKind::Entries
+                | MeasuredKind::Shards,
                 Self::Length,
             ) => MeasureCell::ExactRuntime,
             // Front-moving operations publish a Ring's window origin
@@ -888,11 +901,15 @@ impl CheckedMeasure {
                 MeasuredKind::Range
                 | MeasuredKind::Segments
                 | MeasuredKind::KeySet
-                | MeasuredKind::Entries,
+                | MeasuredKind::Entries
+                | MeasuredKind::Shards,
                 Self::Head,
             )
             | (
-                MeasuredKind::Segments | MeasuredKind::KeySet | MeasuredKind::Entries,
+                MeasuredKind::Segments
+                | MeasuredKind::KeySet
+                | MeasuredKind::Entries
+                | MeasuredKind::Shards,
                 Self::Capacity,
             ) => MeasureCell::Absent,
         }
@@ -901,7 +918,7 @@ impl CheckedMeasure {
 
 /// One measured type [MSR-1]: exactly a type the measure table gives a row.
 ///
-/// The table's seven rows are seven identities because the two placements of
+/// The table's rows are distinct identities because the two placements of
 /// one shape answer `cap` differently: a constant-capacity row reads the
 /// type constant and stores nothing, a runtime-capacity one reads a word its
 /// block stores.
@@ -929,6 +946,8 @@ pub(crate) enum MeasuredKind {
     KeySet,
     /// `Entries<V>`, whose one measure is its entry count `len`.
     Entries,
+    /// `Shards<T>`, whose fixed shard count `len` is at least one.
+    Shards,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -1089,12 +1108,17 @@ pub(crate) enum CheckedTargetKind {
     MapWhole,
     MapEntry(Box<CheckedExpression>),
     MapSet(Box<CheckedExpression>),
+    /// One implementation-selected shard; the expression reads the selector.
+    Shard(Box<CheckedExpression>),
 }
 
 impl CheckedTarget {
     pub(crate) fn expressions(&self) -> Vec<&CheckedExpression> {
         let mut result = vec![self.handle.as_ref()];
-        if let CheckedTargetKind::MapEntry(index) | CheckedTargetKind::MapSet(index) = &self.kind {
+        if let CheckedTargetKind::MapEntry(index)
+        | CheckedTargetKind::MapSet(index)
+        | CheckedTargetKind::Shard(index) = &self.kind
+        {
             result.push(index);
         }
         result
@@ -1102,8 +1126,9 @@ impl CheckedTarget {
 
     pub(crate) fn expressions_mut(&mut self) -> Vec<&mut CheckedExpression> {
         let mut result = vec![self.handle.as_mut()];
-        if let CheckedTargetKind::MapEntry(index) | CheckedTargetKind::MapSet(index) =
-            &mut self.kind
+        if let CheckedTargetKind::MapEntry(index)
+        | CheckedTargetKind::MapSet(index)
+        | CheckedTargetKind::Shard(index) = &mut self.kind
         {
             result.push(index.as_mut());
         }
@@ -1196,7 +1221,8 @@ pub(crate) fn type_has_copy_capability(
             | CheckedType::Window { .. }
             | CheckedType::Segments { .. }
             | CheckedType::KeySet
-            | CheckedType::Entries { .. } => return Some(false),
+            | CheckedType::Entries { .. }
+            | CheckedType::Shards { .. } => return Some(false),
             CheckedType::Nominal(id) => {
                 // A nominal met again is already being judged on this walk,
                 // so it adds no part the walk has not queued.
@@ -2054,7 +2080,8 @@ impl CheckedRangeElementPlace {
             | CheckedType::Window { element, .. }
             | CheckedType::Buffer { element }
             | CheckedType::Segments { element }
-            | CheckedType::Entries { element } => Some(element),
+            | CheckedType::Entries { element }
+            | CheckedType::Shards { element } => Some(element),
             _ => None,
         }
     }
@@ -2180,7 +2207,8 @@ impl CheckedContainerRoot {
             CheckedType::Array { element, .. }
             | CheckedType::Window { element, .. }
             | CheckedType::Buffer { element }
-            | CheckedType::Segments { element } => Some(element),
+            | CheckedType::Segments { element }
+            | CheckedType::Shards { element } => Some(element),
             _ => None,
         }
     }
@@ -3175,6 +3203,9 @@ pub(crate) struct CheckedFunction {
     /// [FN-9] forms a caller's component as though an instance of another
     /// module's generic callable calls every one of them.
     pub(crate) function_actuals: Vec<FunctionId>,
+    /// The PRE-1 record supplies a body that calls every function-kind
+    /// actual. Source bodies expose their calls through their statements.
+    pub(crate) calls_function_actuals: bool,
     /// Formal regions in the same declaration order `UserCall::goal_regions`
     /// uses. Retained for post-acceptance physical release specialization;
     /// semantic identity remains the canonical [`FunctionId`].
@@ -3240,6 +3271,20 @@ pub(crate) struct CheckedFunction {
     /// diagnostics read it; lowering deliberately does not.
     #[allow(dead_code)]
     pub(crate) entailment: super::entailment::FunctionEntailment,
+}
+
+impl CheckedFunction {
+    /// Calls made by a supplied PRE-1 body rather than a source body.
+    /// [SHARE-1] the shards constructor invokes its maker; retaining that
+    /// ordinary edge lets allocation, entry closure and proof scheduling
+    /// follow the actual even though the constructor has no source body.
+    pub(crate) fn supplied_body_calls(&self) -> &[FunctionId] {
+        if self.body.is_none() && !self.formal_hypothesis && self.calls_function_actuals {
+            &self.function_actuals
+        } else {
+            &[]
+        }
+    }
 }
 
 /// [WAIT-1, WAIT-3] the waiting facts of one function body, in source order.

@@ -470,7 +470,8 @@ impl<'parsed> Finalizer<'parsed> {
                 .classified
                 .source_bundle()
                 .file(source)
-                .is_some_and(|file| file.prelude() == Some(crate::source::PreludeSource::Function));
+                .and_then(crate::source::SourceFile::prelude)
+                .is_some_and(crate::source::PreludeSource::is_function);
             let prelude_signature_record = production == Production::Item && prelude_record;
             let shape = if prelude_signature_record {
                 match &self.roots[root_start..] {

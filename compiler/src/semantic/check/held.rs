@@ -60,7 +60,7 @@ impl Checker<'_, '_> {
             CheckedType::Array { element, length } => length.is_concrete() && self.fixed_host_layout(self.types.element_type(element)?, seen)?,
             CheckedType::Window { element, capacity: Some(capacity), .. } => capacity.is_concrete() && self.fixed_host_layout(self.types.element_type(element)?, seen)?,
             // Runtime storage owns descriptors, independently of slot layout.
-            CheckedType::Buffer { .. } | CheckedType::Window { capacity: None, .. } | CheckedType::Segments { .. } | CheckedType::Entries { .. } | CheckedType::KeySet => true,
+            CheckedType::Buffer { .. } | CheckedType::Window { capacity: None, .. } | CheckedType::Segments { .. } | CheckedType::Entries { .. } | CheckedType::Shards { .. } | CheckedType::KeySet => true,
             CheckedType::Unit | CheckedType::Bool | CheckedType::Integer(_) | CheckedType::Float(_) => true,
         })
     }
@@ -111,6 +111,8 @@ impl Checker<'_, '_> {
                 }
             }
             CheckedType::KeySet | CheckedType::Entries { .. } => self.snapshot_resource(node, format!("{path}: keyed shared storage")),
+            // A shards state is only ever a shared object's state [TYPE-9].
+            CheckedType::Shards { .. } => self.snapshot_resource(node, format!("{path}: shards state")),
         }
     }
 
@@ -239,7 +241,7 @@ impl Checker<'_, '_> {
                     range = true;
                     self.types.element_type(element)?
                 }
-                (PlaceStep::Index(_) | PlaceStep::Page(_), CheckedType::Array { element, .. } | CheckedType::Buffer { element } | CheckedType::Window { element, .. } | CheckedType::Entries { element }) => {
+                (PlaceStep::Index(_) | PlaceStep::Page(_), CheckedType::Array { element, .. } | CheckedType::Buffer { element } | CheckedType::Window { element, .. } | CheckedType::Entries { element } | CheckedType::Shards { element }) => {
                     range = matches!(step, PlaceStep::Page(_));
                     self.types.element_type(element)?
                 }

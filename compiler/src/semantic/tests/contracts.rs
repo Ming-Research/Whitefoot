@@ -950,6 +950,75 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 #[test]
+fn a_shards_maker_uses_the_ordinary_function_argument_instance() {
+    let source = br#"fn zero() -> made: u8 pure {
+  return 0_u8;
+}
+
+fn factory<T: drop, fn create() -> made: T pure>() -> result: Shared<Shards<T>> pure {
+  return shared_shards_new::<T, fn create>();
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let counts = factory::<u8, fn zero>();
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    with_semantics(source, |outcome| {
+        let SemanticOutcome::Complete(checked) = outcome else {
+            panic!("the prelude maker follows source function arguments: {outcome:?}");
+        };
+        let maker = checked
+            .data
+            .executable_functions()
+            .find(|function| function.name == "zero")
+            .expect("the supplied maker is an ordinary executable instance");
+        let constructor = checked
+            .data
+            .executable_functions()
+            .find(|function| function.name == "shared_shards_new")
+            .expect("the forwarded maker selects a constructor instance");
+        assert_eq!(constructor.function_actuals, vec![maker.id]);
+        assert_eq!(constructor.supplied_body_calls(), &[maker.id]);
+        assert!(maker.supplied_body_calls().is_empty());
+        // Supplied-body edges are record metadata, independent of names.
+        let mut renamed = constructor.clone();
+        renamed.name = "another_supplied_body".to_owned();
+        assert_eq!(renamed.supplied_body_calls(), &[maker.id]);
+        renamed.calls_function_actuals = false;
+        assert!(renamed.supplied_body_calls().is_empty());
+        renamed.calls_function_actuals = true;
+        renamed.formal_hypothesis = true;
+        assert!(renamed.supplied_body_calls().is_empty());
+        renamed.formal_hypothesis = false;
+        renamed.body = Some(Vec::new());
+        assert!(renamed.supplied_body_calls().is_empty());
+        assert!(!maker.formal_hypothesis);
+    });
+}
+
+#[test]
+fn a_shards_maker_mismatch_is_refused_at_its_written_argument() {
+    assert_behavior_site(
+        include_str!("../../../../tests/conformance/cases/fn4-neg-shards-maker-waits.wf"),
+        SemanticRule::Fn4,
+        "fn waited_zero",
+    );
+    let effectful = r#"fn read(input: &u8) -> made: u8 reads(input) {
+  return input^;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let counts = shared_shards_new::<u8, fn read>();
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    // EFF-1 roots a nonempty row at a reference parameter, so an effectful
+    // maker necessarily also differs from the nullary formal's signature.
+    assert_behavior_site(effectful, SemanticRule::Fn4, "fn read");
+}
+
+#[test]
 fn a_nominal_only_function_argument_must_match_its_signature() {
     let source = r#"struct Holder<fn pick(value: u64) -> result: u64 pure> {
   marker: u64;
@@ -1103,8 +1172,7 @@ fn main() -> status: std::process::ExitStatus pure {
         assert!(
             checked
                 .data
-                .functions
-                .iter()
+                .executable_functions()
                 .all(|function| !function.formal_hypothesis)
         );
     });
@@ -1269,11 +1337,19 @@ fn main() -> status: std::process::ExitStatus pure {
         };
         // D7 replaces standalone conformance metadata with checked group
         // expansion. No symbolic function hypothesis reaches executable IR.
+        // PRE-1's shared_shards_new retains its symbolic maker in the full
+        // inventory, so the boundary is the ordinary executable view.
         assert!(
             checked
                 .data
                 .functions
                 .iter()
+                .any(|function| function.formal_hypothesis && function.name == "make")
+        );
+        assert!(
+            checked
+                .data
+                .executable_functions()
                 .all(|function| !function.formal_hypothesis)
         );
         assert_eq!(
@@ -1894,8 +1970,7 @@ fn main() -> status: std::process::ExitStatus pure {
         assert!(
             checked
                 .data
-                .functions
-                .iter()
+                .executable_functions()
                 .all(|function| !function.formal_hypothesis)
         );
     });
@@ -1935,8 +2010,7 @@ fn main() -> status: std::process::ExitStatus pure {
         assert!(
             checked
                 .data
-                .functions
-                .iter()
+                .executable_functions()
                 .all(|function| !function.formal_hypothesis)
         );
     });

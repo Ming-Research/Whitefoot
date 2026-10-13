@@ -1,0 +1,37 @@
+fn no_count() -> made: u64 pure {
+  return 0_u64;
+}
+
+fn total_of(parts: &Shards<u64>) -> total: u64 reads(parts) {
+  let sum = 0_u64;
+  for @shard (i in 0_u64..parts^.len) {
+    set sum = sum +wrap parts^[i];
+  }
+  return sum;
+}
+
+fn reset(parts: &Shards<u64>) -> result: unit writes(parts) {
+  for @shard (i in 0_u64..parts^.len) {
+    set parts^[i] = 0_u64;
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let stats = shared_shards_new::<u64, fn no_count>();
+  let mine = any_shard();
+  atomic part = &stats[mine] {
+    set part^ = part^ +wrap 7_u64;
+  }
+  let before = 0_u64;
+  let after = 0_u64;
+  atomic all = &stats {
+    set before = total_of(parts: all);
+    reset(parts: all);
+    set after = total_of(parts: all);
+  }
+  let tens = before *wrap 10_u64;
+  let total = tens +wrap after;
+  let code = cvt.wrap::<u64, u8>(total);
+  return std::process::exit_status(code: code);
+}

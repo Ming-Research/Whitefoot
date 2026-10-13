@@ -1,0 +1,12 @@
+fn one_flag() -> made: u8 pure {
+  return 1_u8;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let x = shared_shards_new::<u8, fn one_flag>();
+  let y = shared_shards_new::<u8, fn one_flag>();
+  atomic a = &x, b = &y {
+    swap(first: a, second: b);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

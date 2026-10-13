@@ -1,0 +1,12 @@
+nodrop struct Ticket {
+  id: u64;
+}
+
+fn ticket_new() -> made: Ticket pure {
+  return Ticket(id: 7_u64);
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let tickets = shared_shards_new::<Ticket, fn ticket_new>();
+  return std::process::exit_status(code: 0_u8);
+}

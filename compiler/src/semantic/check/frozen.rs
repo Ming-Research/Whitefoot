@@ -162,7 +162,8 @@ impl TypeContext<'_> {
                 | CheckedType::Window { element, .. }
                 | CheckedType::Buffer { element }
                 | CheckedType::Segments { element }
-                | CheckedType::Entries { element } => {
+                | CheckedType::Entries { element }
+                | CheckedType::Shards { element } => {
                     pending.push((self.element_type(element)?, format!("{path}[element]")))
                 }
                 _ => {}

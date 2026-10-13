@@ -246,7 +246,8 @@ impl<'unit> TypeContext<'unit> {
                 | CheckedType::Window { .. }
                 | CheckedType::Segments { .. }
                 | CheckedType::KeySet
-                | CheckedType::Entries { .. } => {
+                | CheckedType::Entries { .. }
+                | CheckedType::Shards { .. } => {
                     // [OWN-1, STOR-3] an `Array` of copy elements is copy and
                     // a copy value has an empty release.
                     if !self.is_copy_type(check_context, current)? {
@@ -322,6 +323,7 @@ impl<'unit> TypeContext<'unit> {
                 | CheckedType::Segments { .. }
                 | CheckedType::KeySet
                 | CheckedType::Entries { .. }
+                | CheckedType::Shards { .. }
                     if selected =>
                 {
                     return Err(SemanticCompilerFailure::InvalidResolution.into());
@@ -338,7 +340,8 @@ impl<'unit> TypeContext<'unit> {
                 | CheckedType::Window { .. }
                 | CheckedType::Segments { .. }
                 | CheckedType::KeySet
-                | CheckedType::Entries { .. } => {
+                | CheckedType::Entries { .. }
+                | CheckedType::Shards { .. } => {
                     if !self.is_copy_type(check_context, current)? {
                         drops.push((path, current));
                     }

@@ -483,6 +483,17 @@ fn shared_maps_keep_every_update_on_one_driver_and_on_four() {
     run_on_one_driver_and_on_four("shared_maps.wf", 3);
 }
 
+/// Sixteen contexts increment both fields in one shard statement while a
+/// reader compares two complete passes under each whole hold. Reading all
+/// first fields before all second fields exposes writers running through a
+/// broken whole hold even if their adjacent field stores are combined.
+/// Status 1 reports a torn snapshot; statuses 2 and 3 report a wrong final
+/// count after every spawned context has joined.
+#[test]
+fn shared_shards_exclude_writers_from_whole_snapshots_on_one_driver_and_on_four() {
+    run_on_one_driver_and_on_four("shared_shards.wf", 3);
+}
+
 /// Four contexts cover every logging/timing combination. Only the three
 /// held writers advance metadata, while all four preserve their entry updates
 /// and publish a sequence exactly on held writes. This checks the program's

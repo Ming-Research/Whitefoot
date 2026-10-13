@@ -277,6 +277,7 @@ impl Reasoning<'_, '_, '_> {
             if let Some(bound) = self.vocabulary.terms.measure_bound(*sibling) {
                 let bound = match bound {
                     MeasureBound::Constant(value) => MeasureBound::Constant(value),
+                    MeasureBound::Minimum(value) => MeasureBound::Minimum(value),
                     MeasureBound::Equal(term) => {
                         MeasureBound::Equal(targets.get(&term).copied().unwrap_or(term))
                     }

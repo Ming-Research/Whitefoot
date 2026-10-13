@@ -111,6 +111,10 @@ pub enum IrAddressed {
     Entries {
         element: IrElement,
     },
+    /// The address-only length word of one shared shards object.
+    Shards {
+        element: IrElement,
+    },
 }
 
 impl IrAddressed {
@@ -125,6 +129,7 @@ impl IrAddressed {
             Self::Segments { element } => IrType::Segments { element },
             Self::KeySet => IrType::KeySet,
             Self::Entries { element } => IrType::Entries { element },
+            Self::Shards { element } => IrType::Shards { element },
             Self::Array { element, length } => IrType::Array { element, length },
             Self::Window {
                 shape,
@@ -149,6 +154,7 @@ impl IrAddressed {
             IrType::Segments { element } => Self::Segments { element },
             IrType::KeySet => Self::KeySet,
             IrType::Entries { element } => Self::Entries { element },
+            IrType::Shards { element } => Self::Shards { element },
             IrType::Range { .. } | IrType::Run { .. } | IrType::RuntimeBoxPayload { .. } => {
                 return None;
             }
@@ -249,6 +255,11 @@ pub enum IrType {
     Entries {
         element: IrElement,
     },
+    /// [SHARE-1] The address-only length word inside a shared shards header.
+    /// Element projections recover the allocation and its aligned slots.
+    Shards {
+        element: IrElement,
+    },
     /// One `Slots<T, N>`, `Slots<T>`, `Ring<T, N>` or `Ring<T>` [TYPE-9].
     ///
     /// The layout is header-first so that the inline and the boxed placement
@@ -304,6 +315,7 @@ pub(crate) fn type_derives_release(
             // [TYPE-9, STOR-3], so it always derives a release.
             IrType::Buffer { .. }
             | IrType::Segments { .. }
+            | IrType::Shards { .. }
             | IrType::Window {
                 capacity: None, ..
             } => return Some(true),
@@ -472,6 +484,7 @@ impl IrRecord {
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum IrRecordKind {
     AtomicGroup { count: u32 },
+    ShardsGroup { count: u32 },
     TableEntry,
     TableHold,
     Entries,
@@ -801,6 +814,7 @@ impl IrMeasure {
             (Self::Length, IrType::Buffer { .. } | IrType::Segments { .. } | IrType::KeySet)
             | (Self::Length, IrType::Window { .. }) => Some(0),
             (Self::Length, IrType::Entries { .. }) => Some(2),
+            (Self::Length, IrType::Shards { .. }) => Some(0),
             (Self::Capacity, IrType::Window { capacity: None, .. }) => Some(1),
             (
                 Self::Head,
@@ -881,6 +895,8 @@ pub enum IrPlaceStep {
     /// binding over a key set names: the slot its hold keeps for the set's
     /// key `offset` [SHARE-2].
     EntriesElement { offset: IrValueId },
+    /// [OP-4] An element under a whole shards hold, after its lock word.
+    ShardElement { offset: IrValueId },
 }
 
 /// A total, nonnegative estimate evaluated only for a parallel split budget.
@@ -1302,6 +1318,43 @@ pub enum IrOperation {
     /// state not yet stored. Defines the handle.
     SharedNew {
         nominal: IrNominalId,
+    },
+    /// Allocate and initialize the header and lock words, leaving each T
+    /// slot to the constructor's ordinary maker calls before publication.
+    ShardsNew {
+        nominal: IrNominalId,
+    },
+    /// The address of the running thread's selected T slot; loads no selector.
+    ShardsSelect {
+        object: IrValueId,
+        element: IrElement,
+    },
+    /// Take one selected slot, or every slot in ascending index order.
+    ShardsTake {
+        object: IrValueId,
+        element: IrElement,
+        whole: bool,
+    },
+    /// Release the corresponding slots without registering or waking watches.
+    ShardsRelease {
+        object: IrValueId,
+        element: IrElement,
+        whole: bool,
+    },
+    ShardsGroupTarget {
+        record: IrRecord,
+        index: u32,
+        object: IrValueId,
+        whole: bool,
+    },
+    /// Sort by object identity and coalesce aliases, with whole absorbing shard.
+    ShardsGroupTake {
+        record: IrRecord,
+        element: IrElement,
+    },
+    ShardsGroupRelease {
+        record: IrRecord,
+        element: IrElement,
     },
     /// [PRE-1] an Open one-shot decision cell with one shared handle.
     DecisionCellNew {

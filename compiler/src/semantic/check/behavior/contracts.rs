@@ -651,6 +651,7 @@ impl<'unit> DeclarationInventory<'unit> {
             name: signature.name.clone(),
             symbol: signature.symbol.clone(),
             function_actuals: Vec::new(),
+            calls_function_actuals: false,
             region_parameters: Vec::new(),
             parameters,
             result_mode: signature.result_mode,

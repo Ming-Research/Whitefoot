@@ -181,6 +181,7 @@ impl TypeContext<'_> {
             | CheckedType::Buffer { element }
             | CheckedType::Segments { element }
             | CheckedType::Entries { element }
+            | CheckedType::Shards { element }
             | CheckedType::Window { element, .. } => {
                 self.activate_type(self.element_type(element)?)
             }

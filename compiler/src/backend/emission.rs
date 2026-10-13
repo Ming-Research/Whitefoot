@@ -551,6 +551,16 @@ impl Module {
             },
         );
     }
+    pub(crate) fn declare_thread_local(&mut self, name: String, ty: &str, align: u64) {
+        self.parts.push(ModulePart::Declaration(name.clone()));
+        self.declarations.insert(
+            name.clone(),
+            Declaration {
+                text: format!("@{name} = external thread_local global {ty}, align {align}"),
+                references: References::default(),
+            },
+        );
+    }
     pub(crate) fn declare_named(&mut self, signature: Signature) {
         let parameters = signature
             .parameters

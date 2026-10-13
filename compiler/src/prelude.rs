@@ -140,6 +140,21 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
 "#,
     ),
     (
+        "prelude/Shards.wf",
+        PreludeSource::Opaque,
+        r#"opaque nocopy struct Shards<T: drop> {
+  readonly len: u64;
+}
+"#,
+    ),
+    (
+        "prelude/AnyShard.wf",
+        PreludeSource::Opaque,
+        r#"opaque struct AnyShard {
+}
+"#,
+    ),
+    (
         "prelude/DecisionCell.wf",
         PreludeSource::Opaque,
         r#"opaque nocopy struct DecisionCell {
@@ -375,6 +390,18 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
 "#,
     ),
     (
+        "prelude/shared_shards_new.wf",
+        PreludeSource::FunctionCallingActuals,
+        r#"fn shared_shards_new<T: drop, fn make() -> made: T pure>() -> result: Shared<Shards<T>> pure;
+"#,
+    ),
+    (
+        "prelude/any_shard.wf",
+        PreludeSource::Function,
+        r#"fn any_shard() -> result: AnyShard pure;
+"#,
+    ),
+    (
         "prelude/shared_share.wf",
         PreludeSource::Function,
         r#"fn shared_share<T: drop>(shared: &Shared<T>) -> result: Shared<T> reads(shared);
@@ -571,12 +598,14 @@ mod tests {
         signatures.sort_unstable();
         // [PRE-1] keeps no host record: the host signatures are the standard
         // library's [PRE-2], which this unit names none of. Of the
-        // compiler-owned rows the key set's four functions [SHARE-1] and
-        // the decision cell's five functions [PRE-1] take no type parameter,
-        // so each is one ordinary checked function; every other row is
-        // generic, and [FN-2] gives it a checked function only per concrete
-        // instance, of which this unit, calling none of them, has none.
+        // compiler-owned rows the key set's four functions and the shard
+        // selector `any_shard` [SHARE-1] and the decision cell's five
+        // functions [PRE-1] take no type parameter, so each is one ordinary
+        // checked function; every other row is generic, and [FN-2] gives it
+        // a checked function only per concrete instance, of which this unit,
+        // calling none of them, has none.
         let ungeneric = [
+            "any_shard",
             "claim_killed",
             "claim_written",
             "decision_cell_new",

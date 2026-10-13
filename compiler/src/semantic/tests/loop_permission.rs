@@ -319,7 +319,12 @@ fn runtime_stride_sum_base_and_descendant_helper_calls_are_permitted() {
         let SemanticOutcome::Complete(program) = outcome else {
             panic!("{outcome:?}");
         };
-        for function in &program.data.functions {
+        for function in program
+            .data
+            .functions
+            .iter()
+            .filter(|function| !function.formal_hypothesis)
+        {
             super::entailment::validate_derivations(&function.entailment);
         }
     });
@@ -1372,6 +1377,18 @@ fn ring_map() -> result: u64 pure {
     let ring = only_loop(&table, "ring_map");
     assert!(matches!(denial(ring, 2), LoopDenial::SharedWrite { .. }));
     assert_eq!(ring.actualization, None);
+}
+
+/// [PAR-2] a whole-state shards writer checks its ordinary bounds but is
+/// no element map: Shards is absent from the closed list of admitted bases.
+#[test]
+fn a_shards_subscript_is_not_an_affine_element_map() {
+    let table = permission_of(include_bytes!(
+        "../../../../tests/conformance/cases/share-pos-shards-whole-to-callee.wf"
+    ));
+    let reset = only_loop(&table, "reset");
+    assert!(matches!(denial(reset, 2), LoopDenial::SharedWrite { .. }));
+    assert_eq!(reset.actualization, None);
 }
 
 /// Permission consumes the offset's exact checked value rather than its

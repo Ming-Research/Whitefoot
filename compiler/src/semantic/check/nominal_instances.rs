@@ -1091,6 +1091,9 @@ impl<'unit> Checker<'_, 'unit> {
             CheckedType::Entries { element } => CheckedType::Entries {
                 element: self.substitute_element_regions(check_context, element, regions)?,
             },
+            CheckedType::Shards { element } => CheckedType::Shards {
+                element: self.substitute_element_regions(check_context, element, regions)?,
+            },
             CheckedType::KeySet => ty,
             CheckedType::Window {
                 shape,
@@ -1528,6 +1531,10 @@ impl<'unit> TypeContext<'unit> {
                 | (
                     CheckedType::Segments { element: left },
                     CheckedType::Segments { element: right },
+                )
+                | (
+                    CheckedType::Shards { element: left },
+                    CheckedType::Shards { element: right },
                 ) => {
                     pending.push((self.element_type(left)?, self.element_type(right)?));
                     true
@@ -1981,6 +1988,7 @@ impl<'unit> TypeContext<'unit> {
                 "SharedRead" => OpaqueStruct::SharedRead,
                 "DecisionCell" => OpaqueStruct::DecisionCell,
                 "ConcurrentHashMap" => OpaqueStruct::ConcurrentHashMap,
+                "AnyShard" => OpaqueStruct::AnyShard,
                 _ => return Err(SemanticCompilerFailure::InvalidResolution.into()),
             });
         }

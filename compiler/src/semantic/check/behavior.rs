@@ -1091,12 +1091,19 @@ impl<'unit> TypeContext<'unit> {
     ) -> Result<GenericSubstitution, CheckStop> {
         let mut owner = match key {
             GenericParameterKey::Member { application, .. } => application,
-            GenericParameterKey::Source(_) => self.declarations.formal_source(key)?.1,
+            // The formal itself is a FnSig. Its context belongs to the
+            // receiving declaration, which may also be a body-less FnSig.
+            GenericParameterKey::Source(_) => self
+                .declarations
+                .tree
+                .parent(self.declarations.formal_source(key)?.1)?
+                .ok_or(SemanticCompilerFailure::InvalidResolution)?,
         };
         loop {
             if matches!(
                 self.declarations.tree.production(owner)?,
                 Production::FnDecl
+                    | Production::FnSig
                     | Production::StructDecl
                     | Production::EnumDecl
                     | Production::InterfaceDecl

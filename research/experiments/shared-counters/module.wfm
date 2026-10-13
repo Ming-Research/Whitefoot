@@ -1,0 +1,16 @@
+alias ExitStatus = std::process::ExitStatus;
+alias Inputs = std::process::Inputs;
+
+public fn base_main(inputs: Inputs) -> status: ExitStatus pure waits doc "W0: each of CONTEXTS contexts advances its own local number for MILLISECONDS, with no atomic statement; the runtime's no-sharing baseline.";
+
+public fn private_main(inputs: Inputs) -> status: ExitStatus pure waits doc "W1: each of CONTEXTS contexts adds one to a shared object it made and alone holds, in one atomic statement per operation, for MILLISECONDS; an atomic statement that never meets another context.";
+
+public fn shared_main(inputs: Inputs) -> status: ExitStatus pure waits doc "W2: each of CONTEXTS contexts adds one to the same shared object, in one atomic statement per operation, for MILLISECONDS.";
+
+public fn shared_param_main(inputs: Inputs) -> status: ExitStatus pure waits doc "W2r: W2 with each atomic statement reaching the one shared object through a read-only reference parameter, which the compiler counts no handle for; the arm that attributes the handle count.";
+
+public fn read_shared_main(inputs: Inputs) -> status: ExitStatus pure waits doc "W6: each of CONTEXTS contexts reads the same shared object in one atomic statement per operation that writes nothing, for MILLISECONDS; ties the read-only row of the earlier witnesses to a source.";
+
+public fn shards_main(inputs: Inputs) -> status: ExitStatus pure waits doc "W3: each of CONTEXTS contexts adds one to the element at its index modulo 16 of an array of sixteen shared objects, in one atomic statement per operation, for MILLISECONDS; the shard array a writer can build today.";
+
+public fn shards_reader_main(inputs: Inputs) -> status: ExitStatus pure waits doc "W3 with one more context that, about every millisecond, reads all sixteen shared objects in one atomic statement and reports how long each read took.";

@@ -5205,6 +5205,9 @@ fn for_each_implicit_bound(
                     emit(id, other, 0, ImplicitBoundKind::StandingMeasure);
                     emit(other, id, 0, ImplicitBoundKind::StandingMeasure);
                 }
+                Some(MeasureBound::Minimum(value)) => {
+                    emit(ZERO, id, -value, ImplicitBoundKind::StandingMeasure);
+                }
                 None => {}
             }
             // `P.len <= P.cap` and `P.head <= P.cap`, emitted from the

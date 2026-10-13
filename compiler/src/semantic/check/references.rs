@@ -1973,6 +1973,15 @@ impl<'unit> Checker<'_, 'unit> {
                         },
                     );
                 }
+                CheckedType::Shards { .. } => {
+                    return self.types.declarations.issue_node(
+                        SemanticRule::Ref4,
+                        suffix,
+                        SemanticIssueKind::RangeOverShards {
+                            mechanical_fix: "replace the range with a loop over `all^.len` and borrow individual shards with `&all^[i]`",
+                        },
+                    );
+                }
                 _ => {
                     return self.types.declarations.issue_node(
                         SemanticRule::Op4,
@@ -2612,6 +2621,7 @@ impl<'unit> TypeContext<'unit> {
                     | CheckedType::Buffer { .. }
                     | CheckedType::Window { .. }
                     | CheckedType::Entries { .. }
+                    | CheckedType::Shards { .. }
             ),
             RequiredReferent::MeasuredStorage => ty.measured().is_some(),
         })

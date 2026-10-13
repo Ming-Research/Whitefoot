@@ -17,7 +17,8 @@ use whitefoot::{
     ModuleProgramFailure, ORDINARY_VALUES_HEADER, ORDINARY_VALUES_LLVM, ORDINARY_VALUES_SOURCE,
     OverlapLowering, RESTRICTED_CHILD_COMPILE_ARGUMENTS, RecursionBudget, SCHED_CORE_HEADER,
     SCHED_CORE_SOURCE, SCHED_ENTRY_HEADER, SCHED_ENTRY_SOURCE, SCHED_PRIM_HEADER,
-    SNAPSHOT_EXPORT_HEADER, SNAPSHOT_EXPORT_SOURCE, SourceInput, WINDOWS_RUNTIME_HEADER,
+    SHARDED_STATE_HEADER, SHARDED_STATE_SOURCE, SNAPSHOT_EXPORT_HEADER, SNAPSHOT_EXPORT_SOURCE,
+    SourceInput, WINDOWS_RUNTIME_HEADER,
     build_module_entry_for_emission, check, check_module_program, check_with_cache,
     clang_executable, compile_for_emission, content_digest, discover_module_sources, entry_verdict,
     form_module_program_graph, module_verdict, render_driver_failure, render_module_interface,
@@ -158,6 +159,8 @@ const COMPLETION_SHARED_UNITS: &[RuntimeUnit] = &[
     unit("concurrent_map.h", CONCURRENT_MAP_HEADER),
     unit("concurrent_map.c", CONCURRENT_MAP_SOURCE),
     unit("keyed_table.c", KEYED_TABLE_SOURCE),
+    unit("sharded_state.h", SHARDED_STATE_HEADER),
+    unit("sharded_state.c", SHARDED_STATE_SOURCE),
 ];
 
 #[cfg(not(target_os = "windows"))]

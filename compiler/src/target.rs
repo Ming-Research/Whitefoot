@@ -793,6 +793,7 @@ fn holds_union_enum(
         | IrType::RuntimeBoxPayload { .. }
         | IrType::KeySet
         | IrType::Entries { .. }
+        | IrType::Shards { .. }
         | IrType::Address(_) => Ok(false),
     }
 }
@@ -890,6 +891,8 @@ impl<'types> ReturnLeaves<'types> {
             // binding names, which is only ever reached by its address.
             IrType::KeySet => self.integer(copies, 2),
             IrType::Entries { .. } => self.integer(copies, 3),
+            // The shards state's only inline measure is its fixed length.
+            IrType::Shards { .. } => self.integer(copies, 1),
             IrType::Window {
                 shape,
                 element,
@@ -1440,6 +1443,43 @@ fn validate_target_obligation(
                 ));
             }
         }
+        IrOperation::ShardsNew { nominal } => {
+            if result_type != IrType::Nominal(*nominal) {
+                return Err(TargetLayoutFailure::InvalidIr);
+            }
+            let IrNominalKind::Shared {
+                state: IrType::Shards { element },
+                shape: IrShared::Object,
+            } = program
+                .nominal(*nominal)
+                .ok_or(TargetLayoutFailure::InvalidIr)?
+                .kind()
+            else {
+                return Err(TargetLayoutFailure::InvalidIr);
+            };
+            let value = layouts.element(*element)?;
+            let extent = value
+                .size
+                .checked_add(16)
+                .ok_or(TargetLayoutFailure::Unrepresentable(
+                    TargetObject::RuntimeSizedAllocation,
+                ))?;
+            let stride = align_up(
+                layouts.target,
+                extent,
+                64,
+                TargetObject::RuntimeSizedAllocation,
+            )?;
+            if value.align > 16
+                || stride
+                    .checked_add(64)
+                    .is_none_or(|size| size > layouts.target.runtime_allocation_max())
+            {
+                return Err(TargetLayoutFailure::Unrepresentable(
+                    TargetObject::RuntimeSizedAllocation,
+                ));
+            }
+        }
         // [STOR-6] `box_segments_filled`: the element's actual layout must
         // lie within [OP-9]'s language ceilings and the shape's fixed
         // descriptor must be allocatable; its size is checked when it runs.
@@ -1703,6 +1743,12 @@ impl<'types> LayoutComputer<'types> {
             IrType::Entries { element } => {
                 self.element(element)?;
                 Ok(Layout { size: 24, align: 8 })
+            }
+            // A whole shards reference names the length word in its object's
+            // header; values lie in the separately aligned dynamic tail.
+            IrType::Shards { element } => {
+                self.element(element)?;
+                Ok(Layout { size: 8, align: 8 })
             }
             // [TYPE-9] a runtime-capacity block is reached only through the
             // `Box` that owns it, so it never occupies inline storage.

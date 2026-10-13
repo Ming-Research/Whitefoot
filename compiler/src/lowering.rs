@@ -106,6 +106,9 @@ fn lower_type(erasure: TypeLowering<'_>, value: CheckedType) -> Result<IrType, L
         CheckedType::Entries { element } => IrType::Entries {
             element: lower_element(erasure, element)?,
         },
+        CheckedType::Shards { element } => IrType::Shards {
+            element: lower_element(erasure, element)?,
+        },
         CheckedType::Window {
             shape,
             element,
@@ -360,7 +363,8 @@ impl From<crate::target::TargetLayoutFailure> for LoweringFailure {
 /// `shared_new`, `shared_share`, `shared_read`, `shared_read_share`,
 /// `frozen_new` and `frozen_share`,
 /// the map's five functions `shared_map_new`, `map_count`, `map_scan`, `map_scan_within`
-/// and `map_clear`, and the key set's four [SHARE-1].
+/// and `map_clear`, the shards rows `shared_shards_new` and `any_shard`,
+/// and the key set's four [SHARE-1].
 ///
 /// The host functions [PRE-2] are deliberately absent: those are body-less
 /// because the trusted base defines them, and calling one emits an ordinary
@@ -368,7 +372,7 @@ impl From<crate::target::TargetLayoutFailure> for LoweringFailure {
 /// build reaches [`LoweringFailure::UnimplementedPreludeRow`], so a row this
 /// version has not built can never become a module that names a symbol
 /// nothing defines.
-pub(crate) const COMPILER_OWNED_PRELUDE_ROWS: [&str; 44] = [
+pub(crate) const COMPILER_OWNED_PRELUDE_ROWS: [&str; 46] = [
     // [OP-13] construction and storage conversion functions.
     "box_new",
     "array_filled",
@@ -396,8 +400,8 @@ pub(crate) const COMPILER_OWNED_PRELUDE_ROWS: [&str; 44] = [
     // [OP-11] `swap` and [OP-14] `free_empty`.
     "swap",
     "free_empty",
-    // [SHARE-1] mutable, read-only and frozen handle construction/sharing, the map's five
-    // and the key set's four.
+    // [SHARE-1] mutable, read-only and frozen handle construction/sharing, the map's five,
+    // the shards' two and the key set's four.
     "shared_new",
     "shared_share",
     "shared_read",
@@ -405,6 +409,8 @@ pub(crate) const COMPILER_OWNED_PRELUDE_ROWS: [&str; 44] = [
     "frozen_new",
     "frozen_share",
     "shared_map_new",
+    "shared_shards_new",
+    "any_shard",
     "map_count",
     "map_scan",
     "map_scan_within",

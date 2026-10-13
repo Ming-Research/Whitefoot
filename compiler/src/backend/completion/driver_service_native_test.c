@@ -28,7 +28,7 @@ void wf_driver_service_test_resume(void *opaque) {
     CHECK(wf_driver_service == NULL);
     CHECK((wf_context_outside & WF_DRIVER_PHASE_MASK) == WF_DRIVER_OUTSIDE);
     if (frame->kind == FRAME_COMPUTE) {
-        CHECK(wf_executor_index == 0u);
+        CHECK(wf__map_user == 0u);
         atomic_store(&computing, 1u);
         /* Keep the submitter in userspace: even sched_yield would let it
          * enter the kernel and run deferred task work during the hold. */
@@ -37,7 +37,7 @@ void wf_driver_service_test_resume(void *opaque) {
         CHECK(group[0] == 0u && atomic_load(&resumed) == 1u);
         frame->done = 1;
     } else if (frame->stage == 0u) {
-        CHECK(wf_executor_index == 0u);
+        CHECK(wf__map_user == 0u);
         wf_completion_record *record = (wf_completion_record *)wf__context_operation();
         wf__completion_file_read_submit(frame->descriptor, frame->bytes, sizeof(frame->bytes), record);
         CHECK(record->route == WF_COMPLETION_ROUTE_LINUX_IO_URING);
@@ -45,7 +45,7 @@ void wf_driver_service_test_resume(void *opaque) {
         frame->stage = 1u;
         CHECK(wf__context_wait(record, frame));
     } else {
-        CHECK(wf_executor_index == 1u && wf_driver_self == &wf_driver_root);
+        CHECK(wf__map_user == 1u && wf_driver_self == &wf_driver_root);
         CHECK(atomic_load(&computing) && !atomic_load(&release_compute));
         wf_completion_record *record = (wf_completion_record *)wf__context_operation();
         CHECK(wf_bridge_record_state(record) == WF_COMPLETION_DONE);
@@ -65,10 +65,10 @@ int wf_driver_service_test_done(void *opaque) {
 void wf_driver_service_test_destroy(void *opaque) {
     native_service_frame *frame = opaque;
     if (frame->kind == FRAME_READ) {
-        CHECK(wf_executor_index == 1u && atomic_load(&resumed) == 1u);
+        CHECK(wf__map_user == 1u && atomic_load(&resumed) == 1u);
         CHECK(atomic_fetch_add(&destroyed_read, 1u) == 0u);
     } else {
-        CHECK(wf_executor_index == 0u && atomic_load(&wf_context_root_done));
+        CHECK(wf__map_user == 0u && atomic_load(&wf_context_root_done));
         CHECK(atomic_fetch_add(&destroyed_root, 1u) == 0u);
     }
 }
@@ -80,7 +80,7 @@ typedef struct native_owner {
 
 static void *owner_main(void *opaque) {
     native_owner *owner = opaque;
-    wf_executor_index = 0u;
+    wf__map_user = 0u;
     wf_executor_bind(&wf_driver_root);
     CHECK(wf_context_run(&wf_driver_root, owner->reader));
     CHECK(wf_driver_root.parked == owner->reader);
@@ -163,7 +163,7 @@ int main(void) {
     CHECK(wf_executors[1].assignment == &wf_driver_root);
     wf_executors[1].assignment = NULL;
     wf_spin_unlock(&wf_executor_lock);
-    wf_executor_index = 1u;
+    wf__map_user = 1u;
     wf_driver_acquire_reserved(&wf_driver_root);
     CHECK(wf_bridge_linux_current() == &wf_bridge_linux_adapter);
     CHECK(wf_driver_service == &wf_driver_root && !atomic_load(&wf_drivers_moving));

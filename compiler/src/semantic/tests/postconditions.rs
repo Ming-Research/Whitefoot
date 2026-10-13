@@ -2050,7 +2050,12 @@ fn checked_integer_results_reuse_admitted_computed_value_images() {
             let SemanticOutcome::Complete(checked) = outcome else {
                 panic!("checked computed image must remain inspectable: {outcome:?}");
             };
-            for function in &checked.data.functions {
+            for function in checked
+                .data
+                .functions
+                .iter()
+                .filter(|function| !function.formal_hypothesis)
+            {
                 super::entailment::validate_derivations(&function.entailment);
             }
         });

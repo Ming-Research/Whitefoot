@@ -714,6 +714,7 @@ impl IrBuilder<'_> {
                             target_domain: subscript.target_domain.into(),
                         },
                         IrType::Entries { .. } => IrPlaceStep::EntriesElement { offset },
+                        IrType::Shards { .. } => IrPlaceStep::ShardElement { offset },
                         _ => return Err(LoweringFailure::InvalidCheckedProgram),
                     };
                     (

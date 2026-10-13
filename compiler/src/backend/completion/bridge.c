@@ -1736,7 +1736,8 @@ static unsigned wf_drivers_once;
  * service is reassigned. Map identity belongs to the physical executor. */
 static _Thread_local wf_driver *wf_driver_self;
 static _Thread_local wf_driver *wf_driver_service;
-static _Thread_local unsigned wf_executor_index;
+_Thread_local unsigned wf__map_user;
+_Static_assert(sizeof(wf__map_user) == 4u, "the emitted map-user TLS is i32");
 static _Thread_local uint64_t wf_context_outside;
 static _Thread_local wf_context *wf_context_current;
 /* Set when suspension registered an external wake or a fairness yield.
@@ -1798,7 +1799,7 @@ static uint64_t wf_driver_next_epoch(uint64_t token, unsigned executor) {
 }
 
 static uint64_t wf_driver_leave_service(wf_driver *driver) {
-    driver->departure = wf_driver_next_epoch(driver->departure, wf_executor_index);
+    driver->departure = wf_driver_next_epoch(driver->departure, wf__map_user);
     uint64_t outside = driver->departure | WF_DRIVER_OUTSIDE;
     atomic_store_explicit(&driver->deadline_hint,
         driver->timer_count ? driver->timers[0]->timer_at : 0u, memory_order_relaxed);
@@ -3629,7 +3630,7 @@ _Static_assert(
 );
 
 unsigned wf__driver_index(void) {
-    return wf_executor_index;
+    return wf__map_user;
 }
 
 void *wf__runtime_take(uint64_t bytes) {
@@ -3717,13 +3718,13 @@ void *wf__shared_new(uint64_t state_bytes) {
 }
 
 void wf__shared_share(void *object) {
-    wf_shared *shared = (wf_shared *)object;
-    atomic_fetch_add_explicit(&shared->handles, 1u, memory_order_relaxed);
+    _Atomic uint64_t *handles = object;
+    atomic_fetch_add_explicit(handles, 1u, memory_order_relaxed);
 }
 
 int wf__shared_release(void *object) {
-    wf_shared *shared = (wf_shared *)object;
-    return atomic_fetch_sub_explicit(&shared->handles, 1u, memory_order_acq_rel) == 1u;
+    _Atomic uint64_t *handles = object;
+    return atomic_fetch_sub_explicit(handles, 1u, memory_order_acq_rel) == 1u;
 }
 
 void wf__shared_free(void *object) {
@@ -4815,7 +4816,7 @@ static void wf_executor_bind(wf_driver *driver) {
 static void wf_driver_acquire_reserved(wf_driver *driver) {
     uint64_t reserved = atomic_load_explicit(&driver->service_token, memory_order_acquire);
     if ((reserved & WF_DRIVER_PHASE_MASK) != WF_DRIVER_RESERVED
-        || ((reserved & WF_DRIVER_EXECUTOR_MASK) >> WF_DRIVER_EXECUTOR_SHIFT) != wf_executor_index
+        || ((reserved & WF_DRIVER_EXECUTOR_MASK) >> WF_DRIVER_EXECUTOR_SHIFT) != wf__map_user
         || !atomic_compare_exchange_strong_explicit(&driver->service_token, &reserved,
             (reserved & ~WF_DRIVER_PHASE_MASK) | WF_DRIVER_SERVICE,
             memory_order_acquire, memory_order_relaxed))
@@ -4829,7 +4830,7 @@ static void wf_driver_acquire_reserved(wf_driver *driver) {
 /* A displaced launcher is also reusable, but only that physical thread may
  * leave this loop for root destruction and global teardown. */
 static void wf_executor_loop(wf_executor *executor, wf_driver *initial) {
-    wf_executor_index = executor->index;
+    wf__map_user = executor->index;
     wf_driver *driver = initial;
     if (driver) wf_executor_bind(driver);
     for (;;) {
@@ -6306,3 +6307,5 @@ static int wf_bridge_cancel(wf_completion_record *record) {
             return 0;
     }
 }
+
+#include "../sharded_state.c"
