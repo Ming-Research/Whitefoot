@@ -1,0 +1,24 @@
+alias ExitStatus = std::process::ExitStatus;
+
+struct Databases {
+  doc "Two permanently distinct map allocations held by a plain directory. Source bundles have private fields; firn's module interface makes these fields public readonly. Neither field is replaced here. Distinct handle fields do not prove distinct shared state under SHARE-2.";
+  db0: Shared<ConcurrentHashMap<u64>>;
+  db1: Shared<ConcurrentHashMap<u64>>;
+}
+
+fn clear_both(first: &ConcurrentHashMap<u64>, second: &ConcurrentHashMap<u64>) -> result: unit writes(first), writes(second) {
+  map_clear::<u64>(map: first);
+  map_clear::<u64>(map: second);
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure waits {
+  doc "Expected at pin wf-af7665be672d, not yet recorded for this reduction: error[EFF-5]: OverlappingCallEffects at clear_both(first: db0, second: db1); first: db0^; second: db1^. SHARE-2 compares same-type target states as one root even after two fresh constructors. The production counterpart was reported by CI run 38416798793 at head 44d4dce. This witness must retain its helper boundary and two map allocations; inlining the two calls would hide the missing allocation-separation evidence.";
+  let first = shared_map_new::<u64>(capacity: 0_u64);
+  let second = shared_map_new::<u64>(capacity: 0_u64);
+  let databases = Databases(db0: move first, db1: move second);
+  atomic db0 = &databases.db0, db1 = &databases.db1 {
+    clear_both(first: db0, second: db1);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

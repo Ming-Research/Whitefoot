@@ -1,0 +1,27 @@
+alias ExitStatus = std::process::ExitStatus;
+
+fn write_pair(source: &u64, destination: &u64) -> result: unit writes(source), writes(destination) {
+  set source^ = source^ +wrap 1_u64;
+  set destination^ = destination^ +wrap 1_u64;
+  return unit;
+}
+
+fn route(first: &u64, second: &u64, reversed: Bool) -> result: unit writes(first), writes(second) {
+  doc "Expected at the pin: EFF-5 OverlappingCallEffects at write_pair. These ordinary formal roots are already separate; this isolates the additional relation lost when references are selected. The pair is distinct on both branches, but REF-1 joins each reference's targets into a union without retaining their correlation. This is a source-predicted diagnostic, not compiler output recorded locally. No runtime identity check or alternate dispatch is proposed.";
+  let source = first;
+  let destination = second;
+  if reversed {
+    set source = second;
+    set destination = first;
+  }
+  write_pair(source: source, destination: destination);
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  let first = 0_u64;
+  let second = 0_u64;
+  let reversed = True();
+  route(first: &first, second: &second, reversed: reversed);
+  return std::process::exit_status(code: 0_u8);
+}
