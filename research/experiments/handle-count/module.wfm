@@ -1,0 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias Inputs = std::process::Inputs;
+
+public fn value_main(inputs: Inputs) -> status: ExitStatus pure waits doc "V: each of CONTEXTS contexts updates its own key of one shared map in one atomic statement per operation for MILLISECONDS, the map reached through a handle the context holds as a value parameter; then checks that the map's values sum to the operations made.";
+
+public fn reference_main(inputs: Inputs) -> status: ExitStatus pure waits doc "R: V with each context's atomic statements reaching the map through a read-only reference parameter, for which the base compiler already counts no handle; then checks that the map's values sum to the operations made.";

@@ -19,7 +19,9 @@ mod content_moves;
 mod enum_routed_ensures;
 mod floats;
 mod interface_applications;
+mod postcondition_places;
 mod prelude_opaque;
+mod qualified_constants;
 mod recursive_effects;
 mod remaining_repairs;
 mod selector_scope;
@@ -3762,42 +3764,6 @@ fn main() -> status: ExitStatus pure {
 }
 "#],
     },
-    RepairPair {
-        name: "writable-len-field-counted-endpoint.wf",
-        rejected: br#"struct Span {
-  len: u64;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  let span = Span(len: 3_u64);
-  let spans = array_filled::<Span, 2>(value: span);
-  let count = 0_u64;
-  for (i in 0_u64..spans[1_u64].len) {
-    set count = count +wrap 1_u64;
-  }
-  return std::process::exit_status(code: 0_u8);
-}
-"#,
-        rule: "ENT-2",
-        sentences: &[
-            "\n  mechanical_fix: bind the computed u64 value with one preceding ordinary let and use that term as the endpoint\n",
-        ],
-        repaired: &[br#"struct Span {
-  len: u64;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  let span = Span(len: 3_u64);
-  let spans = array_filled::<Span, 2>(value: span);
-  let count = 0_u64;
-  let length = spans[1_u64].len;
-  for (i in 0_u64..length) {
-    set count = count +wrap 1_u64;
-  }
-  return std::process::exit_status(code: 0_u8);
-}
-"#],
-    },
 ];
 
 /// Every function a source declares, by the name its `fn` introduces.
@@ -3839,6 +3805,7 @@ fn each_pinned_repair_is_carried_out_by_its_programs() {
         .chain(cell_consumption::CELL_CONSUMPTION)
         .chain(content_moves::CONTENT_MOVES)
         .chain(prelude_opaque::PRELUDE_OPAQUE)
+        .chain(qualified_constants::QUALIFIED_CONSTANTS)
         .chain(recursive_effects::RECURSIVE_EFFECTS)
         .chain(remaining_repairs::REMAINING_REPAIRS)
         .chain(storage_destructuring::STORAGE_DESTRUCTURING)
@@ -3851,6 +3818,7 @@ fn each_pinned_repair_is_carried_out_by_its_programs() {
         .chain(writer_operations::WRITER_OPERATIONS)
         .chain(writer_ownership::WRITER_OWNERSHIP)
         .chain(writer_references::WRITER_REFERENCES)
+        .chain(postcondition_places::POSTCONDITION_PLACES)
     {
         let failure = compile(
             &[SourceInput::new(pair.name, pair.rejected)],

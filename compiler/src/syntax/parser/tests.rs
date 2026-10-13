@@ -1278,6 +1278,195 @@ fn declaration_and_parameter_optionals_report_their_complete_expected_sets() {
     );
 }
 
+/// The alias repair [MOD-5] a qualified path written where a value stands
+/// carries for `pkg::qualified_source::marker`.
+const QUALIFIED_MARKER_FIX: &str = "a qualified path names only a callee, type, construction or destructuring target, never a value [MOD-5]: to read the const `marker` here, add `alias marker = pkg::qualified_source::marker;` to this record's alias header and write `marker` in place of `pkg::qualified_source::marker` [MOD-4]; a const of this record's own module is written `marker` with no alias";
+
+/// The rule, the cited bytes and the repair one rejected source selects.
+fn qualified_value_issue(
+    name: &'static str,
+    source: &'static [u8],
+) -> (SyntaxRule, &'static [u8], Option<String>) {
+    let outcome = parse_active(name, source);
+    let ParseOutcome::SourceIssue(issue) = outcome else {
+        panic!("{name}: a qualified path in a value position must reject: {outcome:?}");
+    };
+    let repair = issue.mechanical_fix().and_then(|fix| fix.sentence(source));
+    (issue.rule(), issue_bytes(source, issue), repair)
+}
+
+/// [DIAG-1, MOD-5] A qualified path that no `(` or `::` continues, written
+/// where an `expr` or `affine_factor` stands, is cited at the complete path
+/// with the alias that names it, expecting only the call continuation.
+///
+/// Before this rule the derivation failed after the path: at the next
+/// statement's keyword under FORM-3 when the path ended a `let` or `set` and a
+/// keyword followed, and at the `;` or operator under GRAM-5 otherwise, so a
+/// writer read a call expected one line below the constant. The cases cover
+/// both frontiers the failure can stop at — the `callee_path` continuation
+/// (a keyword or operator follows) and the call's targs continuation once a
+/// `; IDENT` or `; }` lookahead completed the callee — and both value
+/// productions.
+#[test]
+fn qualified_const_in_a_value_position_cites_mod5_at_the_path() {
+    for (name, source) in [
+        (
+            "set-before-set.wf",
+            b"fn main() -> status: std::process::ExitStatus pure {\n  let holder = Holder(value: 0_u32, other: 0_u32);\n  set holder.value = pkg::qualified_source::marker;\n  set holder.other = 1_u32;\n  return std::process::exit_status(code: 0_u8);\n}\n".as_slice(),
+        ),
+        (
+            "let-before-let.wf",
+            b"fn main() -> status: std::process::ExitStatus pure {\n  let wanted = pkg::qualified_source::marker;\n  let other = 1_u32;\n  return std::process::exit_status(code: 0_u8);\n}\n",
+        ),
+        (
+            "let-before-call.wf",
+            b"fn main() -> status: std::process::ExitStatus pure {\n  let wanted = pkg::qualified_source::marker;\n  record(value: wanted);\n  return std::process::exit_status(code: 0_u8);\n}\n",
+        ),
+        (
+            "let-before-close.wf",
+            b"fn main() -> status: std::process::ExitStatus pure {\n  let wanted = pkg::qualified_source::marker;\n}\n",
+        ),
+        (
+            "return-value.wf",
+            b"fn main() -> result: u32 pure {\n  return pkg::qualified_source::marker;\n}\n",
+        ),
+        (
+            "if-condition.wf",
+            b"fn main() -> status: std::process::ExitStatus pure {\n  if pkg::qualified_source::marker == 1_u32 {\n  }\n  return std::process::exit_status(code: 0_u8);\n}\n",
+        ),
+        (
+            "left-operand.wf",
+            b"fn main() -> status: std::process::ExitStatus pure {\n  let sum = pkg::qualified_source::marker + 1_u32;\n  return std::process::exit_status(code: 0_u8);\n}\n",
+        ),
+        (
+            "requirement-operand.wf",
+            b"fn bounded(value: u32) -> result: u32 pure contract {\n  requires value < pkg::qualified_source::marker;\n} {\n  return value;\n}\n",
+        ),
+    ] {
+        let (rule, cited, repair) = qualified_value_issue(name, source);
+        assert_eq!(rule, SyntaxRule::Mod5, "{name}");
+        assert_eq!(cited, b"pkg::qualified_source::marker", "{name}");
+        assert_eq!(repair.as_deref(), Some(QUALIFIED_MARKER_FIX), "{name}");
+    }
+    let source = b"fn main() -> status: std::process::ExitStatus pure {\n  let wanted = pkg::qualified_source::marker;\n  let other = 1_u32;\n  return std::process::exit_status(code: 0_u8);\n}\n".as_slice();
+    let ParseOutcome::SourceIssue(issue) = parse_active("expected.wf", source) else {
+        panic!("a qualified path in a value position must reject");
+    };
+    let expected: Vec<_> = issue.expected().iter().collect();
+    assert_eq!(
+        expected,
+        [
+            crate::syntax::grammar::LookaheadPredicate::Terminal(TerminalPredicate::Fixed(
+                FixedTerminal::ColonColon
+            )),
+            crate::syntax::grammar::LookaheadPredicate::Terminal(TerminalPredicate::Fixed(
+                FixedTerminal::LeftParen
+            )),
+        ],
+        "a qualified path continues only as a call"
+    );
+}
+
+/// [MOD-4, MOD-5] An alias path begins at `pkg`, `std` or a bound package
+/// name, never at a module alias, and the grammar cannot tell the two roots
+/// apart, so an IDENT-rooted path's repair also says how to spell its root.
+#[test]
+fn an_ident_rooted_qualified_const_repair_spells_its_root() {
+    let (rule, cited, repair) = qualified_value_issue(
+        "ident-root.wf",
+        b"fn main() -> status: std::process::ExitStatus pure {\n  let wanted = data::origin;\n  let other = 1_u32;\n  return std::process::exit_status(code: 0_u8);\n}\n",
+    );
+    assert_eq!(rule, SyntaxRule::Mod5);
+    assert_eq!(cited, b"data::origin");
+    assert_eq!(
+        repair.as_deref(),
+        Some(
+            "a qualified path names only a callee, type, construction or destructuring target, never a value [MOD-5]: to read the const `origin` here, add `alias origin = data::origin;` to this record's alias header and write `origin` in place of `data::origin` [MOD-4], spelling `data` as the complete module path it stands for when it is a module alias, since an alias path begins at `pkg`, `std` or a bound package name; a const of this record's own module is written `origin` with no alias"
+        )
+    );
+}
+
+/// [DIAG-1, GRAM-9] In an atom-only position the qualified path is a
+/// forbidden call start and keeps GRAM-9 at its first two tokens, but its
+/// repair is the alias, not the `let` that would bind the same refused path.
+///
+/// The positional argument and the two infix operands reach the atom only
+/// after one token of lookahead, the `(` or the operator, so row 2 reads the
+/// tokens that begin at the boundary; before, it read the `(` or operator
+/// itself and FORM-3 cited `pkg` as a reserved word in an IDENT slot.
+#[test]
+fn qualified_const_in_an_atom_position_keeps_gram9_with_the_alias_repair() {
+    for (name, source) in [
+        (
+            "named-argument.wf",
+            b"fn main() -> status: std::process::ExitStatus pure {\n  let x = take(value: pkg::qualified_source::marker);\n  return std::process::exit_status(code: 0_u8);\n}\n".as_slice(),
+        ),
+        (
+            "positional-argument.wf",
+            b"fn main() -> status: std::process::ExitStatus pure {\n  let x = imin(pkg::qualified_source::marker, 1_u32);\n  return std::process::exit_status(code: 0_u8);\n}\n",
+        ),
+        (
+            "construct-field.wf",
+            b"fn main() -> status: std::process::ExitStatus pure {\n  let holder = Holder(value: pkg::qualified_source::marker, other: 0_u32);\n  return std::process::exit_status(code: 0_u8);\n}\n",
+        ),
+        (
+            "right-operand.wf",
+            b"fn main() -> status: std::process::ExitStatus pure {\n  let sum = 1_u32 + pkg::qualified_source::marker;\n  return std::process::exit_status(code: 0_u8);\n}\n",
+        ),
+        (
+            "compared-operand.wf",
+            b"fn main() -> status: std::process::ExitStatus pure {\n  if count == pkg::qualified_source::marker {\n  }\n  return std::process::exit_status(code: 0_u8);\n}\n",
+        ),
+    ] {
+        let (rule, cited, repair) = qualified_value_issue(name, source);
+        assert_eq!(rule, SyntaxRule::Gram9, "{name}");
+        assert_eq!(cited, b"pkg::", "{name}");
+        assert_eq!(repair.as_deref(), Some(QUALIFIED_MARKER_FIX), "{name}");
+    }
+}
+
+/// A qualified path that a call's `(` or `::` continues is a call: a nested
+/// one keeps GRAM-9's binding repair, and a type application that never
+/// reaches its `(` keeps GRAM-5 at the missing parenthesis [DIAG-1].
+#[test]
+fn a_qualified_call_is_not_a_qualified_const() {
+    let source = b"fn main() -> status: std::process::ExitStatus pure {\n  let x = take(value: pkg::qualified_source::f(x: 1_u32));\n  return std::process::exit_status(code: 0_u8);\n}\n".as_slice();
+    let ParseOutcome::SourceIssue(issue) = parse_active("nested-qualified-call.wf", source) else {
+        panic!("a nested qualified call must reject");
+    };
+    assert_eq!(issue.rule(), SyntaxRule::Gram9);
+    assert_eq!(issue_bytes(source, issue), b"pkg::");
+    assert_eq!(
+        issue
+            .mechanical_fix()
+            .and_then(|fix| fix.sentence(source))
+            .as_deref(),
+        Some(
+            "a `call` or `construct` in an atom position does not derive [GRAM-9]: bind the inner call with its own preceding `let` in this body and write that binder in the atom position — `let inner = f(x: 0_u64); let outer = g(y: inner);`"
+        )
+    );
+    let source = b"fn main() -> status: std::process::ExitStatus pure {\n  let x = pkg::qualified_source::make::<u8>;\n  return std::process::exit_status(code: 0_u8);\n}\n".as_slice();
+    let ParseOutcome::SourceIssue(issue) = parse_active("applied-without-call.wf", source) else {
+        panic!("a type application without its call must reject");
+    };
+    assert_eq!(issue.rule(), SyntaxRule::Gram5);
+    assert_eq!(issue_bytes(source, issue), b";");
+    assert!(issue.mechanical_fix().is_none());
+}
+
+/// [DIAG-1] row 2 reads the atom that begins after an infix operator, so a
+/// construction written as the right operand is GRAM-9's forbidden construct
+/// start, where the frontier's own lookahead, the operator, matched no row.
+#[test]
+fn a_construction_after_an_infix_operator_is_a_forbidden_atom() {
+    let source = b"fn main() -> status: std::process::ExitStatus pure {\n  let sum = 1_u32 + Holder(value: 1_u32);\n  return std::process::exit_status(code: 0_u8);\n}\n".as_slice();
+    let ParseOutcome::SourceIssue(issue) = parse_active("construct-operand.wf", source) else {
+        panic!("a construction as an infix operand must reject");
+    };
+    assert_eq!(issue.rule(), SyntaxRule::Gram9);
+    assert_eq!(issue_bytes(source, issue), b"Holder(");
+}
+
 #[test]
 fn bare_bool_range_guard_rejects_with_the_is_true_repair() {
     // [GRAM-5, RANGE-1] a guard requires one relation, so

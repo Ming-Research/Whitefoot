@@ -229,6 +229,7 @@ impl<'unit> Checker<'_, 'unit> {
                             binding,
                             element,
                             element_type: place.ty,
+                            proof_base,
                         },
                     },
                     mode: CheckedMode::Own,

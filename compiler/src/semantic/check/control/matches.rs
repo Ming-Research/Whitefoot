@@ -799,6 +799,7 @@ impl<'unit> Checker<'_, 'unit> {
                         read_only_state: false,
                         reference,
                         refinement_witnesses,
+                        handle_watch: None,
                         call_value: false,
                     },
                 )

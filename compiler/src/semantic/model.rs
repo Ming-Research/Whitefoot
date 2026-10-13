@@ -1069,7 +1069,11 @@ pub(crate) struct CheckedTarget {
     pub(crate) ledger_site: String,
     pub(crate) binding: BindingId,
     pub(crate) handle: Box<CheckedExpression>,
-    pub(crate) borrowed: bool,
+    /// [SHARE-1] whether the handle place keeps the object live until the
+    /// statement completes, because neither its guard nor its block may
+    /// write, move or release that place and no other context reaches it,
+    /// so the statement counts no handle of its own.
+    pub(crate) kept_by_place: bool,
     pub(crate) state: CheckedType,
     pub(crate) kind: CheckedTargetKind,
     pub(crate) referent: CheckedType,
@@ -1743,6 +1747,10 @@ pub(crate) struct CheckedRangeRoot {
     /// The same type carried directly for expression typing, which is
     /// context-free and cannot dereference the program-owned element table.
     pub(crate) element_type: CheckedType,
+    /// The [ENT-2] proof base where `binding` is a range alias: the
+    /// source variable its places are identified through. `None` identifies
+    /// them through `binding`.
+    pub(crate) proof_base: Option<super::places::ResolvedPlace>,
 }
 
 impl CheckedRangeRoot {
@@ -1776,7 +1784,11 @@ impl CheckedRangeRoot {
                 });
                 place
             }
-            _ => super::places::ResolvedPlace::binding(self.binding),
+            _ => proof_place_below(
+                self.proof_base.as_ref(),
+                super::places::PlaceRoot::Binding(self.binding),
+                Vec::new(),
+            ),
         }
     }
 }

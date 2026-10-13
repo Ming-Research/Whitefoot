@@ -1122,6 +1122,16 @@ impl<'unit> Checker<'_, 'unit> {
                         )?;
                     }
                 }
+                // [SHARE-1, WIN-3] the consume also releases each unselected
+                // resource part of the root here, which an atomic statement's
+                // handle place may be, so every handle watch observes exactly
+                // the parts this consume releases as well as the moved place.
+                for drop in &residual_drops {
+                    super::references::HandleWatch::observe(
+                        bindings,
+                        &ResolvedPlace::fields(local.binding, drop.fields.clone()),
+                    );
+                }
                 let access = ResolvedPlace::fields(local.binding, access_fields);
                 let mut effects = EffectSet::NONE;
                 // [SET-1, EFF-2] a read-out reads the target's own storage,

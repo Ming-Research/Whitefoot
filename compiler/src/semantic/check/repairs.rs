@@ -33,7 +33,7 @@
 
 use std::collections::{BTreeSet, HashSet};
 
-use super::super::entailment::TermRead;
+use super::super::entailment::{SelectedReturnBound, TermRead};
 use super::super::goal::{
     EvaluatedValueOccurrence, GoalDatum, GoalExpression, GoalOperation, GoalProjection,
 };
@@ -1180,6 +1180,84 @@ pub(super) fn clause_bounds(case: &GoalCase<'_>, constant_offset: bool) -> Strin
             "add `requires {};` to the `contract` of `{}` ahead of the requirement that forms this place, which each caller then establishes",
             case.text, case.function
         ),
+    }
+}
+
+/// [OP-4] a subscript of a place a postcondition forms [ENT-2, FN-9]. The
+/// place is formed at every return that selects the clause, in the state that
+/// return leaves with, so a requirement or the facts before each such return
+/// establish the bound.
+pub(super) fn postcondition_bounds(
+    case: &GoalCase<'_>,
+    constant_offset: bool,
+    return_line: u64,
+    bound: &SelectedReturnBound,
+    held: bool,
+) -> String {
+    // [FN-9, MSR-3] a place reads its formal offsets, and the bases it
+    // denotes at entry, at function entry. Once the body rebinds an offset,
+    // the clause is unavailable at the return whatever bounds it, so the
+    // value the body computes needs its own name; `held` says the contract
+    // already requires the bound, which then needs nothing more. A base
+    // length the body changes is established only by facts about its entry
+    // value.
+    if let Some((rebound, values, them)) = entry_values(&bound.rebound) {
+        let alternative = match (case.disposition, held) {
+            (Disposition::Refuted, _) => {
+                format!(", and {}", refuted_index(constant_offset, false))
+            }
+            // The contract already requires the bound; only the rebinding
+            // keeps it from the place.
+            (Disposition::Unproved, true) => String::new(),
+            (Disposition::Unproved, false) => format!(
+                ", and add `requires {};` to the `contract` of `{}`, which each caller then establishes",
+                bound.requirement, case.function
+            ),
+        };
+        return format!(
+            "`{}` reads {rebound} at {values}, and a clause reading {them} is unavailable at the `return` on line {return_line}, where the body has rebound {them}: give the new value its own name instead of rebinding {rebound}{alternative}",
+            case.text
+        );
+    }
+    match (case.disposition, entry_values(&bound.entry_lengths)) {
+        (Disposition::Refuted, None) => format!(
+            "`{}` is false at the `return` on line {return_line}, which selects this postcondition: {}",
+            case.text,
+            refuted_index(constant_offset, false)
+        ),
+        (Disposition::Refuted, Some((lengths, values, _))) => format!(
+            "`{}` is false at the `return` on line {return_line}, which selects this postcondition, with {lengths} at {values}: {}",
+            case.text,
+            refuted_index(constant_offset, false)
+        ),
+        (Disposition::Unproved, None) => format!(
+            "add `requires {};` to the `contract` of `{}`, which each caller then establishes, or establish it before the `return` on line {return_line} and every other `return` that selects this postcondition",
+            bound.requirement, case.function
+        ),
+        (Disposition::Unproved, Some((lengths, values, them))) => format!(
+            "add `requires {};` to the `contract` of `{}`, which each caller then establishes, or establish it with {lengths} at {values} before the `return` on line {return_line} and every other `return` that selects this postcondition, which a test made after the body changes {them} does not",
+            bound.requirement, case.function
+        ),
+    }
+}
+
+/// A list of code spans read at function entry, joined for a sentence, with
+/// the noun and pronoun that agree with it.
+fn entry_values(spans: &[String]) -> Option<(String, &'static str, &'static str)> {
+    match spans {
+        [] => None,
+        [one] => Some((one.clone(), "its function-entry value", "it")),
+        [rest @ .., last] => Some((
+            format!(
+                "{} and {last}",
+                rest.iter()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            "their function-entry values",
+            "them",
+        )),
     }
 }
 

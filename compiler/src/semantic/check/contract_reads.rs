@@ -161,7 +161,7 @@ impl Checker<'_, '_> {
                 .declarations
                 .relation_postcondition_selectors(selectors)?
             {
-                let expression = self.expand_postcondition_clause(
+                let (expression, _) = self.expand_postcondition_clause(
                     context,
                     &selector,
                     &mut bindings.clone(),

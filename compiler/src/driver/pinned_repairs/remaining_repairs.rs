@@ -771,6 +771,42 @@ fn pass(value: Token) -> result: unit pure {
 "#,
         ],
     },
+    RepairPair {
+        name: "writable-len-field-counted-endpoint.wf",
+        rejected: br#"struct Span {
+  len: u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let span = Span(len: 3_u64);
+  let spans = array_filled::<Span, 2>(value: span);
+  let count = 0_u64;
+  for (i in 0_u64..spans[1_u64].len) {
+    set count = count +wrap 1_u64;
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "ENT-2",
+        sentences: &[
+            "\n  mechanical_fix: bind the computed u64 value with one preceding ordinary let and use that term as the endpoint\n",
+        ],
+        repaired: &[br#"struct Span {
+  len: u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let span = Span(len: 3_u64);
+  let spans = array_filled::<Span, 2>(value: span);
+  let count = 0_u64;
+  let length = spans[1_u64].len;
+  for (i in 0_u64..length) {
+    set count = count +wrap 1_u64;
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
 ];
 
 /// The public-field repair is selected in an interface, which a single
