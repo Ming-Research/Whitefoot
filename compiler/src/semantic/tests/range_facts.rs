@@ -692,6 +692,68 @@ fn a_term_whose_value_passes_i128_is_unsupported_not_clamped() {
     }
 }
 
+/// A body that forms `first = (2^64 - 1) * x` and `second = (2^64 - 1) *
+/// first` for `x == 0`, then runs `statement`. Ordinary entailment proves
+/// both products from x's interval [0, 0] [ENT-3.S7], so neither site owes
+/// a deferred goal; the walk holds `first` exactly, but `second`'s
+/// coefficient (2^64 - 1)^2 leaves `i128` and the walk forgets its value.
+fn forgotten_product(statement: &str) -> Vec<u8> {
+    format!(
+        "fn need(xs: &[u64], v: u64) -> result: unit reads(xs) contract {{
+  requires forall matched(k in 0_u64..xs^.len): xs^[k] == v;
+}} {{
+  return unit;
+}}
+
+fn probe(xs: &[u64], x: u64) -> result: unit reads(xs) contract {{
+  requires x == 0_u64;
+  requires 1_u64 <= xs^.len;
+  requires forall zero(k in 0_u64..xs^.len): xs^[k] == 0_u64;
+}} {{
+  let first = x * 18446744073709551615_u64;
+  let second = first * 18446744073709551615_u64;
+  let e = xs^[0_u64];
+  {statement}
+  return unit;
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
+}}
+"
+    )
+    .into_bytes()
+}
+
+#[test]
+fn a_walk_that_forgot_a_value_past_i128_leaves_nothing_rejected() {
+    // Each obligation holds, since second is 0. Over `first`, which the walk
+    // holds, each is proved, so the forgotten `second` alone does not stop
+    // the walk. Over `second`, the call's RANGE-3 requirement fails as a
+    // walk issue and the invariant stays an unproved deferred goal; each
+    // would be a rejection, but the walk lost the value to its own
+    // arithmetic, so the verdict is the checker's limit [RANGE-3].
+    for statement in ["need(xs: xs, v: {value});", "invariant held: e == {value};"] {
+        let held = statement.replace("{value}", "first");
+        with_semantics(&forgotten_product(&held), |outcome| {
+            assert!(
+                matches!(outcome, SemanticOutcome::Complete(_)),
+                "{held}: {outcome:?}"
+            );
+        });
+        let forgotten = statement.replace("{value}", "second");
+        with_semantics(&forgotten_product(&forgotten), |outcome| {
+            let SemanticOutcome::Unsupported { unsupported, .. } = outcome else {
+                panic!("{forgotten}: expected the arithmetic limit, got {outcome:?}");
+            };
+            assert_eq!(
+                unsupported.feature(),
+                crate::UnsupportedSemanticFeature::RangeArithmetic
+            );
+        });
+    }
+}
+
 /// A loop whose write to `cells` waits behind a chain of `flags` flags,
 /// each set an iteration after the one before, so each dry walk of the
 /// header reaches one more of them. `header` opens the loop; an ordinary

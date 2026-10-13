@@ -1784,6 +1784,82 @@ mod aggregate_tests {
     }
 
     #[test]
+    fn a_range_width_past_i128_is_the_arithmetic_limit_unless_another_is_empty() {
+        use crate::semantic::range_facts::CheckedRangeBinder;
+        let mut world = World::default();
+        let mut fact = projected_fact(&mut world, 1);
+        // Both endpoints fit, but the width 1 - i128::MIN does not: the range
+        // is nonempty, and the checker cannot say how wide.
+        fact.clause.binders.push(CheckedRangeBinder {
+            start: CheckedRangeTerm::Constant(i128::MIN),
+            end: CheckedRangeTerm::Constant(1),
+        });
+        assert_eq!(
+            vacuous(&mut world, &fact.clause, &fact.frame),
+            Err(Capacity::Arithmetic),
+            "an unformed width is not a nonempty range"
+        );
+        // An empty second range leaves the clause no tuple whatever the first.
+        fact.clause.binders.push(CheckedRangeBinder {
+            start: CheckedRangeTerm::Constant(0),
+            end: CheckedRangeTerm::Constant(0),
+        });
+        assert_eq!(vacuous(&mut world, &fact.clause, &fact.frame), Ok(true));
+    }
+
+    #[test]
+    fn a_relative_trigger_index_past_i128_is_the_arithmetic_limit() {
+        let mut world = World::default();
+        let version = world.new_version(VersionDef::Initial);
+        let trigger = Trigger {
+            place: CheckedRangePlace {
+                root: CheckedRangeRoot::Result(0),
+                path: Vec::new(),
+                fixed_length: None,
+            },
+            shape: CheckedRangeShape::Run,
+            positions: vec![Some(0)],
+            projection: Vec::new(),
+            descendants: false,
+            unchanged: false,
+        };
+        // Element k of this run is the container's element at 1 + k.
+        let view = PlaceView::Run {
+            container: 0,
+            version,
+            generation: 0,
+            prefix: Vec::new(),
+            offset: Linear::constant(1),
+            length: Linear::constant(4),
+        };
+        let mut candidates = vec![BTreeSet::new()];
+        // The read at i128::MIN selects k = i128::MIN - 1, outside i128: a
+        // tuple the checker cannot hold, not one the read does not select.
+        assert_eq!(
+            match_trigger(
+                &view,
+                &trigger,
+                version,
+                &[Linear::constant(i128::MIN)],
+                &mut candidates,
+            ),
+            Err(Capacity::Arithmetic)
+        );
+        assert!(candidates[0].is_empty(), "{candidates:?}");
+        assert_eq!(
+            match_trigger(
+                &view,
+                &trigger,
+                version,
+                &[Linear::constant(3)],
+                &mut candidates,
+            ),
+            Ok(())
+        );
+        assert_eq!(candidates[0], BTreeSet::from([Linear::constant(2)]));
+    }
+
+    #[test]
     fn written_instance_ceiling_counts_tuples_not_conclusions() {
         use crate::semantic::range_facts::CheckedRangeBinder;
         for count in [MAX_INSTANCES, MAX_INSTANCES + 1] {
