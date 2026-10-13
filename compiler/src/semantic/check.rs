@@ -11,6 +11,7 @@ mod frozen;
 mod generics;
 mod inventory;
 mod linearity;
+mod lock_ledger_sources;
 mod nominal_instances;
 mod nominals;
 mod obligations;
@@ -540,6 +541,8 @@ enum PreludeType {
 /// Source declarations and syntax shared read-only by preflight and body checking.
 struct DeclarationInventory<'unit> {
     resolved: &'unit ResolvedSyntaxUnit,
+    /// Lazily indexed source lines for non-normative lock-ledger locations.
+    ledger_line_starts: lock_ledger_sources::SourceLines,
     /// [STOR-8, GRAM-2] whether this compilation unit wrote `program
     /// no_heap;`.
     ///
@@ -910,6 +913,7 @@ impl<'unit> DeclarationInventory<'unit> {
         let no_heap = Checker::declares_no_heap(&tree)?;
         Ok(Self {
             resolved,
+            ledger_line_starts: Default::default(),
             tree,
             no_heap,
         })
@@ -1511,6 +1515,11 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             Vec::new()
         };
 
+        let lock_ledger_sources = self
+            .types
+            .declarations
+            .lock_ledger_sources(&functions, &executable_functions);
+
         Ok(CheckedProgramData {
             nominals: self.types.nominals.clone(),
             nominal_confinement: self
@@ -1553,6 +1562,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             generic_requirements: self.analysis.generic_requirements.clone(),
             permission,
             permission_ledger,
+            lock_ledger_sources,
         })
     }
 
