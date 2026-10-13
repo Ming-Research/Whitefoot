@@ -1811,7 +1811,7 @@ If the actual byte sequence beginning at a backslash's follower does not begin o
 A raw ASCII byte outside the permitted interior set cites [FORM-5] and spans that byte.
 At any other cursor inside a quoted candidate, if the actual byte sequence beginning there does not begin one complete well-formed UTF-8 encoding of a Unicode scalar value, [FORM-2] spans its first byte; a valid non-ASCII scalar instead cites [FORM-5] and spans its complete UTF-8 encoding.
 If no unescaped closing quote occurs and no earlier defect applies, the unterminated quoted candidate cites [FORM-5] and spans from its opening quote through end of segment.
-Terminal membership uses the complete context-free predicate set required by [GRAM-1]; a token with no matching predicate cites [FORM-3] or [FORM-5], whichever rule owns the rejected spelling.
+Terminal membership uses the complete context-free predicate set required by [GRAM-1]; a token with no matching predicate cites [FORM-3], [FORM-5] or [GRAM-1], whichever rule owns the rejected spelling, [GRAM-1] owning the operator-form spellings.
 Every lexical, terminal-membership, or grammar rejection uses `SourceBytes`; its coordinate is the exact interval above, the exact offending token interval, or the zero-width segment-end interval defined above.
 
 Every grammar production and external terminal predicate is owned by the numbered rule containing its unique definition.

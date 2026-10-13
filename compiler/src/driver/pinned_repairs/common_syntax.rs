@@ -280,7 +280,8 @@ fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
 "#,
-        rule: "GRAM-3",
+        // DIAG-1 stops at CONST-1's optional tail exit: `>` matches, but `[` fails its caller continuation.
+        rule: "CONST-1",
         sentences: &[
             "\n  mechanical_fix: replace the expression list with `array_filled` or `box_array_filled` for repeated copy elements, or `slots_new` followed by `place_back` for individual elements [OP-13]; for static elements, declare `const values: Array<u8, 2> =[1_u8, 2_u8];` and use `values` [CONST-2]\n",
         ],
