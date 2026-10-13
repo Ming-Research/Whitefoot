@@ -58,8 +58,8 @@ impl Reasoning<'_, '_, '_> {
     fn fact_support_places(&self, facts: &FactState, places: &mut Vec<ResolvedPlace>) {
         let mut terms = facts
             .bounds
-            .cells()
-            .flat_map(|(left, right, _, _)| [left, right])
+            .live_terms()
+            .into_iter()
             .chain(facts.distinct.iter().flat_map(|(left, right, _)| [*left, *right]))
             .chain(facts.origins.values().flat_map(Relation::terms))
             .collect::<Vec<_>>();
@@ -149,6 +149,8 @@ impl Reasoning<'_, '_, '_> {
                 .filter(|(_, killed)| killed.is_none())
                 .map(|(image, _)| image.place.clone()),
         );
+        let mut seen_places = HashSet::new();
+        places.retain(|place| seen_places.insert(place.clone()));
         let mut pairs = Vec::new();
         for place in places {
             for place in self.input.places.resolve(place.root, &place.path) {

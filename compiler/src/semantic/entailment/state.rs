@@ -2713,7 +2713,7 @@ impl BoundStore {
     }
 
     /// The terms with at least one cell, ascending.
-    fn live_terms(&self) -> Vec<TermId> {
+    pub(crate) fn live_terms(&self) -> Vec<TermId> {
         let count = self.terms.len();
         let mut live = vec![false; count];
         for row in 0..count {
