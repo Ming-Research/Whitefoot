@@ -532,8 +532,8 @@ original with the C convention. Executed instructions per Lua call, fib(32):
 | Stores to the stack in the five hot arms | 43.0 | — | 21.0 |
 | `wf__most_*` self instructions | 0 | 0 | 474.5 |
 
-The pre-written arm criterion is met (−37 against −10), but the program is
-36.7% slower: every call a part makes now crosses a wrapper, including the
+The pre-written arm criterion is met (−37 against −10), but the program executes
+36.7% more instructions: every call a part makes now crosses a wrapper, including the
 fast-path helpers (`fast_instruction_sub_rk`, `fast_instruction_lt_jmp_rk`,
 `checked_step`, `instruction_get_upval`, `instruction_call`,
 `instruction_return`) that B inlined into the arms, and each wrapper pushes
@@ -913,6 +913,182 @@ Rejection, per change:
   interleaved against B with a twin of B; it is rejected if it is not faster
   than B beyond the twin's spread on fib, or slower beyond it on CoreMark.
 
+### Result: E2 instruction counts and 14900K timing
+
+The [instruction-count run](https://github.com/Ming-Research/Whitefoot/actions/runs/38352516256)
+used base compiler `c28b0145e777fa6159ba7134fe1d9591c24466b1` (the
+merge-base with main), and C1 and C2 compiler
+`b385c5c03b219d0f37218f169cb4caa30c45b851`, selecting S1+S2 and
+S1+S2+S3 respectively. Its manifest records main
+`b9c6235e340ba127260e67089dc87dbff7b00362`, Halo
+`c900a68b2f06af0de2adccfd0dd348d49af184de`, the historical probe
+`14eb8eb181fd5fa57cb9f13382ad31bf858c9ae4` (its `probe/measure.py`),
+silverfir `5f248e4420102356be7edadbdb4db2ae105d3270` for v2h, and
+CoreMark input blob `70b4d2165e7fbbd797e47b43032fc06302c1774f`.
+The hosted x86-64 run used LLVM 22, Halo full LTO and uncached builds;
+v2h compiled directly at the default optimizing level, with separate fresh
+caches. The run's `table.md`, `manifest.txt` and `probe/` artifact supply
+the counts and disassembly quoted here. Executable self instructions per
+Lua call exclude other process instructions; harm comparisons use whole
+process callgrind Ir. fib(32) printed 2178309 and made 7,049,155 Lua calls.
+
+| Executed instructions per Lua call | Base | C1 | C2 |
+|---|---:|---:|---:|
+| fib executable self, approximate headline | 841.6 | 825.6 | 752.1 |
+| fib executable self, artifact precision | 841.525130 | 825.525150 | 752.026399 |
+| SubRK self | 59.999991 | 49.999993 | 48.999993 |
+| LtJmpRK self | 53.000000 | 55.000000 | 55.000000 |
+| GetUpval self | 60.999991 | 59.999991 | 59.999991 |
+| Three-arm self sum | 173.999983 | 164.999984 | 163.999985 |
+| Call including ordinary callees | 436.002442 | 433.002441 | 362.002499 |
+
+The headline figures are approximations; the criteria use the artifact
+precision. C1 saves 15.999980 instructions per Lua call against the measured
+base, exceeding its minimum saving of 5. C2 saves 89.498731 against base
+(and 73.498751 against C1), below its ceiling of 814.9 instructions per
+Lua call and exceeding the item's minimum saving of 25. The measured base
+is not the historical B compiler, but its 841.525130 is 0.004870 below
+historical B's 841.53. Translating the published thresholds by that
+baseline difference gives 836.525130 for C1 and 814.895130 for C2; both
+still pass. The written criteria above remain unchanged.
+
+| Other Halo kernel (input size) | C1 whole-process Ir vs base | C2 whole-process Ir vs C1 |
+|---|---:|---:|
+| binary-trees (12) | −0.305961% | −0.383889% |
+| concat (200000) | −1.688624% | +0.446522% |
+| integer-table (1000000) | +0.582242% | −1.301094% |
+| loop (5000000) | +0.693972% | −2.065575% |
+| sort (100000) | −0.328093% | −0.194585% |
+| string-key (200000) | −3.284816% | −0.883528% |
+| v2h CoreMark (200 iterations) | +0.144406% | +0.050732% |
+
+fib's whole-process changes are −1.901125% for C1 against base and
+−8.902442% for C2 against C1. The worst increase among the six other Halo
+kernels is loop's +0.693972% for C1 against base and concat's +0.446522%
+for C2 against C1, both below the 1% harm bound. CoreMark rises 0.14% for
+C1 against base and 0.05% for C2 against C1, also below 1%, **at 200
+iterations only**. The attempted 2000-iteration callgrind run
+[38350625447](https://github.com/Ming-Research/Whitefoot/actions/runs/38350625447)
+on the 16 GB hosted runner already held 20,303,183,872 anonymous mmap
+bytes (over 20 GB) and failed to acquire another 29,360,132,096 bytes.
+The 200-iteration result does not validate the full 2000-iteration
+instruction-count harm criterion. Native timing below uses 2000 iterations.
+
+#### Arm-entry evidence
+
+All three arms execute no ordinary callee on fib's measured fast path;
+their self and inclusive counts agree. The artifact's automatic stack-store
+counter reports zero even for base's visible stores, the same instrument
+limitation noted in the earlier probe. The entry-store counts below come
+from reading the disassembly, before its first conditional jump; entry
+instruction counts exclude that jump as the probe does. A frame or a store
+at entry executes on every arm invocation, including the measured fast path.
+
+| Arm | Base → C2 executed self instructions per Lua call | Base → C2 entry instructions | Base → C2 entry stack stores (excluding push) | Base → C2 frame allocation after push |
+|---|---:|---:|---:|---|
+| SubRK | 60 → 49 | 32 → 14 | 9 → 5 | 0xd0 → 0x80 bytes |
+| LtJmpRK | 53 → 55 | 26 → 27 | 6 → 6 | 0xc0 → 0xc0 bytes |
+| GetUpval | 61 → 60 | 9 → 8 | 2 → 0 | 0x40 → 0x80 bytes |
+
+In `base.arm-SubRK.txt`, entry `5e040: push rbp` and
+`5e041: sub rsp,0xd0` build a frame. Of nine entry stores, four slots are
+read or passed by address only on the unexecuted paths: `5e058: mov QWORD
+PTR [rsp+0x60],r8` (address at `5e206` and `5e2e0`, read at `5e588`),
+`5e0c3: mov QWORD PTR [rsp+0x68],r8` (read at `5e592`),
+`5e0be: mov QWORD PTR [rsp+0x70],r11` (read at `5e5c2`), and
+`5e0b1: mov QWORD PTR [rsp+0x78],rbx` (read at `5e5e4`). Those consumers
+all count 0.000 executions per Lua call. In `C2.arm-SubRK.txt`,
+`5f980: push rbp; 5f981: sub rsp,0x80` still builds a frame; five entry
+stores remain. One is still slow-path-only: `5f996: mov QWORD PTR
+[rsp+0x28],r8`, whose address is passed at `5fa7a: lea r8,[rsp+0x28]`
+and read at `5fabc: mov rsi,QWORD PTR [rsp+0x28]`, both counting 0.000.
+Other entry spills have fast-path reads, for example the `r11` store at
+`5f988` is reloaded at `5fa54`, both counting 1.000. **SubRK does not meet
+the no-entry-preparation condition**, despite saving 11 executed instructions
+per Lua call.
+
+In `base.arm-LtJmpRK.txt`, `65240: push rbp; 65241: sub rsp,0xc0`
+builds a frame. Two of six entry stores have only slow-path consumers:
+`65255: mov QWORD PTR [rsp+0x58],r8` (address at `65412`, read at
+`656a7`) and `652a7: mov QWORD PTR [rsp+0x78],rsi` (read at `656f6`),
+all consumers counting 0.000. In `C2.arm-LtJmpRK.txt`,
+`66680: push rbp; 66681: sub rsp,0xc0` remains, with six entry stores.
+`66693: mov QWORD PTR [rsp+0x18],r8` still prepares a slow-path-only
+slot: reads at `667d1`, `668c2`, `66ad7`, and address formation at
+`66869: lea rdi,[rsp+0x18]` all count 0.000. The new byte spill
+`6669d: mov BYTE PTR [rsp+0x7],al` is **not** slow-path-only:
+`66701: cmp BYTE PTR [rsp+0x7],0x0` executes 1.000 times per Lua call.
+**LtJmpRK does not meet the condition**; its executed count rises by 2.
+
+In `base.arm-GetUpval.txt`, `58980: push rbp; 58981: sub rsp,0x40`
+builds a frame. Both entry stores serve the fast path:
+`58985: mov QWORD PTR [rsp+0x8],r11` and
+`58990: mov QWORD PTR [rsp],rdi` reload at `58b63` and `58b5c`,
+respectively, all counting 1.000. No slow-path-only entry store is visible.
+`C2.arm-GetUpval.txt` has no entry stack store; stores
+`5b886: mov QWORD PTR [rsp],r10` and
+`5b88a: mov QWORD PTR [rsp+0x8],r11` now lie after the error branch
+and count 0.000. But `5b800: push rbp; 5b801: sub rsp,0x80`
+still builds a frame on the hot path, twice base's allocation.
+**GetUpval removes entry stores but does not meet the complete condition**:
+frame preparation remains, and it saves only 1 executed instruction per
+Lua call. None of the three arms establishes the separate completion
+condition of no frame or slow-path-only preparation at entry. These verdicts
+are for these images and fib paths, not a claim about every input or target.
+
+#### 14900K wall time and selection
+
+The [14900K timing run](https://github.com/Ming-Research/Whitefoot/actions/runs/38366457857)
+used base compiler `c28b0145e777fa6159ba7134fe1d9591c24466b1` and
+C2 compiler `0793e49124c16e6d19bed5109168f9508766fc37`; its manifest
+records main `ad8ea57f7cbb0bfd099c9924f7b52639e172e04f`. Halo,
+silverfir and the CoreMark input blob are the same revisions as above.
+This candidate revision differs from the instruction-count run; these are
+results for the two recorded revisions, not measurements of the final
+review-fix revision. The timing manifest identifies Ubuntu x86-64 on
+MBSDESKTOP and clang 22.1.8. The run pinned execution to logical CPU 2,
+used one warm-up round and seven interleaved B/twin/C2 rounds, rotating
+order each round. The twin is a byte copy of B's images. fib(32) validated
+output 2178309; native v2h CoreMark used 2000 iterations and validated CRC.
+The run's timing summary and manifest supply these figures; displayed
+seconds are rounded, while percentages use the underlying measurements.
+
+| Workload | Image | Median wall s | Min wall s | Max wall s | Measured rounds |
+|---|---|---:|---:|---:|---:|
+| fib(32) | B | 0.3032 | 0.3028 | 0.3034 | 7 |
+| fib(32) | twin | 0.3032 | 0.3028 | 0.3043 | 7 |
+| fib(32) | C2 | 0.3031 | 0.3028 | 0.3034 | 7 |
+| CoreMark (2000) | B | 0.4025 | 0.4024 | 0.4032 | 7 |
+| CoreMark (2000) | twin | 0.4027 | 0.4025 | 0.4031 | 7 |
+| CoreMark (2000) | C2 | 0.4026 | 0.4025 | 0.4031 | 7 |
+
+| Workload | Absolute twin/B median difference / B median | B min–max range / B median | C2/B median ratio | C2 wall-time change vs B | Literal criterion |
+|---|---:|---:|---:|---:|---|
+| fib(32) | 0.001% | 0.188% | 0.99958 | 0.042% less | Pass |
+| CoreMark (2000) | 0.062% | 0.188% | 1.00046 | 0.046% more | Pass |
+
+By the run's literal definition of the twin's spread (the absolute
+difference between its median and B's median), fib passes: 0.042% is
+greater than 0.001%. CoreMark's 0.046% increase is below the twin's
+0.062% median difference, so it passes too. That median difference is too
+narrow a noise measure: two medians can agree while the individual runs
+vary more. Base's own min–max range is 0.188%, about 0.19%, for both
+workloads, larger than either effect. The wall-time changes are not
+distinguishable from noise on this run; it establishes no wall-time gain
+from the instruction reduction.
+
+On 2026-10-13 the owner selected **C2, all three rules**, to keep and
+finish despite this wall-time result, on the instruction-count evidence.
+This settles policy selection, without asserting that the full
+2000-iteration instruction-count criterion or the arm-entry condition met.
+Before merge, one `perf stat` run on the 14900K must explain why fewer
+instructions did not shorten wall time; that explanation is pending.
+Reopen the policy if a measurement on any target shows wall-time harm
+beyond its measured noise, the C2/C1 instruction harm exceeds 1% on a
+Halo kernel or v2h CoreMark, or the pending explanation contradicts the
+instruction-reduction grounds. The evidence here covers the listed
+workloads, sizes, compiler revisions and x86-64 settings only.
+
 **E3. Profile ceiling (no compiler change).** B built with
 `-fprofile-generate`, trained (a) on fib(32) and (b) on the six other
 kernels, then rebuilt with `-fprofile-use`; measured on fib(32). Prediction:
@@ -974,4 +1150,5 @@ gain is not the spill placement this item addresses alone. The study's
 objections to PGO as a default stand (a build input, a training set, and an
 unfair comparison against PUC Lua built without one); whether an opt-in
 profile-guided build mode is worth offering is a separate question for the
-owner. For this item, the next step is E2: S1 + S2 + S3 in the compiler.
+owner. E2 above records the subsequent S1 + S2 + S3 compiler results and the
+owner's selection of C2; it does not select a profile-guided build mode.

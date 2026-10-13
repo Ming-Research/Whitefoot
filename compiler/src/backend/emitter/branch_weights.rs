@@ -8,7 +8,7 @@ use crate::{
 };
 
 const STRUCTURAL_LIKELY_WEIGHT: u32 = 2000;
-/// Kept separate so the experiment can try a weaker call prediction.
+/// Kept separate so call predictions can be reconsidered independently.
 pub(super) const CALL_LIKELY_WEIGHT: u32 = 2000;
 /// A general pre-inlining proxy, not a claim about the host's inline budget.
 /// Tiny bodies contribute only calls that survive recursively through them;

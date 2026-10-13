@@ -232,20 +232,11 @@ pub(crate) fn emit_prepared_llvm(
         target,
         WindowAddressFacts::Emit,
         &prepared.plan,
-        call_branch_weights_enabled(),
+        true,
     )
 }
 
-/// Temporary experiment switch for the halo-call-path study's E2 comparison:
-/// `WHITEFOOT_BRANCH_WEIGHTS=C1` emits S1+S2; `C2` (the default, also for an
-/// unrecognized value) adds S3. Remove after E2 selects the retained policy.
-/// It affects placement hints only, never acceptance or target qualification.
-/// The emitted-module cache includes this setting. All supported builds use
-/// the driver's fixed optimizing level; there is no unoptimized build mode.
-pub(crate) fn call_branch_weights_enabled() -> bool {
-    std::env::var_os("WHITEFOOT_BRANCH_WEIGHTS").as_deref() != Some(std::ffi::OsStr::new("C1"))
-}
-
+/// Withholds S3 only for tests comparing placement hints on the same IR.
 #[cfg(test)]
 pub(crate) fn emit_llvm_with_branch_weights(
     program: &IrProgram,
@@ -284,7 +275,7 @@ pub(super) fn emit_llvm_with_window_address_facts(
         target,
         window_address_facts,
         &selected.plan,
-        call_branch_weights_enabled(),
+        true,
     )
 }
 

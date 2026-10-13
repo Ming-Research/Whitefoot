@@ -432,6 +432,207 @@ fn optional_call_heuristic_weights_only_the_non_tail_call_side() {
 }
 
 #[test]
+fn ordinary_loop_suppresses_call_hint_but_split_continuation_receives_it() {
+    let source = sizeable_helper()
+        + r#"enum Command {
+  Work();
+  Halt();
+}
+
+fn ordinary_call_loop(call_it: Bool, seed: u64) -> result: u64 pure {
+  loop {
+    if call_it {
+      let called = sizeable(seed: seed);
+      set seed = called;
+      continue;
+    }
+    return seed;
+  }
+}
+
+fn split_call_loop(command: Command, call_it: Bool, seed: u64) -> result: u64 pure {
+  loop {
+    match command {
+      Work() => {
+        if call_it {
+          let called = sizeable(seed: seed);
+          set seed = called;
+          continue;
+        } else {
+          continue;
+        }
+      }
+      Halt() => {
+        return seed;
+      }
+    }
+  }
+}
+"#;
+    with_ir(source.as_bytes(), |program| {
+        let module = emit_mode(program, true);
+        assert!(
+            !module.contains(" @wf_ordinary_call_loop.arm."),
+            "the ordinary Bool loop must remain unsplit: {module}"
+        );
+        let ordinary = emitted_body(&module, "ordinary_call_loop");
+        assert!(ordinary.contains("call i64 @wf_sizeable("), "{ordinary}");
+        let (block, targets) = bool_match(function(program, "ordinary_call_loop"), 0);
+        assert_eq!(
+            switch_weights(ordinary, block, targets),
+            None,
+            "a surviving ordinary backedge must suppress S3: {ordinary}"
+        );
+        assert!(
+            module.contains(" @wf_split_call_loop.arm.0("),
+            "the nominal dispatch loop must actually split: {module}"
+        );
+        let split = emitted_body(&module, "split_call_loop.arm.0");
+        assert!(split.contains("call i64 @wf_sizeable("), "{split}");
+        let (block, targets) = bool_match(function(program, "split_call_loop"), 1);
+        assert_eq!(
+            switch_weights(split, block, targets),
+            Some(BTreeMap::from([(0, 2000), (1, 1)])),
+            "both edges continue, but only True contains a surviving call: {split}"
+        );
+        let c1 = emit_mode(program, false);
+        assert_eq!(
+            switch_weights(emitted_body(&c1, "split_call_loop.arm.0"), block, targets),
+            None,
+            "the split continuation's hint must come from S3, not S2"
+        );
+    });
+}
+
+#[test]
+fn small_callee_cutoff_is_exactly_sixteen_ir_instructions() {
+    let mut source = String::new();
+    for count in [16, 17] {
+        source.push_str(&format!(
+            "fn leaf{count}(seed: u64) -> result: u64 pure {{\n"
+        ));
+        let mut previous = "seed".to_owned();
+        for instruction in 0..count {
+            // Two existing SSA operands produce exactly one IR instruction;
+            // no literal materialization can shift the tested boundary.
+            source.push_str(&format!(
+                "  let value{instruction} = ixor({previous}, seed);\n"
+            ));
+            previous = format!("value{instruction}");
+        }
+        source.push_str(&format!("  return {previous};\n}}\n"));
+        source.push_str(&format!(
+            "fn optional_leaf{count}(flag: Bool, seed: u64) -> result: u64 pure {{\n  if flag {{\n    let called = leaf{count}(seed: seed);\n    return called +wrap seed;\n  }}\n  return seed;\n}}\n"
+        ));
+    }
+    with_ir(source.as_bytes(), |program| {
+        let module = emit_mode(program, true);
+        for count in [16, 17] {
+            let leaf = function(program, &format!("leaf{count}"));
+            assert_eq!(
+                leaf.blocks()
+                    .iter()
+                    .map(|block| block.instructions().len())
+                    .sum::<usize>(),
+                count,
+                "the fixture must test the exact IR boundary"
+            );
+            let name = format!("optional_leaf{count}");
+            let (block, targets) = bool_match(function(program, &name), 0);
+            let body = emitted_body(&module, &name);
+            assert!(
+                body.contains(&format!("call i64 @wf_leaf{count}(")),
+                "{body}"
+            );
+            let expected = (count == 17).then(|| BTreeMap::from([(0, 2000), (1, 1)]));
+            assert_eq!(
+                switch_weights(body, block, targets),
+                expected,
+                "{name}: {body}"
+            );
+        }
+    });
+}
+
+#[test]
+fn small_wrapper_inherits_its_inner_surviving_call() {
+    let source = sizeable_helper()
+        + r#"fn wrapper(seed: u64) -> result: u64 pure {
+  let called = sizeable(seed: seed);
+  return called +wrap seed;
+}
+
+fn optional_wrapper(flag: Bool, seed: u64) -> result: u64 pure {
+  if flag {
+    let called = wrapper(seed: seed);
+    return called +wrap seed;
+  }
+  return seed;
+}
+"#;
+    with_ir(source.as_bytes(), |program| {
+        let wrapper = function(program, "wrapper");
+        assert!(
+            wrapper
+                .blocks()
+                .iter()
+                .map(|block| block.instructions().len())
+                .sum::<usize>()
+                <= 16,
+            "the wrapper must qualify for the small-body estimate"
+        );
+        let module = emit_mode(program, true);
+        let wrapper_body = emitted_body(&module, "wrapper");
+        assert!(
+            wrapper_body.contains("call i64 @wf_sizeable("),
+            "{wrapper_body}"
+        );
+        let body = emitted_body(&module, "optional_wrapper");
+        assert!(body.contains("call i64 @wf_wrapper("), "{body}");
+        let (block, targets) = bool_match(function(program, "optional_wrapper"), 0);
+        assert_eq!(
+            switch_weights(body, block, targets),
+            Some(BTreeMap::from([(0, 2000), (1, 1)])),
+            "inlining the small wrapper still leaves its large inner call: {body}"
+        );
+    });
+}
+
+#[test]
+fn distinct_surviving_calls_on_both_sides_receive_no_hint() {
+    // True calls in a return block; False calls before another branch. This
+    // asymmetry separately exercises both all_paths call-free exclusions:
+    // seeding return blocks and propagating through their predecessors.
+    let source = sizeable_helper()
+        + &sizeable_helper().replace("sizeable", "other_sizeable")
+        + r#"fn distinct_calls(flag: Bool, seed: u64) -> result: u64 pure {
+  if flag {
+    let called = sizeable(seed: seed);
+    return called +wrap seed;
+  } else {
+    let called = other_sizeable(seed: seed);
+    if called == 0_u64 {
+      return seed;
+    }
+    return called +wrap seed;
+  }
+}
+"#;
+    with_ir(source.as_bytes(), |program| {
+        let module = emit_mode(program, true);
+        let body = emitted_body(&module, "distinct_calls");
+        assert!(body.contains("call i64 @wf_sizeable("), "{body}");
+        assert!(body.contains("call i64 @wf_other_sizeable("), "{body}");
+        let (block, targets) = bool_match(function(program, "distinct_calls"), 0);
+        assert_eq!(
+            switch_weights(body, block, targets),
+            None,
+            "neither distinct call has an opposite call-free path: {body}"
+        );
+    });
+}
+
+#[test]
 fn postdominating_calls_tiny_helpers_intrinsics_and_tail_calls_are_not_cold_seeds() {
     let source = sizeable_helper()
         + r#"fn tiny(seed: u64) -> result: u64 pure {
