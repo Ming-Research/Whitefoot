@@ -185,17 +185,45 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             let destination = self.value_place(result)?;
             rendered.push(format!("ptr {destination}"));
         }
-        for (argument, parameter) in arguments.iter().zip(abi.parameters()) {
+        // A call inside this function's recursive group names the callee's
+        // internal form and passes this activation's own environment record
+        // in place of the arguments it holds (compiler/recursive-environment).
+        let internal = self.internal_call(function, &self.callee_symbol(function, target.name()));
+        if internal.is_some() {
+            rendered.push(format!("ptr {}", call_entries::ENVIRONMENT));
+        }
+        let mut passed = Vec::with_capacity(arguments.len());
+        for (index, (argument, parameter)) in arguments.iter().zip(abi.parameters()).enumerate() {
             if self.value_type(*argument) != Some(parameter.ty()) {
                 return Err(BackendFailure::InvalidIr);
             }
+            if internal
+                .as_ref()
+                .is_some_and(|internal| !internal.order.contains(&index))
+            {
+                passed.push(None);
+                continue;
+            }
             if parameter.is_indirect() {
                 let address = self.value_place(*argument)?;
-                rendered.push(format!("ptr {address}"));
+                passed.push(Some(format!("ptr {address}")));
             } else {
                 let operand = self.value_name(*argument);
-                rendered.push(self.value_argument(*parameter, &operand)?);
+                passed.push(Some(self.value_argument(*parameter, &operand)?));
             }
+        }
+        // The internal form declares its parameters in its own order.
+        match &internal {
+            Some(internal) => {
+                for index in &internal.order {
+                    let argument = passed
+                        .get_mut(*index)
+                        .and_then(Option::take)
+                        .ok_or(BackendFailure::InvalidIr)?;
+                    rendered.push(argument);
+                }
+            }
+            None => rendered.extend(passed.into_iter().flatten()),
         }
         // A call that stays inside a budgeted component carries the caller's
         // remaining levels as the callee variant's trailing parameter, the way
@@ -204,12 +232,20 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         if let Some(budget) = budget {
             rendered.push(format!("i64 {budget}"));
         }
+        let (callee, convention, attributes) = match &internal {
+            Some(internal) => (
+                internal.symbol.clone(),
+                internal.convention,
+                internal.attributes,
+            ),
+            None => (callee, "", ""),
+        };
         if stored_result {
             return {
                 self.output.symbol(callee.to_string());
                 writeln!(
                     self.output,
-                    "  call void @{callee}({})",
+                    "  call {convention}void @{callee}({}){attributes}",
                     rendered.join(", ")
                 )
             }
@@ -221,7 +257,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 self.output.symbol(callee.to_string());
                 writeln!(
                     self.output,
-                    "  {} = call {} @{callee}({})",
+                    "  {} = call {convention}{} @{callee}({}){attributes}",
                     self.value_name(result),
                     emitted_type_1,
                     rendered.join(", ")

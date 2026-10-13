@@ -3,12 +3,20 @@
 //! This is a printing model, not an optimization IR. Instructions remain text;
 //! block identity and references which other emission consumers need do not.
 
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::{self, Write};
 
 use crate::IrBlockId;
 
 use super::emitter::BackendFailure;
+
+/// A deferred definition's literal text and block-scoped local identifiers.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum DeferredPart {
+    Text(String),
+    Local(String),
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum BodyPart {
@@ -21,6 +29,20 @@ enum BodyPart {
         value: String,
         predecessor: IrBlockId,
     },
+    DeferredLoad {
+        canonical: String,
+        label: String,
+    },
+    Terminator {
+        label: String,
+    },
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct DeferredRequests {
+    requested: BTreeSet<(String, String)>,
+    pending: Vec<(String, String)>,
+    invalid: bool,
 }
 
 /// A function's emitted blocks and deferred incoming edges. Recording a label
@@ -30,10 +52,49 @@ pub(crate) struct FunctionBody {
     parts: Vec<BodyPart>,
     current_label: Option<String>,
     exits: Vec<Option<String>>,
+    block_operands: BTreeMap<String, Vec<DeferredPart>>,
+    deferred: RefCell<DeferredRequests>,
     pub(crate) references: References,
 }
 
 impl FunctionBody {
+    pub(crate) fn register_block_operand(
+        &mut self,
+        canonical: String,
+        definition: Vec<DeferredPart>,
+    ) {
+        if self.current_label.is_some() || self.block_operands.contains_key(&canonical) {
+            self.deferred.get_mut().invalid = true;
+            return;
+        }
+        self.block_operands.insert(canonical, definition);
+    }
+
+    /// Looking up an operand schedules its definition before the next write,
+    /// once in this physical LLVM block. Immutable lookup lets format arguments
+    /// keep using the emitter's existing value-name interface.
+    pub(crate) fn block_operand(&self, canonical: &str) -> Option<String> {
+        if !self.block_operands.contains_key(canonical) {
+            return None;
+        }
+        let mut deferred = self.deferred.borrow_mut();
+        let Some(label) = &self.current_label else {
+            deferred.invalid = true;
+            return Some(canonical.to_owned());
+        };
+        let request = (label.clone(), canonical.to_owned());
+        if deferred.requested.insert(request.clone()) {
+            deferred.pending.push(request);
+        }
+        Some(format!("{canonical}.{label}"))
+    }
+
+    fn flush_deferred(&mut self) {
+        for (label, canonical) in self.deferred.get_mut().pending.drain(..) {
+            self.parts.push(BodyPart::DeferredLoad { canonical, label });
+        }
+    }
+
     pub(crate) fn instructions(&mut self, text: &str, symbols: &[&str]) {
         self.references
             .symbols
@@ -52,6 +113,7 @@ impl FunctionBody {
         self.references.symbols.insert(name.into());
     }
     pub(crate) fn push_str(&mut self, text: &str) {
+        self.flush_deferred();
         if let Some(BodyPart::Text(previous)) = self.parts.last_mut() {
             previous.push_str(text);
         } else {
@@ -64,6 +126,11 @@ impl FunctionBody {
     }
 
     pub(crate) fn open_block(&mut self, label: String) {
+        // A request left unwritten would land after the previous block's
+        // terminator; refuse it instead of flushing it into the wrong block.
+        if !self.deferred.get_mut().pending.is_empty() {
+            self.deferred.get_mut().invalid = true;
+        }
         let entry = self.current_label.is_none();
         self.current_label = Some(label.clone());
         self.parts.push(BodyPart::Block { label, entry });
@@ -71,6 +138,19 @@ impl FunctionBody {
 
     pub(crate) fn incoming(&mut self, value: String, predecessor: IrBlockId) {
         self.parts.push(BodyPart::Incoming { value, predecessor });
+    }
+
+    /// Mark the insertion point after cleanup and block splitting, immediately
+    /// before this physical block's final branch or return.
+    pub(crate) fn terminator(&mut self) {
+        self.flush_deferred();
+        if let Some(label) = &self.current_label {
+            self.parts.push(BodyPart::Terminator {
+                label: label.clone(),
+            });
+        } else {
+            self.deferred.get_mut().invalid = true;
+        }
     }
 
     pub(crate) fn finish_ir_block(&mut self, block: IrBlockId) -> Result<(), BackendFailure> {
@@ -85,6 +165,39 @@ impl FunctionBody {
     }
 
     pub(crate) fn render(&self, entry_allocations: &str) -> Result<String, BackendFailure> {
+        let deferred = self.deferred.borrow();
+        if deferred.invalid || !deferred.pending.is_empty() {
+            return Err(BackendFailure::InvalidIr);
+        }
+        let mut defined = BTreeSet::new();
+        let mut terminators = BTreeSet::new();
+        for part in &self.parts {
+            match part {
+                BodyPart::DeferredLoad { canonical, label } => {
+                    defined.insert((label.clone(), canonical.clone()));
+                }
+                BodyPart::Terminator { label } => {
+                    terminators.insert(label.as_str());
+                }
+                _ => {}
+            }
+        }
+        // Resolve every phi before printing: predecessors can be emitted after
+        // their successors, and splitting chooses their actual exit labels.
+        let mut phi_loads: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+        for part in &self.parts {
+            if let BodyPart::Incoming { value, predecessor } = part {
+                let label = self.exit_label(*predecessor)?;
+                if self.block_operands.contains_key(value)
+                    && defined.insert((label.to_owned(), value.clone()))
+                {
+                    if !terminators.contains(label) {
+                        return Err(BackendFailure::InvalidIr);
+                    }
+                    phi_loads.entry(label).or_default().push(value);
+                }
+            }
+        }
         let mut text = String::new();
         for part in &self.parts {
             match part {
@@ -96,17 +209,56 @@ impl FunctionBody {
                     }
                 }
                 BodyPart::Incoming { value, predecessor } => {
-                    let label = self
-                        .exits
-                        .get(predecessor.index())
-                        .and_then(Option::as_ref)
-                        .ok_or(BackendFailure::InvalidIr)?;
+                    let label = self.exit_label(*predecessor)?;
+                    let value = if self.block_operands.contains_key(value) {
+                        format!("{value}.{label}")
+                    } else {
+                        value.clone()
+                    };
                     write!(text, "[ {value}, %{label} ]")
                         .map_err(|_| BackendFailure::TextEmission)?;
+                }
+                BodyPart::DeferredLoad { canonical, label } => {
+                    self.render_block_operand(&mut text, canonical, label)?;
+                }
+                BodyPart::Terminator { label } => {
+                    if let Some(operands) = phi_loads.remove(label.as_str()) {
+                        for canonical in operands {
+                            self.render_block_operand(&mut text, canonical, label)?;
+                        }
+                    }
                 }
             }
         }
         Ok(text)
+    }
+
+    fn exit_label(&self, predecessor: IrBlockId) -> Result<&str, BackendFailure> {
+        self.exits
+            .get(predecessor.index())
+            .and_then(Option::as_deref)
+            .ok_or(BackendFailure::InvalidIr)
+    }
+
+    fn render_block_operand(
+        &self,
+        text: &mut String,
+        canonical: &str,
+        label: &str,
+    ) -> Result<(), BackendFailure> {
+        let definition = self
+            .block_operands
+            .get(canonical)
+            .ok_or(BackendFailure::InvalidIr)?;
+        for part in definition {
+            match part {
+                DeferredPart::Text(part) => text.push_str(part),
+                DeferredPart::Local(name) => {
+                    write!(text, "{name}.{label}").map_err(|_| BackendFailure::TextEmission)?;
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -929,5 +1081,261 @@ mod declaration_tests {
             parent.append(child);
             assert_eq!(parent.repeated_declaration(), Some("callee"));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fmt::Write;
+
+    use super::{DeferredPart, FunctionBody};
+    use crate::IrBlockId;
+
+    fn block(index: usize) -> IrBlockId {
+        IrBlockId::from_index(index).unwrap()
+    }
+
+    fn body_with_operand() -> FunctionBody {
+        let mut body = FunctionBody::default();
+        body.register_block_operand(
+            "%v0".to_owned(),
+            vec![
+                DeferredPart::Text("  ".to_owned()),
+                DeferredPart::Local("%v0".to_owned()),
+                DeferredPart::Text(" = load i64, ptr %env\n".to_owned()),
+            ],
+        );
+        body
+    }
+
+    #[test]
+    fn deferred_operand_loads_once_before_its_first_regular_use() {
+        let mut body = body_with_operand();
+        body.open_block("bb0".to_owned());
+        body.push_str("  %before = add i64 1, 2\n");
+        let first = body.block_operand("%v0").unwrap();
+        let repeated = body.block_operand("%v0").unwrap();
+        writeln!(body, "  %sum = add i64 {first}, {repeated}").unwrap();
+        let last = body.block_operand("%v0").unwrap();
+        body.terminator();
+        writeln!(body, "  ret i64 {last}").unwrap();
+        assert_eq!(
+            body.render("  %slot = alloca i64\n").unwrap(),
+            "bb0:\n  %slot = alloca i64\n  %before = add i64 1, 2\n  \
+             %v0.bb0 = load i64, ptr %env\n  \
+             %sum = add i64 %v0.bb0, %v0.bb0\n  ret i64 %v0.bb0\n"
+        );
+    }
+
+    #[test]
+    fn deferred_operand_definitions_are_local_to_each_physical_branch() {
+        let mut body = body_with_operand();
+        body.open_block("entry".to_owned());
+        body.push_str("  br i1 %condition, label %left, label %right\n");
+        for label in ["left", "right"] {
+            body.open_block(label.to_owned());
+            let value = body.block_operand("%v0").unwrap();
+            body.terminator();
+            body.push_str(&format!("  ret i64 {value}\n"));
+        }
+        assert_eq!(
+            body.render("").unwrap(),
+            "entry:\n  br i1 %condition, label %left, label %right\n\
+             left:\n  %v0.left = load i64, ptr %env\n  ret i64 %v0.left\n\
+             right:\n  %v0.right = load i64, ptr %env\n  ret i64 %v0.right\n"
+        );
+    }
+
+    #[test]
+    fn phi_operands_load_at_earlier_and_later_predecessors_actual_exits() {
+        let mut body = body_with_operand();
+        body.open_block("bb0".to_owned());
+        body.push_str("  br label %bb0.exit\n");
+        body.open_block("bb0.exit".to_owned());
+        body.push_str("  call void @cleanup()\n");
+        body.terminator();
+        body.push_str("  br label %bb1\n");
+        body.finish_ir_block(block(0)).unwrap();
+        body.open_block("bb1".to_owned());
+        body.push_str("  %result = phi i64 ");
+        body.incoming("%v0".to_owned(), block(0));
+        body.push_str(", ");
+        body.incoming("%v0".to_owned(), block(2));
+        body.push_str("\n  ret i64 %result\n");
+        body.open_block("bb2".to_owned());
+        body.push_str("  br label %bb2.exit\n");
+        body.open_block("bb2.exit".to_owned());
+        body.terminator();
+        body.push_str("  br label %bb1\n");
+        body.finish_ir_block(block(2)).unwrap();
+        assert_eq!(
+            body.render("").unwrap(),
+            "bb0:\n  br label %bb0.exit\n\
+             bb0.exit:\n  call void @cleanup()\n  \
+             %v0.bb0.exit = load i64, ptr %env\n  br label %bb1\n\
+             bb1:\n  %result = phi i64 \
+             [ %v0.bb0.exit, %bb0.exit ], [ %v0.bb2.exit, %bb2.exit ]\n  \
+             ret i64 %result\n\
+             bb2:\n  br label %bb2.exit\n\
+             bb2.exit:\n  %v0.bb2.exit = load i64, ptr %env\n  br label %bb1\n"
+        );
+    }
+
+    #[test]
+    fn phi_and_regular_use_share_the_predecessors_load() {
+        let mut body = body_with_operand();
+        body.open_block("bb0".to_owned());
+        let value = body.block_operand("%v0").unwrap();
+        body.push_str(&format!("  %sum = add i64 {value}, 1\n"));
+        body.terminator();
+        body.push_str("  br label %bb1\n");
+        body.finish_ir_block(block(0)).unwrap();
+        body.open_block("bb1".to_owned());
+        body.push_str("  %result = phi i64 ");
+        body.incoming("%v0".to_owned(), block(0));
+        body.push_str("\n  ret i64 %result\n");
+        assert_eq!(
+            body.render("").unwrap(),
+            "bb0:\n  %v0.bb0 = load i64, ptr %env\n  \
+             %sum = add i64 %v0.bb0, 1\n  br label %bb1\n\
+             bb1:\n  %result = phi i64 [ %v0.bb0, %bb0 ]\n  ret i64 %result\n"
+        );
+    }
+
+    #[test]
+    fn phi_reuses_a_regular_load_requested_for_the_terminator() {
+        let mut body = body_with_operand();
+        body.open_block("bb0".to_owned());
+        body.terminator();
+        let value = body.block_operand("%v0").unwrap();
+        body.push_str(&format!("  switch i64 {value}, label %bb1 []\n"));
+        body.finish_ir_block(block(0)).unwrap();
+        body.open_block("bb1".to_owned());
+        body.push_str("  %result = phi i64 ");
+        body.incoming("%v0".to_owned(), block(0));
+        body.push_str("\n  ret i64 %result\n");
+        assert_eq!(
+            body.render("").unwrap(),
+            "bb0:\n  %v0.bb0 = load i64, ptr %env\n  \
+             switch i64 %v0.bb0, label %bb1 []\n\
+             bb1:\n  %result = phi i64 [ %v0.bb0, %bb0 ]\n  ret i64 %result\n"
+        );
+    }
+
+    #[test]
+    fn phi_only_operand_requires_a_predecessor_terminator_marker() {
+        let mut body = body_with_operand();
+        body.open_block("bb0".to_owned());
+        body.push_str("  br label %bb1\n");
+        body.finish_ir_block(block(0)).unwrap();
+        body.open_block("bb1".to_owned());
+        body.push_str("  %result = phi i64 ");
+        body.incoming("%v0".to_owned(), block(0));
+        body.push_str("\n");
+        assert!(matches!(
+            body.render(""),
+            Err(super::BackendFailure::InvalidIr)
+        ));
+    }
+
+    #[test]
+    fn operand_matching_is_exact_and_only_local_recipe_parts_are_scoped() {
+        let mut body = body_with_operand();
+        body.register_block_operand(
+            "%v1".to_owned(),
+            vec![
+                DeferredPart::Text("  ".to_owned()),
+                DeferredPart::Local("%v1.pointer".to_owned()),
+                DeferredPart::Text(" = getelementptr i8, ptr %v0, i64 8\n  ".to_owned()),
+                DeferredPart::Local("%v1".to_owned()),
+                DeferredPart::Text(" = load i64, ptr ".to_owned()),
+                DeferredPart::Local("%v1.pointer".to_owned()),
+                DeferredPart::Text("\n".to_owned()),
+            ],
+        );
+        body.open_block("bb0".to_owned());
+        assert_eq!(body.block_operand("%v01"), None);
+        assert_eq!(body.block_operand("%v0.other"), None);
+        let value = body.block_operand("%v1").unwrap();
+        body.push_str(&format!("  %used = add i64 {value}, %v01\n"));
+        body.push_str("  br label %bb1\n");
+        body.finish_ir_block(block(0)).unwrap();
+        body.open_block("bb1".to_owned());
+        body.push_str("  %result = phi i64 ");
+        body.incoming("%v01".to_owned(), block(0));
+        body.push_str("\n");
+        assert_eq!(
+            body.render("").unwrap(),
+            "bb0:\n  %v1.pointer.bb0 = getelementptr i8, ptr %v0, i64 8\n  \
+             %v1.bb0 = load i64, ptr %v1.pointer.bb0\n  \
+             %used = add i64 %v1.bb0, %v01\n  br label %bb1\n\
+             bb1:\n  %result = phi i64 [ %v01, %bb0 ]\n"
+        );
+    }
+
+    #[test]
+    fn registered_operand_lookup_without_a_physical_block_is_invalid() {
+        let mut body = body_with_operand();
+        assert!(body.block_operand("%v0").is_some());
+        body.open_block("bb0".to_owned());
+        body.push_str("  ret void\n");
+        assert!(matches!(
+            body.render(""),
+            Err(super::BackendFailure::InvalidIr)
+        ));
+    }
+
+    #[test]
+    fn rendering_does_not_drop_an_unwritten_operand_request() {
+        let mut body = body_with_operand();
+        body.open_block("bb0".to_owned());
+        assert!(body.block_operand("%v0").is_some());
+        assert!(matches!(
+            body.render(""),
+            Err(super::BackendFailure::InvalidIr)
+        ));
+    }
+
+    #[test]
+    fn a_request_pending_when_the_next_block_opens_is_invalid() {
+        let mut body = body_with_operand();
+        body.open_block("bb0".to_owned());
+        assert!(body.block_operand("%v0").is_some());
+        body.open_block("bb1".to_owned());
+        body.push_str("  ret void\n");
+        assert!(matches!(
+            body.render(""),
+            Err(super::BackendFailure::InvalidIr)
+        ));
+    }
+
+    #[test]
+    fn registering_an_operand_after_the_first_block_is_invalid() {
+        let mut body = FunctionBody::default();
+        body.open_block("bb0".to_owned());
+        body.register_block_operand(
+            "%v0".to_owned(),
+            vec![DeferredPart::Text("  nop\n".to_owned())],
+        );
+        body.push_str("  ret void\n");
+        assert!(matches!(
+            body.render(""),
+            Err(super::BackendFailure::InvalidIr)
+        ));
+    }
+
+    #[test]
+    fn registering_the_same_operand_twice_is_invalid() {
+        let mut body = body_with_operand();
+        body.register_block_operand(
+            "%v0".to_owned(),
+            vec![DeferredPart::Text("  nop\n".to_owned())],
+        );
+        body.open_block("bb0".to_owned());
+        body.push_str("  ret void\n");
+        assert!(matches!(
+            body.render(""),
+            Err(super::BackendFailure::InvalidIr)
+        ));
     }
 }
