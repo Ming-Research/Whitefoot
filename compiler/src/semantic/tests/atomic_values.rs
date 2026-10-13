@@ -200,6 +200,30 @@ fn work(first: &Shared<AtomicValue>) -> result: unit reads(first) waits {
 }
 
 #[test]
+fn a_reference_parameter_is_not_an_atomic_binding() {
+    check(
+        r#"fn observe(value: &AtomicValue) -> result: unit pure {
+  return unit;
+}
+
+fn forward(value: &AtomicValue) -> result: unit pure {
+  observe(value: value);
+  return unit;
+}
+"#,
+        None,
+    );
+    check(
+        r#"fn exchange(first: &AtomicValue, second: &AtomicValue) -> result: unit writes(first), writes(second) {
+  swap(first: first, second: second);
+  return unit;
+}
+"#,
+        Some(SemanticRule::Type9),
+    );
+}
+
+#[test]
 fn operations_are_refused_in_helpers_and_guards() {
     check(
         r#"fn observe(value: &AtomicValue) -> result: u64 reads(value) {

@@ -392,8 +392,11 @@ impl<'unit> Checker<'_, 'unit> {
             self.body.enter_atomic_update_argument(&call, ordinal);
             let argument = self.check_call_argument_atom(context, atom, bindings, loop_depth)?;
             self.reject_failed_atomic_update_argument(atom)?;
+            // [SHARE-2] restricts the statement's atomic-value bindings; any
+            // other `&AtomicValue` argument meets placement [TYPE-9] below.
             if self.types.is_atomic_value_type(argument.expression.ty())
                 && !(atomic_value_operation && ordinal == 0)
+                && self.mentions_atomic_value_root(&argument.expression)
             {
                 return self.types.declarations.issue_node(
                     SemanticRule::Share2,

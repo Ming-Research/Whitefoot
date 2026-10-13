@@ -30,6 +30,18 @@ fn join(left: Option<u8>, right: Option<u8>) -> Option<u8> {
 }
 
 impl Checker<'_, '_> {
+    /// Whether `expression` names one of the enclosing atomic statements'
+    /// atomic-value bindings, the only occurrences SHARE-2 restricts.
+    pub(in crate::semantic::check) fn mentions_atomic_value_root(
+        &self,
+        expression: &CheckedExpression,
+    ) -> bool {
+        self.body
+            .atomic_value_roots
+            .iter()
+            .any(|root| super::atomic::expression_mentions(expression, *root))
+    }
+
     /// Guards and erased proofs never acquire a readable scalar from the
     /// atomic-value state. Refuse the source use before ordinary typing.
     pub(in crate::semantic::check) fn reject_atomic_value_names(
