@@ -28,7 +28,7 @@ fn second(rows: &Array<Slots<u8, 8>, 4>) -> r: u64 reads(rows) contract {
   doc "Only the second call's relation is over element two; the first result is bounded by element one.";
   let first = width(rows: rows, i: 1_u64);
   let other = width(rows: rows, i: 2_u64);
-  let held = need(rows: rows, w: first);
+  let needed = need(rows: rows, w: first);
   return other;
 }
 

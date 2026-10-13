@@ -24,7 +24,7 @@ fn second(rows: &Array<Slots<u8, 8>, 4>) -> r: u64 reads(rows) contract {
 } {
   doc "A named const actual is the offset of both the published relation and the instantiated requirement.";
   let w = width(rows: rows, i: second_row);
-  let held = need(rows: rows, w: w, i: second_row);
+  let needed = need(rows: rows, w: w, i: second_row);
   return w;
 }
 

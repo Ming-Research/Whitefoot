@@ -27,7 +27,7 @@ fn second(rows: &Array<Slots<u8, 8>, 4>) -> r: u64 reads(rows) contract {
 } {
   doc "The call at offset two publishes its relation over element two.";
   let w = width(rows: rows, i: 2_u64);
-  let held = need(rows: rows, w: w);
+  let needed = need(rows: rows, w: w);
   return w;
 }
 
