@@ -1,0 +1,16 @@
+enum RoutedOrdinal {
+  Item(index: u64);
+}
+
+fn pair() -> (left: RoutedOrdinal, right: RoutedOrdinal) pure contract {
+  ensures when left is Item(index: payload): payload == 1_u64;
+  ensures when right is Item(index: payload): payload == 2_u64;
+} {
+  let left_value = RoutedOrdinal::Item(index: 1_u64);
+  let right_value = RoutedOrdinal::Item(index: 2_u64);
+  return left_value, right_value;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

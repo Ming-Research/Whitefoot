@@ -41,6 +41,7 @@ mod counted_ranges;
 mod derivation;
 mod descriptor_invalidation;
 mod division_obligations;
+mod enum_routed_ensures;
 mod entailment;
 mod entailment_sources;
 mod entry_form;

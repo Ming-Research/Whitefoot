@@ -45,8 +45,8 @@ struct InterfaceRequirement {
 struct InterfaceEnsures {
     clause: NodePath,
     ordinal: u32,
-    variant: Option<crate::BuiltinPreludeId>,
-    field: Option<crate::BuiltinPreludeId>,
+    variant: Option<crate::ResolvedTarget>,
+    field: Option<u32>,
     result_type: CheckedType,
     expression: ExpandedClauseExpression,
     relation_ordinal: u32,
@@ -378,7 +378,7 @@ impl<'unit> Checker<'_, 'unit> {
                 clause: selector.block.clone(),
                 ordinal: selector.ordinal,
                 variant: selector.variant,
-                field: selector.field.as_ref().map(|field| field.declaration),
+                field: selector.field.as_ref().map(|field| field.index),
                 result_type: selector.result_type,
                 expression,
                 relation_ordinal: u32::try_from(relation_ordinal)
@@ -456,9 +456,16 @@ fn ensures_available_on_route(published: &InterfaceEnsures, promised: &Interface
         (true, false) => false,
         (true, true) => {
             published.ordinal == promised.ordinal
-                && published.variant == promised.variant
-                && published.field == promised.field
-                && published.selector.route == promised.selector.route
+                && match (published.selector.route, promised.selector.route) {
+                    // A generated type invariant and a written promise name
+                    // the same concrete field even though only the written
+                    // clause retains resolver-owned selector metadata.
+                    (Some(actual), Some(formal)) => actual == formal,
+                    (None, None) => {
+                        published.variant == promised.variant && published.field == promised.field
+                    }
+                    _ => false,
+                }
         }
     }
 }
