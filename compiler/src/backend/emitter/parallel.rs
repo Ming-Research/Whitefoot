@@ -69,7 +69,7 @@ use crate::{
 
 /// The counted loop's index type [FN-1], which fixes every width question the
 /// split could otherwise have.
-const U64: IrType = IrType::Integer {
+pub(super) const U64: IrType = IrType::Integer {
     width: 64,
     signed: false,
 };

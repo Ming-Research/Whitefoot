@@ -11,6 +11,7 @@
 //! allocates nothing. The far task and its descendants only borrow the
 //! contribution; only its acquiring activation releases it.
 
+use super::parallel::U64;
 use super::*;
 use crate::ir::{IrIndexedFamilyKind, IrIndexedProjection, IrIndexedReduction};
 
