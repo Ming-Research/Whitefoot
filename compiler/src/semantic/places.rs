@@ -1109,20 +1109,22 @@ pub(crate) fn places_overlap(
 /// [EFF-5] whether two places overlap whatever values their index and range
 /// positions take.
 ///
-/// This is the ordinary [OWN-7] walk asked with every position question
-/// answered by the values alone: two positions that are not provably the
-/// same value may be distinct, a slot may lie below `r.len` [WIN-2], and a
-/// range may be empty or lie apart from an index, from another range, or
-/// from `r.len` [OWN-7, WIN-2]. The places overlap at every position exactly
-/// when the walk still finds them overlapping: one is a prefix of the other,
-/// or they first differ at a pair OWN-7 and WIN-2 fix as overlapping, such as
-/// two payload steps naming different variants or a slot or a range against
-/// `r.last` or `r.filled`.
+/// Compare declaration steps as [EFF-5] specifies before asking about
+/// separation. Equal steps continue to the next pair, so identical paths
+/// and prefixes overlap even when an actual range is empty. At the first
+/// differing pair, only the fixed structural overlap answers of [OWN-7]
+/// and [WIN-2] establish overlap at every position; a separation that depends
+/// on position values selects the pair for the call-site comparison.
 pub(crate) fn overlaps_at_every_position(left: &ResolvedPlace, right: &ResolvedPlace) -> bool {
     if !left.roots_overlap(right) {
         return false;
     }
     for (depth, (left_step, right_step)) in left.path.iter().zip(&right.path).enumerate() {
+        // EFF-5 compares declaration spellings before actual OWN-7 proofs:
+        // an empty range cannot separate a declared path from itself.
+        if steps_provably_same(*left_step, *right_step) {
+            continue;
+        }
         let window = ResolvedPlace {
             atomic_aliases: left.atomic_aliases.clone(),
             root: left.root,
@@ -2118,6 +2120,27 @@ mod tests {
             ));
         }
         assert!(super::overlaps_at_every_position(&span, &span));
+        let mut below_span = span.clone();
+        below_span.path.push(PlaceStep::Field(1));
+        assert!(super::overlaps_at_every_position(&span, &below_span));
+        assert!(super::overlaps_at_every_position(&below_span, &span));
+        let other_span = place(
+            0,
+            &[PlaceStep::Range(CapturedRange {
+                start: opaque(3),
+                end: opaque(4),
+            })],
+        );
+        assert!(!super::overlaps_at_every_position(&span, &other_span));
+        assert!(!super::overlaps_at_every_position(&other_span, &span));
+        let empty_span = place(
+            0,
+            &[PlaceStep::Range(CapturedRange {
+                start: literal(5, 2),
+                end: literal(6, 2),
+            })],
+        );
+        assert!(super::overlaps_at_every_position(&empty_span, &empty_span));
     }
 
     /// Every [WIN-2] part is defined against `r.len`, and a live index is live

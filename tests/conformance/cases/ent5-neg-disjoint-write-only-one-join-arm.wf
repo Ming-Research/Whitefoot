@@ -1,4 +1,4 @@
-fn probe(rows: &[Slots<u8, 8>], flag: bool) -> result: u8 writes(rows) contract {
+fn probe(rows: &[Slots<u8, 8>], flag: Bool) -> result: u8 writes(rows) contract {
   requires rows^.len >= 2_u64;
   requires rows^[0_u64].len >= 5_u64;
 } {

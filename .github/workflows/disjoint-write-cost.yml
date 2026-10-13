@@ -39,7 +39,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        workload: [cases, halo, firn]
+        # Firn main is not measured: its source names a local `held`, a
+        # keyword since v0.147, so the base compiler rejects it (FORM-3).
+        workload: [cases, halo]
     env:
       WORKLOAD: ${{ matrix.workload }}
     steps:
@@ -81,7 +83,7 @@ jobs:
               "$bin" --check "$case" > "$RUNNER_TEMP/out/case.log" 2>&1
               status=$?
               set -e
-              codes=$(grep -oE '\b(FN|OP|ENT|OWN|TYPE|FORM)-[0-9]+\b' "$RUNNER_TEMP/out/case.log" | sort -u | tr '\n' ' ')
+              codes=$(grep -oE '\b(FN|OP|ENT|OWN|TYPE|FORM)-[0-9]+\b' "$RUNNER_TEMP/out/case.log" | sort -u | tr "\n" " " || true)
               line="$(basename "$case" .wf) $which exit=$status codes=[$codes]"
               echo "$line" | tee -a "$RUNNER_TEMP/out/verdicts.txt"
               [ "$status" = 0 ] || head -5 "$RUNNER_TEMP/out/case.log"
