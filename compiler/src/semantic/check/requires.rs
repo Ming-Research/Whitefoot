@@ -1809,7 +1809,7 @@ impl<'unit> TypeContext<'unit> {
     /// content is measured [OP-14]. Everywhere else it is the ordinary field
     /// of that name, as it is in an expression.
     fn clause_trailing_measure(
-        &mut self,
+        &self,
         check_context: &CheckContext<'_>,
         suffixes: &[NodeId],
         base: CheckedType,
