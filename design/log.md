@@ -13,6 +13,13 @@ Owner-approved: On the shared status board on 2026-10-13, written in Chinese, th
 
 Summary: Borrowing a measure with no field declaration is refused at the complete path under MSR-1 and the measure is read by value, because the observation supplies a value rather than a borrowable declared field, instead of materializing a temporary reference target. The effect-visibility decision in language/effects is reworded to cite the body's covering write as exhibiting the entry under the tabulated EFF-2; its choice is unchanged.
 
+## 2026-10-13 One release classification decides whether release does work, and key sets and concurrent hash maps release runtime storage
+
+Nodes: compiler/cleanup-traversal, language/ownership/linearity, language/waiting/shared-objects/keyed-tables
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve Ming-Research/Whitefoot#437 (head 47003fdd5)'s specification revision and design-tree change: key sets and concurrent hash maps count as types whose release does work?" (translated), adding the comment that the root cause is that the checker does not know which values hold runtime resources and that adding exceptions one by one is a stopgap (translated); that broader question is recorded as its own board item.
+
+Summary: Semantic tail-transfer eligibility and backend cleanup emission read one cycle-safe type-release classification instead of separate lists in the checker, the IR and the backend, which had diverged and let a KeySet's release pass as empty; the parallel mode's broader storage-reclaim question derives from the same shapes and stays conservative. Release-action emptiness follows the actions a type can execute, so a constant-zero Array, Slots or Ring contributes no element action while its element type keeps its linearity obligation. A KeySet returns its runtime-held storage on release and a ConcurrentHashMap releases its held values and then returns its storage, independently of their declared fields.
 ## 2026-10-13 The range walk checks every object partition of possibly aliased atomic targets
 
 Nodes: compiler/range-judgment

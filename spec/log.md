@@ -11,13 +11,21 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
-## 2026-10-13 v0.151: borrowing a measure with no field declaration is refused under MSR-1, and EFF-2 tabulates exhibited access categories
+## 2026-10-13 v0.152: borrowing a measure with no field declaration is refused under MSR-1, and EFF-2 tabulates exhibited access categories
 
 Rules: changed MSR-1, TYPE-10, EFF-2
 
 Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve both, keep the reads exhibition rule as it is" (translated), on the card "approve the two specification clarifications of Whitefoot#462 (the ground for refusing a measure borrow is written into MSR-1; EFF-2 states that a declared write must be exhibited by a write) and its design-tree decision?" (translated), shown at head commit 13b5d5dd9; option C, which would have let a declared `reads` be exhibited only by a read, was not chosen.
 
 Summary: MSR-1 adds that a `borrow_expr` selecting a measure with no field declaration (the length of a range or run reference, the length of a run-selecting place, or a Paged page count) is a hard error citing MSR-1 at the complete place, with a repair reading the measure by value; before, no rule named the ground, and the compiler cited TYPE-5 or TYPE-10. TYPE-10 now hands each admitted use of the `pages` selector to the rule that judges it (MSR-1, OP-4, EFF-1) and keeps every other use. EFF-2 replaces its scattered statements with two tables: one giving the access categories each body operation exhibits, and one stating that a declared `writes` entry is exhibited only by a write and a declared `reads` entry by a read or a write, matching the checker, where the old wording let any access exhibit any entry. No conformance verdict changes; new cases pin the borrow refusals and the write-only exhibition of a declared write.
+
+## 2026-10-13 v0.151: key sets and concurrent hash maps have nonempty release, and the executable release graph is defined apart from the type ownership closure
+
+Rules: changed PROV-6, STOR-3, SHARE-1
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve Ming-Research/Whitefoot#437 (head 47003fdd5)'s specification revision and design-tree change: key sets and concurrent hash maps count as types whose release does work?" (translated), adding the comment that the root cause is that the checker does not know which values hold runtime resources and that adding exceptions one by one is a stopgap (translated); that broader question is recorded as its own board item. This amendment was written as v0.149 and renumbered to v0.151 because main reached v0.150 first.
+
+Summary: PROV-6 adds ConcurrentHashMap and KeySet to the types whose release performs an action, separates the type ownership closure (read by linearity, which keeps a constant-zero Array's element type) from the executable release graph (read by release and guaranteed tail calls, in which a constant-zero Array or window contributes no element edge), and judges a type parameter by its capability bounds. STOR-3 states that a KeySet returns its runtime-held storage on release and that a ConcurrentHashMap releases each held value before returning its storage, and routes every opaque type to these per-type actions; SHARE-1 points to STOR-3 instead of stating the map's value release itself. The rules that read these definitions, such as FN-10 and DIAG-2, keep their text and now resolve to the executable release graph. Selection ground: a guaranteed tail call holding a KeySet with a live reference to it was accepted on main although the backend returns the set's storage before the jump, leaving the reference dangling; the checker followed a release list that omitted the type.
 
 ## 2026-10-13 v0.150: `match` branches on integer constant values
 
