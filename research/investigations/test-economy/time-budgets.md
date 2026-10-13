@@ -658,6 +658,32 @@ answer decides a merge (a ready pull request, `main`, a manual run) and checks
 both platforms per revision in a final job
 ([decision](../../../design/compiler/verification.md)).
 
+### Gate only where a pull request is open
+
+Read from the Actions API on 2026-10-12: `gate.yml` had 408 runs in the 24
+hours to 11:07Z, at most 41 created in one UTC hour. Its 359 push runs on
+branches other than `main` created between 2026-10-11 11:54Z and 2026-10-12
+11:05Z were compared with each branch's pull requests: 235 were for a branch
+with a pull request open when the run was created (created no later than the
+run and not closed before it), and 124, about a third, for a branch with
+none. Every one of these branches was named `claude/`, so a branch name could
+not have told the two apart. `io-hosts.yml` ran on the same pushes.
+
+From this, a push to a branch without an open pull request runs one deciding
+job and skips every check ([decision](../../../design/compiler/verification.md)).
+Two properties of GitHub, documented rather than measured here, shape the
+rule. GitHub starts no pull request run while the pull request conflicts
+with its base, so pull request events cannot be the only trigger. And a
+session opens its pull request seconds after the first push, while that
+push's run may wait minutes for a runner before it decides; a push run that
+counted every pull request open when it decided would usually check that
+head a second time beside the opening's run. The push run therefore counts
+only pull requests created no later than itself: a run is created after its
+push, so this errs only toward checking a head twice. A conflicting pull
+request opened after its branch's last push gets no run of its own either;
+that head cannot merge until `main` is merged into it, and the push that
+does so is checked.
+
 ## Daily loop
 
 One edit, measured in the local container with the new defaults: an unused

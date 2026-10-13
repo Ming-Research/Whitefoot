@@ -4,7 +4,7 @@ fn main() -> status: std::process::ExitStatus pure {
   let original = keys.len;
   for (
     i in 0_u64..1_u64,
-    invariant unchanged: keys.len == original
+    invariant preserved_value: keys.len == original
   ) {
     key_set_insert(keys: &keys, key: &bytes[0_u64..1_u64]);
   }

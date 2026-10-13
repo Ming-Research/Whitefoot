@@ -719,6 +719,19 @@ impl Checker<'_, '_> {
             .types
             .declarations
             .tree
+            .has_fixed(node, FixedTerminal::Unchanged)?
+        {
+            return self.invalid_range(
+                SemanticRule::Range1,
+                node,
+                "unchanged occurs in a range guard",
+                "state unchanged as a range postcondition conclusion",
+            );
+        }
+        if self
+            .types
+            .declarations
+            .tree
             .first_child_with(node, Production::CompareOp)?
             .is_some()
         {
@@ -741,7 +754,111 @@ impl Checker<'_, '_> {
         bindings: &HashMap<DeclarationId, LocalBinding>,
         names: &RangeNames,
     ) -> Result<Vec<CheckedRangeRelation>, CheckStop> {
+        if self
+            .types
+            .declarations
+            .tree
+            .has_fixed(node, FixedTerminal::Unchanged)?
+        {
+            return self.range_unchanged(context, node, bindings, names);
+        }
         self.range_comparison(context, node, node, bindings, names)
+    }
+
+    /// [RANGE-1] form opaque identity of one exit selection and its entry selection.
+    fn range_unchanged(
+        &mut self,
+        context: FunctionContext<'_, '_>,
+        node: NodeId,
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+        names: &RangeNames,
+    ) -> Result<Vec<CheckedRangeRelation>, CheckStop> {
+        if context.check_context.active_postcondition.is_none() {
+            return self.invalid_range(
+                SemanticRule::Range1,
+                node,
+                "unchanged occurs outside a range postcondition",
+                "state unchanged in an ensures forall conclusion",
+            );
+        }
+        let mut selected = node;
+        for production in [
+            Production::AffineExpr,
+            Production::AffineTerm,
+            Production::AffineFactor,
+            Production::Atom,
+            Production::Place,
+        ] {
+            let children = self.types.declarations.tree.children(selected)?;
+            if children.len() != 1
+                || self.types.declarations.tree.production(children[0])? != production
+                || (production == Production::Place
+                    && !self
+                        .types
+                        .declarations
+                        .tree
+                        .direct_token_indices(selected)?
+                        .is_empty())
+            {
+                return self.invalid_range(
+                    SemanticRule::Range1,
+                    node,
+                    "unchanged does not follow a single element place",
+                    "write an element place followed by unchanged",
+                );
+            }
+            selected = children[0];
+        }
+        let mut exit = self
+            .range_place(context, selected, bindings, names)?
+            .into_term();
+        let CheckedRangeTerm::Read {
+            place,
+            projection,
+            element,
+            ..
+        } = &mut exit
+        else {
+            return self.invalid_range(
+                SemanticRule::Range1,
+                node,
+                "unchanged does not select an element",
+                "select an element of a written reference parameter",
+            );
+        };
+        let writable = match place.root {
+            CheckedRangeRoot::Binding(binding) => {
+                context.function.parameters.iter().any(|parameter| {
+                    bindings
+                        .get(&parameter.declaration)
+                        .is_some_and(|local| local.binding == binding)
+                        && super::ensures::parameter_has_exit_state(context.function, parameter)
+                })
+            }
+            _ => false,
+        };
+        if !writable || matches!(projection.last(), Some(CheckedRangeProjection::Measure(_))) {
+            return self.invalid_range(
+                SemanticRule::Range1, node,
+                "unchanged is not an element projection of a written reference parameter",
+                "select an element of a reference parameter whose row writes it; state measures with comparisons",
+            );
+        }
+        projection.push(CheckedRangeProjection::WholeElement);
+        *element = IntegerType::U64;
+        let mut entry = exit.clone();
+        if let CheckedRangeTerm::Read { place, .. } = &mut entry
+            && let CheckedRangeRoot::Binding(binding) = place.root
+        {
+            place.root = CheckedRangeRoot::Entry(binding);
+        }
+        Ok(vec![CheckedRangeRelation {
+            node: self.types.declarations.tree.path(node)?.clone(),
+            left: exit,
+            comparison: RangeComparison::Equal,
+            right: entry,
+            projected: false,
+        }])
     }
 
     /// One comparison of two range terms: the `affine_expr` children of
@@ -972,17 +1089,17 @@ impl Checker<'_, '_> {
             .tree
             .first_child_with(place, Production::Pbase)?
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-        if self
+        let entry = self
             .types
             .declarations
             .tree
-            .has_fixed(pbase, FixedTerminal::Entry)?
-        {
+            .has_fixed(pbase, FixedTerminal::Entry)?;
+        if entry && check_context.active_postcondition.is_none() {
             return self.invalid_range(
                 SemanticRule::Range1,
                 pbase,
-                "a range term reads an entry image",
-                "read the current value; a range clause states one state",
+                "an entry range place occurs outside a postcondition",
+                "read entry storage in an ensures forall clause",
             );
         }
         let suffixes = self
@@ -1113,7 +1230,11 @@ impl Checker<'_, '_> {
             context,
             place,
             &suffixes,
-            CheckedRangeRoot::Binding(local.binding),
+            if entry {
+                CheckedRangeRoot::Entry(local.binding)
+            } else {
+                CheckedRangeRoot::Binding(local.binding)
+            },
             selected,
             bindings,
             names,

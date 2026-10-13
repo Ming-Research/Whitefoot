@@ -1,0 +1,37 @@
+const key: Array<u8, 1> =[107_u8];
+
+struct Stamp {
+  wall: std::time::WallClock;
+}
+
+fn stamped<V: drop>(table: &ConcurrentHashMap<V>) -> result: Bool reads(table) {
+  doc "Reports whether the table holds an entry, whatever its value type.";
+  let count = map_count::<V>(map: table);
+  let held = count > 0_u64;
+  return held;
+}
+
+fn wait_for<V: drop>(store: &Shared<ConcurrentHashMap<V>>) -> result: u64 reads(store) waits {
+  doc "Waits until the table holds an entry and returns how many it holds, whatever its value type.";
+  let count = 0_u64;
+  atomic t = &store^ when stamped::<V>(table: t) {
+    set count = map_count::<V>(map: t);
+  }
+  return count;
+}
+
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
+  doc "A generic function's guard reads a table of its type parameter, which holds no clock in the generic body; its instance at a value type holding a wall clock reads that clock.";
+  let std::process::Inputs(cwd: directory, handles: factory, wall_clock: wall, ..) = move inputs;
+  let std::fs::Directory(read: directory_read, write: directory_write) = move directory;
+  std::fs::close_directory_write(factory: &factory, directory: move directory_write);
+  std::fs::close_directory(factory: &factory, directory: move directory_read);
+  let stamp = Stamp(wall: move wall);
+  let store = shared_map_new::<Stamp>(capacity: 1_u64);
+  atomic e = &store[&key[0_u64..1_u64]] {
+    set e^ = Some<Stamp>(value: move stamp);
+  }
+  let count = wait_for::<Stamp>(store: &store);
+  let code = cvt.wrap::<u64, u8>(count);
+  return std::process::exit_status(code: code);
+}

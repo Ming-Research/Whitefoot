@@ -1,0 +1,13 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn get<const n: i8>() -> r: i8 pure {
+  doc "Reads the const generic at its written type i8.";
+  return n;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "128 is above i8's maximum 127, so the closed argument is rejected at its const node; truncated, it would read -128.";
+  let v = get::<128>();
+  return exit_status(code: 0_u8);
+}

@@ -208,6 +208,72 @@ static void description_window_probe(wf_probe_description copy,
     free(bytes);
 }
 
+/* The host's own text for a nonzero code, produced independently of the
+ * runtime's lookup: FormatMessageW in US English on Windows, and strerror
+ * under a private C locale on POSIX. The caller frees the copy. */
+static char *host_description_oracle(uint32_t code) {
+#if defined(_WIN32)
+    WCHAR *wide = NULL;
+    DWORD length = FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER
+                                 | FORMAT_MESSAGE_FROM_SYSTEM
+                                 | FORMAT_MESSAGE_IGNORE_INSERTS,
+                                 NULL, (DWORD)code, 0x0409,
+                                 (LPWSTR)&wide, 0, NULL);
+    assert(length > 0 && wide != NULL);
+    while (length > 0 && (wide[length - 1] == L'\r' || wide[length - 1] == L'\n')) --length;
+    int count = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wide,
+                                   (int)length, NULL, 0, NULL, NULL);
+    assert(count > 0);
+    char *text = malloc((size_t)count + 1);
+    assert(text != NULL);
+    assert(WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wide,
+                              (int)length, text, count, NULL, NULL) == count);
+    text[count] = 0;
+    LocalFree(wide);
+    return text;
+#else
+    locale_t locale = newlocale(LC_ALL_MASK, "C", (locale_t)0);
+    assert(locale != (locale_t)0);
+#if defined(__APPLE__)
+    /* Darwin has no strerror_l symbol. Snapshot its ordinary strerror
+     * text under the private C locale, independently of the runtime's
+     * grow-and-retry strerror_r implementation. */
+    locale_t previous = uselocale(locale);
+    assert(previous != (locale_t)0);
+    const char *oracle = strerror((int)code);
+#else
+    const char *oracle = strerror_l((int)code, locale);
+#endif
+    assert(oracle != NULL);
+    size_t length = strlen(oracle);
+    char *text = malloc(length + 1);
+    assert(text != NULL);
+    memcpy(text, oracle, length + 1);
+#if defined(__APPLE__)
+    assert(uselocale(previous) != (locale_t)0);
+#endif
+    freelocale(locale);
+    return text;
+#endif
+}
+
+/* Both a too-small and an empty window, and an ample one, leave every byte
+ * unchanged for a description that is unavailable. */
+static void description_unavailable_probe(wf_probe_description copy,
+                                          const wf_io_error *error) {
+    unsigned char bytes[64], expected[64];
+    wf_view view = {bytes, sizeof(bytes)};
+    wf_copy_result copied;
+    memset(bytes, 90, sizeof(bytes));
+    memset(expected, 90, sizeof(expected));
+    copy(&copied, error, &view, 3, sizeof(bytes));
+    assert(copied.tag == 1 && copied.err.error.tag == 1);
+    assert(memcmp(bytes, expected, sizeof(bytes)) == 0);
+    copy(&copied, error, &view, 3, 3);
+    assert(copied.tag == 1 && copied.err.error.tag == 1);
+    assert(memcmp(bytes, expected, sizeof(bytes)) == 0);
+}
+
 static void description_probe(wf_probe_description copy) {
     static const struct { uint32_t tag; const char *text; } fixed[] = {
         {WF_IO_NOT_FOUND, "Not found"},
@@ -260,30 +326,6 @@ static void description_probe(wf_probe_description copy) {
         {WF_IO_READ_ONLY, ERROR_WRITE_PROTECT},
         {WF_IO_FILE_TOO_LARGE, ERROR_FILE_TOO_LARGE}
     };
-    for (size_t index = 0; index < sizeof(host) / sizeof(host[0]); ++index) {
-        WCHAR *wide = NULL;
-        DWORD length = FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER
-                                     | FORMAT_MESSAGE_FROM_SYSTEM
-                                     | FORMAT_MESSAGE_IGNORE_INSERTS,
-                                     NULL, host[index].code, 0x0409,
-                                     (LPWSTR)&wide, 0, NULL);
-        assert(length > 0 && wide != NULL);
-        while (length > 0 && (wide[length - 1] == L'\r' || wide[length - 1] == L'\n')) --length;
-        int count = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wide,
-                                       (int)length, NULL, 0, NULL, NULL);
-        assert(count > 0);
-        char *text = malloc((size_t)count + 1);
-        assert(text != NULL);
-        assert(WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wide,
-                                  (int)length, text, count, NULL, NULL) == count);
-        text[count] = 0;
-        wf_io_error error = {host[index].tag, host[index].code, 3};
-        description_window_probe(copy, &error, text);
-        error.origin = 9;
-        description_window_probe(copy, &error, text);
-        free(text);
-        LocalFree(wide);
-    }
 #else
     static const struct { uint32_t tag; int code; } host[] = {
         {WF_IO_NO_SPACE, ENOSPC},
@@ -292,51 +334,138 @@ static void description_probe(wf_probe_description copy) {
         {WF_IO_READ_ONLY, EROFS},
         {WF_IO_FILE_TOO_LARGE, EFBIG}
     };
-    locale_t locale = newlocale(LC_ALL_MASK, "C", (locale_t)0);
-    assert(locale != (locale_t)0);
+#endif
     for (size_t index = 0; index < sizeof(host) / sizeof(host[0]); ++index) {
-#if defined(__APPLE__)
-        /* Darwin has no strerror_l symbol. Snapshot its ordinary strerror
-         * text under the private C locale, independently of the runtime's
-         * grow-and-retry strerror_r implementation. */
-        locale_t previous = uselocale(locale);
-        assert(previous != (locale_t)0);
-        const char *oracle = strerror(host[index].code);
-#else
-        const char *oracle = strerror_l(host[index].code, locale);
-#endif
-        assert(oracle != NULL);
-        size_t length = strlen(oracle);
-        char *text = malloc(length + 1);
-        assert(text != NULL);
-        memcpy(text, oracle, length + 1);
-#if defined(__APPLE__)
-        assert(uselocale(previous) != (locale_t)0);
-#endif
+        char *text = host_description_oracle((uint32_t)host[index].code);
         wf_io_error error = {host[index].tag, (uint32_t)host[index].code, 3};
         description_window_probe(copy, &error, text);
         error.origin = 9;
         description_window_probe(copy, &error, text);
         free(text);
     }
-    freelocale(locale);
-#endif
     /* A host's unknown-code prose is not a successful description. Both an
      * ample and empty window must refuse it without touching any sentinel. */
     static const uint32_t unknown_codes[] = {INT32_MAX, UINT32_MAX};
-    unsigned char bytes[32], expected[32];
-    wf_view view = {bytes, sizeof(bytes)};
-    wf_copy_result copied;
-    memset(bytes, 90, sizeof(bytes));
-    memset(expected, 90, sizeof(expected));
     for (size_t index = 0; index < sizeof(unknown_codes) / sizeof(unknown_codes[0]); ++index) {
         wf_io_error unknown = {WF_IO_OTHER, unknown_codes[index], 3};
-        copy(&copied, &unknown, &view, 3, sizeof(bytes));
-        assert(copied.tag == 1 && copied.err.error.tag == 1);
-        assert(memcmp(bytes, expected, sizeof(bytes)) == 0);
-        copy(&copied, &unknown, &view, 3, 3);
-        assert(copied.tag == 1 && copied.err.error.tag == 1);
-        assert(memcmp(bytes, expected, sizeof(bytes)) == 0);
+        description_unavailable_probe(copy, &unknown);
+    }
+}
+
+extern void wf_test_public_error_copy_class_description(wf_copy_result *, const wf_io_error *, wf_view *, uint64_t, uint64_t);
+
+/* [PRE-2] the class-to-code table, restated from the specification apart
+ * from the runtime's own table: every class in tag order with its code on
+ * this host, zero for a class whose entry is None or whose constant the host
+ * C library does not define. Windows codes are the specification's numbers
+ * rather than the SDK's names, so a wrong name in the runtime fails too. */
+static const struct { uint32_t tag; uint32_t code; } wf_probe_class_codes[] = {
+#if defined(_WIN32)
+    {WF_IO_NOT_FOUND, 2},
+    {WF_IO_PERMISSION_DENIED, 5},
+    {WF_IO_ALREADY_EXISTS, 183},
+    {WF_IO_NOT_DIRECTORY, 267},
+    {WF_IO_IS_DIRECTORY, 0},
+    {WF_IO_DIRECTORY_NOT_EMPTY, 145},
+    {WF_IO_READ_ONLY, 19},
+    {WF_IO_RESOURCE_BUSY, 170},
+    {WF_IO_INVALID_INPUT, 87},
+    {WF_IO_INVALID_PATH, 123},
+    {WF_IO_UNSUPPORTED, 50},
+    {WF_IO_TIMED_OUT, 121},
+    {WF_IO_DEADLINE_PASSED, 0},
+    {WF_IO_CANCELLED, 0},
+    {WF_IO_BROKEN_PIPE, 109},
+    {WF_IO_WRITE_ZERO, 0},
+    {WF_IO_UNEXPECTED_END, 0},
+    {WF_IO_CONNECTION_REFUSED, 1225},
+    {WF_IO_CONNECTION_RESET, 64},
+    {WF_IO_CONNECTION_ABORTED, 1235},
+    {WF_IO_NOT_CONNECTED, 2250},
+    {WF_IO_ADDRESS_IN_USE, 10048},
+    {WF_IO_ADDRESS_UNAVAILABLE, 10049},
+    {WF_IO_RESOURCE_EXHAUSTED, 4},
+    {WF_IO_FILE_TOO_LARGE, 223},
+    {WF_IO_NO_SPACE, 112},
+    {WF_IO_QUOTA_EXCEEDED, 1816},
+    {WF_IO_CROSS_DEVICE, 17},
+    {WF_IO_DEVICE_FAILURE, 1117},
+    {WF_IO_OTHER, 0},
+#else
+    {WF_IO_NOT_FOUND, ENOENT},
+    {WF_IO_PERMISSION_DENIED, EACCES},
+    {WF_IO_ALREADY_EXISTS, EEXIST},
+    {WF_IO_NOT_DIRECTORY, ENOTDIR},
+    {WF_IO_IS_DIRECTORY, EISDIR},
+    {WF_IO_DIRECTORY_NOT_EMPTY, ENOTEMPTY},
+    {WF_IO_READ_ONLY, EROFS},
+    {WF_IO_RESOURCE_BUSY, EBUSY},
+    {WF_IO_INVALID_INPUT, EINVAL},
+    {WF_IO_INVALID_PATH, ENAMETOOLONG},
+    {WF_IO_UNSUPPORTED, ENOTSUP},
+    {WF_IO_TIMED_OUT, ETIMEDOUT},
+    {WF_IO_DEADLINE_PASSED, 0},
+    {WF_IO_CANCELLED, 0},
+    {WF_IO_BROKEN_PIPE, EPIPE},
+    {WF_IO_WRITE_ZERO, 0},
+    {WF_IO_UNEXPECTED_END, 0},
+    {WF_IO_CONNECTION_REFUSED, ECONNREFUSED},
+    {WF_IO_CONNECTION_RESET, ECONNRESET},
+    {WF_IO_CONNECTION_ABORTED, ECONNABORTED},
+    {WF_IO_NOT_CONNECTED, ENOTCONN},
+    {WF_IO_ADDRESS_IN_USE, EADDRINUSE},
+    {WF_IO_ADDRESS_UNAVAILABLE, EADDRNOTAVAIL},
+    {WF_IO_RESOURCE_EXHAUSTED, EMFILE},
+    {WF_IO_FILE_TOO_LARGE, EFBIG},
+    {WF_IO_NO_SPACE, ENOSPC},
+#ifdef EDQUOT
+    {WF_IO_QUOTA_EXCEEDED, EDQUOT},
+#else
+    {WF_IO_QUOTA_EXCEEDED, 0},
+#endif
+    {WF_IO_CROSS_DEVICE, EXDEV},
+    {WF_IO_DEVICE_FAILURE, EIO},
+    {WF_IO_OTHER, 0},
+#endif
+};
+
+/* [PRE-2] a class's description is its host code's text whatever code and
+ * origin the error carries, for every row of the class table. On Linux the
+ * text for NoSpace is also glibc's exact "No space left on device". Each coded
+ * class is compared with the host's own strerror or FormatMessageW text for
+ * the code the table names, so a runtime table entry naming another code, a
+ * body that returned the fixed table text or read the error's code fails the
+ * byte comparison; a codeless class must stay unavailable even when its
+ * error carries a describable code. */
+static void class_description_probe(wf_probe_description copy) {
+#if defined(__linux__)
+    {
+        wf_io_error error = {WF_IO_NO_SPACE, 0, 0};
+        description_window_probe(copy, &error, "No space left on device");
+    }
+#endif
+    _Static_assert(sizeof(wf_probe_class_codes) / sizeof(wf_probe_class_codes[0])
+                   == WF_IO_OTHER + 1, "one row for every IoError class");
+    const size_t rows = sizeof(wf_probe_class_codes) / sizeof(wf_probe_class_codes[0]);
+    for (size_t index = 0; index < rows; ++index) {
+        assert(wf_probe_class_codes[index].tag == index);
+        const uint32_t code = wf_probe_class_codes[index].code;
+        wf_io_error error = {wf_probe_class_codes[index].tag, 0, 0};
+        if (code == 0) {
+            description_unavailable_probe(copy, &error);
+            error.code = wf_probe_class_codes[0].code;
+            error.origin = 3;
+            description_unavailable_probe(copy, &error);
+            continue;
+        }
+        char *text = host_description_oracle(code);
+        description_window_probe(copy, &error, text);
+        error.code = 12345;
+        error.origin = 9;
+        description_window_probe(copy, &error, text);
+        error.code = UINT32_MAX;
+        description_window_probe(copy, &error, text);
+        free(text);
     }
 }
 
@@ -1307,6 +1436,8 @@ int wf_ordinary_values_tests(const char *scratch, const char *group) {
         text_probe();
         description_probe(wf__body_error_copy_description);
         description_probe(wf_test_public_error_copy_description);
+        class_description_probe(wf__body_error_copy_class_description);
+        class_description_probe(wf_test_public_error_copy_class_description);
         puts("ordinary text: PASS");
     }
     if (!files && !directory && !tcp) return 0;

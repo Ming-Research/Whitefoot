@@ -1,0 +1,20 @@
+struct Frame {
+  marker: u64;
+  items: Array<u64, 2>;
+}
+
+fn keep_items(keep: &Frame, other: &Frame) -> result: unit writes(keep.marker), writes(other.items) contract {
+  ensures forall kept(k in 0_u64..2_u64): keep^.items[k] unchanged;
+} {
+  set keep^.marker = 1_u64;
+  set other^.items[0_u64] = 9_u64;
+  return unit;
+}
+
+fn caller() -> result: unit pure {
+  let zeros = array_filled::<u64, 2>(value: 0_u64);
+  let first = Frame(marker: 0_u64, items: zeros);
+  let second = Frame(marker: 0_u64, items: zeros);
+  keep_items(keep: &first, other: &second);
+  return unit;
+}
