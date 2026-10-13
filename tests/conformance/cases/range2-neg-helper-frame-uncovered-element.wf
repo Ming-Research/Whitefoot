@@ -1,0 +1,24 @@
+fn retain_first(cell: &Array<u64, 2>) -> result: unit writes(cell) contract {
+  ensures forall preserved(k in 0_u64..1_u64): cell^[k] unchanged;
+} {
+  set cell^[1_u64] = 9_u64;
+  return unit;
+}
+
+fn need_zero(value: u64) -> result: unit pure contract {
+  requires value == 0_u64;
+} {
+  return unit;
+}
+
+fn caller(cell: &Array<u64, 2>) -> result: unit writes(cell) contract {
+  requires forall initial(k in 0_u64..cell^.len): cell^[k] == 0_u64;
+} {
+  retain_first(cell: cell);
+  need_zero(value: cell^[1_u64]);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

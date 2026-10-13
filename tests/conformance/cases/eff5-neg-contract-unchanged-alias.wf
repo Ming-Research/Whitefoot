@@ -1,0 +1,18 @@
+struct Frame {
+  marker: u64;
+  items: Array<u64, 2>;
+}
+
+fn keep_items(keep: &Frame, other: &Frame) -> result: unit writes(keep.marker), writes(other.items) contract {
+  ensures forall kept(k in 0_u64..2_u64): keep^.items[k] unchanged;
+} {
+  set keep^.marker = 1_u64;
+  set other^.items[0_u64] = 9_u64;
+  return unit;
+}
+
+fn caller(f: &Frame) -> result: unit writes(f) {
+  doc "EFF-5, RANGE-1: the unchanged conclusion keep^.items[k] widens to f.items, which other writes; the rows keep.marker and other.items are disjoint, and the callee proves its frame assuming its two reference parameters are disjoint.";
+  keep_items(keep: f, other: f);
+  return unit;
+}
