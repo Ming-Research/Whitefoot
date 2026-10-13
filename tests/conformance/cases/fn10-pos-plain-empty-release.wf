@@ -1,0 +1,24 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+nocopy struct Plain {
+  value: u64;
+}
+
+fn walk(n: u64) -> result: u64 pure {
+  if n == 0_u64 {
+    return n;
+  }
+  let owner = Plain(value: n);
+  let held = &owner;
+  let next = n - 1_u64;
+  return musttail walk(n: next);
+}
+
+fn main() -> status: ExitStatus pure {
+  let result = walk(n: 4_u64);
+  if result != 0_u64 {
+    return exit_status(code: 1_u8);
+  }
+  return exit_status(code: 0_u8);
+}
