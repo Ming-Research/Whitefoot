@@ -1230,6 +1230,14 @@ pub enum SemanticIssueKind {
         /// The repair [DIAG-1].
         mechanical_fix: &'static str,
     },
+    /// An atomic statement's guard whose call reads or writes a path with a
+    /// self-changing host handle part [SHARE-2, PRE-2].
+    AtomicGuardReadsSelfChanging {
+        /// The first self-changing part of the path's type, from its name.
+        handle: String,
+        /// The repair [DIAG-1].
+        mechanical_fix: &'static str,
+    },
     /// A spawn failed its position or its callee's condition [WAIT-3].
     InvalidSpawn {
         /// The failed condition.
