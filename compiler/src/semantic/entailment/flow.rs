@@ -775,6 +775,14 @@ struct AffineL0Entry {
 struct AffineL0Index {
     entries: Vec<AffineL0Entry>,
     by_terms: WordHashMap<Box<[AffineCoefficient]>, usize>,
+    postings: std::cell::OnceCell<AffineL0Postings>,
+}
+
+/// Target-independent support metadata for one complete, immutable index.
+#[derive(Default)]
+struct AffineL0Postings {
+    by_atom: WordHashMap<AffineTermId, Vec<usize>>,
+    by_support: WordHashMap<Box<[AffineTermId]>, Vec<usize>>,
 }
 
 /// One function-local query memo, including the full ordered value images.
@@ -817,6 +825,8 @@ struct AffineDirectQuery<'a> {
     measures: Option<WordHashMap<AffineTermId, Vec<TermId>>>,
     residual: AffineResidualScratch,
     direct_metric: super::work::AffineMetric,
+    /// Entries whose strongest-interval feasibility is false or unknown.
+    final_interval_exceptions: Option<Vec<usize>>,
 }
 
 impl<'a> AffineDirectQuery<'a> {
@@ -833,6 +843,7 @@ impl<'a> AffineDirectQuery<'a> {
             measures: None,
             residual: AffineResidualScratch::default(),
             direct_metric: super::work::AffineMetric::DirectOther,
+            final_interval_exceptions: None,
         }
     }
 }
@@ -866,6 +877,7 @@ struct PreparedAffineAuto {
     /// Canonical coefficients AND upper bound, inserted only after all AUTO
     /// families have failed; no successful proof or intermediate is retained.
     failed: HashSet<AffineInequality>,
+    final_interval_exceptions: Option<Vec<usize>>,
 }
 
 struct AutomaticAffinePremise {

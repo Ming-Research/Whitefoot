@@ -62,8 +62,18 @@
 //!   exclude coefficient overflow before bound subtraction. Non-overflow
 //!   arithmetic errors and failed inverse lookup keys are not counted.
 //!   `affine_interval_construction_probes` and `_warm_probes` partition the
-//!   endpoint-map membership probes in DIRECT: absent (construct) or present
-//!   (reuse). Dot-product and successful-parent endpoint reads are excluded.
+//!   endpoint-map membership probes in DIRECT and final-family filter
+//!   preparation: absent (construct) or present (reuse). Dot-product and
+//!   successful-parent endpoint reads are excluded.
+//!   `affine_final_images_total` sums the complete index size at each reached
+//!   final family; `_selected` sums its planned retained size (all on fallback);
+//!   `_visited` counts retained candidates actually executed before success or
+//!   exhaustion; `_skipped` counts omitted ordinals before that success, or
+//!   all omissions on exhaustion. A post-success omitted suffix counts neither
+//!   visited nor skipped. `affine_final_filter_fallbacks` counts traversals
+//!   retaining every entry because the target is empty, the state contradictory,
+//!   or the exact target interval maximum is unavailable or does not exceed
+//!   its bound. Unknown candidate minima individually retain those entries.
 //! - The `affine_shadow_*` counters observe numeric proofs entering Step 6
 //!   after complete initial AUTO failure. `groups` partitions into
 //!   `would_certify`, `rejected` (all fixed assignments fail validation or do
@@ -153,7 +163,6 @@ struct JoinWork {
     intern_calls: u64,
 }
 
-#[derive(Default)]
 struct AffineWork {
     attempts: u64,
     memo_hits: u64,
@@ -165,6 +174,23 @@ struct AffineWork {
     final_family_exhaustions: u64,
     failed_reuse_hits: u64,
     extra: [u64; AffineMetric::Count as usize],
+}
+
+impl Default for AffineWork {
+    fn default() -> Self {
+        Self {
+            attempts: 0,
+            memo_hits: 0,
+            memo_misses: 0,
+            cold_demands: 0,
+            left_candidates_scanned: 0,
+            promotions: 0,
+            final_family_starts: 0,
+            final_family_exhaustions: 0,
+            failed_reuse_hits: 0,
+            extra: [0; AffineMetric::Count as usize],
+        }
+    }
 }
 
 /// Observer-only affine metrics. Names are shared by TSV emission and tests.
@@ -199,6 +225,11 @@ pub(super) enum AffineMetric {
     ShadowOperations,
     ShadowBridgeCalls,
     ShadowFinalExhaustions,
+    FinalImagesTotal,
+    FinalImagesSelected,
+    FinalImagesVisited,
+    FinalImagesSkipped,
+    FinalFilterFallbacks,
     Count,
 }
 
@@ -233,6 +264,11 @@ impl AffineMetric {
         "affine_shadow_operations",
         "affine_shadow_bridge_calls",
         "affine_shadow_final_exhaustions",
+        "affine_final_images_total",
+        "affine_final_images_selected",
+        "affine_final_images_visited",
+        "affine_final_images_skipped",
+        "affine_final_filter_fallbacks",
     ];
 }
 

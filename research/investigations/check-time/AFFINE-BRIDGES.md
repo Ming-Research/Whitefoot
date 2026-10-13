@@ -425,5 +425,180 @@ a lower bound and leave that conclusion open. A would-certify group followed
 by a successful bridge under identical inputs would invalidate the probe's
 certificate argument. Useful certification coverage still needs subsequent
 CI cost attribution: validation work consuming the avoided searches would
-reject it as a performance remedy. No counter results for this follow-up are
-claimed here.
+reject it as a performance remedy. The following section records this
+follow-up's counter evidence and the next selected reduction before measuring
+that reduction.
+
+## Final-L0 evidence and selective traversal
+
+[Counter run 38377586720](https://github.com/Ming-Research/Whitefoot/actions/runs/38377586720)
+checked Halo `80f0ee4` with head
+`b3d7d9e54911be2be45b4873333660e35b665fdd` against `f09032413`. All eight
+printed verdicts were `pkg::vm: accepted`; median uninstrumented CPU head/base
+was 1.001, with range 0.998–1.009. The completed job log was read to distinguish
+the whole-check totals from its exact-function `run` table:
+
+| Head counter | Whole check | Function `run` |
+| --- | ---: | ---: |
+| AUTO initial submissions | 884 | 466 |
+| AUTO Step-6 submissions | 10,268 | 10,268 |
+| DIRECT initial | 10,842 | 10,424 |
+| DIRECT single-premise | 31,522 | 31,522 |
+| DIRECT pair | 96,806 | 96,806 |
+| DIRECT final-L0 | 34,248,745 | 34,237,146 |
+| Interval construction probes | 10,875 | 10,330 |
+| Interval warm probes | 131,704,851 | 131,659,779 |
+
+The final-L0 family supplies 99.6% of `run`'s observed DIRECT calls. Its count
+divided by bridge submissions is approximately 3,334 DIRECT calls per bridge
+submission. This is a scale comparison: final-family calls also include
+initial-origin AUTO and possible integer-tightened variants, so it is not an
+exact measurement of E per bridge. It nevertheless identifies repeated
+final-family search, rather than repeated endpoint construction, as the next
+material work to remove.
+
+All 176 shadow groups were unknown: 20 hit the group ceiling and 156 hit the
+function ceiling, totaling 2,000,000 charged units. There were zero certified
+and zero rejected groups. This is inconclusive, not evidence against the
+countermodel proposal. The ceilings remain unchanged: the current probe
+copies and rechecks the full atom/measure snapshots repeatedly; raising the
+limits is not a cheap way to settle the final-family question.
+
+### Why overlap alone is insufficient
+
+The proposed simple rule, "a disjoint, interval-feasible image cannot help",
+misses DIRECT's exact-L0 branch. A normalized checker-input witness uses
+anonymous full-interval integer atoms a and b, with no binding or datum whose
+unit image is b:
+
+```text
+datum r has image 2*b, and closed L0 has r <= 0.
+datum q has image a-b, and closed L0 has q <= -1.
+Target T: a <= -1.
+```
+
+The disjoint image `R: 2*b <= 0` is interval-feasible. Its GCD tightening is
+`b <= 0`; subtracting it leaves `a-b <= -1`, which DIRECT proves through q's
+exact indexed image. Trying the overlapping q instead leaves `b <= 0`;
+neither the raw index image `2*b <= 0` nor b's full type interval proves that
+residual. Dropping R therefore loses a required AUTO proof. The design tree's
+existing refusal of overlap-only pruning remains justified.
+
+An independent issue is checked prefix overflow. In atom order a,b,c,d, take
+each selected interval endpoint as 1:
+
+```text
+T: MAX*a + c - MAX*d <= 1, where MAX = i128::MAX.
+R: b <= 1.
+```
+
+T's interval sum overflows at `MAX+1`, although its mathematical maximum is 1.
+Subtracting the feasible disjoint R yields the ordered sum
+`MAX-1+1-MAX = 0` and bound 0, which DIRECT can prove. A previous failed DIRECT
+is therefore insufficient to justify pruning; the target interval maximum
+must itself be representable and strictly above its upper bound.
+
+### Selected conservative index
+
+This branch implements an index of **retained image ordinals**, preserving
+the complete index's first-occurrence order. Two structural posting maps are
+built once for the complete L0 index: atom to image ordinals, and sorted atom
+support to image ordinals. Support ignores coefficients. Interval-dependent
+image feasibility is cached alongside the prepared endpoints and discarded
+on the same input-view invalidation. Neither cache publishes a fact.
+
+For a nonempty target T, pruning requires a checked strongest-interval
+maximum `max(T) > T.upper`. Missing endpoints, arithmetic overflow or a
+constant target selects the complete original traversal. Otherwise retain:
+
+1. Every image sharing any atom with T.
+2. Every image whose checked strongest-interval minimum is unavailable,
+   overflows, or exceeds its upper bound.
+3. Every possible disjoint exact-L0 composer, conservatively by support:
+   for each indexed Q whose coefficients on every atom of T equal T exactly,
+   find Q's foreign support B and retain every image R with support B.
+
+For the third category, any target atom can anchor Q discovery through its
+posting list; a disjoint R leaves every target coefficient unchanged, so Q
+necessarily appears there. This protects raw and GCD-tightened complements
+without deriving unchecked proof coefficients or adding a separate GCD
+index. Different coefficients sharing support may be retained unnecessarily;
+that only reduces the potential saving. Merge the retained ordinals, sort
+and deduplicate them, and evaluate the original candidate routine unchanged.
+
+### Deduction that every omitted image fails
+
+Let R be omitted and let k be 1 or an admitted positive GCD divisor. R and T
+have disjoint supports, and a checked interval minimum establishes
+`min(R) <= R.upper`. Integer interval endpoints and coefficient divisibility
+give an integer `min(R/k) = min(R)/k`, hence
+`min(R/k) <= floor(R.upper/k)`. A target-proportional tightening cannot arise
+for nonzero disjoint supports. Constant images have no tightening.
+
+For every representable residual, fixed interval substitution gives
+
+```text
+max(T-R/k) = max(T) - min(R/k)
+          > T.upper - floor(R.upper/k).
+```
+
+Thus its interval route fails. If its exact-L0 route could succeed through
+an indexed Q, Q would agree with T on the complete target support and its
+foreign support would equal R's support. The third retained category would
+include R, contradicting its omission. Contradiction was already handled by
+the ordinary initial DIRECT. These cases exhaust DIRECT.
+
+Unrepresentable residuals already fail by the skip rule. The selector does
+not replace their checked formation with rearranged arithmetic or invent a
+success. Every retained image still uses the original untightened,
+target-proportional and GCD candidate formation, checked residual merge/bound,
+and DIRECT order. Every removed image has no successful variant; therefore
+the first successful retained image and its original L0/interval parents
+are identical. Step 6 continues to append its original bridge parent.
+
+The governing specification text is:
+
+> ENT-1, line 3214: "An implementation may organize or cache the same
+> derivation differently"
+
+> ENT-6, line 4004: "the strongest canonical L0 image having exactly A's
+> canonical coefficient vector" followed by "fixed interval substitution"
+
+> ENT-6, lines 4016–4017: "checked `i128` arithmetic in the stated order"
+> and "An unrepresentable candidate is skipped"
+
+> ENT-6, line 4022: "a proved result may stop at the first witness in this
+> fixed traversal"
+
+> MSR-4, line 4053: "it submits the one exact residual target to `AUTO` and
+> composes a success transitively with that L0 bridge."
+
+This is a certificate of failure for omitted members of the specified family,
+not a shortened semantic candidate family or another acceptance algorithm.
+Successful first witnesses are retained in their specified order.
+
+### Regression and measurement conditions
+
+Compare the selective route with the existing exhaustive reference on:
+an ordinary feasible disjoint image that is skipped; an interval-infeasible
+disjoint image that still proves; the GCD exact-complement witness above;
+an earlier sharing witness with unchanged parents; target prefix-overflow
+fallback; image-minimum overflow retention; and coefficient/bound overflow
+where the untightened candidate must stay skipped while later variants or
+images may succeed. Changed facts/images must discard interval classification
+and the derived selection along with the prepared view. Keep the owner's
+one-element-slice clippy fix.
+
+New counters distinguish complete family size, planned retained images,
+actually visited images, actual omitted ordinals in the reached prefix, and
+fallbacks. An early success does not count later omitted ordinals as avoided
+work. Existing origin/family/interval/overflow counters remain available.
+The same pinned Halo counter run must show which final-DIRECT and warm-probe
+work is eliminated; image-callback ratios alone are not CPU savings.
+
+Any verdict or first-parent difference rejects the reduction. Target overflow
+or an uncertain image minimum becoming a false failure also rejects it. If
+the support-complement superset retains nearly every image, or classification
+and posting-list work consumes the searches removed, it is not a remedy for
+this workload. Performance remains unmeasured until the next CI run; builds,
+tests and measurements run only there.

@@ -4,8 +4,8 @@
 
 use super::super::work::{self, AffineMetric as Metric};
 use super::*;
-use std::cell::Ref;
 
+mod final_l0;
 mod shadow;
 
 impl Vocabulary {
@@ -3183,14 +3183,13 @@ impl Reasoning<'_, '_, '_> {
         candidates
     }
 
-    pub(super) fn affine_interval_proof<'a>(
+    /// Selects the existing strongest endpoints and their unchanged witnesses.
+    /// This preparation constructs no derivation or affine conclusion.
+    fn prepare_affine_intervals(
         &mut self,
-        inequality: impl Into<AffineInequalityView<'a>>,
+        coefficients: &[AffineCoefficient],
         query: &mut AffineDirectQuery<'_>,
-        check: &mut AffineCheckState,
-    ) -> Result<Option<Vec<DerivationId>>, AffineCheckError> {
-        let inequality = inequality.into();
-
+    ) -> Result<(), AffineCheckError> {
         if query.measures.is_none() {
             query.measures = Some(self.vocabulary.measure_terms_by_atom(query.values));
         }
@@ -3200,7 +3199,7 @@ impl Reasoning<'_, '_, '_> {
             .expect("measure index prepared above");
         // Canonical inequality coefficients already have strictly ordered,
         // unique atom identities, exactly the former sorted/deduplicated list.
-        for coefficient in inequality.terms() {
+        for coefficient in coefficients {
             let atom_id = coefficient.term();
             if query.intervals.contains_key(&atom_id) {
                 work::affine_metric(Metric::IntervalWarmProbes);
@@ -3259,6 +3258,19 @@ impl Reasoning<'_, '_, '_> {
             }
             query.intervals.insert(atom_id, interval);
         }
+
+        Ok(())
+    }
+
+    pub(super) fn affine_interval_proof<'a>(
+        &mut self,
+        inequality: impl Into<AffineInequalityView<'a>>,
+        query: &mut AffineDirectQuery<'_>,
+        check: &mut AffineCheckState,
+    ) -> Result<Option<Vec<DerivationId>>, AffineCheckError> {
+        let inequality = inequality.into();
+
+        self.prepare_affine_intervals(inequality.terms(), query)?;
 
         if query.closed.contradictory() {
             return Ok(query.closed.contradiction_proof().map(|proof| vec![proof]));
@@ -3356,44 +3368,6 @@ impl Reasoning<'_, '_, '_> {
         proof
     }
 
-    /// Exhausts one coefficient-one L0 premise followed by the direct
-    /// L0/interval residual rule. The L0 index contains one strongest entry
-    /// per coefficient vector, so strengthening ordinary facts can only make
-    /// a residual easier and never removes an earlier witness.
-    pub(super) fn affine_l0_then_direct_proof(
-        &mut self,
-        target: &AffineInequality,
-        query: &mut AffineDirectQuery<'_>,
-        check: &mut AffineCheckState,
-    ) -> Option<Vec<DerivationId>> {
-        query.direct_metric = Metric::DirectFinalL0;
-        super::super::work::affine_final_family_start();
-        let l0 = query.l0;
-        let mut ordinal = 0;
-        while let Some(entry) = l0.ordered_entry(ordinal, query.closed, check) {
-            ordinal += 1;
-            let Some(mut parents) =
-                self.affine_candidate_residual_proof(target, &entry.inequality, query, check)
-            else {
-                continue;
-            };
-            let Some(parent) = query.closed.bound_proof(
-                entry.left,
-                entry.right,
-                entry.bound,
-                &mut self.vocabulary.derivations,
-            ) else {
-                continue;
-            };
-            parents.push(parent);
-            parents.sort_unstable_by_key(|parent| parent.0);
-            parents.dedup();
-            return Some(parents);
-        }
-        super::super::work::affine_final_family_exhausted();
-        None
-    }
-
     /// Reuse the demanded index entries only for exactly the same closed
     /// facts and candidate images. Candidate formation comes first: it may
     /// register a term or mint a current measure image. Exact vector equality
@@ -3480,6 +3454,7 @@ impl Reasoning<'_, '_, '_> {
                 measures: None,
                 residual: AffineResidualScratch::default(),
                 failed: HashSet::new(),
+                final_interval_exceptions: None,
             });
         }
         let prepared = auto.prepared.as_mut().expect("prepared above");
@@ -3495,11 +3470,13 @@ impl Reasoning<'_, '_, '_> {
             measures: prepared.measures.take(),
             residual: std::mem::take(&mut prepared.residual),
             direct_metric: Metric::DirectOther,
+            final_interval_exceptions: prepared.final_interval_exceptions.take(),
         };
         let result = self.evaluate_affine_target(target, auto.assumptions, &mut query);
         prepared.intervals = query.intervals;
         prepared.measures = query.measures;
         prepared.residual = query.residual;
+        prepared.final_interval_exceptions = query.final_interval_exceptions;
         if matches!(result, Ok(None)) {
             prepared.failed.insert(target.clone());
         }
@@ -3612,211 +3589,6 @@ pub(super) fn first_two_premise_candidate<T>(
         }
     }
     None
-}
-
-impl LazyAffineL0Index {
-    fn new(candidates: Vec<AffineL0Candidate>) -> Self {
-        let mut by_image: WordHashMap<Vec<(AffineTermId, i128)>, Vec<usize>> =
-            WordHashMap::default();
-        for (ordinal, candidate) in candidates.iter().enumerate() {
-            let key = candidate
-                .value
-                .terms()
-                .iter()
-                .map(|term| (term.term(), term.coefficient()))
-                .collect::<Vec<_>>();
-            by_image.entry(key).or_default().push(ordinal);
-        }
-        Self {
-            candidates,
-            by_image,
-            exact: RefCell::default(),
-            complete: RefCell::default(),
-        }
-    }
-
-    /// Only pairs with left coefficients - right coefficients == requested
-    /// can contribute. Grouping ignores constants, but the original checked
-    /// constructor still decides representability and the shifted bound.
-    /// Visit matching pairs in original left/right order, replacing strictly
-    /// stronger bounds only, so endpoints and equal-bound ties are identical.
-    fn entry(
-        &self,
-        terms: &[AffineCoefficient],
-        closed: &ClosedState,
-        check: &mut AffineCheckState,
-    ) -> Option<Ref<'_, AffineL0Entry>> {
-        if self.complete.borrow().is_some() {
-            return self.complete_entry(terms);
-        }
-        if let Ok(entry) = Ref::filter_map(self.exact.borrow(), |exact| exact.get(terms)) {
-            return Ref::filter_map(entry, Option::as_ref).ok();
-        }
-        // Cached absence counts as one cold demand too. Promote before the
-        // Nth scan, bounding the total lazy left scans by N * (N - 1).
-        if self.exact.borrow().len() + 1 >= self.candidates.len() {
-            super::super::work::affine_cold_demand(0);
-            self.promote(closed, check);
-            return self.complete_entry(terms);
-        }
-        super::super::work::affine_cold_demand(self.candidates.len());
-        let mut selected: Option<AffineL0Entry> = None;
-        let mut right_key = Vec::new();
-        for left in &self.candidates {
-            if !affine_l0_right_key(left.value.terms(), terms, &mut right_key) {
-                continue;
-            }
-            let Some(rights) = self.by_image.get(&right_key) else {
-                continue;
-            };
-            for &right in rights {
-                let right = &self.candidates[right];
-                let Some(bound) = closed.tight_bound(left.term, right.term) else {
-                    continue;
-                };
-                let Ok(inequality) = work::affine_result(
-                    AffineInequality::from_bounded_forms(&left.value, &right.value, bound, check),
-                    Metric::OverflowIndex,
-                ) else {
-                    continue;
-                };
-                if selected
-                    .as_ref()
-                    .is_none_or(|old| inequality.upper() < old.inequality.upper())
-                {
-                    selected = Some(AffineL0Entry {
-                        inequality,
-                        left: left.term,
-                        right: right.term,
-                        bound,
-                    });
-                }
-            }
-        }
-        // None is also memoized: repeating an absent DIRECT vector should
-        // not repeat the candidate search on an unchanged state.
-        self.exact.borrow_mut().insert(terms.into(), selected);
-        self.exact_entry(terms)
-    }
-
-    fn exact_entry(&self, terms: &[AffineCoefficient]) -> Option<Ref<'_, AffineL0Entry>> {
-        Ref::filter_map(self.exact.borrow(), |exact| {
-            exact.get(terms).and_then(Option::as_ref)
-        })
-        .ok()
-    }
-
-    fn complete_entry(&self, terms: &[AffineCoefficient]) -> Option<Ref<'_, AffineL0Entry>> {
-        Ref::filter_map(self.complete.borrow(), |complete| {
-            let index = complete.as_ref()?;
-            index
-                .by_terms
-                .get(terms)
-                .map(|&ordinal| &index.entries[ordinal])
-        })
-        .ok()
-    }
-
-    /// Build once per residency in original pair order. Prior exact demands
-    /// cannot seed this order: a vector's strongest witness may appear after
-    /// its first occurrence, and equal bounds keep the earlier witness.
-    fn promote(&self, closed: &ClosedState, check: &mut AffineCheckState) {
-        if self.complete.borrow().is_some() {
-            return;
-        }
-        let mut index = AffineL0Index::default();
-        for left in &self.candidates {
-            for right in &self.candidates {
-                let Some(bound) = closed.tight_bound(left.term, right.term) else {
-                    continue;
-                };
-                let Ok(inequality) = work::affine_result(
-                    AffineInequality::from_bounded_forms(&left.value, &right.value, bound, check),
-                    Metric::OverflowIndex,
-                ) else {
-                    continue;
-                };
-                let ordinal = *index
-                    .by_terms
-                    .entry(inequality.terms().into())
-                    .or_insert(index.entries.len());
-                let entry = AffineL0Entry {
-                    inequality,
-                    left: left.term,
-                    right: right.term,
-                    bound,
-                };
-                if ordinal == index.entries.len() {
-                    index.entries.push(entry);
-                } else if entry.inequality.upper() < index.entries[ordinal].inequality.upper() {
-                    index.entries[ordinal] = entry;
-                }
-            }
-        }
-        *self.complete.borrow_mut() = Some(index);
-        self.exact.borrow_mut().clear();
-        super::super::work::affine_promotion();
-    }
-
-    /// Entering the final AUTO family promotes even if its first member
-    /// succeeds. Enumeration and all residual lookups then borrow the complete
-    /// map, including negative answers, without rescanning left candidates.
-    fn ordered_entry(
-        &self,
-        ordinal: usize,
-        closed: &ClosedState,
-        check: &mut AffineCheckState,
-    ) -> Option<Ref<'_, AffineL0Entry>> {
-        self.promote(closed, check);
-        Ref::filter_map(self.complete.borrow(), |complete| {
-            complete.as_ref()?.entries.get(ordinal)
-        })
-        .ok()
-    }
-}
-
-/// Solve right = left - requested in coefficient space only. This is a
-/// lookup key, not an affine derivation: checked_sub accepts MIN - MIN = 0,
-/// whereas negating requested first would lose a representable right image.
-/// An out-of-range result cannot equal any candidate's i128 coefficient.
-/// The actual pair always passes the original affine constructor afterwards,
-/// including its stricter intermediate-overflow and formation-limit checks.
-fn affine_l0_right_key(
-    left: &[AffineCoefficient],
-    requested: &[AffineCoefficient],
-    result: &mut Vec<(AffineTermId, i128)>,
-) -> bool {
-    result.clear();
-    let (mut l, mut r) = (0, 0);
-    while l < left.len() || r < requested.len() {
-        let term = match (left.get(l), requested.get(r)) {
-            (Some(a), Some(b)) => a.term().min(b.term()),
-            (Some(a), None) => a.term(),
-            (None, Some(b)) => b.term(),
-            (None, None) => break,
-        };
-        let a = if left.get(l).is_some_and(|a| a.term() == term) {
-            let coefficient = left[l].coefficient();
-            l += 1;
-            coefficient
-        } else {
-            0
-        };
-        let b = if requested.get(r).is_some_and(|b| b.term() == term) {
-            let coefficient = requested[r].coefficient();
-            r += 1;
-            coefficient
-        } else {
-            0
-        };
-        let Some(coefficient) = a.checked_sub(b) else {
-            return false;
-        };
-        if coefficient != 0 {
-            result.push((term, coefficient));
-        }
-    }
-    true
 }
 
 /// Builds the goal-query index for ordinary difference bounds.

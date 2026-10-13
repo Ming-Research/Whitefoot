@@ -138,6 +138,9 @@ jobs:
               'affine_auto_calls_initial', 'affine_auto_calls_bridge', 'affine_auto_calls_other',
               'affine_direct_initial', 'affine_direct_single', 'affine_direct_pair',
               'affine_direct_final_l0', 'affine_direct_other', 'affine_tightenings_formed',
+              'affine_final_images_total', 'affine_final_images_selected',
+              'affine_final_images_visited', 'affine_final_images_skipped',
+              'affine_final_filter_fallbacks',
               'affine_overflow_pair', 'affine_overflow_tightening', 'affine_overflow_residual',
               'affine_overflow_residual_bound_up', 'affine_overflow_residual_bound_down',
               'affine_overflow_direct', 'affine_overflow_bridge', 'affine_overflow_index',
@@ -327,6 +330,19 @@ jobs:
               run_rows = [[metric, run_work[f'function.{metric}']] for metric in sorted(observed)]
               write_tsv('work-run-observations.tsv', ['metric', 'head'], run_rows)
               table('Head AUTO observations for Halo run', ['Metric', 'Head count'], run_rows)
+              image_metrics = {
+                  name: run_work[f'function.affine_final_images_{name}']
+                  for name in ('total', 'selected', 'visited', 'skipped')}
+              selected, total = image_metrics['selected'], image_metrics['total']
+              visited, skipped = image_metrics['visited'], image_metrics['skipped']
+              table('Final-L0 image traversal in Halo run', ['Observation', 'Count', 'Denominator', 'Share'], [
+                  ['Planned selected images', selected, total,
+                   f'{100 * selected / total:.2f}%' if total else 'not observed'],
+                  ['Images visited in reached traversal prefixes', visited, visited + skipped,
+                   f'{100 * visited / (visited + skipped):.2f}%' if visited + skipped else 'not observed'],
+                  ['Images omitted in reached traversal prefixes', skipped, visited + skipped,
+                   f'{100 * skipped / (visited + skipped):.2f}%' if visited + skipped else 'not observed']])
+              lines.append('Total counts the complete image inventory each time the final family is entered; selected counts the planned subset. Visited counts actual candidate callbacks before success or exhaustion. Skipped counts only omitted images before the first retained success, or all omissions on exhaustion; omissions after an early success are excluded. Filter fallbacks traverse the full inventory. The omitted-prefix share measures image callbacks avoided, not DIRECT opportunities or CPU savings: one visited image can form several tightened DIRECT calls. Compare affine_direct_final_l0 separately; planned selection alone does not measure saved traversal.\n')
               lines.append(f"The run table sums all {invocations['head']['run']} head analysis invocations of the exact function name `run`; individual invocation IDs remain in head-work.tsv. The shadow probe is counter-only: three fixed assignments (clamped zero, minimum, maximum), at most 100,000 validation operations per group and 2,000,000 per function invocation. Cutoffs make observed certification coverage a lower bound.\n")
               coverage = []
               for label, numerator, denominator in (
