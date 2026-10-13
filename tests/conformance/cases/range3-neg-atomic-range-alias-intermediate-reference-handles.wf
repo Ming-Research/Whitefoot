@@ -17,7 +17,8 @@ fn update_aliasrefintermediate(first: &Shared<ZeroesAliasRefIntermediate>, secon
 }
 
 fn main() -> status: std::process::ExitStatus pure waits {
-  let initial = ZeroesAliasRefIntermediate(cells: array_filled::<u64, 1>(value: 0_u64));
+  let cells = array_filled::<u64, 1>(value: 0_u64);
+  let initial = ZeroesAliasRefIntermediate(cells: cells);
   let shared = shared_new::<ZeroesAliasRefIntermediate>(value: initial);
   update_aliasrefintermediate(first: &shared, second: &shared);
   return std::process::exit_status(code: 0_u8);
