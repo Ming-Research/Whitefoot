@@ -832,7 +832,7 @@ fn affine_shadow_discards_a_group_after_measure_image_change() {
     with_analyzer(|analyzer| {
         let affine = AffineFlowState::default();
         let [a, b, c] = [0; 3].map(|_| analyzer.vocabulary.new_affine_atom(IntegerType::I32));
-        let datum = reuse_datums(analyzer, &affine, &[b.clone()])[0];
+        let datum = reuse_datums(analyzer, &affine, std::slice::from_ref(&b))[0];
         let target = reuse_target(&a, &b, -1);
         let facts = FactState::new();
         let assumptions = Vec::new();
