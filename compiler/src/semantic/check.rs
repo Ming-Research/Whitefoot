@@ -3,6 +3,7 @@ mod behavior;
 mod cleanup;
 mod contract_reads;
 mod control;
+mod decision_cell;
 mod effect_repairs;
 mod ensures;
 pub(in crate::semantic::check) mod expressions;
@@ -536,6 +537,7 @@ enum PreludeType {
     DivError,
     NarrowError,
     ScanStep,
+    DecisionState,
 }
 
 /// Source declarations and syntax shared read-only by preflight and body checking.
@@ -1310,6 +1312,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             .map(|signature| {
                 Ok(PermissionSignature {
                     name: signature.name.clone(),
+                    decision_cell: self.types.decision_cell_boundary(signature.id)?,
                     parameter_declarations: signature
                         .parameters
                         .iter()
@@ -1342,6 +1345,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         let optimistic_batch = function_inventory.iter().any(|checked| {
             ordinary[checked.function.id.0 as usize]
                 && (!checked.function.postconditions.is_empty()
+                    || !checked.function.range_facts.postconditions.is_empty()
                     || Checker::statements_contain_value_if(
                         checked.function.body.as_deref().unwrap_or_default(),
                     ))
@@ -1407,12 +1411,12 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                     Err(stop) => return Err(stop),
                 }
             }
-            // Every accepted fresh analysis is kept, whether or not another
-            // function's rejection fails this check [MOD-8].
+            // An accepted component's fresh analyses are kept even when
+            // another component fails this check [MOD-8].
             for (index, judged) in ranges.iter().enumerate() {
                 rejected[index] |= !judged.issues.is_empty();
             }
-            self.record_receipts(&baseline_functions, &rejected);
+            self.record_receipts(&baseline_functions, &rejected, &postcondition_schedule);
             rejections.sort_by(|left, right| {
                 left.0
                     .components()

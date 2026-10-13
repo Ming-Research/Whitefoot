@@ -9,6 +9,7 @@
 mod array;
 mod boxes;
 mod buffer;
+mod call_entries;
 mod cleanup;
 mod constants;
 mod contexts;
@@ -27,6 +28,7 @@ mod paged;
 mod parallel;
 pub(super) mod places;
 mod reinterpret;
+mod resource_records;
 mod runs;
 mod segments;
 mod shared;
@@ -34,12 +36,13 @@ mod slice;
 mod storage_alias;
 mod union_enums;
 mod value_equality;
+mod wake;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Write;
 
 use super::abi::{FunctionAbi, ParameterAbi, ResultAbi};
-use super::emission::{FunctionBody, Linkage, Module, Parameter, References, Signature};
+use super::emission::{DeferredPart, FunctionBody, Linkage, Module, Parameter, References, Signature};
 pub use super::runtime::*;
 use super::storage::{FunctionStoragePlan, IncomingSnapshots, is_stored_aggregate};
 use crate::target::{
@@ -67,6 +70,11 @@ use parallel::{
     parallel_recursion_budget_fallback, parallel_runtime_declarations, parallel_runtime_fallback,
     parallel_split_budget_declaration, parallel_split_budget_fallback, sequential_clone_set,
     sequential_clone_symbol,
+};
+use resource_records::{
+    emit_posix_resource_write, latched_resource_record_writer, resource_record_latch,
+    resource_record_latch_fallback, sequential_resource_record_writer,
+    windows_latched_resource_record_writer, windows_sequential_resource_record_writer,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -283,6 +291,9 @@ fn emit_module(
         HashSet::new()
     };
     let frontiers = RecursiveFrontiers::new(program, &frontier_clones);
+    // The recursive groups whose members pass one shared environment record
+    // among themselves (compiler/recursive-environment).
+    let environments = call_entries::EnvironmentPlan::new(program, target, &frontiers)?;
     let mut functions = Module::default();
     let mut linked_declarations = std::collections::HashMap::new();
     for (ordinal, function) in program.functions().iter().enumerate() {
@@ -312,6 +323,7 @@ fn emit_module(
                 grain: None,
                 window_address_facts,
                 dispatch_layout,
+                environments: &environments,
             },
         )?;
         let emitted = emitter.emit()?;
@@ -352,6 +364,7 @@ fn emit_module(
                     grain: Some(grain),
                     window_address_facts,
                     dispatch_layout,
+                    environments: &environments,
                 },
             )?
             .emit()?,
@@ -388,6 +401,7 @@ fn emit_module(
                         grain: None,
                         window_address_facts,
                         dispatch_layout,
+                        environments: &environments,
                     },
                 )?
                 .emit()?,
@@ -1582,6 +1596,15 @@ struct FunctionEmitter<'program, 'state> {
     dispatch_ledger: Vec<String>,
     /// Composition-wide word ownership and constructor addresses.
     dispatch_layout: &'state handler_words::DispatchLayoutPlan,
+    /// The module's recursive groups that share an environment record
+    /// (compiler/recursive-environment).
+    environments: &'state call_entries::EnvironmentPlan,
+    /// This function's place in one of them, when it is emitted in the
+    /// ordinary world: its body is then the internal form that receives the
+    /// record, and its public symbol the entry that builds it.
+    environment: Option<call_entries::Member>,
+    /// Packed formals and uniform block aliases share one operand recipe.
+    environment_aliases: HashMap<IrValueId, IrValueId>,
 }
 
 /// What one function's emission shares with the rest of its module, and the
@@ -1605,6 +1628,8 @@ struct ModuleState<'state> {
     grain: Option<Grain>,
     window_address_facts: WindowAddressFacts,
     dispatch_layout: &'state handler_words::DispatchLayoutPlan,
+    /// The module's recursive groups that share an environment record.
+    environments: &'state call_entries::EnvironmentPlan,
 }
 
 impl<'program, 'state> FunctionEmitter<'program, 'state> {
@@ -1624,7 +1649,21 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             grain,
             window_address_facts,
             dispatch_layout,
+            environments,
         } = module;
+        // Only the ordinary world passes a group's record: a clone or a
+        // budget variant keeps the public form of every call it makes.
+        let environment = if sequential_clones.is_none() && grain.is_none() {
+            program
+                .functions()
+                .iter()
+                .position(|candidate| std::ptr::eq(candidate, function))
+                .and_then(|ordinal| u32::try_from(ordinal).ok())
+                .and_then(|ordinal| environments.member(ordinal))
+                .cloned()
+        } else {
+            None
+        };
         let mut overlaps = Vec::new();
         let mut ordinary_lane_frames = HashMap::new();
         if sequential_clones.is_none() {
@@ -1701,6 +1740,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             slot_uses: std::cell::RefCell::new(HashSet::new()),
             dispatch_ledger: Vec::new(),
             dispatch_layout,
+            environments,
+            environment,
+            environment_aliases: HashMap::new(),
         })
     }
 
@@ -1953,10 +1995,21 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             (None, Some(_)) => recursion_budget_symbol(self.function.name()),
             (None, None) => source_symbol(self.function.name()),
         };
-        let body_symbol = if entry {
-            result_body_symbol(&symbol)
+        // A member of a recursive group defines its body under its internal
+        // environment form; its public symbol becomes the entry that builds
+        // the record (compiler/recursive-environment).
+        let defined = if self.environment.is_some() && !waiting && !declaration {
+            call_entries::internal_entry_symbol(
+                call_entries::EntryForm::Environment,
+                self.function.name(),
+            )
         } else {
             symbol.clone()
+        };
+        let body_symbol = if entry {
+            result_body_symbol(&defined)
+        } else {
+            defined
         };
         Ok((symbol, body_symbol, public, abi, entry))
     }
@@ -1966,7 +2019,11 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let reachable = self.reachable_blocks()?;
         let waiting = self.function.waits();
         let (symbol, body_symbol, public, abi, entry) = self.body_abi()?;
-        let (mut parameters, mut references) = self.signature_parameters(&abi)?;
+        let (mut parameters, mut references) = if self.environment.is_some() {
+            self.internal_parameters(&abi)?
+        } else {
+            self.signature_parameters(&abi)?
+        };
         let result = if abi.result().uses_destination() {
             "void".to_owned()
         } else {
@@ -2027,7 +2084,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             Signature::new(body_symbol.clone(), result, parameters)
         };
         signature.references = references;
-        if entry {
+        if entry || self.environment.is_some() {
             signature.linkage = Linkage::Internal;
         }
         if declaration {
@@ -2037,12 +2094,15 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             module.text("\n");
             return Ok(module);
         }
-        // A range reference arrives as its element pointer and count; the
-        // body reads its ordinary `{ ptr, i64 }` pair, reassembled once in
+        // Packed parameters are defined only in the LLVM blocks that use
+        // them. Register their load/reassembly recipes before binding names.
+        self.register_environment_operands()?;
+        // An unpacked range reference arrives as its element pointer and
+        // count; the body reads its ordinary `{ ptr, i64 }` pair, reassembled once in
         // the entry block beside the frame's slots, where it dominates every
         // use, including a self-tail transfer's parameterized body entry.
         for ((value, _), parameter) in self.function.parameters().iter().zip(abi.parameters()) {
-            if !parameter.is_range() {
+            if !parameter.is_range() || self.is_environment_parameter(*value) {
                 continue;
             }
             let (pointer, count) = incoming_range_parts(*value);
@@ -2125,7 +2185,20 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             self.emit_frame_exit()?;
         }
         let public_entry = if entry {
-            Some(self.public_entry(&symbol, &body_symbol, &public, &abi)?)
+            let returning = if self.environment.is_some() {
+                call_entries::internal_entry_symbol(
+                    call_entries::EntryForm::Environment,
+                    self.function.name(),
+                )
+            } else {
+                symbol.clone()
+            };
+            Some(self.public_entry(&returning, &body_symbol, &public, &abi)?)
+        } else {
+            None
+        };
+        let environment_entry = if self.environment.is_some() {
+            Some(self.environment_entry(&symbol, &public)?)
         } else {
             None
         };
@@ -2136,6 +2209,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         }
         if let Some(public_entry) = public_entry {
             module.append(public_entry);
+        }
+        if let Some(environment_entry) = environment_entry {
+            module.append(environment_entry);
         }
         for line in std::mem::take(&mut self.dispatch_ledger) {
             module.text(format!("{DISPATCH_LEDGER_PREFIX}{line}\n"));
@@ -2220,6 +2296,10 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
     /// in its destination form before it inlines the body here. An
     /// always-inline body would be merged before that simplification and
     /// would lose the loop shapes the destination form gives it.
+    ///
+    /// A member of a recursive group gets this entry in its internal
+    /// environment form, named `symbol`, which its group's calls and its
+    /// public entry name (compiler/recursive-environment).
     fn public_entry(
         &self,
         symbol: &str,
@@ -2228,20 +2308,31 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         body: &FunctionAbi,
     ) -> Result<Module, BackendFailure> {
         let ty = public.result().ty();
-        let (mut parameters, mut references) = self.signature_parameters(body)?;
+        let (mut parameters, mut references) = if self.environment.is_some() {
+            self.internal_parameters(body)?
+        } else {
+            self.signature_parameters(body)?
+        };
         let result = llvm_type_with_references(self.program, ty, &mut references.types)?;
         let frame = FunctionFramePlan::returned_value(self.target, self.program, ty)?.render(
             self.target,
             self.program,
             &mut references,
         )?;
-        let mut arguments = ordinary_call_arguments(self.program, self.function, body)?;
+        let mut arguments = if self.environment.is_some() {
+            self.internal_call_arguments(body)?
+        } else {
+            ordinary_call_arguments(self.program, self.function, body)?
+        };
         if self.grain.is_some() {
             parameters.push(Parameter::named("i64", "%wf.budget"));
             arguments.push_str(", i64 %wf.budget");
         }
         let mut signature = Signature::new(symbol, result.clone(), parameters);
         signature.references = references;
+        if self.environment.is_some() {
+            signature.linkage = Linkage::Internal;
+        }
         let mut output = FunctionBody::default();
         output.open_block("entry".to_owned());
         output.symbol(body_symbol);
@@ -2305,7 +2396,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             return Err(BackendFailure::InvalidIr);
         }
         for (parameter_index, (parameter, ty)) in block.parameters().iter().enumerate() {
-            if self.storage.slot(*parameter).is_some() {
+            if self.storage.slot(*parameter).is_some()
+                || self.environment_origin(*parameter).is_some()
+            {
                 continue;
             }
             if incoming.is_empty() {
@@ -2346,8 +2439,14 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 if edge_index != 0 {
                     self.output.push_str(", ");
                 }
-                self.output
-                    .incoming(self.value_name(argument), edge.predecessor);
+                // A packed incoming operand belongs to the predecessor's
+                // actual exit block, not this phi's block.
+                let operand = if let Some(origin) = self.environment_origin(argument) {
+                    value_name(origin)
+                } else {
+                    self.value_name(argument)
+                };
+                self.output.incoming(operand, edge.predecessor);
             }
             self.output.push('\n');
         }
@@ -2464,6 +2563,16 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             // bytes for equality and scalarize large arrays before BoxNew's
             // typed storage copy can be emitted.
             IrOperation::BoxNew { .. } | IrOperation::ValueEquality { .. } => {}
+            // A record slot binds in the block that reads it; every other
+            // operand is materialized here, as before the record existed.
+            IrOperation::LoopSplit { .. } | IrOperation::BufferProbeSkip { .. } => {
+                let operands = operation
+                    .operands()
+                    .into_iter()
+                    .filter(|value| !self.defers_record_slot(*value))
+                    .collect::<Vec<_>>();
+                self.materialize_operands(operands)?;
+            }
             IrOperation::BufferFill { length, .. } => {
                 self.materialize_operands([*length])?;
             }
@@ -2744,6 +2853,12 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 self.emit_box_new(result, ty, *nominal, *value)
             }
             IrOperation::SharedNew { nominal } => self.emit_shared_new(result, ty, *nominal),
+            IrOperation::DecisionCellNew { nominal } => {
+                self.emit_decision_cell_new(result, ty, *nominal)
+            }
+            IrOperation::DecisionCell { object, winner } => {
+                self.emit_decision_cell(result, ty, *object, *winner)
+            }
             IrOperation::SharedState { nominal, object } => {
                 self.emit_shared_state(result, ty, *nominal, *object)
             }
@@ -2751,13 +2866,15 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 self.emit_shared_retain(result, ty, *nominal, *object)
             }
             IrOperation::SharedAcquire { object } => {
-                self.emit_shared_wait(result, *object, "wf__shared_acquire", "acquire")
+                self.emit_shared_wait(result, *object, "wf__shared_acquire", "acquire", "")
             }
             IrOperation::SharedTake { object } => self.emit_shared_take(result, *object),
-            IrOperation::SharedWatch { object } => {
-                self.emit_shared_wait(result, *object, "wf__shared_watch", "watch")
+            IrOperation::SharedWatch { object, test } => {
+                self.emit_shared_watch(result, *object, test.as_ref())
             }
-            IrOperation::SharedUnlock { object } => self.emit_shared_unlock(result, *object),
+            IrOperation::SharedUnlock { object, wrote } => {
+                self.emit_shared_unlock(result, *object, *wrote)
+            }
             IrOperation::ConcurrentHashMapNew { nominal, capacity } => {
                 self.emit_keyed_table_new(result, ty, *nominal, *capacity)
             }
@@ -2766,9 +2883,13 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 index,
                 object,
                 hold,
-            } => self.emit_atomic_group_target(result, *record, *index, *object, *hold),
+                wrote,
+            } => self.emit_atomic_group_target(result, *record, *index, *object, *hold, *wrote),
             IrOperation::AtomicGroupTake { record } => {
                 self.emit_atomic_group_call(result, *record, None, true)
+            }
+            IrOperation::AtomicGroupAcquire { record } => {
+                self.emit_atomic_group_acquire(result, *record)
             }
             IrOperation::AtomicGroupRelease { record, nominal } => {
                 self.emit_atomic_group_call(result, *record, *nominal, false)
@@ -2874,9 +2995,11 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             IrOperation::WatchBegin { record } => {
                 self.emit_watch_call(result, *record, None, "wf__watch_begin")
             }
-            IrOperation::WatchObject { record, object } => {
-                self.emit_watch_call(result, *record, Some(*object), "wf__watch_object")
-            }
+            IrOperation::WatchObject {
+                record,
+                object,
+                test,
+            } => self.emit_watch_object(result, *record, *object, test.as_ref()),
             IrOperation::WatchTable { record, table } => {
                 self.emit_watch_call(result, *record, Some(*table), "wf__watch_table")
             }
@@ -2964,6 +3087,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         self.prepare_snapshot_use(block, self.block(block)?.instructions().len())?;
         match terminator {
             IrTerminator::Unreachable => {
+                self.output.terminator();
                 writeln!(self.output, "  unreachable").map_err(|_| BackendFailure::TextEmission)
             }
             IrTerminator::Jump {
@@ -2987,6 +3111,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 if self.emit_cursor_join_edge(block, *target, arguments)? {
                     return Ok(());
                 }
+                self.output.terminator();
                 writeln!(self.output, "  br label %{}", block_label(*target))
                     .map_err(|_| BackendFailure::TextEmission)
             }
@@ -2997,6 +3122,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 }
                 self.store_value_at(*value, RESULT_POINTER)?;
                 self.emit_drops(drops)?;
+                self.output.terminator();
                 self.emit_frame_return()
             }
             IrTerminator::Return { value, drops } => {
@@ -3009,10 +3135,12 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 if abi.result().uses_destination() {
                     self.store_value_at(*value, RESULT_POINTER)?;
                     self.emit_drops(drops)?;
+                    self.output.terminator();
                     return writeln!(self.output, "  ret void")
                         .map_err(|_| BackendFailure::TextEmission);
                 }
                 self.emit_drops(drops)?;
+                self.output.terminator();
                 {
                     let emitted_type_0 = self.output.type_name(self.program, abi.result().ty())?;
                     writeln!(
@@ -3034,6 +3162,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 }
                 self.materialize_operands([*scrutinee])?;
                 let (tag, tag_ty) = self.match_tag(*scrutinee, *enum_type)?;
+                self.output.terminator();
                 writeln!(
                     self.output,
                     "  switch {tag_ty} {tag}, label %{} [",
@@ -3061,6 +3190,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                     // tags, so no execution reaches this default
                     // (compiler/backend-facts).
                     self.output.open_block(emission_argument_0.to_string());
+                    self.output.terminator();
                     writeln!(self.output, "  unreachable")?;
                     Ok::<_, BackendFailure>(())
                 }
@@ -3273,7 +3403,10 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             .get(&value)
             .or_else(|| self.materialized.get(&value))
             .cloned()
-            .unwrap_or_else(|| value_name(value))
+            .unwrap_or_else(|| {
+                let canonical = value_name(self.environment_origin(value).unwrap_or(value));
+                self.output.block_operand(&canonical).unwrap_or(canonical)
+            })
     }
 }
 
@@ -3640,258 +3773,6 @@ pub(crate) fn source_symbol(name: &str) -> String {
 /// that from two files gets it wrong.
 pub(crate) fn overlapped_clone_symbol(sequential: &str) -> Option<String> {
     sequential.strip_prefix("wf__par_seq_").map(source_symbol)
-}
-
-/// Retry an interrupted POSIX diagnostic write without changing the caller's
-/// cursor. The supported Darwin and Linux ABIs both number EINTR as four but
-/// expose the thread-local errno cell through different accessors. This stays
-/// in the emitted module, including when no floor runtime is linked.
-fn emit_posix_resource_write(
-    output: &mut Module,
-    target: TargetLayout,
-) -> Result<(), BackendFailure> {
-    let errno = if target.triple().contains("apple-darwin") {
-        "__error"
-    } else {
-        "__errno_location"
-    };
-    output.declare(Signature::new(
-        "write",
-        "i64",
-        vec![
-            Parameter::unnamed("i32"),
-            Parameter::unnamed("ptr"),
-            Parameter::unnamed("i64"),
-        ],
-    ));
-    output.declare(Signature::new(errno, "ptr", Vec::new()));
-    output.text("\n");
-    let mut signature = Signature::new(
-        "wf_resource_write",
-        "i64",
-        vec![
-            Parameter::named("ptr", "%bytes"),
-            Parameter::named("i64", "%length"),
-        ],
-    );
-    signature.linkage = Linkage::Private;
-    let mut body = FunctionBody::default();
-    body.open_block("entry".to_owned());
-    body.instructions("  br label %write\n", &[]);
-    body.open_block("write".to_owned());
-    body.instructions("  %written = call i64 @write(i32 2, ptr %bytes, i64 %length)\n  %failed = icmp slt i64 %written, 0\n  br i1 %failed, label %error, label %done\n", &["write"]);
-    body.open_block("error".to_owned());
-    body.instructions(&format!("  %errno = call ptr @{errno}()\n  %code = load i32, ptr %errno, align 4\n  %interrupted = icmp eq i32 %code, 4\n  br i1 %interrupted, label %write, label %done\n"), &[errno]);
-    body.open_block("done".to_owned());
-    body.instructions("  ret i64 %written\n", &[]);
-    output.define(signature.define(body, "")?);
-    output.text("\n");
-    Ok(())
-}
-
-/// The heap-resource record writer of a module with one thread.
-///
-/// The thread that reaches it writes its complete record to standard error and
-/// aborts the process without unwinding. There is no one to arbitrate with, so
-/// there is no latch: these are the bytes every module emitted before the
-/// overlapped world existed, and they are what a default build still gets.
-pub(super) fn sequential_resource_record_writer() -> Result<Module, BackendFailure> {
-    let mut module = Module::default();
-    module.text("\n");
-    let mut signature = Signature::new(
-        "wf_resource_record_abort",
-        "void",
-        vec![
-            Parameter::named("ptr", "%message"),
-            Parameter::named("i64", "%length"),
-        ],
-    );
-    signature.linkage = Linkage::Private;
-    signature.suffix = " noreturn".to_owned();
-    let mut body = FunctionBody::default();
-    body.open_block("entry".to_owned());
-    body.instructions("  br label %write.loop\n", &[]);
-    body.open_block("write.loop".to_owned());
-    body.instructions("  %cursor = phi ptr [ %message, %entry ], [ %next, %write.more ]\n  %remaining = phi i64 [ %length, %entry ], [ %left, %write.more ]\n  %written = call i64 @wf_resource_write(ptr %cursor, i64 %remaining)\n  %complete = icmp eq i64 %written, %remaining\n  br i1 %complete, label %abort, label %write.incomplete\n", &["wf_resource_write"]);
-    body.open_block("write.incomplete".to_owned());
-    body.instructions("  %progress = icmp sgt i64 %written, 0\n  br i1 %progress, label %write.more, label %abort\n", &[]);
-    body.open_block("write.more".to_owned());
-    body.instructions("  %next = getelementptr i8, ptr %cursor, i64 %written\n  %left = sub i64 %remaining, %written\n  br label %write.loop\n", &[]);
-    body.open_block("abort".to_owned());
-    body.instructions("  call void @abort()\n  unreachable\n", &["abort"]);
-    module.define(signature.define(body, "")?);
-    module.text("\n");
-    Ok(module)
-}
-
-/// Windows twin of [`sequential_resource_record_writer`]. The private runtime
-/// call writes the same bytes to the process diagnostic channel without
-/// importing the POSIX file-descriptor ABI into a COFF module.
-pub(super) fn windows_sequential_resource_record_writer() -> Result<Module, BackendFailure> {
-    let mut module = Module::default();
-    module.text("\n");
-    let mut signature = Signature::new(
-        "wf_resource_record_abort",
-        "void",
-        vec![
-            Parameter::named("ptr", "%message"),
-            Parameter::named("i64", "%length"),
-        ],
-    );
-    signature.linkage = Linkage::Private;
-    signature.suffix = " noreturn".to_owned();
-    let mut body = FunctionBody::default();
-    body.open_block("entry".to_owned());
-    body.instructions("  br label %write.loop\n", &[]);
-    body.open_block("write.loop".to_owned());
-    body.instructions("  %cursor = phi ptr [ %message, %entry ], [ %next, %write.more ]\n  %remaining = phi i64 [ %length, %entry ], [ %left, %write.more ]\n  %written = call i64 @wf__windows_diagnostic_write(ptr %cursor, i64 %remaining)\n  %complete = icmp eq i64 %written, %remaining\n  br i1 %complete, label %abort, label %write.incomplete\n", &["wf__windows_diagnostic_write"]);
-    body.open_block("write.incomplete".to_owned());
-    body.instructions("  %progress = icmp sgt i64 %written, 0\n  br i1 %progress, label %write.more, label %abort\n", &[]);
-    body.open_block("write.more".to_owned());
-    body.instructions("  %next = getelementptr i8, ptr %cursor, i64 %written\n  %left = sub i64 %remaining, %written\n  br label %write.loop\n", &[]);
-    body.open_block("abort".to_owned());
-    body.instructions("  call void @abort()\n  unreachable\n", &["abort"]);
-    module.define(signature.define(body, "")?);
-    module.text("\n");
-    Ok(module)
-}
-
-/// The module's own answer for the shared record latch, and the only state the
-/// resource-record path carries.
-///
-/// The latch a record writer takes is the floor runtime's, because the floor's
-/// signal handler writes the stack record and this module writes every other
-/// one: a latch each would leave the two classes unserialized against each
-/// other, and two threads dying of different resources at once could interleave
-/// two records on one channel. Asking the floor for the address is what makes
-/// "no execution writes a second one" a mechanism rather than an argument.
-///
-/// The `weak` definition here is the same standalone answer
-/// [`floor::floor_runtime_fallback`] gives: an emitted module must link and run
-/// without the floor's translation unit, and the real definition replaces this
-/// one whenever that unit is linked, which is every ordinary build. Zero until
-/// some thread writes a record, and no path outside the writer reads it, so a
-/// program that writes none pays nothing for it.
-pub(super) fn resource_record_latch() -> Result<Module, BackendFailure> {
-    let mut module = Module::default();
-    module.global(
-        ".wf_resource_record.latch".to_owned(),
-        "global",
-        "i32".to_owned(),
-        "0".to_owned(),
-        Some(4),
-        References::default(),
-    );
-    Ok(module)
-}
-
-/// The module's standalone definition of the shared latch's accessor.
-pub(super) fn resource_record_latch_fallback() -> Result<Module, BackendFailure> {
-    let mut module = Module::default();
-    module.text("\n");
-    let mut signature = Signature::new("wf__floor_record_latch", "ptr", vec![]);
-    signature.linkage = Linkage::Weak;
-    let mut body = FunctionBody::default();
-    body.open_block("entry".to_owned());
-    body.instructions(
-        "  ret ptr @.wf_resource_record.latch\n",
-        &[".wf_resource_record.latch"],
-    );
-    module.define(signature.define(body, "")?);
-    Ok(module)
-}
-
-/// [`sequential_resource_record_writer`]'s work under a first-writer-wins latch,
-/// emitted
-/// where the module can have more than one thread inside it — that is, where
-/// it writes a heap-resource record and hands a call out.
-///
-/// The first thread to arrive takes the shared latch and owns the record: it
-/// writes its complete bytes to standard error and aborts the process without
-/// unwinding. Every other thread that arrives while the latch is taken parks,
-/// and the winner's abort takes it down with the process. The latch is the
-/// floor runtime's, not this module's, so the parking also holds between this
-/// writer and the floor's own — an execution that runs out of stack on one
-/// thread while another is refused an allocation still produces exactly one
-/// well-formed record rather than two interleaved ones. [PAR-1]'s
-/// erroneous-execution guarantee is met by construction.
-///
-/// *Which* record wins may depend on the schedule, and that is the whole of
-/// what a permitted overlap can change about one. The bytes are fixed by the
-/// resource class that wins — no worker, thread, or dynamic stack appears in
-/// them — so a run that exhausts nothing observes nothing here.
-///
-/// The park spins on a *volatile* load rather than an empty loop, so no
-/// optimizer may delete the loop and let a losing thread fall through into a
-/// second record.
-pub(super) fn latched_resource_record_writer() -> Result<Module, BackendFailure> {
-    let mut module = Module::default();
-    module.text("\n");
-    let mut signature = Signature::new(
-        "wf_resource_record_abort",
-        "void",
-        vec![
-            Parameter::named("ptr", "%message"),
-            Parameter::named("i64", "%length"),
-        ],
-    );
-    signature.linkage = Linkage::Private;
-    signature.suffix = " noreturn".to_owned();
-    let mut body = FunctionBody::default();
-    body.open_block("entry".to_owned());
-    body.instructions("  %latch = call ptr @wf__floor_record_latch()\n  %acquired = cmpxchg ptr %latch, i32 0, i32 1 seq_cst seq_cst\n  %won = extractvalue { i32, i1 } %acquired, 1\n  br i1 %won, label %write.loop, label %park\n", &["wf__floor_record_latch"]);
-    body.open_block("write.loop".to_owned());
-    body.instructions("  %cursor = phi ptr [ %message, %entry ], [ %next, %write.more ]\n  %remaining = phi i64 [ %length, %entry ], [ %left, %write.more ]\n  %written = call i64 @wf_resource_write(ptr %cursor, i64 %remaining)\n  %complete = icmp eq i64 %written, %remaining\n  br i1 %complete, label %abort, label %write.incomplete\n", &["wf_resource_write"]);
-    body.open_block("write.incomplete".to_owned());
-    body.instructions("  %progress = icmp sgt i64 %written, 0\n  br i1 %progress, label %write.more, label %abort\n", &[]);
-    body.open_block("write.more".to_owned());
-    body.instructions("  %next = getelementptr i8, ptr %cursor, i64 %written\n  %left = sub i64 %remaining, %written\n  br label %write.loop\n", &[]);
-    body.open_block("abort".to_owned());
-    body.instructions("  call void @abort()\n  unreachable\n", &["abort"]);
-    body.open_block("park".to_owned());
-    body.instructions(
-        "  %parked = load volatile i32, ptr %latch, align 4\n  br label %park\n",
-        &[],
-    );
-    module.define(signature.define(body, "")?);
-    module.text("\n");
-    Ok(module)
-}
-
-/// Windows twin of [`latched_resource_record_writer`], sharing the floor
-/// runtime's first-writer latch while using the native diagnostic channel.
-pub(super) fn windows_latched_resource_record_writer() -> Result<Module, BackendFailure> {
-    let mut module = Module::default();
-    module.text("\n");
-    let mut signature = Signature::new(
-        "wf_resource_record_abort",
-        "void",
-        vec![
-            Parameter::named("ptr", "%message"),
-            Parameter::named("i64", "%length"),
-        ],
-    );
-    signature.linkage = Linkage::Private;
-    signature.suffix = " noreturn".to_owned();
-    let mut body = FunctionBody::default();
-    body.open_block("entry".to_owned());
-    body.instructions("  %latch = call ptr @wf__floor_record_latch()\n  %acquired = cmpxchg ptr %latch, i32 0, i32 1 seq_cst seq_cst\n  %won = extractvalue { i32, i1 } %acquired, 1\n  br i1 %won, label %write.loop, label %park\n", &["wf__floor_record_latch"]);
-    body.open_block("write.loop".to_owned());
-    body.instructions("  %cursor = phi ptr [ %message, %entry ], [ %next, %write.more ]\n  %remaining = phi i64 [ %length, %entry ], [ %left, %write.more ]\n  %written = call i64 @wf__windows_diagnostic_write(ptr %cursor, i64 %remaining)\n  %complete = icmp eq i64 %written, %remaining\n  br i1 %complete, label %abort, label %write.incomplete\n", &["wf__windows_diagnostic_write"]);
-    body.open_block("write.incomplete".to_owned());
-    body.instructions("  %progress = icmp sgt i64 %written, 0\n  br i1 %progress, label %write.more, label %abort\n", &[]);
-    body.open_block("write.more".to_owned());
-    body.instructions("  %next = getelementptr i8, ptr %cursor, i64 %written\n  %left = sub i64 %remaining, %written\n  br label %write.loop\n", &[]);
-    body.open_block("abort".to_owned());
-    body.instructions("  call void @abort()\n  unreachable\n", &["abort"]);
-    body.open_block("park".to_owned());
-    body.instructions(
-        "  %parked = load volatile i32, ptr %latch, align 4\n  br label %park\n",
-        &[],
-    );
-    module.define(signature.define(body, "")?);
-    module.text("\n");
-    Ok(module)
 }
 
 fn llvm_bytes(bytes: &[u8]) -> String {
