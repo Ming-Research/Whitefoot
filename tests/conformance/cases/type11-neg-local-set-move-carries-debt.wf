@@ -1,0 +1,14 @@
+struct Index {
+  value: u64;
+  invariant bounded(index): index.value < 16_u64;
+}
+
+fn set_move_broken(table: &Array<u64, 16>) -> result: u64 reads(table) {
+  let a = Index(value: 3_u64);
+  set a.value = 31_u64;
+  let b = Index(value: 4_u64);
+  set b = move a;
+  let at = b.value;
+  let got = table^[at];
+  return got;
+}

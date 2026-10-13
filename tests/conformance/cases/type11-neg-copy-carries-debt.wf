@@ -1,0 +1,13 @@
+struct Index {
+  value: u64;
+  invariant bounded(index): index.value < 16_u64;
+}
+
+fn copy_broken(table: &Array<u64, 16>) -> result: u64 reads(table) {
+  let idx = Index(value: 3_u64);
+  set idx.value = 31_u64;
+  let c = idx;
+  let at = c.value;
+  let got = table^[at];
+  return got;
+}

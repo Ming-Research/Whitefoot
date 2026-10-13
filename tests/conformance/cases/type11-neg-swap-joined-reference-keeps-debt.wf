@@ -1,0 +1,25 @@
+struct Index {
+  value: u64;
+  invariant bounded(index): index.value < 16_u64;
+}
+
+fn lookup(index: &Index, table: &Array<u64, 16>) -> result: u64 reads(index), reads(table) {
+  let at = index^.value;
+  let got = table^[at];
+  return got;
+}
+
+fn swap_joined(flag: Bool, table: &Array<u64, 16>) -> result: u64 reads(table) {
+  let a = Index(value: 1_u64);
+  let b = Index(value: 2_u64);
+  let p = if flag {
+    give &a;
+  } else {
+    give &b;
+  }
+  set a.value = 31_u64;
+  let x = Index(value: 1_u64);
+  swap(first: p, second: &x);
+  let got = lookup(index: &a, table: table);
+  return got;
+}

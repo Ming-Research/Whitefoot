@@ -1,0 +1,10 @@
+struct Index {
+  value: u64;
+  invariant bounded(index): index.value < 16_u64;
+}
+
+fn read_boxed(boxed: &Box<Index>, table: &Array<u64, 16>) -> result: u64 reads(boxed), reads(table) {
+  let at = boxed^.inner.value;
+  let got = table^[at];
+  return got;
+}

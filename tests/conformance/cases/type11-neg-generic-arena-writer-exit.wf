@@ -1,0 +1,12 @@
+struct Arena<T: drop> {
+  entries: Slots<T, 8>;
+  next: u64;
+  invariant recorded(arena): arena.next == arena.entries.len;
+}
+
+fn push_unrecorded<T: drop>(arena: &Arena<T>, value: T) -> result: unit writes(arena.entries.next), writes(arena.entries.len) contract {
+  requires arena^.entries.len < 8_u64;
+} {
+  place_back(window: &arena^.entries, value: move value);
+  return unit;
+}

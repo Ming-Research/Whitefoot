@@ -1,0 +1,27 @@
+struct Index {
+  value: u64;
+  invariant bounded(index): index.value < 16_u64;
+}
+
+struct Holder {
+  index: Index;
+}
+
+fn pass_on(held: Option<Holder>) -> result: unit pure {
+  return unit;
+}
+
+fn broken_option() -> result: unit pure {
+  let idx = Index(value: 3_u64);
+  let h = Holder(index: idx);
+  let held = Some<Holder>(value: h);
+  match &held {
+    Some(value: r) => {
+      set r^.index.value = 31_u64;
+    }
+    None() => {
+    }
+  }
+  pass_on(held: held);
+  return unit;
+}

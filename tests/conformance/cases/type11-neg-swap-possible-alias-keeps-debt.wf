@@ -1,0 +1,30 @@
+struct Index {
+  value: u64;
+  invariant bounded(index): index.value < 16_u64;
+}
+
+fn size(indexes: &Slots<Index, 2>) -> result: u64 reads(indexes.len) {
+  return indexes^.len;
+}
+
+fn swap_maybe_alias(i: u64, j: u64) -> result: u64 pure {
+  let first = Index(value: 1_u64);
+  let second = Index(value: 2_u64);
+  let indexes = slots_new::<Index, 2>();
+  place_back(window: &indexes, value: first);
+  place_back(window: &indexes, value: second);
+  if i < 2_u64 {
+  } else {
+    return 0_u64;
+  }
+  if j < 2_u64 {
+  } else {
+    return 0_u64;
+  }
+  let r = &indexes[j];
+  set r^.value = 31_u64;
+  let x = Index(value: 1_u64);
+  swap(first: &indexes[i], second: &x);
+  let n = size(indexes: &indexes);
+  return n;
+}
