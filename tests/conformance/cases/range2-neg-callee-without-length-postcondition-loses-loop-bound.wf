@@ -1,4 +1,9 @@
-struct Target { t: u32; s: u32; d: u32; k: u32; }
+struct Target {
+  t: u32;
+  s: u32;
+  d: u32;
+  k: u32;
+}
 
 fn move_slot(stack: &Box<Array<u64>>, fp: u64, s: u64, d: u64) -> r: unit writes(stack.inner) contract {
   requires fp + 65536_u64 <= stack^.inner.len;
@@ -21,7 +26,9 @@ fn run(brtab: &Box<Slots<Target>>, stack: &Box<Array<u64>>, fp0: u64) -> r: unit
   loop (
     invariant frame_bound: fp + 65536_u64 <= stack^.inner.len
   ) {
-    if at >= brtab^.inner.len { return unit; }
+    if at >= brtab^.inner.len {
+      return unit;
+    }
     let slot = brtab^.inner[at];
     let si = cvt::<u32, u64>(slot.s);
     let di = cvt::<u32, u64>(slot.d);
