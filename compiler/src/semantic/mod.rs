@@ -929,13 +929,18 @@ pub enum SemanticIssueKind {
         /// Exact mechanical repair required by OWN-1.
         mechanical_fix: String,
     },
-    /// [TYPE-2] a constructor `call` or a destructuring `let_stmt` named an
-    /// opaque struct, whose constructor entry exists to be refused.
+    /// [TYPE-2] a constructor `call` named an opaque struct.
     ContainerConstruction {
         /// The nominal the construct named.
         nominal: String,
-        /// The repair [DIAG-1], chosen by where the struct comes from and,
-        /// for a cell taken apart, by its content.
+        /// The repair [DIAG-1], chosen by where the struct comes from.
+        mechanical_fix: String,
+    },
+    /// [TYPE-2] a destructuring `let_stmt` named an opaque struct.
+    OpaqueDestructuring {
+        /// The nominal the statement named.
+        nominal: String,
+        /// The repair [DIAG-1], chosen by the opaque struct and its content.
         mechanical_fix: String,
     },
     /// A binding was used after ownership had already been consumed.
@@ -1656,6 +1661,8 @@ pub enum UnsupportedSemanticFeature {
     /// written set took more walks to settle, than the checker follows;
     /// RANGE-2 forgets only what the body can write.
     RangeLoopNesting,
+    /// A page's length in a postcondition has no return-site measure term yet.
+    PageLengthPostcondition,
 }
 
 /// Exact source node at which an unimplemented compiler family was required.

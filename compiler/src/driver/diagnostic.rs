@@ -737,7 +737,7 @@ variant_names! {
         Generics, PreludeNominalValues, ReferenceFormation, CompositeValues,
         RecursiveNominalLayout, OwnershipJoin, OperationFamily,
         RangeArithmetic, RangeOrdinaryGoal, RangeOperationIntervals,
-        RangeLoopNesting,
+        RangeLoopNesting, PageLengthPostcondition,
     }
 }
 
@@ -887,6 +887,7 @@ impl Report for SemanticIssueKind {
             MoveOfCopy { binding, ty, reason, mechanical_fix };
             BareAffineUse { binding, ty, reason, mechanical_fix };
             ContainerConstruction { nominal, mechanical_fix };
+            OpaqueDestructuring { nominal, mechanical_fix };
             UseAfterMove { mechanical_fix };
             InvalidReferenceUse { binder, event, mechanical_fix };
             UnestablishedPayloadVariant { place, variant, mechanical_fix };
@@ -1091,8 +1092,11 @@ impl Report for CanonicalIssue {
 /// A valid source that needs a semantic family the compiler has not built;
 /// the node is the record's location.
 impl Report for SemanticUnsupported {
-    fn report(&self, _: &mut Fields<'_>) -> &'static str {
+    fn report(&self, fields: &mut Fields<'_>) -> &'static str {
         let Self { feature, node: _ } = self;
+        if *feature == UnsupportedSemanticFeature::PageLengthPostcondition {
+            fields.field("reason", &"not yet supported: a page's length in a postcondition");
+        }
         feature.name()
     }
 }
