@@ -246,6 +246,15 @@ wf_file_result wf_file_execute_direct(wf_file_request *request);
  * for an engine that can wait on it. */
 int wf_file_transfer_now(const wf_file_request *request, wf_file_result *result);
 
+/* The local endpoint of one connected socket, in the platform leaf
+ * (`local_address` [PRE-2]).  The host answers the query at once, so it is
+ * made on the calling thread with no request kind or record and never reaches
+ * a queue or a ring.  Answers 0 with `address` written in the portable form an
+ * emitted `SocketAddress` value carries (`socket_address.h`,
+ * `wf_socket_address_from_native`), or the host's own nonzero refusal code
+ * with `address` left all zero. */
+int wf_file_socket_local_address(int descriptor, wf_socket_address *address);
+
 /* One descriptor a waiting context needs ready before it retries a socket
  * operation without waiting [WAIT-2].  With no kernel completion ring, a
  * context whose receive, send or accept would wait is parked on this instead

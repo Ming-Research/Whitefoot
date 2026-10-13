@@ -568,9 +568,9 @@ def acc_control_arms():
         o += ["      }", "      return trap(code: 1_u32, pc: pc);", "    }"]
     o += ["    BrTableNC(c: cv, start: startv, count: countv) => {", "      let count = cvt::<u32, u64>(countv^);",
           "      let i32v = cvt.wrap::<u64, u32>(acc);", "      let i = cvt::<u32, u64>(i32v);", "      let pick = imin(i, count);",
-          "      let base = cvt::<u32, u64>(startv^);", "      let at = base + pick;", "      if at < brtab^.inner.len {",
-          "        let slot = brtab^.inner[at];", "        let target = cvt::<u32, u64>(slot.t);", "        if target < n {"]
-    o += tail("target", 10) + ["        }", "      }", "      return trap(code: 1_u32, pc: pc);", "    }"]
+          "      let base = cvt::<u32, u64>(startv^);", "      let at = base + pick;",
+          "      let slot = brtab^.inner[at];", "      let target = cvt::<u32, u64>(slot.t);"]
+    o += tail("target", 6) + ["    }"]
     for form in ACC["Select"]:
         b = word("c", "cv", "C", form) + ["let pick = bv^;", "if cw != 0_u64 {", "  set pick = av^;", "}",
                                           "let si = cvt::<u16, u64>(pick);"]
@@ -1068,6 +1068,10 @@ if "--inline" in sys.argv:
 here = os.path.dirname(os.path.abspath(__file__))
 head = open(os.path.join(here, "interp_head.wf")).read()
 tail_text = open(os.path.join(here, "interp_tail.wf")).read().strip("\n")
+tail_text = tail_text.replace("@@BRTABLE_VALIDATION_OTHER_ARMS@@", "\n".join(
+    f"      {name}({'..' if fields else ''}) => {{\n      }}"
+    for name, fields, _ in variants
+    if name not in {"BrTable", "BrTableN", "BrTableNC"}))
 aliases_end = head.index("\n\n") + 2
 helper_text = "\n".join(HELPERS).strip("\n")
 program = (head[:aliases_end] + OPS + "\n\n" + (helper_text + "\n\n" if helper_text else "")

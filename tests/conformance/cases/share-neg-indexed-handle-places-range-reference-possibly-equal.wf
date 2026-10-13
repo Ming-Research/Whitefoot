@@ -1,0 +1,13 @@
+fn pour(shards: &[Shared<u64>], from: u64, into: u64) -> result: unit reads(shards) waits contract {
+  requires from < shards^.len;
+  requires into < shards^.len;
+} {
+  atomic source = &shards^[from], target = &shards^[into] {
+    set target^ = target^ +wrap source^;
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

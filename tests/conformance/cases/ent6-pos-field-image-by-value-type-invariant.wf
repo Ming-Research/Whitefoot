@@ -1,0 +1,15 @@
+struct Exponent {
+  value: i64;
+  invariant floor(e): -1000_i64 <= e.value;
+}
+
+fn shift(e: Exponent, d: u8) -> result: i64 pure {
+  doc "The type invariant over the by-value parameter is a requirement established at body entry, so the field's entry image is bounded below and the subtraction of a widened byte cannot overflow.";
+  let w = cvt::<u8, i64>(d);
+  let r = e.value - w;
+  return r;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

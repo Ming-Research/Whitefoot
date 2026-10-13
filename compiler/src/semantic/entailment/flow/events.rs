@@ -90,9 +90,9 @@ impl Input<'_, '_> {
         targets.is_empty()
             || writes.is_empty()
             || targets.iter().any(|target| {
-                writes.iter().any(|write| {
-                    write.may_be_prefix_of(separations, target, false)
-                })
+                writes
+                    .iter()
+                    .any(|write| write.may_be_prefix_of(separations, target, false))
             })
     }
 
@@ -141,12 +141,11 @@ impl Input<'_, '_> {
                 // of an already filled selection remain the same value.
                 !matches!(
                     suffix,
-                    []
-                    | [PlaceStep::Deref, PlaceStep::Measure(CheckedMeasure::Length)]
-                    | [PlaceStep::Deref, PlaceStep::Index(_), ..]
-                    | [PlaceStep::Deref, PlaceStep::Range(_), ..]
-                    | [PlaceStep::Deref, PlaceStep::Part(WindowPart::Filled), ..]
-                    | [PlaceStep::Deref, PlaceStep::Page(_), ..]
+                    [] | [PlaceStep::Deref, PlaceStep::Measure(CheckedMeasure::Length)]
+                        | [PlaceStep::Deref, PlaceStep::Index(_), ..]
+                        | [PlaceStep::Deref, PlaceStep::Range(_), ..]
+                        | [PlaceStep::Deref, PlaceStep::Part(WindowPart::Filled), ..]
+                        | [PlaceStep::Deref, PlaceStep::Page(_), ..]
                 )
             })
         })
@@ -846,7 +845,7 @@ impl Vocabulary {
         range_path: &[u32],
     ) {
         self.promote_flow_contradiction(states);
-        for result in states.results.values_mut() {
+        for result in states.results.values_mut().flatten() {
             self.refresh_result(result, &states.facts);
             materialize_closure_before_kill(
                 &mut result.facts,
@@ -926,7 +925,9 @@ impl Reasoning<'_, '_, '_> {
                     ..
                 } = event
                     && let PlaceRoot::Binding(binding) = place.root
-                    && self.input.relocation_kills_holder(separations, binding, written)
+                    && self
+                        .input
+                        .relocation_kills_holder(separations, binding, written)
                 {
                     return true;
                 }
@@ -959,7 +960,8 @@ impl Reasoning<'_, '_, '_> {
                 ..
             } = event
                 && holders.iter().any(|holder| {
-                    self.input.relocation_kills_holder(separations, *holder, written)
+                    self.input
+                        .relocation_kills_holder(separations, *holder, written)
                 })
             {
                 return true;
@@ -1331,7 +1333,9 @@ impl Reasoning<'_, '_, '_> {
             _ => self.captured_index_term(index),
         }?;
         let affine_offset = match index.capture {
-            CaptureId::Source(_) => states.affine.indices.get(&index.capture).cloned(),
+            CaptureId::Source(_) | CaptureId::ContractRead { .. } => {
+                states.affine.indices.get(&index.capture).cloned()
+            }
             _ => None,
         }
         .or_else(|| self.vocabulary.affine_term_value(offset, &states.affine));

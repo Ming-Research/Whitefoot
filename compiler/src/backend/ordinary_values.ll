@@ -47,6 +47,18 @@ entry:
   ret void
 }
 
+declare void @wf__body_error_copy_class_description(ptr, ptr, ptr, i64, i64)
+
+define void @wf_std.io.error_copy_class_description(ptr %result, ptr %error, ptr %destination.data, i64 %destination.len, i64 %start, i64 %end) align 64 {
+entry:
+  %view = alloca { ptr, i64 }, align 8
+  store ptr %destination.data, ptr %view, align 8
+  %view.len = getelementptr inbounds { ptr, i64 }, ptr %view, i32 0, i32 1
+  store i64 %destination.len, ptr %view.len, align 8
+  call void @wf__body_error_copy_class_description(ptr %result, ptr %error, ptr %view, i64 %start, i64 %end)
+  ret void
+}
+
 declare void @wf__body_host_copy_utf8(ptr, ptr, ptr, i64, i64)
 
 define void @wf_std.text.host_copy_utf8(ptr %result, ptr %value, ptr %destination.data, i64 %destination.len, i64 %start, i64 %end) align 64 {
@@ -428,6 +440,32 @@ declare void @wf__body_socket_address_v6(ptr, i16 zeroext, i16 zeroext, i16 zero
 define void @wf_std.net.socket_address_v6(ptr %result, i16 %a, i16 %b, i16 %c, i16 %d, i16 %e, i16 %f, i16 %g, i16 %h, i16 %port) align 64 {
 entry:
   tail call void @wf__body_socket_address_v6(ptr %result, i16 zeroext %a, i16 zeroext %b, i16 zeroext %c, i16 zeroext %d, i16 zeroext %e, i16 zeroext %f, i16 zeroext %g, i16 zeroext %h, i16 zeroext %port)
+  ret void
+}
+
+declare void @wf__body_socket_address_ip(ptr, ptr)
+
+; `IpAddress` is a union-laid-out enum, which is memory-only and returns
+; through its destination (design/compiler/payload-enum-layout.md).
+define void @wf_std.net.socket_address_ip(ptr %result, ptr %address) align 64 {
+entry:
+  tail call void @wf__body_socket_address_ip(ptr %result, ptr %address)
+  ret void
+}
+
+declare zeroext i16 @wf__body_socket_address_port(ptr)
+
+define i16 @wf_std.net.socket_address_port(ptr %address) align 64 {
+entry:
+  %port = tail call zeroext i16 @wf__body_socket_address_port(ptr %address)
+  ret i16 %port
+}
+
+declare void @wf__body_local_address(ptr, ptr)
+
+define void @wf_std.net.local_address(ptr %result, ptr %receive) align 64 {
+entry:
+  tail call void @wf__body_local_address(ptr %result, ptr %receive)
   ret void
 }
 

@@ -1038,7 +1038,14 @@ static wf_pool_block *wf_pool_released[WF_POOL_CLASSES];
 static unsigned char *wf_pool_cursor;
 static size_t wf_pool_remaining;
 static atomic_flag wf_pool_lock = ATOMIC_FLAG_INIT;
-static int64_t wf_pool_live_bytes;
+/* The pool's granted total.  Only a holder of the pool lock changes it, with
+ * a relaxed load and store and no read-modify-write; it is atomic, and padded
+ * to a cache line of its own, so that a heap reading loads it without taking
+ * the lock and a reading on every driver writes no shared line. */
+typedef struct {
+    _Alignas(64) _Atomic int64_t bytes;
+} wf_pool_total;
+static wf_pool_total wf_pool_live_bytes;
 
 static void wf_spin_lock(atomic_flag *flag) {
     while (atomic_flag_test_and_set_explicit(flag, memory_order_acquire)) {
@@ -1114,7 +1121,9 @@ static void *wf_pool_take(size_t bytes, size_t *granted) {
     void *block;
     wf_spin_lock(&wf_pool_lock);
     block = wf_pool_take_locked(bytes, granted);
-    wf_pool_live_bytes += (int64_t)*granted;
+    atomic_store_explicit(&wf_pool_live_bytes.bytes,
+        atomic_load_explicit(&wf_pool_live_bytes.bytes, memory_order_relaxed) + (int64_t)*granted,
+        memory_order_relaxed);
     wf_spin_unlock(&wf_pool_lock);
     return block;
 }
@@ -1174,7 +1183,9 @@ static void wf_pool_give(void *block, size_t granted) {
         return;
     }
     wf_spin_lock(&wf_pool_lock);
-    wf_pool_live_bytes -= (int64_t)granted;
+    atomic_store_explicit(&wf_pool_live_bytes.bytes,
+        atomic_load_explicit(&wf_pool_live_bytes.bytes, memory_order_relaxed) - (int64_t)granted,
+        memory_order_relaxed);
     if (granted > WF_POOL_LARGEST) {
         wf_spin_unlock(&wf_pool_lock);
         wf_pool_host_release(block, granted);
@@ -1489,10 +1500,7 @@ void wf__heap_change(int64_t change) {
 }
 
 uint64_t wf__heap_in_use(void) {
-    uint64_t bytes;
-    wf_spin_lock(&wf_pool_lock);
-    bytes = (uint64_t)wf_pool_live_bytes;
-    wf_spin_unlock(&wf_pool_lock);
+    uint64_t bytes = (uint64_t)atomic_load_explicit(&wf_pool_live_bytes.bytes, memory_order_relaxed);
     /* Fixed storage also covers a slot still being registered, and retains
      * deltas from drivers that have stopped. */
     unsigned count = atomic_load_explicit(&wf_heap_counter_count, memory_order_relaxed);
@@ -6012,6 +6020,26 @@ void wf__completion_socket_shutdown_submit(
     held->request.operation.shutdown.direction =
         (enum wf_socket_direction)direction;
     wf_bridge_dispatch(held);
+}
+
+int wf__completion_socket_local_address(
+    int descriptor,
+    uint64_t *address_low,
+    uint64_t *address_high,
+    uint32_t *port_and_family
+) {
+    wf_socket_address address;
+    int refusal;
+    if (address_low == NULL || address_high == NULL || port_and_family == NULL) {
+        wf_bridge_fail(
+            "a local-address query was given no place to publish its result"
+        );
+    }
+    refusal = wf_file_socket_local_address(descriptor, &address);
+    *address_low = address.words[0];
+    *address_high = address.words[1];
+    *port_and_family = address.port_and_family;
+    return refusal;
 }
 
 void wf__completion_directory_next_submit(

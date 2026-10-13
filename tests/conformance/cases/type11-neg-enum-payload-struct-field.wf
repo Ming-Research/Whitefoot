@@ -1,0 +1,36 @@
+struct Span {
+  start: u64;
+  end: u64;
+  invariant ordered(span): span.start <= span.end;
+}
+
+struct Holder {
+  span: Span;
+}
+
+fn width(span: Span) -> result: u64 pure {
+  let e = span.end;
+  let s = span.start;
+  let w = e - s;
+  return w;
+}
+
+fn make() -> made: Option<Holder> pure {
+  let span = Span(start: 1_u64, end: 2_u64);
+  let holder = Holder(span: span);
+  return Some<Holder>(value: holder);
+}
+
+fn use_it() -> result: u64 pure {
+  let made = make();
+  match made {
+    Some(value: h) => {
+      let s = h.span;
+      let w = width(span: s);
+      return w;
+    }
+    None() => {
+      return 0_u64;
+    }
+  }
+}
