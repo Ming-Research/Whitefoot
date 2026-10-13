@@ -1,13 +1,18 @@
 //! Atomic targets and their ordinary reference, effect and scope judgments [SHARE-2].
 use super::super::super::model::{
-    BindingId, CheckedArrayRoot, CheckedCallSeparation, CheckedCallSeparationPositions,
-    CheckedExpression, CheckedMode, CheckedNominalKind, CheckedRangeSource,
-    CheckedSeparationOccasion, CheckedSetTarget, CheckedShared, CheckedStatePath, CheckedStatement,
-    CheckedTarget, CheckedTargetKind, CheckedType, IntegerType, expression_children,
+    BindingId, CheckedAffineExpressionKind, CheckedAffineRelation, CheckedArrayRoot,
+    CheckedCallSeparation, CheckedCallSeparationPositions, CheckedExpression, CheckedLoopId,
+    CheckedLoopInvariant, CheckedMode, CheckedNominalKind, CheckedProofMultiplicity,
+    CheckedProofUseSource, CheckedRangeSource, CheckedSeparationOccasion, CheckedSetTarget,
+    CheckedShared, CheckedStatePath, CheckedStatement, CheckedTarget, CheckedTargetKind, CheckedType,
+    IntegerType, expression_children,
 };
 use super::super::super::places::{
     CapturedTerm, CapturedValue, PlaceRoot, PlaceStep, ResolvedPlace, UnprovedSeparations,
     places_overlap,
+};
+use super::super::super::range_facts::{
+    CheckedRangeClause, CheckedRangeFacts, CheckedRangeRoot, CheckedRangeTerm,
 };
 use super::super::expressions::calls::user::WAIT1_DECLARE_THE_CALLER_WAITING;
 use super::super::references::{ReferenceInfo, ReferenceKind};
@@ -370,7 +375,7 @@ impl Checker<'_, '_> {
                 && !checked
                     .statements
                     .iter()
-                    .any(|s| statement_mentions(s, target.binding))
+                    .any(|s| statement_mentions(s, target.binding, &self.body.range_facts))
             {
                 return self.types.declarations.issue_node(
                     SemanticRule::Share2,
@@ -893,12 +898,16 @@ impl Checker<'_, '_> {
 }
 
 /// Whether a checked statement, or a block it holds, names `binding`.
-fn statement_mentions(statement: &CheckedStatement, binding: BindingId) -> bool {
+fn statement_mentions(
+    statement: &CheckedStatement,
+    binding: BindingId,
+    range_facts: &CheckedRangeFacts,
+) -> bool {
     let expression = |value: &CheckedExpression| expression_mentions(value, binding);
     let block = |statements: &[CheckedStatement]| {
         statements
             .iter()
-            .any(|statement| statement_mentions(statement, binding))
+            .any(|statement| statement_mentions(statement, binding, range_facts))
     };
     match statement {
         CheckedStatement::Let { value, .. }
@@ -926,10 +935,25 @@ fn statement_mentions(statement: &CheckedStatement, binding: BindingId) -> bool 
         | CheckedStatement::ValueMatchLet {
             scrutinee, arms, ..
         } => expression(scrutinee) || arms.iter().any(|arm| block(&arm.body)),
-        CheckedStatement::Loop { body, .. } => block(body),
+        CheckedStatement::Loop {
+            id,
+            invariants,
+            body,
+            ..
+        } => loop_header_mentions(*id, invariants, binding, range_facts) || block(body),
         CheckedStatement::CountedRange {
-            lower, upper, body, ..
-        } => expression(lower) || expression(upper) || block(body),
+            id,
+            lower,
+            upper,
+            invariants,
+            body,
+            ..
+        } => {
+            expression(lower)
+                || expression(upper)
+                || loop_header_mentions(*id, invariants, binding, range_facts)
+                || block(body)
+        }
         CheckedStatement::Atomic {
             targets,
             guard,
@@ -943,10 +967,93 @@ fn statement_mentions(statement: &CheckedStatement, binding: BindingId) -> bool 
                 || guard.as_deref().is_some_and(expression)
                 || block(body)
         }
-        CheckedStatement::Proof(_)
-        | CheckedStatement::Break { .. }
-        | CheckedStatement::Continue { .. } => false,
+        CheckedStatement::Proof(proof) => {
+            affine_relation_mentions(&proof.target, binding)
+                || proof.uses.iter().any(|written_use| {
+                    matches!(
+                        written_use.multiplicity,
+                        CheckedProofMultiplicity::Value { binding: named, .. } if named == binding
+                    ) || match &written_use.source {
+                        CheckedProofUseSource::Named(_) => false,
+                        CheckedProofUseSource::Relation(relation) => {
+                            affine_relation_mentions(relation, binding)
+                        }
+                        CheckedProofUseSource::Range(instance) => instance
+                            .arguments
+                            .iter()
+                            .any(|term| range_term_mentions(term, binding)),
+                    }
+                })
+        }
+        CheckedStatement::Break { .. } | CheckedStatement::Continue { .. } => false,
     }
+}
+
+fn loop_header_mentions(
+    id: CheckedLoopId,
+    invariants: &[CheckedLoopInvariant],
+    binding: BindingId,
+    range_facts: &CheckedRangeFacts,
+) -> bool {
+    invariants
+        .iter()
+        .any(|invariant| affine_relation_mentions(&invariant.relation, binding))
+        || range_facts.loops.get(&id).is_some_and(|header| {
+            header
+                .invariants
+                .iter()
+                .any(|clause| range_clause_mentions(clause, binding))
+                || header.apart.as_ref().is_some_and(|apart| {
+                    apart
+                        .uses
+                        .iter()
+                        .flat_map(|instance| &instance.arguments)
+                        .any(|term| range_term_mentions(term, binding))
+                })
+        })
+}
+
+fn affine_relation_mentions(relation: &CheckedAffineRelation, binding: BindingId) -> bool {
+    [&relation.left, &relation.right]
+        .into_iter()
+        .flat_map(|side| side.postorder())
+        .any(|expression| match &expression.kind {
+            CheckedAffineExpressionKind::Local { binding: named, .. } => *named == binding,
+            CheckedAffineExpressionKind::Measure(expression)
+            | CheckedAffineExpressionKind::Field(expression) => {
+                expression_mentions(expression, binding)
+            }
+            CheckedAffineExpressionKind::Constant { .. }
+            | CheckedAffineExpressionKind::ConstGeneric { .. }
+            | CheckedAffineExpressionKind::Add(..)
+            | CheckedAffineExpressionKind::Subtract(..)
+            | CheckedAffineExpressionKind::MultiplyByConstant { .. } => false,
+        })
+}
+
+fn range_clause_mentions(clause: &CheckedRangeClause, binding: BindingId) -> bool {
+    clause
+        .binders
+        .iter()
+        .flat_map(|binder| [&binder.start, &binder.end])
+        .chain(
+            clause
+                .relations()
+                .flat_map(|relation| [&relation.left, &relation.right]),
+        )
+        .chain(&clause.contract_reads)
+        .any(|term| range_term_mentions(term, binding))
+}
+
+fn range_term_mentions(term: &CheckedRangeTerm, binding: BindingId) -> bool {
+    let mut values = Vec::new();
+    term.collect_values(&mut values);
+    let mut places = Vec::new();
+    term.collect_places(&mut places);
+    values
+        .into_iter()
+        .chain(places.into_iter().map(|place| place.root))
+        .any(|root| matches!(root, CheckedRangeRoot::Binding(named) if named == binding))
 }
 
 /// Whether a checked expression names `binding` as a place's root or as a
