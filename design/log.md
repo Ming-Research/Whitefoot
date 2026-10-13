@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 the owner's agent instructions own the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-13 Borrowing a measure with no field declaration is refused under MSR-1
+
+Nodes: language/surface-form/measure-spelling, language/effects
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the two specification clarifications of Whitefoot#462 (the ground for refusing a measure borrow is written into MSR-1; EFF-2 states that a declared write must be exhibited by a write) and its design-tree decision?" (translated), shown at head commit 13b5d5dd9, whose background stated the new measure-spelling decision and the rejected alternative.
+
+Summary: Borrowing a measure with no field declaration is refused at the complete path under MSR-1 and the measure is read by value, because the observation supplies a value rather than a borrowable declared field, instead of materializing a temporary reference target. The effect-visibility decision in language/effects is reworded to cite the body's covering write as exhibiting the entry under the tabulated EFF-2; its choice is unchanged.
+
 ## 2026-10-13 The range walk checks every object partition of possibly aliased atomic targets
 
 Nodes: compiler/range-judgment
