@@ -156,7 +156,7 @@ impl Checker<'_, '_> {
             .tree
             .children_with(clause, Production::RangeGuard)?
         {
-            guards.extend(self.range_guard(context, guard, bindings, &names)?);
+            guards.extend(self.range_relation(context, guard, bindings, &names)?);
         }
         let mut conclusions = Vec::new();
         for relation in self
@@ -708,42 +708,8 @@ impl Checker<'_, '_> {
         )
     }
 
-    /// [RANGE-1] a comparison or variant guard is a relation; a bare Bool
-    /// datum states that it `is True`.
-    fn range_guard(
-        &mut self,
-        context: FunctionContext<'_, '_>,
-        node: NodeId,
-        bindings: &HashMap<DeclarationId, LocalBinding>,
-        names: &RangeNames,
-    ) -> Result<Vec<CheckedRangeRelation>, CheckStop> {
-        if self
-            .types
-            .declarations
-            .tree
-            .first_child_with(node, Production::CompareOp)?
-            .is_some()
-        {
-            return self.range_comparison(context, node, node, bindings, names);
-        }
-        if let Some(variant) = self
-            .types
-            .declarations
-            .tree
-            .first_child_with(node, Production::RangeVariant)?
-        {
-            return self.range_variant(context, node, variant, bindings, names);
-        }
-        let expression = self
-            .types
-            .declarations
-            .tree
-            .first_child_with(node, Production::AffineExpr)?
-            .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-        let operand = self.range_expression(context, expression, bindings, names)?;
-        operand.bool_guard(self, expression)
-    }
-
+    /// [RANGE-1] a guard and a conclusion are each one comparison or one
+    /// variant relation.
     fn range_relation(
         &mut self,
         context: FunctionContext<'_, '_>,

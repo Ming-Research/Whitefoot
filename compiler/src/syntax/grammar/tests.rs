@@ -162,8 +162,9 @@ fn complete_inventory_is_pinned() {
     // v0.128's range guard optional comparison adds one decision.
     // v0.136's variant relation adds three: the comparison-or-variant choice
     // of `range_guard` and of `range_relation`, and `range_variant`'s
-    // optional `not`.
-    assert_eq!(DECISIONS.len(), 183);
+    // optional `not`; the guard's optional comparison then retires, because a
+    // guard is one comparison or one variant relation: one decision fewer.
+    assert_eq!(DECISIONS.len(), 182);
     // `continue` adds the same statement prefixes and followers as `break`:
     // 72 rows at existing decisions and 29 at its optional label decision.
     // Together these extend the previous 7,816-row inventory by 101.
@@ -195,7 +196,9 @@ fn complete_inventory_is_pinned() {
     // exits and `^ is`; one at `pbase`, at its `entry` suffix repeat, at
     // `psuffix`'s `^` arm and at its range-tail optional; and a call's
     // `) is` at its argument optional and its two argument-list repeats.
-    assert_eq!(SELECT_ROWS.len(), 8_328);
+    // Retiring the guard's optional comparison removes that decision's 106
+    // rows: 104 from v0.128 and the two `is` rows v0.136 added.
+    assert_eq!(SELECT_ROWS.len(), 8_222);
     // v0.136's `not` is one new terminal [RANGE-1].
     assert_eq!(diagnostic_terminal_order().len(), 116);
     assert_eq!(productions()[0], Production::Program);
@@ -400,23 +403,22 @@ fn complete_inventory_is_pinned() {
         assert_eq!(DECISIONS[index].production(), Production::RangeClause);
         assert_eq!(DECISIONS[index].kind(), kind);
     }
-    // v0.128 [GRAM-5, RANGE-1] the guard's optional comparison, and
     // v0.136's choice between a comparison and a variant relation in a guard
-    // and in a conclusion, then the variant relation's optional `not`.
+    // and in a conclusion, then the variant relation's optional `not`. A guard
+    // has no bare alternative, so it owns no optional [RANGE-1].
     for (index, production, kind) in [
-        (163, Production::RangeGuard, DecisionKind::Optional),
-        (164, Production::RangeGuard, DecisionKind::Choice),
-        (165, Production::RangeRelation, DecisionKind::Choice),
-        (166, Production::RangeVariant, DecisionKind::Optional),
+        (163, Production::RangeGuard, DecisionKind::Choice),
+        (164, Production::RangeRelation, DecisionKind::Choice),
+        (165, Production::RangeVariant, DecisionKind::Optional),
     ] {
         assert_eq!(DECISIONS[index].production(), production);
         assert_eq!(DECISIONS[index].kind(), kind);
     }
     // `epsuffix` mirrors it inside an effect row [EFF-1].
+    assert_eq!(DECISIONS[180].production(), Production::Epsuffix);
+    assert_eq!(DECISIONS[180].kind(), DecisionKind::Choice);
     assert_eq!(DECISIONS[181].production(), Production::Epsuffix);
-    assert_eq!(DECISIONS[181].kind(), DecisionKind::Choice);
-    assert_eq!(DECISIONS[182].production(), Production::Epsuffix);
-    assert_eq!(DECISIONS[182].kind(), DecisionKind::Optional);
+    assert_eq!(DECISIONS[181].kind(), DecisionKind::Optional);
 }
 
 /// `borrow_expr` is `"&" place` and owns no decision.
@@ -547,14 +549,14 @@ fn every_decision_has_two_position_rows_and_complete_arm_coverage() {
             stack.extend_from_slice(node.children());
         }
     }
-    // The same 183 decisions `complete_inventory_is_pinned` reads out of the
+    // The same 182 decisions `complete_inventory_is_pinned` reads out of the
     // generated table, counted a second time by walking every production's
     // node tree. `struct_decl`'s `"opaque"?` optional [GRAM-2, TYPE-2] is
     // reachable from `item`, so the walk and the table agree on it; a
     // decision in the table that no production reaches would show up as the
     // two counts disagreeing.
     assert_eq!(decisions, DECISIONS.len());
-    assert_eq!(decisions, 183);
+    assert_eq!(decisions, 182);
 }
 
 #[test]
@@ -611,7 +613,7 @@ fn overlaps(left: LookaheadPredicate, right: LookaheadPredicate) -> bool {
 
 #[test]
 fn all_detailed_rows_retain_provenance_and_remain_cross_arm_disjoint() {
-    assert_eq!(DECISIONS.len(), 183);
+    assert_eq!(DECISIONS.len(), 182);
     let mut total_rows = 0_usize;
     let mut saw_atom_only = false;
     for decision in &DECISIONS {
@@ -657,6 +659,6 @@ fn all_detailed_rows_retain_provenance_and_remain_cross_arm_disjoint() {
     }
     // Count the complete inventory independently by summing each decision's
     // rows, including the explicit interface import arm [FN-3].
-    assert_eq!(total_rows, 8_328);
+    assert_eq!(total_rows, 8_222);
     assert!(saw_atom_only);
 }

@@ -1,11 +1,10 @@
-//! Value equality, variant relations and bare Bool guards in range
-//! clauses [RANGE-1].
+//! Value equality and variant relations in range clauses [RANGE-1].
 
 use super::*;
 use crate::semantic::range_facts::MAX_RANGE_ATOMS;
 
 /// A noninteger operand survives until its enclosing comparison decides
-/// whether to expand it, or a bare guard selects its Bool tag. Other uses
+/// whether to expand it, or a variant relation selects its tag. Other uses
 /// leave a concrete generic clause unformed and reject a nongeneric clause
 /// under RANGE-1.
 pub(super) struct RangeOperand {
@@ -25,23 +24,6 @@ impl From<CheckedRangeTerm> for RangeOperand {
 impl RangeOperand {
     pub(super) fn term(&self) -> &CheckedRangeTerm {
         &self.term
-    }
-
-    /// [RANGE-1] a bare Bool guard states that its datum `is True`.
-    pub(super) fn bool_guard(
-        self,
-        checker: &Checker<'_, '_>,
-        node: NodeId,
-    ) -> Result<Vec<CheckedRangeRelation>, CheckStop> {
-        if self.aggregate != Some(CheckedType::Bool) {
-            return checker.invalid_range(
-                SemanticRule::Range1,
-                node,
-                "a bare range guard is not a Bool element projection or live own-mode Bool binding",
-                "write one Bool element projection or own-mode binding, or compare integer range terms",
-            );
-        }
-        self.variant_relation(checker, node, "True", false)
     }
 
     /// [RANGE-1] `e is V` holds where e's versioned tag equals V's

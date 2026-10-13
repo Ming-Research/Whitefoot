@@ -1253,3 +1253,20 @@ fn declaration_and_parameter_optionals_report_their_complete_expected_sets() {
         "an ordinary parameter name must be followed by a colon"
     );
 }
+
+#[test]
+fn bare_bool_range_guard_rejects_with_the_is_true_repair() {
+    // [GRAM-5, RANGE-1] a guard is one comparison or one variant relation, so
+    // a Bool datum written alone stops at its `:`.
+    let source = b"fn inspect(nodes: &[Bool]) -> result: unit pure contract {\n  requires forall held(k in 0_u64..nodes^.len) when nodes^[k]: k == k;\n} {\n  return unit;\n}\n".as_slice();
+    let outcome = parse_active("bare-guard.wf", source);
+    let ParseOutcome::SourceIssue(issue) = outcome else {
+        panic!("a lone expression as a guard must reject: {outcome:?}");
+    };
+    assert_eq!(issue.rule(), SyntaxRule::Gram5);
+    assert_eq!(issue_bytes(source, issue), b":");
+    assert!(
+        format!("{issue:?}").contains("`is True`"),
+        "the diagnostic names the `is True` spelling: {issue:?}"
+    );
+}

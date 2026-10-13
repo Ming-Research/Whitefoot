@@ -4,15 +4,15 @@ struct Frame {
 }
 
 fn helper(frame: &Frame, other: &Frame) -> result: unit writes(other.flags) contract {
-  requires forall before(k in 0_u64..1_u64) when frame^.flags[k]: frame^.vals[k] == 0_u64;
-  ensures forall after(k in 0_u64..1_u64) when frame^.flags[k]: frame^.vals[k] == 0_u64;
+  requires forall before(k in 0_u64..1_u64) when frame^.flags[k] is True: frame^.vals[k] == 0_u64;
+  ensures forall after(k in 0_u64..1_u64) when frame^.flags[k] is True: frame^.vals[k] == 0_u64;
 } {
   set other^.flags[0_u64] = True();
   return unit;
 }
 
 fn caller(f: &Frame) -> result: unit writes(f) contract {
-  requires forall start(k in 0_u64..1_u64) when f^.flags[k]: f^.vals[k] == 0_u64;
+  requires forall start(k in 0_u64..1_u64) when f^.flags[k] is True: f^.vals[k] == 0_u64;
 } {
   doc "EFF-5, RANGE-1: the Bool guard frame^.flags[k] widens to f.flags, which other writes; the guarded conclusion reads only f.vals.";
   helper(frame: f, other: f);
