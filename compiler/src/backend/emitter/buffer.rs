@@ -474,17 +474,27 @@ writeln!(self.output, "  %{pointer} = getelementptr inbounds {}, ptr {address}, 
                 element,
                 length: count,
             })) if self.program.element(element) == Some(u8_type) => {
-                // The constant extent needs no pointer before the guards.
-                // Bind the borrowed array only in the block that reads it.
-                (count.to_string(), None)
+                // Only a record slot binds in the block that reads it; every
+                // other operand resolves here, as it always has.
+                let first = if self.defers_record_slot(buffer) {
+                    None
+                } else {
+                    Some(self.value_name(buffer))
+                };
+                (count.to_string(), first)
             }
             Some(IrType::Array {
                 element,
                 length: count,
             }) if self.program.element(element) == Some(u8_type) => {
-                // A by-value array can read through an immutable borrow;
-                // resolve that place only after the guards as well.
-                (count.to_string(), None)
+                // A by-value array can read through an immutable borrow; a
+                // record slot's place binds after the guards, any other here.
+                let first = if self.defers_record_slot(buffer) {
+                    None
+                } else {
+                    Some(self.value_place(buffer)?)
+                };
+                (count.to_string(), first)
             }
             _ => return Err(BackendFailure::InvalidIr),
         };

@@ -584,6 +584,17 @@ pub(crate) struct ComputeHandedOut {
 pub(crate) type HandedOut = ComputeHandedOut;
 
 impl FunctionEmitter<'_, '_> {
+    /// A split operand's name: a record slot is loaded in the block that
+    /// reads it, every other operand is the value the operation's operands
+    /// were materialized to before the splitter's blocks.
+    fn split_operand(&mut self, value: IrValueId) -> Result<String, BackendFailure> {
+        if self.defers_record_slot(value) {
+            self.value_operand(value)
+        } else {
+            Ok(self.value_name(value))
+        }
+    }
+
     fn resolve_split_arguments(
         &mut self,
         arguments: Vec<SplitArgument>,
@@ -807,28 +818,39 @@ impl FunctionEmitter<'_, '_> {
         let result_type = self.output.type_name(self.program, ty)?;
         let mut arguments = Vec::with_capacity(split.captures.len() + 4);
         arguments.push(if declared[0].is_indirect() {
-            SplitArgument::Place(split.seed)
-        } else if matches!(declared[0].ty(), IrType::Address(_)) {
+            if self.defers_record_slot(split.seed) {
+                SplitArgument::Place(split.seed)
+            } else {
+                SplitArgument::Prepared(format!("ptr {}", self.value_place(split.seed)?))
+            }
+        } else if matches!(declared[0].ty(), IrType::Address(_))
+            && self.defers_record_slot(split.seed)
+        {
             SplitArgument::Address(split.seed)
         } else {
-            SplitArgument::Prepared(format!("{result_type} {}", self.value_operand(split.seed)?))
+            SplitArgument::Prepared(format!("{result_type} {}", self.split_operand(split.seed)?))
         });
         let mut endpoints = Vec::with_capacity(2);
         for endpoint in [split.lower, split.upper] {
             if self.value_type(endpoint) != Some(U64) {
                 return Err(BackendFailure::InvalidIr);
             }
-            let operand = self.value_operand(endpoint)?;
+            let operand = self.split_operand(endpoint)?;
             arguments.push(SplitArgument::Prepared(format!("i64 {operand}")));
             endpoints.push(operand);
         }
         for (capture, parameter) in split.captures.iter().zip(&declared[3..]) {
+            let deferred = self.defers_record_slot(*capture);
             arguments.push(if parameter.is_indirect() {
-                SplitArgument::Place(*capture)
-            } else if matches!(parameter.ty(), IrType::Address(_)) {
+                if deferred {
+                    SplitArgument::Place(*capture)
+                } else {
+                    SplitArgument::Prepared(format!("ptr {}", self.value_place(*capture)?))
+                }
+            } else if matches!(parameter.ty(), IrType::Address(_)) && deferred {
                 SplitArgument::Address(*capture)
             } else {
-                let operand = self.value_operand(*capture)?;
+                let operand = self.split_operand(*capture)?;
                 SplitArgument::Prepared(self.value_argument(*parameter, &operand)?)
             });
         }
@@ -890,7 +912,7 @@ impl FunctionEmitter<'_, '_> {
                 if self.value_type(*value) != Some(U64) {
                     return Err(BackendFailure::InvalidIr);
                 }
-                self.value_operand(*value)?
+                self.split_operand(*value)?
             }
             IrWorkEstimate::BoxArrayLength(value) => {
                 let Some(IrType::Address(IrAddressed::Nominal(nominal))) = self.value_type(*value)
@@ -932,7 +954,7 @@ impl FunctionEmitter<'_, '_> {
                     return Err(BackendFailure::InvalidIr);
                 }
                 let result = format!("%{}", self.next_temporary()?);
-                let operand = self.value_operand(*value)?;
+                let operand = self.split_operand(*value)?;
                 {
                     let emitted_type_0 = self.output.type_name(self.program, ty)?;
                     writeln!(

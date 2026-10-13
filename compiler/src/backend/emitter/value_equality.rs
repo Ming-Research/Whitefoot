@@ -14,6 +14,16 @@ enum EqualityPlace {
 }
 
 impl FunctionEmitter<'_, '_> {
+    /// A record slot binds where a comparison block reads it; any other
+    /// operand's place resolves here, before the comparison's blocks.
+    fn equality_operand(&mut self, value: IrValueId) -> Result<EqualityPlace, BackendFailure> {
+        if self.defers_record_slot(value) {
+            Ok(EqualityPlace::Value(value))
+        } else {
+            Ok(EqualityPlace::Pointer(self.value_place(value)?))
+        }
+    }
+
     fn equality_place(&mut self, place: &EqualityPlace) -> Result<String, BackendFailure> {
         match place {
             EqualityPlace::Value(value) => self.value_place(*value),
@@ -62,8 +72,8 @@ impl FunctionEmitter<'_, '_> {
             )?;
             return Ok(());
         }
-        let left = EqualityPlace::Value(arguments[0]);
-        let right = EqualityPlace::Value(arguments[1]);
+        let left = self.equality_operand(arguments[0])?;
+        let right = self.equality_operand(arguments[1])?;
         let unique = self.next_temporary()?;
         let mismatch = format!("eq.{unique}.different");
         let matched = format!("eq.{unique}.same");

@@ -776,3 +776,109 @@ fn traced<'function>(function: &'function str, name: &'function str) -> &'functi
         }
     }
 }
+
+#[test]
+fn functions_without_a_record_resolve_their_operands_before_their_blocks() {
+    // No recursive group: nothing here may take the record's deferred path,
+    // so every operand's place is resolved where the operation starts, before
+    // the blocks the comparison, the probe and the splitter open.
+    let source = br#"fn same(left: &Array<u64, 2>, right: &Array<u64, 2>) -> result: Bool reads(left), reads(right) {
+  doc "Array equality over borrowed arrays.";
+  return left^ == right^;
+}
+
+fn count_words(left: &u64, right: &u64) -> result: u64 reads(left), reads(right) {
+  doc "An indexed loop the splitter takes, capturing two borrows.";
+  let counts = box_array_filled::<u64>(count: 8_u64, value: 0_u64);
+  for (i in 0_u64..64_u64) {
+    let bucket = i % 8_u64;
+    let added = left^ +wrap right^;
+    set counts.inner[bucket] = counts.inner[bucket] +wrap added;
+  }
+  return counts.inner[0_u64];
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let a = array_filled::<u64, 2>(value: 7_u64);
+  let b = array_filled::<u64, 2>(value: 7_u64);
+  let data = box_array_filled::<u8>(count: 64_u64, value: 97_u8);
+  let mark = 88_u8;
+  let seen = 0_u64;
+  let stop = data.inner.len;
+  let cursor = 0_u64;
+  loop @walk {
+    let done = cursor >= stop;
+    if done {
+      break @walk;
+    }
+    let byte = data.inner[cursor];
+    let newline = byte == 10_u8;
+    if newline {
+      set seen = seen +wrap 1_u64;
+    }
+    let lead = byte == mark;
+    if lead {
+      set seen = seen +wrap 2_u64;
+    }
+    set cursor = cursor +wrap 1_u64;
+  }
+  let one = 3_u64;
+  let two = 2_u64;
+  let counted = count_words(left: &one, right: &two);
+  if same(left: &a, right: &b) {
+    if counted == 40_u64 {
+      return std::process::exit_status(code: 0_u8);
+    }
+  }
+  return std::process::exit_status(code: 1_u8);
+}
+"#;
+    let llvm = super::emit_lowered(
+        source,
+        crate::OverlapLowering::OnWithRecursionBudget {
+            budget: crate::RecursionBudget::Off,
+            call_grain: crate::CallGrain::WorkUnit,
+            sequential_refusal: false,
+        },
+    );
+    assert!(!llvm.contains("wf.env"), "{llvm}");
+
+    // Every pointer a block's address computations start from is defined
+    // outside that block (a parameter, an entry allocation or an earlier
+    // block), never by a place computed inside the comparison loop's body.
+    let same = emitted_function(&llvm, "same");
+    let body = blocks(same)
+        .into_iter()
+        .find(|(label, _)| label.ends_with(".body"))
+        .expect("array equality loops over its elements");
+    for line in body.1.lines().filter(|line| line.contains("getelementptr")) {
+        let base = line
+            .split("ptr ")
+            .nth(1)
+            .and_then(|rest| rest.split(',').next())
+            .expect("an element address names its base");
+        assert!(!body.1.contains(&format!("  {base} = ")), "{base} in {same}");
+    }
+
+    // The splitter's pointer arguments exist before its budget query.
+    let count = emitted_function(&llvm, "count_words");
+    let budget = count
+        .find("@wf__par_split_budget(")
+        .expect("the loop is split");
+    let call = count
+        .lines()
+        .find(|line| line.contains("call ") && line.contains("@wf__par_split_count_words."))
+        .expect("the split call");
+    for operand in call_operands(call).into_iter().filter(|op| op.starts_with("%")) {
+        let defined = count.find(&format!("  {operand} = ")).or_else(|| {
+            header(count).contains(&format!(" {operand}")).then_some(0)
+        });
+        assert!(
+            defined.is_some_and(|at| at < budget),
+            "{operand} is defined before the budget query in {count}"
+        );
+    }
+
+    // The probe was recognized: its wide load block exists.
+    assert!(llvm.contains("buffer.probe.load."), "{llvm}");
+}

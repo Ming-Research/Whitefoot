@@ -876,6 +876,23 @@ impl FunctionEmitter<'_, '_> {
         self.environment_aliases.get(&value).copied()
     }
 
+    /// Whether naming or placing `value` reaches a record slot, the only
+    /// operands that bind in the block that reads them. Everything else, and
+    /// every function without a record, resolves eagerly where it always has,
+    /// so such functions emit the IR they emitted before the record existed.
+    pub(super) fn defers_record_slot(&self, value: IrValueId) -> bool {
+        if self.environment_aliases.is_empty() {
+            return false;
+        }
+        if self.environment_origin(value).is_some() {
+            return true;
+        }
+        self.storage
+            .slot(value)
+            .and_then(|slot| self.storage.read_through(slot))
+            .is_some_and(|address| self.environment_origin(address).is_some())
+    }
+
     /// Register each packed parameter's block-local definition. The printing
     /// model binds local names to the actual LLVM block at each use, including
     /// incoming operands whose load belongs to the predecessor's exit block.

@@ -2530,21 +2530,15 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             // bytes for equality and scalarize large arrays before BoxNew's
             // typed storage copy can be emitted.
             IrOperation::BoxNew { .. } | IrOperation::ValueEquality { .. } => {}
-            // The splitter helper owns its operand preparation: indirect
-            // inputs are passed by address, not first-class snapshots, and
-            // pointer-only arguments bind after indexed setup opens blocks.
-            IrOperation::LoopSplit { .. } => {}
-            IrOperation::BufferProbeSkip {
-                index,
-                limit,
-                needles,
-                ..
-            } => {
-                // The probe consumes its buffer by address in its guarded
-                // load block; only scalar inputs need snapshots here.
-                self.materialize_operands(
-                    [*index, *limit].into_iter().chain(needles.iter().copied()),
-                )?;
+            // A record slot binds in the block that reads it; every other
+            // operand is materialized here, as before the record existed.
+            IrOperation::LoopSplit { .. } | IrOperation::BufferProbeSkip { .. } => {
+                let operands = operation
+                    .operands()
+                    .into_iter()
+                    .filter(|value| !self.defers_record_slot(*value))
+                    .collect::<Vec<_>>();
+                self.materialize_operands(operands)?;
             }
             IrOperation::BufferFill { length, .. } => {
                 self.materialize_operands([*length])?;

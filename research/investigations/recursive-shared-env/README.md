@@ -61,8 +61,9 @@ slots. On AArch64, with eight registers, only the with-table chain does.
   load per slot it reads. The revised emission loads a slot once before its
   first use in each block, with phi operands loaded in their predecessors.
   The record pointer is `noalias readonly` and nothing writes the record,
-  so these loads are equivalent; GVN and LICM can remove dominated
-  duplicates and hoist loads out of loops. An argument past the registers
+  so these loads are equivalent. Expectation, not yet a result: GVN and
+  LICM remove dominated duplicates and hoist loads out of loops; the pending
+  renderer measurement checks whether they do. An argument past the registers
   was already a load from the stack, but a member whose words all fit gains
   record loads. The profitability rule keeps such a group out only when
   every member fits.

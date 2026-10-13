@@ -126,7 +126,11 @@ impl FunctionBody {
     }
 
     pub(crate) fn open_block(&mut self, label: String) {
-        self.flush_deferred();
+        // A request left unwritten would land after the previous block's
+        // terminator; refuse it instead of flushing it into the wrong block.
+        if !self.deferred.get_mut().pending.is_empty() {
+            self.deferred.get_mut().invalid = true;
+        }
         let entry = self.current_label.is_none();
         self.current_label = Some(label.clone());
         self.parts.push(BodyPart::Block { label, entry });
@@ -1081,6 +1085,49 @@ mod tests {
         let mut body = body_with_operand();
         body.open_block("bb0".to_owned());
         assert!(body.block_operand("%v0").is_some());
+        assert!(matches!(
+            body.render(""),
+            Err(super::BackendFailure::InvalidIr)
+        ));
+    }
+
+    #[test]
+    fn a_request_pending_when_the_next_block_opens_is_invalid() {
+        let mut body = body_with_operand();
+        body.open_block("bb0".to_owned());
+        assert!(body.block_operand("%v0").is_some());
+        body.open_block("bb1".to_owned());
+        body.push_str("  ret void\n");
+        assert!(matches!(
+            body.render(""),
+            Err(super::BackendFailure::InvalidIr)
+        ));
+    }
+
+    #[test]
+    fn registering_an_operand_after_the_first_block_is_invalid() {
+        let mut body = FunctionBody::default();
+        body.open_block("bb0".to_owned());
+        body.register_block_operand(
+            "%v0".to_owned(),
+            vec![DeferredPart::Text("  nop\n".to_owned())],
+        );
+        body.push_str("  ret void\n");
+        assert!(matches!(
+            body.render(""),
+            Err(super::BackendFailure::InvalidIr)
+        ));
+    }
+
+    #[test]
+    fn registering_the_same_operand_twice_is_invalid() {
+        let mut body = body_with_operand();
+        body.register_block_operand(
+            "%v0".to_owned(),
+            vec![DeferredPart::Text("  nop\n".to_owned())],
+        );
+        body.open_block("bb0".to_owned());
+        body.push_str("  ret void\n");
         assert!(matches!(
             body.render(""),
             Err(super::BackendFailure::InvalidIr)
