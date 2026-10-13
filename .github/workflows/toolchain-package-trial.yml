@@ -1,12 +1,12 @@
 # Temporary step-4 packaging trial; remove before release-workflow integration.
-# Downloads, archive operations and a few tiny C compilations only: the owner
-# explicitly exempted this trial from run-check.pl wrapping.
+# Downloads, archive operations and a few tiny C compilations only, so no
+# step runs under run-check.pl.
 name: Toolchain package trial
 
 on:
   workflow_dispatch:
   push:
-    branches: [claude/bundled-clang-pkg]
+    branches: [claude/bundled-clang]
 
 permissions:
   contents: read
