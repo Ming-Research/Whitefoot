@@ -1,0 +1,32 @@
+# Temporary: backtrace the negate overflow on the new INV-1 boundary cases.
+# Remove before this branch is ready.
+name: i128-panic-probe
+
+on:
+  push:
+    branches: [claude/clause-i128-overflow]
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and check
+        env:
+          RUST_BACKTRACE: "1"
+        run: |
+          rustup default stable
+          cargo build --manifest-path compiler/Cargo.toml --profile gate --locked
+          for f in tests/conformance/cases/inv1-*-i128-minimum.wf tests/conformance/cases/msr5-*.wf tests/conformance/cases/range1-neg-term-product-leaves-i128.wf; do
+            set +e
+            compiler/target/gate/whitefootc "$f" -o /tmp/out > out.txt 2>&1
+            st=$?
+            set -e
+            printf '== %s status=%s\n' "$(basename "$f")" "$st"
+            head -c 6000 out.txt; echo
+          done
