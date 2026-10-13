@@ -119,9 +119,9 @@ fn main() -> status: std::process::ExitStatus pure {
   marker:              {}
   concrete_callee: drop_spaces
   requires_clause: caller.wf:2:3 \"requires out^.len >= src^.len;\"
-  instantiated_goal: buffer[0..5].len >= text[0..6].len
+  instantiated_goal: buffer[0_u64..5_u64].len >= text[0_u64..6_u64].len
   disposition: Refuted
-  mechanical_fix: `buffer[0..5].len >= text[0..6].len` is false for the values that reach this call, so no fact can establish it here: pass arguments that satisfy it, or change the statements or requirements that fix those values",
+  mechanical_fix: `buffer[0_u64..5_u64].len >= text[0_u64..6_u64].len` is false for the values that reach this call, so no fact can establish it here: pass arguments that satisfy it, or change the statements or requirements that fix those values",
         "^".repeat(65)
     );
     assert_eq!(failure.to_string(), expected);

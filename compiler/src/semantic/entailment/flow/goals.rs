@@ -101,7 +101,6 @@ impl Input<'_, '_> {
         // affine and cannot be a standalone goal datum.
         if self.is_copy(expression.ty())
             && let Some(path) = self.read_place_path(expression)
-            && matches!(path.root, PlaceRoot::Binding(_))
         {
             let mut goal = self.goal_place_datum(&path, expression.ty())?;
             let written = match expression {

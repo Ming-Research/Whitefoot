@@ -1157,16 +1157,13 @@ impl Reasoning<'_, '_, '_> {
                     || ("?".to_owned(), None, projections.as_slice()),
                     |parameter| {
                         if matches!(parameter.mode, CheckedMode::Reference) {
-                            // The clause retains its leading reference step;
-                            // the remaining steps select storage below it.
-                            let projections = match projections.split_first() {
-                                Some((PlaceStep::Deref, rest)) => rest,
-                                _ => projections,
-                            };
+                            // Entry datums retain body-relative projections:
+                            // body_clause_projections already removed the
+                            // reference step. A remaining Deref is Box content.
                             (
                                 format!("entry({})^", parameter.name),
                                 Some(parameter.ty),
-                                projections,
+                                projections.as_slice(),
                             )
                         } else {
                             (

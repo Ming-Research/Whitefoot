@@ -486,7 +486,7 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 #[test]
-fn indexed_and_consumed_destinations_keep_no_result_field_relation() {
+fn indexed_destinations_receive_result_field_relations() {
     let indexed = format!(
         "{RESULT_FIELD_CALLER}fn main() -> status: std::process::ExitStatus pure {{
   let table = box_array_filled::<u8>(count: 4_u64, value: 5_u8);
@@ -499,8 +499,13 @@ fn indexed_and_consumed_destinations_keep_no_result_field_relation() {
 }}
 "
     );
-    assert_rule_kind(indexed.as_bytes(), SemanticRule::Op4, |_| true);
+    // ENT-2(b) admits atoms[0].index, so CALL-4 can publish the result
+    // field there and MSR-3 carries the bound into the copied Atom.
+    assert_complete(indexed.as_bytes());
+}
 
+#[test]
+fn a_call_without_a_summary_does_not_forward_result_field_relations() {
     let consumed = format!(
         "{RESULT_FIELD_CALLER}fn pass(atom: Atom) -> result: Atom pure {{
   return atom;

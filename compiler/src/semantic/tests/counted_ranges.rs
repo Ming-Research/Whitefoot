@@ -316,6 +316,8 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "#;
     check_records_client(body).expect("a body read retains the tracked field offset");
+    // [EFF-2] clauses are erased: the body must perform the declared read,
+    // and its selector reuses the same parameter-field bound as the clause.
     let clause = br#"alias Node = pkg::records::Node;
 
 struct Cursor {
@@ -326,7 +328,7 @@ fn probe(nodes: &[Node], cursor: Cursor) -> result: u64 reads(nodes) contract {
   requires cursor.at < nodes^.len;
   requires nodes^[cursor.at].count <= 8_u64;
 } {
-  return 0_u64;
+  return nodes^[cursor.at].count;
 }
 
 fn main() -> status: std::process::ExitStatus pure {

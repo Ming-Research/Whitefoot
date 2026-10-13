@@ -20,7 +20,7 @@ use super::super::entailment::{
     PostconditionDisposition, RangeSeparationOrdering, Relation, SourceAffineFactRef, TermId,
     TermKind, TransportedHeaderRelation, ZERO, type_range,
 };
-use super::super::goal::{GoalDatum, GoalExpression, GoalOperation};
+use super::super::goal::{GoalDatum, GoalExpression, GoalOperation, GoalProjection};
 use super::super::model::{
     CheckedBodyDisposition, CheckedConversionMode, CheckedExpression, CheckedIntegerOperation,
     CheckedMeasure, CheckedProgramData, CheckedStatement, CheckedValue, FunctionId, IntegerType,
@@ -9780,10 +9780,16 @@ fn indexed_guards_discharge_structurally_identical_signature_ranges() {
     assert!(matches!(
         first.as_slice(),
         [
-            GoalExpression::Datum(GoalDatum::Place { .. }),
-            GoalExpression::Datum(GoalDatum::Place { .. })
-        ]
+            GoalExpression::Datum(GoalDatum::NamedConst { declaration: left, projections: left_steps, .. }),
+            GoalExpression::Datum(GoalDatum::NamedConst { declaration: right, projections: right_steps, .. })
+        ] if left == right
+            && matches!(left_steps.as_slice(), [GoalProjection::Subscript(_)])
+            && matches!(right_steps.as_slice(), [GoalProjection::Subscript(_)])
     ));
+    assert_ne!(
+        first[0], first[1],
+        "different selected elements retain different identities"
+    );
     assert_eq!(
         first[1], second[0],
         "both requirements reuse the end value identity"
@@ -9791,7 +9797,7 @@ fn indexed_guards_discharge_structurally_identical_signature_ranges() {
 }
 
 #[test]
-fn a_nonterm_endpoint_is_never_replaced_by_the_zero_term() {
+fn an_unbounded_element_endpoint_is_never_replaced_by_the_zero_term() {
     let source = range_contract_source(
         "",
         "  let no_deadline = None<std::time::Instant>();\n  let wait_cancel_1 = std::time::cancel_never();\n  let outcome = std::io::write_once(factory: factory, output: output, source: source, start: 1_u64, end: endpoints[0_u64], deadline: no_deadline, cancel: &wait_cancel_1);\n  std::time::close_cancel_watch(watch: move wait_cancel_1);\n",
@@ -12606,6 +12612,39 @@ fn main() -> status: std::process::ExitStatus pure {
             .roots
             .iter()
             .any(|root| matches!(root.kind, DerivationRootKind::FactPreservation { .. }))
+    );
+}
+
+#[test]
+fn structurally_separate_element_writes_need_no_numeric_preservation_query() {
+    let source = br#"struct Pair {
+  left: Array<u8, 2>;
+  right: Array<u8, 2>;
+}
+
+fn probe(values: &Pair, index: u64, other: u64) -> result: u8 reads(values.left), writes(values.right) contract {
+  requires index < 2_u64;
+  requires other < 2_u64;
+  requires index != other;
+  requires 1_u8 <= values^.left[index];
+} {
+  set values^.right[other] = 0_u8;
+  return values^.left[index] - 1_u8;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let summary = accepted_entailment(source, "probe");
+    validate_derivations(&summary);
+    assert!(
+        !summary
+            .derivations
+            .roots
+            .iter()
+            .any(|root| matches!(root.kind, DerivationRootKind::FactPreservation { .. })),
+        "field separation must precede optional index-separation queries",
     );
 }
 

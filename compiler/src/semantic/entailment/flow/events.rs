@@ -1293,7 +1293,13 @@ impl Reasoning<'_, '_, '_> {
         for place in &places {
             for support in self.input.places.resolve(place.root, &place.path) {
                 for written in &indexed_writes {
-                    if !support.roots_overlap(written) {
+                    // Structural separation or an already retained proof
+                    // preserves this support without another numeric query.
+                    if !self
+                        .input
+                        .places
+                        .overlaps(&states.separations, &support, written)
+                    {
                         continue;
                     }
                     for (left, right) in support.path.iter().zip(&written.path) {

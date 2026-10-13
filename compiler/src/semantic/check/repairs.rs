@@ -929,9 +929,9 @@ fn range_length_routes(
 ) -> String {
     let bind = "or bind the range with one preceding `let`, use the binding in the call, and establish the relation over the binding";
     let wrap = "a `-wrap` difference carries no relation to the range's length";
-    // An endpoint no relation names: a field or element read, say. Its
-    // range's length is a difference of values no fact names until a `let`
-    // binds each of them.
+    // An endpoint represented only by its evaluation occurrence has no
+    // captured source term. Binding it supplies a name for the value whose
+    // difference determines the range's length.
     if let Some(range) = ranges.iter().find(|range| !range.start.1 || !range.end.1) {
         let unnamed = [&range.start, &range.end]
             .into_iter()
