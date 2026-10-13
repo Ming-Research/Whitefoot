@@ -155,3 +155,37 @@ fn generic_float_identity_header_is_refused_by_gram12() {
         matches!(issue, SemanticIssueKind::InvalidIntegerMatchArm { .. })
     });
 }
+
+#[test]
+fn non_t_numeric_identity_keeps_its_origin_in_requires_and_ensures() {
+    let source = br#"fn zero<N: Int>(value: N) -> result: N pure contract {
+  requires value >= 0_N;
+  ensures result == 0_N;
+} {
+  return 0_N;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let result = zero::<u8>(value: 1_u8);
+  return std::process::exit_status(code: result);
+}
+"#;
+    assert_accepts(source);
+}
+
+#[test]
+fn non_t_generic_identity_in_an_affine_proof_rejects_for_its_open_type() {
+    let source = br#"fn check<N: Int>(value: u64) -> result: unit pure {
+  invariant zero: value == 0_N;
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    assert_rule_kind(source, SemanticRule::Inv1, |issue| {
+        matches!(issue, SemanticIssueKind::InvalidInvariant { reason, .. }
+            if reason == "an affine literal does not have a closed integer type")
+    });
+}

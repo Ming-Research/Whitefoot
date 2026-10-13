@@ -12740,6 +12740,39 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 #[test]
+fn integer_match_value_arm_projects_its_equality_into_index_bounds() {
+    let source =
+        include_bytes!("../../../../tests/conformance/cases/ent3-pos-integer-arm-index.wf");
+    let summary = accepted_entailment(source, "selected");
+    validate_derivations(&summary);
+    assert_eq!(summary.obligations.len(), 1);
+    assert!(summary.obligations[0].discharged);
+    let root = obligation_root(&summary, 0);
+    assert_root_contains(
+        &summary,
+        root,
+        |node| {
+            matches!(node,
+                DerivationNode::SourceBound {
+                    relation: Relation::Equal { difference: 1, .. }, event, ..
+                } if retained_event(&summary, *event).kind == FlowEventKind::S17
+            )
+        },
+        "the selected integer's exact equality projected at arm entry",
+    );
+    assert!(
+        !root_contains(&summary, root, |node| matches!(
+            node,
+            DerivationNode::L0Contradiction { .. }
+                | DerivationNode::GoalContradiction { .. }
+                | DerivationNode::JoinContradiction { .. }
+                | DerivationNode::MaterializedContradiction { .. }
+        )),
+        "the reachable value arm must discharge its bound without contradiction"
+    );
+}
+
+#[test]
 fn integer_match_selection_proofs_replay_and_origin_transport_keeps_one_source_set() {
     let direct =
         include_bytes!("../../../../tests/conformance/cases/ent3-pos-integer-else-exclusions.wf");

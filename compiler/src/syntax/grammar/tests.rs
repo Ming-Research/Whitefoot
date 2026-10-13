@@ -186,7 +186,8 @@ fn complete_inventory_is_pinned() {
     // FIRST(2), FOLLOW(2) and SELECT sets, the `unchanged` suffixes add 417
     // rows, three of them where it follows the entry former's repeat, and
     // one terminal.
-    assert_eq!(SELECT_ROWS.len(), 8_548);
+    // v0.141's integer arm alternatives add 28 provenance-bearing rows.
+    assert_eq!(SELECT_ROWS.len(), 8_576);
     assert_eq!(diagnostic_terminal_order().len(), 116);
     assert_eq!(productions()[0], Production::Program);
     // v0.70 [GRAM-2] adds the file alias header as an `item` arm and closes
@@ -643,6 +644,6 @@ fn all_detailed_rows_retain_provenance_and_remain_cross_arm_disjoint() {
     }
     // Count the complete inventory independently by summing each decision's
     // rows, including the explicit interface import arm [FN-3].
-    assert_eq!(total_rows, 8_548);
+    assert_eq!(total_rows, 8_576);
     assert!(saw_atom_only);
 }

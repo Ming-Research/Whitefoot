@@ -527,6 +527,16 @@ fn if_else_renders_its_join_line_and_indents_both_blocks() {
     );
 }
 
+/// Match arm `else` does not own an if continuation. Grammar permits a
+/// following arm so GRAM-12 can reject its position after FORM-2 succeeds.
+#[test]
+fn match_else_arms_keep_the_ordinary_block_boundary() {
+    let source =
+        include_bytes!("../../../../../../tests/conformance/cases/gram12-neg-else-not-final.wf");
+    only_these_trivia_bytes_render(source);
+    assert_eq!(rendered_bytes(source).as_deref(), Some(source.as_slice()));
+}
+
 #[test]
 fn counted_range_attaches_its_endpoints_and_round_trips_canonically() {
     // `(` remains in FORM-2's general right-attachment set, so the affine

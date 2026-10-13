@@ -294,8 +294,8 @@ impl Judging<'_, '_, '_> {
 
     /// [ENT-3] one body goal entering as a positive opaque fact, with its
     /// exact comparison-root projection and its signed decomposition: a
-    /// requirement at body entry [ENT-3.S4], and a type invariant at an
-    /// atomic block's entry [TYPE-11].
+    /// requirement at body entry [ENT-3.S4], a type invariant at an
+    /// atomic block's entry [TYPE-11], or a selected integer value [ENT-3.S17].
     pub(super) fn establish_body_goal(
         &mut self,
         goal: GoalExpression,

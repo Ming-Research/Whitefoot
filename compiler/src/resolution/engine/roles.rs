@@ -1598,18 +1598,11 @@ fn add_generic_suffix(
     let bytes = classified
         .token_bytes(token)
         .ok_or(ResolutionCompilerFailure::InvalidCanonicalTree)?;
-    if bytes.len() < 3 || !matches!(&bytes[..2], b"0_" | b"1_") {
+    if !crate::syntax::terminal::is_generic_numeric_literal(bytes) {
         return Ok(());
     }
     let suffix = std::str::from_utf8(&bytes[2..])
         .map_err(|_| ResolutionCompilerFailure::InvalidNameEncoding)?;
-    if !suffix
-        .as_bytes()
-        .first()
-        .is_some_and(u8::is_ascii_uppercase)
-    {
-        return Ok(());
-    }
     let start = token
         .id()
         .start()

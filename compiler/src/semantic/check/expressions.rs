@@ -771,11 +771,7 @@ impl<'unit> Checker<'_, 'unit> {
             .direct_token_with(node, TerminalPredicate::Literal)?
         {
             let bytes = self.types.declarations.tree.token_bytes(literal)?;
-            if bytes
-                .get(..2)
-                .is_some_and(|prefix| matches!(prefix, b"0_" | b"1_"))
-                && bytes.get(2).is_some_and(u8::is_ascii_uppercase)
-            {
+            if crate::syntax::terminal::is_generic_numeric_literal(bytes) {
                 return self.types.check_generic_numeric_identity(
                     context,
                     node,

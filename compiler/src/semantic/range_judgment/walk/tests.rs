@@ -348,7 +348,14 @@ fn main() -> status: std::process::ExitStatus pure {
         let Value::Int(before) = walker.eval(&mut state, scrutinee) else {
             panic!("integer element");
         };
-        let branches = walker.arms(&mut state, scrutinee, *match_type, arms);
+        // `arms` runs each body as well as establishing its selection. The
+        // write's target evaluation also records the Array's known length,
+        // so count selection conditions before running the body.
+        let mut entry_arms = arms.clone();
+        for arm in &mut entry_arms {
+            arm.body.clear();
+        }
+        let branches = walker.arms(&mut state, scrutinee, *match_type, &entry_arms);
         assert_eq!(branches.len(), 4);
         for branch in &branches {
             assert_eq!(
@@ -357,7 +364,23 @@ fn main() -> status: std::process::ExitStatus pure {
                 "each arm adds one selection; else never adds one disequality per label"
             );
         }
-        let mut otherwise = branches.last().unwrap().clone();
+        let exclusions = walker
+            .world
+            .atoms
+            .iter()
+            .filter_map(|atom| match &atom.def {
+                super::super::world::AtomDef::IntegerExclusion { value, values } => {
+                    Some((value, values))
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(exclusions.len(), 1, "one whole-set predicate is captured");
+        assert_eq!(exclusions[0].0, &before);
+        assert_eq!(exclusions[0].1.as_ref(), &[0, 1, 2]);
+        let mut otherwise = walker
+            .block(branches.last().unwrap().clone(), &arms.last().unwrap().body)
+            .expect("the actual else body continues after its write");
         let Value::Int(after) = walker.eval(&mut otherwise, scrutinee) else {
             panic!("integer element");
         };

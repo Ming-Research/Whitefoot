@@ -727,7 +727,7 @@ impl<'unit> Checker<'_, 'unit> {
             let (value, name) = match header {
                 MatchArmHeader::Literal(token) => {
                     let bytes = self.types.declarations.tree.token_bytes(token)?;
-                    let value = if bytes.get(..2).is_some_and(|prefix| matches!(prefix, b"0_" | b"1_")) && bytes.get(2).is_some_and(u8::is_ascii_uppercase) {
+                    let value = if crate::syntax::terminal::is_generic_numeric_literal(bytes) {
                         let identity = self.types.check_generic_numeric_identity(context, arm_node, bytes.first() == Some(&b'1'))?;
                         let CheckedExpression::Constant(value) = identity.expression else {
                             return Err(SemanticCompilerFailure::InvalidResolution.into());

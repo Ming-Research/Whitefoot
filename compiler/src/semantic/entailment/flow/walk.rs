@@ -117,21 +117,10 @@ impl Judging<'_, '_, '_> {
                     };
                     let complete = self.reasoning().expand_goal_expression(&equality, state);
                     for expression in [equality, complete] {
-                        let goal = self.reasoning().intern_goal_expression(expression);
-                        state.establish_goal(
-                            goal,
-                            GoalSign::Positive,
-                            &self.vocabulary.goals,
-                            &mut self.vocabulary.derivations,
-                            event,
-                        );
-                        self.reasoning().establish_boolean_decomposition(
-                            goal,
-                            GoalSign::Positive,
-                            state,
-                            event,
-                        );
-                        self.record_boolean_decomposition(goal, GoalSign::Positive, state);
+                        // S17 has the same root comparison projection as S1:
+                        // recording only the opaque sign would leave bounds
+                        // obligations without the selected term's equality.
+                        self.establish_body_goal(expression, state, event);
                     }
                 }
                 CheckedMatchSelection::Else => {

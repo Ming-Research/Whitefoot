@@ -85,11 +85,7 @@ impl TypeContext<'_> {
                         .direct_token_with(node, TerminalPredicate::Literal)?
                     {
                         let bytes = self.declarations.tree.token_bytes(literal)?;
-                        if bytes
-                            .get(..2)
-                            .is_some_and(|prefix| matches!(prefix, b"0_" | b"1_"))
-                            && bytes.get(2).is_some_and(u8::is_ascii_uppercase)
-                        {
+                        if crate::syntax::terminal::is_generic_numeric_literal(bytes) {
                             let one = bytes.first() == Some(&b'1');
                             return Ok(Some(
                                 self.check_generic_numeric_identity(context, node, one)?
