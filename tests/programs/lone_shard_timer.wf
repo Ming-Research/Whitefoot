@@ -29,7 +29,8 @@ fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure w
   std::fs::close_directory_write(factory: &handles, directory: move writable);
   std::fs::close_directory(factory: &handles, directory: move readable);
   let counter = shared_shards_new::<u64, fn timer_shard_zero>();
-  let started = shared_new::<Bool>(value: False());
+  let not_started = False();
+  let started = shared_new::<Bool>(value: not_started);
   let stop = decision_cell_new();
   let writer_counter = shared_share::<Shards<u64>>(shared: &counter);
   let writer_started = shared_share::<Bool>(shared: &started);
