@@ -524,10 +524,51 @@ fn resolve_qualified(
                 spelling: use_record.spelling.clone(),
                 module: modules.name(module),
                 role: use_record.role,
+                mechanical_fix: qualified_name_fix(
+                    declarations,
+                    metas,
+                    inventory,
+                    module,
+                    &modules.name(module),
+                    use_record,
+                ),
             },
         })),
         _ => Err(ResolutionCompilerFailure::AmbiguousResolution),
     }
+}
+
+/// Keep inventory hints short: list at most eight unique spellings, in lexical
+/// order, without selecting by similarity to the rejected spelling. This cap
+/// affects only repair text, never resolution or source acceptance.
+const QUALIFIED_NAME_HINT_LIMIT: usize = 8;
+
+fn qualified_name_fix(
+    declarations: &[DeclarationRecord],
+    metas: &[DeclarationMeta],
+    inventory: super::super::ScopeId,
+    module: crate::ModuleId,
+    module_name: &str,
+    use_record: &UseMeta,
+) -> String {
+    let mut names = Vec::new();
+    for meta in metas.iter().filter(|meta| {
+        meta.scope == inventory
+            && !meta.type_owned
+            && !defers_to_definition(meta)
+            && (!use_record.interface || !meta.implementation_only)
+            && (module == use_record.module || meta.public)
+    }) {
+        let spelling = &declarations[meta.record_index].spelling;
+        let admissible = admissible_classes(use_record.role, spelling);
+        if meta.entries.iter().any(|class| admissible.contains(class)) {
+            names.push(spelling.as_str());
+        }
+    }
+    names.sort_unstable();
+    names.dedup();
+    names.truncate(QUALIFIED_NAME_HINT_LIMIT);
+    crate::diagnostic_repairs::qualified_name(&use_record.spelling, module_name, &names)
 }
 
 /// Resolves the member TYPEID of a type-owned variant construction among

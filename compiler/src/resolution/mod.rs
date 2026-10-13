@@ -1218,6 +1218,9 @@ pub enum ResolutionIssueKind {
         module: String,
         /// Use role.
         role: LexicalUseRole,
+        /// Accessible inventory names in this role, or the declaration needed
+        /// when this module has none.
+        mechanical_fix: String,
     },
     /// A reference from another module names a private declaration [MOD-5].
     PrivateDeclaration {

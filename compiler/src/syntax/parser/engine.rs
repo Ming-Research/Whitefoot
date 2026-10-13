@@ -160,6 +160,47 @@ impl<'classified> Parser<'classified> {
             production: frame.production,
             atom_only: frame.atom_only,
             in_contract: frame.in_contract,
+            infix_operand: self
+                .frames
+                .iter()
+                .rev()
+                .find_map(|frame| match frame.production {
+                    Production::InfixTail => Some(true),
+                    Production::Psuffix
+                    | Production::AtomList
+                    | Production::Fieldinit
+                    | Production::ForBinding => Some(false),
+                    _ => None,
+                })
+                .unwrap_or(false),
+            in_expression: self
+                .frames
+                .iter()
+                .any(|frame| frame.production == Production::Expr),
+            match_binder: self
+                .frames
+                .iter()
+                .rev()
+                .find_map(|frame| match frame.production {
+                    Production::Arm => Some(true),
+                    Production::ResultRoute | Production::LetStmt => Some(false),
+                    _ => None,
+                })
+                .unwrap_or(false),
+            after_value_match: self
+                .elements
+                .iter()
+                .rev()
+                .take_while(|element| matches!(element, DerivationElement::Production { .. }))
+                .any(|element| {
+                    matches!(
+                        element,
+                        DerivationElement::Production {
+                            production: Production::ValueMatch,
+                            ..
+                        }
+                    )
+                }),
         })
     }
 
@@ -338,6 +379,7 @@ impl<'classified> Parser<'classified> {
             DiagnosticSite {
                 source,
                 source_len,
+                bundle: self.classified.source_bundle(),
                 tokens,
                 cursor,
                 limits: self.limits,
@@ -485,6 +527,7 @@ impl<'classified> Parser<'classified> {
                             DiagnosticSite {
                                 source,
                                 source_len,
+                                bundle: self.classified.source_bundle(),
                                 tokens,
                                 cursor,
                                 limits: self.limits,
@@ -501,6 +544,7 @@ impl<'classified> Parser<'classified> {
                             DiagnosticSite {
                                 source,
                                 source_len,
+                                bundle: self.classified.source_bundle(),
                                 tokens,
                                 cursor,
                                 limits: self.limits,

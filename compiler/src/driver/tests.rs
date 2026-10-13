@@ -7,6 +7,8 @@ use crate::{OverlapLowering, RecursionBudget, SourceInput};
 #[cfg(unix)]
 mod spellings;
 
+mod mechanical_repairs;
+
 /// Places each record in the module its directory names, in the
 /// interface role when it is that directory's `module.wfm` [MOD-2].
 fn module_inputs<'a>(

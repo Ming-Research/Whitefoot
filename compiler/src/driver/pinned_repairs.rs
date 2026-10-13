@@ -14,10 +14,13 @@ use crate::SourceInput;
 
 mod call_separations;
 mod collisions_and_killed_facts;
+mod common_syntax;
 mod content_moves;
 mod floats;
 mod interface_applications;
+mod lexical_syntax;
 mod prelude_opaque;
+mod qualified_names;
 mod recursive_effects;
 mod selector_scope;
 mod shared_maps;
@@ -3837,8 +3840,11 @@ fn each_pinned_repair_is_carried_out_by_its_programs() {
         .chain(shared_maps::SHARED_MAPS)
         .chain(floats::FLOATS)
         .chain(interface_applications::INTERFACE_APPLICATIONS)
+        .chain(lexical_syntax::LEXICAL_SYNTAX)
+        .chain(qualified_names::QUALIFIED_NAMES)
         .chain(selector_scope::SELECTOR_SCOPE)
         .chain(collisions_and_killed_facts::COLLISIONS_AND_KILLED_FACTS)
+        .chain(common_syntax::COMMON_SYNTAX)
     {
         let failure = compile(
             &[SourceInput::new(pair.name, pair.rejected)],

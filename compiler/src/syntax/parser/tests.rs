@@ -1270,3 +1270,6 @@ fn unchanged_suffixes_parse_for_semantic_admission() {
     let outcome = parse_active("unchanged.wf", source);
     assert!(matches!(outcome, ParseOutcome::Complete(_)), "{outcome:?}");
 }
+
+#[path = "repair_tests.rs"]
+mod repair_hints;

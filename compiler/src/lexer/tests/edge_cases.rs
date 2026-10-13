@@ -29,6 +29,66 @@ fn invalid_bytes_and_comment_markers_fail_without_a_partial_tape() {
 }
 
 #[test]
+fn upper_word_underscore_fix_keeps_the_form1_byte() {
+    let source = bundle(&[("name.wf", b"const MAX_SIZE: u32 = 8_u32;")]);
+    let LexOutcome::SourceIssue(issue) = crate::lex(&source, generous_limits()) else {
+        panic!("an upper word followed by underscore must reject");
+    };
+    assert_eq!(issue.kind().rule_id(), "FORM-1");
+    assert_eq!(issue.span().start().value(), 9);
+    assert_eq!(issue.span().end().value(), 10);
+    assert_eq!(
+        issue.mechanical_fix(),
+        Some("write this name in lower case as `max_size` [FORM-3]")
+    );
+    for bytes in [
+        b"foo _".as_slice(),
+        b"_MAX",
+        b"123_",
+        b"struct Bad_Name",
+        b"enum Some_Thing",
+        b"let value = Some_Name()",
+        b"MAX_SIZE",
+        b"constMAX_SIZE",
+    ] {
+        let source = bundle(&[("unrelated.wf", bytes)]);
+        if let LexOutcome::SourceIssue(issue) = crate::lex(&source, generous_limits()) {
+            assert_eq!(issue.mechanical_fix(), None);
+        }
+    }
+    for bytes in [b"const\n  MAX_SIZE".as_slice(), b"const   MAX_SIZE"] {
+        let source = bundle(&[("constant.wf", bytes)]);
+        let LexOutcome::SourceIssue(issue) = crate::lex(&source, generous_limits()) else {
+            panic!("constant underscore must remain a lexical defect");
+        };
+        assert_eq!(
+            issue.mechanical_fix(),
+            Some("write this name in lower case as `max_size` [FORM-3]")
+        );
+    }
+}
+
+#[test]
+fn boolean_disjunction_fix_keeps_the_first_illegal_pipe() {
+    let source = bundle(&[("bool.wf", b"a || b")]);
+    let LexOutcome::SourceIssue(issue) = crate::lex(&source, generous_limits()) else {
+        panic!("a pipe has no raw token spelling");
+    };
+    assert_eq!(issue.kind().rule_id(), "FORM-1");
+    assert_eq!(issue.span().start().value(), 2);
+    assert_eq!(issue.span().end().value(), 3);
+    assert_eq!(
+        issue.mechanical_fix(),
+        Some(crate::diagnostic_repairs::BOOLEAN_OPERATION_FIX)
+    );
+    let source = bundle(&[("pipe.wf", b"a | b")]);
+    let LexOutcome::SourceIssue(issue) = crate::lex(&source, generous_limits()) else {
+        panic!("a lone pipe also rejects");
+    };
+    assert_eq!(issue.mechanical_fix(), None);
+}
+
+#[test]
 fn active_spec_pre_tree_defects_use_the_exact_specified_spans() {
     assert_eq!(issue(b"// comment"), (SourceIssueKind::CommentPrefix, 0, 2));
     assert_eq!(issue(b"/* comment"), (SourceIssueKind::CommentPrefix, 0, 2));

@@ -973,7 +973,7 @@ impl Report for ResolutionIssue {
             LibraryNamesItself { path };
             UnknownModule { path };
             MissingModuleEdge { from, to };
-            QualifiedNameNotFound { spelling, module, role };
+            QualifiedNameNotFound { spelling, module, role, mechanical_fix };
             PrivateDeclaration { spelling, module };
             UnknownOwnedVariant { spelling, reason };
             MisplacedPublication { reason };
@@ -989,7 +989,11 @@ impl Report for ResolutionIssue {
 /// offending bytes are printed escaped because they are often invisible.
 impl Report for SourceIssue {
     fn report(&self, fields: &mut Fields<'_>) -> &'static str {
-        let Self { span, kind } = self;
+        let Self {
+            span,
+            kind,
+            mechanical_fix,
+        } = self;
         fields.field(
             "found",
             &Spelled(SyntaxCoordinate::new(
@@ -998,6 +1002,7 @@ impl Report for SourceIssue {
                 span.end(),
             )),
         );
+        fields.field("mechanical_fix", mechanical_fix);
         kind.name()
     }
 }
@@ -1006,7 +1011,11 @@ impl Report for SourceIssue {
 /// is the envelope's rule.
 impl Report for TerminalIssue {
     fn report(&self, fields: &mut Fields<'_>) -> &'static str {
-        let Self { token, owner: _ } = self;
+        let Self {
+            token,
+            owner: _,
+            mechanical_fix,
+        } = self;
         fields.field(
             "found",
             &Spelled(SyntaxCoordinate::new(
@@ -1015,6 +1024,7 @@ impl Report for TerminalIssue {
                 token.end(),
             )),
         );
+        fields.field("mechanical_fix", mechanical_fix);
         "UnclassifiedToken"
     }
 }
@@ -1044,9 +1054,11 @@ impl Report for CanonicalIssue {
             location: _,
             expected,
             found,
+            mechanical_fix,
         } = self;
         fields.field("expected", &Exact(expected));
         fields.field("found", &Exact(found));
+        fields.field("mechanical_fix", mechanical_fix);
         "NonCanonicalTrivia"
     }
 }
