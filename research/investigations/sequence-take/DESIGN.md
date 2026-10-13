@@ -1326,8 +1326,12 @@ rule is introduced. Mixed statements retain their ordinary acquisition check.
 The formal [atomic polling program](../../../tests/programs/atomic_value_progress.wf)
 is now wired into the program tests on one and four drivers. The backend
 regression requires the scheduling pass in its polling function, and the
-lowering checks cover placement before acquiring any target. These checks
-and the native witness await owner-run CI; no local execution is claimed.
+lowering checks cover placement before acquiring any target. The first
+[owner-run Linux gate](https://github.com/Ming-Research/Whitefoot/actions/runs/38462704179),
+on revision `6e6624986`, passed the native polling witness on one and four
+drivers. Unit compilation stopped before its tests could run; the corrected
+unit cases and the repaired ordering program still require the next CI round.
+No local execution is claimed.
 
 ### Temporary IR comparison budget treatment
 

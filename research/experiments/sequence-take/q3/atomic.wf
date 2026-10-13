@@ -36,41 +36,39 @@ fn sq_atomic_context(table: Shared<ConcurrentHashMap<u64>>, part: Shared<SqPart>
             }
           }
         }
+      } else if variant == 4_u8 {
+        let record = sq_record(key: key, number: 0_u64);
+        atomic slot = &table[view], p = &part {
+          set slot^ = Some<u64>(value: record);
+          let ring_at = p^.pos % 4096_u64;
+          set p^.ring[ring_at] = record;
+          set p^.pos = p^.pos +wrap 1_u64;
+        }
+        let peak = high % 1048576_u64;
+        atomic s = &seq {
+          let previous = atomic_raise(cell: s, value: peak);
+        }
       } else {
-        if variant == 4_u8 {
-          let record = sq_record(key: key, number: 0_u64);
-          atomic slot = &table[view], p = &part {
+        atomic slot = &table[view], p = &part, s = &seq {
+          if variant == 1_u8 {
+            match atomic_add(cell: s, value: 1_u64) {
+              Some(value: current) => {
+                let record = sq_record(key: key, number: current);
+                set slot^ = Some<u64>(value: record);
+                let ring_at = p^.pos % 4096_u64;
+                set p^.ring[ring_at] = record;
+                set p^.pos = p^.pos +wrap 1_u64;
+              }
+              None() => {
+                set exhausted = True();
+              }
+            }
+          } else {
+            let record = sq_record(key: key, number: 0_u64);
             set slot^ = Some<u64>(value: record);
             let ring_at = p^.pos % 4096_u64;
             set p^.ring[ring_at] = record;
             set p^.pos = p^.pos +wrap 1_u64;
-          }
-          let peak = high % 1048576_u64;
-          atomic s = &seq {
-            let previous = atomic_raise(cell: s, value: peak);
-          }
-        } else {
-          atomic slot = &table[view], p = &part, s = &seq {
-            if variant == 1_u8 {
-              match atomic_add(cell: s, value: 1_u64) {
-                Some(value: current) => {
-                  let record = sq_record(key: key, number: current);
-                  set slot^ = Some<u64>(value: record);
-                  let ring_at = p^.pos % 4096_u64;
-                  set p^.ring[ring_at] = record;
-                  set p^.pos = p^.pos +wrap 1_u64;
-                }
-                None() => {
-                  set exhausted = True();
-                }
-              }
-            } else {
-              let record = sq_record(key: key, number: 0_u64);
-              set slot^ = Some<u64>(value: record);
-              let ring_at = p^.pos % 4096_u64;
-              set p^.ring[ring_at] = record;
-              set p^.pos = p^.pos +wrap 1_u64;
-            }
           }
         }
       }

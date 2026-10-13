@@ -1,4 +1,4 @@
-fn observe_atomic(value: &AtomicValue) -> result: u64 reads(value) {
+fn observe_atomic(value: &AtomicValue) -> result: u64 pure {
   return 0_u64;
 }
 

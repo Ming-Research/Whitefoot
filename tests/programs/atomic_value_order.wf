@@ -281,8 +281,8 @@ fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure w
     let found = False();
     atomic slot = &table[view] {
       match slot^ {
-        Some(value: value) => {
-          set final[key] = value^;
+        Some(value: stored) => {
+          set final[key] = stored^;
           set found = True();
         }
         None() => {

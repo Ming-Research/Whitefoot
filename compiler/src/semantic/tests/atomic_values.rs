@@ -214,8 +214,11 @@ fn observe(value: &AtomicValue) -> result: u64 reads(value) {
     );
     check(
         r#"
+fn atomic_guard(value: &AtomicValue) -> result: Bool pure {
+  return True();
+}
 fn work(first: &Shared<AtomicValue>) -> result: unit reads(first) waits {
-  atomic a = &first^ when atomic_load(cell: a) {
+  atomic a = &first^ when atomic_guard(value: a) {
     atomic_raise(cell: a, value: 1_u64);
   }
   return unit;

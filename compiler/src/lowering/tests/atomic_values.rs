@@ -182,7 +182,7 @@ fn main() -> status: std::process::ExitStatus pure waits {
             })
             .expect("the logging condition has a false arm");
         let mut pending = vec![false_arm];
-        let mut visited = std::collections::BTreeSet::new();
+        let mut visited = std::collections::HashSet::new();
         while let Some(block) = pending.pop() {
             if !visited.insert(block) {
                 continue;

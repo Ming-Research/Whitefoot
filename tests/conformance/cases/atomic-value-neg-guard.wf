@@ -1,4 +1,4 @@
-fn atomic_guard(value: &AtomicValue) -> result: Bool reads(value) {
+fn atomic_guard(value: &AtomicValue) -> result: Bool pure {
   return True();
 }
 

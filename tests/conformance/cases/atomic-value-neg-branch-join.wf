@@ -2,7 +2,6 @@ fn repeated(owner: &Shared<AtomicValue>, choose: Bool) -> result: unit reads(own
   atomic s = &owner^ {
     if choose {
       let first = atomic_load(cell: s);
-    } else {
     }
     let second = atomic_load(cell: s);
   }
