@@ -67,6 +67,7 @@ mod range_facts;
 mod range_ordinary;
 mod range_references;
 mod range_type_invariants;
+mod recursive_postconditions;
 mod references;
 mod reinterpret;
 mod requires;

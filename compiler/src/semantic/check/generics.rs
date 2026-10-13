@@ -1380,6 +1380,7 @@ impl<'unit> Checker<'_, 'unit> {
     ) -> Result<Option<CheckStop>, CheckStop> {
         let optimistic_batch = functions.iter().any(|checked| {
             !checked.function.postconditions.is_empty()
+                || !checked.function.range_facts.postconditions.is_empty()
                 || Checker::statements_contain_value_if(
                     checked.function.body.as_deref().unwrap_or_default(),
                 )
