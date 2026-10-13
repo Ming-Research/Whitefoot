@@ -184,11 +184,15 @@ jobs:
 
           edges_a = call_edges(families['resume'], families['ordinary'])
           edges_b = call_edges(families['ordinary'], families['leaf'])
-          preflight = {'symbols': families, 'resume_to_ordinary': edges_a, 'ordinary_to_leaf': edges_b}
+          # Full LTO may inline the ordinary function into resume; a direct
+          # non-tail resume -> hot_leaf call is then the physical chain to test.
+          edges_direct = call_edges(families['resume'], families['leaf'])
+          preflight = {'symbols': families, 'resume_to_ordinary': edges_a, 'ordinary_to_leaf': edges_b,
+                       'resume_to_leaf': edges_direct}
           (root / 'preflight.json').write_text(json.dumps(preflight, indent=2) + '\n')
-          connected = any(ordinary == middle for _, ordinary in edges_a for middle, _ in edges_b)
+          connected = any(ordinary == middle for _, ordinary in edges_a for middle, _ in edges_b) or bool(edges_direct)
           if not connected:
-              raise RuntimeError('Inconclusive: optimized executable lacks connected non-tail resume -> ordinary -> hot_leaf calls; no fraction table can answer this witness.')
+              raise RuntimeError('Inconclusive: optimized executable lacks a non-tail call chain from resume to hot_leaf; no fraction table can answer this witness.')
 
           # Begin with two million iterations, then a bounded larger sample
           # when startup overhead makes it too short. Keep all measurements.
