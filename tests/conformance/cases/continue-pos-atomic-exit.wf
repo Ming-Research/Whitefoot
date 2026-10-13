@@ -9,9 +9,9 @@ fn main() -> status: std::process::ExitStatus pure waits {
   let shared = shared_new::<Counter>(value: initial);
   let observed = 0_u64;
   for (i in 0_u64..2_u64) {
-    atomic held = &shared {
-      set held^.value = 4_u64;
-      set observed = held^.value;
+    atomic observed_state = &shared {
+      set observed_state^.value = 4_u64;
+      set observed = observed_state^.value;
       continue;
     }
   }

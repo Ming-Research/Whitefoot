@@ -100,6 +100,8 @@ macro_rules! operation_operands {
             | IrOperation::ConstantAddress { .. }
             | IrOperation::Window
             | IrOperation::ContextJoin
+            | IrOperation::SnapshotAtomicBegin
+            | IrOperation::SnapshotAtomicEnd
             | IrOperation::SharedNew { .. }
             | IrOperation::DecisionCellNew { .. }
             | IrOperation::TableEntrySlot { .. }

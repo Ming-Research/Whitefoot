@@ -26,8 +26,8 @@ fn main() -> status: ExitStatus pure {
   doc "Advances a nested count from 5 by 7 after checking its room.";
   let inner = Inner(count: 5_u64);
   let outer = Outer(label: 1_u64, inner: inner);
-  let held = outer.inner.count;
-  if held <= 793_u64 {
+  let kept = outer.inner.count;
+  if kept <= 793_u64 {
   } else {
     return exit_status(code: 1_u8);
   }

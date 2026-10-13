@@ -987,6 +987,14 @@ fn classify_node(
         // type [DIAG-1]; the subscript alternative owns only bracket
         // punctuation, its offset and endpoint atoms classifying through the
         // `atom` productions below it.
+        Production::HeldClause => add_all(
+            classified,
+            owner,
+            &names,
+            RawRoleKind::DeferredUse(DeferredUseRole::HeldParameter),
+            roles,
+            complete_counts,
+        )?,
         Production::Psuffix if !names.is_empty() => classify_projection_names(
             classified,
             owner,

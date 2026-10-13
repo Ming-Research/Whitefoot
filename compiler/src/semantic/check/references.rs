@@ -2697,6 +2697,7 @@ impl<'unit> TypeContext<'unit> {
                     binder: String::new(),
                     event: event.phrase(),
                 }),
+                held_use: None,
                 positions,
                 contract_indices: Vec::new(),
                 window,

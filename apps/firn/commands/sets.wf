@@ -156,8 +156,8 @@ fn run_sadd(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   set client^.number = 0_u64;
   atomic slot = &store^.keys[key], m = &store^.meta {
     match slot^ {
-      Some(value: held) => {
-        let edited = add_members(env: client, value: held);
+      Some(value: observed) => {
+        let edited = add_members(env: client, value: observed);
       }
       None() => {
       }
@@ -262,8 +262,8 @@ fn run_srem(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   set client^.number = 0_u64;
   atomic slot = &store^.keys[key], m = &store^.meta {
     match slot^ {
-      Some(value: held) => {
-        let edited = remove_members(env: client, value: held);
+      Some(value: observed) => {
+        let edited = remove_members(env: client, value: observed);
       }
       None() => {
       }
@@ -423,8 +423,8 @@ fn run_spop(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   }
   atomic slot = &store^.keys[key], m = &store^.meta {
     match slot^ {
-      Some(value: held) => {
-        let edited = pop_members(env: client, value: held);
+      Some(value: observed) => {
+        let edited = pop_members(env: client, value: observed);
       }
       None() => {
       }
@@ -522,8 +522,8 @@ fn run_scard(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &C
   set client^.number = 0_u64;
   atomic slot = &store^.keys[key] {
     match slot^ {
-      Some(value: held) => {
-        let found = set_size(env: client, value: held);
+      Some(value: observed) => {
+        let found = set_size(env: client, value: observed);
       }
       None() => {
       }
@@ -590,8 +590,8 @@ fn run_smembers(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client:
   set client^.state = state_absent;
   atomic slot = &store^.keys[key] {
     match slot^ {
-      Some(value: held) => {
-        let found = members_out(env: client, value: held);
+      Some(value: observed) => {
+        let found = members_out(env: client, value: observed);
       }
       None() => {
       }
@@ -617,7 +617,7 @@ fn member_seen(env: &Membership, key: &Key, value: &unit) -> result: u64 writes(
   return 1_u64;
 }
 
-fn set_holds(members: &HashMap<Key, unit, ceiling>, member: &Key, keys: &KeyEnv) -> held: Bool reads(members), reads(member), reads(keys) {
+fn set_holds(members: &HashMap<Key, unit, ceiling>, member: &Key, keys: &KeyEnv) -> observed: Bool reads(members), reads(member), reads(keys) {
   doc "Whether a set holds a member.";
   let absent = False();
   let probe = Membership(found: absent);
@@ -642,8 +642,8 @@ fn members_known(env: &Client, value: &Entry) -> kind: u64 reads(value), writes(
       loop @members {
         if env^.items.inner.len > 0_u64 {
           let member = take_back(window: &env^.items.inner);
-          let held = set_holds(members: set_of, member: &member, keys: &keys);
-          if held {
+          let observed = set_holds(members: set_of, member: &member, keys: &keys);
+          if observed {
             reply_integer(client: env, value: 1_i64);
           } else {
             reply_integer(client: env, value: 0_i64);
@@ -688,8 +688,8 @@ fn run_sismember(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client
   }
   atomic slot = &store^.keys[key] {
     match slot^ {
-      Some(value: held) => {
-        let found = members_known(env: client, value: held);
+      Some(value: observed) => {
+        let found = members_known(env: client, value: observed);
       }
       None() => {
       }
@@ -811,8 +811,8 @@ fn random_members(env: &Client, value: &Entry) -> kind: u64 reads(value), writes
         let chosen = hash_map_new::<Key, unit, ceiling>(capacity: magnitude);
         let keys = env^.keys;
         loop @draws {
-          let held = hash_map_len::<Key, unit, ceiling>(map: &chosen);
-          if held >= magnitude {
+          let observed = hash_map_len::<Key, unit, ceiling>(map: &chosen);
+          if observed >= magnitude {
             break @draws;
           }
           set env^.random = next_random(state: env^.random);
@@ -884,8 +884,8 @@ fn run_srandmember(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, clie
   }
   atomic slot = &store^.keys[key] {
     match slot^ {
-      Some(value: held) => {
-        let found = random_members(env: client, value: held);
+      Some(value: observed) => {
+        let found = random_members(env: client, value: observed);
       }
       None() => {
       }
@@ -912,12 +912,12 @@ fn run_srandmember(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, clie
 fn set_kind(slot: &Option<Entry>, now: u64) -> kind: u64 reads(slot) {
   doc "What an entry holds for a set command naming several keys: entry_none for no value, entry_lapsed for one whose expiry has been reached at now, entry_wanted for a live set and entry_other for a live value of another kind.";
   match slot^ {
-    Some(value: held) => {
-      let reached = expired(expires: held^.expires, now: now);
+    Some(value: observed) => {
+      let reached = expired(expires: observed^.expires, now: now);
       if reached {
         return entry_lapsed;
       }
-      match held^.value {
+      match observed^.value {
         Members(members: set_of) => {
           return entry_wanted;
         }
@@ -944,7 +944,7 @@ fn set_kind(slot: &Option<Entry>, now: u64) -> kind: u64 reads(slot) {
 fn entry_present(slot: &Option<Entry>) -> present: Bool reads(slot) {
   doc "Whether an entry holds a value, its expiry reached or not.";
   match slot^ {
-    Some(value: held) => {
+    Some(value: observed) => {
       return True();
     }
     None() => {
@@ -956,8 +956,8 @@ fn entry_present(slot: &Option<Entry>) -> present: Bool reads(slot) {
 fn entry_size(slot: &Option<Entry>) -> size: u64 reads(slot) {
   doc "How many members the set an entry holds has, 0 for an entry holding no set.";
   match slot^ {
-    Some(value: held) => {
-      match held^.value {
+    Some(value: observed) => {
+      match observed^.value {
         Members(members: set_of) => {
           let size = hash_map_len::<Key, unit, ceiling>(map: set_of);
           return size;
@@ -982,15 +982,15 @@ fn entry_size(slot: &Option<Entry>) -> size: u64 reads(slot) {
   }
 }
 
-fn entry_holds(slot: &Option<Entry>, member: &Key, keys: &KeyEnv, now: u64) -> held: Bool reads(slot), reads(member), reads(keys) {
+fn entry_holds(slot: &Option<Entry>, member: &Key, keys: &KeyEnv, now: u64) -> observed: Bool reads(slot), reads(member), reads(keys) {
   doc "Whether the live set an entry holds has the member; false for an entry holding no live set.";
   match slot^ {
-    Some(value: held) => {
-      let reached = expired(expires: held^.expires, now: now);
+    Some(value: observed) => {
+      let reached = expired(expires: observed^.expires, now: now);
       if reached {
         return False();
       }
-      match held^.value {
+      match observed^.value {
         Members(members: set_of) => {
           let found = set_holds(members: set_of, member: member, keys: keys);
           return found;
@@ -1018,8 +1018,8 @@ fn entry_holds(slot: &Option<Entry>, member: &Key, keys: &KeyEnv, now: u64) -> h
 fn drop_member(slot: &Option<Entry>, member: &Key, client: &Client) -> removed: Bool reads(member), writes(slot), writes(client) {
   doc "Removes a member from the set an entry holds and returns whether the set held it, leaving how many members the set keeps in the client's number; false for an entry holding no set.";
   match slot^ {
-    Some(value: held) => {
-      match held^.value {
+    Some(value: observed) => {
+      match observed^.value {
         Members(members: set_of) => {
           let keys = client^.keys;
           let pair = hash_map_remove::<KeyHash, unit, ceiling>(map: set_of, key: member, env: &keys);
@@ -1056,8 +1056,8 @@ fn drop_member(slot: &Option<Entry>, member: &Key, client: &Client) -> removed: 
 fn place_member(slot: &Option<Entry>, member: Key, keys: &KeyEnv) -> result: unit reads(keys), writes(slot) {
   doc "Adds a member to the set an entry holds, creating the set, without an expiry, for an entry holding none; an entry holding another kind, which the caller has refused, drops it.";
   match slot^ {
-    Some(value: held) => {
-      match held^.value {
+    Some(value: observed) => {
+      match observed^.value {
         Members(members: set_of) => {
           let put = hash_map_put::<KeyHash, unit, ceiling>(map: set_of, key: move member, value: unit, env: keys);
           return unit;
@@ -1148,8 +1148,8 @@ fn run_smove(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &C
       if source < keys.len {
         if client^.items.inner.len > 0_u64 {
           let keys_env = client^.keys;
-          let held = entry_holds(slot: &slots^[source], member: &client^.items.inner[0_u64], keys: &keys_env, now: now);
-          if held {
+          let observed = entry_holds(slot: &slots^[source], member: &client^.items.inner[0_u64], keys: &keys_env, now: now);
+          if observed {
             set client^.number = 1_u64;
           }
         }
@@ -1283,7 +1283,7 @@ fn survey(slots: &Entries<Entry>, keys: &KeySet, positions: &Box<Slots<u64>>, no
   return found;
 }
 
-fn held_by_others(slots: &Entries<Entry>, keys: &KeySet, positions: &Box<Slots<u64>>, skip: u64, member: &Key, env: &KeyEnv, now: u64, every: Bool) -> held: Bool reads(slots), reads(keys), reads(positions), reads(member), reads(env) {
+fn held_by_others(slots: &Entries<Entry>, keys: &KeySet, positions: &Box<Slots<u64>>, skip: u64, member: &Key, env: &KeyEnv, now: u64, every: Bool) -> observed: Bool reads(slots), reads(keys), reads(positions), reads(member), reads(env) {
   doc "Whether every set the operation names but the one at skip holds the member (every), or else whether any of them does; a key holding no live set holds nothing.";
   for @others (at in 0_u64..keys^.len) {
     if at != skip {
@@ -1291,13 +1291,13 @@ fn held_by_others(slots: &Entries<Entry>, keys: &KeySet, positions: &Box<Slots<u
       let named = iand(payload, operand_named);
       if named != 0_u64 {
         if at < slots^.len {
-          let held = entry_holds(slot: &slots^[at], member: member, keys: env, now: now);
+          let observed = entry_holds(slot: &slots^[at], member: member, keys: env, now: now);
           if every {
-            if held {
+            if observed {
             } else {
               return False();
             }
-          } else if held {
+          } else if observed {
             return True();
           }
         }
@@ -1313,8 +1313,8 @@ fn combine(slots: &Entries<Entry>, keys: &KeySet, positions: &Box<Slots<u64>>, f
   if from < slots^.len {
     let source = &slots^[from];
     match source^ {
-      Some(value: held) => {
-        match held^.value {
+      Some(value: observed) => {
+        match observed^.value {
           Members(members: set_of) => {
             let buckets = set_of^.cells.inner.len;
             for @buckets (index in 0_u64..buckets) {
@@ -1415,8 +1415,8 @@ fn store_members(slot: &Option<Entry>, members: &HashMap<Key, unit, ceiling>) ->
   let fresh = Entry(value: move made, expires: 0_u64);
   set slot^ = Some<Entry>(value: move fresh);
   match slot^ {
-    Some(value: held) => {
-      match held^.value {
+    Some(value: observed) => {
+      match observed^.value {
         Members(members: set_of) => {
           swap(first: set_of, second: members);
         }

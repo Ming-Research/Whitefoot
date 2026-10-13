@@ -1085,6 +1085,7 @@ impl<'unit> Checker<'_, 'unit> {
                 // prefix names storage the move has carried away, and
                 // [REF-2] says a move never re-roots an existing reference.
                 if !copy && !read_out {
+                    self.record_held_write(use_node, &ResolvedPlace::fields(local.binding, fields.clone()));
                     self.types.invalidate_references(
                         bindings,
                         &ResolvedPlace::fields(local.binding, fields.clone()),

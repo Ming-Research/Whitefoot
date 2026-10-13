@@ -219,6 +219,7 @@ impl Checker<'_, '_> {
                                 self.types.declarations.tree.path(*place)?.clone(),
                             ),
                             reference_use: None,
+                            held_use: None,
                             positions,
                             window,
                             left_spelling: self.types.render_resolved_place(a, &block_bindings)?,
@@ -362,9 +363,20 @@ impl Checker<'_, '_> {
             })
             .collect::<Vec<_>>();
         self.body.atomic_depth += 1;
+        self.body.held_atomic_roots = targets.iter().map(|target| target.binding).collect();
+        self.body.held_atomic_node = Some(node_path.clone());
+        let held_call_start = self.body.held_calls.len();
+        let held_write_start = self.body.held_writes.len();
         let checked = self.check_atomic_parts(context, node, &mut block_bindings, counters, scope);
         self.body.atomic_depth -= 1;
+        self.body.held_atomic_roots.clear();
+        self.body.held_atomic_node = None;
         let (mut guard, mut checked) = checked?;
+        let held_calls = self.body.held_calls[held_call_start..].to_vec();
+        let held_writes = self.body.held_writes[held_write_start..].to_vec();
+        self.check_held_protection(&held_writes, &block_bindings, &held_calls)?;
+        self.body.held_calls.truncate(held_call_start);
+        self.body.held_writes.truncate(held_write_start);
         for (((target, place), aliases), watch) in targets
             .iter_mut()
             .zip(&places)
@@ -745,8 +757,11 @@ impl Checker<'_, '_> {
             .first_child_with(node, Production::Expr)?
         {
             Some(expression_node) => {
+                self.body.held_guard = true;
                 let condition =
-                    self.check_condition(context, expression_node, bindings, scope.loops.len())?;
+                    self.check_condition(context, expression_node, bindings, scope.loops.len());
+                self.body.held_guard = false;
+                let condition = condition?;
                 if self.guard_has_decision_cell(&condition.expression)? {
                     return self.types.declarations.issue_node(
                         SemanticRule::Share2,
