@@ -1,10 +1,12 @@
 # A bundled native toolchain for Whitefoot's first external release
 
-Status: research and proposed implementation plan, written before measurement.
+Status: implementation direction selected; arm64 non-LTO candidate evidence
+is recorded below. Release-package qualification remains open.
 The owner has committed to bundling clang and lld at the gate's LLVM major and
-to preserving macOS stack probing with upstream LLVM. This document selects
-candidates and rejection checks; it does not claim an implemented or qualified
-package.
+to preserving macOS stack probing with upstream LLVM. This document records
+the qualified arm64 non-LTO probe candidate and
+selects package candidates and rejection checks; it does not claim a qualified
+release package.
 
 ## Question and fixed requirements
 
@@ -44,7 +46,7 @@ The starting tree is `af7665be672d29912d878dd5da8c3932bb6f296c`. Source inspecti
 establishes the following; the reported LLVM failure comes from the task and
 was not reproduced on this workstation.
 
-| Owner in the repository | Present behavior and consequence |
+| Owner in the repository | Starting behavior and consequence |
 | --- | --- |
 | [Target layout](../../../compiler/src/target.rs), `TargetLayout::for_triple` | Both Darwin architectures select `__chkstk_darwin`; Linux selects `inline-asm`; Windows MSVC selects `__chkstk`. Backend capability is currently conflated with target ABI. |
 | [Emitter](../../../compiler/src/backend/emitter.rs), `emit_module`'s attribute group, and [fragments](../../../compiler/src/backend/fragments.rs), `split_emission` | Generated definitions share the target probe attribute; fragment emission retains referenced attribute groups. Any replacement must cover helpers and fragments as well as source functions. |
@@ -121,8 +123,8 @@ must perform the page walk it promises.
 
 | Candidate | Benefit and cost | Deciding comparison | Reject when |
 | --- | --- | --- | --- |
-| Inline probing with explicit 4096 for both upstream Darwin architectures; retain the qualified Apple helper while Apple remains supported (**recommended initial plan**) | Fits upstream source without a new assembly runtime. Requires a toolchain-aware emission fact rather than OS-only selection; two qualified producer families remain temporarily. | Compile the same large-frame IR with upstream and Apple, inspect the selected native method, then run the unchanged behavioral floor oracles. | Missing inline page touches, failed helper containment, backend error, incorrect unwind/frame accounting, changed fault classification, or failed positive/negative control. |
-| One inline form for upstream and Apple | Removes vendor-specific probe selection. Apple's support and behavior are unverified. | Give the identical inline+4096 module to both exact compilers on arm64 and x86-64, including ordinary, large, aligned, and variable frames and LTO. | Any supported Apple toolchain rejects it, ignores it, or fails containment/recursion tests. Adopt only after the whole declared support matrix passes. |
+| Probe the resolved Darwin consumer's helper support; retain the helper on acceptance and select inline+4096 on rejection (**selected implementation direction**) | Fits the qualified upstream arm64 path without a new assembly runtime and retains the maintained Apple helper. Requires one additional property probe rather than OS-only or vendor-string selection. | Compile the same large-frame IR with upstream and Apple, inspect the selected native method, then run the unchanged behavioral floor oracles. | Missing inline page touches, failed helper containment, backend error, incorrect unwind/frame accounting, changed fault classification, or failed positive/negative control. |
+| One inline form for upstream and Apple | Removes the need to select between two probe methods. Apple's support and behavior are unverified. | Give the identical inline+4096 module to both exact compilers on arm64 and x86-64, including ordinary, large, aligned, and variable frames and LTO. | Any supported Apple toolchain rejects it, ignores it, or fails containment/recursion tests. Adopt only after the whole declared support matrix passes. |
 | Keep the Darwin helper everywhere by upgrading or patching LLVM | May align with future Darwin conventions, but adds a different version qualification or a maintained LLVM fork. | Identify a released implementation, check its helper ABI and deployment requirements, and repeat the full native checks. | Unreleased-only support, missing helper, ABI mismatch, or inability to stay on the owner's pinned major. Not needed for the inline candidate. |
 | Write a Whitefoot probe helper | Owns delicate architecture-specific pre-prologue assembly, unwinding, and Darwin ABI evolution; does not bypass AArch64's rejection of helper forms. | First establish backend support for invoking it, then independently check preservation and every guard crossing. | Unsupported invocation, ABI uncertainty, or any containment failure. Not recommended while inline lowering exists. |
 
@@ -133,12 +135,17 @@ program:
 attributes #0 = { "probe-stack"="inline-asm" "stack-probe-size"="4096" }
 ```
 
-The initial Apple path retains its existing helper attribute until qualified
-evidence permits consolidation. Probe selection must use the resolved backend
-toolchain and target together; parsing an Apple marketing major alone is
-insufficient. A small source-backed toolchain profile, checked by native CI,
-is preferable to introducing an unproved custom stack routine. Failure to
-qualify a toolchain is a toolchain error, never a fallback to unprobed code.
+The selected implementation retains Apple's qualified helper when the resolved
+consumer accepts it. A fourth once-per-process capability probe compiles a tiny
+function with a live large frame and the `__chkstk_darwin` attribute; an empty
+function would not exercise the frame-lowering property. Acceptance selects the
+helper, rejection selects inline probing with explicit 4096. This is a property
+check against the actual executable, not a vendor-string profile. Darwin alone
+uses this choice; Linux and Windows retain their existing methods. The live
+answer selects between methods, while native qualification establishes their
+containment behavior. It does not qualify every compiler accepting the probe.
+Failure of the selected method during native compilation is a toolchain error,
+never a fallback to unprobed code.
 
 ### Preserve the independent floor oracles
 
@@ -278,10 +285,11 @@ a release archive must contain its sibling clang and complete toolchain.
 
 Bundling makes the three syntax/ABI answers constant **for a particular
 qualified artifact and target**, not automatically constants of the Whitefoot
-binary or LLVM major. Recommendation: retain the existing once-per-process
-probes and point all three at the selected executable in either mode. Cost: three
-small compiler invocations when native emission first needs the facts. The
-alternative is packaging-time generated facts, coupled to a verified artifact
+binary or LLVM major. Retain the existing three once-per-process
+syntax/ABI probes and point all three at the selected executable in either mode;
+on Darwin add the live large-frame helper-method probe described above. Cost:
+three small compiler invocations, plus the fourth on Darwin, when native emission
+first needs the facts. The alternative is packaging-time generated facts, coupled to a verified artifact
 identity; compare them with live probes on every shipped platform and reject
 that alternative on any disagreement or an independently replaceable toolchain.
 It adds no needed evidence for the first release. In particular, a coroutine
@@ -289,9 +297,11 @@ intrinsic declaration alone does not validate a call's result type.
 
 An inability to execute a required probe or create its files must be reported
 as an environment/toolchain failure in the packaged path, distinguished from
-an actually unsupported optional form. Today's conservative fallback on launch
-failure is a related implementation concern, not evidence that the bundled
-toolchain accepts the selected form. Retain source judgment independently.
+an actually unsupported optional form. Source-build probe I/O or launch failures
+retain the conservative legacy
+syntax/ABI forms and select Darwin inline+4096; this retains mandatory probing,
+not evidence that a backend supports it. A backend that cannot lower the selected
+method fails native compilation. Retain source judgment independently.
 Include the resolved clang path and first version-output line, explicitly
 selected linker path, and selected macOS SDK path in native-cache identity.
 Selecting a different path, version line, linker or SDK then invalidates reused
@@ -377,7 +387,8 @@ their own package and native qualification before becoming release promises.
 
 ## Acceptance experiments and CI cost
 
-These are plans, not commands run or passing results. Run only in CI, with
+The stages below state acceptance criteria; the completed arm64 candidate
+evidence is recorded under Qualification run. Run only in CI, with
 heavy commands under `.github/run-check.pl`; begin with one tiny IR object
 probe, one native link and one focused floor case before scaling. Record their
 actual durations separately from toolchain acquisition and Rust construction.
@@ -432,37 +443,37 @@ by the current compiler's Apple-clang probe. Those failures supply no result
 about the inline probe candidate. This is a consumer-selection defect in the
 experiment; it does not justify weakening a floor oracle.
 
-The corrected [temporary qualification workflow](../../../.github/workflows/darwin-probe-qualify.yml)
-retains hosted `macos-15` arm64, the verified official 22.1.8 archive, the system
-SDK/ld, every native/control check, and the unchanged compiler. It runs the
+The corrected experiment at [revision 035c50417](https://github.com/Ming-Research/Whitefoot/commit/035c50417)
+retained hosted `macos-15` arm64, the verified official 22.1.8 archive, the system
+SDK/ld, every native/control check, and the unchanged compiler. It ran the
 compiler's own three probe sources and flags against Apple and upstream clang:
 the `preserve_nonecc` musttail pair, the `captures(none)` parameter, and the
 verified `void` call to `llvm.coro.end`. Probe inputs, commands, diagnostics,
-answers and source-byte checks become part of the artifact; answers come from
+answers and source-byte checks were part of the artifact; answers came from
 the actual executable, never a version number.
 
-Apple's original IR stays intact. Only in the upstream lane, the experiment
-substitutes those consumer-selected forms where they occur before testing
-either probe method; zero occurrences are recorded too. A changed `llvm.coro.end` call includes its result type and removal of
+Apple's original IR stayed intact. Only in the upstream lane, that experiment
+substituted those consumer-selected forms where they occur before testing
+either probe method; zero occurrences were recorded too. A changed `llvm.coro.end` call included its result type and removal of
 the unused `i1` result assignment. An independently checked byte-edit allowlist
-admits only these forms in their legal IR contexts and the probe attribute
-under test; CI controls inject unrelated edits to prove that they are rejected.
+admitted only these forms in their legal IR contexts and the probe attribute
+under test; CI controls injected unrelated edits to prove that they were rejected.
 Changes to other signatures, dispatch layout, instruction operands or unrelated
-attributes are outside that allowance. A convention-dependent dispatch shape
-that cannot be adapted by the allowed forms stops explicitly.
+attributes were outside that allowance. A convention-dependent dispatch shape
+that could not be adapted by the allowed forms stopped explicitly.
 
-This measured substitution stands in for the later bundled-clang resolution
-change, where the compiler's existing probes will run its sibling clang and
-emit that consumer's forms directly. It is experiment-only, not a new compiler
-path, an intrinsic compatibility policy, or a change to the language. The
-artifact preserves raw compiler IR, Apple-fact original IR, upstream-fact
-baseline IR, and the inline candidate, with separate fact and probe diffs.
-Fixture exposure and probe ablation remain separately recorded test adapters.
+That measured substitution stood in for bundled-clang resolution: it was
+experiment-only, not a compiler path, an intrinsic compatibility policy, or a
+language change. Its artifact preserved raw compiler IR, Apple-fact original IR,
+upstream-fact baseline IR, and the inline candidate, with separate fact and probe
+diffs. Fixture exposure and probe ablation were separate test adapters. Those
+results retain their historical grounds; consumer-fact substitution is no longer
+the current qualification procedure.
 
-Accept this arm64 non-LTO candidate only if the upstream-fact baseline
-reproduces `Unsupported stack probing method`, its attribute-only candidate
-compiles and links using the system SDK/ld, and its exact large-frame function
-has a 4096 byte descent-and-touch walk. The large-frame positive must end with SIGABRT
+The corrected experiment's acceptance criteria required that the upstream-fact
+baseline reproduce `Unsupported stack probing method`, its attribute-only
+candidate compile and link using the system SDK/ld, and its exact large-frame
+function have a 4096-byte descent-and-touch walk. The large-frame positive must end with SIGABRT
 and exactly `{"resource":"stack"}\n`; the ablated control must have no probe
 in that function, end with Darwin's SIGBUS, and write no resource record.
 Narrow and wide recursion on both entry and worker stacks must succeed just
@@ -472,10 +483,35 @@ Apple must pass the corresponding unchanged-IR maintained comparison.
 Any missing check, different signal or record, lost native probe, unresolved
 link, unexplained fact result, rejected byte-edit guard, or incompatibility
 outside the three measured forms leaves qualification failed or blocked.
-The workflow summary and artifact will supply the run URL,
-revision, toolchain versions, SDK/linker identity, IR, disassembly and logs.
-The corrected run is pending. A passing run does not qualify x86-64 Darwin,
-LTO, release packages, or the host-clang isolation requirement.
+The owner supplied the completed result of [the corrected hosted run](https://github.com/Ming-Research/Whitefoot/actions/runs/38398061414)
+at revision 035c50417: every qualification row passed. This report is recorded
+as owner-provided evidence; its artifacts were not independently fetched for
+this update. Against the criteria above, the reported results are:
+
+| Comparison | Reported result |
+| --- | --- |
+| Upstream helper baseline | Reproduced `Unsupported stack probing method`. |
+| Upstream inline candidate | All three fixtures compiled with inline+4096 attributes; the exact large-frame function retained its 4096-byte descent-and-touch walk. |
+| Upstream large-frame containment | SIGABRT with exactly `{"resource":"stack"}\n`. |
+| Upstream ablation | No probe in the selected large-frame function, SIGBUS and no resource record. |
+| Upstream narrow and wide recursion | Correct successful/aborting boundaries on entry and worker stacks, with the exact stack record above the measured bounds. |
+| Maintained Apple comparison | Every corresponding row passed. |
+
+This qualifies the tested upstream 22.1.8 inline candidate on hosted arm64
+macOS 15 with ordinary non-LTO linking and the maintained Apple comparison.
+It does not qualify x86-64 Darwin, other LLVM versions, LTO, release packages,
+or the host-clang isolation requirement.
+
+The current [temporary qualification workflow](../../../.github/workflows/darwin-probe-qualify.yml)
+instead stages the built compiler and the selected clang as siblings in the
+packaged layout. The compiler's resolver runs its own three syntax/ABI probes
+and fourth Darwin method probe against that executable, then emits the selected
+forms directly. The experiment no longer substitutes consumer facts into
+Apple-produced IR. Helper-failure reproduction and probe ablation remain
+explicit test adapters, separate from normal emission. Preserve the same
+containment, native-probe and recursion-boundary criteria above; the completed
+experiment cannot replace a floor/ledger/runtime group or gate run for the new
+implementation. Qualification of that implementation is pending.
 
 ## Recommended ordered delivery plan
 
@@ -488,10 +524,12 @@ LTO, release packages, or the host-clang isolation requirement.
    upstream LLVM; compare the maintained Apple path. Deliver disassembly,
    large-frame positive/negative controls and recursion-floor results.
    Any failure blocks the macOS bundle; do not suppress probing.
-3. **Implement the qualified probe choice.** Move backend-specific probe
-   facts out of the OS-only assumption, retain all generated-definition and
-   fragment coverage, and update the native recognizer without weakening its
-   oracle. Deliver passing floor/ledger/runtime groups and the full gate.
+3. **Implement the qualified probe choice.** Add the once-per-process live
+   large-frame Darwin helper probe against the resolved clang; helper acceptance
+   retains the helper and rejection selects inline+4096. Retain non-Darwin
+   methods, all generated-definition and fragment coverage, and update the
+   native recognizer without weakening its oracle. Deliver passing
+   floor/ledger/runtime groups and the full gate.
 4. **Construct relocatable packages.** In parallel with probe work after
    step 1, inventory and trim official assets, retaining resources, lld,
    shared dependencies, licenses and macOS libLTO. Deliver archives with
@@ -527,22 +565,24 @@ probes are not being reopened.
 | Question | Options and recommendation | Ground and confidence |
 | --- | --- | --- |
 | Which platforms ship with Firn first? | **A: existing Linux x86-64/macOS arm64 pair (recommended)**. B: add Windows x86-64 now, accepting its SDK, packaging and CI lane. C: also add Intel macOS/Linux arm64 with native qualification. | Current release scope is concrete; Firn's desired public support matrix remains the owner's decision. 3/5. |
-| Which probing policy should we qualify first? | **A: upstream inline+4096, retain Apple's qualified helper initially (recommended)**. B: require one inline form for Apple and upstream before delivery. C: wait for an upstream helper implementation. | Exact upstream source supports A; runtime qualification and Apple-common-form evidence remain outstanding. 4/5 for choosing the experiment, not for claiming safety validation. |
+| Which probing policy should implementation retain? | **A: probe the resolved consumer's helper support; retain its helper on acceptance and select inline+4096 on rejection (selected direction)**. B: require one inline form for Apple and upstream before delivery. C: wait for an upstream helper implementation. | The owner-provided arm64 non-LTO run qualifies the upstream inline candidate and maintained Apple helper. The live property probe avoids vendor assumptions; implementation-group and gate results remain outstanding. Apple-common-form evidence remains unverified. |
 | Which toolchain source should package CI try first? | **A: exact official archives, trimmed and dependency-checked (recommended)**. B: apt.llvm.org extraction for Linux and official macOS. C: build selected LLVM distributions ourselves. | Available assets reduce new build responsibility; actual portability and final size are unknown. 3/5. |
 | Does macOS acceptance mean no dependency on an executable host clang while retaining CLT/Xcode's SDK and ld? | **A: yes; prove invocation denial and retain the system SDK/linker (recommended)**. B: require literally no host clang files, using an isolated CI image retaining only the necessary Apple development components. | Ordinary CLT includes clang. PATH hiding cannot prove either option. A is testable in principle; the isolation mechanism remains unverified. 4/5 for the boundary, 2/5 for hosted enforcement. |
-| Should capability probes become packaged constants now? | A: generate facts and bind them to exact artifacts. **B: keep the three runtime probes against sibling clang (recommended)**. | This preserves the existing semantic consumer check without a second fact-production pipeline. No startup-cost measurement justifies changing it. 4/5. |
+| Should capability probes become packaged constants now? | A: generate facts and bind them to exact artifacts. **B: keep the three syntax/ABI runtime probes against sibling clang, plus the Darwin method probe (recommended)**. | This preserves the existing semantic consumer check without a second fact-production pipeline. No startup-cost measurement justifies changing it. 4/5. |
 
 ## Unverified work and findings disposition
 
-- **Execution boundary:** the first hosted qualification artifacts were read
-  and their limited results are recorded above. The corrected run is pending;
-  neither release commitment is accepted. No build, test, compiler invocation,
-  download or measurement ran on this workstation.
-- **Safety qualification outstanding:** the complete Darwin inline floor run,
-  post-LTO probing, aligned/variable frames, unwinding and stack-ledger
-  correspondence; Apple inline support; exact Apple helper ABI/deployment
-  availability; runtime C prologue coverage. These belong in probe qualification,
-  not a suppression workaround.
+- **Execution boundary:** the first hosted qualification artifacts were read;
+  the owner supplied the corrected run's complete passing result, recorded above
+  with its narrow scope. Qualification of the compiler-selected implementation
+  and both release commitments remains pending. No build, test, compiler
+  invocation, download or measurement ran on this workstation.
+- **Safety qualification outstanding:** the implementation's floor/ledger/runtime
+  groups and exact-revision gate, post-LTO probing, aligned/variable frames,
+  unwinding and stack-ledger correspondence; Apple inline support; exact Apple
+  helper ABI/deployment availability; runtime C prologue coverage. The completed
+  arm64 non-LTO candidate experiment does not establish these wider claims.
+  They belong in probe qualification, not a suppression workaround.
 - **Package qualification outstanding:** archive member/dependency inventories,
   final compressed sizes, minimum OS/glibc/CLT versions, resource layouts,
   macOS libLTO/system-ld compatibility, symlinks and macOS distribution signing

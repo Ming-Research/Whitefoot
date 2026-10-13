@@ -31,6 +31,7 @@ pub(crate) struct ToolchainFacts {
     pub(crate) preserve_none: bool,
     pub(crate) no_capture_attribute: &'static str,
     pub(crate) coro_end_result: &'static str,
+    pub(crate) darwin_stack_probe_helper: bool,
 }
 
 impl ToolchainFacts {
@@ -53,6 +54,7 @@ impl ToolchainFacts {
             preserve_none: false,
             no_capture_attribute: "nocapture",
             coro_end_result: "i1",
+            darwin_stack_probe_helper: false,
         };
         let directory = match ProbeDirectory::new() {
             Ok(directory) => directory,
@@ -91,6 +93,21 @@ impl ToolchainFacts {
                 "void"
             } else {
                 "i1"
+            },
+            // Other hosts keep their existing attribute and run no additional
+            // command. Unknown support on Darwin retains inline page probing.
+            darwin_stack_probe_helper: {
+                #[cfg(target_os = "macos")]
+                {
+                    required(
+                        darwin_stack_probe_helper_supported(toolchain, &directory.0),
+                        "__chkstk_darwin",
+                    )?
+                }
+                #[cfg(not(target_os = "macos"))]
+                {
+                    false
+                }
             },
         })
     }
@@ -224,6 +241,30 @@ fn no_capture_supported(toolchain: &Toolchain, directory: &Path) -> io::Result<b
         .command()
         .args(["-x", "ir", "-c", "-o"])
         .arg(directory.join("captures_probe.o"))
+        .arg(&probe)
+        .output()?;
+    probe_status(toolchain, accepted.status)
+}
+
+/// Some Darwin LLVM consumers accept the helper spelling in IR but reject it
+/// during native prologue lowering. Generate an actual large, live frame:
+/// passing its address to an unknown callee prevents optimization from
+/// deleting or shrinking the allocation. No link or execution is needed.
+#[cfg(target_os = "macos")]
+fn darwin_stack_probe_helper_supported(toolchain: &Toolchain, directory: &Path) -> io::Result<bool> {
+    let probe = directory.join("darwin_stack_probe.ll");
+    fs::write(
+        &probe,
+        "declare void @consume(ptr)\n\n\
+         define void @probe() #0 {\n  \
+         %frame = alloca [65536 x i8], align 16\n  \
+         call void @consume(ptr %frame)\n  ret void\n}\n\n\
+         attributes #0 = { \"probe-stack\"=\"__chkstk_darwin\" }\n",
+    )?;
+    let accepted = toolchain
+        .command()
+        .args(["-x", "ir", "-O2", "-c", "-o"])
+        .arg(directory.join("darwin_stack_probe.o"))
         .arg(&probe)
         .output()?;
     probe_status(toolchain, accepted.status)

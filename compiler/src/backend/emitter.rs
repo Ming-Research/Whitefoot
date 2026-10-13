@@ -674,7 +674,12 @@ fn emit_module(
     {
         text.declare_global("wf__empty_window".to_owned(), "[64 x i8]", 64);
     }
-    text.attribute_group(0, format!("\"probe-stack\"=\"{}\"", target.stack_probe()));
+    text.attribute_group(
+        0,
+        target
+            .stack_probe_attributes(crate::toolchain::facts().darwin_stack_probe_helper)
+            .to_owned(),
+    );
     let mut ledger = frontiers.ledger().to_vec();
     ledger.extend(lane_frame_ledger(program, target, &frontiers)?);
     // Emit source acquisition decisions once, independently of backend clones

@@ -1,6 +1,6 @@
 # Temporary hosted experiment; remove before the branch is ready.
-# No emitter change: scratch IR first adopts the actual consumer's three
-# measured LLVM forms; the candidate then changes only stack-probe attributes.
+# The actual compiler discovers each consumer's LLVM forms and probe method.
+# Only the unsupported-helper reproduction rewrites scratch probe attributes.
 # Fixtures and signal/record expectations are maintained native floor tests.
 name: Darwin stack-probe qualification
 
@@ -110,15 +110,15 @@ jobs:
           cat "$QUALIFY_DIR/upstream-version.txt"
           grep -F "clang version $LLVM_VERSION" "$QUALIFY_DIR/upstream-version.txt"
           echo "UPSTREAM_ROOT=$RUNNER_TEMP/upstream-llvm-$LLVM_VERSION" >> "$GITHUB_ENV"
-          # Never add upstream LLVM to PATH or replace /usr/bin/clang: the CLI's
-          # current capability probes deliberately retain the Apple consumer.
+          # Never add upstream LLVM to PATH or replace /usr/bin/clang: each lane
+          # selects its consumer through the compiler's real sibling resolver.
 
       - name: Fetch locked compiler dependencies
         run: |
           rustup default stable
           cargo fetch --locked --manifest-path compiler/Cargo.toml
 
-      - name: Build the unchanged compiler with the normal gate profile
+      - name: Build the compiler once with the normal gate profile
         id: build
         run: |
           set +e
@@ -185,84 +185,6 @@ jobs:
               p = run(label, command)
               assert p.returncode == 0, f'{label}: exit {p.returncode}; see saved stderr'
               return p
-
-          # These are the compiler's rendered probe inputs, not substitute
-          # experiments. Pin each exact Rust literal and decode only its used
-          # escapes; drift or missing source is a setup error before clang runs.
-          probe_literals = {
-              'coro_end_result': r'''"declare void @llvm.coro.end(ptr, i1, token)\n\n\
-                   define void @probe() {\n  \
-                   call void @llvm.coro.end(ptr null, i1 false, token none)\n  ret void\n}\n"''',
-              'preserve_none': r'''"define internal preserve_nonecc i64 @q(i64 %a) {\n  ret i64 %a\n}\n\n\
-                   define preserve_nonecc i64 @p(i64 %a) {\n  \
-                   %r = musttail call preserve_nonecc i64 @q(i64 %a)\n  ret i64 %r\n}\n"''',
-              'no_capture_attribute': r'''"define void @p(ptr {NEW} %v) {{\n  ret void\n}}\n"''',
-          }
-          probe_inputs = {
-              'coro_end_result': 'declare void @llvm.coro.end(ptr, i1, token)\n\ndefine void @probe() {\n  call void @llvm.coro.end(ptr null, i1 false, token none)\n  ret void\n}\n',
-              'preserve_none': 'define internal preserve_nonecc i64 @q(i64 %a) {\n  ret i64 %a\n}\n\ndefine preserve_nonecc i64 @p(i64 %a) {\n  %r = musttail call preserve_nonecc i64 @q(i64 %a)\n  ret i64 %r\n}\n',
-              'no_capture_attribute': 'define void @p(ptr captures(none) %v) {\n  ret void\n}\n',
-          }
-          probe_source_functions = {'coro_end_result': 'coro_end_result',
-                                    'preserve_none': 'preserve_none_supported',
-                                    'no_capture_attribute': 'no_capture_attribute'}
-          probe_flags = {'coro_end_result': ['-x', 'ir', '-S', '-emit-llvm', '-fverify-intermediate-code', '-o'],
-                         'preserve_none': ['-x', 'ir', '-c', '-o'],
-                         'no_capture_attribute': ['-x', 'ir', '-c', '-o']}
-
-          def checked_probe_inputs(source):
-              rendered = {}
-              for key, literal in probe_literals.items():
-                  assert source.count(literal) == 1, f'missing/changed compiler probe source: {key}'
-                  marker = 'fn ' + probe_source_functions[key] + '(directory: &Path)'
-                  assert source.count(marker) == 1, f'missing/ambiguous compiler probe function: {key}'
-                  body = source.split(marker, 1)[1].split('\n}', 1)[0]
-                  assert body.count(literal) == 1, f'probe literal moved outside its owner: {key}'
-                  command_flags = re.findall(r'\.args\(\[(.*?)\]\)', body, re.S)
-                  assert len(command_flags) == 1, f'probe command shape changed: {key}'
-                  expected_flags = ','.join('"' + flag + '"' for flag in probe_flags[key])
-                  assert re.sub(r'\s+', '', command_flags[0]).rstrip(',') == expected_flags, f'compiler probe flags changed: {key}'
-                  text = re.sub(r'\\\n\s*', '', literal[1:-1])
-                  text = text.replace(r'\n', '\n')
-                  assert '\\' not in text, f'unhandled Rust escape in {key}'
-                  if key == 'no_capture_attribute':
-                      assert 'const NEW: &str = "captures(none)";' in body
-                      text = text.replace('{NEW}', 'captures(none)').replace('{{', '{').replace('}}', '}')
-                  assert text.encode() == probe_inputs[key].encode(), f'probe bytes differ: {key}'
-                  rendered[key] = text
-              return rendered
-
-          def consumer_facts():
-              inputs = checked_probe_inputs((repo / 'compiler/src/toolchain.rs').read_text())
-              # Same policy and flags as toolchain.rs, without isysroot/O2:
-              # the coro probe is verification-only, never code generation.
-              facts = {}
-              for tc, clang in toolchains.items():
-                  directory = root / 'consumer-probes' / tc
-                  directory.mkdir(parents=True, exist_ok=True)
-                  answers = {}
-                  for key, text in inputs.items():
-                      probe = directory / (key + '.ll')
-                      probe.write_bytes(text.encode())
-                      output = directory / (key + ('.verified.ll' if key == 'coro_end_result' else '.o'))
-                      p = run(f'consumer-probes/{tc}/{key}', [clang] + probe_flags[key] + [output, probe])
-                      # OSError and timeout propagate as setup failures. Only a
-                      # completed rejection chooses the compiler's old form.
-                      assert p.returncode >= 0, f'{tc}/{key}: probe terminated by signal {p.returncode}'
-                      answers[key] = {'returncode': p.returncode, 'accepted': p.returncode == 0}
-                  facts[tc] = {
-                      'preserve_none': answers['preserve_none']['accepted'],
-                      'no_capture_attribute': 'captures(none)' if answers['no_capture_attribute']['accepted'] else 'nocapture',
-                      'coro_end_result': 'void' if answers['coro_end_result']['accepted'] else 'i1',
-                  }
-                  (directory / 'answers.json').write_text(json.dumps(answers, indent=2) + '\n')
-                  (directory / 'facts.json').write_text(json.dumps(facts[tc], indent=2) + '\n')
-                  result('compiler-owned consumer probes', tc, True, json.dumps(facts[tc], sort_keys=True))
-              (root / 'consumer-facts.json').write_text(json.dumps(facts, indent=2) + '\n')
-              (root / 'consumer-facts.diff').write_text(''.join(difflib.unified_diff(
-                  json.dumps(facts['Apple'], indent=2).splitlines(True),
-                  json.dumps(facts['upstream'], indent=2).splitlines(True), fromfile='Apple facts', tofile='upstream facts')))
-              return facts
 
           def floor_outcome(p, status, stdout, stderr):
               # Python receives direct Unix signal status, unlike a shell's
@@ -358,263 +280,59 @@ jobs:
           old_probe = '"probe-stack"="__chkstk_darwin"'
           new_probe = '"probe-stack"="inline-asm" "stack-probe-size"="4096"'
 
-          def ir_tokens(line):
-              # Retain offsets and treat quoted strings/symbols as one token.
-              # Semicolons outside strings start comments, whose bytes remain
-              # in the fingerprint and are never an editable fact slot.
-              pattern = r'"(?:[^"\\]|\\.)*"|[@%](?:"(?:[^"\\]|\\.)*"|[-\w.$]+)|[A-Za-z_][-\w.]*|\d+|[^\s]'
-              tokens = []
-              for match in re.finditer(pattern, line):
-                  if match.group() == ';':
-                      break
-                  tokens.append((match.group(), match.start(), match.end()))
-              return tokens
+          def assert_probe_attributes(module, tc):
+              expected = new_probe if tc == 'upstream' else old_probe
+              groups = re.findall(r'^attributes #0 = \{ (.*?) \}$', module, re.M)
+              assert groups == [expected], f'{tc}: compiler selected unexpected stack probe: {groups}'
+              assert module.count('"probe-stack"') == 1
+              assert module.count('"stack-probe-size"') == (1 if tc == 'upstream' else 0)
 
-          def fact_fingerprint(text, facts, *, inline=False):
-              # This validator is independent of rewrite_facts: it identifies
-              # legal typed/token contexts, replaces only those spans with
-              # placeholders and compares every remaining byte. Thus an
-              # unrelated edit shared by a faulty forward/reverse transformer
-              # cannot pass. Comments, strings and symbol names stay literal.
-              assert type(facts['preserve_none']) is bool
-              assert facts['no_capture_attribute'] in ['nocapture', 'captures(none)']
-              assert facts['coro_end_result'] in ['i1', 'void']
-              spans, counts, offset = [], {'capture': 0, 'coro_declaration': 0, 'coro_call': 0,
-                                         'preserve_none': 0, 'eligible_dispatch_definitions': 0, 'probe': 0}, 0
-              current, references, definitions, eligible = None, {}, {}, set()
-              # A public enclosing function can call a part before the part's
-              # later definition. Collect known internal helper names first.
-              for line in text.splitlines(True):
-                  words = [t[0] for t in ir_tokens(line)]
-                  if words and words[0] == 'define':
-                      symbols = [word for word in words if word.startswith('@')]
-                      if len(symbols) == 1 and re.search(r'\.(?:dispatch|arm\.\d+)$', symbols[0]):
-                          assert re.fullmatch(r'@wf_[-\w.$]+(?:\.dispatch|\.arm\.\d+)', symbols[0]), 'unknown dispatch helper naming'
-                          assert words[1] == 'internal', 'dispatch part must remain internal'
-                          eligible.add(symbols[0])
-              for line in text.splitlines(True):
-                  ts = ir_tokens(line)
-                  words = [t[0] for t in ts]
-                  capture_positions = set()
-                  signature = bool(words and words[0] in ['define', 'declare'])
-                  if signature:
-                      symbols = [i for i, word in enumerate(words) if word.startswith('@')]
-                      assert len(symbols) == 1, 'unrecognized function signature'
-                      symbol_at = symbols[0]
-                      symbol = words[symbol_at]
-                      if words[0] == 'define':
-                          assert current is None, 'nested/unclosed IR function'
-                          current = symbol
-                          references[current], definitions[current] = 0, 0
-                          if re.fullmatch(r'@wf_[-\w.$]+(?:\.dispatch|\.arm\.\d+)', symbol):
-                              assert words[1] == 'internal', 'dispatch part must remain internal'
-                              assert (words[2] == 'preserve_nonecc') == facts['preserve_none'], 'dispatch convention differs from consumer probe'
-                              counts['eligible_dispatch_definitions'] += 1
-                      assert words[symbol_at + 1] == '(', 'unrecognized parameter list'
-                      # Split the actual signature parameters, retaining nested
-                      # aggregate types and parenthesized parameter attributes.
-                      depth, start, segments = 0, symbol_at + 2, []
-                      for i in range(start, len(words)):
-                          word = words[i]
-                          if word == ')' and depth == 0:
-                              segments.append((start, i))
-                              break
-                          if word == ',' and depth == 0:
-                              segments.append((start, i))
-                              start = i + 1
-                          elif word in ['(', '{', '[', '<']:
-                              depth += 1
-                          elif word in [')', '}', ']', '>']:
-                              depth -= 1
-                              assert depth >= 0
-                      else:
-                          raise AssertionError('unterminated signature parameters')
-                      for first, last in segments:
-                          for i in range(first, last):
-                              if words[i] not in ['nocapture', 'captures']:
-                                  continue
-                              width = 1 if words[i] == 'nocapture' else 4
-                              form = 'nocapture' if width == 1 else 'captures(none)'
-                              assert words[first] == 'ptr', 'capture attribute outside a pointer parameter'
-                              assert words[first + 1:i] == [w for w in words[first + 1:i]
-                                                          if w in ['noalias', 'readonly', 'nonnull']], 'unknown pre-capture parameter attributes'
-                              assert width == 1 or words[i:i + 4] == ['captures', '(', 'none', ')'], 'unknown capture spelling'
-                              assert i + width <= last and form == facts['no_capture_attribute'], 'IR capture form differs from consumer probe'
-                              assert line[ts[i][1]:ts[i + width - 1][2]] == form, 'noncanonical capture token bytes'
-                              # Attribute must precede the parameter name. It
-                              # cannot be a value, return attribute or call arg.
-                              assert not any(w.startswith('%') for w in words[first:i])
-                              spans.append((offset + ts[i][1], offset + ts[i + width - 1][2], 'capture'))
-                              capture_positions.add(i)
-                              counts['capture'] += 1
-                  if '@llvm.coro.end' in words:
-                      declaration = re.fullmatch(r'declare (i1|void) @llvm\.coro\.end\(ptr, i1, token\)(\n)?', line)
-                      call = re.fullmatch(r'  (%wf\.coro\.end = call i1|call void) @llvm\.coro\.end\(ptr null, i1 false, token none\)(\n)?', line)
-                      assert bool(declaration) != bool(call), 'unknown coro.end declaration/call form'
-                      if declaration:
-                          assert declaration.group(1) == facts['coro_end_result'], 'IR coro declaration differs from consumer probe'
-                          spans.append((offset + declaration.start(1), offset + declaration.end(1), 'coro_declaration'))
-                          counts['coro_declaration'] += 1
-                      else:
-                          expected = 'call void' if facts['coro_end_result'] == 'void' else '%wf.coro.end = call i1'
-                          assert current is not None and call.group(1) == expected, 'IR coro call differs from consumer probe'
-                          spans.append((offset + call.start(1), offset + call.end(1), 'coro_call'))
-                          counts['coro_call'] += 1
-                          if facts['coro_end_result'] == 'i1':
-                              definitions[current] += 1
-                  if current is not None:
-                      references[current] += words.count('%wf.coro.end')
-                  elif '%wf.coro.end' in words:
-                      raise AssertionError('coro.end SSA name outside a function')
-                  for i, word in enumerate(words):
-                      if word in ['nocapture', 'captures']:
-                          assert i in capture_positions, 'capture token outside actual signature parameter attribute'
-                      if word == 'preserve_nonecc':
-                          # No convention upgrade is attempted: the compiler's
-                          # choice can also change part selection/register ABI.
-                          assert facts['preserve_none'], 'IR preserve_none differs from consumer probe'
-                          definition = signature and words[0] == 'define' and current in eligible and i == 2
-                          transfer = current is not None and i > 0 and words[i - 1] == 'call'
-                          target = next((w for w in words[i + 1:] if w.startswith(('@', '%'))), None)
-                          assert definition or (transfer and (target in eligible or current in eligible)), 'preserve_none outside known internal dispatch entities'
-                          counts['preserve_none'] += 1
-                  if '"probe-stack"' in words or '"stack-probe-size"' in words:
-                      expected = new_probe if inline else old_probe
-                      match = re.fullmatch(r'attributes #0 = \{ (' + re.escape(expected) + r') \}(\n)?', line)
-                      assert match, 'unknown stack-probe attribute/context'
-                      spans.append((offset + match.start(1), offset + match.end(1), 'probe'))
-                      counts['probe'] += 1
-                  if words == ['}']:
-                      assert current is not None
-                      current = None
-                  offset += len(line)
-              assert current is None, 'unterminated IR function'
-              assert all(references[key] == definitions[key] and definitions[key] <= 1 for key in references), 'old coro.end SSA result is used or multiply defined'
-              assert counts['coro_declaration'] <= 1 and (counts['coro_call'] == 0 or counts['coro_declaration'] == 1)
-              assert counts['probe'] == 1, 'one original/candidate probe group required'
-              pieces, end = [], 0
-              for first, last, kind in sorted(spans):
-                  assert end <= first < last
-                  pieces += [text[end:first], '<consumer-' + kind + '>']
-                  end = last
-              pieces.append(text[end:])
-              return ''.join(pieces), counts
-
-          def validate_delta(original, changed, before, after, *, inline=False):
-              left, old_counts = fact_fingerprint(original, before)
-              right, new_counts = fact_fingerprint(changed, after, inline=inline)
-              assert old_counts == new_counts, 'consumer rewrite changed fact/context counts'
-              if before['preserve_none'] != after['preserve_none']:
-                  assert old_counts['eligible_dispatch_definitions'] == 0, 'unsupported dispatch convention normalization: consumer fact affects register layout and part selection'
-                  assert old_counts['preserve_none'] == 0
-              assert left == right, 'IR contains a byte change outside measured fact forms/probe attributes'
-              return old_counts
-
-          def rewrite_facts(original, before, after):
-              # Forward edits deliberately do not use the fingerprint's spans.
-              # Independent validation below confines every changed byte.
-              _, counts = fact_fingerprint(original, before)
-              if before['preserve_none'] != after['preserve_none'] and counts['eligible_dispatch_definitions']:
-                  raise AssertionError('unsupported dispatch convention normalization: re-emission is required')
-              lines = []
-              for line in original.splitlines(True):
-                  if line.startswith(('define ', 'declare ')):
-                      pattern = r'(ptr(?: (?:noalias|readonly|nonnull))* )' + re.escape(before['no_capture_attribute']) + r'(?= )'
-                      line = re.sub(pattern, lambda m: m.group(1) + after['no_capture_attribute'], line)
-                  if before['coro_end_result'] != after['coro_end_result']:
-                      line = line.replace('declare ' + before['coro_end_result'] + ' @llvm.coro.end(ptr, i1, token)',
-                                          'declare ' + after['coro_end_result'] + ' @llvm.coro.end(ptr, i1, token)')
-                      old_call = 'call void' if before['coro_end_result'] == 'void' else '%wf.coro.end = call i1'
-                      new_call = 'call void' if after['coro_end_result'] == 'void' else '%wf.coro.end = call i1'
-                      line = line.replace(old_call + ' @llvm.coro.end(ptr null, i1 false, token none)',
-                                          new_call + ' @llvm.coro.end(ptr null, i1 false, token none)')
-                  lines.append(line)
-              baseline = ''.join(lines)
-              validate_delta(original, baseline, before, after)
+          def helper_reproduction(candidate):
+              # Reverse only the compiler-selected probe group to reproduce
+              # the unsupported helper. Every other emitted byte stays intact.
+              assert_probe_attributes(candidate, 'upstream')
+              baseline = candidate.replace(new_probe, old_probe, 1)
+              validate_probe_delta(candidate, baseline)
               return baseline
 
-          def inline_candidate(original, facts):
-              assert original.count(old_probe) == 1 and '"stack-probe-size"' not in original
-              candidate = original.replace(old_probe, new_probe)
-              validate_delta(original, candidate, facts, facts, inline=True)
-              return candidate
+          def validate_probe_delta(candidate, baseline):
+              # Independently validate exact group lines and the unchanged
+              # prefix/suffix, rather than trusting the rewriting operation.
+              assert_probe_attributes(candidate, 'upstream')
+              assert_probe_attributes(baseline, 'Apple')
+              left = candidate.split('attributes #0 = { ' + new_probe + ' }')
+              right = baseline.split('attributes #0 = { ' + old_probe + ' }')
+              assert len(left) == len(right) == 2 and left == right, 'non-probe IR bytes changed'
 
-          def consumer_controls():
-              old = {'preserve_none': False, 'no_capture_attribute': 'nocapture', 'coro_end_result': 'i1'}
-              new = {'preserve_none': True, 'no_capture_attribute': 'captures(none)', 'coro_end_result': 'void'}
-              # Independent, hand-written expected input/output: not the
-              # transformer's own earlier output used as its oracle.
-              apple = ('; nocapture llvm.coro.end remain literal\n'
-                       '@nocapture = private constant [10 x i8] c"nocapture\\00"\n'
-                       'declare i1 @llvm.coro.end(ptr, i1, token)\n'
-                       'declare void @nocapture(ptr noalias nonnull nocapture %v)\n'
-                       'define i64 @wf_guard(i64 %v) #0 align 64 {\n'
-                       '  %r = add i64 %v, 1\n'
-                       '  %wf.coro.end = call i1 @llvm.coro.end(ptr null, i1 false, token none)\n'
-                       '  ret i64 %r\n}\n'
-                       'attributes #0 = { "probe-stack"="__chkstk_darwin" }\n')
-              expected = ('; nocapture llvm.coro.end remain literal\n'
-                          '@nocapture = private constant [10 x i8] c"nocapture\\00"\n'
-                          'declare void @llvm.coro.end(ptr, i1, token)\n'
-                          'declare void @nocapture(ptr noalias nonnull captures(none) %v)\n'
-                          'define i64 @wf_guard(i64 %v) #0 align 64 {\n'
-                          '  %r = add i64 %v, 1\n'
-                          '  call void @llvm.coro.end(ptr null, i1 false, token none)\n'
-                          '  ret i64 %r\n}\n'
+          def probe_delta_controls():
+              candidate = ('define i64 @wf_guard(i64 %v) #0 align 64 {\n'
+                           '  %r = add i64 %v, 1\n  ret i64 %r\n}\n'
+                           'attributes #0 = { "probe-stack"="inline-asm" "stack-probe-size"="4096" }\n')
+              expected = ('define i64 @wf_guard(i64 %v) #0 align 64 {\n'
+                          '  %r = add i64 %v, 1\n  ret i64 %r\n}\n'
                           'attributes #0 = { "probe-stack"="__chkstk_darwin" }\n')
-              assert rewrite_facts(apple, old, new) == expected
-              validate_delta(apple, apple, old, old)
-              validate_delta(apple, expected, old, new)
-              candidate = expected.replace(old_probe, new_probe)
-              validate_delta(apple, candidate, old, new, inline=True)
-              validate_delta(expected, candidate, new, new, inline=True)
-              assert rewrite_facts(expected, new, old) == apple
-              bad = [
-                  expected.replace('add i64', 'sub i64'),
-                  expected.replace('add i64', 'add i32'),
-                  expected.replace('%v, 1', '%v, 2'),
-                  expected.replace('nonnull captures', 'readonly captures'),
-                  expected.replace('@wf_guard', '@wf_changed'),
-                  expected.replace('i1 false', 'i1 true'),
-                  expected.replace('@llvm.coro.end(ptr null', '@llvm.coro.begin(ptr null'),
-                  expected.replace('declare void @nocapture', 'declare i64 @nocapture'),
-                  expected.replace('; nocapture', '; captures(none)'),
-                  expected.replace('c"nocapture\\00"', 'c"captures(none)\\00"'),
-                  expected.replace('@nocapture', '@captures_none'),
-                  expected.replace('captures(none)', 'captures (none)'),
-                  expected.replace('ptr noalias nonnull captures(none) %v', 'ptr noalias nonnull %captures(none)'),
-                  expected.replace('  ret i64 %r', '  call void @other(ptr captures(none) null)\n  ret i64 %r'),
-                  candidate.replace('"4096"', '"8192"'),
-                  candidate.replace('"inline-asm"', '"other"'),
-              ]
-              for changed in bad:
+              assert helper_reproduction(candidate) == expected
+              for changed in [expected.replace('add i64', 'sub i64'),
+                              expected.replace('i64 %v', 'i32 %v'),
+                              expected.replace('%v, 1', '%v, 2'),
+                              expected.replace('@wf_guard', '@wf_changed'),
+                              expected.replace(' #0 align', ' noinline #0 align'),
+                              expected + '; extra comment\n',
+                              expected.replace('__chkstk_darwin', 'other')]:
                   try:
-                      validate_delta(apple, changed, old, new, inline='"stack-probe-size"' in changed)
+                      validate_probe_delta(candidate, changed)
                   except AssertionError:
                       continue
-                  raise AssertionError('fact/probe byte guard accepted injected unrelated IR/context')
-              # Reject a used legacy result before any deletion, and a C part
-              # that would require a different convention/layout on upstream.
-              consumed = apple.replace('  ret i64 %r', '  %use = zext i1 %wf.coro.end to i64\n  ret i64 %r')
-              dispatch = apple.replace('@wf_guard', '@wf_guard.dispatch').replace('define i64', 'define internal i64')
-              for unsupported in [consumed, dispatch]:
+                  raise AssertionError('probe-only byte guard accepted unrelated IR edits')
+              for missing in ['', candidate.replace('"4096"', '"8192"'),
+                              candidate.replace('"inline-asm"', '"other"')]:
                   try:
-                      rewrite_facts(unsupported, old, new)
+                      helper_reproduction(missing)
                   except AssertionError:
                       continue
-                  raise AssertionError('fact rewrite accepted used coro result/unsupported dispatch upgrade')
-              source = (repo / 'compiler/src/toolchain.rs').read_text()
-              checked_probe_inputs(source)
-              changed_source = source.replace('call void @llvm.coro.end', 'call void @llvm.coro.foo', 1)
-              assert changed_source != source and len(changed_source) == len(source)
-              for invalid_source in ['', changed_source]:
-                  try:
-                      checked_probe_inputs(invalid_source)
-                  except AssertionError:
-                      continue
-                  raise AssertionError('probe source guard accepted missing/drifted source')
-              result('consumer fact and independent byte-allowlist controls', 'instrument', True,
-                     'unchanged/explicit three-fact delta/probe attributes accepted; instruction, type, constant, attribute, symbol, coro operands, other intrinsic, signature, comment, string, context, probe size, missing source, used coro SSA and unsupported dispatch upgrade rejected')
+                  raise AssertionError('probe-only byte guard accepted missing/wrong input')
+              result('reverse-probe byte controls', 'instrument', True,
+                     'exact helper-only rewrite accepted; instruction, type, constant, symbol, attribute, comment, missing input and wrong probe rejected')
 
           def negative(module):
               # Exactly the maintained negative: isolate only array_filled,
@@ -782,8 +500,7 @@ jobs:
               else:
                   assert 'chkstk' in pos and 'chkstk' not in neg, 'Apple helper positive/negative comparison failed'
 
-          def check_large(tc, original, observer, facts):
-              selected = inline_candidate(original, facts) if tc == 'upstream' else original
+          def check_large(tc, selected, observer):
               positive, pos_asm, _ = build_image(tc, 'large', selected, observer)
               unprobed, neg_asm, _ = build_image(tc, 'large-unprobed', negative(selected), observer)
               assert_probe(tc, pos_asm, neg_asm, positive)
@@ -793,8 +510,7 @@ jobs:
               floor_outcome(p, -10, b'', b'')
               result('large-frame containment and ablation', tc, True, 'SIGABRT + exact stack record; ablation SIGBUS + no record; native probe checked')
 
-          def check_recursion(tc, name, original, observer, facts):
-              selected = inline_candidate(original, facts) if tc == 'upstream' else original
+          def check_recursion(tc, name, selected, observer):
               binary, assembly, usage = build_image(tc, name, selected, observer, wide=name == 'wide', small=True)
               rows_su = [line.split('\t') for line in usage.read_text().splitlines()]
               frames = [int(fields[1]) for fields in rows_su if len(fields) == 3
@@ -832,8 +548,19 @@ jobs:
 
           def experiment():
               oracle_controls()
-              consumer_controls()
-              facts = consumer_facts()
+              probe_delta_controls()
+              # current_exe canonicalizes a compiler symlink, so copy the
+              # compiler itself into the sibling-clang layout. Clang may be a
+              # symlink: resolution follows it to its full upstream tree.
+              package = root / 'compiler with upstream sibling'
+              package.mkdir()
+              shutil.copy2(compiler, package / 'whitefootc')
+              (package / 'clang').symlink_to(upstream / 'bin/clang')
+              assert not (compiler.parent / 'clang').exists() and not (compiler.parent / 'clang').is_symlink(), 'Apple source-build lane has a sibling clang'
+              compilers = {'Apple': compiler, 'upstream': package / 'whitefootc'}
+              (root / 'compiler-lanes.json').write_text(json.dumps(
+                  {tc: {'compiler': str(exe), 'clang': str(toolchains[tc])}
+                   for tc, exe in compilers.items()}, indent=2) + '\n')
               fixture_text = (backend / 'tests/exhaustion.rs').read_text()
               source_text = (repo / 'compiler/tests/support/native.rs').read_text()
               sources = {'large': raw_constant(fixture_text, 'LARGE_FRAME_SPINE'),
@@ -844,60 +571,50 @@ jobs:
               boundary = root / 'stack_boundary.c'
               shutil.copyfile(backend / 'tests/stack_boundary.c', boundary)
               originals = {'Apple': {}, 'upstream': {}}
-              for name, source in sources.items():
-                  directory = root / 'fixtures' / name
-                  directory.mkdir(parents=True, exist_ok=True)
-                  wf, raw = directory / 'fixture.wf', directory / 'compiler-raw.ll'
-                  wf.write_text(source)
-                  must_run(f'fixtures/{name}/emit', [compiler, '--emit-llvm', '-o', raw, wf])
-                  _, raw_counts = fact_fingerprint(raw.read_text(), facts['Apple'])
-                  text = expose(raw.read_text(), large=name == 'large')
-                  _, apple_counts = fact_fingerprint(text, facts['Apple'])
-                  assert raw_counts == apple_counts, 'observer adaptation changed consumer fact counts'
-                  originals['Apple'][name] = text
-                  (directory / 'original.ll').write_text(text)
-                  baseline = rewrite_facts(text, facts['Apple'], facts['upstream'])
-                  counts = validate_delta(text, baseline, facts['Apple'], facts['upstream'])
-                  originals['upstream'][name] = baseline
-                  (directory / 'upstream-fact-original.ll').write_text(baseline)
-                  (directory / 'consumer-fact.diff').write_text(''.join(difflib.unified_diff(
-                      text.splitlines(True), baseline.splitlines(True), fromfile='original.ll', tofile='upstream-fact-original.ll')))
-                  candidate = inline_candidate(baseline, facts['upstream'])
-                  validate_delta(text, candidate, facts['Apple'], facts['upstream'], inline=True)
-                  (directory / 'inline.ll').write_text(candidate)
-                  (directory / 'probe-only.diff').write_text(''.join(difflib.unified_diff(
-                      baseline.splitlines(True), candidate.splitlines(True), fromfile='upstream-fact-original.ll', tofile='inline.ll')))
-                  deltas = {
-                      'no_capture_attribute': counts['capture'] if facts['Apple']['no_capture_attribute'] != facts['upstream']['no_capture_attribute'] else 0,
-                      'coro_end_result': counts['coro_declaration'] + counts['coro_call'] if facts['Apple']['coro_end_result'] != facts['upstream']['coro_end_result'] else 0,
-                      'preserve_none': 0,
-                  }
-                  (directory / 'consumer-fact-counts.json').write_text(json.dumps(
-                      {'occurrences': counts, 'changed_occurrences': deltas,
-                       'facts': facts, 'probe_attribute_changes': 1}, indent=2) + '\n')
-                  result(name + ' consumer-fact baseline and byte allowlist', 'instrument', True,
-                         json.dumps({'occurrences': counts, 'changed_occurrences': deltas}, sort_keys=True))
+              for tc, selected_compiler in compilers.items():
+                  for name, source in sources.items():
+                      directory = root / 'fixtures' / tc / name
+                      directory.mkdir(parents=True, exist_ok=True)
+                      wf, raw = directory / 'fixture.wf', directory / 'compiler-raw.ll'
+                      wf.write_text(source)
+                      # No fact substitution: every LLVM form comes from the
+                      # compiler process probing its actual selected consumer.
+                      must_run(f'fixtures/{tc}/{name}/emit',
+                               [selected_compiler, '--emit-llvm', '-o', raw, wf])
+                      assert_probe_attributes(raw.read_text(), tc)
+                      text = expose(raw.read_text(), large=name == 'large')
+                      assert_probe_attributes(text, tc)
+                      originals[tc][name] = text
+                      (directory / 'observer-adapted.ll').write_text(text)
+                      result(name + ' compiler-selected probe attributes', tc, True,
+                             new_probe if tc == 'upstream' else old_probe)
+                      if tc == 'upstream':
+                          baseline = helper_reproduction(text)
+                          (directory / 'unsupported-helper.ll').write_text(baseline)
+                          (directory / 'reverse-probe.diff').write_text(''.join(difflib.unified_diff(
+                              text.splitlines(True), baseline.splitlines(True),
+                              fromfile='observer-adapted.ll', tofile='unsupported-helper.ll')))
               # Small feasibility sample first; do not build all runtime units
               # until a real compiler-emitted candidate reaches object code.
               for name in ['narrow', 'large', 'wide']:
-                  directory = root / 'fixtures' / name
+                  directory = root / 'fixtures' / 'upstream' / name
                   p = run(f'upstream/{name}/reported-failure', cflags(toolchains['upstream']) +
-                          ['-Wno-override-module', '-x', 'ir', directory / 'upstream-fact-original.ll', '-c', '-o', directory / 'upstream-fact-original.o'])
+                          ['-Wno-override-module', '-x', 'ir', directory / 'unsupported-helper.ll', '-c', '-o', directory / 'unsupported-helper.o'])
                   diagnostic = b'Unsupported stack probing method'
                   okay = p.returncode != 0 and diagnostic in p.stderr
                   result(name + ' reported failure reproduction', 'upstream', okay,
                          f'exit {p.returncode}; ' + ('exact backend error observed' if okay else
                          'expected backend error absent; inspect stderr for an independent capability/IR blocker'))
                   p = run(f'upstream/{name}/candidate-screen', cflags(toolchains['upstream']) +
-                          ['-Wno-override-module', '-x', 'ir', directory / 'inline.ll', '-c', '-o', directory / 'inline.o'])
+                          ['-Wno-override-module', '-x', 'ir', directory / 'observer-adapted.ll', '-c', '-o', directory / 'inline.o'])
                   result(name + ' probe-only candidate object', 'upstream', p.returncode == 0,
-                         f'exit {p.returncode}; only probe attributes changed relative to measured consumer-fact baseline')
+                         f'exit {p.returncode}; actual compiler-emitted upstream facts and inline+4096 probe attributes')
               for tc in ['Apple', 'upstream']:
                   attempt('large-frame containment and ablation', tc,
-                          lambda tc=tc: check_large(tc, originals[tc]['large'], observer, facts[tc]))
+                          lambda tc=tc: check_large(tc, originals[tc]['large'], observer))
                   for name in ['narrow', 'wide']:
                       attempt(name + ' recursion floor boundary', tc,
-                              lambda tc=tc, name=name: check_recursion(tc, name, originals[tc][name], boundary, facts[tc]))
+                              lambda tc=tc, name=name: check_recursion(tc, name, originals[tc][name], boundary))
 
           try:
               experiment()
@@ -909,7 +626,7 @@ jobs:
           PY
           cp "$RUNNER_TEMP/darwin-probe-qualify.py" "$QUALIFY_DIR/instrument.py"
 
-      - name: Compare Apple original and upstream consumer-fact probe-only candidate
+      - name: Qualify actual Apple and sibling-upstream compiler emission
         id: experiment
         run: |
           set +e
@@ -949,8 +666,8 @@ jobs:
               summary.write('| Step | Toolchain | Result |\n| --- | --- | --- |\n')
               for row in rows:
                   summary.write('| ' + ' | '.join(cell.replace('|', '\\|').replace('\n', ' ') for cell in row) + ' |\n')
-              summary.write('\nThe unchanged compiler emits Apple-host forms. Its own three probe inputs run against both actual consumers; measured capture spelling, preserve_none support and coro.end result select the upstream fact baseline, standing in for later bundled sibling-clang fact resolution. The candidate changes only probe attributes relative to that baseline. Dispatch convention/layout changes outside a known ABI-only rewrite fail explicitly.\n')
-              summary.write('\nArtifact contains probe inputs, commands, answers and facts JSON/diff; intact raw compiler and Apple observer-adapted IR; upstream-fact original IR and consumer-fact diff/counts; inline candidate and probe-only diff; assembly/stack reports, final disassembly, direct signal/record outcomes and logs. Independent byte/context controls reject every other IR change; probe launch/file errors and timeouts fail setup.\n')
+              summary.write('\nThe compiler is built once. The source-build lane has no sibling clang and selects Apple; a compiler copy beside upstream clang exercises package resolution and all compiler-owned capability probes. Raw IR must select Apple helper or upstream inline+4096 directly. No capture, coroutine or calling-convention facts are rewritten. The unsupported-helper reproduction reverses only upstream probe attributes under an independent byte guard; all native loop, exact signal/record, ablation and entry/worker boundary controls remain.\n')
+              summary.write('\nArtifacts retain raw compiler IR, observer-adapted IR, helper reproduction and reverse-probe diff, compiler paths, command metadata, assembly/stack reports, linked disassembly, direct signal/record outcomes and logs. The former copied probe inputs and three-fact allowlist controls were removed because actual compiler emission now owns those forms; no scratch fact transformer remains.\n')
           PY
 
       - uses: actions/upload-artifact@v4
