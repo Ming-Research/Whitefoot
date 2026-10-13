@@ -214,6 +214,11 @@ impl ClausePlaces {
         });
     }
 
+    /// The recorded definitions' bindings, in written order.
+    pub(super) fn bindings(&self) -> impl Iterator<Item = BindingId> + '_ {
+        self.definitions.iter().map(|definition| definition.binding)
+    }
+
     /// The places one clause forms: those of every definition its expansion
     /// reaches that `formed` does not already hold, in definition order,
     /// then its own. Each definition reached is added to `formed`.
@@ -600,14 +605,14 @@ impl<'unit> Checker<'_, 'unit> {
             requirement_places
                 .push(clause_places.clause(&condition.expression, &mut expanded_definitions));
         }
-        let definitions = definitions
-            .into_iter()
-            .map(|definition| {
+        let definitions = clause_places
+            .bindings()
+            .map(|binding| {
                 let expression = expanded_bindings
-                    .remove(&definition.binding)
+                    .remove(&binding)
                     .and_then(ExpandedClauseExpression::into_goal_expression)
                     .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                Ok((definition.binding, expression))
+                Ok((binding, expression))
             })
             .collect::<Result<Vec<_>, CheckStop>>()?;
         Ok(CheckedRequires {
