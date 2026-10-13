@@ -53,6 +53,7 @@ mod payload_enums;
 mod ranges;
 mod read_through;
 mod value_equality;
+mod wake;
 // Retired with [OWN-6] and [OWN-14]: the `reborrows` module's four tests all
 // had the reborrow as their subject - a callee taking `&uniq 'r T` and
 // returning `&uniq 'r target^`, the child chain through a `box<u64>`

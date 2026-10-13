@@ -5,6 +5,13 @@ Newest first. One entry per approved change of the tree: a dated title,
 the owner's agent instructions own the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-12 Conditional waits notify the oldest waiter whose wake test holds
+
+Nodes: compiler/waiting-contexts, compiler/waiting-contexts/state-locks
+
+Owner-approved: On the shared status board on 2026-10-12, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve Whitefoot#377's change to the design tree? The change: conditional waits use registered wake tests; a write notifies only the oldest waiter whose condition may hold; a waiter that has waited longer than 1 ms gets one attempt first, and newcomers cannot take it ahead of it" (translated), whose background listed each changed and added decision of the two nodes and the four added refusals. The direction was the owner's choice of A on the card for design A, registered wake tests, on 2026-10-12.
+
+Summary: A statement whose guard reads false registers a watch with a wake test of at most four comparisons over its object's own fields and fixed values, every other part of the guard counted as true, so a false test proves a false guard. A write to an ordinary object evaluates each distinct test once and notifies only the oldest watch whose test holds, instead of waking every watcher, because waking watchers whose guards stay false was the measured cost of the earlier oldest-only handoff; a map entry's write still wakes the map's watchers. A notified watch that has waited longer than 1 ms reserves the object's next attempt against statements holding nothing, a provisional threshold with its reopening condition, while holders of earlier objects, map-entry holders and cancel triggers pass to avoid deadlock. A notified retry that reads false or does not write passes the notification on, a holder's release rescans after writes during its hold, and a release carries its statement's write flag so read-only releases notify nobody. Watches sit in per-test buckets and the acquisition queue stores only its tail, freeing the slot for the reservation. On the 14900K, 50 waiters' longest wait fell from 534 ms to at most 1.34 ms against a 3.3 ms criterion, with run time 0.69 to 0.70 of the base; strict turns, bounded overtaking, oldest-only handoff, a releaser running guards and frozen foreign comparisons are refused.
 ## 2026-10-13 A release carries the specification and the standard library interfaces of its commit
 
 Nodes: compiler/downstream-releases

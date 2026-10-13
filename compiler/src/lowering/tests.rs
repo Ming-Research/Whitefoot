@@ -2,7 +2,9 @@
 
 #![allow(clippy::panic)]
 
+mod atomic_groups;
 mod overlap_storage;
+mod wake;
 
 use crate::lexer::{LexLimits, LexOutcome, lex};
 use crate::{

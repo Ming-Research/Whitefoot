@@ -1,0 +1,309 @@
+alias Clock = std::time::Clock;
+alias Instant = std::time::Instant;
+alias Inputs = std::process::Inputs;
+alias ExitStatus = std::process::ExitStatus;
+alias PriorityOrder = std::collections::priority_queue::PriorityOrder;
+
+struct State {
+  out: u64;
+  counter: u64;
+  checksum: u64;
+}
+
+struct Measured {
+  delays: Box<Slots<u64>>;
+  hold_ns: u64;
+}
+
+struct Runs {
+  measured: Measured;
+  next: Option<Box<Runs>>;
+}
+
+binding DelayOrder : PriorityOrder<u64, Bool> {
+  compare = delay_order;
+}
+
+fn delay_order(env: &Bool, left: &u64, right: &u64) -> order: i32 reads(env), reads(left), reads(right) {
+  let order = 0_i32;
+  if left^ < right^ {
+    set order = -1_i32;
+  } else if left^ > right^ {
+    set order = 1_i32;
+  }
+  if env^ {
+    return order;
+  }
+  return 0_i32 -wrap order;
+}
+
+fn hold_work(seed: u64) -> value: u64 pure {
+  let value = seed;
+  for (i in 0_u64..4096_u64) {
+    let shifted = ishr(value, 13_u32);
+    let mixed = ixor(value, shifted);
+    set value = mixed *wrap 6364136223846793005_u64;
+    set value = value +wrap i;
+  }
+  return value;
+}
+
+fn contend(state: Shared<State>, clock: Clock, id: u64, rounds: u64) -> measured: Measured pure waits {
+  let delays = box_slots_new::<u64>(capacity: rounds);
+  let hold_ns = 0_u64;
+  let checksum = id;
+  for (i in 0_u64..rounds) {
+    let started = std::time::now(clock: &clock);
+    let acquired = started;
+    atomic p = &state when p^.out == 0_u64 {
+      set acquired = std::time::now(clock: &clock);
+      set p^.out = 1_u64;
+    }
+    let seed = checksum +wrap i;
+    set checksum = hold_work(seed: seed);
+    atomic p = &state {
+      let returned = std::time::now(clock: &clock);
+      let held = std::time::nanoseconds_from(earlier: acquired, later: returned);
+      set hold_ns = hold_ns +sat held;
+      set p^.counter = p^.counter +sat 1_u64;
+      set p^.checksum = ixor(p^.checksum, checksum);
+      set p^.out = 0_u64;
+    }
+    let delay = std::time::nanoseconds_from(earlier: started, later: acquired);
+    if delays.inner.len < delays.inner.cap {
+      place_back(window: &delays.inner, value: delay);
+    }
+  }
+  return Measured(delays: move delays, hold_ns: hold_ns);
+}
+
+fn collect(state: &Shared<State>, clock: &Clock, remaining: u64, rounds: u64) -> runs: Option<Box<Runs>> reads(state), reads(clock) waits {
+  if remaining == 0_u64 {
+    return None<Box<Runs>>();
+  }
+  let handle = shared_share::<State>(shared: state);
+  let timer = std::time::clock_share(clock: clock);
+  let measured = spawn contend(state: move handle, clock: move timer, id: remaining, rounds: rounds);
+  let next_count = remaining -sat 1_u64;
+  let tail = collect(state: state, clock: clock, remaining: next_count, rounds: rounds);
+  let row = Runs(measured: move measured, next: move tail);
+  let boxed = box_new::<Runs>(value: move row);
+  return Some<Box<Runs>>(value: move boxed);
+}
+
+fn argument(args: &std::text::Args, position: u64, fallback: u64) -> value: u64 reads(args) {
+  let bytes = array_filled::<u8, 20>(value: 0_u8);
+  let length = 0_u64;
+  match std::text::arg_get(args: args, position: position) {
+    Ok(value: text) => {
+      match std::text::host_copy_utf8(value: &text, destination: &bytes[0_u64..20_u64], start: 0_u64, end: 20_u64) {
+        Ok(value: copied) => {
+          set length = copied;
+        }
+        Err(error: copying_error) => {
+          return 0_u64;
+        }
+      }
+    }
+    Err(error: missing_argument) => {
+      return fallback;
+    }
+  }
+  if length == 0_u64 {
+    return 0_u64;
+  }
+  let value = 0_u64;
+  for (i in 0_u64..length) {
+    if i < 20_u64 {
+      let byte = bytes[i];
+      if byte < 48_u8 {
+        return 0_u64;
+      } else if byte > 57_u8 {
+        return 0_u64;
+      }
+      let digit = byte -sat 48_u8;
+      let widened = cvt::<u8, u64>(digit);
+      let scaled = value *sat 10_u64;
+      set value = scaled +sat widened;
+    }
+  }
+  return value;
+}
+
+fn word(out: &Box<Slots<u8>>, bytes: &[u8]) -> r: unit reads(bytes), writes(out) {
+  for (i in 0_u64..bytes^.len) {
+    if out^.inner.len < out^.inner.cap {
+      place_back(window: &out^.inner, value: bytes^[i]);
+    }
+  }
+  return unit;
+}
+
+fn number(out: &Box<Slots<u8>>, value: u64) -> r: unit writes(out) {
+  let digits = array_filled::<u8, 20>(value: 0_u8);
+  let rest = value;
+  let length = 0_u64;
+  loop {
+    let low = rest % 10_u64;
+    let byte = cvt.wrap::<u64, u8>(low);
+    if length < 20_u64 {
+      set digits[length] = byte +wrap 48_u8;
+      set length = length +sat 1_u64;
+    }
+    set rest = rest / 10_u64;
+    if rest == 0_u64 {
+      break;
+    }
+  }
+  for (i in 0_u64..length) {
+    let back = length -sat i;
+    let index = back -sat 1_u64;
+    if index < 20_u64 {
+      if out^.inner.len < out^.inner.cap {
+        place_back(window: &out^.inner, value: digits[index]);
+      }
+    }
+  }
+  return unit;
+}
+
+const heading: Array<u8, 76> = "contexts,rounds,count,p50_ns,p99_ns,max_ns,hold_ns_mean,runtime_ns,checksum\n";
+
+const comma: Array<u8, 1> = ",";
+
+const newline: Array<u8, 1> = "\n";
+
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  let Inputs(args: args, cwd: cwd_directory, stdout: stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
+  std::fs::close_directory_write(factory: &handles, directory: move cwd_write);
+  std::fs::close_directory(factory: &handles, directory: move cwd);
+  let n = argument(args: &args, position: 1_u64, fallback: 0_u64);
+  let rounds = argument(args: &args, position: 2_u64, fallback: 1000_u64);
+  let small = n == 2_u64;
+  let medium = n == 8_u64;
+  let large = n == 50_u64;
+  let usual = bor(small, medium);
+  let allowed = bor(usual, large);
+  if bnot(allowed) {
+    return std::process::exit_status(code: 1_u8);
+  }
+  if rounds == 0_u64 {
+    return std::process::exit_status(code: 1_u8);
+  } else if rounds > 20000_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  let initial = State(out: 0_u64, counter: 0_u64, checksum: 0_u64);
+  let state = shared_new::<State>(value: initial);
+  let started = std::time::now(clock: &clock);
+  let runs = collect(state: &state, clock: &clock, remaining: n, rounds: rounds);
+  let ended = std::time::now(clock: &clock);
+  let runtime = std::time::nanoseconds_from(earlier: started, later: ended);
+  let total = n *sat rounds;
+  let delays = box_slots_new::<u64>(capacity: total);
+  let hold_ns = 0_u64;
+  loop @gather {
+    match move runs {
+      None() => {
+        break @gather;
+      }
+      Some(value: row) => {
+        for (i in 0_u64..row.inner.measured.delays.inner.len) {
+          if delays.inner.len < delays.inner.cap {
+            let delay = row.inner.measured.delays.inner[i];
+            place_back(window: &delays.inner, value: delay);
+          }
+        }
+        set hold_ns = hold_ns +sat row.inner.measured.hold_ns;
+        set runs = move row.inner.next;
+      }
+    }
+  }
+  let count = delays.inner.len;
+  let counted = 0_u64;
+  let checksum = 0_u64;
+  atomic p = &state {
+    set counted = p^.counter;
+    set checksum = p^.checksum;
+  }
+  if count == 0_u64 {
+    return std::process::exit_status(code: 2_u8);
+  } else if count != total {
+    return std::process::exit_status(code: 2_u8);
+  } else if counted != total {
+    return std::process::exit_status(code: 2_u8);
+  }
+  let p50 = 0_u64;
+  let p99 = 0_u64;
+  let maximum = 0_u64;
+  let middle = count +sat 1_u64;
+  let rank50 = middle / 2_u64;
+  let scaled = count *sat 99_u64;
+  let rounded = scaled +sat 99_u64;
+  let rank99 = rounded / 100_u64;
+  let ascending = True();
+  if delays.inner.cap <= 1000000_u64 {
+    let queue = std::collections::priority_queue::priority_queue_heapify::<DelayOrder, 1000000>(storage: move delays, env: &ascending);
+    for (i in 0_u64..count) {
+      let length = std::collections::priority_queue::priority_queue_len::<u64, 1000000>(queue: &queue);
+      if length > 0_u64 {
+        let delay = std::collections::priority_queue::priority_queue_pop::<DelayOrder, 1000000>(queue: &queue, env: &ascending);
+        let rank = i +sat 1_u64;
+        if rank == rank50 {
+          set p50 = delay;
+        }
+        if rank == rank99 {
+          set p99 = delay;
+        }
+        set maximum = delay;
+      }
+    }
+  } else {
+    return std::process::exit_status(code: 2_u8);
+  }
+  let out = box_slots_new::<u8>(capacity: 512_u64);
+  word(out: &out, bytes: &heading[0_u64..76_u64]);
+  number(out: &out, value: n);
+  word(out: &out, bytes: &comma[0_u64..1_u64]);
+  number(out: &out, value: rounds);
+  word(out: &out, bytes: &comma[0_u64..1_u64]);
+  number(out: &out, value: count);
+  word(out: &out, bytes: &comma[0_u64..1_u64]);
+  number(out: &out, value: p50);
+  word(out: &out, bytes: &comma[0_u64..1_u64]);
+  number(out: &out, value: p99);
+  word(out: &out, bytes: &comma[0_u64..1_u64]);
+  number(out: &out, value: maximum);
+  word(out: &out, bytes: &comma[0_u64..1_u64]);
+  let mean_hold = hold_ns / count;
+  number(out: &out, value: mean_hold);
+  word(out: &out, bytes: &comma[0_u64..1_u64]);
+  number(out: &out, value: runtime);
+  word(out: &out, bytes: &comma[0_u64..1_u64]);
+  number(out: &out, value: checksum);
+  word(out: &out, bytes: &newline[0_u64..1_u64]);
+  let length = out.inner.len;
+  let sent = 0_u64;
+  let never = std::time::cancel_never();
+  let deadline = None<Instant>();
+  loop @emit {
+    if sent >= length {
+      break @emit;
+    }
+    if sent <= length {
+      let result = std::io::write_once(factory: &handles, output: &stdout, source: &out.inner[0_u64..length], start: sent, end: length, deadline: deadline, cancel: &never);
+      match result {
+        Ok(value: next_sent) => {
+          if next_sent <= sent {
+            return std::process::exit_status(code: 3_u8);
+          }
+          set sent = next_sent;
+        }
+        Err(error: writing_error) => {
+          return std::process::exit_status(code: 3_u8);
+        }
+      }
+    }
+  }
+  return std::process::exit_status(code: 0_u8);
+}
