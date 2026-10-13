@@ -2173,6 +2173,9 @@ impl IrFunction {
 
 #[derive(Clone, Debug)]
 pub struct IrProgram {
+    /// Ordinary lowering from the same checked input and roots, retained before
+    /// optional parallel extraction. Its own canonical graph is always absent.
+    pub(crate) canonical_sequential: Option<Box<Self>>,
     /// OP-9 ceilings before target representation choices, indexed by nominal.
     pub(crate) nominal_ceilings: Vec<IrLayoutCeiling>,
     pub(crate) nominals: Vec<IrNominal>,

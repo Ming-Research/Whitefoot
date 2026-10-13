@@ -207,7 +207,10 @@ const COMPLETION_COMPILE_UNITS: &[&str] = &[
 #[cfg(not(target_os = "windows"))]
 const TARGET_COMPILE_ARGUMENTS: &[&str] = &["-pthread"];
 #[cfg(target_os = "windows")]
-const TARGET_COMPILE_ARGUMENTS: &[&str] = &[];
+// Request words must remain in native TLS through FLS cleanup; emutls has
+// an independent reclamation protocol. Apply this to both C and LLVM inputs,
+// including their cached construction keys.
+const TARGET_COMPILE_ARGUMENTS: &[&str] = &["-fno-emulated-tls"];
 
 /// The linker a link-time-optimized link runs on this host, and the
 /// argument prefix naming the directory where a ThinLTO link of fragments

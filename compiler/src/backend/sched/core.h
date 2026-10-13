@@ -15,6 +15,9 @@ _Static_assert((WF_SCHED_LANE_SLOTS & (WF_SCHED_LANE_SLOTS - 1)) == 0, "deque si
  * stays on that owner's ordinary stack. Oversized/full slots refuse; the
  * compiler executes the same ordinary call. These u64 ABI values must stay
  * 64-bit on Windows LLP64 as well as POSIX LP64. */
+/* Direct relaxed polling by generated code; all accesses use atomics.
+ * The word is advisory, not a task-publication synchronization edge. */
+extern _Thread_local uint64_t wf__par_demand_word;
 void *wf__par_acquire_lane(uint64_t bytes);
 void wf__par_publish(void *frame, void (*run)(void *));
 void wf__par_join(void *frame);

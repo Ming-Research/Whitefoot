@@ -450,9 +450,7 @@ fn forwarded_order(
     for class in &mut forwarded {
         class.sort_unstable();
     }
-    forwarded.sort_unstable_by_key(|class| {
-        (class.len() != members.len(), class.first().copied())
-    });
+    forwarded.sort_unstable_by_key(|class| (class.len() != members.len(), class.first().copied()));
     let mut orders = Vec::with_capacity(members.len());
     for (member, slots) in parameter_slots.iter().enumerate() {
         let mut order: Vec<usize> = forwarded
@@ -626,9 +624,9 @@ fn formal_origins(
             .blocks()
             .iter()
             .filter_map(|block| match block.terminator() {
-                IrTerminator::Jump { target, arguments, .. } => {
-                    Some((target.index(), arguments.as_slice()))
-                }
+                IrTerminator::Jump {
+                    target, arguments, ..
+                } => Some((target.index(), arguments.as_slice())),
                 _ => None,
             })
             .collect(),
@@ -969,10 +967,7 @@ impl FunctionEmitter<'_, '_> {
                     if field == 0 {
                         definition.push(DeferredPart::Text("poison".to_owned()));
                     } else {
-                        definition.push(DeferredPart::Local(format!(
-                            "{name}.field{}",
-                            field - 1
-                        )));
+                        definition.push(DeferredPart::Local(format!("{name}.field{}", field - 1)));
                     }
                     definition.extend([
                         DeferredPart::Text(format!(", {} ", kind.fields()[field])),
@@ -1244,6 +1239,7 @@ mod tests {
             },
         });
         let program = IrProgram {
+            canonical_sequential: None,
             nominal_ceilings: Vec::new(),
             nominals: Vec::new(),
             elements: Vec::new(),

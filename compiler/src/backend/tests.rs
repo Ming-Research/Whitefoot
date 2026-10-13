@@ -13,6 +13,7 @@
 mod arithmetic_obligations;
 mod arrays;
 mod base64;
+mod canonical_compute;
 mod checked_division;
 mod completion;
 mod containers;
@@ -441,7 +442,10 @@ fn append_runtime_units_with_library_defines(
             COMPLETION_LINUX_IO_URING_SOURCE,
         ),
         ("concurrent_map.h", crate::CONCURRENT_MAP_HEADER),
-        ("concurrent_map_layout.h", crate::CONCURRENT_MAP_LAYOUT_HEADER),
+        (
+            "concurrent_map_layout.h",
+            crate::CONCURRENT_MAP_LAYOUT_HEADER,
+        ),
         ("concurrent_map.c", crate::CONCURRENT_MAP_SOURCE),
         ("keyed_table.c", crate::KEYED_TABLE_SOURCE),
     ];
@@ -450,8 +454,11 @@ fn append_runtime_units_with_library_defines(
     for (name, source) in units {
         let fixture_source = (name == "ordinary_values.c" && !library_fixture.is_empty())
             .then(|| format!("{source}\n{library_fixture}\n"));
-        std::fs::write(directory.join(name), fixture_source.as_deref().unwrap_or(source))
-            .expect("write ordinary library unit");
+        std::fs::write(
+            directory.join(name),
+            fixture_source.as_deref().unwrap_or(source),
+        )
+        .expect("write ordinary library unit");
     }
     let custom_library = !library_defines.is_empty() || !library_fixture.is_empty();
     let mut artifacts: Vec<_> = units.into_iter().map(|(name, _)| name).collect();
@@ -566,7 +573,14 @@ pub(super) fn build_linked_executable_with_library_defines(
     library_defines: &[String],
     directory: &Path,
 ) -> PathBuf {
-    build_linked_executable_with_library_fixture(llvm, host, defines, library_defines, "", directory)
+    build_linked_executable_with_library_fixture(
+        llvm,
+        host,
+        defines,
+        library_defines,
+        "",
+        directory,
+    )
 }
 
 /// Appends a test-only fixture to the staged ordinary library translation unit,
@@ -1114,29 +1128,32 @@ fn main() -> status: std::process::ExitStatus pure {
     // tag at field 0 and each selected payload field with its own type.
     // Payload's union has three common padding bytes after its byte tag;
     // Compact's register-returned product keeps its byte tag store.
-    let initialized = |body: &str, ty: &str, tag: u32, prefix_width: u8, fields: &[(String, &str)]| {
-        assert!(
-            body.contains(&format!("store {ty} zeroinitializer, ptr %wf.result")),
-            "the baseline constructor initializes the complete result: {body}"
-        );
-        assert!(!body.contains("poison"), "{body}");
-        assert!(!body.contains("undef"), "{body}");
-        let tag_address = field_address(body, ty, 0).expect("the tag has a destination at field 0");
-        assert!(
-            body.lines()
-                .any(|line| line.trim() == format!("store i{prefix_width} {tag}, ptr {tag_address}")),
-            "the tag uses the expected union prefix or product leaf width: {body}"
-        );
-        for (address, field_type) in fields {
+    let initialized =
+        |body: &str, ty: &str, tag: u32, prefix_width: u8, fields: &[(String, &str)]| {
             assert!(
-                body.lines().any(|line| {
-                    line.trim().starts_with(&format!("store {field_type} "))
-                        && line.ends_with(&format!(", ptr {address}"))
-                }),
-                "each selected payload field is initialized: {body}"
+                body.contains(&format!("store {ty} zeroinitializer, ptr %wf.result")),
+                "the baseline constructor initializes the complete result: {body}"
             );
-        }
-    };
+            assert!(!body.contains("poison"), "{body}");
+            assert!(!body.contains("undef"), "{body}");
+            let tag_address =
+                field_address(body, ty, 0).expect("the tag has a destination at field 0");
+            assert!(
+                body.lines()
+                    .any(|line| line.trim()
+                        == format!("store i{prefix_width} {tag}, ptr {tag_address}")),
+                "the tag uses the expected union prefix or product leaf width: {body}"
+            );
+            for (address, field_type) in fields {
+                assert!(
+                    body.lines().any(|line| {
+                        line.trim().starts_with(&format!("store {field_type} "))
+                            && line.ends_with(&format!(", ptr {address}"))
+                    }),
+                    "each selected payload field is initialized: {body}"
+                );
+            }
+        };
     let union_constructors: [(&str, u32, &[&str]); 3] = [
         ("empty_payload", 0, &[]),
         ("number_payload", 1, &["i32"]),

@@ -320,6 +320,10 @@ struct wf__par_slot {
 };
 
 struct wf__par_lane {
+    /* Permanent lane storage protects the registered TLS address's lifetime. */
+    _Alignas(WF_PAR_CACHE_LINE) uint64_t *request_word;
+    unsigned request_users;
+    wf_prim_exit_registration request_cleanup;
     /* Thieves advance top; only this lane's owner writes bottom/free_head.
      * Ring cells are atomic because a losing thief may read across reuse. */
     _Alignas(WF_PAR_CACHE_LINE) unsigned long long top;
@@ -715,6 +719,69 @@ static _Thread_local struct wf__par_lane *wf__par_self;
 
 static _Thread_local int wf__par_attached;
 
+/* Windows construction explicitly selects native PE TLS with Clang's
+ * -fno-emulated-tls. Its OS lifetime encloses the FLS cleanup; compiler-emulated
+ * TLS with an independent destructor is not this exported polling ABI. */
+#if defined(_WIN32)
+_Thread_local uint64_t wf__par_demand_word;
+#else
+__attribute__((tls_model("initial-exec"))) _Thread_local uint64_t wf__par_demand_word;
+#endif
+static wf_prim_exit_key wf__par_word_key;
+static unsigned wf__par_word_key_once;
+
+#if defined(WF_SCHED_REQUEST_TEST)
+static void wf_sched_request_test_acquired(void);
+static void wf_sched_request_test_withdrawn(void);
+static void wf_sched_request_test_released(void);
+static void wf_sched_request_test_cleared(void);
+#endif
+#if defined(WF_SCHED_STARTUP_TEST)
+static uint64_t wf_sched_startup_test_window_us(uint64_t selected);
+static void wf_sched_startup_test_before_register(void);
+static void wf_sched_startup_test_helper_ready(unsigned lane);
+static void wf_sched_startup_test_window_entered(unsigned lane);
+static void wf_sched_startup_test_before_park(unsigned lane);
+#endif
+
+/* An SC count increment precedes each pointer read. A requester either reads
+ * NULL after withdrawal, or withdrawal observes its count and waits until its
+ * last possible store is complete. Lane storage itself lasts for the process. */
+static void wf__par_withdraw_word(void *opaque) {
+    struct wf__par_lane *lane = opaque;
+    __atomic_store_n(&lane->request_word, (uint64_t *)NULL, __ATOMIC_SEQ_CST);
+#if defined(WF_SCHED_REQUEST_TEST)
+    wf_sched_request_test_withdrawn();
+#endif
+    while (__atomic_load_n(&lane->request_users, __ATOMIC_SEQ_CST) != 0)
+        wf_prim_yield();
+#if defined(WF_SCHED_REQUEST_TEST)
+    wf_sched_request_test_released();
+#endif
+}
+static void wf__par_word_key_init(void) {
+    if (wf_prim_exit_key_init(&wf__par_word_key, wf__par_withdraw_word)) abort();
+}
+static void wf__par_register_word(struct wf__par_lane *lane) {
+    wf__sched_once(&wf__par_word_key_once, wf__par_word_key_init);
+    if (wf_prim_exit_bind(&lane->request_cleanup, &wf__par_word_key, lane)) abort();
+    __atomic_store_n(&lane->request_word, &wf__par_demand_word, __ATOMIC_RELEASE);
+    /* Every registering lane gets a first opportunity to expose work, even
+     * after all potential requesters have stopped scanning or parked. */
+    __atomic_store_n(&wf__par_demand_word, (uint64_t)1, __ATOMIC_RELAXED);
+}
+static void wf__par_request(struct wf__par_lane *victim) {
+    uint64_t *word;
+    __atomic_fetch_add(&victim->request_users, 1u, __ATOMIC_SEQ_CST);
+    word = __atomic_load_n(&victim->request_word, __ATOMIC_SEQ_CST);
+#if defined(WF_SCHED_REQUEST_TEST)
+    wf_sched_request_test_acquired();
+#endif
+    if (word != NULL && __atomic_load_n(word, __ATOMIC_RELAXED) == 0)
+        __atomic_store_n(word, (uint64_t)1, __ATOMIC_RELAXED);
+    __atomic_fetch_sub(&victim->request_users, 1u, __ATOMIC_RELEASE);
+}
+
 static unsigned wf__par_ready;
 static wf_prim_thread wf__par_threads[WF_PAR_MAX_LANES];
 
@@ -904,6 +971,9 @@ static struct wf__par_slot *wf__par_find(struct wf__par_lane *lane) {
             return slot;
         }
     }
+    /* One advisory request per failed scan, skipping the scanning lane. */
+    if (&wf__par_lanes[offset] == lane) offset = (offset + 1) % count;
+    wf__par_request(&wf__par_lanes[offset]);
     return NULL;
 }
 
@@ -1038,6 +1108,9 @@ static int wf__par_stay_hot(struct wf__par_idling *idling) {
         if (now != 0) {
             if (idling->entered == 0) {
                 idling->entered = now;
+#if defined(WF_SCHED_STARTUP_TEST)
+                wf_sched_startup_test_window_entered((unsigned)(wf__par_self - wf__par_lanes));
+#endif
             }
             if (now - idling->entered < wf__par_idle_window_us) {
                 idling->rounds = 0;
@@ -1124,8 +1197,12 @@ static void wf__par_worker_main(void *opaque) {
     wf__par_self = lane;
     wf__par_attached = 1;
     wf_prim_floor_attach();
+    wf__par_register_word(lane);
 
     __atomic_add_fetch(&wf__par_ready, 1u, __ATOMIC_RELEASE);
+#if defined(WF_SCHED_STARTUP_TEST)
+    wf_sched_startup_test_helper_ready((unsigned)(lane - wf__par_lanes));
+#endif
 
     for (;;) {
         struct wf__par_slot *slot;
@@ -1160,6 +1237,9 @@ static void wf__par_worker_main(void *opaque) {
 #if defined(WF_PAR_TRACE)
             wf__par_trace_put(lane, WF_PAR_TRACE_PARK, (int64_t)idling.rounds);
 #endif
+#if defined(WF_SCHED_STARTUP_TEST)
+            wf_sched_startup_test_before_park((unsigned)(lane - wf__par_lanes));
+#endif
             wf_prim_wait_sleep(&lane->wait);
 #if defined(WF_PAR_TRACE)
             wf__par_trace_wake(lane);
@@ -1183,6 +1263,8 @@ static void wf__par_worker_main(void *opaque) {
 
 static void wf__par_prepare(struct wf__par_lane *lane, int index) {
     int slot;
+    lane->request_word = NULL;
+    lane->request_users = 0;
     lane->top = 0;
     lane->bottom = 0;
     lane->seed = 0x9e3779b97f4a7c15ull * (unsigned long long)(index + 1);
@@ -1233,6 +1315,9 @@ static void wf__par_start(void) {
         (cpus != 0u && (unsigned)requested <= cpus && levels <= 1u)
             ? (uint64_t)WF_PAR_IDLE_WINDOW_US
             : 0u;
+#if defined(WF_SCHED_STARTUP_TEST)
+    wf__par_idle_window_us = wf_sched_startup_test_window_us(wf__par_idle_window_us);
+#endif
     /* Prepare every deque before publishing a scan bound. Initialize the
      * owner's wait before any worker exists; preserve started workers on
      * later failure, and never destroy a station a worker may reach. */
@@ -1286,6 +1371,10 @@ static struct wf__par_lane *wf__par_attach(void) {
         return NULL;
     }
     wf__par_self = &wf__par_lanes[0];
+#if defined(WF_SCHED_STARTUP_TEST)
+    wf_sched_startup_test_before_register();
+#endif
+    wf__par_register_word(wf__par_self);
     return wf__par_self;
 }
 
@@ -1319,6 +1408,12 @@ void wf__par_publish(void *frame, void (*fn)(void *)) {
     struct wf__par_slot *slot = (struct wf__par_slot *)frame;
     slot->run = fn;
     __atomic_store_n(&slot->state, WF_PAR_SLOT_PENDING, __ATOMIC_RELAXED);
+    /* Clear before publishing, so an idle request after publication survives.
+     * Only the owner publishes its frames, so this is its own live TLS word. */
+    __atomic_store_n(&wf__par_demand_word, (uint64_t)0, __ATOMIC_RELAXED);
+#if defined(WF_SCHED_REQUEST_TEST)
+    wf_sched_request_test_cleared();
+#endif
     wf__par_push(slot->home, slot);
 #if defined(WF_PAR_TRACE)
     wf__par_trace_rings[slot->home - wf__par_lanes].depth += 1;

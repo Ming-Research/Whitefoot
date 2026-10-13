@@ -46,7 +46,7 @@
 use super::BoundedOutput;
 use std::process::Command;
 
-use super::parallel::{CountedProgram, clone_symbols, function_body, identical};
+use super::parallel::{CountedProgram, function_body, identical};
 use super::{
     build_executable, emit, emit_with_overlap, module_requires_parallel_runtime, test_directory,
 };
@@ -817,67 +817,28 @@ fn the_default_compilation_of_a_permitted_loop_splits_nothing() {
     assert!(!module_requires_parallel_runtime(&module));
 }
 
-/// The sequential world of a split loop is the loop.
-///
-/// Two things carry that. The enclosing function's clone calls the chunk's
-/// clone and reaches no runtime entry point — no lane acquisition, no allowance query, no
-/// join — so nothing about a split is executed there. And the chunk's clone is
-/// the chunk, byte for byte once its own symbols are restored, so the loop the
-/// sequential world runs is not merely similar to the one the overlapped world
-/// runs at its leaf: it is the same lowering.
-///
-/// The clone exists at all so that each copy has exactly one caller and the
-/// loop is inlined back into it. Sharing one chunk between the worlds would
-/// give it two callers and cost the sequential world that inlining, which is
-/// the whole reason the second copy is cheap.
+/// Ordinary lowering supersedes the old clone-of-chunk construction: retaining
+/// its in-place loop is necessary for single-thread computation identity.
 #[test]
-fn the_sequential_world_of_a_split_loop_is_the_loop() {
+fn the_sequential_world_of_a_split_loop_is_the_ordinary_loop() {
     let module = fold_module(true);
-
-    let chunk_symbol = synthesized(&module, "@wf__par_chunk_");
-    let splitter_symbol = synthesized(&module, "@wf__par_split_");
-    let chunk_clone_symbol = chunk_symbol.replace("@wf_", "@wf__par_seq_");
-
-    let mut cloned = clone_symbols(&module);
-    cloned.sort_unstable();
-    assert_eq!(
-        cloned,
-        [
-            chunk_clone_symbol.as_str(),
-            "@wf__par_seq_folded",
-            "@wf__par_seq_main"
-        ],
-        "the clone set must be the enclosing closure plus the chunk, and never the splitter:\n{module}"
-    );
-
+    let ordinary = fold_module(false);
     let clone = function_body(&module, "@wf__par_seq_folded");
-    assert!(
-        clone.contains(&format!("call i64 {chunk_clone_symbol}(")),
-        "the sequential world must call the chunk's own clone:\n{clone}"
+    assert_eq!(
+        clone.replace("@wf__par_seq_", "@wf_"),
+        function_body(&ordinary, "@wf_folded"),
+        "the sequential computation must be the complete non-parallel lowering"
     );
     for absent in [
         "@wf__par_acquire_lane",
         "@wf__par_publish",
         "@wf__par_join",
         "@wf__par_split_budget",
-        splitter_symbol.as_str(),
+        "@wf__par_seq__par_chunk_",
+        "@wf__par_chunk_",
     ] {
-        assert!(
-            !clone.contains(absent),
-            "the sequential world must not reach {absent}:\n{clone}"
-        );
+        assert!(!clone.contains(absent), "unexpected {absent}: {clone}");
     }
-
-    // The clone renaming is the whole difference between the two copies. After
-    // undoing it there must be nothing left, or the sequential world runs a
-    // second lowering of the loop that nobody audited.
-    let chunk = function_body(&module, &chunk_symbol);
-    let chunk_clone = function_body(&module, &chunk_clone_symbol);
-    assert_eq!(
-        chunk_clone.replace("@wf__par_seq_", "@wf_"),
-        chunk,
-        "the two worlds' copies of the loop must be one lowering"
-    );
 }
 
 /// The one synthesized symbol in this module beginning with `prefix`.

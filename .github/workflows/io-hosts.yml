@@ -190,7 +190,7 @@ jobs:
             choco install make --yes --no-progress
           fi
           make --version
-          make -C compiler -j2 completion-windows-cross WINDOWS_CC=clang SHELL=bash \
+          make -C compiler -j2 completion-windows-cross WINDOWS_CC=clang WINDOWS_SCHED_CC=clang SHELL=bash \
             COMPLETION_TMP="$(cygpath -u "$RUNNER_TEMP")/completion"
 
 
@@ -199,11 +199,20 @@ jobs:
           "$RUNNER_TEMP/completion/windows-sched-deque.exe"
           "$RUNNER_TEMP/completion/windows-sched-deque-no-stats.exe"
 
+      - name: Exercise request lifetime and startup exposure
+        run: |
+          "$RUNNER_TEMP/completion/windows-sched-demand.exe"
+          for lanes in 4 8; do
+            for mode in late-spinning late-parked registered-first helper-registration; do
+              WF_WORKERS=$lanes "$RUNNER_TEMP/completion/windows-sched-startup.exe" "$mode"
+            done
+          done
+
       - name: Native Windows CPU policy and wait integration
         run: |
           WF_WORKERS=2 "$RUNNER_TEMP/completion/windows-sched-cpu-levels.exe" host
           "$RUNNER_TEMP/completion/windows-sched-cpu-levels.exe" wake
-          make -C compiler sched-split-policy-cases WINDOWS_CC=clang SHELL=bash \
+          make -C compiler sched-split-policy-cases WINDOWS_CC=clang WINDOWS_SCHED_CC=clang SHELL=bash \
             COMPLETION_TMP="$(cygpath -u "$RUNNER_TEMP")/completion" \
             SCHED_POLICY_EXE="$(cygpath -u "$RUNNER_TEMP")/completion/windows-sched-cpu-levels.exe"
           for mode in fit oversubscribed unknown-count mixed; do

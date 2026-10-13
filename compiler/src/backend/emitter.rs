@@ -10,6 +10,7 @@ mod array;
 mod boxes;
 mod buffer;
 mod call_entries;
+mod canonical_world;
 mod cleanup;
 mod constants;
 mod contexts;
@@ -43,7 +44,9 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Write;
 
 use super::abi::{FunctionAbi, ParameterAbi, ResultAbi};
-use super::emission::{DeferredPart, FunctionBody, Linkage, Module, Parameter, References, Signature};
+use super::emission::{
+    DeferredPart, FunctionBody, Linkage, Module, Parameter, References, Signature,
+};
 pub use super::runtime::*;
 use super::storage::{FunctionStoragePlan, IncomingSnapshots, is_stored_aggregate};
 use crate::target::{
@@ -58,6 +61,7 @@ use crate::{
     IrOperation, IrOverlap, IrProgram, IrShared, IrTargetDomainObligation, IrTerminator, IrType,
     IrValueId, IrWindowShape,
 };
+use canonical_world::{canonical_clone_roots, validate_crossovers};
 use cleanup::{CleanupOperand, emit_cleanup, emit_resource_drop_helpers, type_requires_cleanup};
 pub use floor::FLOOR_STACK_BYTES;
 use floor::floor_runtime_fallback;
@@ -248,6 +252,7 @@ pub(crate) fn emit_prepared_llvm(
         target,
         WindowAddressFacts::Emit,
         &prepared.plan,
+        prepared.fragments,
     )
 }
 
@@ -273,6 +278,7 @@ pub(super) fn emit_llvm_with_window_address_facts(
         target,
         window_address_facts,
         &selected.plan,
+        selected.fragments,
     )
 }
 
@@ -281,6 +287,7 @@ fn emit_module(
     target: TargetLayout,
     window_address_facts: WindowAddressFacts,
     dispatch_layout: &handler_words::DispatchLayoutPlan,
+    fragments: bool,
 ) -> Result<LlvmModule, BackendFailure> {
     if snapshot::required(program) && target.triple() != "x86_64-unknown-linux-gnu" {
         return Err(BackendFailure::SnapshotTargetUnsupported);
@@ -382,22 +389,28 @@ fn emit_module(
             .emit()?,
         );
     }
-    // The second world. It exists only where the first one actualizes
-    // something, so a build that hands nothing out — every default build among
-    // them — emits exactly the module it emitted before this path existed.
-    //
-    // A build launcher can select the sequential clone of its ordinary entry.
-    // The clone set is closed upwards through the module's call graph and
-    // does not depend on the presence or spelling of a selected entry.
-    let clones = if thunks.is_used() {
+    // Retain captured-ABI fallback helpers, but import every ordinary entrance
+    // and its complete dependencies from the graph before optional extraction.
+    // The bootstrap and recursion cuts keep their existing entry selection.
+    let mut clones = if thunks.is_used() {
         sequential_clone_set(program)
     } else if frontiers.is_used() {
         frontier_clones
     } else {
         HashSet::new()
     };
+    let canonical = program.canonical_sequential.as_deref();
+    let (mut canonical_roots, crossovers) = if let Some(canonical) = canonical {
+        canonical_clone_roots(program, canonical, &mut clones)?
+    } else {
+        (BTreeSet::new(), BTreeSet::new())
+    };
+    canonical_roots.extend(dispatch_layout.canonical_roots());
     for (ordinal, function) in program.functions().iter().enumerate() {
         if u32::try_from(ordinal).is_ok_and(|ordinal| clones.contains(&ordinal)) {
+            if canonical_roots.contains(&source_symbol(function.name())) {
+                continue;
+            }
             functions.append(
                 FunctionEmitter::new(
                     program,
@@ -692,6 +705,21 @@ fn emit_module(
         text.declare_global("wf__empty_window".to_owned(), "[64 x i8]", 64);
     }
     text.attribute_group(0, format!("\"probe-stack\"=\"{}\"", target.stack_probe()));
+    if let Some(canonical) = canonical.filter(|_| !canonical_roots.is_empty()) {
+        let selected = prepare_dispatch_layout(canonical, target, fragments)?;
+        validate_crossovers(program, &selected.program, &crossovers)?;
+        let module = emit_module(
+            &selected.program,
+            target,
+            window_address_facts,
+            &selected.plan,
+            fragments,
+        )?;
+        // A sequential closure may execute on a worker after a budget cut or
+        // refusal; preserve the shared, worker-safe resource diagnostic latch.
+        let shared = BTreeSet::from(["wf_resource_abort".to_owned()]);
+        text.import_canonical_closure(&module.model, &canonical_roots, &shared)?;
+    }
     let mut ledger = frontiers.ledger().to_vec();
     ledger.extend(lane_frame_ledger(program, target, &frontiers)?);
     // Emit source acquisition decisions once, independently of backend clones
@@ -2041,12 +2069,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
     }
 
     fn emit(mut self) -> Result<Module, BackendFailure> {
-        if let Some(module) = snapshot::definition(
-            self.program,
-            self.target,
-            self.function,
-            self.intrinsics,
-        )? {
+        if let Some(module) =
+            snapshot::definition(self.program, self.target, self.function, self.intrinsics)?
+        {
             return Ok(module);
         }
         let declaration = self.function.blocks().is_empty();

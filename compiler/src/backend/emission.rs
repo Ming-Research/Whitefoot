@@ -11,6 +11,8 @@ use crate::IrBlockId;
 
 use super::emitter::BackendFailure;
 
+mod canonical;
+
 /// A deferred definition's literal text and block-scoped local identifiers.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum DeferredPart {
@@ -1006,7 +1008,10 @@ mod declaration_tests {
             1
         );
         assert_eq!(
-            module.render().matches("attributes #1 = { noreturn }").count(),
+            module
+                .render()
+                .matches("attributes #1 = { noreturn }")
+                .count(),
             1
         );
     }
