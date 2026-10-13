@@ -18,7 +18,8 @@ use crate::ClassifiedToken;
 
 use super::{
     ExpectedBuilder, ParseCompilerFailure, ParseLimit, ParseLimits, ParseResourceFailure,
-    ParseStorage, SyntaxCoordinate, SyntaxIssue, SyntaxRule, Work,
+    ParseStorage, QualifiedValuePath, SyntaxCoordinate, SyntaxIssue, SyntaxRepair, SyntaxRule,
+    Work,
 };
 
 pub(crate) enum DiagnosticResult {
@@ -68,6 +69,58 @@ pub(crate) struct ProbeContext {
     pub(crate) in_expression: bool,
     /// The nearest field-binding role is a match arm, not a result route or let.
     pub(crate) match_binder: bool,
+    /// The qualified path a `call` in a value position has consumed when the
+    /// token after its final IDENT continues no call [DIAG-1, MOD-5].
+    ///
+    /// Only the open frames record that the path is a `callee` of a `call`
+    /// an `expr` or `affine_factor` derives, so the parser reads it from them
+    /// at the failing frontier; a production the diagnostic probe enters
+    /// starts without it.
+    pub(crate) qualified_value: Option<QualifiedValueSite>,
+}
+
+/// A qualified path with the index of the token after its final IDENT.
+#[derive(Clone, Copy)]
+pub(crate) struct QualifiedValueSite {
+    pub(crate) path: QualifiedValuePath,
+    pub(crate) after: usize,
+}
+
+impl QualifiedValueSite {
+    /// Whether a frontier whose lookahead begins at `cursor` lies at the
+    /// path's final IDENT or at the token after it [DIAG-1].
+    ///
+    /// Recognition stops at either. When an operator follows the path, as in
+    /// `pkg::m::k == 1`, no `callee_path` row starts `IDENT ==`, so the
+    /// `callee_path` choice fails with its lookahead at the final IDENT; when
+    /// a `;` follows, the `IDENT ;` row of `fn_bind`'s continuation admits the
+    /// IDENT and the next decision fails at the `;`.
+    pub(crate) fn applies_at(self, cursor: usize) -> bool {
+        self.after == cursor || cursor.checked_add(1) == Some(self.after)
+    }
+}
+
+/// The repair for a qualified path written where a value stands [MOD-5]: the
+/// alias that binds its final name [MOD-4], with that name written in the
+/// path's place.
+///
+/// The path is a `callee` spelling, so a writer who meant another module's
+/// const reads only that a call was expected. An alias path begins at `pkg`,
+/// `std` or a bound package name and never at a module alias, which the
+/// grammar cannot tell from a bound name, so an IDENT-rooted path also says
+/// how to spell its root. A const of the record's own module would collide
+/// with such an alias, so the sentence names the bare name for it too.
+pub(crate) fn qualified_value_fix(path: &str, root: &str, name: &str) -> String {
+    let root_spelling = if root == "pkg" || root == "std" {
+        String::new()
+    } else {
+        format!(
+            ", spelling `{root}` as the complete module path it stands for when it is a module alias, since an alias path begins at `pkg`, `std` or a bound package name"
+        )
+    };
+    format!(
+        "a qualified path names only a callee, type, construction or destructuring target, never a value [MOD-5]: to read the const `{name}` here, add `alias {name} = {path};` to this record's alias header and write `{name}` in place of `{path}` [MOD-4]{root_spelling}; a const of this record's own module is written `{name}` with no alias"
+    )
 }
 
 /// The repair the failing production admits, when the production itself fixes
@@ -376,13 +429,71 @@ fn atom_repair(context: ProbeContext, nested_infix: bool) -> Option<&'static str
     }
 }
 
+/// The qualified path `("pkg" | "std" | IDENT) "::" IDENT ("::" IDENT)*`
+/// that begins at `start`, with the index of the token after its final
+/// IDENT, when that token continues no call: it is neither `(` nor `::`.
+pub(crate) fn qualified_value_path(
+    source: SourceId,
+    tokens: &[ClassifiedToken],
+    start: usize,
+    work: &mut Work,
+) -> Result<Option<QualifiedValueSite>, ParseResourceFailure> {
+    let Some(root) = tokens.get(start) else {
+        return Ok(None);
+    };
+    if !(fixed(root, FixedTerminal::Pkg)
+        || fixed(root, FixedTerminal::Std)
+        || has(root, TerminalPredicate::Identifier))
+    {
+        return Ok(None);
+    }
+    let mut last = start;
+    loop {
+        work.spend(1)?;
+        let (Some(colons), Some(name)) = (
+            last.checked_add(1).and_then(|index| tokens.get(index)),
+            last.checked_add(2).and_then(|index| tokens.get(index)),
+        ) else {
+            break;
+        };
+        if !(fixed(colons, FixedTerminal::ColonColon) && has(name, TerminalPredicate::Identifier)) {
+            break;
+        }
+        let Some(next) = last.checked_add(2) else {
+            break;
+        };
+        last = next;
+    }
+    let Some(after) = last.checked_add(1) else {
+        return Ok(None);
+    };
+    if last == start
+        || tokens.get(after).is_some_and(|next| {
+            fixed(next, FixedTerminal::LeftParen) || fixed(next, FixedTerminal::ColonColon)
+        })
+    {
+        return Ok(None);
+    }
+    let Some(name) = tokens.get(last) else {
+        return Ok(None);
+    };
+    let coordinate = |token: &ClassifiedToken| {
+        SyntaxCoordinate::new(source, token.token().id().start(), token.token().id().end())
+    };
+    Ok(Some(QualifiedValueSite {
+        path: QualifiedValuePath::new(coordinate(root), coordinate(name)),
+        after,
+    }))
+}
+
 fn forbidden_atom_override(
     source: SourceId,
     tokens: &[ClassifiedToken],
     cursor: usize,
     context: ProbeContext,
     expected: super::ExpectedTerminals,
-) -> Option<SyntaxIssue> {
+    work: &mut Work,
+) -> Result<Option<SyntaxIssue>, ParseResourceFailure> {
     if let Some(atom) = context.completed_infix_operand
         && let Some(first) = cursor.checked_sub(1).and_then(|index| tokens.get(index))
         && let Some(second) = tokens.get(cursor)
@@ -391,7 +502,7 @@ fn forbidden_atom_override(
         && atom.end() == first.token().id().end()
         && repairs::is_infix_operator(second)
     {
-        return Some(SyntaxIssue {
+        return Ok(Some(SyntaxIssue {
             rule: SyntaxRule::Gram9,
             coordinate: SyntaxCoordinate::new(
                 source,
@@ -399,14 +510,18 @@ fn forbidden_atom_override(
                 second.token().id().end(),
             ),
             expected,
-            mechanical_fix: atom_repair(context, true),
-        });
+            mechanical_fix: atom_repair(context, true).map(SyntaxRepair::Fixed),
+        }));
     }
     if !context.atom_only {
-        return None;
+        return Ok(None);
     }
-    let first = tokens.get(cursor)?;
-    let second = tokens.get(cursor.checked_add(1)?)?;
+    let (Some(first), Some(second)) = (
+        tokens.get(cursor),
+        cursor.checked_add(1).and_then(|index| tokens.get(index)),
+    ) else {
+        return Ok(None);
+    };
     // [DIAG-1] row 2: a `call` start is a name followed by `(` or by the
     // `::` type-application or qualified-path delimiter, or `pkg ::` / `std ::`; a
     // `construct` start is a TYPEID followed by `(`, `<` or the `::` of a
@@ -432,27 +547,59 @@ fn forbidden_atom_override(
             || fixed(second, FixedTerminal::Std));
     let nested_infix = (context.infix_operand || context.production == Production::InfixTail)
         && repairs::is_infix_operator(second);
-    if call_start || construct_start || marked_call_start || nested_infix {
-        return Some(SyntaxIssue {
-            rule: SyntaxRule::Gram9,
-            coordinate: SyntaxCoordinate::new(
-                source,
-                first.token().id().start(),
-                second.token().id().end(),
-            ),
-            expected,
-            // A musttail call cannot be lifted to a let [FN-10], and spawn
-            // admission depends on the callee [WAIT-3]. No applicable marked
-            // call repair has been established. Construction is always
-            // inadmissible in definitions [FN-8], so that route also fails.
-            mechanical_fix: if marked_call_start || (construct_start && context.in_contract) {
-                None
-            } else {
-                atom_repair(context, nested_infix)
-            },
-        });
+    if !(call_start || construct_start || marked_call_start || nested_infix) {
+        return Ok(None);
     }
-    None
+    // A qualified path no call continues names a const through the wrong
+    // spelling [MOD-5]. Its alias repair applies in body and contract scope.
+    let qualified = if call_start {
+        qualified_value_path(source, tokens, cursor, work)?
+    } else {
+        None
+    };
+    let repair = if let Some(site) = qualified {
+        Some(SyntaxRepair::QualifiedValue(site.path))
+    } else if marked_call_start || (construct_start && context.in_contract) {
+        // A musttail call cannot be lifted to a let [FN-10], and spawn
+        // admission depends on the callee [WAIT-3]. Construction is always
+        // inadmissible in definitions [FN-8], so that route also fails.
+        None
+    } else {
+        atom_repair(context, nested_infix).map(SyntaxRepair::Fixed)
+    };
+    Ok(Some(SyntaxIssue {
+        rule: SyntaxRule::Gram9,
+        coordinate: SyntaxCoordinate::new(
+            source,
+            first.token().id().start(),
+            second.token().id().end(),
+        ),
+        expected,
+        mechanical_fix: repair,
+    }))
+}
+
+/// [DIAG-1] row 2's second clause: a `call` an `expr` or `affine_factor`
+/// derives has consumed a qualified path that no `(` or `::` continues, so
+/// the path names no callee and the rejection cites [MOD-5] at the complete
+/// path, expecting the call continuation `::` or `(`.
+fn qualified_value_override(context: ProbeContext, cursor: usize) -> Option<SyntaxIssue> {
+    let site = context.qualified_value?;
+    if !site.applies_at(cursor) {
+        return None;
+    }
+    let mut expected = ExpectedBuilder::empty();
+    for terminal in [FixedTerminal::ColonColon, FixedTerminal::LeftParen] {
+        expected.insert(LookaheadPredicate::Terminal(TerminalPredicate::Fixed(
+            terminal,
+        )));
+    }
+    Some(SyntaxIssue {
+        rule: SyntaxRule::Mod5,
+        coordinate: site.path.path(),
+        expected: expected.finish(),
+        mechanical_fix: Some(SyntaxRepair::QualifiedValue(site.path)),
+    })
 }
 
 fn raw_restriction_owner(
@@ -746,7 +893,13 @@ fn override_issue(
             ..context
         },
         frontier.expected,
-    ) {
+        work,
+    )
+    .map_err(DiagnosticResult::Resource)?
+    {
+        return Ok(Some(issue));
+    }
+    if let Some(issue) = qualified_value_override(context, site.cursor) {
         return Ok(Some(issue));
     }
     if let Some(token) = site.tokens.get(boundary) {
@@ -781,7 +934,7 @@ fn override_issue(
                 )
                 .map_err(DiagnosticResult::Compiler)?,
                 expected: frontier.expected,
-                mechanical_fix: name_class_fix(admitted),
+                mechanical_fix: name_class_fix(admitted).map(SyntaxRepair::Fixed),
             }));
         }
     }
@@ -890,7 +1043,7 @@ fn descend_or_issue(
                 )
                 .map_err(DiagnosticResult::Compiler)?,
                 expected: value.expected,
-                mechanical_fix: production_fix(decision.production()),
+                mechanical_fix: production_fix(decision.production()).map(SyntaxRepair::Fixed),
             }));
         };
         // Retain the enclosing arm's pending work as diagnostic continuation,
@@ -920,7 +1073,7 @@ fn descend_or_issue(
         )
         .map_err(DiagnosticResult::Compiler)?,
         expected: value.expected,
-        mechanical_fix: production_fix(decision.production()),
+        mechanical_fix: production_fix(decision.production()).map(SyntaxRepair::Fixed),
     }))
 }
 
@@ -938,9 +1091,19 @@ fn direct_mismatch_inner(
         Ok(None) => {}
         Err(failure) => return DiagnosticResult::Resource(failure),
     }
-    if let Some(issue) =
-        forbidden_atom_override(site.source, site.tokens, site.cursor, context, expected)
-    {
+    match forbidden_atom_override(
+        site.source,
+        site.tokens,
+        site.cursor,
+        context,
+        expected,
+        work,
+    ) {
+        Ok(Some(issue)) => return DiagnosticResult::Issue(issue),
+        Ok(None) => {}
+        Err(failure) => return DiagnosticResult::Resource(failure),
+    }
+    if let Some(issue) = qualified_value_override(context, site.cursor) {
         return DiagnosticResult::Issue(issue);
     }
     if let Some(token) = site.tokens.get(site.cursor) {
@@ -973,7 +1136,7 @@ fn direct_mismatch_inner(
                     token.token().id().end(),
                 ),
                 expected,
-                mechanical_fix: name_class_fix(admitted),
+                mechanical_fix: name_class_fix(admitted).map(SyntaxRepair::Fixed),
             });
         }
     }
@@ -982,7 +1145,7 @@ fn direct_mismatch_inner(
             rule: SyntaxRule::from(context.production.owner()),
             coordinate,
             expected,
-            mechanical_fix: production_fix(context.production),
+            mechanical_fix: production_fix(context.production).map(SyntaxRepair::Fixed),
         }),
         Err(failure) => DiagnosticResult::Compiler(failure),
     }
@@ -1059,6 +1222,7 @@ fn probe(
                             after_value_match: task_context.after_value_match,
                             in_expression: task_context.in_expression
                                 || production == Production::Expr,
+                            qualified_value: None,
                             match_binder: match production {
                                 Production::Arm => true,
                                 Production::ResultRoute | Production::LetStmt => false,
@@ -1292,7 +1456,7 @@ fn diagnose_decision_inner(
         rule: SyntaxRule::from(decision.production().owner()),
         coordinate,
         expected: value.expected,
-        mechanical_fix: production_fix(decision.production()),
+        mechanical_fix: production_fix(decision.production()).map(SyntaxRepair::Fixed),
     })
 }
 

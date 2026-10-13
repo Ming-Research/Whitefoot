@@ -167,8 +167,9 @@ fn complete_inventory_is_pinned() {
     // v0.90's package bindings add `package_decl` [GRAM-2, MOD-11].
     // v0.142 adds `range_variant` [GRAM-5, RANGE-1]; a guard is a
     // `range_relation`, so no production of its own remains.
-    // The diagnostic-only graph_segment adds one production to main's 101.
-    assert_eq!(productions().len(), 102);
+    // The diagnostic-only graph_segment and HOLD-1 held_clause each add one
+    // production to the 101-production inventory.
+    assert_eq!(productions().len(), 103);
     // v0.72's standard library qualifier [MOD-10] adds a `"pkg" | "std"`
     // alternation to `alias_decl`, `module_path` and `callee`, three
     // decisions, and extends `type_path`'s existing root alternation.
@@ -206,8 +207,9 @@ fn complete_inventory_is_pinned() {
     // v0.142 shares the comparison, variant or unchanged choice between a
     // guard and a conclusion, adds `range_variant`'s optional `not`, and
     // retires the guard's optional comparison and separate suffix choice.
-    // Main has 182 decisions; graph_segment adds a repeat and a choice.
-    assert_eq!(DECISIONS.len(), 184);
+    // graph_segment adds a repeat and a choice to 182 decisions; held_clause
+    // adds its identifier repeat.
+    assert_eq!(DECISIONS.len(), 185);
     // `continue` adds the same statement prefixes and followers as `break`:
     // 72 rows at existing decisions and 29 at its optional label decision.
     // Together these extend the previous 7,816-row inventory by 101.
@@ -238,9 +240,54 @@ fn complete_inventory_is_pinned() {
     // six compare_op tokens: 30 rows at compare_op and 30 exit rows at
     // place's psuffix repeat. Other frontiers either truncate that second
     // token or carry only affine continuations, adding 60 rows to 8,409.
-    assert_eq!(SELECT_ROWS.len(), 8_469);
-    // v0.136's `unchanged` and v0.142's `not` are both fixed terminals.
-    assert_eq!(diagnostic_terminal_order().len(), 117);
+    // HOLD-1 adds `requires held` to contract_block's define-repeat exit
+    // and requires-repeat entry, and `held (` to requires_clause's choice.
+    // The new held_clause repeat contributes `, IDENT` and `) ;`: five
+    // additional rows. All old pairs survive unchanged under projection.
+    assert_eq!(SELECT_ROWS.len(), 8_474);
+    let held = LookaheadPredicate::Terminal(TerminalPredicate::Fixed(FixedTerminal::Held));
+    let old_rows = DECISIONS
+        .iter()
+        .filter(|decision| decision.production() != Production::HeldClause)
+        .flat_map(|decision| decision.rows())
+        .filter(|row| {
+            (0..2).all(|position| {
+                row.position(position)
+                    .is_none_or(|atom| atom.predicate() != held)
+            })
+        })
+        .count();
+    assert_eq!(old_rows, 8_469);
+    let group = DECISIONS
+        .iter()
+        .find(|decision| decision.production() == Production::HeldClause)
+        .expect("the held identifier repeat");
+    assert_eq!(group.kind(), DecisionKind::Repeat0);
+    assert_eq!(group.rows().len(), 2);
+    assert_eq!(
+        group.rows()[0].position(0).expect("repeat entry").predicate(),
+        LookaheadPredicate::Terminal(TerminalPredicate::Fixed(FixedTerminal::Comma))
+    );
+    assert_eq!(
+        group.rows()[1].position(0).expect("repeat exit").predicate(),
+        LookaheadPredicate::Terminal(TerminalPredicate::Fixed(FixedTerminal::RightParen))
+    );
+    assert_eq!(
+        group.rows()[0]
+            .position(1)
+            .expect("repeat identifier")
+            .predicate(),
+        LookaheadPredicate::Terminal(TerminalPredicate::Identifier)
+    );
+    assert_eq!(
+        group.rows()[1]
+            .position(1)
+            .expect("requirement terminator")
+            .predicate(),
+        LookaheadPredicate::Terminal(TerminalPredicate::Fixed(FixedTerminal::Semicolon))
+    );
+    // `held` joins v0.136's `unchanged` and v0.142's `not` fixed terminals.
+    assert_eq!(diagnostic_terminal_order().len(), 118);
     assert_eq!(productions()[0], Production::Program);
     // v0.70 [GRAM-2] adds the file alias header as an `item` arm and closes
     // with the module graph productions; [GRAM-3] adds `type_path` and
@@ -250,40 +297,42 @@ fn complete_inventory_is_pinned() {
     assert_eq!(productions()[3], Production::HeapDecl);
     assert_eq!(productions()[13], Production::ContractDefine);
     assert_eq!(productions()[14], Production::RequiresClause);
-    assert_eq!(productions()[15], Production::EnsuresClause);
-    assert_eq!(productions()[16], Production::ResultRoute);
-    assert_eq!(productions()[27], Production::CapabilityBound);
-    assert_eq!(productions()[30], Production::GraphFile);
-    assert_eq!(productions()[31], Production::GraphSegment);
-    assert_eq!(productions()[32], Production::PackageDecl);
-    assert_eq!(productions()[35], Production::EntryDecl);
-    assert_eq!(productions()[37], Production::TypePath);
-    assert_eq!(productions()[51], Production::ForStmt);
-    assert_eq!(productions()[52], Production::ForBinding);
-    assert_eq!(productions()[53], Production::HeaderInvariant);
-    assert_eq!(productions()[54], Production::InvariantStmt);
-    assert_eq!(productions()[55], Production::TypeInvariant);
-    assert_eq!(productions()[56], Production::ProofUse);
-    assert_eq!(productions()[57], Production::UsePremise);
-    assert_eq!(productions()[71], Production::ApartClause);
-    assert_eq!(productions()[75], Production::CompareOp);
-    assert_eq!(productions()[79], Production::CalleePath);
-    assert_eq!(productions()[84], Production::ClauseExpr);
-    assert_eq!(productions()[85], Production::ClauseOp);
-    assert_eq!(productions()[89], Production::RangeTail);
-    assert_eq!(productions()[90], Production::RangeClause);
-    assert_eq!(productions()[91], Production::RangeBinder);
-    assert_eq!(productions()[92], Production::RangeRelation);
-    assert_eq!(productions()[93], Production::RangeVariant);
-    assert_eq!(productions()[97], Production::Effect);
-    assert_eq!(productions()[98], Production::EffectPath);
-    assert_eq!(productions()[99], Production::Epbase);
-    assert_eq!(productions()[100], Production::Epsuffix);
-    assert_eq!(productions()[101], Production::Erange);
+    assert_eq!(productions()[15], Production::HeldClause);
+    assert_eq!(productions()[16], Production::EnsuresClause);
+    assert_eq!(productions()[17], Production::ResultRoute);
+    assert_eq!(productions()[28], Production::CapabilityBound);
+    assert_eq!(productions()[31], Production::GraphFile);
+    assert_eq!(productions()[32], Production::GraphSegment);
+    assert_eq!(productions()[33], Production::PackageDecl);
+    assert_eq!(productions()[36], Production::EntryDecl);
+    assert_eq!(productions()[38], Production::TypePath);
+    assert_eq!(productions()[52], Production::ForStmt);
+    assert_eq!(productions()[53], Production::ForBinding);
+    assert_eq!(productions()[54], Production::HeaderInvariant);
+    assert_eq!(productions()[55], Production::InvariantStmt);
+    assert_eq!(productions()[56], Production::TypeInvariant);
+    assert_eq!(productions()[57], Production::ProofUse);
+    assert_eq!(productions()[58], Production::UsePremise);
+    assert_eq!(productions()[72], Production::ApartClause);
+    assert_eq!(productions()[76], Production::CompareOp);
+    assert_eq!(productions()[80], Production::CalleePath);
+    assert_eq!(productions()[85], Production::ClauseExpr);
+    assert_eq!(productions()[86], Production::ClauseOp);
+    assert_eq!(productions()[90], Production::RangeTail);
+    assert_eq!(productions()[91], Production::RangeClause);
+    assert_eq!(productions()[92], Production::RangeBinder);
+    assert_eq!(productions()[93], Production::RangeRelation);
+    assert_eq!(productions()[94], Production::RangeVariant);
+    assert_eq!(productions()[98], Production::Effect);
+    assert_eq!(productions()[99], Production::EffectPath);
+    assert_eq!(productions()[100], Production::Epbase);
+    assert_eq!(productions()[101], Production::Epsuffix);
+    assert_eq!(productions()[102], Production::Erange);
     // Above, `productions()` follows first definition in the specification.
     // Below, `index()` follows the generator's independent `ENUM_ORDER`:
-    // RangeVariant is definition 93 but dense index 100; GraphSegment is
-    // definition 31 but dense index 101.
+    // RangeVariant is definition 94 but dense index 100; GraphSegment is
+    // definition 32 but dense index 101; HeldClause is definition 15 but
+    // dense index 102.
     assert_eq!(Production::ForStmt.index(), 63);
     assert_eq!(Production::ForBinding.index(), 64);
     assert_eq!(Production::HeaderInvariant.index(), 65);
@@ -320,6 +369,7 @@ fn complete_inventory_is_pinned() {
     assert_eq!(Production::PackageDecl.index(), 99);
     assert_eq!(Production::RangeVariant.index(), 100);
     assert_eq!(Production::GraphSegment.index(), 101);
+    assert_eq!(Production::HeldClause.index(), 102);
     // Decision indices follow specification-definition order and EBNF
     // preorder, independently of the dense production indices above.
     // `item`'s alias, public-item and declaration choice and the public
@@ -355,124 +405,126 @@ fn complete_inventory_is_pinned() {
     assert_eq!(DECISIONS[34].kind(), DecisionKind::Repeat0);
     assert_eq!(DECISIONS[35].production(), Production::ContractBlock);
     assert_eq!(DECISIONS[35].kind(), DecisionKind::Repeat0);
-    // v0.84's `requires_clause` chooses a clause or a range clause [RANGE-1].
+    // `requires_clause` chooses a clause, range clause or held clause.
     assert_eq!(DECISIONS[36].production(), Production::RequiresClause);
     assert_eq!(DECISIONS[36].kind(), DecisionKind::Choice);
-    assert_eq!(DECISIONS[37].production(), Production::EnsuresClause);
-    assert_eq!(DECISIONS[37].kind(), DecisionKind::Optional);
-    // v0.84's `ensures_clause` chooses a clause or a range clause [RANGE-1].
+    assert_eq!(DECISIONS[37].production(), Production::HeldClause);
+    assert_eq!(DECISIONS[37].kind(), DecisionKind::Repeat0);
     assert_eq!(DECISIONS[38].production(), Production::EnsuresClause);
-    assert_eq!(DECISIONS[38].kind(), DecisionKind::Choice);
-    assert_eq!(DECISIONS[39].production(), Production::ResultRoute);
-    assert_eq!(DECISIONS[39].kind(), DecisionKind::Optional);
+    assert_eq!(DECISIONS[38].kind(), DecisionKind::Optional);
+    // v0.84's `ensures_clause` chooses a clause or a range clause [RANGE-1].
+    assert_eq!(DECISIONS[39].production(), Production::EnsuresClause);
+    assert_eq!(DECISIONS[39].kind(), DecisionKind::Choice);
+    assert_eq!(DECISIONS[40].production(), Production::ResultRoute);
+    assert_eq!(DECISIONS[40].kind(), DecisionKind::Optional);
     // Value mode follows a written type; `&` selects either one referent or
     // a range. Both choices belong to `param` [GRAM-2, REF-4].
-    assert_eq!(DECISIONS[63].production(), Production::Param);
-    assert_eq!(DECISIONS[63].kind(), DecisionKind::Choice);
     assert_eq!(DECISIONS[64].production(), Production::Param);
     assert_eq!(DECISIONS[64].kind(), DecisionKind::Choice);
+    assert_eq!(DECISIONS[65].production(), Production::Param);
+    assert_eq!(DECISIONS[65].kind(), DecisionKind::Choice);
     // graph_segment follows graph_file and adds two decisions before
     // every subsequent production; the source-order pins below include it.
-    assert_eq!(DECISIONS[68].production(), Production::GraphSegment);
-    assert_eq!(DECISIONS[68].kind(), DecisionKind::Repeat0);
     assert_eq!(DECISIONS[69].production(), Production::GraphSegment);
-    assert_eq!(DECISIONS[69].kind(), DecisionKind::Choice);
+    assert_eq!(DECISIONS[69].kind(), DecisionKind::Repeat0);
+    assert_eq!(DECISIONS[70].production(), Production::GraphSegment);
+    assert_eq!(DECISIONS[70].kind(), DecisionKind::Choice);
     // v0.90's `package_decl*` repeat [GRAM-2, MOD-11] precedes every
     // decision from `graph_file` on, which moves each of them by one.
     // `type` keeps its primitive-or-nominal choice, now with the qualified
     // `type_path` arm [GRAM-3, MOD-3], and one `targs?` optional per nominal
     // arm; v0.59's three shape optionals retired with `array`, `box` and
     // `arena`.
-    assert_eq!(DECISIONS[75].production(), Production::Type);
-    assert_eq!(DECISIONS[75].kind(), DecisionKind::Choice);
     assert_eq!(DECISIONS[76].production(), Production::Type);
-    assert_eq!(DECISIONS[76].kind(), DecisionKind::Optional);
+    assert_eq!(DECISIONS[76].kind(), DecisionKind::Choice);
     assert_eq!(DECISIONS[77].production(), Production::Type);
     assert_eq!(DECISIONS[77].kind(), DecisionKind::Optional);
-    assert_eq!(DECISIONS[99].production(), Production::LoopStmt);
-    assert_eq!(DECISIONS[99].kind(), DecisionKind::Optional);
+    assert_eq!(DECISIONS[78].production(), Production::Type);
+    assert_eq!(DECISIONS[78].kind(), DecisionKind::Optional);
     assert_eq!(DECISIONS[100].production(), Production::LoopStmt);
     assert_eq!(DECISIONS[100].kind(), DecisionKind::Optional);
     assert_eq!(DECISIONS[101].production(), Production::LoopStmt);
-    assert_eq!(DECISIONS[101].kind(), DecisionKind::Repeat0);
-    assert_eq!(DECISIONS[103].production(), Production::ForStmt);
-    assert_eq!(DECISIONS[103].kind(), DecisionKind::Optional);
+    assert_eq!(DECISIONS[101].kind(), DecisionKind::Optional);
+    assert_eq!(DECISIONS[102].production(), Production::LoopStmt);
+    assert_eq!(DECISIONS[102].kind(), DecisionKind::Repeat0);
     assert_eq!(DECISIONS[104].production(), Production::ForStmt);
-    assert_eq!(DECISIONS[104].kind(), DecisionKind::Repeat0);
+    assert_eq!(DECISIONS[104].kind(), DecisionKind::Optional);
+    assert_eq!(DECISIONS[105].production(), Production::ForStmt);
+    assert_eq!(DECISIONS[105].kind(), DecisionKind::Repeat0);
     // v0.84's optional final `apart_clause` [RANGE-5] and the header
     // invariant's affine-or-range choice [RANGE-1].
-    assert_eq!(DECISIONS[105].production(), Production::ForStmt);
-    assert_eq!(DECISIONS[105].kind(), DecisionKind::Optional);
-    assert_eq!(DECISIONS[107].production(), Production::HeaderInvariant);
-    assert_eq!(DECISIONS[107].kind(), DecisionKind::Choice);
-    assert_eq!(DECISIONS[108].production(), Production::InvariantStmt);
+    assert_eq!(DECISIONS[106].production(), Production::ForStmt);
+    assert_eq!(DECISIONS[106].kind(), DecisionKind::Optional);
+    assert_eq!(DECISIONS[108].production(), Production::HeaderInvariant);
     assert_eq!(DECISIONS[108].kind(), DecisionKind::Choice);
     assert_eq!(DECISIONS[109].production(), Production::InvariantStmt);
-    assert_eq!(DECISIONS[109].kind(), DecisionKind::Repeat1);
-    assert_eq!(DECISIONS[110].production(), Production::TypeInvariant);
-    assert_eq!(DECISIONS[110].kind(), DecisionKind::Choice);
-    assert_eq!(DECISIONS[113].production(), Production::UsePremise);
-    assert_eq!(DECISIONS[113].kind(), DecisionKind::Choice);
-    // v0.84's written instance `NAME(atom, ...)` [RANGE-4].
+    assert_eq!(DECISIONS[109].kind(), DecisionKind::Choice);
+    assert_eq!(DECISIONS[110].production(), Production::InvariantStmt);
+    assert_eq!(DECISIONS[110].kind(), DecisionKind::Repeat1);
+    assert_eq!(DECISIONS[111].production(), Production::TypeInvariant);
+    assert_eq!(DECISIONS[111].kind(), DecisionKind::Choice);
     assert_eq!(DECISIONS[114].production(), Production::UsePremise);
-    assert_eq!(DECISIONS[114].kind(), DecisionKind::Optional);
-    assert_eq!(DECISIONS[119].production(), Production::BreakStmt);
-    assert_eq!(DECISIONS[119].kind(), DecisionKind::Optional);
-    assert_eq!(DECISIONS[120].production(), Production::ContinueStmt);
+    assert_eq!(DECISIONS[114].kind(), DecisionKind::Choice);
+    // v0.84's written instance `NAME(atom, ...)` [RANGE-4].
+    assert_eq!(DECISIONS[115].production(), Production::UsePremise);
+    assert_eq!(DECISIONS[115].kind(), DecisionKind::Optional);
+    assert_eq!(DECISIONS[120].production(), Production::BreakStmt);
     assert_eq!(DECISIONS[120].kind(), DecisionKind::Optional);
+    assert_eq!(DECISIONS[121].production(), Production::ContinueStmt);
+    assert_eq!(DECISIONS[121].kind(), DecisionKind::Optional);
     // The call-site marker optional, and v0.82's `atomic_stmt` guard and
     // statement repeat, shift the later place/effect choices; v0.82's
     // retired `for_stmt` marker moves every decision after it back by one,
     // and v0.84's range decisions and v0.86's entry bindings move them
     // forward again.
-    assert_eq!(DECISIONS[138].production(), Production::Call);
-    assert_eq!(DECISIONS[138].kind(), DecisionKind::Optional);
+    assert_eq!(DECISIONS[139].production(), Production::Call);
+    assert_eq!(DECISIONS[139].kind(), DecisionKind::Optional);
     // `psuffix` carries the field, payload and index-or-range choice, and the
     // factored `range_tail?` that keeps the index and range steps
     // strong-LL(2) [GRAM-1, GRAM-5].
     // The projected entry former adds the repeat immediately before these
     // suffix decisions; later decision identities move by one [MSR-3].
     // v0.136's clause suffix choice moves them once more; v0.142 keeps it.
-    assert_eq!(DECISIONS[159].production(), Production::Pbase);
-    assert_eq!(DECISIONS[159].kind(), DecisionKind::Repeat0);
+    assert_eq!(DECISIONS[160].production(), Production::Pbase);
+    assert_eq!(DECISIONS[160].kind(), DecisionKind::Repeat0);
     // The 12 entering rows and 83 exiting rows are unchanged: replacing
     // range_guard's `unchanged` occurrence with range_variant's `is`
     // occurrence removes one FOLLOW provenance row and adds one.
     // The graph-only diagnostic start contributes no place continuation.
-    assert_eq!(DECISIONS[159].rows().len(), 95);
-    assert_eq!(DECISIONS[160].production(), Production::Psuffix);
-    assert_eq!(DECISIONS[160].kind(), DecisionKind::Choice);
+    assert_eq!(DECISIONS[160].rows().len(), 95);
     assert_eq!(DECISIONS[161].production(), Production::Psuffix);
-    assert_eq!(DECISIONS[161].kind(), DecisionKind::Optional);
+    assert_eq!(DECISIONS[161].kind(), DecisionKind::Choice);
+    assert_eq!(DECISIONS[162].production(), Production::Psuffix);
+    assert_eq!(DECISIONS[162].kind(), DecisionKind::Optional);
     // v0.84's `range_clause` [RANGE-1]: the binder repeat, the optional guard
     // list and its repeat, and the conclusion repeat.
     for (index, kind) in [
-        (162, DecisionKind::Repeat0),
-        (163, DecisionKind::Optional),
-        (164, DecisionKind::Repeat0),
+        (163, DecisionKind::Repeat0),
+        (164, DecisionKind::Optional),
         (165, DecisionKind::Repeat0),
+        (166, DecisionKind::Repeat0),
     ] {
         assert_eq!(DECISIONS[index].production(), Production::RangeClause);
         assert_eq!(DECISIONS[index].kind(), kind);
     }
     // v0.136's diagnostic-only ordinary unchanged suffix [RANGE-1].
-    assert_eq!(DECISIONS[155].production(), Production::ClauseExpr);
-    assert_eq!(DECISIONS[155].kind(), DecisionKind::Choice);
+    assert_eq!(DECISIONS[156].production(), Production::ClauseExpr);
+    assert_eq!(DECISIONS[156].kind(), DecisionKind::Choice);
     // v0.142 shares comparison, variant and unchanged relations between a
     // guard and a conclusion, then adds the variant's optional `not`.
     // A relation has no bare alternative, so it owns no optional [RANGE-1].
     for (index, production, kind) in [
-        (166, Production::RangeRelation, DecisionKind::Choice),
-        (167, Production::RangeVariant, DecisionKind::Optional),
+        (167, Production::RangeRelation, DecisionKind::Choice),
+        (168, Production::RangeVariant, DecisionKind::Optional),
     ] {
         assert_eq!(DECISIONS[index].production(), production);
         assert_eq!(DECISIONS[index].kind(), kind);
     }
     // `epsuffix` mirrors it inside an effect row [EFF-1].
-    assert_eq!(DECISIONS[182].production(), Production::Epsuffix);
-    assert_eq!(DECISIONS[182].kind(), DecisionKind::Choice);
     assert_eq!(DECISIONS[183].production(), Production::Epsuffix);
-    assert_eq!(DECISIONS[183].kind(), DecisionKind::Optional);
+    assert_eq!(DECISIONS[183].kind(), DecisionKind::Choice);
+    assert_eq!(DECISIONS[184].production(), Production::Epsuffix);
+    assert_eq!(DECISIONS[184].kind(), DecisionKind::Optional);
 }
 
 /// `borrow_expr` is `"&" place` and owns no decision.
@@ -560,7 +612,7 @@ fn the_retired_atoms_leave_the_inventory_and_the_new_ones_enter() {
     ] {
         assert_eq!(FixedTerminal::from_spelling(spelling), Some(terminal));
     }
-    assert_eq!(ALL_FIXED_TERMINALS.len(), 110);
+    assert_eq!(ALL_FIXED_TERMINALS.len(), 111);
     // No fixed atom is capitalized any more, so nothing competes with TYPEID.
     assert!(ALL_FIXED_TERMINALS.iter().all(|terminal| {
         !terminal
@@ -604,14 +656,14 @@ fn every_decision_has_two_position_rows_and_complete_arm_coverage() {
             stack.extend_from_slice(node.children());
         }
     }
-    // The same 184 decisions `complete_inventory_is_pinned` reads out of the
+    // The same 185 decisions `complete_inventory_is_pinned` reads out of the
     // generated table, counted a second time by walking every production's
     // node tree. `struct_decl`'s `"opaque"?` optional [GRAM-2, TYPE-2] is
     // reachable from `item`, so the walk and the table agree on it; a
     // decision in the table that no production reaches would show up as the
     // two counts disagreeing.
     assert_eq!(decisions, DECISIONS.len());
-    assert_eq!(decisions, 184);
+    assert_eq!(decisions, 185);
 }
 
 #[test]
@@ -668,7 +720,7 @@ fn overlaps(left: LookaheadPredicate, right: LookaheadPredicate) -> bool {
 
 #[test]
 fn all_detailed_rows_retain_provenance_and_remain_cross_arm_disjoint() {
-    assert_eq!(DECISIONS.len(), 184);
+    assert_eq!(DECISIONS.len(), 185);
     let mut total_rows = 0_usize;
     let mut saw_atom_only = false;
     for decision in &DECISIONS {
@@ -714,6 +766,6 @@ fn all_detailed_rows_retain_provenance_and_remain_cross_arm_disjoint() {
     }
     // Count the complete inventory independently by summing each decision's
     // rows, including the explicit interface import arm [FN-3].
-    assert_eq!(total_rows, 8_469);
+    assert_eq!(total_rows, 8_474);
     assert!(saw_atom_only);
 }

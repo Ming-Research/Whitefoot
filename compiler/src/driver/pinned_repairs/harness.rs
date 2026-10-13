@@ -40,6 +40,7 @@ pub(super) fn run_pairs() {
         .chain(super::call_separations::CALL_SEPARATIONS)
         .chain(super::content_moves::CONTENT_MOVES)
         .chain(super::prelude_opaque::PRELUDE_OPAQUE)
+        .chain(super::qualified_constants::QUALIFIED_CONSTANTS)
         .chain(super::recursive_effects::RECURSIVE_EFFECTS)
         .chain(super::storage_destructuring::STORAGE_DESTRUCTURING)
         .chain(super::shared_maps::SHARED_MAPS)

@@ -128,6 +128,8 @@ const ENUM_ORDER: &[&str] = &[
     "range_variant",
     // v0.144 [DIAG-1]: the diagnostic-only graph segment start.
     "graph_segment",
+    // v0.145 [GRAM-2, HOLD-1]: a callable's held requirement.
+    "held_clause",
 ];
 
 /// v0.33 deliberately replaces the old pseudo-statement contract grammar.

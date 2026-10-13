@@ -12,8 +12,8 @@ fn main() -> status: std::process::ExitStatus pure waits {
   let initial = State(ready: no);
   let owner = shared_new::<State>(value: initial);
   let view = shared_read::<State>(shared: &owner);
-  atomic held = &view {
-    change(state: held);
+  atomic observed = &view {
+    change(state: observed);
   }
   return std::process::exit_status(code: 0_u8);
 }

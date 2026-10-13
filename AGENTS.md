@@ -161,8 +161,11 @@ read.
 - `spec/kernel-spec.md`: normative syntax, semantics, judgments, boundaries
   and examples; not compiler convenience presented as law or editing history.
   `spec/log.md` holds its approvals.
-- `docs/patterns.md`: writer problems, usable forms, examples, applicability
-  and costs; not acceptance rules or universal performance claims.
+- Whitefoot-kit's [writing guide](https://github.com/Ming-Research/Whitefoot-kit/blob/main/docs/writing.md): writer
+  problems, usable forms, examples, applicability and costs, for agents;
+  the line that merges a specification change into `main` files a request
+  to Whitefoot-kit on the status board naming the specification version,
+  the rules it changed and what writers must now watch for.
 - `docs/ideas.md` and `docs/why-whitefoot.md`: candidate mechanisms and
   explanatory essays; not a work queue or invented measurements.
 - `docs/articles/`: one idea each for readers outside the project, every
@@ -177,7 +180,7 @@ read.
 
 - Technical claims point to the specification, source and cases, a relevant
   design, or reproducible evidence.
-- The constitution, specification, writer patterns and essays stand without
+- The constitution, specification and essays stand without
   the design trees: they do not link to `design/` or use it as authority.
 - Maintainer navigation (README, this file, the research index) may point to
   the design trees. Research records and PRs may cite decisions as historical

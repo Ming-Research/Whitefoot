@@ -40,7 +40,7 @@ use crate::{
     PostconditionProofDisposition, ReservedDeclarationRole, ReservedNameClass, ResolutionIssue,
     ResolutionIssueKind, SemanticIssue, SemanticIssueKind, SemanticLocation, SemanticUnsupported,
     SourceIssue, SourceIssueKind, SourceOrigin, SourceProofObligation, StaticObligationDisposition,
-    SyntaxCoordinate, SyntaxIssue, TerminalIssue, UndischargedCallRequirementDetail,
+    SyntaxCoordinate, SyntaxIssue, SyntaxRepair, TerminalIssue, UndischargedCallRequirementDetail,
     UndischargedPostconditionDetail, UnsupportedSemanticFeature,
 };
 
@@ -621,6 +621,18 @@ impl FieldValue for Spelled {
     }
 }
 
+/// A grammar rejection's repair [DIAG-1]; one that names the source's own
+/// spelling reads it from the source the rejection cites.
+impl FieldValue for SyntaxRepair {
+    fn value(&self, bundle: &SourceBundle) -> Option<Value> {
+        let bytes = match self.source() {
+            Some(source) => bundle.file(source)?.bytes(),
+            None => &[],
+        };
+        self.sentence(bytes).map(Value::Text)
+    }
+}
+
 /// A node location's coordinate is the node's complete extent.
 impl FieldValue for SemanticLocation {
     fn value(&self, bundle: &SourceBundle) -> Option<Value> {
@@ -949,6 +961,8 @@ impl Report for SemanticIssueKind {
             UnreachableStatement;
             FunctionFallthrough;
             InvalidRequires;
+            InvalidHeldContract { reason, mechanical_fix };
+            SnapshotResource { owned_path, mechanical_fix };
             InvalidPostconditionSelector { mechanical_fix };
             AmbiguousResultRoute { mechanical_fix };
             InvalidPostconditionFields { required_fields };

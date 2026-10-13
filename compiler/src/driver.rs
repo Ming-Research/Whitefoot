@@ -3228,7 +3228,7 @@ fn lower_selected(
             let mut ledger = ledger;
             ledger.extend(module.take_actualization_ledger());
             if launcher_contract_ready {
-                module.append(launcher::render(ir, selected)?);
+                module.append(launcher::render(ir, selected)?)?;
             }
             if let Some(failure) = caller_failure {
                 let mut comment = crate::backend::emission::Module::default();
@@ -3236,11 +3236,18 @@ fn lower_selected(
                     "\n; Executable caller was not admitted: {}\n",
                     failure.replace('\n', "\n; ")
                 ));
-                module.append(comment);
+                module.append(comment)?;
             }
             Ok(Reported { module, ledger })
         })
         .map_err(|failure: BackendFailure| {
+            if failure == BackendFailure::SnapshotTargetUnsupported {
+                return CompilationFailure::new(
+                    CompilationStage::Backend,
+                    CompilationFailureKind::Unsupported,
+                    "snapshot export requires Linux x86-64 with glibc; source checking succeeded",
+                );
+            }
             let (stage, kind) = match failure {
                 BackendFailure::TargetLayout(_) => (
                     CompilationStage::TargetLayout,

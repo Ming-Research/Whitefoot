@@ -3,8 +3,8 @@ alias exit_status = std::process::exit_status;
 
 const names: Array<u8, 4> =[97_u8, 98_u8, 99_u8, 100_u8];
 
-fn empty(held: &Option<u64>) -> result: Bool reads(held) {
-  match held^ {
+fn empty(observed: &Option<u64>) -> result: Bool reads(observed) {
+  match observed^ {
     Some(value: unused) => {
       return False();
     }
@@ -14,8 +14,8 @@ fn empty(held: &Option<u64>) -> result: Bool reads(held) {
   }
 }
 
-fn full(held: &Option<u64>) -> result: Bool reads(held) {
-  match held^ {
+fn full(observed: &Option<u64>) -> result: Bool reads(observed) {
+  match observed^ {
     Some(value: unused) => {
       return True();
     }
@@ -25,11 +25,11 @@ fn full(held: &Option<u64>) -> result: Bool reads(held) {
   }
 }
 
-fn ready(closed: &u64, held: &Option<u64>) -> result: Bool reads(closed), reads(held) {
+fn ready(closed: &u64, observed: &Option<u64>) -> result: Bool reads(closed), reads(observed) {
   if closed^ == 1_u64 {
     return True();
   }
-  return full(held: held);
+  return full(observed: observed);
 }
 
 fn post(boxes: Shared<ConcurrentHashMap<u64>>, at: u64) -> result: unit pure waits contract {
@@ -39,7 +39,7 @@ fn post(boxes: Shared<ConcurrentHashMap<u64>>, at: u64) -> result: unit pure wai
   let names_end = at + 1_u64;
   let key = &names[at..names_end];
   for @send (value in 1_u64..501_u64) {
-    atomic slot = &boxes[key] when empty(held: slot) {
+    atomic slot = &boxes[key] when empty(observed: slot) {
       set slot^ = Some<u64>(value: value);
     }
   }
@@ -53,7 +53,7 @@ fn fetch(received: Shared<u64>, boxes: Shared<ConcurrentHashMap<u64>>, at: u64) 
   let names_end = at + 1_u64;
   let key = &names[at..names_end];
   for @take (count in 0_u64..500_u64) {
-    atomic slot = &boxes[key], r = &received when full(held: slot) {
+    atomic slot = &boxes[key], r = &received when full(observed: slot) {
       match slot^ {
         Some(value: seen) => {
           set r^ = r^ +wrap seen^;
@@ -70,8 +70,8 @@ fn fetch(received: Shared<u64>, boxes: Shared<ConcurrentHashMap<u64>>, at: u64) 
 fn wait_ready(closed: Shared<u64>, boxes: Shared<ConcurrentHashMap<u64>>, waited: Shared<u64>) -> result: unit pure waits {
   doc "Waits until the first box holds a value or the mail is closed, then counts its wake.";
   let key = &names[0_u64..1_u64];
-  atomic slot = &boxes[key], c = &closed when ready(closed: c, held: slot) {
-    let unused = full(held: slot);
+  atomic slot = &boxes[key], c = &closed when ready(closed: c, observed: slot) {
+    let unused = full(observed: slot);
   }
   atomic count = &waited {
     set count^ = count^ +wrap 1_u64;

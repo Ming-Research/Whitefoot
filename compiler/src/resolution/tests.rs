@@ -2078,8 +2078,8 @@ fn probe() -> result: unit pure {
     break @counted;
   }
   match ordinary {
-    Present(value: held) => {
-      give held;
+    Present(value: observed_state) => {
+      give observed_state;
     }
     Absent() => {
       return unit;

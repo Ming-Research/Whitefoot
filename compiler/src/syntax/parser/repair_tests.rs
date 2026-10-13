@@ -1,6 +1,7 @@
 //! Attribution and position controls for syntax repair hints.
 
 use super::*;
+use crate::syntax::parser::SyntaxRepair;
 
 fn outcome(source: &[u8], graph: bool) -> ParseOutcome {
     outcome_from(
@@ -73,7 +74,9 @@ fn infix_in_named_and_positional_arguments_keeps_gram5_and_the_flat_repair() {
             ]));
             assert_eq!(
                 issue.mechanical_fix,
-                Some(crate::diagnostic_repairs::FLAT_OPERATION_FIX)
+                Some(SyntaxRepair::Fixed(
+                    crate::diagnostic_repairs::FLAT_OPERATION_FIX
+                ))
             );
         }
     }
@@ -96,9 +99,9 @@ fn nested_infix_operand_uses_gram9_and_spans_its_two_token_start() {
             assert_eq!(&source[start..end], format!("1_u32 {operator}"));
             assert_eq!(
                 issue.mechanical_fix,
-                Some(
+                Some(SyntaxRepair::Fixed(
                     "bind each operation with its own preceding `let` and pass the binding as the operand; an expression has one operation over two atoms, with no chaining or parenthesized subexpressions [GRAM-6, GRAM-9]"
-                )
+                ))
             );
         }
     }
@@ -115,7 +118,9 @@ fn completed_infix_operand_keeps_its_contract_repair() {
     assert_eq!(issue_bytes(source, issue), b"1_u32 +wrap");
     assert_eq!(
         issue.mechanical_fix,
-        Some(crate::diagnostic_repairs::FLAT_CONTRACT_OPERATION_FIX)
+        Some(SyntaxRepair::Fixed(
+            crate::diagnostic_repairs::FLAT_CONTRACT_OPERATION_FIX
+        ))
     );
 }
 
@@ -130,7 +135,9 @@ fn nested_call_in_a_definition_keeps_the_definition_repair() {
     assert_eq!(issue_bytes(source, issue), b"cvt::");
     assert_eq!(
         issue.mechanical_fix,
-        Some(crate::diagnostic_repairs::GRAM9_CONTRACT_FIX)
+        Some(SyntaxRepair::Fixed(
+            crate::diagnostic_repairs::GRAM9_CONTRACT_FIX
+        ))
     );
 }
 
@@ -509,9 +516,9 @@ fn graph_row_hint_gives_complete_declaration_forms() {
         assert_eq!(issue_bytes(b"module geometry {", issue), b"geometry");
         assert_eq!(
             issue.mechanical_fix,
-            Some(
+            Some(SyntaxRepair::Fixed(
                 "write graph declarations as `package name = \"location\";`, then module rows `module_path: [dependency_path, ...];`, then entries `entry name = module_path;`; examples are `package util = \"../util\";`, `pkg::geometry: [];`, and `entry app = pkg::geometry::main;` [GRAM-2]"
-            ),
+            )),
             "{entry:?}"
         );
     }
@@ -526,9 +533,9 @@ fn entry_prefix_hint_names_the_graph_declaration() {
     };
     assert_eq!(
         issue.mechanical_fix,
-        Some(
+        Some(SyntaxRepair::Fixed(
             "remove `entry` before `fn`; declare the entry in the module graph file, for example `entry app = pkg::main;` [GRAM-2, MOD-1]"
-        )
+        ))
     );
     assert!(matches!(
         outcome(b"fn main() -> r: u32 pure { return 0_u32; }", false),
@@ -620,7 +627,9 @@ fn definition_conjunction_keeps_the_applicable_boolean_repair() {
     assert_eq!(issue_bytes(source, issue), b"&");
     assert_eq!(
         issue.mechanical_fix,
-        Some(crate::diagnostic_repairs::BOOLEAN_OPERATION_FIX)
+        Some(SyntaxRepair::Fixed(
+            crate::diagnostic_repairs::BOOLEAN_OPERATION_FIX
+        ))
     );
 }
 
@@ -649,7 +658,9 @@ fn routed_range_conjunction_keeps_the_range_repair() {
             );
             assert_eq!(
                 issue.mechanical_fix,
-                Some(crate::diagnostic_repairs::RANGE1_BOOLEAN_AND_FIX)
+                Some(SyntaxRepair::Fixed(
+                    crate::diagnostic_repairs::RANGE1_BOOLEAN_AND_FIX
+                ))
             );
             let repaired = source.replace("&&", ",");
             assert!(matches!(

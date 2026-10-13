@@ -21,6 +21,7 @@ mod harness;
 mod interface_applications;
 mod lexical_syntax;
 mod prelude_opaque;
+mod qualified_constants;
 mod qualified_names;
 mod recursive_effects;
 mod selector_scope;

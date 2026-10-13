@@ -1,6 +1,6 @@
 //! Repairs selected after grammar attribution, without changing its result.
 
-use super::{DiagnosticResult, DiagnosticSite, ProbeContext, fixed, has};
+use super::{DiagnosticResult, DiagnosticSite, ProbeContext, SyntaxRepair, fixed, has};
 use crate::ClassifiedToken;
 use crate::diagnostic_repairs::{
     ALIAS_FIX, ARRAY_FIX, BOOLEAN_OPERATION_FIX, BORROW_MUT_FIX, EFFECT_ROW_FIX, ENTRY_FIX,
@@ -207,7 +207,7 @@ pub(super) fn attach(
         } else {
             None
         };
-        issue.mechanical_fix = hint.or(issue.mechanical_fix);
+        issue.mechanical_fix = hint.map(SyntaxRepair::Fixed).or(issue.mechanical_fix);
     }
     result
 }
