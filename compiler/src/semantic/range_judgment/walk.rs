@@ -735,13 +735,14 @@ impl<'program> Walker<'program> {
                 binding,
                 scrutinee,
                 ok_type,
+                error_type,
                 ..
             } => {
                 self.cite = node_path.clone();
-                let _ = self.eval(&mut state, scrutinee);
+                let outcome = self.eval(&mut state, scrutinee);
                 // [FN-9] the `Err` edge returns the propagated error.
                 self.owe_atomic(&state, node_path, true);
-                self.owe_postconditions(&mut state, None, node_path, "a propagated error exit");
+                self.owe_propagated_postconditions(&state, outcome, *error_type, node_path);
                 self.bind(&mut state, *binding, *ok_type, Value::Unknown);
                 Some(state)
             }
@@ -1168,19 +1169,7 @@ impl<'program> Walker<'program> {
                             ));
                         }
                         forked.variants.insert(location.clone(), arm.tag);
-                        let enabled: Vec<(FactId, Vec<Literal>)> = forked
-                            .routed
-                            .iter()
-                            .filter(|(at, variant, ..)| at == location && *variant == arm.tag)
-                            .map(|(_, _, fact, guards)| (*fact, guards.clone()))
-                            .collect();
-                        for (fact, guards) in enabled {
-                            if guards.is_empty() {
-                                forked.facts.push(fact);
-                            } else {
-                                forked.guarded.push(Guarded { fact, guards });
-                            }
-                        }
+                        self.activate_routed_facts(&mut forked, location, arm.tag);
                     }
                     for binder in &arm.binders {
                         let element = match &value {
