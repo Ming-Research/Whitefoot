@@ -1,10 +1,11 @@
-fn helper(source: &Array<Array<u64, 1>, 2>, target: &u64, selector: &u64) -> result: unit writes(target) contract {
+fn helper(source: &Array<Array<u64, 1>, 2>, target: &u64, selector: &u64) -> result: u64 writes(target) contract {
   requires source^.len == 2_u64;
   requires selector^ == 0_u64;
-  ensures source^[selector^].len == source^[selector^].len;
+  ensures result <= source^[selector^].len;
 } {
+  doc "FN-9: the integer result supplies a result datum, and returning zero proves its bound by the source measure's nonnegative domain.";
   set target^ = 1_u64;
-  return unit;
+  return 0_u64;
 }
 
 fn caller() -> result: unit pure {

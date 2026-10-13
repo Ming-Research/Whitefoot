@@ -2,13 +2,14 @@ struct Cursor {
   k: u64;
 }
 
-fn helper(source: &Paged<u64>, target: &[u64], selector: &Cursor) -> result: unit writes(target) contract {
+fn helper(source: &Paged<u64>, target: &[u64], selector: &Cursor) -> result: u64 writes(target) contract {
   requires selector^.k < source^.pages.len;
   requires target^.len > 0_u64;
-  ensures source^.pages[selector^.k].len == source^.pages[selector^.k].len;
+  ensures result <= source^.pages[selector^.k].len;
 } {
+  doc "FN-9: the integer result supplies a result datum, and returning zero proves its bound by the source measure's nonnegative domain.";
   set target^[0_u64] = 1_u64;
-  return unit;
+  return 0_u64;
 }
 
 fn caller(source: &Paged<u64>, selector: &Cursor, second: u64) -> result: unit reads(source.len), writes(source.pages[second]) contract {
