@@ -97,6 +97,15 @@ fn obligation_records(
     // compiler-owned [PRE-1] signature has none, its contract being a
     // declaration premise.
     if function.body.is_some() {
+        // [ENT-2, FN-9] the places a postcondition forms owe their
+        // subscripts' obligations at every return that selects it.
+        for postcondition in &function.postconditions {
+            for _ in &postcondition.selected_returns {
+                for place in &postcondition.places {
+                    records.expression(&place.expression);
+                }
+            }
+        }
         for (ordinal, postcondition) in function.postconditions.iter().enumerate() {
             records.push(
                 SemanticRule::Fn9,
@@ -109,6 +118,24 @@ fn obligation_records(
         }
     }
     records.list
+}
+
+/// [ENT-2, FN-8] whether some place a requirement of `function` forms at
+/// body entry owes an obligation at `site`.
+pub(super) fn requirement_forms_site(function: &CheckedFunction, site: &NodePath) -> bool {
+    let mut records = Records {
+        list: Vec::new(),
+        empties_run: &|_| false,
+        function: function.id,
+        loops: Vec::new(),
+        gives: 0,
+        atomic: None,
+        branches: Vec::new(),
+    };
+    for place in function.requirement_places.iter().flatten() {
+        records.expression(place);
+    }
+    records.list.iter().any(|record| record.site == *site)
 }
 
 struct Records<'rows> {
@@ -619,6 +646,7 @@ impl Records<'_> {
                     );
                 }
                 CheckedPlaceStep::Field(_)
+                | CheckedPlaceStep::Payload { .. }
                 | CheckedPlaceStep::BoxReferent(_)
                 | CheckedPlaceStep::Measure(_) => {}
             }

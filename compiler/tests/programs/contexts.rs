@@ -4,7 +4,7 @@
 //! program here stopped, or ran on without end, on the runtime before the
 //! change that makes it pass, on the route or driver count it names
 //! (`research/investigations/io-model/CONCURRENCY-MODEL.md`, section 10.4).
-//! The last case is a bound spawn's result crossing its join [WAIT-3].
+//! Bound-spawn cases also check their results and block-end joins [WAIT-3].
 
 use super::support::{build_program, compile_program, compile_sources};
 
@@ -174,6 +174,22 @@ fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure w
 #[test]
 fn a_bound_spawn_moves_its_host_handle_on_after_the_join() {
     let program = build_program(&compile_sources(&[("handle_result.wf", HANDLE_RESULT)]));
+    for drivers in ["1", "4"] {
+        let output = program.run_with_settings(None, &[("WF_DRIVERS", drivers)]);
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "drivers {drivers}: {output:?}"
+        );
+    }
+}
+
+/// A bound spawn unused in its loop body joins at the body's end [WAIT-3].
+/// Joining before the next statement waits for the guarded context before
+/// the starter makes its guard true, so the runtime reports a deadlock.
+#[test]
+fn an_unused_bound_spawn_joins_after_the_statement_that_enables_its_guard() {
+    let program = build_program(&compile_program("bound_context_block_end.wf"));
     for drivers in ["1", "4"] {
         let output = program.run_with_settings(None, &[("WF_DRIVERS", drivers)]);
         assert_eq!(

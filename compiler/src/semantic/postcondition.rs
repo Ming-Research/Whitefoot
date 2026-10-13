@@ -367,4 +367,30 @@ pub(crate) struct CheckedPostcondition {
     pub(crate) const_substitutions: Vec<(DeclarationId, u64)>,
     pub(crate) relation: RelationTemplate,
     pub(crate) selected_returns: Vec<SelectedPostconditionReturn>,
+    /// The [ENT-2] clause (b) places the clause forms, each owing its
+    /// subscripts' [OP-4] obligations at every selected return [FN-9].
+    pub(crate) places: Vec<PostconditionFormedPlace>,
+}
+
+/// One [ENT-2] clause (b) place a postcondition forms at each of its
+/// selected returns [FN-9].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct PostconditionFormedPlace {
+    pub(crate) expression: super::model::CheckedExpression,
+    /// Which state each base the place indexes is read in [MSR-3].
+    pub(crate) denotation: PlaceDenotation,
+}
+
+/// [MSR-3, FN-9] the state the bases of one postcondition place denote.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PlaceDenotation {
+    /// The state the return reads: the exit state of a reference parameter
+    /// the row writes, a named const, or a range.
+    Return,
+    /// The one state of a parameter that has no exit state: a by-value
+    /// parameter, or a reference the row only reads.
+    Entry,
+    /// The entry state `entry(parameter)` names, of a reference parameter
+    /// the row writes.
+    EntryImage,
 }

@@ -1,0 +1,317 @@
+alias Clock = std::time::Clock;
+alias ExitStatus = std::process::ExitStatus;
+alias HandleFactory = std::io::HandleFactory;
+alias Inputs = std::process::Inputs;
+alias Instant = std::time::Instant;
+alias OutputStream = std::io::OutputStream;
+alias exit_status = std::process::exit_status;
+alias instant_after = std::time::instant_after;
+alias nanoseconds_from = std::time::nanoseconds_from;
+alias now = std::time::now;
+
+const label_witness: Array<u8, 8> =[119_u8, 105_u8, 116_u8, 110_u8, 101_u8, 115_u8, 115_u8, 61_u8];
+
+const label_contexts: Array<u8, 10> =[32_u8, 99_u8, 111_u8, 110_u8, 116_u8, 101_u8, 120_u8, 116_u8, 115_u8, 61_u8];
+
+const label_drivers: Array<u8, 9> =[32_u8, 100_u8, 114_u8, 105_u8, 118_u8, 101_u8, 114_u8, 115_u8, 61_u8];
+
+const label_ops: Array<u8, 5> =[32_u8, 111_u8, 112_u8, 115_u8, 61_u8];
+
+const label_ns: Array<u8, 4> =[32_u8, 110_u8, 115_u8, 61_u8];
+
+const label_rate: Array<u8, 11> =[32_u8, 111_u8, 112_u8, 115_u8, 95_u8, 112_u8, 101_u8, 114_u8, 95_u8, 115_u8, 61_u8];
+
+const label_unknown: Array<u8, 1> =[63_u8];
+
+const label_check: Array<u8, 7> =[32_u8, 99_u8, 104_u8, 101_u8, 99_u8, 107_u8, 61_u8];
+
+const label_reads: Array<u8, 7> =[32_u8, 114_u8, 101_u8, 97_u8, 100_u8, 115_u8, 61_u8];
+
+const label_read_ns: Array<u8, 9> =[32_u8, 114_u8, 101_u8, 97_u8, 100_u8, 95_u8, 110_u8, 115_u8, 61_u8];
+
+const label_read_max: Array<u8, 13> =[32_u8, 114_u8, 101_u8, 97_u8, 100_u8, 95_u8, 109_u8, 97_u8, 120_u8, 95_u8, 110_u8, 115_u8, 61_u8];
+
+const line_end: Array<u8, 1> =[10_u8];
+
+struct Totals {
+  doc "What every context adds once, when its time is up: the operations it made and the last value of its local number, kept so that no loop's work can be dropped as unused; and, for the arms with a reader context, how many reads it made, their total nanoseconds and the longest one.";
+  ops: u64;
+  check: u64;
+  read_count: u64;
+  read_ns: u64;
+  read_max_ns: u64;
+}
+
+struct Gate {
+  doc "Holds every context until the root has spawned them all, so that all of them run from one start to one deadline whatever order the runtime starts contexts in.";
+  open: Bool;
+  deadline: Instant;
+}
+
+struct Bench {
+  doc "One witness run: the contexts to start and the milliseconds they run, read from the invocation's two arguments, valid when both are positive decimal numbers; the runtime's driver count; the handles the report needs; and the process's memory meter, which no arm here uses.";
+  contexts: u64;
+  millis: u64;
+  valid: Bool;
+  drivers: u64;
+  clock: Clock;
+  factory: HandleFactory;
+  output: OutputStream;
+  meter: std::process::MemoryMeter;
+}
+
+fn arg_number(args: &std::text::Args, position: u64) -> result: Option<u64> reads(args) {
+  doc "The invocation argument at position read as a positive decimal number of at most 18 digits, or None.";
+  match std::text::arg_get(args: args, position: position) {
+    Ok(value: host) => {
+      let digits = array_filled::<u8, 18>(value: 0_u8);
+      match std::text::host_copy_bytes(value: &host, destination: &digits[0_u64..18_u64], start: 0_u64, end: 18_u64) {
+        Ok(value: length) => {
+          let total = 0_u64;
+          for @digit (at in 0_u64..length) {
+            let byte = digits[at];
+            if byte < 48_u8 {
+              return None<u64>();
+            }
+            if byte > 57_u8 {
+              return None<u64>();
+            }
+            let digit = byte - 48_u8;
+            let value = cvt::<u8, u64>(digit);
+            set total = total *wrap 10_u64;
+            set total = total +wrap value;
+          }
+          if total == 0_u64 {
+            return None<u64>();
+          }
+          return Some<u64>(value: total);
+        }
+        Err(error: short) => {
+          return None<u64>();
+        }
+      }
+    }
+    Err(error: missing) => {
+      return None<u64>();
+    }
+  }
+}
+
+fn bench_begin(inputs: Inputs) -> bench: Bench pure waits {
+  doc "Reads CONTEXTS and MILLISECONDS, the invocation's two arguments, and keeps the clock, the standard output and the runtime's driver count.";
+  let Inputs(args: args, drivers: drivers, cwd: directory, stdout: output, handles: factory, clock: clock, memory_meter: meter, ..) = move inputs;
+  let std::fs::Directory(read: read_directory, write: write_directory) = move directory;
+  std::fs::close_directory_write(factory: &factory, directory: move write_directory);
+  std::fs::close_directory(factory: &factory, directory: move read_directory);
+  let contexts = 0_u64;
+  let millis = 0_u64;
+  let valid = False();
+  match arg_number(args: &args, position: 1_u64) {
+    Some(value: count) => {
+      match arg_number(args: &args, position: 2_u64) {
+        Some(value: span) => {
+          set contexts = count;
+          set millis = span;
+          set valid = True();
+        }
+        None() => {
+        }
+      }
+    }
+    None() => {
+    }
+  }
+  return Bench(contexts: contexts, millis: millis, valid: valid, drivers: drivers, clock: move clock, factory: move factory, output: move output, meter: move meter);
+}
+
+fn gate_new(clock: &Clock) -> result: Shared<Gate> writes(clock) {
+  doc "A closed gate, whose deadline stays a placeholder until it opens.";
+  let placeholder = now(clock: clock);
+  let shut = False();
+  let closed = Gate(open: shut, deadline: placeholder);
+  return shared_new::<Gate>(value: closed);
+}
+
+fn gate_open(gate: &Shared<Gate>, clock: &Clock, millis: u64) -> started: Instant reads(gate), writes(clock) waits {
+  doc "Opens the gate once every context is spawned, with the deadline millis milliseconds from now, and returns now.";
+  let started = now(clock: clock);
+  let span = millis *wrap 1000000_u64;
+  let deadline = instant_after(instant: started, nanoseconds: span);
+  atomic g = &gate^ {
+    set g^.deadline = deadline;
+    set g^.open = True();
+  }
+  return started;
+}
+
+fn gate_pass(gate: &Shared<Gate>, clock: &Clock) -> deadline: Instant reads(gate), writes(clock) waits {
+  doc "Waits until the gate opens and returns its deadline.";
+  let deadline = now(clock: clock);
+  atomic g = &gate^ when g^.open {
+    set deadline = g^.deadline;
+  }
+  return deadline;
+}
+
+fn totals_new() -> result: Shared<Totals> pure {
+  doc "The object every context adds its operations and its local number to when its time is up.";
+  let zero = Totals(ops: 0_u64, check: 0_u64, read_count: 0_u64, read_ns: 0_u64, read_max_ns: 0_u64);
+  return shared_new::<Totals>(value: zero);
+}
+
+fn tally(totals: &Shared<Totals>, done: u64, state: u64) -> result: unit reads(totals) waits {
+  doc "Adds one context's operations and local number to the totals, once, after its loop.";
+  atomic t = &totals^ {
+    set t^.ops = t^.ops +wrap done;
+    set t^.check = ixor(t^.check, state);
+  }
+  return unit;
+}
+
+fn tally_reads(totals: &Shared<Totals>, count: u64, nanoseconds: u64, longest: u64, state: u64) -> result: unit reads(totals) waits {
+  doc "Adds a reader context's reads, their total nanoseconds, its longest read and the last value it read to the totals, once, after its loop.";
+  atomic t = &totals^ {
+    set t^.read_count = t^.read_count +wrap count;
+    set t^.read_ns = t^.read_ns +wrap nanoseconds;
+    set t^.check = ixor(t^.check, state);
+    if longest > t^.read_max_ns {
+      set t^.read_max_ns = longest;
+    }
+  }
+  return unit;
+}
+
+fn step(state: u64) -> next: u64 pure {
+  doc "The local work of one operation: one step of a 64-bit linear congruential sequence, which no compiler folds across a loop.";
+  let scaled = state *wrap 6364136223846793005_u64;
+  return scaled +wrap 1442695040888963407_u64;
+}
+
+fn context_key(index: u64) -> key: Array<u8, 8> pure {
+  doc "A context's own eight-byte key: the low two bytes of its index and six bytes of k, distinct for up to 65,536 contexts.";
+  let key = array_filled::<u8, 8>(value: 107_u8);
+  set key[0_u64] = cvt.wrap::<u64, u8>(index);
+  let high = ishr.wrap(index, 8_u32);
+  set key[1_u64] = cvt.wrap::<u64, u8>(high);
+  return key;
+}
+
+fn put_text(line: &Slots<u8, 256>, text: &[u8]) -> result: unit reads(text), writes(line) {
+  doc "Appends text to the line, as much as fits.";
+  for @copy (at in 0_u64..text^.len) {
+    let byte = text^[at];
+    if line^.len < line^.cap {
+      place_back(window: line, value: byte);
+    }
+  }
+  return unit;
+}
+
+fn put_decimal(line: &Slots<u8, 256>, value: u64) -> result: unit writes(line) {
+  doc "Appends value in decimal to the line, as much as fits.";
+  let digits = slots_new::<u8, 20>();
+  let rest = value;
+  loop @split {
+    let low = rest % 10_u64;
+    let glyph = cvt.wrap::<u64, u8>(low);
+    let shown = glyph +wrap 48_u8;
+    if digits.len < digits.cap {
+      place_back(window: &digits, value: shown);
+    }
+    set rest = rest / 10_u64;
+    if rest == 0_u64 {
+      break @split;
+    }
+  }
+  loop @emit {
+    if digits.len == 0_u64 {
+      break @emit;
+    }
+    let shown = take_back(window: &digits);
+    if line^.len < line^.cap {
+      place_back(window: line, value: shown);
+    }
+  }
+  return unit;
+}
+
+fn write_line(factory: &HandleFactory, output: &OutputStream, line: &Slots<u8, 256>) -> result: u8 reads(line), writes(factory), writes(output) waits {
+  doc "Writes the whole line to the output; 0 when written, 1 when the output refused it.";
+  let length = line^.len;
+  let source = &line^[0_u64..length];
+  let sent = 0_u64;
+  let unbounded = None<Instant>();
+  let cancel = std::time::cancel_never();
+  loop @send {
+    if sent < length {
+    } else {
+      break @send;
+    }
+    match std::io::write_once(factory: factory, output: output, source: source, start: sent, end: length, deadline: unbounded, cancel: &cancel) {
+      Ok(value: endpoint) => {
+        set sent = endpoint;
+      }
+      Err(error: failure) => {
+        std::time::close_cancel_watch(watch: move cancel);
+        return 1_u8;
+      }
+    }
+  }
+  std::time::close_cancel_watch(watch: move cancel);
+  return 0_u8;
+}
+
+fn bench_end(bench: Bench, name: &[u8], totals: &Shared<Totals>, started: Instant, ended: Instant) -> status: ExitStatus reads(name), reads(totals) waits {
+  doc "Prints one line, witness=NAME contexts=N drivers=D ops=OPS ns=ELAPSED ops_per_s=RATE check=C reads=R read_ns=T read_max_ns=M, the elapsed time measured from the opening of the gate, once every context is spawned, to after the last join; the status is 0 when the line was written and 1 otherwise.";
+  let Bench(contexts: contexts, drivers: drivers, factory: factory, output: output, ..) = move bench;
+  let ops = 0_u64;
+  let check = 0_u64;
+  let read_count = 0_u64;
+  let read_ns = 0_u64;
+  let read_max_ns = 0_u64;
+  atomic t = &totals^ {
+    set ops = t^.ops;
+    set check = t^.check;
+    set read_count = t^.read_count;
+    set read_ns = t^.read_ns;
+    set read_max_ns = t^.read_max_ns;
+  }
+  let elapsed = nanoseconds_from(earlier: started, later: ended);
+  let line = slots_new::<u8, 256>();
+  put_text(line: &line, text: &label_witness[0_u64..8_u64]);
+  put_text(line: &line, text: name);
+  put_text(line: &line, text: &label_contexts[0_u64..10_u64]);
+  put_decimal(line: &line, value: contexts);
+  put_text(line: &line, text: &label_drivers[0_u64..9_u64]);
+  put_decimal(line: &line, value: drivers);
+  put_text(line: &line, text: &label_ops[0_u64..5_u64]);
+  put_decimal(line: &line, value: ops);
+  put_text(line: &line, text: &label_ns[0_u64..4_u64]);
+  put_decimal(line: &line, value: elapsed);
+  put_text(line: &line, text: &label_rate[0_u64..11_u64]);
+  let micros = elapsed / 1000_u64;
+  let rated = False();
+  if micros > 0_u64 {
+    if ops <= 18000000000000_u64 {
+      let scaled = ops * 1000000_u64;
+      let rate = scaled / micros;
+      put_decimal(line: &line, value: rate);
+      set rated = True();
+    }
+  }
+  if rated {
+  } else {
+    put_text(line: &line, text: &label_unknown[0_u64..1_u64]);
+  }
+  put_text(line: &line, text: &label_check[0_u64..7_u64]);
+  put_decimal(line: &line, value: check);
+  put_text(line: &line, text: &label_reads[0_u64..7_u64]);
+  put_decimal(line: &line, value: read_count);
+  put_text(line: &line, text: &label_read_ns[0_u64..9_u64]);
+  put_decimal(line: &line, value: read_ns);
+  put_text(line: &line, text: &label_read_max[0_u64..13_u64]);
+  put_decimal(line: &line, value: read_max_ns);
+  put_text(line: &line, text: &line_end[0_u64..1_u64]);
+  let written = write_line(factory: &factory, output: &output, line: &line);
+  return exit_status(code: written);
+}
