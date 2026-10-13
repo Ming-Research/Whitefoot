@@ -11,6 +11,14 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-13 v0.143: a call inside its own call-graph component receives every callee postcondition as an induction hypothesis
+
+Rules: changed DIAG-2, TYPE-11, ENT-1, ENT-2, ENT-3, RANGE-2
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the specification revision (v0.142 to v0.143) and design-tree change of Whitefoot#427 at commit ae19f6b4e?" (translated); before it, the same day, the owner chose option A on the direction card "after a recursive function calls itself (or another member of its cycle), may it use the ensures the callee wrote?" (translated): in-component calls receive every callee postcondition as an induction hypothesis on call-return order.
+
+Summary: A call to a member of its own call-graph component received only the callee's generated type-invariant postconditions, so Snowghost's halving recursive count (`ensures total <= n`, two recursive halves summed) was refused at `a + b`, while the range judgment already took every callee's range postconditions after every call. DIAG-2 now gives such a call every callee postcondition, written and generated, affine and range, unrouted and routed, under each one's ordinary selection and establishment conditions, as induction hypotheses justified by strong induction on the order in which calls of the component return: the first call to return used no same-component hypothesis, each later return's proof uses hypotheses only of calls that returned before it, and every selected return proves its postconditions; this is partial correctness, a call that never returns handing back nothing. Verification stays one pass with no summary fixed point, and publication outside the component stays atomic at the module boundary [FN-9, MOD-8]. TYPE-11, ENT-1, ENT-2, ENT-3 (S12, S13 and the publication formula) and RANGE-2 drop their restated restriction and cite DIAG-2; S13's call data now also serve in-component calls. Selection ground: the induction argument does not depend on whether a clause was written or generated, and the earlier refusal rested only on no program needing a written clause inside its component. Refused: limiting hypotheses to generated type-invariant postconditions, and limiting the range judgment the same way, which would refuse more programs and still leave Snowghost's count unprovable.
+
 ## 2026-10-13 v0.142: a tracked integer field place has a current image, a quotient's upper bound follows from its dividend and divisor, and `ishl(1, s)` is named
 
 Rules: changed ENT-3, ENT-6, MSR-4, INV-1
