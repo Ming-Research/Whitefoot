@@ -52,10 +52,14 @@ on:
         options: ["1", "2", "3", "4", "5a", "5c", "6", "6b", diagnostic-spine, diagnostic-fir, diagnostic-twin]
         default: "1"
       par_demand_inspection:
-        # A committed record cannot name the commit introducing itself.
-        # Build-matching manual evidence needs delivery after that build;
-        # this repository-path input does not supply external artifact delivery.
+        # A committed record cannot name the commit introducing itself, so a
+        # record for this build is committed afterwards, on another ref, and
+        # read from the commit par_demand_inspection_ref names.
         description: Repository-relative manual inspection file bound to this build; required for qualified demand timing
+        type: string
+        default: ""
+      par_demand_inspection_ref:
+        description: Full commit holding par_demand_inspection when it was committed after this build; empty reads it from the dispatched checkout
         type: string
         default: ""
       placement_runner:
@@ -501,8 +505,18 @@ jobs:
         env:
           EXPERIMENT: ${{ inputs.par_demand_experiment }}
           INSPECTION: ${{ inputs.par_demand_inspection }}
+          INSPECTION_REF: ${{ inputs.par_demand_inspection_ref }}
         run: |
-          if [ -n "$INSPECTION" ]; then
+          if [ -n "$INSPECTION_REF" ]; then
+            # The record names this build's revision and hashes; it lives in a
+            # later commit, which only delivers it. inspection.py below checks
+            # both against this build, unchanged.
+            [ -n "$INSPECTION" ] || { echo "par_demand_inspection_ref needs par_demand_inspection." >&2; exit 1; }
+            [[ "$INSPECTION_REF" =~ ^[0-9a-f]{40}$ ]] || { echo "par_demand_inspection_ref must be a full commit." >&2; exit 1; }
+            case "$INSPECTION" in /*|..|../*|*/../*|*/..) echo "Inspection must be repository-relative." >&2; exit 1 ;; esac
+            git fetch --no-tags --depth 1 origin "$INSPECTION_REF"
+            git show "$INSPECTION_REF:$INSPECTION" > "$RUNNER_TEMP/par-demand/inspection.json"
+          elif [ -n "$INSPECTION" ]; then
             case "$INSPECTION" in /*|..|../*|*/../*|*/..) echo "Inspection must be repository-relative." >&2; exit 1 ;; esac
             inspection_source=$(realpath -e -- "$INSPECTION")
             inspection_repository=$(realpath -e -- "$GITHUB_WORKSPACE")

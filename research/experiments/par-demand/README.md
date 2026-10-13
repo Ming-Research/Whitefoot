@@ -152,11 +152,12 @@ identify an indexed fallback before interpreting that attribution.
 Qualified workflow timing requires `par_demand_inspection`, a repository-relative
 manual record matching the actual build. The workflow and `measure.py` validate
 it before decisive timing; the reducer independently validates it before any
-qualified verdict. This exposes a delivery gap: committing an inspection for
-revision H creates revision H', so that record cannot qualify the new HEAD.
-An external, post-build inspection delivery mechanism is still needed for a
-fresh CI build. Do not work around this by copying historical evidence or
-loosening the revision/hash check. Archived builds can be inspected and reduced
+qualified verdict. Committing an inspection for revision H creates revision
+H', so that record cannot qualify the new HEAD. A record for a build of H is
+therefore committed afterwards on another ref, and the workflow reads it from
+the commit `par_demand_inspection_ref` names while it measures H; the
+revision and hash checks are unchanged. Do not copy historical evidence or
+loosen the revision/hash check. Archived builds can be inspected and reduced
 with `summarize.py --inspection <record>` without rebuilding or retiming.
 
 Arm order rotates once per pair of rounds, then visits that rotation in both
