@@ -235,6 +235,19 @@ void wf__completion_socket_shutdown_submit(
     void *record
 );
 
+/* The local endpoint of one connected socket (`local_address` [PRE-2]), as
+ * the three scalars an emitted `SocketAddress` value is.  It is a query the
+ * host answers at once, so it takes no record and makes its one host call on
+ * the calling thread, whichever route the connection's transfers use.
+ * Returns 0 with the three scalars written, or the host's own nonzero
+ * refusal code with all three zero. */
+int wf__completion_socket_local_address(
+    int descriptor,
+    uint64_t *address_low,
+    uint64_t *address_high,
+    uint32_t *port_and_family
+);
+
 /* A shutdown's joined value is zero for the first half and one for the
  * descriptor-close attempt on its last half. Its error code independently
  * reports the close outcome. The ordinary linked close uses that private
@@ -309,6 +322,11 @@ uint64_t wf__completion_wait_signals(void);
 int wf__completion_pending(const void *record);
 
 /* ------------------------------------------------------ waiting contexts */
+
+/* The execution's driver count, fixed before the entry receives Inputs.
+ * Establishes root-ring availability without starting a helper or executor;
+ * later lazy context startup must start exactly this many driver roles. */
+uint64_t wf__context_driver_count(void);
 
 /* Contexts [WAIT-2], each a chain of resumable frames
  * (design/compiler/waiting-contexts.md).  The emitted code of a
@@ -416,9 +434,11 @@ void wf__shared_seen(unsigned moment);
 struct wf_key_set;
 struct wf_table_entry;
 void wf__key_set_new(struct wf_key_set *out, uint64_t capacity);
+uint64_t wf__key_set_bytes(const struct wf_key_set *set);
 uint64_t wf__key_set_insert(struct wf_key_set *set, const unsigned char *key, uint64_t length);
-/* Gives a set's memory back, taking the set's `store` alone, NULL for none,
- * as the emitted code holds a set in two registers. */
+/* Returns all a source set's grants to the heap, without retaining a spare,
+ * taking the set's `store` alone, NULL for none, as emitted code holds a set
+ * in two registers. */
 void wf__key_set_free(void *store);
 /* The length of the set's key at `index`, below its count, after copying as
  * many of its first bytes as `room` allows to `out`. */

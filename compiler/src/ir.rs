@@ -767,6 +767,8 @@ impl IrRuntimeTargetObligations {
 /// The [MSR-1] measure one reader row loads.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum IrMeasure {
+    /// Heap bytes retained by a KeySet.
+    Bytes,
     /// Number of pages holding initialized elements.
     Pages,
     Length,
@@ -1451,6 +1453,11 @@ pub enum IrOperation {
     KeySetInsert {
         set: IrValueId,
         key: IrValueId,
+    },
+    /// [SHARE-1] reads the heap bytes held by the set's storage, including
+    /// unused allocated capacity. Defines `u64`, an execution input [WAIT-2].
+    KeySetBytes {
+        set: IrValueId,
     },
     /// [SHARE-1] copies the first bytes of the key at `index` of the set
     /// `set` addresses into the range `out`, as many as both lengths allow.

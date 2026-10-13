@@ -90,8 +90,10 @@ pub(super) struct Container {
 pub(super) enum VersionDef {
     /// The contents the container held when the judgment first saw it.
     Initial,
-    /// A collection reached below an aggregate copy. Its elements and initial
-    /// descriptor retain the immutable source definition captured by the copy.
+    /// A copied collection's value projections retain the immutable source;
+    /// its whole-element identities are new [RANGE-2]. `arity` adds the
+    /// subscripts into a collection reached below an aggregate source; zero
+    /// copies an already materialized container's version directly.
     Copied { source: ReadSource, arity: usize },
     /// Contents nothing here describes.
     Fresh,
@@ -142,6 +144,8 @@ pub(super) enum AtomDef {
     },
     /// One of a join's arm values, by the arm taken.
     Joined { join: JoinId, values: Vec<Linear> },
+    /// The arm a join took, numbered from zero; one of `arms` [RANGE-2].
+    Selector { arms: u32 },
 }
 
 #[derive(Clone, Debug)]
@@ -170,6 +174,11 @@ pub(super) struct World {
     descriptor_joins: HashMap<(ContainerId, u32), (JoinId, Vec<u32>)>,
     /// Each join's arms: the literals each arm added since the fork.
     pub(super) joins: Vec<Vec<Vec<Literal>>>,
+    /// Each join's selector, the atom its arms' literals fix.
+    selectors: Vec<Linear>,
+    /// Each join's bypasses: a later join and one of its arms that did not
+    /// pass through this join, recorded where that later join dropped it.
+    bypasses: Vec<Vec<(JoinId, usize)>>,
     next_origin: u32,
     next_generation: u32,
     /// What a dry walk records as written.
@@ -225,6 +234,13 @@ impl World {
         projection: Vec<CheckedRangeProjection>,
         ty: Option<IntegerType>,
     ) -> Linear {
+        // [RANGE-3] Whole-element identity is a mathematical read, with no
+        // source-language integer type or value-equality interpretation.
+        let ty = if projection.last() == Some(&CheckedRangeProjection::WholeElement) {
+            None
+        } else {
+            ty
+        };
         let key = (version, indices.clone(), projection.clone());
         if let Some(atom) = self.reads.get(&key) {
             return Linear::atom(*atom);
@@ -401,7 +417,8 @@ impl World {
     /// choice the join defines takes the same arm.
     pub(super) fn new_join(&mut self, arms: Vec<Vec<Literal>>) -> JoinId {
         let id = JoinId::try_from(self.joins.len()).unwrap_or(JoinId::MAX);
-        let selector = self.opaque(None);
+        let count = u32::try_from(arms.len()).unwrap_or(u32::MAX);
+        let selector = Linear::atom(self.push(AtomDef::Selector { arms: count }, None));
         let arms = arms
             .into_iter()
             .enumerate()
@@ -416,7 +433,43 @@ impl World {
             })
             .collect();
         self.joins.push(arms);
+        self.selectors.push(selector);
+        self.bypasses.push(Vec::new());
         id
+    }
+
+    /// [RANGE-3] The alternatives that `join` was not reached: one
+    /// `selector == arm` literal for each later join and arm that bypassed
+    /// it, and, since a later join can itself be bypassed, those of each such
+    /// join in turn. A path through `join` takes one of its arms; any other
+    /// path reaching a value `join` defines passed a join that dropped it
+    /// through an arm that bypassed it.
+    pub(super) fn not_reached(&self, join: JoinId) -> Vec<Vec<Literal>> {
+        let mut alternatives = Vec::new();
+        let mut visited = BTreeSet::from([join]);
+        let mut pending = vec![join];
+        while let Some(reached) = pending.pop() {
+            for (later, arm) in &self.bypasses[reached as usize] {
+                alternatives.push(vec![Literal::new(
+                    self.selectors[*later as usize].clone(),
+                    Relation::Equal,
+                    Linear::constant(*arm as i128),
+                )]);
+                if visited.insert(*later) {
+                    pending.push(*later);
+                }
+            }
+        }
+        alternatives
+    }
+
+    /// `selector != arm`: the join took another arm than `arm`.
+    pub(super) fn not_taken(&self, join: JoinId, arm: usize) -> Literal {
+        Literal::new(
+            self.selectors[join as usize].clone(),
+            Relation::NotEqual,
+            Linear::constant(arm as i128),
+        )
     }
 
     pub(super) fn new_origin(&mut self) -> u32 {
@@ -563,6 +616,14 @@ pub(super) enum Slot {
     Ref(View),
 }
 
+/// A fact active where every one of its guards holds: each guard says one
+/// join took another arm than one that did not hold the fact [RANGE-2].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct Guarded {
+    pub(super) fact: FactId,
+    pub(super) guards: Vec<Literal>,
+}
+
 /// The state one path carries.
 #[derive(Clone, Debug, Default)]
 pub(super) struct State {
@@ -574,10 +635,13 @@ pub(super) struct State {
     pub(super) generations: BTreeMap<ContainerId, u32>,
     pub(super) conds: Vec<Literal>,
     pub(super) facts: Vec<FactId>,
+    /// Facts active only where the path took certain join arms.
+    pub(super) guarded: Vec<Guarded>,
     /// Joins one of whose arms was taken on the way here.
     pub(super) disjunctions: Vec<JoinId>,
-    /// Facts that hold once a match finds `location` holding `variant`.
-    pub(super) routed: Vec<(Location, u32, FactId)>,
+    /// Facts that hold once a match finds `location` holding `variant`,
+    /// each under its guards, which are empty for an unconditional route.
+    pub(super) routed: Vec<(Location, u32, FactId, Vec<Literal>)>,
     pub(super) variants: BTreeMap<Location, u32>,
     /// Scalar bindings a reference has been taken to, with their integer
     /// type. The walk holds a scalar binding's value directly rather than
@@ -793,7 +857,7 @@ impl State {
     pub(super) fn forget_variants(&mut self, location: &Location) {
         self.variants
             .retain(|known, _| !known.starts_with(location));
-        self.routed.retain(|(at, _, _)| !at.starts_with(location));
+        self.routed.retain(|(at, ..)| !at.starts_with(location));
     }
 
     /// Forgets every container's contents and every exposed scalar
@@ -974,30 +1038,36 @@ pub(super) fn join_states(
         };
         out.generations.insert(container, generation);
     }
-    out.facts = first
-        .facts
-        .iter()
-        .copied()
-        .filter(|fact| arms.iter().all(|arm| arm.facts.contains(fact)))
-        .collect();
-    out.disjunctions = first
-        .disjunctions
-        .iter()
-        .copied()
-        .filter(|earlier| arms.iter().all(|arm| arm.disjunctions.contains(earlier)))
-        .collect();
+    join_facts(world, join, &arms, &mut out);
+    // [RANGE-3] An earlier join every arm passed through stays reached; one
+    // only some arms passed through records the others as its bypasses.
+    let mut earlier: Vec<JoinId> = Vec::new();
+    for arm in &arms {
+        for reached in &arm.disjunctions {
+            if !earlier.contains(reached) {
+                earlier.push(*reached);
+            }
+        }
+    }
+    for reached in earlier {
+        let mut all = true;
+        for (index, arm) in arms.iter().enumerate() {
+            if !arm.disjunctions.contains(&reached) {
+                all = false;
+                world.bypasses[reached as usize].push((join, index));
+            }
+        }
+        if all {
+            out.disjunctions.push(reached);
+        }
+    }
     out.disjunctions.push(join);
     // A reference one arm took may survive the join through a joined value.
     for arm in &arms {
         out.exposed
             .extend(arm.exposed.iter().map(|(binding, ty)| (*binding, *ty)));
     }
-    out.routed = first
-        .routed
-        .iter()
-        .filter(|entry| arms.iter().all(|arm| arm.routed.contains(entry)))
-        .cloned()
-        .collect();
+    join_routes(world, join, &arms, &mut out);
     for (location, variant) in &first.variants {
         if arms
             .iter()
@@ -1007,6 +1077,88 @@ pub(super) fn join_states(
         }
     }
     Some((out, Some(join)))
+}
+
+/// [RANGE-2] A fact every arm holds unconditionally stays unconditional. A
+/// fact some arms hold, under the same guards in each, stays active under
+/// those guards and one more for each arm that does not hold it: that the
+/// join took another arm. An arm holding a fact unconditionally holds it
+/// under any guards.
+fn join_facts(world: &World, join: JoinId, arms: &[State], out: &mut State) {
+    let mut entries: Vec<Guarded> = Vec::new();
+    for arm in arms {
+        let held = arm
+            .facts
+            .iter()
+            .map(|fact| Guarded {
+                fact: *fact,
+                guards: Vec::new(),
+            })
+            .chain(arm.guarded.iter().cloned());
+        for entry in held {
+            if !entries.contains(&entry) {
+                entries.push(entry);
+            }
+        }
+    }
+    for entry in entries {
+        let missing: Vec<usize> = arms
+            .iter()
+            .enumerate()
+            .filter(|(_, arm)| {
+                !arm.facts.contains(&entry.fact)
+                    && (entry.guards.is_empty() || !arm.guarded.contains(&entry))
+            })
+            .map(|(index, _)| index)
+            .collect();
+        if missing.is_empty() && entry.guards.is_empty() {
+            out.facts.push(entry.fact);
+            continue;
+        }
+        let mut guards = entry.guards;
+        guards.extend(missing.into_iter().map(|arm| world.not_taken(join, arm)));
+        let guarded = Guarded {
+            fact: entry.fact,
+            guards,
+        };
+        if !out.guarded.contains(&guarded) {
+            out.guarded.push(guarded);
+        }
+    }
+}
+
+/// [RANGE-2] Routes join as facts do: one some arms hold stays, guarded by
+/// the join taking one of those arms.
+fn join_routes(world: &World, join: JoinId, arms: &[State], out: &mut State) {
+    let mut entries: Vec<(Location, u32, FactId, Vec<Literal>)> = Vec::new();
+    for arm in arms {
+        for entry in &arm.routed {
+            if !entries.contains(entry) {
+                entries.push(entry.clone());
+            }
+        }
+    }
+    for (location, variant, fact, mut guards) in entries {
+        let holds = |arm: &State| {
+            arm.routed.iter().any(|(at, tag, held, by)| {
+                *at == location
+                    && *tag == variant
+                    && *held == fact
+                    && (by.is_empty() || *by == guards)
+            })
+        };
+        let missing: Vec<usize> = arms
+            .iter()
+            .enumerate()
+            .filter(|(_, arm)| !holds(arm))
+            .map(|(index, _)| index)
+            .collect();
+        guards.extend(missing.into_iter().map(|arm| world.not_taken(join, arm)));
+        let entry = (location, variant, fact, guards);
+        if !out.routed.contains(&entry) {
+            out.routed.push(entry);
+        }
+    }
 }
 
 /// One value every arm holds, joined.
@@ -1090,6 +1242,14 @@ pub(super) fn projections_overlap(
     left: &[CheckedRangeProjection],
     right: &[CheckedRangeProjection],
 ) -> bool {
+    // [OWN-7, RANGE-2] An identity read names all the owned storage below
+    // its selection, so every descendant write overlaps it.
+    let left = left
+        .strip_suffix(&[CheckedRangeProjection::WholeElement])
+        .unwrap_or(left);
+    let right = right
+        .strip_suffix(&[CheckedRangeProjection::WholeElement])
+        .unwrap_or(right);
     for (left, right) in left.iter().zip(right) {
         if left == right {
             continue;
@@ -1228,6 +1388,7 @@ pub(super) fn stored_projections(
                     CheckedMeasure::Length,
                     CheckedMeasure::Capacity,
                     CheckedMeasure::Pages,
+                    CheckedMeasure::Bytes,
                 ] {
                     path.push(CheckedRangeProjection::Measure(measure));
                     let value = world.measure(container, generation, measure);

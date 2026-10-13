@@ -26,7 +26,16 @@ impl Input<'_, '_> {
             .operands
             .iter()
             .map(|operand| {
-                self.postcondition_affine_datum(&operand.datum, result, state)?
+                let mut value = self.postcondition_affine_datum(&operand.datum, result, state)?;
+                if let Some(parameter) = &operand.parameter {
+                    value = value
+                        .add(
+                            &self.postcondition_affine_datum(parameter, result, state)?,
+                            &mut AffineCheckState::new(),
+                        )
+                        .ok()?;
+                }
+                value
                     .add(
                         &AffineForm::constant(operand.displacement),
                         &mut AffineCheckState::new(),
@@ -113,25 +122,44 @@ impl Input<'_, '_> {
             .is_some_and(|parameter| parameter.mode.is_range())
     }
 
+    /// The relations a direct call of `function` may publish [FN-9]: its
+    /// published summaries, or, while its component is being verified and
+    /// the caller is a member of it, exactly its type-invariant
+    /// postconditions as induction hypotheses [DIAG-2, TYPE-11].
     pub(super) fn available_postconditions(
         &self,
         function: super::super::super::model::FunctionId,
     ) -> Vec<AvailablePostcondition> {
+        let available = |postcondition: &CheckedPostcondition,
+                         summary: super::super::VerifiedPostconditionSummary| {
+            AvailablePostcondition {
+                relation: postcondition.relation.clone(),
+                route: postcondition.selector.route,
+                variant: postcondition.selector.variant,
+                field: postcondition
+                    .selector
+                    .field
+                    .as_ref()
+                    .map(|field| field.declaration),
+                authority: super::super::RelationProvenance::Verified(summary),
+            }
+        };
+        if let Some(component) = self
+            .context
+            .component_postconditions(self.function.id, function)
+        {
+            return component
+                .generated
+                .iter()
+                .map(|(postcondition, summary)| available(postcondition, summary.clone()))
+                .collect();
+        }
         self.context
             .verified_postconditions(function)
             .unwrap_or_default()
             .into_iter()
             .filter_map(|(postcondition, proof)| {
-                Some(AvailablePostcondition {
-                    relation: postcondition.relation.clone(),
-                    variant: postcondition.selector.variant,
-                    field: postcondition
-                        .selector
-                        .field
-                        .as_ref()
-                        .map(|field| field.declaration),
-                    authority: super::super::RelationProvenance::Verified(proof.summary.clone()?),
-                })
+                Some(available(postcondition, proof.summary.clone()?))
             })
             .collect()
     }
@@ -181,6 +209,7 @@ impl Input<'_, '_> {
                     .collect::<Option<Vec<_>>>()?;
                 Some(AvailablePostcondition {
                     relation: boundary.relation.clone(),
+                    route: boundary.selector.route,
                     variant: boundary.selector.variant,
                     field: boundary
                         .selector
@@ -501,8 +530,13 @@ impl Input<'_, '_> {
         let mut relation_images = Vec::with_capacity(self.function.postconditions.len());
         for postcondition in &self.function.postconditions {
             let mut indices = Vec::new();
-            for operand in &postcondition.relation.operands {
-                let datum = match &operand.datum {
+            for datum in postcondition
+                .relation
+                .operands
+                .iter()
+                .flat_map(|term| term.datums())
+            {
+                let datum = match datum {
                     // [MSR-3] an exit-state place is read over the live
                     // referent at each return and has no entry image.
                     RelationDatum::Parameter {
@@ -677,6 +711,35 @@ impl Vocabulary {
         ))
     }
 
+    /// Capture a verified extended relation over its current immutable value
+    /// images. Later kills remove mappings to replaced storage, never a fact
+    /// about the values previously observed there.
+    pub(super) fn establish_postcondition_affine(
+        &mut self,
+        relation: &Relation,
+        parent: DerivationId,
+        state: &mut AffineFlowState,
+    ) {
+        if !relation
+            .terms()
+            .iter()
+            .any(|term| matches!(self.terms.kind(*term), TermKind::Sum(..)))
+        {
+            return;
+        }
+        let Some(inequalities) = self.affine_relation_target(relation, state) else {
+            return;
+        };
+        for inequality in inequalities {
+            if !state.facts.iter().any(|fact| fact.inequality == inequality) {
+                state.facts.push(ActiveAffineFact {
+                    inequality,
+                    evidence: AffineFactEvidence::Derivation(parent),
+                });
+            }
+        }
+    }
+
     pub(super) fn retain_postcondition_call(
         &mut self,
         instantiated: &InstantiatedPostcondition,
@@ -706,7 +769,7 @@ impl Vocabulary {
         instantiated: &InstantiatedPostcondition,
         available: &AvailablePostcondition,
         prepared: &PreparedCall,
-        state: &mut FactState,
+        state: &mut ProofFlowState,
     ) {
         let Some(call) = self.retain_postcondition_call(instantiated, available, prepared) else {
             return;
@@ -728,7 +791,10 @@ impl Vocabulary {
             DerivationRootKind::PostconditionDirectResult { occurrence },
             route,
         );
-        state.establish_from_proof(&instantiated.relation, route, &self.derivations);
+        state
+            .facts
+            .establish_from_proof(&instantiated.relation, route, &self.derivations);
+        self.establish_postcondition_affine(&instantiated.relation, route, &mut state.affine);
     }
 
     pub(super) fn retain_direct_receiver(
@@ -737,7 +803,7 @@ impl Vocabulary {
         candidate: &DirectReceiverCandidate,
         target_event: FlowEventId,
         prepared: &PreparedCall,
-        state: &mut FactState,
+        state: &mut ProofFlowState,
     ) {
         let Some(call) =
             self.retain_postcondition_call(&candidate.instantiated, &candidate.available, prepared)
@@ -763,7 +829,16 @@ impl Vocabulary {
             DerivationRootKind::PostconditionDirectReceiver { occurrence },
             proof,
         );
-        state.establish_from_proof(&candidate.instantiated.relation, proof, &self.derivations);
+        state.facts.establish_from_proof(
+            &candidate.instantiated.relation,
+            proof,
+            &self.derivations,
+        );
+        self.establish_postcondition_affine(
+            &candidate.instantiated.relation,
+            proof,
+            &mut state.affine,
+        );
     }
 
     pub(super) fn establish_direct_receiver(
@@ -779,7 +854,7 @@ impl Vocabulary {
             candidate,
             target_event,
             prepared,
-            &mut states.facts,
+            states,
         );
     }
 }
@@ -790,6 +865,7 @@ impl Reasoning<'_, '_, '_> {
         block: &crate::NodePath,
         relation_ordinal: u32,
         parents: Option<Vec<DerivationId>>,
+        vacuous: bool,
     ) -> PostconditionAggregate {
         if self.input.function.formal_hypothesis || self.input.function.body.is_none() {
             let node = self.vocabulary.derivations.intern(
@@ -807,7 +883,7 @@ impl Reasoning<'_, '_, '_> {
                 derivation: Some(node),
             };
         }
-        let Some(parents) = parents.filter(|parents| !parents.is_empty()) else {
+        let Some(parents) = parents.filter(|parents| vacuous || !parents.is_empty()) else {
             return PostconditionAggregate {
                 discharged: false,
                 derivation: None,
@@ -1109,11 +1185,16 @@ impl Reasoning<'_, '_, '_> {
                 let term = self.goal_operand(expression)?;
                 Some(self.vocabulary.measure_atom(term, state))
             }
+            // Instantiated contract positions also spell measures as typed
+            // place projections. They denote the same measure term and use
+            // its existing affine atom, just like the operation form above.
+            GoalExpression::Datum(GoalDatum::Place { .. } | GoalDatum::NamedConst { .. }) => {
+                let term = self.goal_operand(expression)?;
+                self.vocabulary.affine_term_value(term, state)
+            }
             GoalExpression::Datum(
                 GoalDatum::Parameter { .. } | GoalDatum::EvaluatedValue { .. },
             )
-            | GoalExpression::Datum(GoalDatum::NamedConst { .. })
-            | GoalExpression::Datum(GoalDatum::Place { .. })
             | GoalExpression::Operation { .. } => None,
         }
     }
@@ -1124,12 +1205,26 @@ impl Reasoning<'_, '_, '_> {
         results: &[Option<TermId>],
         returns: &[Option<PostconditionReturnDatum>],
     ) -> Option<Relation> {
-        let operands = postcondition
-            .relation
+        self.instantiate_relation_template(&postcondition.relation, results, returns)
+    }
+
+    /// One relation template with each result ordinal read from `results`
+    /// and `returns` [FN-9, CALL-4].
+    pub(super) fn instantiate_relation_template(
+        &mut self,
+        template: &RelationTemplate,
+        results: &[Option<TermId>],
+        returns: &[Option<PostconditionReturnDatum>],
+    ) -> Option<Relation> {
+        let operands = template
             .operands
             .iter()
             .map(|operand| {
-                let term = self.postcondition_relation_term(&operand.datum, results, returns)?;
+                let mut term = self.postcondition_relation_term(&operand.datum, results, returns)?;
+                if let Some(parameter) = &operand.parameter {
+                    let extra = self.postcondition_relation_term(parameter, results, returns)?;
+                    term = self.vocabulary.terms.sum(term, extra);
+                }
                 let (term, constant) = self.vocabulary.terms.constant_part(term);
                 Some((term, operand.displacement.checked_add(constant)?))
             })
@@ -1141,7 +1236,7 @@ impl Reasoning<'_, '_, '_> {
         // difference bound carries: `l + a <cmp> r + b` is
         // `l - r <cmp> b - a`.
         let gap = second.1.checked_sub(first.1)?;
-        match postcondition.relation.normalized {
+        match template.normalized {
             NormalizedRelation::Equal => Some(Relation::Equal {
                 left: first.0,
                 right: second.0,
@@ -1413,8 +1508,8 @@ impl Reasoning<'_, '_, '_> {
 
     /// [ENT-2, MSR-6] every occurrence of a symbolic const parameter names
     /// its original declaration and keeps that declaration's written type.
-    /// A storage extent or a differently typed formal does not create another
-    /// constant identity or grant that parameter a different interval.
+    /// Forwarding it to a formal or using it as a storage extent, each of its
+    /// own type [CONST-1], creates no other constant identity or interval.
     pub(super) fn const_parameter_term(&mut self, declaration: crate::DeclarationId) -> TermId {
         let ty = self.input.context.const_parameter_types[&declaration];
         self.vocabulary
@@ -1478,6 +1573,10 @@ impl Reasoning<'_, '_, '_> {
     pub(super) fn postcondition_term_live_holders(&self, term: TermId) -> Vec<BindingId> {
         let mut holders = Vec::new();
         match self.vocabulary.terms.kind(term) {
+            TermKind::Sum(left, right) => {
+                holders.extend(self.postcondition_term_live_holders(*left));
+                holders.extend(self.postcondition_term_live_holders(*right));
+            }
             TermKind::Place(place, _) | TermKind::Measure(_, place) => {
                 let PlaceRoot::Binding(root) = place.root else {
                     return holders;
@@ -1577,7 +1676,8 @@ impl Reasoning<'_, '_, '_> {
                 ..
             } => live_holders.iter().any(|holder| {
                 if *relocation {
-                    self.input.relocation_kills_holder(separations, *holder, place)
+                    self.input
+                        .relocation_kills_holder(separations, *holder, place)
                 } else {
                     self.input.write_replaces_live_holder(*holder, place)
                 }
@@ -1771,8 +1871,12 @@ impl Reasoning<'_, '_, '_> {
         let parameter_modes = callee.parameter_modes.clone();
         let mut operands: Vec<CallDatumOperand> = Vec::new();
         for available in postconditions {
-            for operand in &available.relation.operands {
-                let datum = &operand.datum;
+            for datum in available
+                .relation
+                .operands
+                .iter()
+                .flat_map(|term| term.datums())
+            {
                 match datum {
                     // [MSR-3] an exit-state place is the actual's resolved
                     // exit place and never a call datum.
@@ -1878,153 +1982,156 @@ impl Reasoning<'_, '_, '_> {
         let mut substitutions = Vec::new();
         let mut operands = Vec::with_capacity(template.operands.len());
         for (operand, term_operand) in template.operands.iter().enumerate() {
-            let datum = &term_operand.datum;
-            let (term, formal) = match datum {
-                // [CALL-4] the destination supplies one place per declared
-                // result ordinal, and a datum below the result is that place
-                // projected by its projection; an ordinal with none makes
-                // only this relation unavailable.
-                RelationDatum::Result {
-                    ordinal,
-                    projections,
-                    ty,
-                } => (
-                    self.destination_term(
-                        destinations.get(*ordinal as usize)?.as_ref()?,
+            let mut combined = ZERO;
+            for datum in term_operand.datums() {
+                let (term, formal) = match datum {
+                    // [CALL-4] the destination supplies one place per declared
+                    // result ordinal, and a datum below the result is that place
+                    // projected by its projection; an ordinal with none makes
+                    // only this relation unavailable.
+                    RelationDatum::Result {
+                        ordinal,
                         projections,
+                        ty,
+                    } => (
+                        self.destination_term(
+                            destinations.get(*ordinal as usize)?.as_ref()?,
+                            projections,
+                            None,
+                            *ty,
+                        )?,
                         None,
-                        *ty,
-                    )?,
-                    None,
-                ),
-                RelationDatum::Parameter {
-                    ordinal,
-                    projections,
-                    ty,
-                    denotation,
-                } => {
-                    let mode = *parameter_modes.get(*ordinal as usize)?;
-                    let actual = arguments.get(*ordinal as usize)?;
-                    match denotation {
-                        // [MSR-3] a bare place of a written reference
-                        // parameter is the actual's resolved exit place.
-                        ParameterDenotation::ExitState => (
-                            self.call_parameter_term(actual, projections, *ty, None, mode)?,
-                            Some((*ordinal, false)),
-                        ),
-                        // [MSR-3] an entry-qualified place is that call's
-                        // call datum; an immortal pre-transfer term is its
-                        // own datum and nothing else stands for it.
-                        ParameterDenotation::EntryDatum => {
-                            match self.vocabulary.interned_call_datum(
-                                call_path,
-                                *ordinal,
-                                projections,
-                                None,
-                                *ty,
-                            ) {
-                                Some(datum) => (datum, Some((*ordinal, true))),
-                                None => {
-                                    let term = self.call_parameter_term(
-                                        actual,
-                                        projections,
-                                        *ty,
-                                        None,
-                                        mode,
-                                    )?;
-                                    if !self.vocabulary.immortal_term(term) {
-                                        return None;
-                                    }
-                                    (term, Some((*ordinal, true)))
-                                }
-                            }
-                        }
-                        ParameterDenotation::EntryImage => match self
-                            .vocabulary
-                            .interned_call_datum(call_path, *ordinal, projections, None, *ty)
-                        {
-                            // [MSR-3] an `own` operand denotes this call's
-                            // call datum, which has empty support.
-                            Some(datum) => (datum, Some((*ordinal, true))),
-                            None => (
+                    ),
+                    RelationDatum::Parameter {
+                        ordinal,
+                        projections,
+                        ty,
+                        denotation,
+                    } => {
+                        let mode = *parameter_modes.get(*ordinal as usize)?;
+                        let actual = arguments.get(*ordinal as usize)?;
+                        match denotation {
+                            // [MSR-3] a bare place of a written reference
+                            // parameter is the actual's resolved exit place.
+                            ParameterDenotation::ExitState => (
                                 self.call_parameter_term(actual, projections, *ty, None, mode)?,
                                 Some((*ordinal, false)),
                             ),
-                        },
-                    }
-                }
-                RelationDatum::NamedConst {
-                    declaration,
-                    projections,
-                    ty,
-                } => (
-                    self.postcondition_named_const_term(*declaration, projections, *ty)?,
-                    None,
-                ),
-                RelationDatum::Literal { value, .. } => {
-                    (self.postcondition_constant_term(value)?, None)
-                }
-                RelationDatum::Measure(measure, place) => match place.root {
-                    PostconditionPlaceRoot::Parameter { ordinal } => {
-                        match self.vocabulary.interned_call_datum(
-                            call_path,
-                            ordinal,
-                            &place.projections,
-                            Some(*measure),
-                            place.ty,
-                        ) {
-                            Some(datum) => (datum, Some((ordinal, true))),
-                            None => (
-                                self.call_parameter_term(
-                                    arguments.get(ordinal as usize)?,
-                                    &place.projections,
-                                    place.ty,
-                                    Some(*measure),
-                                    *parameter_modes.get(ordinal as usize)?,
-                                )?,
-                                Some((ordinal, false)),
-                            ),
+                            // [MSR-3] an entry-qualified place is that call's
+                            // call datum; an immortal pre-transfer term is its
+                            // own datum and nothing else stands for it.
+                            ParameterDenotation::EntryDatum => {
+                                match self.vocabulary.interned_call_datum(
+                                    call_path,
+                                    *ordinal,
+                                    projections,
+                                    None,
+                                    *ty,
+                                ) {
+                                    Some(datum) => (datum, Some((*ordinal, true))),
+                                    None => {
+                                        let term = self.call_parameter_term(
+                                            actual,
+                                            projections,
+                                            *ty,
+                                            None,
+                                            mode,
+                                        )?;
+                                        if !self.vocabulary.immortal_term(term) {
+                                            return None;
+                                        }
+                                        (term, Some((*ordinal, true)))
+                                    }
+                                }
+                            }
+                            ParameterDenotation::EntryImage => match self
+                                .vocabulary
+                                .interned_call_datum(call_path, *ordinal, projections, None, *ty)
+                            {
+                                // [MSR-3] an `own` operand denotes this call's
+                                // call datum, which has empty support.
+                                Some(datum) => (datum, Some((*ordinal, true))),
+                                None => (
+                                    self.call_parameter_term(actual, projections, *ty, None, mode)?,
+                                    Some((*ordinal, false)),
+                                ),
+                            },
                         }
                     }
-                    PostconditionPlaceRoot::ExitParameter { ordinal } => (
-                        self.call_parameter_term(
-                            arguments.get(ordinal as usize)?,
-                            &place.projections,
-                            place.ty,
-                            Some(*measure),
-                            *parameter_modes.get(ordinal as usize)?,
-                        )?,
-                        Some((ordinal, false)),
-                    ),
-                    // [CALL-4] the destination supplies one place per
-                    // declared result ordinal, and this operand is that
-                    // place's measure rather than its value.
-                    PostconditionPlaceRoot::Result { ordinal } => (
-                        self.destination_term(
-                            destinations.get(ordinal as usize)?.as_ref()?,
-                            &place.projections,
-                            Some(*measure),
-                            place.ty,
-                        )?,
+                    RelationDatum::NamedConst {
+                        declaration,
+                        projections,
+                        ty,
+                    } => (
+                        self.postcondition_named_const_term(*declaration, projections, *ty)?,
                         None,
                     ),
-                },
-            };
-            if let Some((formal, datum)) = formal {
-                substitutions.push(PostconditionCallSubstitution {
-                    operand: u32::try_from(operand)
-                        .expect("postcondition operands exceed the u32 identity space"),
-                    formal,
-                    term,
-                    transfer_holders: self.input.call_argument_holder_chain(
-                        checked_arguments.get(formal as usize)?,
-                        arguments.get(formal as usize)?,
-                    ),
-                    datum,
-                    exit_state: term_operand.datum.is_exit_state(),
-                });
+                    RelationDatum::Literal { value, .. } => {
+                        (self.postcondition_constant_term(value)?, None)
+                    }
+                    RelationDatum::Measure(measure, place) => match place.root {
+                        PostconditionPlaceRoot::Parameter { ordinal } => {
+                            match self.vocabulary.interned_call_datum(
+                                call_path,
+                                ordinal,
+                                &place.projections,
+                                Some(*measure),
+                                place.ty,
+                            ) {
+                                Some(datum) => (datum, Some((ordinal, true))),
+                                None => (
+                                    self.call_parameter_term(
+                                        arguments.get(ordinal as usize)?,
+                                        &place.projections,
+                                        place.ty,
+                                        Some(*measure),
+                                        *parameter_modes.get(ordinal as usize)?,
+                                    )?,
+                                    Some((ordinal, false)),
+                                ),
+                            }
+                        }
+                        PostconditionPlaceRoot::ExitParameter { ordinal } => (
+                            self.call_parameter_term(
+                                arguments.get(ordinal as usize)?,
+                                &place.projections,
+                                place.ty,
+                                Some(*measure),
+                                *parameter_modes.get(ordinal as usize)?,
+                            )?,
+                            Some((ordinal, false)),
+                        ),
+                        // [CALL-4] the destination supplies one place per
+                        // declared result ordinal, and this operand is that
+                        // place's measure rather than its value.
+                        PostconditionPlaceRoot::Result { ordinal } => (
+                            self.destination_term(
+                                destinations.get(ordinal as usize)?.as_ref()?,
+                                &place.projections,
+                                Some(*measure),
+                                place.ty,
+                            )?,
+                            None,
+                        ),
+                    },
+                };
+                if let Some((formal, captured_datum)) = formal {
+                    substitutions.push(PostconditionCallSubstitution {
+                        operand: u32::try_from(operand)
+                            .expect("postcondition operands exceed the u32 identity space"),
+                        formal,
+                        term,
+                        transfer_holders: self.input.call_argument_holder_chain(
+                            checked_arguments.get(formal as usize)?,
+                            arguments.get(formal as usize)?,
+                        ),
+                        datum: captured_datum,
+                        exit_state: datum.is_exit_state(),
+                    });
+                }
+                combined = self.vocabulary.terms.sum(combined, term);
             }
-            let (term, constant) = self.vocabulary.terms.constant_part(term);
+            let (term, constant) = self.vocabulary.terms.constant_part(combined);
             operands.push((term, term_operand.displacement.checked_add(constant)?));
         }
         let [first, second] = operands.as_slice() else {
@@ -2174,7 +2281,7 @@ impl Reasoning<'_, '_, '_> {
             Vec::new(),
         ));
         for available in prepared.postconditions.iter().cloned() {
-            if available.variant.is_some()
+            if available.routed()
                 || !available
                     .relation
                     .operands
@@ -2207,7 +2314,7 @@ impl Reasoning<'_, '_, '_> {
                 &instantiated,
                 &available,
                 prepared,
-                &mut states.facts,
+                states,
             );
         }
     }
@@ -2262,7 +2369,7 @@ impl Reasoning<'_, '_, '_> {
         for available in prepared.postconditions.iter().cloned() {
             // A variant-routed relation is restricted to its arm [CALL-6];
             // a binder or target list enters no arm.
-            if available.variant.is_some()
+            if available.routed()
                 || !available
                     .relation
                     .operands
@@ -2300,7 +2407,7 @@ impl Reasoning<'_, '_, '_> {
                 &instantiated,
                 &available,
                 prepared,
-                &mut states.facts,
+                states,
             );
         }
     }
@@ -2331,7 +2438,7 @@ impl Reasoning<'_, '_, '_> {
             .iter()
             .cloned()
             .filter_map(|available| {
-                if available.variant.is_some()
+                if available.routed()
                     || !available
                         .relation
                         .operands
@@ -2476,6 +2583,7 @@ impl Judging<'_, '_, '_> {
                     .expect("postcondition relation ordinal exceeds u32"),
                 summary: None,
                 exits: Vec::new(),
+                vacuous: postcondition.selector.vacuous_when_unselected(),
                 aggregate: aggregate(),
             })
             .collect();
@@ -2494,9 +2602,13 @@ impl Judging<'_, '_, '_> {
                         .flatten()
                 })
                 .collect::<Option<Vec<_>>>();
+            // [TYPE-11] a routed relation a type invariant generates holds
+            // vacuously where no exit selects it: no value the instance
+            // returns holds its variant.
+            let vacuous = self.output.postconditions[index].vacuous;
             self.output.postconditions[index].aggregate = self
                 .reasoning()
-                .retain_postcondition_aggregate(&block, relation_ordinal, parents);
+                .retain_postcondition_aggregate(&block, relation_ordinal, parents, vacuous);
         }
     }
 
@@ -2506,7 +2618,7 @@ impl Judging<'_, '_, '_> {
         states: &ProofFlowState,
         affine_result: Option<&AffineForm>,
         value_reached: bool,
-        forwarded: &[Option<ResultEvidence>],
+        forwarded: &[Vec<ResultEvidence>],
     ) {
         if self.output.postconditions.is_empty() {
             return;
@@ -2521,9 +2633,21 @@ impl Judging<'_, '_, '_> {
             else {
                 continue;
             };
+            // [FN-9, TYPE-11] the forwarded value's context for the route
+            // this clause is restricted to: its written success variant, or
+            // the variant field a type invariant's route names.
+            let route = postcondition.selector.route;
             let forwarded = forwarded
                 .get(postcondition.selector.ordinal as usize)
-                .and_then(Option::as_ref);
+                .and_then(|held| {
+                    held.iter().find(|result| match route {
+                        Some(route) => {
+                            result.route.variant == route.variant
+                                && result.route.field == route.field
+                        }
+                        None => result.success,
+                    })
+                });
             let conditional = selected
                 .values
                 .iter()

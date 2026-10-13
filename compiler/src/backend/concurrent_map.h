@@ -94,17 +94,23 @@ typedef struct wf_key_set {
 
 /* An empty set with room for capacity keys. */
 void wf_cmap_key_set_new(wf_key_set *set, uint64_t capacity);
+/* The pool-granted bytes of its item/index store and byte arena, including
+ * capacity not occupied by a key. A storeless set retains zero bytes. */
+uint64_t wf_cmap_key_set_bytes(const wf_key_set *set);
 /* The index of key in the set: that of its first insertion when the set
  * has it, else len, after appending it. */
 uint64_t wf_cmap_key_set_insert(wf_key_set *set, const unsigned char *key, uint64_t length);
 /* The bytes of the key at index, below len; they stay where they are until
  * the set next changes. */
 const unsigned char *wf_cmap_key_set_key(const wf_key_set *set, uint64_t index, uint64_t *length);
-/* Gives the set's memory back, leaving it empty; or gives back the memory
- * of a set whose `store` alone is at hand, NULL for none. When the includer
- * keeps spares (WF_CMAP_SPARE_KEYS), a small set's memory stays as the
- * calling thread's spare instead, for its next set, until
- * wf_cmap_key_set_drop_spare gives it back. */
+/* Gives all the set's grants back, leaving it empty; or gives back the
+ * memory of a set whose `store` alone is at hand, NULL for none. When the
+ * includer keeps spares (WF_CMAP_SPARE_KEYS), a small set's memory stays as
+ * the calling thread's spare instead, for its next set; the heap reading
+ * records either as the same release of the set's granted bytes. Only tests
+ * give a spare back (wf_cmap_key_set_drop_spare): a runtime thread keeps its
+ * one bounded spare until the process ends, and one that exits leaves it
+ * unreturned, already outside the reading. */
 void wf_cmap_key_set_release(wf_key_set *set);
 void wf_cmap_key_set_free_store(void *store);
 void wf_cmap_key_set_drop_spare(void);

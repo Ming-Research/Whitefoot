@@ -75,6 +75,8 @@ static inline void table_written(wf_cmap *map) {
 
 void wf__key_set_new(wf_key_set *out, uint64_t capacity) { wf_cmap_key_set_new(out, capacity); }
 
+uint64_t wf__key_set_bytes(const wf_key_set *set) { return wf_cmap_key_set_bytes(set); }
+
 uint64_t wf__key_set_insert(wf_key_set *set, const unsigned char *key, uint64_t length) {
     return wf_cmap_key_set_insert(set, key, length);
 }

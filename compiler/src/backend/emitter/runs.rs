@@ -213,6 +213,24 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         // its place; the entries an entry binding names keep the set's count
         // in their record's third word [SHARE-2].
         match self.value_type(container) {
+            Some(IrType::Address(IrAddressed::KeySet)) if measure == IrMeasure::Bytes => {
+                return self.emit_key_set_bytes(result, container);
+            }
+            Some(IrType::KeySet) if measure == IrMeasure::Bytes => {
+                // The byte account lives in the store, so read through the
+                // same runtime bridge as an addressed KeySet.
+                let address = self.next_temporary()?;
+                self.names(&["wf__key_set_bytes"]);
+                return writeln!(
+                    self.output,
+                    "  %{address} = alloca {{ i64, ptr }}
+  store {{ i64, ptr }} {}, ptr %{address}
+  {} = call i64 @wf__key_set_bytes(ptr %{address})",
+                    self.value_name(container),
+                    self.value_name(result)
+                )
+                .map_err(|_| BackendFailure::TextEmission);
+            }
             Some(IrType::KeySet) if measure == IrMeasure::Length => {
                 return writeln!(
                     self.output,
@@ -270,7 +288,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                     )
                     .map_err(|_| BackendFailure::TextEmission)
                 }
-                IrMeasure::Capacity | IrMeasure::Head | IrMeasure::Pages => {
+                IrMeasure::Capacity | IrMeasure::Head | IrMeasure::Pages | IrMeasure::Bytes => {
                     Err(BackendFailure::InvalidIr)
                 }
             };
@@ -279,6 +297,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             return Err(BackendFailure::InvalidIr);
         };
         let value = match measure {
+            IrMeasure::Bytes => return Err(BackendFailure::InvalidIr),
             IrMeasure::Pages => {
                 if shape.shape != IrWindowShape::Paged {
                     return Err(BackendFailure::InvalidIr);

@@ -27,7 +27,63 @@ pub(crate) struct CheckedPostconditionSelector {
     pub(crate) ordinal: u32,
     pub(crate) variant: Option<BuiltinPreludeId>,
     pub(crate) field: Option<PostconditionFieldIdentity>,
+    /// The variant field a routed clause restricts its ordinal to [FN-9]:
+    /// `Ok`'s or `Some`'s value for a written route, any variant field
+    /// whose type is a struct with type invariants for a route a type
+    /// invariant generates [TYPE-11]. `None` for an unrouted clause.
+    pub(crate) route: Option<PayloadRoute>,
+    /// [TYPE-11] whether a type invariant generated this clause, rather than
+    /// a writer. A generated routed clause that no exit selects holds
+    /// vacuously.
+    pub(crate) generated: bool,
+    /// The type of the ordinal's datum: the declared result type of an
+    /// unrouted clause, the routed field's type of a routed one.
     pub(crate) result_type: CheckedType,
+}
+
+/// One variant field of an enum, by the declaration-order positions of the
+/// variant among its enum's variants and of the field among its fields, and
+/// the variant's tag, which an arm names [TYPE-11, FN-9, ENT-5].
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub(crate) struct PayloadRoute {
+    pub(crate) variant: u32,
+    pub(crate) field: u32,
+    pub(crate) tag: u32,
+}
+
+/// [TYPE-11] one type invariant of the struct a parameter's enum carries in
+/// one variant field: a requirement restricted to a value of that parameter
+/// holding the variant, over that field [FN-8]. A call owes it in the
+/// argument's conditional context for the route, and body entry establishes
+/// it in the parameter's [ENT-5].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CheckedRoutedRequirement {
+    /// The `type_invariant` occurrence.
+    pub(crate) clause: NodePath,
+    /// The parameter ordinal the requirement is taken over.
+    pub(crate) subject: u32,
+    pub(crate) route: PayloadRoute,
+    /// The struct the routed field holds.
+    pub(crate) payload: CheckedType,
+    /// The predicate over the payload as parameter zero [FN-8].
+    pub(crate) goal: super::goal::GoalTemplate,
+    /// The same relation over the payload as result ordinal zero, the form
+    /// a conditional context holds it in [ENT-5].
+    pub(crate) relation: RelationTemplate,
+}
+
+impl CheckedPostconditionSelector {
+    /// Whether this clause is routed: written with a success route, or
+    /// generated over a variant field [FN-9, TYPE-11].
+    pub(crate) const fn is_routed(&self) -> bool {
+        self.variant.is_some() || self.route.is_some()
+    }
+
+    /// [TYPE-11] whether this is a routed clause a type invariant generated,
+    /// which holds vacuously where no exit selects it.
+    pub(crate) const fn vacuous_when_unselected(&self) -> bool {
+        self.generated && self.route.is_some()
+    }
 }
 
 /// Exact PRE-1 field identity and written origin of `Ok(value: result)`.
@@ -47,26 +103,28 @@ pub(crate) struct RelationTemplate {
     pub(crate) normalized: NormalizedRelation,
 }
 
-/// One operand of a declared relation: one datum displaced by a written
-/// constant [FN-9].
-///
-/// A clause side is an `affine_expr` [MSR-5], and the part of it that is not
-/// the datum reduces to one mathematical integer. That is exactly the shape
-/// [ENT-4]'s closure represents and the shape every declared relation of the
-/// kernel declaration domain writes [BLK-0], so `len_of(rest) + 1_u64 ==
-/// len_of(vector)` is one relation occurrence and not a second fact class.
+/// One FN-9 side: a datum displaced by a mathematical integer constant,
+/// optionally adding one bare own integer parameter with coefficient one.
+/// At most one side of a relation carries that additional parameter.
 #[allow(dead_code)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct RelationTerm {
     pub(crate) datum: RelationDatum,
     pub(crate) displacement: i128,
+    /// One additional bare own integer parameter, with coefficient one.
+    pub(crate) parameter: Option<RelationDatum>,
 }
 
 impl RelationTerm {
+    pub(crate) fn datums(&self) -> impl Iterator<Item = &RelationDatum> {
+        std::iter::once(&self.datum).chain(self.parameter.iter())
+    }
+
     pub(crate) const fn undisplaced(datum: RelationDatum) -> Self {
         Self {
             datum,
             displacement: 0,
+            parameter: None,
         }
     }
 

@@ -1,29 +1,35 @@
-//! Value-associated conditional success evidence of a Result or an Option.
-//! Each context assumes only its own value holds its success variant; no
-//! operation combines guards of different outcomes.
+//! Value-associated conditional evidence of an enum value: for each of its
+//! routes, a variant field, the relations that hold of that field if the
+//! value holds that variant. Each context assumes only its own value holds
+//! its own variant; no operation combines guards of different outcomes.
 
 use super::*;
+use crate::semantic::postcondition::PayloadRoute;
 
 #[derive(Clone, Debug)]
 pub(super) struct ResultEvidence {
-    /// The success payload type the context's private root is typed by
-    /// [ENT-2] clause (i).
+    /// The routed field's type, which the context's private root is typed
+    /// by [ENT-2] clause (i).
     pub(super) payload: CheckedType,
-    /// The tag of the success variant, `Ok` or `Some`, whose arm selects
-    /// this context.
-    pub(super) success_tag: u32,
+    /// The variant field this context is restricted to; an arm for the
+    /// variant's tag that binds the field selects it.
+    pub(super) route: PayloadRoute,
+    /// Whether this is the success route of a Result or an Option, which a
+    /// written route and `propagate` select [FN-9, ERR-3].
+    pub(super) success: bool,
     pub(super) facts: FactState,
+    /// The value definitely holds another variant.
     pub(super) definitely_err: bool,
 }
 
-/// [ENT-5] the success route of one Result or Option type whose payload
-/// supplies data under [CALL-4].
+/// [ENT-5] one route of an own enum type: the success variant of a Result
+/// or an Option whose payload supplies data under [CALL-4], or a variant
+/// field whose type is a struct with type invariants [TYPE-11].
 #[derive(Clone, Copy)]
 pub(super) struct SuccessRoute {
     pub(super) payload: CheckedType,
-    /// The declaration-order index of the success variant.
-    pub(super) success_index: u32,
-    pub(super) success_tag: u32,
+    pub(super) route: PayloadRoute,
+    pub(super) success: bool,
     /// An integer-payload Result has a context for every value, as it always
     /// has. Every other admitted type receives one where evidence is created:
     /// an empty context and a missing association mean the same [ENT-5], so
@@ -31,40 +37,76 @@ pub(super) struct SuccessRoute {
     pub(super) eager: bool,
 }
 
+impl SuccessRoute {
+    /// Whether `evidence` is this route's context.
+    pub(super) fn holds(&self, evidence: &ResultEvidence) -> bool {
+        evidence.route.variant == self.route.variant && evidence.route.field == self.route.field
+    }
+}
+
 impl Input<'_, '_> {
-    /// [ENT-5] the success route of a local own `Result<T, E>` or
-    /// `Option<T>` whose payload type T supplies data under [CALL-4]: a
-    /// fragment integer, a measured type, or an aggregate reaching one of the
-    /// two through struct fields and `Box` content.
-    pub(super) fn success_route(&self, ty: CheckedType) -> Option<SuccessRoute> {
+    /// [ENT-5] the routes of a local own enum value, in variant and then
+    /// field order: the success variant of a `Result<T, E>` or `Option<T>`
+    /// whose payload type T supplies data under [CALL-4] (a fragment
+    /// integer, a measured type, or an aggregate reaching one of the two
+    /// through struct fields and `Box` content), and each variant field
+    /// whose type is a struct with type invariants [TYPE-11].
+    pub(super) fn payload_routes(&self, ty: CheckedType) -> Vec<SuccessRoute> {
         let CheckedType::Nominal(id) = ty else {
-            return None;
+            return Vec::new();
         };
-        let CheckedNominalKind::Enum { variants } = &self.context.nominals.get(id.0 as usize)?.kind
+        let Some(CheckedNominalKind::Enum { variants }) = self
+            .context
+            .nominals
+            .get(id.0 as usize)
+            .map(|record| &record.kind)
         else {
-            return None;
+            return Vec::new();
         };
-        let (index, success) = variants.iter().enumerate().find(|(_, variant)| {
-            matches!(
+        let mut routes = Vec::new();
+        for (index, variant) in variants.iter().enumerate() {
+            let Ok(variant_index) = u32::try_from(index) else {
+                return Vec::new();
+            };
+            let success = matches!(
                 variant.constructor,
                 CheckedConstructor::Prelude(
                     crate::BuiltinPreludeId::OK | crate::BuiltinPreludeId::SOME
                 )
-            )
-        })?;
-        let [field] = success.fields.as_slice() else {
-            return None;
-        };
-        if !self.payload_supplies_data(field.ty) {
-            return None;
+            );
+            for (position, field) in variant.fields.iter().enumerate() {
+                let Ok(field_index) = u32::try_from(position) else {
+                    return Vec::new();
+                };
+                let success = success && variant.fields.len() == 1;
+                let invariant = matches!(
+                    field.ty,
+                    CheckedType::Nominal(payload)
+                        if self
+                            .context
+                            .nominals
+                            .get(payload.0 as usize)
+                            .is_some_and(|record| record.type_invariant)
+                );
+                if !invariant && !(success && self.payload_supplies_data(field.ty)) {
+                    continue;
+                }
+                routes.push(SuccessRoute {
+                    payload: field.ty,
+                    route: PayloadRoute {
+                        variant: variant_index,
+                        field: field_index,
+                        tag: variant.tag,
+                    },
+                    success,
+                    eager: success
+                        && variant.constructor
+                            == CheckedConstructor::Prelude(crate::BuiltinPreludeId::OK)
+                        && fragment_type(field.ty).is_some(),
+                });
+            }
         }
-        Some(SuccessRoute {
-            payload: field.ty,
-            success_index: u32::try_from(index).ok()?,
-            success_tag: success.tag,
-            eager: success.constructor == CheckedConstructor::Prelude(crate::BuiltinPreludeId::OK)
-                && fragment_type(field.ty).is_some(),
-        })
+        routes
     }
 
     /// [CALL-4] whether a value of this type supplies a datum.
@@ -128,10 +170,11 @@ impl Input<'_, '_> {
 }
 
 impl Reasoning<'_, '_, '_> {
-    fn result_context(&mut self, route: SuccessRoute) -> ResultEvidence {
+    pub(super) fn result_context(&mut self, route: SuccessRoute) -> ResultEvidence {
         ResultEvidence {
             payload: route.payload,
-            success_tag: route.success_tag,
+            route: route.route,
+            success: route.success,
             facts: FactState::new(),
             definitely_err: false,
         }
@@ -252,9 +295,11 @@ impl Vocabulary {
             // valid witness can win an equal-bound tie.
             let conditional = result.facts.l0_candidates();
             result.facts = ordinary.numeric_snapshot();
-            result
-                .facts
-                .kill(|term| matches!(self.terms.kind(term), TermKind::ResultPayload { .. }));
+            result.facts.kill(|term| {
+                self.terms.any_leaf(term, &|leaf| {
+                    matches!(self.terms.kind(leaf), TermKind::ResultPayload { .. })
+                })
+            });
             for (relation, parent) in conditional {
                 result
                     .facts
@@ -263,11 +308,11 @@ impl Vocabulary {
             return;
         }
         for (relation, parent) in ordinary.l0_candidates() {
-            if relation
-                .terms()
-                .iter()
-                .any(|term| matches!(self.terms.kind(*term), TermKind::ResultPayload { .. }))
-            {
+            if relation.terms().iter().any(|term| {
+                self.terms.any_leaf(*term, &|leaf| {
+                    matches!(self.terms.kind(leaf), TermKind::ResultPayload { .. })
+                })
+            }) {
                 continue;
             }
             result
@@ -284,6 +329,7 @@ impl Vocabulary {
         source: &FactState,
         pairs: &[(TermId, TermId)],
     ) -> FactState {
+        let pairs = self.terms.expand_substitutions(pairs);
         let mut closed = source.clone();
         materialize_closure_before_kill(
             &mut closed,
@@ -303,7 +349,7 @@ impl Vocabulary {
             }
             let mut substituted = relation;
             let mut parent = parent;
-            for (from, to) in pairs {
+            for (from, to) in &pairs {
                 if !substituted.terms().contains(from) {
                     continue;
                 }
@@ -323,14 +369,15 @@ impl Vocabulary {
 }
 
 impl Analyzer<'_, '_> {
-    /// Read the value before its own consuming transfer. Calls supply their
-    /// evidence separately, after the successful call's ordered effects.
+    /// Read the value before its own consuming transfer, one context per
+    /// route of its type. Calls supply their evidence separately, after the
+    /// successful call's ordered effects.
     pub(super) fn capture_result(
         &mut self,
         statement: &crate::NodePath,
         expression: &CheckedExpression,
         state: &ProofFlowState,
-    ) -> Option<ResultEvidence> {
+    ) -> Vec<ResultEvidence> {
         if matches!(expression, CheckedExpression::Binding { binding, .. } if is_holder(*binding))
             || matches!(
                 expression,
@@ -338,13 +385,32 @@ impl Analyzer<'_, '_> {
                     | CheckedExpression::BorrowRangeIndex { .. }
             )
         {
-            return None;
+            return Vec::new();
         }
-        let route = self.input.success_route(expression.ty())?;
+        let mut captured = Vec::new();
+        for route in self.input.payload_routes(expression.ty()) {
+            if let Some(result) = self.capture_route(statement, expression, state, route) {
+                captured.push(result);
+            }
+        }
+        captured
+    }
+
+    fn capture_route(
+        &mut self,
+        statement: &crate::NodePath,
+        expression: &CheckedExpression,
+        state: &ProofFlowState,
+        route: SuccessRoute,
+    ) -> Option<ResultEvidence> {
         let mut result = self.reasoning().result_context(route);
         match expression {
-            CheckedExpression::Binding { binding, .. } if !is_holder(*binding) => {
-                if let Some(held) = state.results.get(binding) {
+            CheckedExpression::Binding { binding, .. } => {
+                if let Some(held) = state
+                    .results
+                    .get(binding)
+                    .and_then(|held| held.iter().find(|held| route.holds(held)))
+                {
                     result = held.clone();
                 } else if !route.eager {
                     return None;
@@ -353,8 +419,8 @@ impl Analyzer<'_, '_> {
             }
             CheckedExpression::ConstructEnum {
                 variant, fields, ..
-            } if *variant == route.success_index => {
-                let [value] = fields.as_slice() else {
+            } if *variant == route.route.variant => {
+                let Some(value) = fields.get(route.route.field as usize) else {
                     return Some(result);
                 };
                 let pairs = self.reasoning().payload_pairs(route.payload, value);
@@ -397,7 +463,7 @@ impl Analyzer<'_, '_> {
                 destination: CheckedNumericType::Integer(_),
                 value,
                 ..
-            } => {
+            } if route.success => {
                 // The conditional payload is exactly this evaluated integer,
                 // even when its input is outside the tracked-place vocabulary.
                 // Existing sources publish only the input's admitted image;
@@ -436,7 +502,7 @@ impl Analyzer<'_, '_> {
             }
             // [ENT-5] a checked integer row's success payload is the exact
             // row's mathematical result, with that row's [ENT-3.S7] facts.
-            CheckedExpression::IntegerOperation { .. } => {
+            CheckedExpression::IntegerOperation { .. } if route.success => {
                 let payload = self
                     .reasoning()
                     .payload_root_term(route.payload, &[], None)?;
@@ -450,16 +516,274 @@ impl Analyzer<'_, '_> {
     }
 }
 
+impl Analyzer<'_, '_> {
+    /// [TYPE-11, ENT-3.S4] each routed requirement enters the body in its
+    /// parameter's own conditional context for its route, never as an
+    /// ordinary fact: the condition is that the argument holds the route's
+    /// variant, and a contradictory invariant stays local to that context.
+    pub(super) fn establish_routed_requirements(&mut self, state: &mut ProofFlowState) {
+        let function = self.input.function;
+        for requirement in &function.routed_requirements {
+            let Some(parameter) = function.parameters.get(requirement.subject as usize) else {
+                continue;
+            };
+            let Some(route) = self
+                .input
+                .payload_routes(parameter.ty)
+                .into_iter()
+                .find(|route| {
+                    route.route.variant == requirement.route.variant
+                        && route.route.field == requirement.route.field
+                })
+            else {
+                continue;
+            };
+            let results = [self
+                .reasoning()
+                .payload_root_term(requirement.payload, &[], None)];
+            let returns = [Some(PostconditionReturnDatum::ResultPayload {
+                ty: requirement.payload,
+            })];
+            let Some(relation) = self.reasoning().instantiate_relation_template(
+                &requirement.relation,
+                &results,
+                &returns,
+            ) else {
+                continue;
+            };
+            let event = self
+                .vocabulary
+                .proof_event(FlowEventKind::S4, Some(&requirement.clause));
+            let context = self.reasoning().result_context(route);
+            let held = state.results.entry(parameter.binding).or_default();
+            if !held.iter().any(|result| route.holds(result)) {
+                held.push(context);
+                held.sort_by_key(|result| (result.route.variant, result.route.field));
+            }
+            if let Some(result) = held.iter_mut().find(|result| route.holds(result)) {
+                result
+                    .facts
+                    .establish(&relation, &mut self.vocabulary.derivations, event);
+            }
+        }
+    }
+}
+
+impl Analyzer<'_, '_> {
+    /// [TYPE-11, FN-8] the goal one routed requirement poses at a call and
+    /// the facts it is judged in: the invariant over the place below the
+    /// argument's payload step, and the ordinary facts with the argument's
+    /// context for the route, each private root term standing for that
+    /// place's corresponding term [ENT-5]. An argument with no context for
+    /// the route contributes the ordinary facts alone.
+    ///
+    /// A bare binding is the root its context is selected onto. Any other
+    /// argument, a field or element read or a moved field, is rooted where
+    /// the call's ordinary requirements root it: `image`, the argument's
+    /// admitted pre-transfer image [FN-8], or, when that image cannot carry
+    /// the payload step, the argument's own occurrence-local value, which
+    /// no fact names.
+    pub(super) fn routed_requirement_goal(
+        &mut self,
+        call: &crate::NodePath,
+        argument: &CheckedExpression,
+        image: Option<GoalExpression>,
+        requirement: &crate::semantic::postcondition::CheckedRoutedRequirement,
+        state: &ProofFlowState,
+    ) -> (ConcreteGoal, FactState) {
+        let binding = match argument {
+            CheckedExpression::Binding { binding, .. } => Some(*binding),
+            _ => None,
+        };
+        let step = GoalProjection::Payload {
+            variant: requirement.route.tag,
+            field: requirement.route.field,
+        };
+        let root = match binding {
+            Some(binding) => PayloadGoalRoot::Binding(binding),
+            None => PayloadGoalRoot::Image(
+                image
+                    .filter(|image| {
+                        matches!(
+                            image,
+                            GoalExpression::Datum(
+                                GoalDatum::Place { .. } | GoalDatum::EvaluatedValue { .. }
+                            )
+                        )
+                    })
+                    .unwrap_or_else(|| {
+                        GoalExpression::Datum(GoalDatum::EvaluatedValue {
+                            function: self.input.function.id,
+                            occurrence: EvaluatedValueOccurrence::CallArgument {
+                                call: call.clone(),
+                                argument: requirement.subject,
+                            },
+                            captured_type: argument.ty(),
+                            projections: Vec::new(),
+                            ty: argument.ty(),
+                        })
+                    }),
+            ),
+        };
+        let goal = ConcreteGoal::new(payload_goal(&requirement.goal.root, &root, step));
+        let context = self.capture_result(call, argument, state).into_iter().find(|result| {
+            result.route.variant == requirement.route.variant
+                && result.route.field == requirement.route.field
+        });
+        let (Some(binding), Some(context)) = (binding, context) else {
+            return (goal, state.facts.clone());
+        };
+        let facts = self
+            .reasoning()
+            .payload_place_facts(call, &context, binding, &state.facts);
+        (goal, facts)
+    }
+}
+
+/// What a routed requirement's payload step is taken below at a call.
+enum PayloadGoalRoot {
+    /// A bare binding argument, the place its context is selected onto.
+    Binding(BindingId),
+    /// Any other argument's admitted image or occurrence-local value: a
+    /// place or an evaluated-value datum.
+    Image(GoalExpression),
+}
+
+/// [TYPE-11] a type invariant's predicate over parameter zero, read over
+/// the place `step` reaches below `root` instead.
+fn payload_goal(
+    expression: &GoalExpression,
+    root: &PayloadGoalRoot,
+    step: GoalProjection,
+) -> GoalExpression {
+    match expression {
+        GoalExpression::Datum(GoalDatum::Parameter {
+            ordinal: 0,
+            projections,
+            ty,
+        }) => match root {
+            PayloadGoalRoot::Binding(binding) => GoalExpression::Datum(GoalDatum::Place {
+                root: *binding,
+                projections: std::iter::once(step)
+                    .chain(projections.iter().copied())
+                    .collect(),
+                ty: *ty,
+                admission: GoalAdmission::default(),
+            }),
+            // Each step is appended as an ordinary requirement's projection
+            // is appended to its admitted actual [FN-8]; only the last
+            // step's type is the datum's.
+            PayloadGoalRoot::Image(image) => std::iter::once(step)
+                .chain(projections.iter().copied())
+                .try_fold(image.clone(), |datum, projection| {
+                    datum.with_projection(projection, *ty)
+                })
+                .expect("a place or evaluated value takes every projection"),
+        },
+        GoalExpression::Datum(datum) => GoalExpression::Datum(datum.clone()),
+        GoalExpression::Operation {
+            row,
+            type_arguments,
+            const_arguments,
+            result,
+            arguments,
+        } => GoalExpression::Operation {
+            row: *row,
+            type_arguments: type_arguments.clone(),
+            const_arguments: const_arguments.clone(),
+            result: *result,
+            arguments: arguments
+                .iter()
+                .map(|argument| payload_goal(argument, root, step))
+                .collect(),
+        },
+    }
+}
+
 impl Reasoning<'_, '_, '_> {
+    /// [TYPE-11, ENT-5] one context's facts with each private root term
+    /// replaced by the corresponding term of the place below `binding`'s
+    /// payload step for the context's route, over the current ordinary
+    /// facts. The result is a scratch state for one judgment; nothing in it
+    /// becomes an ordinary fact.
+    fn payload_place_facts(
+        &mut self,
+        statement: &crate::NodePath,
+        result: &ResultEvidence,
+        binding: BindingId,
+        ordinary: &FactState,
+    ) -> FactState {
+        let mut result = result.clone();
+        self.vocabulary.refresh_result(&mut result, ordinary);
+        let step = PlaceStep::Payload {
+            variant: result.route.tag,
+            field: result.route.field,
+        };
+        let pairs = self.payload_receiver_pairs(&result, binding, Some(step));
+        self.vocabulary
+            .substitute_result_facts(statement, &result.facts, &pairs)
+    }
+
+    /// Each private root term of `result`'s payload with the corresponding
+    /// term of the receiving place: `binding` itself, or the place `step`
+    /// reaches below it, extended by the root term's projection.
+    fn payload_receiver_pairs(
+        &mut self,
+        result: &ResultEvidence,
+        binding: BindingId,
+        step: Option<PlaceStep>,
+    ) -> Vec<(TermId, TermId)> {
+        let mut roots = Vec::new();
+        for term in self.vocabulary.terms.ids() {
+            if let TermKind::ResultPayload {
+                payload,
+                path,
+                measure,
+                ty,
+            } = self.vocabulary.terms.kind(term)
+                && *payload == result.payload
+            {
+                roots.push((term, path.clone(), *measure, *ty));
+            }
+        }
+        let mut pairs = Vec::with_capacity(roots.len());
+        for (root, path, measure, ty) in roots {
+            let place = ResolvedPlace {
+                atomic_aliases: Vec::new(),
+                root: PlaceRoot::Binding(binding),
+                path: step.into_iter().chain(path.iter().cloned()).collect(),
+            };
+            let receiver = match measure {
+                None => Some(self.vocabulary.terms.intern(TermKind::Place(place, ty))),
+                Some(measure) => self
+                    .input
+                    .payload_path_type(result.payload, &path)
+                    .and_then(|reached| {
+                        let measured = measured_kind(reached)?;
+                        Some(self.place_measure_term(
+                            measure,
+                            place,
+                            measured,
+                            type_constant(reached),
+                        ))
+                    }),
+            };
+            if let Some(receiver) = receiver {
+                pairs.push((root, receiver));
+            }
+        }
+        pairs
+    }
+
     pub(super) fn finish_result(
         &mut self,
         expression: &CheckedExpression,
         judgment: &ExpressionJudgment,
-        result: &mut Option<ResultEvidence>,
+        results: &mut Vec<ResultEvidence>,
         state: &ProofFlowState,
     ) {
         if !judgment.reached {
-            *result = None;
+            results.clear();
             return;
         }
         let (
@@ -473,7 +797,7 @@ impl Reasoning<'_, '_, '_> {
             },
         ) = (&judgment.prepared_call, expression)
         else {
-            if let Some(result) = result {
+            for result in results.iter_mut() {
                 let mut kills = Vec::new();
                 self.input.collect_expression_kills(expression, &mut kills);
                 self.apply_kills_one(&state.separations, &mut result.facts, &kills);
@@ -481,39 +805,56 @@ impl Reasoning<'_, '_, '_> {
             }
             return;
         };
+        let routes = self.input.payload_routes(expression.ty());
+        // [ENT-5] each routed relation is restricted to the context of the
+        // variant field it is routed by: a written route's success variant,
+        // or the field a type invariant's route names [TYPE-11].
         let routed = prepared
             .postconditions
             .iter()
-            .filter(|available| {
-                matches!(
-                    (available.variant, available.field),
-                    (
-                        Some(crate::BuiltinPreludeId::OK),
-                        Some(crate::BuiltinPreludeId::OK_VALUE)
-                    ) | (
-                        Some(crate::BuiltinPreludeId::SOME),
-                        Some(crate::BuiltinPreludeId::SOME_VALUE)
-                    )
-                )
+            .filter_map(|available| {
+                let route = routes.iter().find(|route| match available.route {
+                    Some(wanted) => {
+                        route.route.variant == wanted.variant && route.route.field == wanted.field
+                    }
+                    None => {
+                        route.success
+                            && matches!(
+                                (available.variant, available.field),
+                                (
+                                    Some(crate::BuiltinPreludeId::OK),
+                                    Some(crate::BuiltinPreludeId::OK_VALUE)
+                                ) | (
+                                    Some(crate::BuiltinPreludeId::SOME),
+                                    Some(crate::BuiltinPreludeId::SOME_VALUE)
+                                )
+                            )
+                    }
+                })?;
+                Some((*route, available.clone()))
             })
-            .cloned()
             .collect::<Vec<_>>();
         // [ENT-5] a routed call's value receives its context here, where the
         // call establishes the relations it restricts to it; a type whose
         // contexts are created only by evidence has none before.
-        if result.is_none()
-            && !routed.is_empty()
-            && let Some(route) = self.input.success_route(expression.ty())
-        {
-            *result = Some(self.result_context(route));
+        for (route, _) in &routed {
+            if !results.iter().any(|result| route.holds(result)) {
+                let context = self.result_context(*route);
+                results.push(context);
+            }
         }
-        let Some(result) = result else { return };
+        results.sort_by_key(|result| (result.route.variant, result.route.field));
         let mut kills = Vec::new();
         self.input.collect_expression_kills(expression, &mut kills);
-        self.apply_kills_one(&state.separations, &mut result.facts, &kills);
-        self.vocabulary.refresh_result(result, &state.facts);
-        let destination = [Some(ResultDestination::PayloadRoot(result.payload))];
-        for available in &routed {
+        for result in results.iter_mut() {
+            self.apply_kills_one(&state.separations, &mut result.facts, &kills);
+            self.vocabulary.refresh_result(result, &state.facts);
+        }
+        for (route, available) in &routed {
+            let Some(result) = results.iter_mut().find(|result| route.holds(result)) else {
+                continue;
+            };
+            let destination = [Some(ResultDestination::PayloadRoot(result.payload))];
             let Some(instantiated) = self.instantiate_call_postcondition_relation(
                 *function,
                 call,
@@ -569,45 +910,7 @@ impl Reasoning<'_, '_, '_> {
     ) {
         let mut result = result.clone();
         self.vocabulary.refresh_result(&mut result, &state.facts);
-        let mut roots = Vec::new();
-        for term in self.vocabulary.terms.ids() {
-            if let TermKind::ResultPayload {
-                payload,
-                path,
-                measure,
-                ty,
-            } = self.vocabulary.terms.kind(term)
-                && *payload == result.payload
-            {
-                roots.push((term, path.clone(), *measure, *ty));
-            }
-        }
-        let mut pairs = Vec::with_capacity(roots.len());
-        for (root, path, measure, ty) in roots {
-            let place = ResolvedPlace {
-                atomic_aliases: Vec::new(),
-                root: PlaceRoot::Binding(binding),
-                path: path.clone(),
-            };
-            let receiver = match measure {
-                None => Some(self.vocabulary.terms.intern(TermKind::Place(place, ty))),
-                Some(measure) => self
-                    .input
-                    .payload_path_type(result.payload, &path)
-                    .and_then(|reached| {
-                        let measured = measured_kind(reached)?;
-                        Some(self.place_measure_term(
-                            measure,
-                            place,
-                            measured,
-                            type_constant(reached),
-                        ))
-                    }),
-            };
-            if let Some(receiver) = receiver {
-                pairs.push((root, receiver));
-            }
-        }
+        let pairs = self.payload_receiver_pairs(&result, binding, None);
         let selected = self
             .vocabulary
             .substitute_result_facts(statement, &result.facts, &pairs);
@@ -616,16 +919,17 @@ impl Reasoning<'_, '_, '_> {
         }
         for (relation, parent) in selected.l0_candidates() {
             if relation.terms().iter().any(|term| {
-                matches!(
-                    self.vocabulary.terms.kind(*term),
-                    TermKind::ResultPayload { .. }
-                )
+                self.vocabulary.terms.any_leaf(*term, &|leaf| {
+                    matches!(self.vocabulary.terms.kind(leaf), TermKind::ResultPayload { .. })
+                })
             }) {
                 continue;
             }
             state
                 .facts
                 .establish_from_proof(&relation, parent, &self.vocabulary.derivations);
+            self.vocabulary
+                .establish_postcondition_affine(&relation, parent, &mut state.affine);
         }
     }
 }
@@ -668,7 +972,7 @@ impl Reasoning<'_, '_, '_> {
         });
         if !held.is_empty() {
             let ordinary = self.vocabulary.result_ordinary_snapshot(&state.facts);
-            for result in held.values_mut() {
+            for result in held.values_mut().flatten() {
                 self.vocabulary
                     .refresh_result_from_snapshot(result, &ordinary);
                 self.apply_kills_one(&state.separations, &mut result.facts, events);
@@ -692,7 +996,7 @@ impl Analyzer<'_, '_> {
         held.retain(|binding, _| !exited.contains(binding));
         if !held.is_empty() {
             let ordinary = self.vocabulary.result_ordinary_snapshot(&state.facts);
-            for result in held.values_mut() {
+            for result in held.values_mut().flatten() {
                 self.vocabulary
                     .refresh_result_from_snapshot(result, &ordinary);
                 materialize_closure_before_kill(
@@ -712,36 +1016,45 @@ impl Vocabulary {
     pub(super) fn join_result_evidence(
         &mut self,
         states: &[ProofFlowState],
-    ) -> BTreeMap<BindingId, ResultEvidence> {
-        let mut bindings = BTreeMap::new();
+    ) -> BTreeMap<BindingId, Vec<ResultEvidence>> {
+        let mut keys = BTreeMap::new();
         for state in states {
-            for (&binding, result) in &state.results {
-                bindings
-                    .entry(binding)
-                    .or_insert((result.payload, result.success_tag));
+            for (&binding, held) in &state.results {
+                for result in held {
+                    keys.entry((binding, result.route.variant, result.route.field))
+                        .or_insert((result.payload, result.route, result.success));
+                }
             }
         }
-        let mut results = BTreeMap::new();
-        if bindings.is_empty() {
+        let mut results: BTreeMap<BindingId, Vec<ResultEvidence>> = BTreeMap::new();
+        if keys.is_empty() {
             return results;
         }
         let ordinary = states
             .iter()
             .map(|state| self.result_ordinary_snapshot(&state.facts))
             .collect::<Vec<_>>();
-        for (binding, (payload, success_tag)) in bindings {
+        fn find(
+            state: &ProofFlowState,
+            binding: BindingId,
+            route: PayloadRoute,
+        ) -> Option<&ResultEvidence> {
+            state.results.get(&binding).and_then(|held| {
+                held.iter().find(|result| {
+                    result.route.variant == route.variant && result.route.field == route.field
+                })
+            })
+        }
+        for ((binding, _, _), (payload, route, success)) in keys {
             let mut images = Vec::new();
             for (state, ordinary) in states.iter().zip(&ordinary) {
-                let mut result = state
-                    .results
-                    .get(&binding)
-                    .cloned()
-                    .unwrap_or(ResultEvidence {
-                        payload,
-                        success_tag,
-                        facts: FactState::new(),
-                        definitely_err: false,
-                    });
+                let mut result = find(state, binding, route).cloned().unwrap_or(ResultEvidence {
+                    payload,
+                    route,
+                    success,
+                    facts: FactState::new(),
+                    definitely_err: false,
+                });
                 self.refresh_result_from_snapshot(&mut result, ordinary);
                 images.push(result.facts);
             }
@@ -754,20 +1067,15 @@ impl Vocabulary {
                 event,
             );
             let definitely_err = states.iter().all(|state| {
-                state
-                    .results
-                    .get(&binding)
-                    .is_some_and(|result| result.definitely_err)
+                find(state, binding, route).is_some_and(|result| result.definitely_err)
             });
-            results.insert(
-                binding,
-                ResultEvidence {
-                    payload,
-                    success_tag,
-                    facts,
-                    definitely_err,
-                },
-            );
+            results.entry(binding).or_default().push(ResultEvidence {
+                payload,
+                route,
+                success,
+                facts,
+                definitely_err,
+            });
         }
         results
     }
@@ -800,6 +1108,7 @@ mod tests {
             contract_queries: &[],
             verified_postconditions: &[],
             verified_postcondition_proofs: &[],
+            component_postconditions: &[],
             binding_names: &[],
         };
         let function = CheckedFunction {
@@ -820,6 +1129,7 @@ mod tests {
             declared_state_reads: Vec::new(),
             requirements: Vec::new(),
             requirement_places: Vec::new(),
+            routed_requirements: Vec::new(),
             postconditions: Vec::new(),
             range_facts: Default::default(),
             body: None,
@@ -994,7 +1304,12 @@ mod tests {
         for conditional in [unseeded, source] {
             let mut refreshed = ResultEvidence {
                 payload: CheckedType::Integer(IntegerType::I32),
-                success_tag: 0,
+                route: PayloadRoute {
+                    variant: 0,
+                    field: 0,
+                    tag: 0,
+                },
+                success: true,
                 facts: conditional.clone(),
                 definitely_err: false,
             };

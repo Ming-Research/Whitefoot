@@ -896,19 +896,12 @@ impl<'unit> Checker<'_, 'unit> {
                 context, use_node, node, &suffixes, subscript, bindings, options,
             );
         }
-        // [OP-15] a measure is read as a member of the measured place, so
-        // `a.len` is a place form and not a call. The written base decides
-        // nothing about that read: the explicit-place walker resolves a bare
-        // IDENT base exactly as it resolves a `^` path, so routing every
-        // measure member there keeps one implementation of [MSR-1]'s rows,
-        // [MSR-2]'s descriptor-only support and [EFF-2]'s attribution.
-        if self.types.declarations.tree.place_has_dereference(node)?
-            || self
-                .types
-                .declarations
-                .trailing_measure_member(&suffixes)?
-                .is_some()
-        {
+        // [TYPE-7] explicit reference paths use the addressed-place reader.
+        // An ordinary local path is elaborated below before choosing its
+        // reader: [TYPE-10] measure spellings may also name owned fields,
+        // whose moves consume their whole owner under [WIN-3]. A real
+        // measure has no plain field path and reaches that same reader.
+        if self.types.declarations.tree.place_has_dereference(node)? {
             return self.check_dereferenced_place_use(
                 check_context,
                 use_node,
@@ -1097,6 +1090,30 @@ impl<'unit> Checker<'_, 'unit> {
                         &ResolvedPlace::fields(local.binding, fields.clone()),
                         &super::references::InvalidationEvent::PrefixMoved,
                     )?;
+                    // [WIN-3, STOR-3] a move out of a field releases the
+                    // owner's other affine parts here, and [REF-2] counts
+                    // that compiler-derived release as an invalidating
+                    // event for every reference at or below a released part.
+                    for drop in &residual_drops {
+                        self.types.invalidate_references(
+                            bindings,
+                            &ResolvedPlace::fields(local.binding, drop.fields.clone()),
+                            &super::references::InvalidationEvent::PrefixReleased,
+                        )?;
+                    }
+                    // [WIN-3] the move consumes the whole owner, so the root
+                    // is a moved prefix of every remaining reference into it,
+                    // its copy parts and the root itself included, exactly as
+                    // a move out of `Box` content consumes the `Box`. The
+                    // events above come first so a reference keeps the more
+                    // specific one [REF-2].
+                    if !fields.is_empty() {
+                        self.types.invalidate_references(
+                            bindings,
+                            &ResolvedPlace::binding(local.binding),
+                            &super::references::InvalidationEvent::PrefixMoved,
+                        )?;
+                    }
                 }
                 let access = ResolvedPlace::fields(local.binding, access_fields);
                 let mut effects = EffectSet::NONE;

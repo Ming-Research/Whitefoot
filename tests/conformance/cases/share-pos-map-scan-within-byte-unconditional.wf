@@ -1,0 +1,22 @@
+fn account_any_outcome(map: &ConcurrentHashMap<u8>, keys: &KeySet, cursor: u64, count: u64, left: u64) -> remaining: u64 reads(map), writes(keys) {
+  doc "The retained-byte bounds apply before selecting Next or Needs, so both exact subtractions are admitted without an outcome match or arithmetic guard; the former declaration published no such bound.";
+  let before = key_set_bytes(keys: keys);
+  map_scan_within::<u8>(map: map, cursor: cursor, count: count, limit: left, keys: keys);
+  let after = key_set_bytes(keys: keys);
+  let used = after - before;
+  set left = left - used;
+  return left;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let store = shared_map_new::<u8>(capacity: 0_u64);
+  let keys = key_set_new(capacity: 0_u64);
+  let remaining = 1_u64;
+  atomic map = &store {
+    set remaining = account_any_outcome(map: map, keys: &keys, cursor: 0_u64, count: 0_u64, left: 0_u64);
+  }
+  if remaining == 0_u64 {
+    return std::process::exit_status(code: 42_u8);
+  }
+  return std::process::exit_status(code: 1_u8);
+}

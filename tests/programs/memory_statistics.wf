@@ -136,8 +136,8 @@ fn measure_empty_windows(meter: &MemoryMeter) -> result: u64 writes(meter) {
   append(destination: &slots.inner, source: &ring.inner);
   split_off(source: &slots.inner, index: 0_u64, destination: &ring.inner);
   grow(cell: &slots, capacity: 0_u64);
-  let unchanged = std::process::heap_in_use(meter: meter);
-  if unchanged != before {
+  let preserved_value = std::process::heap_in_use(meter: meter);
+  if preserved_value != before {
     return 1_u64;
   }
   grow(cell: &slots, capacity: 4_u64);
@@ -273,6 +273,139 @@ fn measure_map(meter: &MemoryMeter) -> result: u8 writes(meter) waits {
   return 0_u8;
 }
 
+fn measure_key_set(meter: &MemoryMeter) -> result: u8 writes(meter) waits {
+  doc "Guards exact retained-byte reporting against the independent heap meter for unused capacity, insertion growth, every successful bounded scan, and explicit release in one context. Before key_set_bytes exists this fails name resolution; omitting a storage-growth grant from its answer fails the growth equality, and caching a released grant fails the release equality.";
+  let store = shared_map_new::<u8>(capacity: 40_u64);
+  atomic map = &store {
+    for @populate (k in 0_u64..40_u64) {
+      let bytes = array_filled::<u8, 65536>(value: 0_u8);
+      set bytes[0_u64] = cvt.wrap::<u64, u8>(k);
+      set bytes[1_u64] = 255_u8;
+      let key = &bytes[0_u64..65536_u64];
+      set map^[key] = Some<u8>(value: 1_u8);
+    }
+  }
+  let keys = key_set_new(capacity: 1_u64);
+  let reserved = key_set_bytes(keys: &keys);
+  if reserved == 0_u64 {
+    return 26_u8;
+  }
+  if keys.len != 0_u64 {
+    return 27_u8;
+  }
+  let seed = array_filled::<u8, 65536>(value: 250_u8);
+  let before_insert = std::process::heap_in_use(meter: meter);
+  key_set_insert(keys: &keys, key: &seed[0_u64..65536_u64]);
+  let inserted = key_set_bytes(keys: &keys);
+  let after_insert = std::process::heap_in_use(meter: meter);
+  if inserted <= reserved {
+    return 28_u8;
+  }
+  let inserted_growth = inserted - reserved;
+  if after_insert >= before_insert {
+    let heap_growth = after_insert - before_insert;
+    if inserted_growth != heap_growth {
+      return 29_u8;
+    }
+  } else {
+    return 29_u8;
+  }
+  key_set_insert(keys: &keys, key: &seed[0_u64..65536_u64]);
+  let duplicate = key_set_bytes(keys: &keys);
+  let after_duplicate = std::process::heap_in_use(meter: meter);
+  if duplicate != inserted {
+    return 30_u8;
+  }
+  if after_duplicate != after_insert {
+    return 31_u8;
+  }
+  let cursor = 0_u64;
+  let limit = 262144_u64;
+  let grew = False();
+  atomic map = &store {
+    loop {
+      let reported_before = key_set_bytes(keys: &keys);
+      let heap_before = std::process::heap_in_use(meter: meter);
+      let outcome = map_scan_within::<u8>(map: map, cursor: cursor, count: 3_u64, limit: limit, keys: &keys);
+      let reported_after = key_set_bytes(keys: &keys);
+      let heap_after = std::process::heap_in_use(meter: meter);
+      if reported_after < reported_before {
+        return 32_u8;
+      }
+      let retained_growth = reported_after - reported_before;
+      if heap_after >= heap_before {
+        let heap_growth = heap_after - heap_before;
+        if retained_growth != heap_growth {
+          return 33_u8;
+        }
+      } else {
+        return 33_u8;
+      }
+      match outcome {
+        Next(next: end) => {
+          if retained_growth > limit {
+            return 34_u8;
+          }
+          if retained_growth > 0_u64 {
+            set grew = True();
+          }
+          if end == 0_u64 {
+            break;
+          }
+          if end <= cursor {
+            return 35_u8;
+          }
+          set cursor = end;
+        }
+        Needs(bytes: required) => {
+          if retained_growth != 0_u64 {
+            return 36_u8;
+          }
+          if required <= limit {
+            return 37_u8;
+          }
+          set limit = required;
+        }
+      }
+    }
+  }
+  if bnot(grew) {
+    return 38_u8;
+  }
+  if keys.len != 41_u64 {
+    return 39_u8;
+  }
+  let held = key_set_bytes(keys: &keys);
+  let before_release = std::process::heap_in_use(meter: meter);
+  release::<KeySet>(value: move keys);
+  let after_release = std::process::heap_in_use(meter: meter);
+  if before_release >= after_release {
+    let freed = before_release - after_release;
+    if freed != held {
+      return 40_u8;
+    }
+  } else {
+    return 40_u8;
+  }
+  let unused = key_set_new(capacity: 8_u64);
+  let unused_bytes = key_set_bytes(keys: &unused);
+  let before_unused_release = std::process::heap_in_use(meter: meter);
+  release::<KeySet>(value: move unused);
+  let after_unused_release = std::process::heap_in_use(meter: meter);
+  if unused_bytes == 0_u64 {
+    return 41_u8;
+  }
+  if before_unused_release >= after_unused_release {
+    let freed = before_unused_release - after_unused_release;
+    if freed != unused_bytes {
+      return 42_u8;
+    }
+  } else {
+    return 42_u8;
+  }
+  return 0_u8;
+}
+
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   let Inputs(cwd: directory, handles: factory, memory_meter: meter, ..) = move inputs;
   let std::fs::Directory(read: directory_read, write: directory_write) = move directory;
@@ -320,6 +453,10 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   let map_result = measure_map(meter: &meter);
   if map_result != 0_u8 {
     return exit_status(code: map_result);
+  }
+  let key_set_result = measure_key_set(meter: &meter);
+  if key_set_result != 0_u8 {
+    return exit_status(code: key_set_result);
   }
   let resident = std::process::resident_bytes(meter: &meter);
   match resident {

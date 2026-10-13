@@ -574,8 +574,15 @@ impl<'unit> Checker<'_, 'unit> {
             return mismatch("a const argument in the element position");
         };
         let element_type = self.parse_type_with(check_context, element_node, substitution)?;
+        // [CONST-1, PRE-1] a storage shape's capacity is the argument of its
+        // declared `const n: u64` parameter.
         let capacity = capacity
-            .map(|length| self.parse_const_expression_with(check_context, length, substitution))
+            .map(|length| {
+                let value =
+                    self.parse_const_expression_with(check_context, length, substitution)?;
+                self.check_const_argument(check_context, length, value, IntegerType::U64)?;
+                Ok::<_, CheckStop>(value)
+            })
             .transpose()?;
         match (shape, capacity) {
             // An `Array` has no window: every slot always holds a value and
@@ -782,6 +789,91 @@ impl<'unit> Checker<'_, 'unit> {
         self.types
             .combine_const(operation, left, right)
             .ok_or_else(|| SemanticCompilerFailure::CounterOverflow.into())
+    }
+
+    /// [CONST-1] admits one const argument for a const parameter of integer
+    /// type `parameter`: each IDENT term must declare exactly that type, and
+    /// the evaluated `value` must lie in its closed range [FORM-7]. A closed
+    /// argument's value is concrete wherever it is written; a symbolic one is
+    /// judged at each concrete instance, whose substitution evaluates it, as
+    /// the u64 domain of [`Self::parse_const_expression_with`] is.
+    pub(super) fn check_const_argument(
+        &self,
+        check_context: &CheckContext<'_>,
+        node: NodeId,
+        value: CheckedConst,
+        parameter: IntegerType,
+    ) -> Result<(), CheckStop> {
+        let terms = self.const_term_types(check_context, node)?;
+        if let Some(found) = terms.into_iter().find(|term| *term != parameter) {
+            return self.types.declarations.issue_node(
+                SemanticRule::Const1,
+                node,
+                SemanticIssueKind::type_mismatch(
+                    self.types.checked_type_name(CheckedType::Integer(parameter))?,
+                    self.types.checked_type_name(CheckedType::Integer(found))?,
+                ),
+            );
+        }
+        let CheckedConst::Value(value) = value else {
+            return Ok(());
+        };
+        // Every const value is a nonnegative u64, so only the upper end of
+        // the closed range can fail.
+        let unused_high_bits =
+            64 - u32::from(parameter.width()) + u32::from(parameter.signed());
+        if value <= u64::MAX >> unused_high_bits {
+            return Ok(());
+        }
+        self.types.declarations.issue_node(
+            SemanticRule::Const1,
+            node,
+            SemanticIssueKind::ConstArgumentOutOfRange {
+                parameter_type: self
+                    .types
+                    .checked_type_name(CheckedType::Integer(parameter))?,
+                value,
+            },
+        )
+    }
+
+    /// The declared integer type of each IDENT term of `node`, in source
+    /// order: a const generic's written `gparam` type [MSR-6] or a named
+    /// const's declared type [CONST-2]. [`Self::parse_const_term`] has
+    /// already resolved every term to one of the two.
+    fn const_term_types(
+        &self,
+        check_context: &CheckContext<'_>,
+        node: NodeId,
+    ) -> Result<Vec<IntegerType>, CheckStop> {
+        let uses =
+            self.types
+                .declarations
+                .uses_at_ordered(check_context, node, LexicalUseRole::Const)?;
+        uses.iter()
+            .map(|usage| match usage.target() {
+                ResolvedTarget::Source {
+                    declaration,
+                    class: DeclarationClass::ConstGeneric,
+                } => self.types.const_generic_type(declaration),
+                ResolvedTarget::Source {
+                    declaration,
+                    class: DeclarationClass::NamedConst,
+                } => {
+                    let constant = self
+                        .types
+                        .constants
+                        .get(&declaration)
+                        .copied()
+                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                    match &self.types.constant(constant)?.value {
+                        CheckedValue::Integer { ty, .. } => Ok(*ty),
+                        _ => Err(SemanticCompilerFailure::InvalidResolution.into()),
+                    }
+                }
+                _ => Err(SemanticCompilerFailure::InvalidResolution.into()),
+            })
+            .collect()
     }
 
     /// One `const` term: a bare decimal u64 literal, an integer-typed named
@@ -1249,6 +1341,7 @@ pub(super) fn measure_named(spelling: &str) -> Option<CheckedMeasure> {
         "len" => Some(CheckedMeasure::Length),
         "cap" => Some(CheckedMeasure::Capacity),
         "head" => Some(CheckedMeasure::Head),
+        "bytes" => Some(CheckedMeasure::Bytes),
         _ => None,
     }
 }
@@ -2381,6 +2474,24 @@ impl<'unit> TypeContext<'unit> {
         path: &CheckedStatePath,
         signature: &FunctionSignature,
     ) -> Result<String, CheckStop> {
+        Ok(self.walk_effect_path(path, signature)?.0)
+    }
+    /// The value or range type a checked effect path's last step selects,
+    /// from the callee parameter types `signature` carries [EFF-1].
+    pub(super) fn effect_path_selected(
+        &self,
+        path: &CheckedStatePath,
+        signature: &FunctionSignature,
+    ) -> Result<SelectedPlaceType, CheckStop> {
+        Ok(self.walk_effect_path(path, signature)?.1)
+    }
+    /// One checked effect path's canonical spelling and the type its last
+    /// step selects.
+    fn walk_effect_path(
+        &self,
+        path: &CheckedStatePath,
+        signature: &FunctionSignature,
+    ) -> Result<(String, SelectedPlaceType), CheckStop> {
         let parameter = signature
             .parameters
             .iter()
@@ -2479,7 +2590,7 @@ impl<'unit> TypeContext<'unit> {
                 }
             }
         }
-        Ok(rendered)
+        Ok((rendered, selected))
     }
     /// One `effect_path := epbase epsuffix*` [EFF-1], with the type its last
     /// step selects.
@@ -2650,7 +2761,8 @@ impl<'unit> TypeContext<'unit> {
                         (spelling == "len").then_some(CheckedMeasure::Length)
                     }
                     SelectedPlaceType::Value(ty) => measure_named(spelling).filter(|measure| {
-                        (symbolic_window && *measure != CheckedMeasure::Head)
+                        (symbolic_window
+                            && matches!(measure, CheckedMeasure::Length | CheckedMeasure::Capacity))
                             || ty.measured().is_some_and(|measured| {
                                 !matches!(
                                     measure.cell(measured),

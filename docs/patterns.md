@@ -620,7 +620,7 @@ A `nodrop` owner must be consumed on every exit [PROV-6]. Destructure a
 non-opaque aggregate whole when its parts need different consumers:
 
 ```whitefoot
-let std::process::Inputs(args: args, cwd: cwd_directory, stdout: out, stderr: err, handles: factory, stdin: input, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+let std::process::Inputs(args: args, drivers: unused_driver_count, cwd: cwd_directory, stdout: out, stderr: err, handles: factory, stdin: input, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
 let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
 std::fs::close_directory_write(factory: &factory, directory: move cwd_write);
 std::fs::close_directory(factory: &factory, directory: move cwd);
@@ -933,6 +933,31 @@ atomic items = &queue when items^.len > 0_u64 {
 }
 ```
 
+A guard is woken only by a write to its targets' states, so it cannot wait
+for a time: a guard that reads a clock or the memory meter is refused
+[SHARE-2, PRE-2]. To wait until a deadline, call `std::time::sleep_until`
+before the statement. To wait for the state or the deadline, whichever comes
+first, spawn a context that sleeps until the deadline and then fires a
+cancellation source, and let the guard read that source's state:
+
+```whitefoot
+fn ready_or_stopped(count: &u64, stop: &std::time::CancelState) -> result: Bool reads(count), reads(stop) {
+  let ready = count^ > 0_u64;
+  let either = bor(ready, stop^.fired);
+  return either;
+}
+```
+
+```whitefoot
+spawn timer(source: move source, deadline: deadline);
+atomic count = &pending, stop = &stopped when ready_or_stopped(count: count, stop: stop) {
+  set timed_out = stop^.fired;
+}
+```
+
+Here `timer` waits with `sleep_until` and then calls `cancel_fire`, and
+`stopped` is the `cancel_state` of a watch on the same source.
+
 A map's entries and accompanying metadata can be held by one statement:
 
 ```whitefoot
@@ -984,7 +1009,10 @@ Every function taking a `Table` or a `&Table` receives the relation at entry,
 which here proves `t^.slots[at]` in bounds, and owes it back where it hands the
 value on: at its returns and its `propagate` error exits when it writes the
 value, at each call passing it, and at `shared_new`. Every construction owes it
-too. Between two field writes of
+too. A generic function's instance at `Table` takes it the same way through a
+parameter or result written as its type parameter, while an element of a
+storage carries none, so a library container of `Table` is refused where it
+hands an element out or compares two. Between two field writes of
 one body the relation may be false, since no other code can see the value
 there. A shared object's state keeps it the same way: each atomic block
 receives it at entry and owes it at every edge that leaves the block.

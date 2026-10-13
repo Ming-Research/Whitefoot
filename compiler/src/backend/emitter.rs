@@ -2841,6 +2841,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             } => self.emit_keyed_entries_fill(result, *entries, *hold, *position, *set),
             IrOperation::KeySetNew { capacity } => self.emit_key_set_new(result, ty, *capacity),
             IrOperation::KeySetInsert { set, key } => self.emit_key_set_insert(result, *set, *key),
+            IrOperation::KeySetBytes { set } => self.emit_key_set_bytes(result, *set),
             IrOperation::KeySetReadKey { set, index, out } => {
                 self.emit_key_set_read_key(result, *set, *index, *out)
             }
@@ -2957,6 +2958,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                     }
                 }
                 self.emit_place_edge(*target, arguments, drops)?;
+                if self.emit_cursor_join_edge(block, *target, arguments)? {
+                    return Ok(());
+                }
                 writeln!(self.output, "  br label %{}", block_label(*target))
                     .map_err(|_| BackendFailure::TextEmission)
             }

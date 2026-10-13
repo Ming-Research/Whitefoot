@@ -732,7 +732,7 @@ impl CheckedType {
     }
 }
 
-/// One of [MSR-1]'s three measures of a measured value.
+/// One of [MSR-1]'s measures of a measured value.
 ///
 /// The spelling and the [ENT-2] term are the same quantity read two ways, so
 /// one enum keys both the [OP-1] reader row and the measure term.
@@ -743,6 +743,8 @@ pub(crate) enum CheckedMeasure {
     Head,
     /// Initialized page count, supported by the same word as len.
     Pages,
+    /// Heap bytes retained by a KeySet, including unused capacity.
+    Bytes,
 }
 
 /// One cell of [MSR-1]'s measure table.
@@ -766,7 +768,7 @@ pub(crate) enum MeasureCell {
     /// `cap` [WIN-1].
     ExactRuntime,
     /// The measure is only two-sidedly published by some writing operation:
-    /// a Ring's `head` and a key set's `len` are the measures of this class
+    /// a Ring's `head` and a key set's `len` and `bytes` are measures of this class
     /// [MSR-1].
     Bounded,
     /// The type has no such measure.
@@ -807,6 +809,7 @@ impl CheckedMeasure {
             Self::Capacity => "cap",
             Self::Head => "head",
             Self::Pages => "pages.len",
+            Self::Bytes => "bytes",
         }
     }
 
@@ -816,6 +819,8 @@ impl CheckedMeasure {
     /// a member's spelling alone cannot establish either.
     pub(crate) const fn cell(self, measured: MeasuredKind) -> MeasureCell {
         match (measured, self) {
+            (MeasuredKind::KeySet, Self::Bytes) => MeasureCell::Bounded,
+            (_, Self::Bytes) => MeasureCell::Absent,
             (MeasuredKind::Paged, Self::Pages) => MeasureCell::ExactRuntime,
             (_, Self::Pages) => MeasureCell::Absent,
             // `Array<T, N>`: `len` is the type constant and every slot always
@@ -853,10 +858,8 @@ impl CheckedMeasure {
                 MeasuredKind::Range | MeasuredKind::Segments | MeasuredKind::Entries,
                 Self::Length,
             ) => MeasureCell::ExactRuntime,
-            // The two *bounded* cell classes of the table: the two
-            // front-moving operations publish a `Ring`'s window origin
-            // two-sidedly and no operation re-establishes it exactly
-            // [MSR-1, OP-10], and the key-set additions publish a set's `len`
+            // Front-moving operations publish a Ring's window origin
+            // two-sidedly [MSR-1, OP-10]. Key-set additions publish len
             // two-sidedly, a key already held adding none [SHARE-1].
             (MeasuredKind::ConstantRing | MeasuredKind::RuntimeRing, Self::Head)
             | (MeasuredKind::KeySet, Self::Length) => MeasureCell::Bounded,
@@ -1116,6 +1119,10 @@ pub(crate) struct CheckedNominal {
     /// capability alone: the written `nocopy` modifier and the cell nominals
     /// this compiler interns for declarations [PRE-1] writes `nocopy`.
     pub(crate) nocopy: bool,
+    /// [TYPE-11] whether this is a struct that declares affine type
+    /// invariants, which an enum payload of its type carries across a
+    /// function boundary.
+    pub(crate) type_invariant: bool,
 }
 
 impl CheckedNominal {
@@ -2428,6 +2435,10 @@ pub(crate) enum CheckedExpression {
         /// Filled from the complete phase-A inventory before entailment runs,
         /// in callee `requires_clause` source order.
         requirements: Vec<super::goal::CheckedCallRequirement>,
+        /// [TYPE-11] the callee's requirements over its parameters' enum
+        /// payloads, each owed in its argument's conditional context for its
+        /// route [ENT-5]; filled with `requirements`.
+        routed_requirements: Vec<super::postcondition::CheckedRoutedRequirement>,
         result: CheckedType,
         /// For a borrow-mode result admitted under the reborrow extension:
         /// the caller-side storage the result borrow is conservatively rooted
@@ -3076,7 +3087,7 @@ pub(crate) enum CheckedEffectStep {
     },
     /// `.next`, `.last`, `.filled`, or `.free` [WIN-2, TYPE-10].
     Part(super::places::WindowPart),
-    /// `.len`, `.cap`, or `.head` [MSR-1, OP-15, TYPE-2].
+    /// `.len`, `.cap`, `.head`, or `.bytes` [MSR-1, OP-15, TYPE-2].
     Measure(CheckedMeasure),
 }
 
@@ -3123,6 +3134,10 @@ pub(crate) struct CheckedFunction {
     /// at body entry in the state holding the requirements before it, where
     /// its subscripts owe [OP-4]. A hypothetical premise set forms none.
     pub(crate) requirement_places: Vec<Vec<CheckedExpression>>,
+    /// [TYPE-11] the type invariants of each struct a parameter's enum
+    /// carries in a variant field, each restricted to that variant, in
+    /// parameter order and then variant, field and declaration order.
+    pub(crate) routed_requirements: Vec<super::postcondition::CheckedRoutedRequirement>,
     /// Verified-relation surfaces in `ensures_clause` source order. H1
     /// constructs this metadata; the shared entailment flow proves every
     /// clause at every selected exit.
@@ -3200,23 +3215,29 @@ pub(crate) struct CheckedContextAwait {
 
 /// One [OWN-7] separation question the checker could not settle by syntax.
 ///
-/// A mandatory call-effect pair [EFF-5] or a write's preservation of a later
-/// reference use [REF-2] requires the positions to be proved distinct.
+/// A mandatory call-effect pair [EFF-5], a write's preservation of a later
+/// reference use [REF-2] or two handle places of one atomic statement
+/// [SHARE-2] requires the positions to be proved distinct.
 /// The checker holds the actual argument spellings and the live
 /// reference state, so it owns the comparison; what it cannot do is discharge
 /// the index or range goal, which is the fixed [ENT-6] families' work under
 /// [MSR-4]'s disposition. This record is that handover, and the diagnostic it
-/// carries cites EFF-5 or OP-11 at the call, or REF-2 at the reference use.
+/// carries cites EFF-5 or OP-11 at the call, SHARE-2 at the target, or REF-2
+/// at the reference use.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CheckedCallSeparation {
-    /// The call or set commit whose pre-write proof context answers the query.
+    /// The call, set commit or atomic statement whose pre-write proof context
+    /// answers the query.
     pub(crate) site: NodePath,
-    /// Exchange's possible ancestry is refused by OP-11, rather than EFF-5.
-    pub(crate) exchange: bool,
+    /// The rule whose separation this is, when no reference use names one.
+    pub(crate) occasion: CheckedSeparationOccasion,
     /// A demanded REF-2 use; the separation is still proved at `site`, before
     /// the invalidating write, and diagnosed at this later use.
     pub(crate) reference_use: Option<CheckedReferencePreservationUse>,
     pub(crate) positions: Vec<CheckedCallSeparationPositions>,
+    /// Erased index expressions instantiated in this call's entry state.
+    /// Their captures serve only this separation, never runtime evaluation.
+    pub(crate) contract_indices: Vec<(super::places::CapturedValue, super::goal::GoalExpression)>,
     /// The window a position beside one of its parts reads `r.len` of
     /// [WIN-2]: the place both paths reach above the divergence.
     pub(crate) window: Option<super::places::ResolvedPlace>,
@@ -3227,6 +3248,20 @@ pub(crate) struct CheckedCallSeparation {
     /// Whether one reference argument supplies both paths [EFF-5], so that
     /// passing only one of them is no repair [DIAG-1].
     pub(crate) one_argument: bool,
+}
+
+/// Which judgment asks a [`CheckedCallSeparation`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum CheckedSeparationOccasion {
+    /// Two entries of one call's substituted row [EFF-5].
+    Call,
+    /// Exchange's possible ancestry is refused by OP-11, rather than EFF-5.
+    Exchange,
+    /// Two targets of one atomic statement whose handle places overlap
+    /// unless their positions differ, where one is a whole target [SHARE-2].
+    /// The site is the atomic statement, judged when it begins, and the
+    /// diagnostic cites the later target.
+    AtomicTargets(NodePath),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -3252,6 +3287,34 @@ pub(crate) enum CheckedCallSeparationPositions {
     /// [WIN-2] a range beside the window's `next` or `free`, which the
     /// separation needs proved to end at or below `r.len`, or empty.
     RangeWithinLength(super::places::CapturedRange),
+}
+
+impl CheckedCallSeparationPositions {
+    /// Whether the fixed [ENT-6] families can name every value this
+    /// candidate's proof reads.
+    ///
+    /// The unknown marker stands for an offset no captured value names, such
+    /// as an atomic binder's own key subscript or an index actual read from
+    /// an element: it has no term, and no index or range image is ever filed
+    /// under it, so no fact separates it from anything. A range's endpoint
+    /// images are found through both endpoints, so a range with either
+    /// endpoint the marker is unnamed. A candidate reading an unnamed value
+    /// is never proved, and a pair with no other candidate is one no named
+    /// position separates [EFF-5, OWN-7].
+    pub(crate) fn names_its_values(self) -> bool {
+        let named = |value: super::places::CapturedValue| {
+            value != super::places::CapturedValue::unknown()
+        };
+        let named_range =
+            |range: super::places::CapturedRange| named(range.start) && named(range.end);
+        match self {
+            Self::Indices(left, right) => named(left) && named(right),
+            Self::Ranges(left, right) => named_range(left) && named_range(right),
+            Self::Live(index) => named(index),
+            Self::IndexOutsideRange(index, range) => named(index) && named_range(range),
+            Self::RangeWithinLength(range) => named_range(range),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]

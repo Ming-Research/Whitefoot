@@ -334,6 +334,19 @@ judgment reads as runner variance is expected. Slowest runs, in seconds:
 Every other stage's slowest run was under 6.6 s, so its budget is the 10-s
 floor.
 
+**The corpus group on macOS, raised by 10 s.** On main at `032a0f665`
+(Whitefoot run 38190993768), with every test passing, the corpus job on
+macos-15 took 365.8 s of `check/corpus`'s 330 s: 177.2 s of
+`compiler/test-build-corpus`'s 165 s and 188.1 s of `compiler/test-corpus`'s
+175 s. Over the 35 most recent corpus jobs on macos-15 the group's median was
+291 s, its 90th percentile 340 s and its longest 365 s, with six above 330 s;
+the same revision varied widely, 338 s and then 244 s on a rerun of #368, so
+the overruns are mostly runner variance with some growth of main. The owner
+approved the rule's raise of 10 s on the status board on 2026-10-12 (card
+coord-devspeed-macos-corpus-budget): `check/corpus` to 340 s,
+`compiler/test-build-corpus` to 175 s and `compiler/test-corpus` to 185 s on
+macOS; ubuntu is unchanged.
+
 **`check/runtime` on macOS, raised to 30 s.** On macOS hosted runners the
 stage overran 20 s five times on changes that touched none of its code:
 23.2 s on Whitefoot#298, 20.5 s on #311, 20.7 s on #312, 27.0 s on #333
@@ -491,6 +504,48 @@ four branches with different changes, Whitefoot#346, #355, #358 and #359, at
 so the owner approved a raise of 10 s, to 115 s, on the status board on
 2026-10-11 (card coord-budget-baseline-raise).
 
+**`compiler/test-corpus` on ubuntu, raised to 185 s.** The stage's time
+depends on the hosted runner's processor: an AMD EPYC 9V45 host ran it in
+109.6 s (main, run 38214030096), while Intel Xeon Platinum 8370C, AMD EPYC
+7763 and AMD EPYC 9V74 hosts took 170.0 to 178.6 s (main runs 38238443040
+and 38303779039; Whitefoot#394 and #400, the latter a research-only change).
+Main itself kept 2 s of margin, so any change landing on a slow host failed.
+The owner approved a raise of 10 s, to 185 s, with `check/corpus` on ubuntu
+to 315 s, on the status board on 2026-10-12 (card ci-corpus-budget-raise).
+Per-processor budgets would restore the sensitivity this raise gives up.
+
+**`compiler/test-build-unit` on macOS, raised to 300 s.** Four pull requests
+that did not change the Rust test build took 282.7, 290.4, 282.5 and 321.9 s
+against 270 s on 2026-10-12; a 10-s raise would not have covered three of
+them. The owner approved a raise of 30 s, to 300 s, with `check/unit` on
+macOS to 425 s, on the status board on 2026-10-12 (card
+coord-ci-budget-1012), and asked whether macOS speed also depends on the
+host assigned, to lower the budget or split it by host once known.
+
+**`check/runtime` on ubuntu, raised to 30 s.** The same main code ran the
+stage in 12.1 s on an AMD EPYC 9V45 host (run 38303779039), 14.6 s on an
+AMD EPYC 9V74 (run 38306929562) and 19.1 and 19.3 s on AMD EPYC 7763 hosts
+(runs 38310976155 and 38314210000), with only a budget-file change merged
+between the 14.6-s and 19.1-s runs; three pull requests that do not touch
+the runtime, Whitefoot#383 and #399 twice, took 20.6, 20.0 and 20.1 s on
+EPYC 7763 hosts against 20 s on 2026-10-12. The stage is its group's only
+labeled stage. The owner approved a raise of 10 s, to 30 s, on the status
+board on 2026-10-12 (card ci-runtime-budget-raise).
+
+**The corpus stage on macOS, raised to 205 s.** On 2026-10-13 three consecutive
+main merges failed the gate only because `compiler/test-corpus` overran its
+185 s on macos-15, with every case passing: 203.5 s (run 38326724649, a
+research-only change), 196.6 s (run 38331202789) and 192.2 s with
+`check/corpus` at 360.4 s of 340 s (run 38332455808). Over the 58 main runs
+from 2026-10-10 to 2026-10-13 the stage took 110.8 to 203.7 s, mean 146.7 s;
+the four runs over 185 s were spread over three days, the ubuntu stage rose
+and fell with it, the runner images did not change, and the ten slowest
+cases were the same in fast and slow runs, so no change of main explains the
+overruns. The rule's 10-s raise would not have covered 203.5 s, so the owner
+set the budget directly, approving a raise of 20 s, to 205 s, with
+`check/corpus` on macOS to 360 s, on the status board on 2026-10-13 (card
+macos-corpus-budget-raise); ubuntu is unchanged.
+
 **The candidate's images, back to 10 s.** `performance-candidate-images`
 builds the five formal kernels with the candidate compiler right after the
 two cold compiler builds. On PRs #278 and #289 it overran its 10-s floor on
@@ -616,6 +671,32 @@ jobs, made the slow runs. From this, the gate runs macOS only where its
 answer decides a merge (a ready pull request, `main`, a manual run) and checks
 both platforms per revision in a final job
 ([decision](../../../design/compiler/verification.md)).
+
+### Gate only where a pull request is open
+
+Read from the Actions API on 2026-10-12: `gate.yml` had 408 runs in the 24
+hours to 11:07Z, at most 41 created in one UTC hour. Its 359 push runs on
+branches other than `main` created between 2026-10-11 11:54Z and 2026-10-12
+11:05Z were compared with each branch's pull requests: 235 were for a branch
+with a pull request open when the run was created (created no later than the
+run and not closed before it), and 124, about a third, for a branch with
+none. Every one of these branches was named `claude/`, so a branch name could
+not have told the two apart. `io-hosts.yml` ran on the same pushes.
+
+From this, a push to a branch without an open pull request runs one deciding
+job and skips every check ([decision](../../../design/compiler/verification.md)).
+Two properties of GitHub, documented rather than measured here, shape the
+rule. GitHub starts no pull request run while the pull request conflicts
+with its base, so pull request events cannot be the only trigger. And a
+session opens its pull request seconds after the first push, while that
+push's run may wait minutes for a runner before it decides; a push run that
+counted every pull request open when it decided would usually check that
+head a second time beside the opening's run. The push run therefore counts
+only pull requests created no later than itself: a run is created after its
+push, so this errs only toward checking a head twice. A conflicting pull
+request opened after its branch's last push gets no run of its own either;
+that head cannot merge until `main` is merged into it, and the push that
+does so is checked.
 
 ## Daily loop
 

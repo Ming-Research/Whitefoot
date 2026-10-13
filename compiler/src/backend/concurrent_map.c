@@ -45,7 +45,8 @@
  * WF_CMAP_CURRENT_USER(map), the user the calling thread holds, whose
  * spare memory a hold's keys then reuse, and WF_CMAP_SPARE_KEYS(), a
  * `void *` place only the calling thread uses, where the memory of the last
- * key set it freed is kept for its next one.
+ * key set it freed is kept for its next one, its release and its reuse
+ * recorded through WF_CMAP_HEAP_CHANGE as a give and a take would be.
  */
 #if !defined(WF_CMAP_TAKE) || !defined(WF_CMAP_GIVE) || !defined(WF_CMAP_YIELD) || !defined(WF_CMAP_EXHAUSTED)
 #error "the includer supplies WF_CMAP_TAKE, WF_CMAP_GIVE, WF_CMAP_YIELD and WF_CMAP_EXHAUSTED"
@@ -1483,7 +1484,8 @@ typedef struct {
 /* The largest store, and arena, a thread keeps as its spare: a set of up to
  * 1,024 keys whose bytes fit in 64 KiB. Of two stores it may keep, it keeps
  * the one with room for more keys, so a small set freed between large ones
- * does not leave every large one taking memory again. */
+ * does not leave every large one taking memory again, unless that one holds
+ * fewer granted bytes (wf_cmap_key_set_free_store). */
 #define KEY_SET_SPARE_ROOM 1024ull
 #define KEY_SET_SPARE_BYTES (64ull * 1024)
 
@@ -1525,17 +1527,35 @@ static key_store *new_store(uint64_t room) {
     return s;
 }
 
+/* The pool-granted bytes of a store and its arena, which the heap reading
+ * counts while the set holds them [PRE-2]. */
+static uint64_t store_granted(const key_store *s) {
+    uint64_t bytes = (uint64_t)WF_CMAP_GRANTED(store_bytes(s->room));
+    if (s->bytes != NULL) {
+        uint64_t arena = (uint64_t)WF_CMAP_GRANTED(s->bytes_room);
+        if (arena > UINT64_MAX - bytes)
+            WF_CMAP_EXHAUSTED();
+        bytes += arena;
+    }
+    return bytes;
+}
+
 /* A set's first store, with room for `room` keys: the calling thread's
  * spare, with the arena it kept, when it has one that large. A statement
  * naming keys builds a set each time it runs, and the pool the stores come
  * from keeps its free lists behind one lock every driver takes, so `MSET`'s
- * set on four drivers spent more time there than in its statement; with the
- * spare, a thread that has built one such set takes no memory for the next. */
+ * set on several drivers spent more time there than in its statement; with
+ * the spare, a thread that has built one such set takes no memory for the
+ * next. A kept spare is released memory the heap reading does not count
+ * [PRE-2], so taking it records its granted bytes as a fresh take of them
+ * would; holding memory already, it cannot meet the exhaustion a fresh
+ * take may. */
 static key_store *first_store(uint64_t room) {
 #ifdef WF_CMAP_SPARE_KEYS
     key_store *spare = WF_CMAP_SPARE_KEYS();
     if (spare != NULL && spare->room >= room) {
         WF_CMAP_SPARE_KEYS() = NULL;
+        WF_CMAP_HEAP_CHANGE((int64_t)store_granted(spare));
         /* Clears only the slots the last set used, so that a small set
          * reusing a large spare does not pay for its whole index. A slot is
          * found by its exact value, past slots already cleared. */
@@ -1625,6 +1645,11 @@ void wf_cmap_key_set_new(wf_key_set *set, uint64_t capacity) {
                                : first_store(store_room(capacity < KEY_SET_FIRST_LIMIT ? capacity : KEY_SET_FIRST_LIMIT));
 }
 
+uint64_t wf_cmap_key_set_bytes(const wf_key_set *set) {
+    const key_store *s = set->store;
+    return s == NULL ? 0 : store_granted(s);
+}
+
 /* An existing index, or UINT64_MAX. A bounded scan uses the same lookup
  * before it changes the set; map keys themselves are already distinct. */
 static uint64_t key_set_find(const wf_key_set *set, const unsigned char *key, uint64_t length, uint64_t tag) {
@@ -1683,8 +1708,13 @@ static void give_store(key_store *s) {
 }
 
 /* A freed store no larger than a spare may be becomes the calling thread's
- * spare when it has none or the one it has room for fewer keys, which is
- * given back instead (first_store). */
+ * spare when it has none, or when the one it has room for fewer keys and
+ * holds no more granted bytes, which is given back instead (first_store).
+ * Keeping it records its granted bytes as released, exactly as giving them
+ * back would; the replaced spare, already recorded so, is given back with
+ * its bytes recorded again first, in the one change that also records the
+ * kept store's release, so a reading taken meanwhile, seeing either step
+ * alone, stays within this release's own decrease. */
 void wf_cmap_key_set_free_store(void *store) {
     key_store *s = store;
     if (s == NULL)
@@ -1692,8 +1722,11 @@ void wf_cmap_key_set_free_store(void *store) {
 #ifdef WF_CMAP_SPARE_KEYS
     if (s->room <= KEY_SET_SPARE_ROOM && s->bytes_room <= KEY_SET_SPARE_BYTES) {
         key_store *spare = WF_CMAP_SPARE_KEYS();
-        if (spare == NULL || spare->room < s->room) {
+        uint64_t kept = store_granted(s);
+        uint64_t replaced = spare == NULL ? 0 : store_granted(spare);
+        if (spare == NULL || (spare->room < s->room && replaced <= kept)) {
             WF_CMAP_SPARE_KEYS() = s;
+            WF_CMAP_HEAP_CHANGE((int64_t)replaced - (int64_t)kept);
             if (spare != NULL)
                 give_store(spare);
             return;
@@ -1703,13 +1736,17 @@ void wf_cmap_key_set_free_store(void *store) {
     give_store(s);
 }
 
-/* Gives back the calling thread's spare store, if it keeps one. */
+/* Gives back the calling thread's spare store, if it keeps one. The spare
+ * is not in the heap reading, so its bytes are recorded again before the
+ * pool's give removes them, leaving the reading where it was. */
 void wf_cmap_key_set_drop_spare(void) {
 #ifdef WF_CMAP_SPARE_KEYS
     key_store *spare = WF_CMAP_SPARE_KEYS();
     WF_CMAP_SPARE_KEYS() = NULL;
-    if (spare != NULL)
+    if (spare != NULL) {
+        WF_CMAP_HEAP_CHANGE((int64_t)store_granted(spare));
         give_store(spare);
+    }
 #endif
 }
 
@@ -2923,10 +2960,11 @@ uint64_t wf_cmap_scan_within(wf_cmap *map, uint64_t cursor, uint64_t count, uint
     if (used != kept)
         abort();
     sort_scanned(keys, kept);
-    /* A spare's larger arena can double to a larger grant than the fresh
-     * simulation predicts. Start a storeless destination fresh so insertion
-     * follows the simulated store/arena take-before-give sequence exactly;
-     * the one sort buffer stays held throughout and sorting allocates none. */
+    /* Taking the spare would record its granted bytes, and its larger arena
+     * can double to a larger grant than the fresh simulation predicts. Start
+     * a storeless destination fresh so insertion follows the simulated
+     * store/arena take-before-give sequence exactly; the one sort buffer
+     * stays held throughout and sorting allocates none. */
     if (set->store == NULL && kept != 0)
         set->store = new_store(KEY_SET_MIN_ROOM);
     for (uint64_t i = 0; i < kept; i++)

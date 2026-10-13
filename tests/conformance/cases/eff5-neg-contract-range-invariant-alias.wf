@@ -1,0 +1,18 @@
+struct Zeroes {
+  marker: u64;
+  cells: Array<u64, 1>;
+  invariant(z): forall zero(k in 0_u64..z^.cells.len): z^.cells[k] == 0_u64;
+}
+
+fn helper(source: &Zeroes, target: &Zeroes) -> result: unit writes(source.marker), writes(target.cells) {
+  set source^.marker = 1_u64;
+  set target^.cells[0_u64] = 0_u64;
+  return unit;
+}
+
+fn caller() -> result: unit pure {
+  let zero = array_filled::<u64, 1>(value: 0_u64);
+  let first = Zeroes(marker: 0_u64, cells: zero);
+  helper(source: &first, target: &first);
+  return unit;
+}

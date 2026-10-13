@@ -21,7 +21,7 @@ use super::super::model::{
 };
 use super::super::postcondition::{
     CheckedPostcondition, CheckedPostconditionSelector, NormalizedRelation, ParameterDenotation,
-    PostconditionConstantOrigin, PostconditionFieldIdentity, PostconditionPlace,
+    PayloadRoute, PostconditionConstantOrigin, PostconditionFieldIdentity, PostconditionPlace,
     PostconditionPlaceRoot, PostconditionReturnDatum, PostconditionReturnPlace,
     PostconditionReturnPlaceRoot, RelationDatum, RelationTemplate, RelationTerm,
     SelectedPostconditionReturn,
@@ -121,7 +121,7 @@ impl<'unit> Checker<'_, 'unit> {
         signature: &FunctionSignature,
         selector: &CheckedPostconditionSelector,
     ) -> Vec<(String, u32, CheckedType)> {
-        let routed = selector.variant.is_some();
+        let routed = selector.is_routed();
         let mut datums = Vec::with_capacity(record.result_binders.len() + 1);
         for (ordinal, binder) in record.result_binders.iter().enumerate() {
             let Ok(ordinal) = u32::try_from(ordinal) else {
@@ -616,7 +616,7 @@ impl<'unit> Checker<'_, 'unit> {
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
         self.types
             .declarations
-            .postcondition_relation(expression, expanded)
+            .postcondition_relation(expression, expanded, context.function)
     }
 
     pub(super) fn expand_postcondition_clause(
@@ -805,21 +805,37 @@ impl<'unit> Checker<'_, 'unit> {
         }
     }
 
-    /// One relation term [FN-9]: the datum one clause side names, displaced
-    /// by the constant the rest of that side reduces to.
-    ///
-    /// A side carrying two datums, or a datum with any coefficient other than
-    /// one, is outside the difference-bound fragment [ENT-4] and yields
-    /// `None`, which is the ordinary FN-9 rejection at the clause.
+    /// One FN-9 side: a datum and constant displacement, optionally adding
+    /// one bare integer parameter. The declaration checks that parameter's
+    /// own mode and that only one side uses the extension.
     pub(super) fn postcondition_relation_term(
         expanded: &ExpandedClauseExpression,
         operand_type: CheckedType,
     ) -> Option<RelationTerm> {
-        let (datum, displacement) = Checker::postcondition_relation_operand(expanded)?;
+        let (mut datums, displacement) = Checker::postcondition_relation_operand(expanded)?;
+        let parameter = if datums.len() == 2 {
+            let index = datums.iter().rposition(|datum| {
+                matches!(datum, RelationDatum::Parameter {
+                    projections,
+                    ty: CheckedType::Integer(_),
+                    denotation: ParameterDenotation::EntryImage,
+                    ..
+                } if projections.is_empty())
+            })?;
+            let parameter = datums.remove(index);
+            if datums.first() == Some(&parameter) {
+                return None;
+            }
+            Some(parameter)
+        } else {
+            None
+        };
+        let datum = datums.pop();
         match datum {
             Some(datum) => Some(RelationTerm {
                 datum,
                 displacement,
+                parameter,
             }),
             // A side with no datum reduced to one constant; it is a literal
             // operand exactly as a written one is, and the fragment holds it
@@ -837,11 +853,11 @@ impl<'unit> Checker<'_, 'unit> {
         }
     }
 
-    /// One clause side's affine expression, as at most one datum with
-    /// coefficient one plus a constant [MSR-5].
+    /// Collect at most two coefficient-one datums and the folded constant.
+    /// The caller selects the optional additional parameter [FN-9].
     fn postcondition_relation_operand(
         expanded: &ExpandedClauseExpression,
-    ) -> Option<(Option<RelationDatum>, i128)> {
+    ) -> Option<(Vec<RelationDatum>, i128)> {
         if let ExpandedClauseExpression::Operation {
             row:
                 GoalOperation::Integer {
@@ -858,33 +874,55 @@ impl<'unit> Checker<'_, 'unit> {
             let [left, right] = arguments.as_slice() else {
                 return None;
             };
-            let (left_datum, left_value) = Checker::postcondition_relation_operand(left)?;
+            let (mut left_datum, left_value) = Checker::postcondition_relation_operand(left)?;
             let (right_datum, right_value) = Checker::postcondition_relation_operand(right)?;
             return match operation {
                 CheckedIntegerOperation::AddExact => {
-                    if left_datum.is_some() && right_datum.is_some() {
+                    if left_datum.len() + right_datum.len() > 2 {
                         return None;
                     }
-                    Some((
-                        left_datum.or(right_datum),
-                        left_value.checked_add(right_value)?,
-                    ))
+                    left_datum.extend(right_datum);
+                    Some((left_datum, left_value.checked_add(right_value)?))
                 }
                 // Subtracting a datum gives it coefficient minus one, which
                 // no difference-bound term carries.
                 CheckedIntegerOperation::SubtractExact => {
-                    if right_datum.is_some() {
+                    if !right_datum.is_empty() {
                         return None;
                     }
                     Some((left_datum, left_value.checked_sub(right_value)?))
                 }
-                // A multiplication of two constants is one constant; any
-                // other coefficient leaves the fragment.
+                // Fold two constants, or preserve a coefficient-one side
+                // when the other operand is a direct literal one. A folded
+                // composite constant is not INV-1's direct literal factor.
                 _ => {
-                    if left_datum.is_some() || right_datum.is_some() {
-                        return None;
+                    if left_datum.is_empty() && right_datum.is_empty() {
+                        Some((Vec::new(), left_value.checked_mul(right_value)?))
+                    } else if left_datum.is_empty()
+                        && left_value == 1
+                        && matches!(
+                            left,
+                            ExpandedClauseExpression::Datum(ExpandedClauseDatum::Literal {
+                                origin: PostconditionConstantOrigin::Literal,
+                                ..
+                            })
+                        )
+                    {
+                        Some((right_datum, right_value))
+                    } else if right_datum.is_empty()
+                        && right_value == 1
+                        && matches!(
+                            right,
+                            ExpandedClauseExpression::Datum(ExpandedClauseDatum::Literal {
+                                origin: PostconditionConstantOrigin::Literal,
+                                ..
+                            })
+                        )
+                    {
+                        Some((left_datum, left_value))
+                    } else {
+                        None
                     }
-                    Some((None, left_value.checked_mul(right_value)?))
                 }
             };
         }
@@ -897,9 +935,9 @@ impl<'unit> Checker<'_, 'unit> {
             origin: PostconditionConstantOrigin::Literal,
         } = &datum
         {
-            return Some((None, integer_value(*ty, *bits)));
+            return Some((Vec::new(), integer_value(*ty, *bits)));
         }
-        Some((Some(datum), 0))
+        Some((vec![datum], 0))
     }
 
     fn postcondition_relation_datum(expanded: &ExpandedClauseExpression) -> Option<RelationDatum> {
@@ -1337,7 +1375,8 @@ impl<'unit> DeclarationInventory<'unit> {
         Ok(Some((usage.origin.clone(), ty)))
     }
     /// `entry` selects proof state, never an executable place expression.
-    /// Its argument must be the declaration's own exclusive parameter.
+    /// Its argument is a reference parameter the row writes [MSR-3]; range
+    /// postconditions read that same entry storage [RANGE-1].
     pub(super) fn check_entry_formers(
         &self,
         function: &FunctionSignature,
@@ -1366,6 +1405,24 @@ impl<'unit> DeclarationInventory<'unit> {
             }
             if nested {
                 continue;
+            }
+            // entry names only a declaration-boundary place: projection
+            // reads are checked by the ordinary FN-9 fragment judgment, and
+            // indexed selections are not part of its projection language.
+            for suffix in self.tree.children_with(base, Production::Psuffix)? {
+                if matches!(
+                    self.tree.place_suffix(suffix)?,
+                    crate::syntax::views::PlaceSuffix::Index { .. }
+                        | crate::syntax::views::PlaceSuffix::Range { .. }
+                ) {
+                    return self.issue_node(
+                        SemanticRule::Msr3,
+                        base,
+                        SemanticIssueKind::InvalidEntryFormer {
+                            mechanical_fix: "select a fragment integer or measure of a written reference parameter by fields and dereferences",
+                        },
+                    );
+                }
             }
             // Clause uses remain provisional until selector admission. This
             // whole-function position check runs outside an active clause.
@@ -1482,6 +1539,7 @@ impl<'unit> DeclarationInventory<'unit> {
         &self,
         final_expression: NodeId,
         expanded: ExpandedClauseExpression,
+        function: &FunctionSignature,
     ) -> Result<RelationTemplate, CheckStop> {
         let ExpandedClauseExpression::Operation {
             row:
@@ -1504,6 +1562,22 @@ impl<'unit> DeclarationInventory<'unit> {
         let Some(right) = Checker::postcondition_relation_term(right, operand_type) else {
             return self.invalid_postcondition_relation(final_expression);
         };
+        if left.parameter.is_some() && right.parameter.is_some()
+            || [&left, &right]
+                .iter()
+                .filter_map(|term| term.parameter.as_ref())
+                .any(|datum| {
+                    let RelationDatum::Parameter { ordinal, .. } = datum else {
+                        return true;
+                    };
+                    function
+                        .parameters
+                        .get(*ordinal as usize)
+                        .is_none_or(|parameter| parameter.mode != CheckedMode::Own)
+                })
+        {
+            return self.invalid_postcondition_relation(final_expression);
+        }
         // [ENT-2] a widening conversion's operand keeps its own type: the
         // relation is over mathematical values, and the conversion's pair is
         // whole-type total, so no other operand type reaches here.
@@ -1905,37 +1979,43 @@ impl<'unit> TypeContext<'unit> {
             .filter_map(|index| self.signatures.get(*index).cloned())
             .collect()
     }
-    /// The success payload one routed ordinal produces at a return, `None`
-    /// for a direct failure variant, and the whole value for an ordinary
-    /// forwarded Result or Option [FN-9].
+    /// The payload one routed ordinal produces at a return: the routed
+    /// field's operand of a direct construction of the routed variant,
+    /// `None` for a direct construction of another variant, and the whole
+    /// value for an ordinary forwarded one [FN-9].
     fn postcondition_route_payload<'value>(
         &self,
         function: &FunctionSignature,
-        ordinal: u32,
+        selector: &CheckedPostconditionSelector,
         value: &'value CheckedExpression,
-        _node_path: &crate::NodePath,
     ) -> Result<Option<&'value CheckedExpression>, CheckStop> {
         let declared = function
             .results
-            .get(ordinal as usize)
+            .get(selector.ordinal as usize)
             .ok_or(SemanticCompilerFailure::InvalidResolution)?;
         let CheckedType::Nominal(result_nominal) = declared.ty else {
             return Err(SemanticCompilerFailure::InvalidResolution.into());
         };
-        if self.success_payload_type(declared.ty).is_none() {
-            return Err(SemanticCompilerFailure::InvalidResolution.into());
-        }
         let CheckedNominalKind::Enum { variants } = &self.nominal(result_nominal)?.kind else {
             return Err(SemanticCompilerFailure::InvalidResolution.into());
         };
-        let success = variants.iter().position(|variant| {
-            matches!(
-                variant.constructor,
-                super::super::model::CheckedConstructor::Prelude(
-                    BuiltinPreludeId::OK | BuiltinPreludeId::SOME
-                )
-            )
-        });
+        let (routed_variant, routed_field) = match selector.route {
+            Some(route) => (Some(route.variant as usize), route.field as usize),
+            None => {
+                if self.success_payload_type(declared.ty).is_none() {
+                    return Err(SemanticCompilerFailure::InvalidResolution.into());
+                }
+                let success = variants.iter().position(|variant| {
+                    matches!(
+                        variant.constructor,
+                        super::super::model::CheckedConstructor::Prelude(
+                            BuiltinPreludeId::OK | BuiltinPreludeId::SOME
+                        )
+                    )
+                });
+                (success, 0)
+            }
+        };
         match value {
             CheckedExpression::ConstructEnum {
                 nominal,
@@ -1943,17 +2023,44 @@ impl<'unit> TypeContext<'unit> {
                 fields,
                 ..
             } if *nominal == result_nominal => {
-                if Some(*variant as usize) == success {
-                    let [payload] = fields.as_slice() else {
-                        return Err(SemanticCompilerFailure::InvalidResolution.into());
-                    };
-                    Ok(Some(payload))
+                if Some(*variant as usize) == routed_variant {
+                    Ok(Some(
+                        fields
+                            .get(routed_field)
+                            .ok_or(SemanticCompilerFailure::InvalidResolution)?,
+                    ))
                 } else {
                     Ok(None)
                 }
             }
             _ => Ok(Some(value)),
         }
+    }
+    /// [TYPE-11, ERR-3] whether a generated route names a field of the
+    /// `Err` variant of the routed ordinal's Result, which a propagated
+    /// error exit returns.
+    fn routes_error_variant(
+        &self,
+        function: &FunctionSignature,
+        selector: &CheckedPostconditionSelector,
+    ) -> Result<bool, CheckStop> {
+        let Some(route) = selector.route.filter(|_| selector.generated) else {
+            return Ok(false);
+        };
+        let Some(CheckedType::Nominal(nominal)) = function
+            .results
+            .get(selector.ordinal as usize)
+            .map(|result| result.ty)
+        else {
+            return Ok(false);
+        };
+        let CheckedNominalKind::Enum { variants } = &self.nominal(nominal)?.kind else {
+            return Ok(false);
+        };
+        Ok(variants.get(route.variant as usize).is_some_and(|variant| {
+            variant.constructor
+                == super::super::model::CheckedConstructor::Prelude(BuiltinPreludeId::ERR)
+        }))
     }
     fn postcondition_return_place(
         &self,
@@ -2650,18 +2757,13 @@ impl<'unit> TypeContext<'unit> {
                     // [FN-9] route selection precedes datum admission for
                     // every ordinal. An Err exit is unselected even when a
                     // different result precedes it in the written list.
-                    let routed_payload = if selector.variant.is_some() {
+                    let routed_payload = if selector.is_routed() {
                         let ordinal = usize::try_from(selector.ordinal)
                             .map_err(|_| SemanticCompilerFailure::CounterOverflow)?;
                         let produced = ordinals
                             .get(ordinal)
                             .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                        match self.postcondition_route_payload(
-                            function,
-                            selector.ordinal,
-                            produced,
-                            node_path,
-                        )? {
+                        match self.postcondition_route_payload(function, selector, produced)? {
                             Some(payload) => Some(payload),
                             None => continue,
                         }
@@ -2678,7 +2780,7 @@ impl<'unit> TypeContext<'unit> {
                         } else {
                             produced
                         };
-                        let datum = if selector.variant.is_some()
+                        let datum = if selector.is_routed()
                             && ordinal == selector.ordinal
                             && produced.ty() != selector.result_type
                         {
@@ -2706,13 +2808,32 @@ impl<'unit> TypeContext<'unit> {
                 // [FN-9, ERR-3] an unrouted clause also selects a
                 // propagated error exit, whose returned value is the
                 // propagated outcome and therefore no result datum.
-                CheckedStatement::PropagateLet { node_path, .. } if selector.variant.is_none() => {
+                CheckedStatement::PropagateLet { node_path, .. } if !selector.is_routed() => {
                     if !named.is_empty() {
                         return self.declarations.invalid_postcondition_return(node_path);
                     }
                     selected.push(SelectedPostconditionReturn {
                         statement: node_path.clone(),
                         values: vec![None; function.results.len().max(1)],
+                    });
+                }
+                // [TYPE-11, ERR-3] the propagated outcome holds the enclosing
+                // Result's `Err` variant, so a route a type invariant
+                // generates over that variant's field selects the edge, and
+                // the edge forwards the operand's error payload.
+                CheckedStatement::PropagateLet { node_path, .. }
+                    if self.routes_error_variant(function, selector)? =>
+                {
+                    let mut values = vec![None; function.results.len().max(1)];
+                    let slot = values
+                        .get_mut(selector.ordinal as usize)
+                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                    *slot = Some(PostconditionReturnDatum::ResultPayload {
+                        ty: selector.result_type,
+                    });
+                    selected.push(SelectedPostconditionReturn {
+                        statement: node_path.clone(),
+                        values,
                     });
                 }
                 CheckedStatement::Match { arms, .. }
@@ -3088,6 +3209,29 @@ impl<'unit> TypeContext<'unit> {
             }
         };
 
+        // [FN-9] a written route on a concrete ordinal names its success
+        // variant's one field; a symbolic ordinal's enum is not yet known.
+        let route = match (variant, declared.ty) {
+            (Some(wanted), CheckedType::Nominal(nominal)) => match &self.nominal(nominal)?.kind {
+                CheckedNominalKind::Enum { variants } => {
+                    let found = variants.iter().enumerate().find(|(_, candidate)| {
+                        candidate.constructor
+                            == super::super::model::CheckedConstructor::Prelude(wanted)
+                    });
+                    match found {
+                        Some((index, candidate)) => Some(PayloadRoute {
+                            variant: u32::try_from(index)
+                                .map_err(|_| SemanticCompilerFailure::CounterOverflow)?,
+                            field: 0,
+                            tag: candidate.tag,
+                        }),
+                        None => None,
+                    }
+                }
+                _ => None,
+            },
+            _ => None,
+        };
         Ok(CheckedPostconditionSelector {
             function: signature.id,
             block: record.block.clone(),
@@ -3096,6 +3240,8 @@ impl<'unit> TypeContext<'unit> {
             ordinal,
             variant,
             field,
+            route,
+            generated: false,
             result_type,
         })
     }

@@ -635,6 +635,40 @@ impl Reasoning<'_, '_, '_> {
             state,
         )
     }
+
+    /// [GIVE-1, MSR-3] the first half of a value carrier: the placements a
+    /// `give` operand mints before the give's own kills, exactly as the
+    /// initializer of an ordinary `let` mints them.
+    pub(super) fn mint_value_carrier(
+        &mut self,
+        node_path: &crate::NodePath,
+        value: &CheckedExpression,
+        state: &mut ProofFlowState,
+    ) -> ValueCarrier {
+        ValueCarrier {
+            rebind: self.mint_rebind_datums(node_path, 0, value, state),
+            constructed: self.mint_construct_placements(node_path, value, state),
+        }
+    }
+}
+
+/// [GIVE-1, ENT-5] the placements one value carrier's `give` minted before
+/// its own kills, held until the delivery image establishes them at the
+/// receiving binding.
+pub(super) struct ValueCarrier {
+    rebind: Option<MeasureCarry>,
+    constructed: Vec<(PlaceStep, MeasureCarry)>,
+}
+
+/// [ENT-5] whether a term is a tracked place or measure rooted at `binding`,
+/// one of the receiver terms a value carrier's delivery relates.
+pub(super) fn receiver_term(terms: &TermTable, term: TermId, binding: BindingId) -> bool {
+    match terms.kind(term) {
+        TermKind::Place(place, _) | TermKind::Measure(_, place) => {
+            place.root == PlaceRoot::Binding(binding)
+        }
+        _ => false,
+    }
 }
 
 impl Input<'_, '_> {
@@ -707,7 +741,9 @@ impl Reasoning<'_, '_, '_> {
                 .vocabulary
                 .proof_event(FlowEventKind::S5, Some(node_path));
             let mut datums = Vec::with_capacity(4);
-            for measure in MEASURES {
+            for measure in MEASURES.into_iter().filter(|measure| {
+                *measure != CheckedMeasure::Bytes || measured == MeasuredKind::KeySet
+            }) {
                 let live = self.place_measure_term(measure, place.clone(), measured, constant);
                 let datum = self.vocabulary.terms.intern(TermKind::MeasureDatum {
                     statement: node_path.components().to_vec(),
@@ -1105,7 +1141,13 @@ impl Reasoning<'_, '_, '_> {
         for carried in &carry.carried {
             let mut place = destination.clone();
             place.path.extend(carried.path.iter().copied());
-            for (measure, datum) in MEASURES.into_iter().zip(&carried.datums) {
+            for (measure, datum) in MEASURES
+                .into_iter()
+                .filter(|measure| {
+                    *measure != CheckedMeasure::Bytes || carried.measured == MeasuredKind::KeySet
+                })
+                .zip(&carried.datums)
+            {
                 let left = self.place_measure_term(
                     measure,
                     place.clone(),
@@ -1692,11 +1734,12 @@ pub(super) fn comparison_relation(
     })
 }
 
-/// The three [MSR-1] measures, in the order every former reads them.
-const MEASURES: [CheckedMeasure; 3] = [
+/// The [MSR-1] measures, in the order every placement reads them.
+const MEASURES: [CheckedMeasure; 4] = [
     CheckedMeasure::Length,
     CheckedMeasure::Capacity,
     CheckedMeasure::Head,
+    CheckedMeasure::Bytes,
 ];
 
 /// [MSR-3] one placement's datums, held between the mint before the
@@ -1852,8 +1895,11 @@ impl Vocabulary {
                 // [ENT-5]: its only relations in the edge's state are implicit.
                 // A self-bound `c - c` says nothing about x, whichever proof
                 // the closure keeps for it.
-                relation.terms().contains(&context.carrier)
-                    && !relation.terms().contains(&context.receiver)
+                relation.terms().iter().any(|term| {
+                    self.terms.any_leaf(*term, &|leaf| leaf == context.carrier)
+                }) && !relation.terms().iter().any(|term| {
+                    self.terms.any_leaf(*term, &|leaf| leaf == context.receiver)
+                })
                     && !matches!(relation, Relation::Bound { left, right, .. } if left == right)
                     // A universally implicit relation is reconstructed at
                     // the same-typed receiver, regardless of which equal
@@ -1885,6 +1931,9 @@ impl Vocabulary {
         };
         let upper = zero_bound(context.carrier, ZERO);
         let lower = zero_bound(ZERO, context.carrier);
+        let substitutions = self
+            .terms
+            .expand_substitutions(&[(context.carrier, context.receiver)]);
         for (source_relation, parent) in carried {
             if let Relation::Bound { left, right, bound } = source_relation {
                 let through_zero = if left == context.carrier && right != ZERO {
@@ -1900,14 +1949,102 @@ impl Vocabulary {
                     continue;
                 }
             }
-            let relation =
-                substitute_delivery_relation(&source_relation, context.carrier, context.receiver);
+            let mut relation = source_relation.clone();
+            for (from, to) in &substitutions {
+                relation = substitute_delivery_relation(&relation, *from, *to);
+            }
             let proof = self.derivations.intern(DerivationNode::PostconditionGive {
                 statement: context.statement.clone(),
                 carrier: context.carrier,
                 receiver: context.receiver_binding,
                 relation: Box::new(relation.clone()),
                 event: context.event,
+                parent,
+            });
+            image.establish_from_proof(&relation, proof, &self.derivations);
+        }
+        image
+    }
+
+    /// [ENT-5] the image one value carrier's edge delivers: every relation of
+    /// the closed state that names a receiver term, each in its own Give
+    /// node. The receiving binding stands for the fresh carrier, so a Give
+    /// node substitutes nothing and its carrier is the first receiver term
+    /// its relation names. As for an integer carrier, the relations the
+    /// implicit bounds give, a receiver term's bound on itself and a bound
+    /// that the receiver term's own Z bound implies through the other term's
+    /// implicit bound are left to the join and the continuation's closure.
+    pub(super) fn receiver_delivery_state(
+        &mut self,
+        closed: &ClosedState,
+        statement: &crate::NodePath,
+        receiver: BindingId,
+        event: FlowEventId,
+    ) -> FactState {
+        if closed.contradictory() {
+            return FactState::contradictory(
+                closed
+                    .contradiction_proof()
+                    .expect("contradictory delivery edge has one exact proof"),
+            );
+        }
+        let carried = closed
+            .delivery_relations()
+            .into_iter()
+            .filter(|(relation, _)| {
+                relation
+                    .terms()
+                    .iter()
+                    .any(|term| receiver_term(&self.terms, *term, receiver))
+                    && !matches!(relation, Relation::Bound { left, right, .. } if left == right)
+                    && !implicit_derives(&self.terms, relation)
+            })
+            .collect::<Vec<_>>();
+        let zero_bounds = carried
+            .iter()
+            .filter_map(|(relation, _)| match relation {
+                Relation::Bound { left, right, bound } if *left == ZERO || *right == ZERO => {
+                    Some(((*left, *right), *bound))
+                }
+                _ => None,
+            })
+            .collect::<HashMap<_, _>>();
+        let mut image = FactState::new();
+        for (relation, parent) in carried {
+            if let Relation::Bound { left, right, bound } = relation {
+                let through_zero = if receiver_term(&self.terms, left, receiver) && right != ZERO
+                {
+                    zero_bounds
+                        .get(&(left, ZERO))
+                        .copied()
+                        .zip(implicit_bound_between(&self.terms, (ZERO, right)))
+                } else if receiver_term(&self.terms, right, receiver) && left != ZERO {
+                    zero_bounds
+                        .get(&(ZERO, right))
+                        .copied()
+                        .zip(implicit_bound_between(&self.terms, (left, ZERO)))
+                } else {
+                    None
+                };
+                if through_zero.is_some_and(|(zero, (implicit, _))| {
+                    zero.checked_add(implicit).is_some_and(|sum| sum <= bound)
+                }) {
+                    continue;
+                }
+            }
+            let Some(carrier) = relation
+                .terms()
+                .into_iter()
+                .find(|term| receiver_term(&self.terms, *term, receiver))
+            else {
+                continue;
+            };
+            let proof = self.derivations.intern(DerivationNode::PostconditionGive {
+                statement: statement.clone(),
+                carrier,
+                receiver,
+                relation: Box::new(relation.clone()),
+                event,
                 parent,
             });
             image.establish_from_proof(&relation, proof, &self.derivations);
@@ -2133,7 +2270,11 @@ impl Vocabulary {
             Err((_, transitive, give)) => (transitive, give),
         };
         let other = if pair.0 == receiver { pair.1 } else { pair.0 };
-        let carrier_pair = if pair.0 == receiver {
+        // A value carrier's Give node substitutes nothing, so its strict
+        // bound already names the pair itself [ENT-5].
+        let carrier_pair = if give.carrier == pair.0 || give.carrier == pair.1 {
+            pair
+        } else if pair.0 == receiver {
             distinct_key(give.carrier, other, pair.2)
         } else {
             distinct_key(other, give.carrier, pair.2)
@@ -2263,7 +2404,9 @@ impl Vocabulary {
             .flat_map(|index| images[*index].bounds.cells())
             .map(|(left, right, _, _)| (left, right))
             .filter(|(left, right)| {
-                left != right && (*left == context.receiver || *right == context.receiver)
+                left != right
+                    && ((*left == context.receiver && !context.earlier.contains(right))
+                        || (*right == context.receiver && !context.earlier.contains(left)))
             })
             .collect::<BTreeSet<_>>();
         for pair in bound_pairs {
@@ -2377,7 +2520,10 @@ impl Vocabulary {
         let mut candidates = contributing
             .iter()
             .flat_map(|index| images[*index].distinct.iter().copied())
-            .filter(|pair| pair.0 == receiver || pair.1 == receiver)
+            .filter(|pair| {
+                (pair.0 == receiver && !context.earlier.contains(&pair.1))
+                    || (pair.1 == receiver && !context.earlier.contains(&pair.0))
+            })
             .collect::<BTreeSet<_>>();
         let lowest_zero_bound = |left: TermId, right: TermId| {
             contributing
@@ -2391,7 +2537,10 @@ impl Vocabulary {
         ) && lowest_to_zero.saturating_add(lowest_from_zero) <= -2
         {
             for other in self.terms.ids() {
-                if other == ZERO || !zero_distinct_candidate(&self.terms, receiver, other) {
+                if other == ZERO
+                    || context.earlier.contains(&other)
+                    || !zero_distinct_candidate(&self.terms, receiver, other)
+                {
                     continue;
                 }
                 let pair = distinct_key(receiver, other, 0);
@@ -2525,29 +2674,71 @@ impl Vocabulary {
                 .windows(2)
                 .all(|pair| { pair[0].components().cmp(pair[1].components()).is_lt() })
         );
-        let Some(fragment) = fragment_type(frame.result_type) else {
-            return;
+        // [ENT-5] an integer carrier's one receiver term is the receiving
+        // binding itself; a value carrier's are the terms rooted at it that
+        // some image relates, each joined in term order.
+        let receivers = if let Some(fragment) = fragment_type(frame.result_type) {
+            vec![self.terms.intern(TermKind::Place(
+                ResolvedPlace::spelled(PlaceRoot::Binding(frame.binding), false, Vec::new()),
+                fragment,
+            ))]
+        } else {
+            let mut receivers = BTreeSet::new();
+            for image in &frame.delivery_images {
+                if image.facts.all_derivable {
+                    continue;
+                }
+                let related = image
+                    .facts
+                    .bounds
+                    .cells()
+                    .flat_map(|(left, right, _, _)| [left, right])
+                    .chain(
+                        image
+                            .facts
+                            .distinct
+                            .iter()
+                            .flat_map(|(left, right, _)| [*left, *right]),
+                    );
+                for term in related {
+                    if receiver_term(&self.terms, term, frame.binding) {
+                        receivers.insert(term);
+                    }
+                }
+            }
+            receivers.into_iter().collect::<Vec<_>>()
         };
-        let receiver = self.terms.intern(TermKind::Place(
-            ResolvedPlace::spelled(PlaceRoot::Binding(frame.binding), false, Vec::new()),
-            fragment,
-        ));
+        if receivers.is_empty() {
+            return;
+        }
         let event = self.proof_event(
             FlowEventKind::PostconditionDeliveryJoin,
             Some(&frame.node_path),
         );
-        let context = DeliveryJoinContext {
-            statement: &frame.node_path,
-            receiver_binding: frame.binding,
-            receiver,
-            event,
-        };
         let facts = frame
             .delivery_images
             .iter()
             .map(|image| image.facts.clone())
             .collect::<Vec<_>>();
-        self.establish_delivery_join(&facts, &context, &mut target.facts);
+        for (index, receiver) in receivers.iter().enumerate() {
+            let context = DeliveryJoinContext {
+                statement: &frame.node_path,
+                receiver_binding: frame.binding,
+                receiver: *receiver,
+                earlier: &receivers[..index],
+                event,
+            };
+            self.establish_delivery_join(&facts, &context, &mut target.facts);
+        }
+        for (relation, parent) in target.facts.l0_candidates() {
+            if matches!(
+                &self.derivations.nodes[parent.0 as usize],
+                DerivationNode::PostconditionDeliveryJoin { detail }
+                    if detail.statement == frame.node_path
+            ) {
+                self.establish_postcondition_affine(&relation, parent, &mut target.affine);
+            }
+        }
     }
 
     /// Captures one unsigned division for the fixed product consequence and
@@ -3063,6 +3254,101 @@ impl Analyzer<'_, '_> {
         // The forward substitution happens above before the ordinary edge
         // kills, so the carrier's own branch scope cannot delete a
         // substituted relation; it deletes the carrier equality `x = d`.
+        self.kill_scopes_to(&mut image, context.scope_depth);
+        self.exit_counted_loops_from(&mut image, context.loop_depth);
+        image
+    }
+
+    /// [GIVE-1, ENT-5] the delivery image of one `give` of a value carrier,
+    /// an own value whose type is no fragment integer.
+    ///
+    /// The receiving binding x stands for the fresh carrier: on a copy of the
+    /// edge's state, x is bound exactly as an ordinary `let x = d;` binds its
+    /// binding at that point, through d's placements minted before the
+    /// give's own kills [MSR-3], a call's direct-result relations
+    /// [ENT-3.S12] and the let sources [ENT-3]. For a bare atom this is the
+    /// substitution of x's projections for d's. Every relation of that
+    /// closed state over a term rooted at x is the edge's image; the edge's
+    /// scope exits then apply as they do for an integer carrier.
+    pub(super) fn value_carrier_delivery_image(
+        &mut self,
+        value: &CheckedExpression,
+        source: &ProofFlowState,
+        context: DeliveryImageContext<'_>,
+        carrier: &ValueCarrier,
+        prepared: Option<&PreparedCall>,
+    ) -> ProofFlowState {
+        let receiver = context.receiver_binding;
+        let mut bound = source.clone();
+        if let Some(prepared) = prepared {
+            self.reasoning().establish_direct_result(
+                context.statement,
+                receiver,
+                value,
+                prepared,
+                &mut bound,
+            );
+        }
+        let _ = self.establish_value_image(
+            context.statement,
+            ValueImage::Binding(receiver),
+            value,
+            &mut bound.facts,
+            &mut None,
+        );
+        if let Some(rebind) = &carrier.rebind {
+            self.reasoning().establish_rebind_datums(
+                context.statement,
+                receiver,
+                rebind,
+                &mut bound.facts,
+            );
+        }
+        if !carrier.constructed.is_empty() {
+            self.reasoning().establish_construct_placements(
+                context.statement,
+                &bound_place(receiver),
+                None,
+                &carrier.constructed,
+                &mut bound.facts,
+            );
+        }
+        let event = self
+            .vocabulary
+            .proof_event(FlowEventKind::PostconditionGive, Some(context.statement));
+        let closed = close(
+            &bound.facts,
+            &self.vocabulary.terms,
+            &self.vocabulary.goals,
+            &mut self.vocabulary.derivations,
+        );
+        let mut delivered =
+            self.vocabulary
+                .receiver_delivery_state(&closed, context.statement, receiver, event);
+        if delivered.may_hold_postcondition_candidates() {
+            let mut ordinary = bound.facts.clone();
+            ordinary.retain_non_postcondition_candidates(&self.vocabulary.derivations);
+            let ordinary = close(
+                &ordinary,
+                &self.vocabulary.terms,
+                &self.vocabulary.goals,
+                &mut self.vocabulary.derivations,
+            );
+            let fallback =
+                self.vocabulary
+                    .receiver_delivery_state(&ordinary, context.statement, receiver, event);
+            delivered.merge_relation_candidates_from(&fallback, &self.vocabulary.derivations);
+        }
+        let mut image = ProofFlowState {
+            facts: delivered,
+            results: BTreeMap::new(),
+            entry_images: Vec::new(),
+            separations: source.separations.clone(),
+            affine: AffineFlowState::default(),
+            written: source.written.clone(),
+            measure_kills: source.measure_kills.clone(),
+            continuing: Vec::new(),
+        };
         self.kill_scopes_to(&mut image, context.scope_depth);
         self.exit_counted_loops_from(&mut image, context.loop_depth);
         image

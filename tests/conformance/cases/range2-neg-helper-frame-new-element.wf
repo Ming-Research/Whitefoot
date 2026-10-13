@@ -1,0 +1,27 @@
+fn append_one(window: &Slots<u64, 1>) -> result: unit writes(window.next), writes(window.len) contract {
+  requires window^.len == 0_u64;
+  ensures window^.len == 1_u64;
+  ensures forall claimed(k in 0_u64..window^.len): window^[k] unchanged;
+} {
+  place_back(window: window, value: 7_u64);
+  return unit;
+}
+
+fn need_zero(value: u64) -> result: unit pure contract {
+  requires value == 0_u64;
+} {
+  return unit;
+}
+
+fn caller(window: &Slots<u64, 1>) -> result: unit writes(window) contract {
+  requires window^.len == 0_u64;
+  requires forall initial(k in 0_u64..window^.len): window^[k] == 0_u64;
+} {
+  append_one(window: window);
+  need_zero(value: window^[0_u64]);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
