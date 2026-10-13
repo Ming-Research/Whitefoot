@@ -1076,6 +1076,7 @@ mod tests {
             box_keeping_reference_parameters: Vec::new(),
             source_signature: None,
             source_calls: Vec::new(),
+            lock_ledger: Vec::new(),
             result: U64,
             values: vec![U64; 17],
             blocks,
