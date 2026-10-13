@@ -1,0 +1,66 @@
+# Temporary: checks that the recursive shared environment leaves every
+# program without a record byte-identical in emitted LLVM, by emitting each
+# test program and conformance case with main's compiler (the branch's merge
+# base) and this branch's compiler and comparing. Removed before the branch
+# is ready.
+name: tmp-ir-identity
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [claude/recursive-shared-env]
+    paths: [.github/workflows/tmp-ir-identity.yml]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Build both compilers
+        run: |
+          set -euo pipefail
+          base=$(git merge-base HEAD origin/main)
+          echo "base $base head $(git rev-parse HEAD)"
+          git worktree add -q ../base "$base"
+          perl .github/run-check.pl tmp-ir-build-head cargo build --release --locked --manifest-path compiler/Cargo.toml
+          (cd ../base && perl .github/run-check.pl tmp-ir-build-base cargo build --release --locked --manifest-path compiler/Cargo.toml)
+      - name: Emit and compare
+        run: |
+          set -uo pipefail
+          head=compiler/target/release/whitefootc
+          base=../base/compiler/target/release/whitefootc
+          same=0; differ_env=0; differ_plain=0; failed=0
+          mkdir -p ir
+          for f in tests/programs/*.wf tests/conformance/cases/*.wf; do
+            n=$(echo "$f" | tr / _)
+            "$base" --emit-llvm "$f" -o "ir/$n.base.ll" >/dev/null 2>&1; b=$?
+            "$head" --emit-llvm "$f" -o "ir/$n.head.ll" >/dev/null 2>&1; h=$?
+            if [ $b -ne 0 ] || [ $h -ne 0 ]; then
+              if [ $b -ne $h ]; then echo "STATUS-DIFFERS $f base=$b head=$h"; fi
+              failed=$((failed+1)); continue
+            fi
+            if cmp -s "ir/$n.base.ll" "ir/$n.head.ll"; then
+              same=$((same+1))
+            elif grep -q 'wf__env_' "ir/$n.head.ll"; then
+              differ_env=$((differ_env+1)); echo "DIFFERS-WITH-RECORD $f"
+            else
+              differ_plain=$((differ_plain+1)); echo "DIFFERS-WITHOUT-RECORD $f"
+              diff "ir/$n.base.ll" "ir/$n.head.ll" | head -20
+            fi
+          done
+          echo "identical $same, differ with a record $differ_env, differ without a record $differ_plain, not emitted $failed"
+          test $differ_plain -eq 0
