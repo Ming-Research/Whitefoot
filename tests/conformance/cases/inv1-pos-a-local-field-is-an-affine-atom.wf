@@ -7,7 +7,7 @@ struct Bounds {
 }
 
 fn main() -> status: ExitStatus pure {
-  doc "[INV-1] an affine factor's atom is one bare IDENT place or one integer literal. A field selection derives under the widened production [GRAM-4, MSR-5] and is refused at the factor by the rule, not by the parser, which is what keeps one production serving both an invariant and a contract clause.";
+  doc "[INV-1, ENT-6] a field of a local struct is a tracked field place, so the field selection that derives under the widened production [GRAM-4, MSR-5] is an admitted affine atom, and the header relation holds over its image.";
   let limits = Bounds(low: 0_u64, high: 4_u64);
   let seen = 0_u64;
   for (

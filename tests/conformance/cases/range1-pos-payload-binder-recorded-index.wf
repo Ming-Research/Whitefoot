@@ -1,0 +1,39 @@
+enum Instr {
+  Jump(t: u64);
+  Branch(t: u64, c: u64);
+  Halt();
+}
+
+fn need_below(value: u64, bound: u64) -> result: unit pure contract {
+  requires value < bound;
+} {
+  return unit;
+}
+
+fn follow(code: &Box<Slots<Instr>>, pc: u64) -> r: u64 reads(code) contract {
+  requires pc < code^.inner.len;
+  requires forall targets(j in 0_u64..code^.inner.len): code^.inner[j].Jump.t < code^.inner.len, code^.inner[j].Branch.t < code^.inner.len;
+} {
+  doc "Each arm reassigns the index the match read before it uses its payload binder. jump_to^ and branch_to^ still name the element at the index the match recorded, so targets bounds them there; read at the index's new value, zero or n, nothing would bound them.";
+  let n = code^.inner.len;
+  let at = pc;
+  match code^.inner[at] {
+    Jump(t: jump_to) => {
+      set at = 0_u64;
+      need_below(value: jump_to^, bound: n);
+      return at;
+    }
+    Branch(t: branch_to, ..) => {
+      set at = n;
+      need_below(value: branch_to^, bound: n);
+      return at;
+    }
+    Halt() => {
+      return at;
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
