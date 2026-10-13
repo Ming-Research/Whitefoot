@@ -124,25 +124,44 @@ impl Input<'_, '_> {
             .is_some_and(|parameter| parameter.mode.is_range())
     }
 
+    /// The relations a direct call of `function` may publish [FN-9]: its
+    /// published summaries, or, while its component is being verified and
+    /// the caller is a member of it, exactly its type-invariant
+    /// postconditions as induction hypotheses [DIAG-2, TYPE-11].
     pub(super) fn available_postconditions(
         &self,
         function: super::super::super::model::FunctionId,
     ) -> Vec<AvailablePostcondition> {
+        let available = |postcondition: &CheckedPostcondition,
+                         summary: super::super::VerifiedPostconditionSummary| {
+            AvailablePostcondition {
+                relation: postcondition.relation.clone(),
+                route: postcondition.selector.route,
+                variant: postcondition.selector.variant,
+                field: postcondition
+                    .selector
+                    .field
+                    .as_ref()
+                    .map(|field| field.declaration),
+                authority: super::super::RelationProvenance::Verified(summary),
+            }
+        };
+        if let Some(component) = self
+            .context
+            .component_postconditions(self.function.id, function)
+        {
+            return component
+                .generated
+                .iter()
+                .map(|(postcondition, summary)| available(postcondition, summary.clone()))
+                .collect();
+        }
         self.context
             .verified_postconditions(function)
             .unwrap_or_default()
             .into_iter()
             .filter_map(|(postcondition, proof)| {
-                Some(AvailablePostcondition {
-                    relation: postcondition.relation.clone(),
-                    variant: postcondition.selector.variant,
-                    field: postcondition
-                        .selector
-                        .field
-                        .as_ref()
-                        .map(|field| field.declaration),
-                    authority: super::super::RelationProvenance::Verified(proof.summary.clone()?),
-                })
+                Some(available(postcondition, proof.summary.clone()?))
             })
             .collect()
     }
@@ -192,6 +211,7 @@ impl Input<'_, '_> {
                     .collect::<Option<Vec<_>>>()?;
                 Some(AvailablePostcondition {
                     relation: boundary.relation.clone(),
+                    route: boundary.selector.route,
                     variant: boundary.selector.variant,
                     field: boundary
                         .selector
@@ -878,6 +898,7 @@ impl Reasoning<'_, '_, '_> {
         block: &crate::NodePath,
         relation_ordinal: u32,
         parents: Option<Vec<DerivationId>>,
+        vacuous: bool,
     ) -> PostconditionAggregate {
         if self.input.function.formal_hypothesis || self.input.function.body.is_none() {
             let node = self.vocabulary.derivations.intern(
@@ -895,7 +916,7 @@ impl Reasoning<'_, '_, '_> {
                 derivation: Some(node),
             };
         }
-        let Some(parents) = parents.filter(|parents| !parents.is_empty()) else {
+        let Some(parents) = parents.filter(|parents| vacuous || !parents.is_empty()) else {
             return PostconditionAggregate {
                 discharged: false,
                 derivation: None,
@@ -1197,11 +1218,16 @@ impl Reasoning<'_, '_, '_> {
                 let term = self.goal_operand(expression)?;
                 Some(self.vocabulary.measure_atom(term, state))
             }
+            // Instantiated contract positions also spell measures as typed
+            // place projections. They denote the same measure term and use
+            // its existing affine atom, just like the operation form above.
+            GoalExpression::Datum(GoalDatum::Place { .. } | GoalDatum::NamedConst { .. }) => {
+                let term = self.goal_operand(expression)?;
+                self.vocabulary.affine_term_value(term, state)
+            }
             GoalExpression::Datum(
                 GoalDatum::Parameter { .. } | GoalDatum::EvaluatedValue { .. },
             )
-            | GoalExpression::Datum(GoalDatum::NamedConst { .. })
-            | GoalExpression::Datum(GoalDatum::Place { .. })
             | GoalExpression::Operation { .. } => None,
         }
     }
@@ -1212,8 +1238,18 @@ impl Reasoning<'_, '_, '_> {
         results: &[Option<TermId>],
         returns: &[Option<PostconditionReturnDatum>],
     ) -> Option<Relation> {
-        let operands = postcondition
-            .relation
+        self.instantiate_relation_template(&postcondition.relation, results, returns)
+    }
+
+    /// One relation template with each result ordinal read from `results`
+    /// and `returns` [FN-9, CALL-4].
+    pub(super) fn instantiate_relation_template(
+        &mut self,
+        template: &RelationTemplate,
+        results: &[Option<TermId>],
+        returns: &[Option<PostconditionReturnDatum>],
+    ) -> Option<Relation> {
+        let operands = template
             .operands
             .iter()
             .map(|operand| {
@@ -1233,7 +1269,7 @@ impl Reasoning<'_, '_, '_> {
         // difference bound carries: `l + a <cmp> r + b` is
         // `l - r <cmp> b - a`.
         let gap = second.1.checked_sub(first.1)?;
-        match postcondition.relation.normalized {
+        match template.normalized {
             NormalizedRelation::Equal => Some(Relation::Equal {
                 left: first.0,
                 right: second.0,
@@ -1503,8 +1539,8 @@ impl Reasoning<'_, '_, '_> {
 
     /// [ENT-2, MSR-6] every occurrence of a symbolic const parameter names
     /// its original declaration and keeps that declaration's written type.
-    /// A storage extent or a differently typed formal does not create another
-    /// constant identity or grant that parameter a different interval.
+    /// Forwarding it to a formal or using it as a storage extent, each of its
+    /// own type [CONST-1], creates no other constant identity or interval.
     pub(super) fn const_parameter_term(&mut self, declaration: crate::DeclarationId) -> TermId {
         let ty = self.input.context.const_parameter_types[&declaration];
         self.vocabulary
@@ -1671,7 +1707,8 @@ impl Reasoning<'_, '_, '_> {
                 ..
             } => live_holders.iter().any(|holder| {
                 if *relocation {
-                    self.input.relocation_kills_holder(separations, *holder, place)
+                    self.input
+                        .relocation_kills_holder(separations, *holder, place)
                 } else {
                     self.input.write_replaces_live_holder(*holder, place)
                 }
@@ -2291,7 +2328,7 @@ impl Reasoning<'_, '_, '_> {
             Vec::new(),
         ));
         for available in prepared.postconditions.iter().cloned() {
-            if available.variant.is_some()
+            if available.routed()
                 || !available
                     .relation
                     .operands
@@ -2379,7 +2416,7 @@ impl Reasoning<'_, '_, '_> {
         for available in prepared.postconditions.iter().cloned() {
             // A variant-routed relation is restricted to its arm [CALL-6];
             // a binder or target list enters no arm.
-            if available.variant.is_some()
+            if available.routed()
                 || !available
                     .relation
                     .operands
@@ -2448,7 +2485,7 @@ impl Reasoning<'_, '_, '_> {
             .iter()
             .cloned()
             .filter_map(|available| {
-                if available.variant.is_some()
+                if available.routed()
                     || !available
                         .relation
                         .operands
@@ -2598,6 +2635,7 @@ impl Judging<'_, '_, '_> {
                     .expect("postcondition relation ordinal exceeds u32"),
                 summary: None,
                 exits: Vec::new(),
+                vacuous: postcondition.selector.vacuous_when_unselected(),
                 aggregate: aggregate(),
             })
             .collect();
@@ -2616,9 +2654,13 @@ impl Judging<'_, '_, '_> {
                         .flatten()
                 })
                 .collect::<Option<Vec<_>>>();
+            // [TYPE-11] a routed relation a type invariant generates holds
+            // vacuously where no exit selects it: no value the instance
+            // returns holds its variant.
+            let vacuous = self.output.postconditions[index].vacuous;
             self.output.postconditions[index].aggregate = self
                 .reasoning()
-                .retain_postcondition_aggregate(&block, relation_ordinal, parents);
+                .retain_postcondition_aggregate(&block, relation_ordinal, parents, vacuous);
         }
     }
 
@@ -2628,7 +2670,7 @@ impl Judging<'_, '_, '_> {
         states: &ProofFlowState,
         affine_result: Option<&AffineForm>,
         value_reached: bool,
-        forwarded: &[Option<ResultEvidence>],
+        forwarded: &[Vec<ResultEvidence>],
     ) {
         if self.output.postconditions.is_empty() {
             return;
@@ -2643,9 +2685,10 @@ impl Judging<'_, '_, '_> {
             else {
                 continue;
             };
-            let forwarded = forwarded
-                .get(postcondition.selector.ordinal as usize)
-                .and_then(Option::as_ref);
+            // [FN-9, TYPE-11] the forwarded value's context for the route
+            // this clause is restricted to: its written success variant, or
+            // the variant field a type invariant's route names.
+            let forwarded = forwarded_return(postcondition, forwarded);
             if conditional_return(&selected)
                 && forwarded.is_some_and(|result| result.definitely_err)
             {
@@ -2740,15 +2783,15 @@ impl Analyzer<'_, '_> {
     /// obligation there, in the context the return proves the clause in.
     ///
     /// A routed clause is proved under the assumption that the returned
-    /// value holds its success variant, so a forwarded outcome that is
-    /// definitely failure judges its places in that contradictory context.
+    /// value holds its routed variant, so a forwarded outcome that excludes
+    /// that variant judges its places in that contradictory context.
     /// The judgment is made on a copy of the state: forming a place at an
     /// exit adds nothing to the edge a propagated error leaves beside.
     pub(super) fn judge_postcondition_places(
         &mut self,
         statement: &crate::NodePath,
         states: &ProofFlowState,
-        forwarded: &[Option<ResultEvidence>],
+        forwarded: &[Vec<ResultEvidence>],
     ) {
         let function = self.input.function;
         for postcondition in &function.postconditions {
@@ -2762,9 +2805,7 @@ impl Analyzer<'_, '_> {
             else {
                 continue;
             };
-            let forwarded = forwarded
-                .get(postcondition.selector.ordinal as usize)
-                .and_then(Option::as_ref);
+            let forwarded = forwarded_return(postcondition, forwarded);
             let mut context = states.clone();
             context.facts =
                 selected_return_facts(selected, states, forwarded, &self.vocabulary.derivations);
@@ -3295,8 +3336,25 @@ fn offset_parameter(function: &CheckedFunction, offset: &CheckedExpression) -> O
     u32::try_from(ordinal).ok()
 }
 
-/// [FN-9] whether one selected return reads its routed ordinal's success
-/// payload from a forwarded Result or Option [ENT-5].
+/// [FN-9, TYPE-11] the conditional evidence for a clause's routed field.
+/// Both place formation and relation proof use that field's context.
+fn forwarded_return<'a>(
+    postcondition: &CheckedPostcondition,
+    forwarded: &'a [Vec<ResultEvidence>],
+) -> Option<&'a ResultEvidence> {
+    forwarded
+        .get(postcondition.selector.ordinal as usize)?
+        .iter()
+        .find(|result| match postcondition.selector.route {
+            Some(route) => {
+                result.route.variant == route.variant && result.route.field == route.field
+            }
+            None => result.success,
+        })
+}
+
+/// [FN-9, TYPE-11] whether one selected return reads its routed ordinal's
+/// payload from a forwarded enum value [ENT-5].
 fn conditional_return(selected: &SelectedPostconditionReturn) -> bool {
     selected
         .values
@@ -3305,8 +3363,8 @@ fn conditional_return(selected: &SelectedPostconditionReturn) -> bool {
 }
 
 /// [FN-9, ENT-5] the facts one selected return proves its clause in: the
-/// ordinary current facts, combined, for a forwarded Result or Option, with
-/// the conditional context of its success payload.
+/// ordinary current facts, combined, for a forwarded enum value, with
+/// the conditional context of its routed payload.
 fn selected_return_facts(
     selected: &SelectedPostconditionReturn,
     states: &ProofFlowState,

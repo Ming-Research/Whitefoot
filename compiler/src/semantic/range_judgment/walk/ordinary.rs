@@ -380,7 +380,14 @@ impl Walker<'_> {
                     choices,
                     ..Query::default()
                 };
-                match facts::judge(&mut self.world, &self.facts, &state.facts, written, query) {
+                match facts::judge(
+                    &mut self.world,
+                    &self.facts,
+                    &state.facts,
+                    &state.guarded,
+                    written,
+                    query,
+                ) {
                     Ok(Verdict::Refuted) => DeferredAnswer::Proved,
                     Ok(Verdict::Open) if self.imprecise.is_some() => DeferredAnswer::Inconclusive,
                     Ok(Verdict::Open) => DeferredAnswer::Unproved,

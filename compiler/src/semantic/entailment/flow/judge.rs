@@ -2,6 +2,7 @@
 //! judged where the walk reaches it and its outcome is recorded.
 
 use super::*;
+use crate::semantic::model::CheckedSeparationOccasion;
 
 impl Input<'_, '_> {
     /// The [OWN-5] resolved place that root names.
@@ -114,6 +115,38 @@ impl Reasoning<'_, '_, '_> {
             event,
         );
     }
+
+    /// Instantiates erased positions in an isolated copy of the call's entry
+    /// context. The ordinary relation and affine projections give the shared
+    /// separation families their images without evaluating contract syntax.
+    fn establish_contract_indices(
+        &mut self,
+        separation: &super::super::super::model::CheckedCallSeparation,
+        state: &mut ProofFlowState,
+    ) {
+        for (captured, expression) in &separation.contract_indices {
+            let datum = self.vocabulary.terms.intern(TermKind::IndexCapture {
+                capture: captured.capture,
+            });
+            if let Some(image) = self.affine_goal_value(expression, &state.affine) {
+                state.affine.indices.insert(captured.capture, image);
+            }
+            if let Some((source, difference)) = self.goal_side(expression) {
+                let event = self
+                    .vocabulary
+                    .proof_event(FlowEventKind::S13, Some(&separation.site));
+                state.facts.establish(
+                    &Relation::Equal {
+                        left: datum,
+                        right: source,
+                        difference,
+                    },
+                    &mut self.vocabulary.derivations,
+                    event,
+                );
+            }
+        }
+    }
 }
 
 impl Judging<'_, '_, '_> {
@@ -196,10 +229,54 @@ impl Judging<'_, '_, '_> {
         let mut all_discharged = true;
         for (query, separation) in pending {
             self.output.judged_separations.insert(query);
-            let discharged = self.judge_one_separation(query, &separation, state);
+            let discharged = if separation.contract_indices.is_empty() {
+                self.judge_one_separation(query, &separation, state)
+            } else {
+                // Contract positions carry proof data only. In particular,
+                // their captured equalities and affine images do not become
+                // caller facts or scheduling evidence after this comparison.
+                let mut contract_state = state.clone();
+                self.reasoning()
+                    .establish_contract_indices(&separation, &mut contract_state);
+                self.judge_one_separation(query, &separation, &mut contract_state)
+            };
             // A preservation query is a later reference-use obligation. It
             // does not make this event unreachable or suppress its effects.
             all_discharged &= discharged || separation.reference_use.is_some();
+        }
+        all_discharged
+    }
+
+    /// [SHARE-2, OWN-7] the pairs of one atomic statement's handle places
+    /// whose separation is a proof, judged where the statement begins, after
+    /// its handle places and index atoms are read and before it holds any
+    /// state. Only the statement's own queries are taken: a call or set in
+    /// its block owns the queries below it.
+    pub(super) fn judge_atomic_target_separations(
+        &mut self,
+        site: &crate::NodePath,
+        state: &mut ProofFlowState,
+    ) -> bool {
+        let pending: Vec<_> = self
+            .input
+            .function
+            .call_separations
+            .iter()
+            .enumerate()
+            .filter(|(query, _)| !self.output.judged_separations.contains(query))
+            .filter(|(_, separation)| {
+                separation.site == *site
+                    && matches!(
+                        separation.occasion,
+                        CheckedSeparationOccasion::AtomicTargets(_)
+                    )
+            })
+            .map(|(query, separation)| (query, separation.clone()))
+            .collect();
+        let mut all_discharged = true;
+        for (query, separation) in pending {
+            self.output.judged_separations.insert(query);
+            all_discharged &= self.judge_one_separation(query, &separation, state);
         }
         all_discharged
     }
@@ -267,20 +344,26 @@ impl Judging<'_, '_, '_> {
                 .add_root(DerivationRootKind::BoundsObligation(ordinal), root);
         }
         self.output.obligations.push(ObligationOutcome {
-            node_path: separation.reference_use.as_ref()
-                .map_or_else(|| separation.site.clone(), |use_site| use_site.site.clone()),
-            family: if separation.reference_use.is_some() {
-                ObligationFamily::ReferencePreservation(
+            node_path: match (&separation.reference_use, &separation.occasion) {
+                (Some(use_site), _) => use_site.site.clone(),
+                (None, CheckedSeparationOccasion::AtomicTargets(target)) => target.clone(),
+                (None, _) => separation.site.clone(),
+            },
+            family: match (&separation.reference_use, &separation.occasion) {
+                (Some(_), _) => ObligationFamily::ReferencePreservation(
                     u32::try_from(query).expect("reference-preservation queries exceed u32"),
-                )
-            } else if separation.exchange {
-                ObligationFamily::ExchangeSeparation(
+                ),
+                (None, CheckedSeparationOccasion::Exchange) => ObligationFamily::ExchangeSeparation(
                     u32::try_from(query).expect("exchange-separation queries exceed u32"),
-                )
-            } else {
-                ObligationFamily::CallSeparation(
+                ),
+                (None, CheckedSeparationOccasion::AtomicTargets(_)) => {
+                    ObligationFamily::AtomicTargetSeparation(
+                        u32::try_from(query).expect("atomic-target separation queries exceed u32"),
+                    )
+                }
+                (None, CheckedSeparationOccasion::Call) => ObligationFamily::CallSeparation(
                     u32::try_from(query).expect("call-separation queries exceed u32"),
-                )
+                ),
             },
             conjunct: 0,
             canonical_goal: None,
@@ -570,6 +653,7 @@ impl Analyzer<'_, '_> {
                 actual_captures,
                 goal_arguments,
                 requirements,
+                routed_requirements,
                 formal_contract,
                 ..
             } => {
@@ -670,6 +754,45 @@ impl Analyzer<'_, '_> {
                         }
                     }
                 }
+                // [TYPE-11, FN-8] each requirement over a parameter's enum
+                // payload is owed in the argument's conditional context for
+                // its route [ENT-5]: if the argument holds the variant, its
+                // field satisfies the invariant.
+                let mut routed_parents = Vec::with_capacity(routed_requirements.len());
+                for requirement in routed_requirements {
+                    if !actuals_reached {
+                        break;
+                    }
+                    let Some(argument) = arguments.get(requirement.subject as usize) else {
+                        goals_ok = false;
+                        continue;
+                    };
+                    // The argument's admitted pre-transfer image, as an
+                    // ordinary requirement over this parameter reads it.
+                    let image = goal_arguments.get(requirement.subject as usize).map(|captured| {
+                        admitted_call_goal_expression(
+                            captured,
+                            call,
+                            admitted_arguments
+                                .as_deref()
+                                .expect("reached actuals have admitted argument slots"),
+                        )
+                    });
+                    let (goal, facts) =
+                        self.routed_requirement_goal(call, argument, image, requirement, states);
+                    let (disposition, derivation) = self.judging().judge_call_goal(
+                        *function,
+                        call,
+                        (requirement.clause.clone(), Some(requirement.subject)),
+                        goal,
+                        arguments.len(),
+                        (ProofContext::new(&facts, &states.affine), &*states),
+                    );
+                    goals_ok &= disposition == CallGoalDisposition::Discharged;
+                    if let Some(derivation) = derivation {
+                        routed_parents.push(derivation);
+                    }
+                }
                 let reached = actuals_reached && goals_ok;
                 let contract_parents = if reached {
                     formal_contract.as_deref().and_then(|contract| {
@@ -691,10 +814,14 @@ impl Analyzer<'_, '_> {
                     .available_call_postconditions(*function, formal_contract.as_deref());
                 let prepared_call = (|| {
                     let mut parents = actual_parents?;
-                    if !reached || goal_parents.len() != requirements.len() {
+                    if !reached
+                        || goal_parents.len() != requirements.len()
+                        || routed_parents.len() != routed_requirements.len()
+                    {
                         return None;
                     }
                     parents.extend(goal_parents);
+                    parents.extend(routed_parents);
                     parents.extend(contract_parents.unwrap_or_default());
                     // A direct call needs an earlier-component verified FN-9
                     // summary. A bound call needs either those actual
@@ -1785,7 +1912,7 @@ impl Analyzer<'_, '_> {
         if outcome.route == Some(ProofRoute::Affine) || outcome.route.is_none() {
             states.affine = prepared_affine;
         } else {
-            self.vocabulary.affine_atoms.truncate(candidate_atom_start);
+            self.vocabulary.discard_atoms_from(candidate_atom_start);
         }
         let discharged = outcome.disposition == ProofDisposition::Proved;
         let refuted = outcome.disposition == ProofDisposition::Refuted;

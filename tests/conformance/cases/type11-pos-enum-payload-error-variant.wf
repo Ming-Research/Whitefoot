@@ -1,0 +1,44 @@
+struct Window {
+  slots: Slots<u64, 8>;
+  next: u64;
+  invariant cursor(window): window.next < window.slots.len;
+}
+
+fn peek(window: &Window) -> result: u64 reads(window) {
+  let at = window^.next;
+  let got = window^.slots[at];
+  return got;
+}
+
+fn try_take(window: Window, ready: Bool) -> result: Result<u64, Window> pure {
+  if ready {
+    let got = peek(window: &window);
+    return Ok<u64, Window>(value: got);
+  }
+  return Err<u64, Window>(error: move window);
+}
+
+fn forward(window: Window, ready: Bool) -> result: Result<u32, Window> pure {
+  let got = propagate try_take(window: move window, ready: ready);
+  let small = cvt.wrap::<u64, u32>(got);
+  return Ok<u32, Window>(value: small);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let slots = slots_new::<u64, 8>();
+  place_back(window: &slots, value: 9_u64);
+  let made = Window(slots: move slots, next: 0_u64);
+  let no = False();
+  let outcome = forward(window: move made, ready: no);
+  match move outcome {
+    Ok(value: v) => {
+      let code = cvt.wrap::<u32, u8>(v);
+      return std::process::exit_status(code: code);
+    }
+    Err(error: back) => {
+      let got = peek(window: &back);
+      let code = cvt.wrap::<u64, u8>(got);
+      return std::process::exit_status(code: code);
+    }
+  }
+}

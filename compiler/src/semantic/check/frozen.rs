@@ -1,4 +1,5 @@
-//! Frozen content eligibility and consuming-place admission [SHARE-1].
+//! Frozen content eligibility and consuming-place admission [SHARE-1], and
+//! the part walk that also finds a self-changing host handle [SHARE-2].
 
 use std::collections::{HashMap, HashSet};
 
@@ -37,41 +38,107 @@ impl TypeContext<'_> {
     /// Depth-first declaration order, with nominal cycles visited once. Symbolic
     /// parameters are checked again at each concrete instantiation.
     pub(super) fn first_unfrozen_part(&self, ty: CheckedType) -> Result<Option<String>, CheckStop> {
+        self.first_part(ty, false, |types, ty| {
+            let CheckedType::Nominal(id) = ty else {
+                return Ok(false);
+            };
+            Ok(match &types.nominal(id)?.kind {
+                CheckedNominalKind::Shared {
+                    shape: CheckedShared::Object,
+                    ..
+                } => true,
+                CheckedNominalKind::Opaque => types
+                    .host_opaque_template(id)?
+                    .is_some_and(|host| host.fieldless),
+                _ => false,
+            })
+        })
+    }
+
+    /// [SHARE-2, PRE-2] the first part of `ty`, `ty` included, that is a
+    /// self-changing host handle, in the same walk as frozen content. A
+    /// shared handle is a part without parts of its own: its state is reached
+    /// only through an atomic statement's target. A map's entries are its
+    /// elements [SHARE-1, OP-4], so a path of type `ConcurrentHashMap<V>`
+    /// has each entry's `Option<V>` and its parts as parts.
+    pub(super) fn first_self_changing_part(
+        &self,
+        ty: CheckedType,
+    ) -> Result<Option<String>, CheckStop> {
+        self.first_part(ty, true, |types, ty| {
+            let CheckedType::Nominal(id) = ty else {
+                return Ok(false);
+            };
+            if !matches!(types.nominal(id)?.kind, CheckedNominalKind::Opaque) {
+                return Ok(false);
+            }
+            Ok(types
+                .host_opaque_template(id)?
+                .is_some_and(|host| {
+                    crate::library::is_self_changing_host_handle(host.module, host.name)
+                }))
+        })
+    }
+
+    /// The host module, name and fieldlessness of an opaque nominal a host
+    /// module declares [PRE-2], or `None` for any other opaque nominal.
+    fn host_opaque_template(
+        &self,
+        id: super::super::model::NominalId,
+    ) -> Result<Option<HostOpaque<'_>>, CheckStop> {
+        let Some((template, _)) = &self.source_nominal_instances[id.0 as usize] else {
+            return Ok(None);
+        };
+        let template = &self.nominal_templates[*template];
+        let Some((package, module)) = self.declarations.declaration_home(template.declaration)
+        else {
+            return Ok(None);
+        };
+        if *package != crate::PackageKey::Standard || !crate::library::is_host_module(module) {
+            return Ok(None);
+        }
+        let fieldless = self
+            .declarations
+            .tree
+            .children_with(template.node, Production::Field)?
+            .is_empty();
+        Ok(Some(HostOpaque {
+            module,
+            name: template.name.as_str(),
+            fieldless,
+        }))
+    }
+
+    /// The first part of `ty` in depth-first declaration order, `ty` itself
+    /// included, that `stops` selects, rendered as a path from the type's
+    /// name; nominal cycles are visited once. With `map_entries` a map's
+    /// entries are walked as its elements. The frozen walk leaves them out:
+    /// a map is only ever a shared object's state or a `swap`'s exchange
+    /// [TYPE-9], never a part of frozen content, and the frozen walk stops at
+    /// the `Shared` handle that holds one.
+    fn first_part(
+        &self,
+        ty: CheckedType,
+        map_entries: bool,
+        stops: impl Fn(&Self, CheckedType) -> Result<bool, CheckStop>,
+    ) -> Result<Option<String>, CheckStop> {
         let mut pending = vec![(ty, self.checked_type_name(ty)?)];
         let mut seen = HashSet::new();
         while let Some((ty, path)) = pending.pop() {
             if !seen.insert(ty) {
                 continue;
             }
+            if stops(self, ty)? {
+                return Ok(Some(path));
+            }
             match ty {
                 CheckedType::Nominal(id) => match &self.nominal(id)?.kind {
-                    CheckedNominalKind::Shared {
-                        shape: CheckedShared::Object,
-                        ..
-                    } => return Ok(Some(path)),
-                    CheckedNominalKind::Shared {
-                        shape: CheckedShared::Map { .. },
-                        ..
-                    } => {}
-                    CheckedNominalKind::Opaque => {
-                        if let Some((template, _)) = &self.source_nominal_instances[id.0 as usize] {
-                            let template = &self.nominal_templates[*template];
-                            let declaration = template.declaration;
-                            if self.declarations.declaration_home(declaration).is_some_and(
-                                |(package, module)| {
-                                    *package == crate::PackageKey::Standard
-                                        && crate::library::is_host_module(module)
-                                },
-                            ) && self
-                                .declarations
-                                .tree
-                                .children_with(template.node, Production::Field)?
-                                .is_empty()
-                            {
-                                return Ok(Some(path));
-                            }
+                    CheckedNominalKind::Shared { shape, .. } => {
+                        if map_entries && let CheckedShared::Map { entry } = shape {
+                            pending.push((*entry, format!("{path}[element]")));
                         }
                     }
+                    CheckedNominalKind::Opaque => {}
                     CheckedNominalKind::Box { referent, .. } => {
                         pending.push((*referent, format!("{path}.inner")))
                     }
@@ -203,4 +270,12 @@ impl Checker<'_, '_> {
             mechanical_fix: "read copy-typed parts without move, borrow `&f.inner` or its descendants, or retain a nested frozen handle with frozen_share",
         })
     }
+}
+
+/// An opaque nominal a host module declares [PRE-2]: its module, its name and
+/// whether its declaration has no fields.
+struct HostOpaque<'a> {
+    module: &'a [String],
+    name: &'a str,
+    fieldless: bool,
 }

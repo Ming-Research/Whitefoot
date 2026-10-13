@@ -1,0 +1,24 @@
+struct Span {
+  start: u64;
+  end: u64;
+  invariant ordered(span): span.start <= span.end;
+}
+
+fn span_width(t: &Span) -> result: u64 reads(t) {
+  let a = t^.start;
+  let b = t^.end;
+  let d = b - a;
+  return d;
+}
+
+fn measure<T: drop, fn width(t: &T) -> result: u64 reads(t)>(item: &T) -> result: u64 reads(item) {
+  let got = width(t: item);
+  return got;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let span = Span(start: 4_u64, end: 9_u64);
+  let got = measure::<Span, fn span_width>(item: &span);
+  let code = cvt.wrap::<u64, u8>(got);
+  return std::process::exit_status(code: code);
+}

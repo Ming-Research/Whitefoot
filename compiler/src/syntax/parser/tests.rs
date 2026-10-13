@@ -1253,3 +1253,20 @@ fn declaration_and_parameter_optionals_report_their_complete_expected_sets() {
         "an ordinary parameter name must be followed by a colon"
     );
 }
+
+/// [GRAM-5, RANGE-1] the suffix is parsed in guards and ordinary relations
+/// so the semantic restriction can name RANGE-1 instead of a grammar error.
+#[test]
+fn unchanged_suffixes_parse_for_semantic_admission() {
+    let source = br#"fn preserve(cell: &Array<u64, 1>) -> result: unit writes(cell) contract {
+  requires cell^[0_u64] unchanged;
+  requires forall incoming(k in 0_u64..cell^.len): cell^[k] unchanged;
+  ensures forall preserved(k in 0_u64..entry(cell)^.len): cell^[k] unchanged;
+  ensures forall guarded(k in 0_u64..cell^.len) when cell^[k] unchanged: cell^[k] == k;
+} {
+  return unit;
+}
+"#;
+    let outcome = parse_active("unchanged.wf", source);
+    assert!(matches!(outcome, ParseOutcome::Complete(_)), "{outcome:?}");
+}

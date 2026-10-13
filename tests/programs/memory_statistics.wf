@@ -136,8 +136,8 @@ fn measure_empty_windows(meter: &MemoryMeter) -> result: u64 writes(meter) {
   append(destination: &slots.inner, source: &ring.inner);
   split_off(source: &slots.inner, index: 0_u64, destination: &ring.inner);
   grow(cell: &slots, capacity: 0_u64);
-  let unchanged = std::process::heap_in_use(meter: meter);
-  if unchanged != before {
+  let preserved_value = std::process::heap_in_use(meter: meter);
+  if preserved_value != before {
     return 1_u64;
   }
   grow(cell: &slots, capacity: 4_u64);
