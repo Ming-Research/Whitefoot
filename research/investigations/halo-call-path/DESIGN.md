@@ -459,3 +459,39 @@ logs, divided by fib(32)'s 7,049,155 Lua calls.
   172, `SubRK` 350 to 338, `LtJmpRK` 338 to 290, `GetUpval` 206 to 136).
   These count every path of the arm, most of which fib(32) does not
   execute.
+
+## Call entries for calls made from parts (R3 follow-up)
+
+**Question.** Does sending every ordinary call a split part makes through a
+`preserve_most` entry of its callee remove the spill, frame and copy
+overhead of kinds (b) to (e) from SubRK, LtJmpRK and GetUpval?
+
+**Change.** The call-entry decision proposed in compiler/match-dispatch-lowering
+(Whitefoot#410): a call from the dispatch function or an arm to a
+module-defined function returning a value or through a destination names an
+internal preserve_mostcc entry that calls the callee with a call-site
+alwaysinline; the callee keeps the C convention.
+
+**Comparison.** The halo-call-path workflow (hosted x86-64, pinned LLVM,
+Halo-wf c900a68b2f06, full LTO, callgrind of fib(32)), run on a base B (this
+branch with main at 58743a931 merged, the base of Whitefoot#410) and on C = B
+plus only Whitefoot#410. Both runs build identical Halo sources; the only
+difference is the compiler change.
+
+**Measure.** Executed instructions per Lua call of the SubRK, LtJmpRK and
+GetUpval arms (re-identified from hot-arms.tsv) and the program total per Lua
+call, from callgrind/summary.txt.
+
+**Rejection criterion** (written before C ran). The change is rejected if
+the three arms' summed executed instructions per Lua call fall by fewer than
+10 from B to C.
+
+**Prior from reading the code.** None of the arms' surviving calls (slow,
+heap.intern, unwind, restore_stopped_stack) is a call the arm makes in
+source; each lies in a helper the arm calls (fast_instruction_sub_rk,
+instruction_sub_rk, instruction_get_upval) that the host inlines into the
+arm. The entry for such a helper is an internal single-caller copy of it,
+which the host inlines the same way, leaving the inner calls in the C
+convention. This predicts no change in the three arms and a rejection; a
+reduction would show that the entries keep a helper out of line that the
+base inlined.
