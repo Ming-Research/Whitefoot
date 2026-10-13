@@ -11,6 +11,14 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-12 v0.136: a guard reaches no self-changing host handle; an IoError's class description
+
+Rules: changed SHARE-2, SHARE-3, PRE-2
+
+Owner-approved: On the shared status board on 2026-10-12, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve Whitefoot#392 (head commit 70aca3925)'s specification v0.136 change and three design decisions?" (translated), whose background listed SHARE-2's footprint sentence and its diagnostic site and repair, SHARE-3's consequence sentence, PRE-2's self-changing host handle table, the `error_copy_class_description` paragraph with its class-to-code table, the widened window paragraph, the library entry, and the three design decisions. The directions were the owner's choices of A on card gran-guard-time-read-form and of A on card gran-enospc-text-form, both on 2026-10-12.
+
+Summary: A guard is re-evaluated only after a write to a state it reads, so a guard reading the monotonic clock, the calendar clock or the memory meter could stay false after its deadline passed with no further write, and the program hung. SHARE-2 now refuses a guard whose footprint path has a self-changing host handle as its type or as a part at any depth of field, payload field, element, map entry [OP-4] or `Box` content; the diagnostic sits at the guard's one call, and the repair waits for the time outside the guard, with a deadline or with a context that fires a cancellation source the guard reads. PRE-2 lists the self-changing host handles in a table (`std::time::Clock`, `std::time::WallClock`, `std::process::MemoryMeter`), and SHARE-3 states the consequence: a waiting guard changes only when an atomic statement or a cancellation-state update changes one of its targets' states. Separately, PRE-2 adds `error_copy_class_description`, which describes an `IoError` by its variant alone with the host's text for the one host code a class-to-code table gives that class on POSIX and Windows (25 and 24 coded classes), returning `DescriptionUnavailable` with the destination unchanged for a class with no code on the host; the window paragraph now covers both description functions, and the `std::io` record carries the entry. Selection ground: refusing the guard (card A) keeps the wake rule that only writes change a guard, instead of a runtime re-evaluating clock guards on a timer; a class description without host codes in source (card A) gives Firn Redis-identical text such as `No space left on device` for a condition it detected itself.
+
 ## 2026-10-12 v0.135: a call separates the places a callee's contract reads
 
 Rules: changed EFF-2, EFF-5

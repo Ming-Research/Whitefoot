@@ -1040,9 +1040,10 @@ pub enum SemanticIssueKind {
         mechanical_fix: String,
     },
     /// Two compared positions have no source proof of the separation their
-    /// family needs [OWN-7, WIN-2, EFF-5]: two index or range steps, an index
-    /// beside a range, or either beside a window part. The residual names the
-    /// exact position family.
+    /// family needs [OWN-7, WIN-2]: two index or range steps, an index
+    /// beside a range, or either beside a window part, in a call's row
+    /// [EFF-5], an exchange [OP-11] or two handle places of one atomic
+    /// statement [SHARE-2]. The residual names the exact position family.
     UndischargedCallSeparation {
         residual: String,
         mechanical_fix: &'static str,
@@ -1243,6 +1244,14 @@ pub enum SemanticIssueKind {
     },
     /// An atomic statement's guard whose footprint writes a path [SHARE-2].
     AtomicGuardWrites {
+        /// The repair [DIAG-1].
+        mechanical_fix: &'static str,
+    },
+    /// An atomic statement's guard whose call reads or writes a path with a
+    /// self-changing host handle part [SHARE-2, PRE-2].
+    AtomicGuardReadsSelfChanging {
+        /// The first self-changing part of the path's type, from its name.
+        handle: String,
         /// The repair [DIAG-1].
         mechanical_fix: &'static str,
     },

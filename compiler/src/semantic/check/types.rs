@@ -2474,6 +2474,24 @@ impl<'unit> TypeContext<'unit> {
         path: &CheckedStatePath,
         signature: &FunctionSignature,
     ) -> Result<String, CheckStop> {
+        Ok(self.walk_effect_path(path, signature)?.0)
+    }
+    /// The value or range type a checked effect path's last step selects,
+    /// from the callee parameter types `signature` carries [EFF-1].
+    pub(super) fn effect_path_selected(
+        &self,
+        path: &CheckedStatePath,
+        signature: &FunctionSignature,
+    ) -> Result<SelectedPlaceType, CheckStop> {
+        Ok(self.walk_effect_path(path, signature)?.1)
+    }
+    /// One checked effect path's canonical spelling and the type its last
+    /// step selects.
+    fn walk_effect_path(
+        &self,
+        path: &CheckedStatePath,
+        signature: &FunctionSignature,
+    ) -> Result<(String, SelectedPlaceType), CheckStop> {
         let parameter = signature
             .parameters
             .iter()
@@ -2572,7 +2590,7 @@ impl<'unit> TypeContext<'unit> {
                 }
             }
         }
-        Ok(rendered)
+        Ok((rendered, selected))
     }
     /// One `effect_path := epbase epsuffix*` [EFF-1], with the type its last
     /// step selects.
