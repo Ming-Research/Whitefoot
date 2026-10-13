@@ -2,6 +2,7 @@
 //! and places spelled in the source's own terms.
 
 use super::*;
+use crate::semantic::places::SelectorRendering;
 
 /// How a source rendering spells one counted loop binder.
 #[derive(Clone, Copy, Debug)]
@@ -241,22 +242,56 @@ impl Input<'_, '_> {
     }
 
     /// One [OP-4] subscript offset, in the spelling the source wrote it in.
+    #[cfg(test)]
     pub(super) fn render_offset(&self, offset: CapturedValue) -> String {
         self.render_header_offset(offset, None)
     }
 
+    #[cfg(test)]
     fn render_header_offset(
         &self,
         offset: CapturedValue,
         counted: Option<BinderSpelling<'_>>,
     ) -> String {
+        let mut selectors = SelectorRendering::default();
+        let rendered = self.render_header_offset_with_selectors(offset, counted, &mut selectors);
+        selectors.finish(rendered)
+    }
+
+    fn render_header_offset_with_selectors(
+        &self,
+        offset: CapturedValue,
+        counted: Option<BinderSpelling<'_>>,
+        selectors: &mut SelectorRendering,
+    ) -> String {
         match offset.term {
             CapturedTerm::Literal(value) => value.to_string(),
             CapturedTerm::Binding(binding) => self.render_header_binding(binding, counted),
+            CapturedTerm::Place(selector) => {
+                if !SelectorRendering::needs_label(&selector) {
+                    return self.render_header_place_with_selectors(
+                        selector.place(),
+                        counted,
+                        selectors,
+                    );
+                }
+                let (id, fresh) = selectors.reference(&selector);
+                if fresh {
+                    let rendered = self.render_header_place_with_selectors(
+                        selector.place(),
+                        counted,
+                        selectors,
+                    );
+                    selectors.define(id, rendered);
+                }
+                SelectorRendering::label(id)
+            }
             CapturedTerm::Const(declaration) => self.declaration_name(declaration),
             // [REF-1] the binding's spelling names a later value than the one
             // this index read, and no source spelling names that one.
-            CapturedTerm::Superseded(_) | CapturedTerm::Opaque => "?".to_owned(),
+            CapturedTerm::Superseded(_)
+            | CapturedTerm::SupersededPlace(_)
+            | CapturedTerm::Opaque => "?".to_owned(),
         }
     }
 
@@ -286,6 +321,17 @@ impl Input<'_, '_> {
         &self,
         place: &ResolvedPlace,
         counted: Option<BinderSpelling<'_>>,
+    ) -> String {
+        let mut selectors = SelectorRendering::default();
+        let rendered = self.render_header_place_with_selectors(place, counted, &mut selectors);
+        selectors.finish(rendered)
+    }
+
+    fn render_header_place_with_selectors(
+        &self,
+        place: &ResolvedPlace,
+        counted: Option<BinderSpelling<'_>>,
+        selectors: &mut SelectorRendering,
     ) -> String {
         let reference_root = matches!(place.root, PlaceRoot::Binding(binding)
             if self.places.is_reference(binding));
@@ -318,7 +364,7 @@ impl Input<'_, '_> {
                     .map(|constant| constant.ty),
             ),
         };
-        self.render_place_projections(rendered, ty, &place.path, counted)
+        self.render_place_projections_with_selectors(rendered, ty, &place.path, counted, selectors)
     }
 
     /// Render body and entry paths through the same typed storage selectors.
@@ -331,10 +377,29 @@ impl Input<'_, '_> {
     /// since this renderer has no error channel.
     fn render_place_projections(
         &self,
+        rendered: String,
+        ty: Option<CheckedType>,
+        projections: &[PlaceStep],
+        counted: Option<BinderSpelling<'_>>,
+    ) -> String {
+        let mut selectors = SelectorRendering::default();
+        let rendered = self.render_place_projections_with_selectors(
+            rendered,
+            ty,
+            projections,
+            counted,
+            &mut selectors,
+        );
+        selectors.finish(rendered)
+    }
+
+    fn render_place_projections_with_selectors(
+        &self,
         mut rendered: String,
         mut ty: Option<CheckedType>,
         projections: &[PlaceStep],
         counted: Option<BinderSpelling<'_>>,
+        selectors: &mut SelectorRendering,
     ) -> String {
         for projection in projections {
             match projection {
@@ -370,8 +435,16 @@ impl Input<'_, '_> {
                 PlaceStep::Range(range) => {
                     rendered.push_str(&format!(
                         "[{}..{}]",
-                        self.render_header_offset(range.start, counted),
-                        self.render_header_offset(range.end, counted)
+                        self.render_header_offset_with_selectors(
+                            range.start.clone(),
+                            counted,
+                            selectors
+                        ),
+                        self.render_header_offset_with_selectors(
+                            range.end.clone(),
+                            counted,
+                            selectors
+                        )
                     ));
                 }
                 PlaceStep::Part(part) => {
@@ -403,14 +476,22 @@ impl Input<'_, '_> {
                 PlaceStep::Page(offset) => {
                     rendered.push_str(".pages");
                     rendered.push('[');
-                    rendered.push_str(&self.render_offset(*offset));
+                    rendered.push_str(&self.render_header_offset_with_selectors(
+                        offset.clone(),
+                        counted,
+                        selectors,
+                    ));
                     rendered.push(']');
                     ty = ty.map(|ty| self.storage_element_type(ty).unwrap_or(ty));
                 }
                 PlaceStep::Index(offset) => {
                     rendered.push_str(&format!(
                         "[{}]",
-                        self.render_header_offset(*offset, counted)
+                        self.render_header_offset_with_selectors(
+                            offset.clone(),
+                            counted,
+                            selectors
+                        )
                     ));
                     // A range reference's root type is already its element
                     // type [REF-4], so a subscript of a type that selects no
@@ -540,8 +621,8 @@ impl Input<'_, '_> {
             .into_iter()
             .map(|(datum, range)| RangeLengthReading {
                 base: self.render_goal_datum(&range_base(datum)),
-                start: self.range_endpoint_reading(range.start),
-                end: self.range_endpoint_reading(range.end),
+                start: self.range_endpoint_reading(range.start.clone()),
+                end: self.range_endpoint_reading(range.end.clone()),
                 difference_goal: difference_goal.clone(),
             })
             .collect()
@@ -560,7 +641,17 @@ impl Input<'_, '_> {
             }
             // [REF-1] a later write made the binding's spelling name another
             // value, so neither it nor the occurrence spells this one.
-            CapturedTerm::Superseded(_) => RangeEndpointReading::Unspelled(None),
+            CapturedTerm::Place(selector) => {
+                let rendered = self.render_place(selector.place());
+                if SelectorRendering::is_diagnostic(&rendered) {
+                    RangeEndpointReading::Unspelled(None)
+                } else {
+                    RangeEndpointReading::Spelled(rendered)
+                }
+            }
+            CapturedTerm::Superseded(_) | CapturedTerm::SupersededPlace(_) => {
+                RangeEndpointReading::Unspelled(None)
+            }
             CapturedTerm::Opaque => RangeEndpointReading::Unspelled(match endpoint.capture {
                 CaptureId::Source(occurrence) => Some(occurrence),
                 _ => None,
@@ -573,8 +664,8 @@ impl Input<'_, '_> {
     /// absent when some endpoint has no spelling.
     fn render_difference_goal(&self, expression: &GoalExpression, bare: bool) -> Option<String> {
         if let Some((_, range)) = measured_range(expression) {
-            let start = self.range_endpoint_reading(range.start);
-            let end = self.range_endpoint_reading(range.end);
+            let start = self.range_endpoint_reading(range.start.clone());
+            let end = self.range_endpoint_reading(range.end.clone());
             let (RangeEndpointReading::Spelled(start), RangeEndpointReading::Spelled(end)) =
                 (start, end)
             else {
@@ -703,6 +794,7 @@ impl Input<'_, '_> {
         root_type: Option<CheckedType>,
         projections: &[GoalProjection],
     ) -> String {
+        let mut selectors = SelectorRendering::default();
         let mut rendered = base;
         let mut ty = root_type;
         for projection in projections {
@@ -756,12 +848,23 @@ impl Input<'_, '_> {
                 GoalProjection::Page(offset) => {
                     rendered.push_str(".pages");
                     rendered.push('[');
-                    rendered.push_str(&self.render_offset(*offset));
+                    rendered.push_str(&self.render_header_offset_with_selectors(
+                        offset.clone(),
+                        None,
+                        &mut selectors,
+                    ));
                     rendered.push(']');
                     ty = None;
                 }
                 GoalProjection::Subscript(offset) => {
-                    rendered.push_str(&format!("[{}]", self.render_offset(*offset)));
+                    rendered.push_str(&format!(
+                        "[{}]",
+                        self.render_header_offset_with_selectors(
+                            offset.clone(),
+                            None,
+                            &mut selectors
+                        )
+                    ));
                     // A range reference's root type is already its element
                     // type [REF-4], so a subscript of a type that selects no
                     // element keeps it.
@@ -773,22 +876,30 @@ impl Input<'_, '_> {
                 GoalProjection::Range(range) => {
                     rendered.push_str(&format!(
                         "[{}..{}]",
-                        self.render_offset(range.start),
-                        self.render_offset(range.end)
+                        self.render_header_offset_with_selectors(
+                            range.start.clone(),
+                            None,
+                            &mut selectors
+                        ),
+                        self.render_header_offset_with_selectors(
+                            range.end.clone(),
+                            None,
+                            &mut selectors
+                        )
                     ));
                     ty = ty.and_then(|ty| element_type(ty, self.context.elements));
                 }
-                GoalProjection::FormalSubscript { ordinal } => {
+                GoalProjection::FormalSubscript { ordinal, .. } => {
                     rendered.push_str(&format!("[parameter #{ordinal}]"));
                     ty = ty.and_then(|ty| element_type(ty, self.context.elements));
                 }
-                GoalProjection::FormalPage { ordinal } => {
+                GoalProjection::FormalPage { ordinal, .. } => {
                     rendered.push_str(&format!(".pages[parameter #{ordinal}]"));
                     ty = ty.and_then(|ty| element_type(ty, self.context.elements));
                 }
             }
         }
-        rendered
+        selectors.finish(rendered)
     }
 
     /// Render the checked storage path without reducing subscript offsets
@@ -994,7 +1105,11 @@ impl Reasoning<'_, '_, '_> {
                 format!("next-header {}", self.render_term(*source))
             }
             TermKind::Sum(left, right) => {
-                format!("({} + {})", self.render_term(*left), self.render_term(*right))
+                format!(
+                    "({} + {})",
+                    self.render_term(*left),
+                    self.render_term(*right)
+                )
             }
             TermKind::Zero => "0".to_owned(),
             TermKind::Constant(value) => value.to_string(),
@@ -1119,7 +1234,7 @@ fn measured_range(expression: &GoalExpression) -> Option<(&GoalDatum, CapturedRa
     };
     match projections.last() {
         Some(GoalProjection::Range(range)) if *measure == CheckedMeasure::Length => {
-            Some((datum, *range))
+            Some((datum, range.clone()))
         }
         _ => None,
     }

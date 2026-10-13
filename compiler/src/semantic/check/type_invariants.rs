@@ -11,6 +11,7 @@ use std::collections::HashMap;
 
 use super::requires::{ClauseKind, ExpandedClauseDatum, ExpandedClauseExpression};
 use super::*;
+use crate::FixedTerminal;
 use crate::semantic::goal::{
     CheckedCallRequirement, ConcreteGoal, GoalDatum, GoalExpression, GoalProjection, GoalTemplate,
 };
@@ -19,7 +20,6 @@ use crate::semantic::postcondition::{
     NormalizedRelation, ParameterDenotation, PayloadRoute, PostconditionPlace,
     PostconditionPlaceRoot, RelationDatum, RelationTemplate, RelationTerm,
 };
-use crate::FixedTerminal;
 
 const TYPE11_DROP_THE_GENERICS: &str = "declare the invariant on a struct without generics, or state the relation as a `requires` and `ensures` pair on each function that takes the value";
 const TYPE11_DROP_OPAQUE: &str = "declare the invariant on a struct that is not `opaque`";
@@ -1018,7 +1018,7 @@ fn substitute_goal(expression: &GoalExpression, ordinal: u32, reference: bool) -
             projections: reference
                 .then_some(GoalProjection::Deref)
                 .into_iter()
-                .chain(projections.iter().copied())
+                .chain(projections.iter().cloned())
                 .collect(),
             ty: *ty,
         }),
@@ -1059,7 +1059,7 @@ fn construct_goal(
             };
             let mut image = arguments.get(*field as usize)?.clone();
             for projection in rest {
-                image = image.with_projection(*projection, *ty)?;
+                image = image.with_projection(projection.clone(), *ty)?;
             }
             Some(image)
         }
@@ -1161,7 +1161,7 @@ fn substitute_relation_datum(datum: &RelationDatum, subject: InvariantSubject) -
         ) => RelationDatum::Parameter {
             ordinal,
             projections: std::iter::once(GoalProjection::Deref)
-                .chain(projections.iter().copied())
+                .chain(projections.iter().cloned())
                 .collect(),
             ty: *ty,
             denotation: ParameterDenotation::ExitState,
@@ -1195,7 +1195,7 @@ fn substitute_relation_datum(datum: &RelationDatum, subject: InvariantSubject) -
                 InvariantSubject::ExitParameter(ordinal) => PostconditionPlace {
                     root: PostconditionPlaceRoot::ExitParameter { ordinal },
                     projections: std::iter::once(GoalProjection::Deref)
-                        .chain(projections.iter().copied())
+                        .chain(projections.iter().cloned())
                         .collect(),
                     ty: *ty,
                 },
@@ -1226,7 +1226,7 @@ pub(super) fn substitute_expanded(
             InvariantSubject::ExitParameter(ordinal) => ExpandedClauseDatum::Parameter {
                 ordinal,
                 projections: std::iter::once(GoalProjection::Deref)
-                    .chain(projections.iter().copied())
+                    .chain(projections.iter().cloned())
                     .collect(),
                 ty: *ty,
                 denotation: ParameterDenotation::ExitState,

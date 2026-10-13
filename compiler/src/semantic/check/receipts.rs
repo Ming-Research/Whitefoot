@@ -989,6 +989,8 @@ impl<'unit> DeclarationInventory<'unit> {
                     relation_ordinal: u32::try_from(ordinal).ok()?,
                     summary: None,
                     exits: Vec::new(),
+                    place_proofs: Vec::new(),
+                    entry_place_outcomes: Vec::new(),
                     vacuous: postcondition.selector.vacuous_when_unselected(),
                     aggregate: PostconditionAggregate {
                         discharged: true,

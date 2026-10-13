@@ -134,7 +134,7 @@ impl Vocabulary {
         let captured = match self.terms.kind(anchor) {
             TermKind::Measure(CheckedMeasure::Length, place) => {
                 place.path.last().and_then(|step| match step {
-                    PlaceStep::Range(range) => Some(*range),
+                    PlaceStep::Range(range) => Some(range.clone()),
                     _ => None,
                 })
             }
@@ -1061,8 +1061,8 @@ impl Reasoning<'_, '_, '_> {
                         for projection in projections {
                             let result = self
                                 .input
-                                .goal_expression_projection_type(&definition, *projection)?;
-                            definition = definition.with_projection(*projection, result)?;
+                                .goal_expression_projection_type(&definition, projection.clone())?;
+                            definition = definition.with_projection(projection.clone(), result)?;
                         }
                         if definition.ty() != *ty {
                             return None;
@@ -1276,7 +1276,8 @@ impl Reasoning<'_, '_, '_> {
             })
         {
             let derivation =
-                self.vocabulary.goal_numeric_derivation(canonical, relation.as_ref(), derivation);
+                self.vocabulary
+                    .goal_numeric_derivation(canonical, relation.as_ref(), derivation);
             return ProofResult {
                 disposition: ProofDisposition::Proved,
                 route: Some(ProofRoute::Affine),
@@ -1340,9 +1341,9 @@ impl Reasoning<'_, '_, '_> {
         } else {
             return None;
         };
-        let derivation =
-            self.vocabulary
-                .goal_numeric_derivation(canonical, relation, derivation);
+        let derivation = self
+            .vocabulary
+            .goal_numeric_derivation(canonical, relation, derivation);
         Some(ProofResult {
             disposition: ProofDisposition::Proved,
             route: Some(ProofRoute::Affine),
@@ -1421,7 +1422,8 @@ impl Reasoning<'_, '_, '_> {
             right: bridge.middle,
             bound: bridge.left_to_middle_bound,
         };
-        let proof = self.affine_step_proof(step, bridge.target, ProofContext::new(facts, affine))?;
+        let proof =
+            self.affine_step_proof(step, bridge.target, ProofContext::new(facts, affine))?;
         let first = self
             .vocabulary
             .derivations
@@ -1731,6 +1733,22 @@ impl Reasoning<'_, '_, '_> {
                     .intern(TermKind::Constant(i128::from(value))),
             ),
             CapturedTerm::Const(declaration) => Some(self.const_parameter_term(declaration)),
+            CapturedTerm::Place(selector) if value.capture == CaptureId::SpellingDetermined => {
+                let mut place = selector.place().clone();
+                let kind = if let Some(PlaceStep::Measure(measure)) = place.path.last().cloned() {
+                    place.path.pop();
+                    TermKind::Measure(measure, place)
+                } else {
+                    TermKind::Place(place, IntegerType::U64)
+                };
+                Some(self.vocabulary.terms.intern(kind))
+            }
+            CapturedTerm::Binding(binding) if value.capture == CaptureId::SpellingDetermined => {
+                Some(self.vocabulary.terms.intern(TermKind::Place(
+                    ResolvedPlace::binding(binding),
+                    IntegerType::U64,
+                )))
+            }
             CapturedTerm::Opaque if matches!(value.capture, CaptureId::ContractRead { .. }) => {
                 self.vocabulary.terms.interned(&TermKind::IndexCapture {
                     capture: value.capture,
@@ -1738,14 +1756,24 @@ impl Reasoning<'_, '_, '_> {
             }
             // A superseded binding's capture still names the value its
             // formation read, which is the immutable term the capture minted.
-            CapturedTerm::Binding(_) | CapturedTerm::Superseded(_)
-                if matches!(value.capture, CaptureId::Source(_)) =>
+            CapturedTerm::Binding(_)
+            | CapturedTerm::Superseded(_)
+            | CapturedTerm::Place(_)
+            | CapturedTerm::SupersededPlace(_)
+                if matches!(
+                    value.capture,
+                    CaptureId::Source(_) | CaptureId::ContractRead { .. }
+                ) =>
             {
                 self.vocabulary.terms.interned(&TermKind::IndexCapture {
                     capture: value.capture,
                 })
             }
-            CapturedTerm::Binding(_) | CapturedTerm::Superseded(_) | CapturedTerm::Opaque => None,
+            CapturedTerm::Binding(_)
+            | CapturedTerm::Superseded(_)
+            | CapturedTerm::Place(_)
+            | CapturedTerm::SupersededPlace(_)
+            | CapturedTerm::Opaque => None,
         }
     }
 
@@ -1755,8 +1783,8 @@ impl Reasoning<'_, '_, '_> {
         right: CapturedValue,
         state: &ProofFlowState,
     ) -> Option<ProofResult> {
-        let left_term = self.captured_index_term(left)?;
-        let right_term = self.captured_index_term(right)?;
+        let left_term = self.captured_index_term(left.clone())?;
+        let right_term = self.captured_index_term(right.clone())?;
         let (left_base, left_constant) = self.vocabulary.terms.constant_part(left_term);
         let (right_base, right_constant) = self.vocabulary.terms.constant_part(right_term);
         let (left_base, right_base, difference) = super::super::state::distinct_key(
@@ -1802,18 +1830,26 @@ impl Reasoning<'_, '_, '_> {
                 affine: None,
             },
         );
+        let current_place = |value: &CapturedValue| {
+            let mut place = match &value.term {
+                CapturedTerm::Binding(binding) => ResolvedPlace::binding(*binding),
+                CapturedTerm::Place(selector) => selector.place().clone(),
+                _ => return None,
+            };
+            Some(
+                if let Some(PlaceStep::Measure(measure)) = place.path.last().cloned() {
+                    place.path.pop();
+                    TermKind::Measure(measure, place)
+                } else {
+                    TermKind::Place(place, IntegerType::U64)
+                },
+            )
+        };
         if proof.disposition != ProofDisposition::Proved
-            && let (CapturedTerm::Binding(left_binding), CapturedTerm::Binding(right_binding)) =
-                (left.term, right.term)
+            && let Some((left_place, right_place)) = current_place(&left).zip(current_place(&right))
         {
-            let source_left = self.vocabulary.terms.intern(TermKind::Place(
-                ResolvedPlace::spelled(PlaceRoot::Binding(left_binding), false, Vec::new()),
-                super::super::super::model::IntegerType::U64,
-            ));
-            let source_right = self.vocabulary.terms.intern(TermKind::Place(
-                ResolvedPlace::spelled(PlaceRoot::Binding(right_binding), false, Vec::new()),
-                super::super::super::model::IntegerType::U64,
-            ));
+            let source_left = self.vocabulary.terms.intern(left_place);
+            let source_right = self.vocabulary.terms.intern(right_place);
             let source_relation = if source_left <= source_right {
                 Relation::Distinct {
                     left: source_left,
@@ -1928,8 +1964,8 @@ impl Reasoning<'_, '_, '_> {
         facts: &FactState,
         affine: &AffineFlowState,
     ) -> Option<ProofResult> {
-        let (left_start, left_end) = self.range_endpoint_images(left, affine)?;
-        let (right_start, right_end) = self.range_endpoint_images(right, affine)?;
+        let (left_start, left_end) = self.range_endpoint_images(left.clone(), affine)?;
+        let (right_start, right_end) = self.range_endpoint_images(right.clone(), affine)?;
         for (ordering, end, start) in [
             (
                 RangeSeparationOrdering::LeftBeforeRight,
@@ -1991,7 +2027,7 @@ impl Reasoning<'_, '_, '_> {
         if let Some(image) = affine.indices.get(&value.capture) {
             return Some(image.clone());
         }
-        let term = self.captured_index_term(value)?;
+        let term = self.captured_index_term(value.clone())?;
         self.vocabulary.affine_term_value(term, affine)
     }
 
@@ -2007,8 +2043,8 @@ impl Reasoning<'_, '_, '_> {
             return Some((image.start.clone(), image.end.clone()));
         }
         Some((
-            self.captured_value_image(range.start, affine)?,
-            self.captured_value_image(range.end, affine)?,
+            self.captured_value_image(range.start.clone(), affine)?,
+            self.captured_value_image(range.end.clone(), affine)?,
         ))
     }
 

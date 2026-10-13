@@ -293,14 +293,14 @@ pub(crate) enum ValueInitializerKind {
     ValueMatch,
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) struct NominalId(pub(crate) u32);
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Ord, PartialOrd)]
 pub(crate) struct CheckedConstantId(pub(crate) u32);
 
 /// One checker-interned symbolic const operation [`DerivedConst`].
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) struct DerivedConstId(pub(crate) u32);
 
 /// The five bare const-expression operations of the CONST-1 candidate
@@ -361,7 +361,7 @@ pub(crate) const fn evaluate_const_operation(
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) enum CheckedConst {
     Value(u64),
     Parameter(DeclarationId),
@@ -415,7 +415,7 @@ impl IntegerType {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) enum FloatType {
     F32,
     F64,
@@ -560,7 +560,7 @@ pub(crate) enum CheckedReleaseClass {
 /// the checked program.
 /// Structural children precede parents; recursive ownership graphs pass through
 /// nominal identities. The handle keeps every checked type compact and Copy.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) struct CheckedElement(pub(crate) u32);
 
 impl CheckedElement {
@@ -569,7 +569,7 @@ impl CheckedElement {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) enum CheckedType {
     Unit,
     Bool,
@@ -1912,11 +1912,11 @@ impl CheckedSegmentSelect {
     }
 
     /// The step this selection adds to the `Segments` place [REF-1].
-    pub(crate) const fn place_step(&self) -> super::places::PlaceStep {
+    pub(crate) fn place_step(&self) -> super::places::PlaceStep {
         match self {
-            Self::One(index) => super::places::PlaceStep::Index(index.captured),
-            Self::Page(index) => super::places::PlaceStep::Page(index.captured),
-            Self::All(range) => super::places::PlaceStep::Range(*range),
+            Self::One(index) => super::places::PlaceStep::Index(index.captured.clone()),
+            Self::Page(index) => super::places::PlaceStep::Page(index.captured.clone()),
+            Self::All(range) => super::places::PlaceStep::Range(range.clone()),
         }
     }
 }
@@ -1986,7 +1986,7 @@ impl CheckedRangeElementPlace {
             .place_path()
             .into_iter()
             .chain(std::iter::once(super::places::PlaceStep::Index(
-                self.captured,
+                self.captured.clone(),
             )))
             .chain(self.path.iter().map(CheckedPlaceStep::place_step))
             .collect()
@@ -1996,7 +1996,7 @@ impl CheckedRangeElementPlace {
         let mut place = self.root.proof_place();
         place
             .path
-            .push(super::places::PlaceStep::Index(self.captured));
+            .push(super::places::PlaceStep::Index(self.captured.clone()));
         place
             .path
             .extend(self.path.iter().map(CheckedPlaceStep::place_step));
@@ -2019,18 +2019,15 @@ impl CheckedRangeElementPlace {
     /// subscript first, then every nested one.
     pub(crate) fn subscripted_term(&self) -> Option<SubscriptedTerm> {
         SubscriptedTerm::of_offsets(
-            std::iter::once((&self.offset, self.captured)).chain(subscript_offsets(&self.path)),
+            std::iter::once((&self.offset, self.captured.clone()))
+                .chain(subscript_offsets(&self.path)),
         )
     }
 
-    /// [ENT-2] clause (b): whether this element place is a term because its
-    /// final step selects a readonly field of one fragment type. The range's
-    /// own subscript selects the element every later step starts from.
-    pub(crate) fn readonly_field_term(
-        &self,
-        nominals: &[CheckedNominal],
-    ) -> Option<SubscriptedTerm> {
-        if !selects_readonly_fragment_field(nominals, self.root.element_type, &self.path) {
+    /// [ENT-2(b)] a selected integer is an ordinary term when every
+    /// subscript offset is a tracked place or a constant.
+    pub(crate) fn integer_element_term(&self) -> Option<SubscriptedTerm> {
+        if !matches!(self.ty, CheckedType::Integer(_)) {
             return None;
         }
         self.subscripted_term()
@@ -2189,23 +2186,15 @@ impl CheckedContainerRoot {
         SubscriptedTerm::of_offsets(subscript_offsets(&self.path))
     }
 
-    /// [ENT-2] clause (b): whether this subscripted place is a term because
-    /// its final step selects a readonly field of one fragment type.
-    ///
-    /// Only the steps after the last subscript decide the final field; the
-    /// offsets of every subscript decide whether its identity is represented.
-    pub(crate) fn readonly_field_term(
-        &self,
-        nominals: &[CheckedNominal],
-    ) -> Option<SubscriptedTerm> {
-        let last = self
-            .path
-            .iter()
-            .rposition(|step| matches!(step, CheckedPlaceStep::Subscript(_)))?;
-        let CheckedPlaceStep::Subscript(index) = &self.path[last] else {
-            return None;
-        };
-        if !selects_readonly_fragment_field(nominals, index.element_type, &self.path[last + 1..]) {
+    /// [ENT-2(b)] the selected value may be an integer element or any
+    /// integer descendant; admission depends on every written offset.
+    pub(crate) fn integer_element_term(&self) -> Option<SubscriptedTerm> {
+        if !matches!(self.ty, CheckedType::Integer(_))
+            || !self
+                .path
+                .iter()
+                .any(|step| matches!(step, CheckedPlaceStep::Subscript(_)))
+        {
             return None;
         }
         self.subscripted_term()
@@ -2225,7 +2214,7 @@ fn subscript_offsets(
     path: &[CheckedPlaceStep],
 ) -> impl Iterator<Item = (&CheckedExpression, super::places::CapturedValue)> {
     path.iter().filter_map(|step| match step {
-        CheckedPlaceStep::Subscript(index) => Some((&index.offset, index.captured)),
+        CheckedPlaceStep::Subscript(index) => Some((&index.offset, index.captured.clone())),
         CheckedPlaceStep::Field(_)
         | CheckedPlaceStep::BoxReferent(_)
         | CheckedPlaceStep::Measure(_) => None,
@@ -2242,10 +2231,6 @@ pub(crate) enum SubscriptedTerm {
     /// Every offset is a captured literal, const or binding [REF-1], so the
     /// place has the term identity the entailment fragment interns.
     Represented,
-    /// An offset is a tracked place with projections, which ENT-2 admits but
-    /// no captured value names. This is a compiler capability limit, reported
-    /// as unsupported, not a language rejection [DIAG-1].
-    Unrepresented,
 }
 
 impl SubscriptedTerm {
@@ -2253,86 +2238,10 @@ impl SubscriptedTerm {
     fn of_offsets<'offset>(
         offsets: impl IntoIterator<Item = (&'offset CheckedExpression, super::places::CapturedValue)>,
     ) -> Option<Self> {
-        let mut term = Self::Represented;
-        for (offset, captured) in offsets {
-            if captured != super::places::CapturedValue::unknown() {
-                continue;
-            }
-            if !is_tracked_place_read(offset) {
-                return None;
-            }
-            term = Self::Unrepresented;
+        for (offset, _) in offsets {
+            offset.tracked_offset()?;
         }
-        Some(term)
-    }
-}
-
-/// Whether `steps`, read from a value of type `start`, end by selecting a
-/// readonly field [TYPE-2] whose type is one fragment integer [ENT-2].
-fn selects_readonly_fragment_field(
-    nominals: &[CheckedNominal],
-    start: CheckedType,
-    steps: &[CheckedPlaceStep],
-) -> bool {
-    let struct_field = |ty: CheckedType, field: u32| {
-        let CheckedType::Nominal(nominal) = ty else {
-            return None;
-        };
-        let CheckedNominalKind::Struct { fields } = &nominals.get(nominal.0 as usize)?.kind else {
-            return None;
-        };
-        fields.get(field as usize)
-    };
-    let Some((last, prefix)) = steps.split_last() else {
-        return false;
-    };
-    let mut ty = start;
-    for step in prefix {
-        ty = match step {
-            CheckedPlaceStep::Subscript(index) => index.element_type,
-            CheckedPlaceStep::Measure(_) => return false,
-            CheckedPlaceStep::Field(field) => match struct_field(ty, *field) {
-                Some(field) => field.ty,
-                None => return false,
-            },
-            CheckedPlaceStep::BoxReferent(nominal) => {
-                match nominals
-                    .get(nominal.0 as usize)
-                    .map(|nominal| &nominal.kind)
-                {
-                    Some(CheckedNominalKind::Box { referent, .. }) => *referent,
-                    _ => return false,
-                }
-            }
-        };
-    }
-    match last {
-        CheckedPlaceStep::Field(field) => struct_field(ty, *field)
-            .is_some_and(|field| field.readonly && matches!(field.ty, CheckedType::Integer(_))),
-        CheckedPlaceStep::Measure(measure) => ty
-            .measured()
-            .is_some_and(|measured| !matches!(measure.cell(measured), MeasureCell::Absent)),
-        _ => false,
-    }
-}
-
-/// Whether one checked offset reads an [ENT-2] clause (a) tracked place:
-/// a binding, possibly below field selections, `^` suffixes and `Box`
-/// content, with no subscript.
-fn is_tracked_place_read(offset: &CheckedExpression) -> bool {
-    match offset {
-        CheckedExpression::Binding {
-            consume_root: false,
-            ..
-        }
-        | CheckedExpression::Project {
-            consume_root: false,
-            ..
-        }
-        | CheckedExpression::DerefAddressed { .. } => true,
-        CheckedExpression::BoxDeref { value, .. }
-        | CheckedExpression::ProjectValue { value, .. } => is_tracked_place_read(value),
-        _ => false,
+        Some(Self::Represented)
     }
 }
 
@@ -2359,7 +2268,7 @@ impl CheckedPlaceStep {
             Self::Field(field) => super::places::PlaceStep::Field(*field),
             Self::Measure(measure) => super::places::PlaceStep::Measure(*measure),
             Self::BoxReferent(_) => super::places::PlaceStep::Deref,
-            Self::Subscript(index) => super::places::PlaceStep::Index(index.captured),
+            Self::Subscript(index) => super::places::PlaceStep::Index(index.captured.clone()),
         }
     }
 }
@@ -2676,7 +2585,183 @@ pub(crate) enum CheckedExpression {
     },
 }
 
+impl CheckedArrayRoot {
+    pub(crate) fn proof_place(&self) -> super::places::ResolvedPlace {
+        use super::places::{PlaceRoot, ResolvedPlace};
+        match self {
+            Self::Binding { binding, fields } => ResolvedPlace::fields(*binding, fields.clone()),
+            Self::Constant(constant) => ResolvedPlace {
+                root: PlaceRoot::Constant(*constant),
+                path: Vec::new(),
+                atomic_aliases: Vec::new(),
+            },
+        }
+    }
+}
+
 impl CheckedExpression {
+    /// ENT-2(a,c) offsets retain their ordinary proof-place identity; this
+    /// excludes a written subscript or computation even when its value is
+    /// an integer. Reference proof paths may themselves select storage.
+    pub(crate) fn tracked_offset(&self) -> Option<super::places::CapturedTerm> {
+        use super::places::{CapturedTerm, PlaceRoot, PlaceStep, ResolvedPlace};
+        match self {
+            Self::Constant(CheckedValue::Integer { bits, .. })
+            | Self::NamedConstant {
+                value: CheckedValue::Integer { bits, .. },
+                ..
+            } => return Some(CapturedTerm::Literal(*bits)),
+            Self::Constant(CheckedValue::ConstGeneric { declaration, .. }) => {
+                return Some(CapturedTerm::Const(*declaration));
+            }
+            _ => {}
+        }
+        fn place(expression: &CheckedExpression) -> Option<ResolvedPlace> {
+            match expression {
+                CheckedExpression::NamedConstant { constant, .. } => Some(ResolvedPlace {
+                    root: PlaceRoot::Constant(*constant),
+                    path: Vec::new(),
+                    atomic_aliases: Vec::new(),
+                }),
+                CheckedExpression::Binding {
+                    binding,
+                    consume_root: false,
+                    ..
+                } => Some(ResolvedPlace::binding(*binding)),
+                CheckedExpression::Project {
+                    binding,
+                    fields,
+                    consume_root: false,
+                    ..
+                } => {
+                    let mut place = ResolvedPlace::binding(*binding);
+                    place
+                        .path
+                        .extend(fields.iter().copied().map(PlaceStep::Field));
+                    Some(place)
+                }
+                CheckedExpression::DerefAddressed { binding, proof, .. } => Some(
+                    proof
+                        .clone()
+                        .unwrap_or_else(|| ResolvedPlace::binding(*binding)),
+                ),
+                CheckedExpression::BoxDeref { value, .. } => {
+                    let mut selected = place(value)?;
+                    selected.path.push(PlaceStep::Deref);
+                    Some(selected)
+                }
+                CheckedExpression::ProjectValue { value, field, .. } => {
+                    let mut selected = place(value)?;
+                    selected.path.push(PlaceStep::Field(*field));
+                    Some(selected)
+                }
+                CheckedExpression::ArrayMeasure { measure, root, .. }
+                    if *measure != CheckedMeasure::Pages =>
+                {
+                    let mut selected = root.proof_place();
+                    selected.path.push(PlaceStep::Measure(*measure));
+                    Some(selected)
+                }
+                CheckedExpression::BufferMeasure { measure, root }
+                    if *measure != CheckedMeasure::Pages
+                        && !root
+                            .path
+                            .iter()
+                            .any(|step| matches!(step, CheckedPlaceStep::Subscript(_))) =>
+                {
+                    let mut selected = root.proof_place();
+                    selected.path.push(PlaceStep::Measure(*measure));
+                    Some(selected)
+                }
+                CheckedExpression::ContainerMeasure { measure, root }
+                    if *measure != CheckedMeasure::Pages
+                        && !root
+                            .path
+                            .iter()
+                            .any(|step| matches!(step, CheckedPlaceStep::Subscript(_))) =>
+                {
+                    let mut selected = root.proof_place();
+                    selected.path.push(PlaceStep::Measure(*measure));
+                    Some(selected)
+                }
+                CheckedExpression::RangeMeasure { measure, root }
+                    if *measure != CheckedMeasure::Pages && root.formation.is_none() =>
+                {
+                    let mut selected = root.proof_place();
+                    selected.path.push(PlaceStep::Measure(*measure));
+                    Some(selected)
+                }
+                CheckedExpression::ReadStorage { root, .. }
+                    if !root
+                        .path
+                        .iter()
+                        .any(|step| matches!(step, CheckedPlaceStep::Subscript(_))) =>
+                {
+                    Some(root.proof_place())
+                }
+                _ => None,
+            }
+        }
+        if !matches!(self.ty(), CheckedType::Integer(_)) {
+            return None;
+        }
+        let selected = place(self)?.term_identity();
+        match (selected.root, selected.path.as_slice()) {
+            (PlaceRoot::Binding(binding), []) => Some(CapturedTerm::Binding(binding)),
+            _ => Some(CapturedTerm::Place(super::places::ProjectedSelector::new(
+                selected,
+            ))),
+        }
+    }
+
+    /// One admitted integer element's canonical place, shared by ordinary
+    /// operand reads and declaration-contract actual substitution.
+    pub(crate) fn integer_element_proof_place(&self) -> Option<super::places::ResolvedPlace> {
+        use super::places::{CapturedValue, PlaceStep};
+        self.integer_element_term()?;
+        match self {
+            Self::ReadStorage { root, .. } => Some(root.proof_place()),
+            Self::RangeIndex { place, .. } => Some(place.proof_place()),
+            Self::ArrayIndex { root, offset, .. } => {
+                let mut place = root.proof_place();
+                place.path.push(PlaceStep::Index(
+                    CapturedValue::new(CapturedValue::unknown().capture, offset.tracked_offset()?)
+                        .goal_identity(),
+                ));
+                Some(place)
+            }
+            Self::BufferIndex { root, offset, .. } => {
+                let mut place = root.proof_place();
+                place.path.push(PlaceStep::Index(
+                    CapturedValue::new(CapturedValue::unknown().capture, offset.tracked_offset()?)
+                        .goal_identity(),
+                ));
+                Some(place)
+            }
+            _ => None,
+        }
+    }
+
+    pub(crate) fn integer_element_term(&self) -> Option<SubscriptedTerm> {
+        if !matches!(self.ty(), CheckedType::Integer(_)) {
+            return None;
+        }
+        match self {
+            Self::ReadStorage { root, .. } => root.integer_element_term(),
+            Self::RangeIndex { place, .. } => place.integer_element_term(),
+            Self::ArrayIndex { offset, .. } => offset
+                .tracked_offset()
+                .map(|_| SubscriptedTerm::Represented),
+            Self::BufferIndex { root, offset, .. } => {
+                root.subscripted_term()?;
+                offset
+                    .tracked_offset()
+                    .map(|_| SubscriptedTerm::Represented)
+            }
+            _ => None,
+        }
+    }
+
     /// Exact PRV-1 carrier node for a positive explicit-dataflow edge.
     pub(crate) const fn carrier(&self) -> Option<&NodePath> {
         match self {
@@ -3310,7 +3395,7 @@ pub(crate) struct CheckedReferencePreservationUse {
     pub(crate) event: &'static str,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum CheckedCallSeparationPositions {
     Indices(super::places::CapturedValue, super::places::CapturedValue),
     Ranges(super::places::CapturedRange, super::places::CapturedRange),
@@ -3340,12 +3425,12 @@ impl CheckedCallSeparationPositions {
     /// endpoint the marker is unnamed. A candidate reading an unnamed value
     /// is never proved, and a pair with no other candidate is one no named
     /// position separates [EFF-5, OWN-7].
-    pub(crate) fn names_its_values(self) -> bool {
-        let named = |value: super::places::CapturedValue| {
-            value != super::places::CapturedValue::unknown()
+    pub(crate) fn names_its_values(&self) -> bool {
+        let named = |value: &super::places::CapturedValue| {
+            *value != super::places::CapturedValue::unknown()
         };
         let named_range =
-            |range: super::places::CapturedRange| named(range.start) && named(range.end);
+            |range: &super::places::CapturedRange| named(&range.start) && named(&range.end);
         match self {
             Self::Indices(left, right) => named(left) && named(right),
             Self::Ranges(left, right) => named_range(left) && named_range(right),

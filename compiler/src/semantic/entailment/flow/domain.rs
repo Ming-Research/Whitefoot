@@ -8,7 +8,6 @@ struct ProjectionEndpoint {
     ty: CheckedType,
     run: bool,
     indexed: bool,
-    readonly: bool,
     represented: bool,
 }
 
@@ -47,6 +46,11 @@ impl Input<'_, '_> {
     /// deref. [ENT-2] distinguishes those canonical spellings.
     pub(super) fn read_place_path(&self, expression: &CheckedExpression) -> Option<ResolvedPlace> {
         match expression {
+            CheckedExpression::NamedConstant { constant, .. } => Some(ResolvedPlace {
+                root: PlaceRoot::Constant(*constant),
+                path: Vec::new(),
+                atomic_aliases: Vec::new(),
+            }),
             CheckedExpression::Binding { binding, .. } => Some(ResolvedPlace {
                 atomic_aliases: Vec::new(),
                 root: PlaceRoot::Binding(*binding),
@@ -85,24 +89,7 @@ impl Input<'_, '_> {
                 path.path.push(PlaceStep::Field(*field));
                 Some(path)
             }
-            // [ENT-2] clause (b): a subscripted place is a term exactly when
-            // its final step selects a readonly field of one fragment type.
-            // Its offsets are part of its identity, so only a place whose
-            // every offset was captured is one; the measure former keeps its
-            // own row in `measure_operand`.
-            CheckedExpression::ReadStorage { root, .. }
-                if root.readonly_field_term(self.context.nominals)
-                    == Some(SubscriptedTerm::Represented) =>
-            {
-                Some(container_root_path(root))
-            }
-            CheckedExpression::RangeIndex { place, .. }
-                if place.readonly_field_term(self.context.nominals)
-                    == Some(SubscriptedTerm::Represented) =>
-            {
-                Some(place.proof_place())
-            }
-            _ => None,
+            _ => expression.integer_element_proof_place(),
         }
     }
 
@@ -135,14 +122,7 @@ impl Input<'_, '_> {
             // prior type, so an untyped default cannot hide a new subscript.
             return projections.is_empty();
         };
-        self.typed_integer_place_admitted(
-            ty,
-            admission.root_is_range,
-            false,
-            true,
-            false,
-            &projections,
-        )
+        self.typed_integer_place_admitted(ty, admission.root_is_range, false, true, &projections)
     }
 
     fn written_integer_place_admitted(
@@ -151,28 +131,22 @@ impl Input<'_, '_> {
         root_is_range: bool,
         projections: &[PlaceStep],
     ) -> bool {
-        let (indexed, offsets, readonly) = match target {
-            CheckedSetTarget::Place(_) => (false, None, None),
+        let (indexed, offsets) = match target {
+            CheckedSetTarget::Place(_) => (false, None),
             CheckedSetTarget::Storage(place) => (
                 place
                     .path
                     .iter()
                     .any(|step| matches!(step, CheckedPlaceStep::Subscript(_))),
                 place.subscripted_term(),
-                place.readonly_field_term(self.context.nominals),
             ),
-            CheckedSetTarget::RangeIndex(place) => (
-                true,
-                place.subscripted_term(),
-                place.readonly_field_term(self.context.nominals),
-            ),
+            CheckedSetTarget::RangeIndex(place) => (true, place.subscripted_term()),
         };
         self.typed_integer_place_admitted(
             target.ty(),
             root_is_range,
             indexed,
             !indexed || offsets == Some(SubscriptedTerm::Represented),
-            readonly == Some(SubscriptedTerm::Represented),
             projections,
         )
     }
@@ -186,7 +160,6 @@ impl Input<'_, '_> {
         run: bool,
         indexed: bool,
         represented: bool,
-        base_readonly: bool,
         projections: &[PlaceStep],
     ) -> bool {
         let Some(endpoint) = self.projection_endpoint(
@@ -194,15 +167,13 @@ impl Input<'_, '_> {
                 ty,
                 run,
                 indexed,
-                readonly: base_readonly,
                 represented,
             },
             projections,
         ) else {
             return false;
         };
-        endpoint.represented
-            && (!endpoint.indexed || (endpoint.readonly && fragment_type(endpoint.ty).is_some()))
+        endpoint.represented && (!endpoint.indexed || fragment_type(endpoint.ty).is_some())
     }
 
     pub(super) fn goal_expression_projection_type(
@@ -217,7 +188,6 @@ impl Input<'_, '_> {
             ty: datum.ty(),
             run: false,
             indexed: false,
-            readonly: false,
             represented: true,
         };
         if let Some(admission) = datum.admission() {
@@ -254,7 +224,6 @@ impl Input<'_, '_> {
                     .unwrap_or(default_type),
                 run: admission.root_is_range,
                 indexed: false,
-                readonly: false,
                 represented: true,
             },
             &suffix,
@@ -349,11 +318,15 @@ impl Input<'_, '_> {
         let represented = |offset: &CapturedValue| {
             matches!(
                 offset.term,
-                CapturedTerm::Literal(_) | CapturedTerm::Const(_) | CapturedTerm::Binding(_)
+                CapturedTerm::Literal(_)
+                    | CapturedTerm::Const(_)
+                    | CapturedTerm::Binding(_)
+                    | CapturedTerm::Place(_)
+                    | CapturedTerm::Superseded(_)
+                    | CapturedTerm::SupersededPlace(_)
             )
         };
         for step in projections {
-            endpoint.readonly = false;
             match step {
                 PlaceStep::Index(offset) | PlaceStep::Page(offset) => {
                     endpoint.indexed = true;
@@ -383,18 +356,17 @@ impl Input<'_, '_> {
                     };
                     let field = fields.get(*field as usize)?;
                     endpoint.ty = field.ty;
-                    endpoint.readonly = field.readonly;
                     endpoint.run = false;
                 }
                 PlaceStep::Deref => {
-                    if let Some(next) = self.owned_path_type(endpoint.ty, &[*step]) {
+                    if let Some(next) = self.owned_path_type(endpoint.ty, &[step.clone()]) {
                         endpoint.ty = next;
                         endpoint.run = false;
                     }
                     // Borrow images already carry their referent type.
                 }
                 PlaceStep::Payload { .. } => {
-                    endpoint.ty = self.owned_path_type(endpoint.ty, &[*step])?;
+                    endpoint.ty = self.owned_path_type(endpoint.ty, &[step.clone()])?;
                     endpoint.run = false;
                 }
                 // [OP-15, MSR-1] a measure is a readonly u64 field of the
@@ -402,7 +374,6 @@ impl Input<'_, '_> {
                 // subscript as it admits `table[i].len`.
                 PlaceStep::Measure(_) => {
                     endpoint.ty = CheckedType::Integer(IntegerType::U64);
-                    endpoint.readonly = true;
                     endpoint.run = false;
                 }
                 _ => return None,
@@ -662,7 +633,8 @@ impl Vocabulary {
         let kept_all = |terms: &[AffineCoefficient]| terms.iter().all(|each| kept(each.term()));
         self.product_atoms
             .retain(|product, (left, right)| kept(*product) && kept(*left) && kept(*right));
-        self.handle_images.retain(|handle, image| kept(*handle) && kept_all(image.terms()));
+        self.handle_images
+            .retain(|handle, image| kept(*handle) && kept_all(image.terms()));
         self.power_atoms
             .retain(|(amount, _), power| kept_all(amount.terms()) && kept_all(power.terms()));
         self.unsigned_divisions.retain(|division| {
@@ -838,7 +810,7 @@ impl Reasoning<'_, '_, '_> {
         // [ENT-2, MSR-2] an exact scalar reference to a descriptor field
         // retains that field's standing bounds as well as its term identity.
         if fragment == IntegerType::U64
-            && let Some(PlaceStep::Measure(measure)) = path.path.last().copied()
+            && let Some(PlaceStep::Measure(measure)) = path.path.last().cloned()
         {
             let mut base = path.clone();
             base.path.pop();
@@ -1338,7 +1310,7 @@ impl Judging<'_, '_, '_> {
                     states
                         .iter()
                         .skip(1)
-                        .all(|state| state.affine.ranges.get(id) == Some(*range))
+                        .all(|state| state.affine.ranges.get(id) == Some(range.clone()))
                 })
                 .map(|(id, range)| (*id, range.clone()))
                 .collect(),

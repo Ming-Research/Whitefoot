@@ -452,7 +452,10 @@ impl Input<'_, '_> {
                 if place.subscripted_term() == Some(SubscriptedTerm::Represented) =>
             {
                 let measured = place.measured()?;
-                let argument = self.goal_place_datum(&place.proof_place(), place.ty)?;
+                let mut argument = self.goal_place_datum(&place.proof_place(), place.ty)?;
+                if let GoalExpression::Datum(datum) = &mut argument {
+                    *datum.admission_mut()? = GoalAdmission::written(CheckedSetTarget::RangeIndex(place.clone()));
+                }
                 build_operation(
                     GoalOperation::ContainerMeasure {
                         measure: *measure,
@@ -639,6 +642,43 @@ impl Input<'_, '_> {
         self.body_goal_expression(&requirement.template.root)
     }
 
+    /// [ENT-2, FN-8, FN-9] instantiate a clause's selectors using this
+    /// body's parameter bindings, retaining their ordinary mutable support.
+    pub(super) fn body_clause_projections(
+        &self,
+        root: PlaceRoot,
+        projections: &[GoalProjection],
+    ) -> Option<Vec<GoalProjection>> {
+        self.body_projections(root, projections)
+            .iter()
+            .map(|projection| match projection {
+                GoalProjection::FormalSubscript {
+                    ordinal,
+                    projections,
+                }
+                | GoalProjection::FormalPage {
+                    ordinal,
+                    projections,
+                } => {
+                    let selector =
+                        self.body_goal_expression(&GoalExpression::Datum(GoalDatum::Parameter {
+                            ordinal: *ordinal,
+                            projections: projections.clone(),
+                            ty: CheckedType::Integer(IntegerType::U64),
+                        }))?;
+                    let offset = selector
+                        .captured_offset(self.context.constant_ids, self.context.constants)?;
+                    Some(if matches!(projection, GoalProjection::FormalPage { .. }) {
+                        GoalProjection::Page(offset)
+                    } else {
+                        GoalProjection::Subscript(offset)
+                    })
+                }
+                other => Some(other.clone()),
+            })
+            .collect()
+    }
+
     pub(super) fn body_goal_expression(
         &self,
         expression: &GoalExpression,
@@ -651,35 +691,8 @@ impl Input<'_, '_> {
             }) => {
                 let parameter = self.function.parameters.get(*ordinal as usize)?;
                 let binding = parameter.binding;
-                // [MSR-1, ENT-2] a formal-valued subscript names a value
-                // parameter of this same callable, so inside the body it is
-                // that parameter's own binding: `rows^[i].len` written
-                // in the clause and written in the body are one term because
-                // their canonical spellings are byte-identical there.
-                let projections = self
-                    .body_projections(PlaceRoot::Binding(binding), projections)
-                    .iter()
-                    .map(|projection| match projection {
-                        GoalProjection::FormalSubscript { ordinal }
-                        | GoalProjection::FormalPage { ordinal } => self
-                            .function
-                            .parameters
-                            .get(*ordinal as usize)
-                            .map(|offset| {
-                                let offset = CapturedValue::new(
-                                    CaptureId::source(u32::MAX),
-                                    CapturedTerm::Binding(offset.binding),
-                                )
-                                .goal_identity();
-                                if matches!(projection, GoalProjection::FormalPage { .. }) {
-                                    GoalProjection::Page(offset)
-                                } else {
-                                    GoalProjection::Subscript(offset)
-                                }
-                            }),
-                        other => Some(*other),
-                    })
-                    .collect::<Option<Vec<_>>>()?;
+                let projections =
+                    self.body_clause_projections(PlaceRoot::Binding(binding), projections)?;
                 let mut admission = if parameter.mode.is_range() {
                     GoalAdmission::plain_range(parameter.ty)
                 } else {
@@ -688,6 +701,24 @@ impl Input<'_, '_> {
                 admission.projections = projections.clone();
                 Some(GoalExpression::Datum(GoalDatum::Place {
                     root: binding,
+                    projections,
+                    ty: *ty,
+                    admission,
+                }))
+            }
+            GoalExpression::Datum(GoalDatum::NamedConst {
+                declaration,
+                projections,
+                ty,
+                admission,
+            }) => {
+                let root = PlaceRoot::Constant(*self.context.constant_ids.get(declaration)?);
+                let projections = self.body_clause_projections(root, projections)?;
+                let mut admission = admission.clone();
+                admission.projections =
+                    self.body_clause_projections(root, &admission.projections)?;
+                Some(GoalExpression::Datum(GoalDatum::NamedConst {
+                    declaration: *declaration,
                     projections,
                     ty: *ty,
                     admission,
@@ -1037,11 +1068,11 @@ impl Reasoning<'_, '_, '_> {
                 for projection in projections {
                     let Some(result) = self
                         .input
-                        .goal_expression_projection_type(&expanded, *projection)
+                        .goal_expression_projection_type(&expanded, projection.clone())
                     else {
                         return expression.clone();
                     };
-                    let Some(next) = expanded.with_projection(*projection, result) else {
+                    let Some(next) = expanded.with_projection(projection.clone(), result) else {
                         return expression.clone();
                     };
                     expanded = next;
@@ -1754,25 +1785,7 @@ impl Judging<'_, '_, '_> {
 /// effect vocabulary, not a value projection. Support may conservatively
 /// widen to a prefix, but a value identity must never be shortened that way.
 pub(super) fn goal_projection_of_step(step: &PlaceStep) -> Option<GoalProjection> {
-    match step {
-        PlaceStep::Deref => Some(GoalProjection::Deref),
-        PlaceStep::Measure(measure) => Some(GoalProjection::Measure(*measure)),
-        PlaceStep::Field(field) => Some(GoalProjection::Field(*field)),
-        PlaceStep::Payload { variant, field } => Some(GoalProjection::Payload {
-            variant: *variant,
-            field: *field,
-        }),
-        PlaceStep::Index(offset) => Some(GoalProjection::Subscript(offset.goal_identity())),
-        // [ENT-2] retain the supplied page identity: borrowed pages carry
-        // their formation capture; direct selectors are already canonical.
-        PlaceStep::Page(offset) => Some(GoalProjection::Page(*offset)),
-        // [REF-4] a range step's endpoint captures identify the formation
-        // whose immutable affine image gives the anonymous range its length.
-        // Canonicalizing those captures by endpoint spelling would merge two
-        // formations that read the same binding at different times.
-        PlaceStep::Range(range) => Some(GoalProjection::Range(*range)),
-        PlaceStep::Part(_) | PlaceStep::Descendant(_) => None,
-    }
+    GoalProjection::from_place_step(step)
 }
 
 /// Replaces one occurrence-local FN-8 actual with the same admitted
@@ -1809,7 +1822,7 @@ pub(super) fn admitted_call_goal_expression(
                 return GoalExpression::Datum(original.clone());
             };
             for projection in projections {
-                let Some(projected) = admitted.with_projection(*projection, *ty) else {
+                let Some(projected) = admitted.with_projection(projection.clone(), *ty) else {
                     return GoalExpression::Datum(original.clone());
                 };
                 admitted = projected;
@@ -1943,7 +1956,7 @@ pub(super) fn substituted_steps(
     let offset = |declaration: &crate::DeclarationId| {
         offsets
             .get(declaration)
-            .copied()
+            .cloned()
             .unwrap_or_else(CapturedValue::unknown)
     };
     steps
@@ -1987,7 +2000,7 @@ pub(super) fn substituted_offsets(
     };
     for (declaration, capture) in callee.parameter_declarations.iter().zip(captures) {
         if !matches!(capture.term, CapturedTerm::Opaque) {
-            offsets.insert(*declaration, *capture);
+            offsets.insert(*declaration, capture.clone());
         }
     }
     offsets

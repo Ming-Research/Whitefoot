@@ -479,23 +479,31 @@ impl Vocabulary {
         Some(self.terms.intern(kind))
     }
 
-    /// [ENT-3.S5] admits direct scalar places, including fields and Box
-    /// content reached through a reference. A subscript anywhere in the
-    /// path excludes a commit image, even if its offset is a literal.
+    /// [ENT-3.S5] an admitted integer target receives the existing commit
+    /// value, including a subscripted destination. This creates no affine
+    /// element image or conditional aggregate destination.
     pub(super) fn commit_target_term(&mut self, target: &CheckedSetTarget) -> Option<TermId> {
         match target {
             CheckedSetTarget::Place(target) => {
                 self.writable_place_term(target.binding, &target.fields, target.ty)
             }
             CheckedSetTarget::Storage(target)
-                if !target
-                    .path
-                    .iter()
-                    .any(|step| matches!(step, CheckedPlaceStep::Subscript(_))) =>
+                if target.subscripted_term() == Some(SubscriptedTerm::Represented) =>
             {
                 let fragment = fragment_type(target.ty)?;
-                let place = container_root_path(target);
-                Some(self.terms.intern(TermKind::Place(place, fragment)))
+                Some(
+                    self.terms
+                        .intern(TermKind::Place(container_root_path(target), fragment)),
+                )
+            }
+            CheckedSetTarget::RangeIndex(target)
+                if target.integer_element_term() == Some(SubscriptedTerm::Represented) =>
+            {
+                let fragment = fragment_type(target.ty)?;
+                Some(
+                    self.terms
+                        .intern(TermKind::Place(target.proof_place(), fragment)),
+                )
             }
             _ => None,
         }
@@ -736,7 +744,7 @@ impl Reasoning<'_, '_, '_> {
             };
             let constant = super::type_constant(measured_type);
             let mut place = source.clone();
-            place.path.extend(path.iter().copied());
+            place.path.extend(path.iter().cloned());
             let event = self
                 .vocabulary
                 .proof_event(FlowEventKind::S5, Some(node_path));
@@ -788,7 +796,7 @@ impl Reasoning<'_, '_, '_> {
                 continue;
             }
             let mut place = source.clone();
-            place.path.extend(path.iter().copied());
+            place.path.extend(path.iter().cloned());
             let Some(live) = self
                 .vocabulary
                 .terms
@@ -1140,7 +1148,7 @@ impl Reasoning<'_, '_, '_> {
             .proof_event(FlowEventKind::S5, Some(node_path));
         for carried in &carry.carried {
             let mut place = destination.clone();
-            place.path.extend(carried.path.iter().copied());
+            place.path.extend(carried.path.iter().cloned());
             for (measure, datum) in MEASURES
                 .into_iter()
                 .filter(|measure| {
@@ -1170,14 +1178,14 @@ impl Reasoning<'_, '_, '_> {
                 let projections = prefix
                     .iter()
                     .chain(&value.path)
-                    .copied()
+                    .cloned()
                     .collect::<Vec<_>>();
                 if !self.input.set_integer_place_admitted(target, &projections) {
                     continue;
                 }
             }
             let mut place = destination.clone();
-            place.path.extend(value.path.iter().copied());
+            place.path.extend(value.path.iter().cloned());
             let left = self
                 .vocabulary
                 .terms
@@ -1219,19 +1227,27 @@ impl Vocabulary {
     /// about the old target value; this equality names that evaluated value,
     /// so an arithmetic or other computed right-hand side carries its own
     /// image across the write exactly as an intervening `let` would. Only a
-    /// direct fragment place receives it; indexed storage establishes
-    /// nothing, since one element write is no image of the whole collection.
+    /// admitted fragment place receives it, at the target evaluated before
+    /// RHS effects rather than a later selector value.
     pub(super) fn establish_commit_copy_fact(
         &mut self,
         node_path: &crate::NodePath,
         target: &CheckedSetTarget,
+        captured_destination: Option<&ResolvedPlace>,
         commit: TermId,
         state: &mut FactState,
         event: &mut Option<(FlowEventKind, FlowEventId)>,
     ) {
-        let Some(destination) = self.commit_target_term(target) else {
+        if self.commit_target_term(target).is_none() {
+            return;
+        }
+        let Some(place) = captured_destination else {
             return;
         };
+        let Some(fragment) = fragment_type(target.ty()) else {
+            return;
+        };
+        let destination = self.terms.intern(TermKind::Place(place.clone(), fragment));
         self.establish_copy_equality(node_path, destination, commit, state, event);
     }
 }
@@ -2015,8 +2031,7 @@ impl Vocabulary {
         let mut image = FactState::new();
         for (relation, parent) in carried {
             if let Relation::Bound { left, right, bound } = relation {
-                let through_zero = if receiver_term(&self.terms, left, receiver) && right != ZERO
-                {
+                let through_zero = if receiver_term(&self.terms, left, receiver) && right != ZERO {
                     zero_bounds
                         .get(&(left, ZERO))
                         .copied()
@@ -2965,8 +2980,8 @@ impl Reasoning<'_, '_, '_> {
     ) {
         for (step, carry) in carried {
             let mut destination = base.clone();
-            destination.path.push(*step);
-            let prefix = [*step];
+            destination.path.push(step.clone());
+            let prefix = [step.clone()];
             let written = target.map(|target| (target, prefix.as_slice()));
             self.establish_measure_datums(node_path, destination, written, carry, state);
         }
@@ -3337,9 +3352,12 @@ impl Analyzer<'_, '_> {
                 &self.vocabulary.goals,
                 &mut self.vocabulary.derivations,
             );
-            let fallback =
-                self.vocabulary
-                    .receiver_delivery_state(&ordinary, context.statement, receiver, event);
+            let fallback = self.vocabulary.receiver_delivery_state(
+                &ordinary,
+                context.statement,
+                receiver,
+                event,
+            );
             delivered.merge_relation_candidates_from(&fallback, &self.vocabulary.derivations);
         }
         let mut image = ProofFlowState {

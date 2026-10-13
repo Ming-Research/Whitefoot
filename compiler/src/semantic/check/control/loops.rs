@@ -1516,22 +1516,12 @@ impl<'unit> TypeContext<'unit> {
             CheckedExpression::BufferMeasure { root, .. } => root.subscripted_term(),
             CheckedExpression::ContainerMeasure { root, .. } => root.subscripted_term(),
             CheckedExpression::RangeElementMeasure { place, .. } => place.subscripted_term(),
-            CheckedExpression::ReadStorage { root, .. } => root.readonly_field_term(&self.nominals),
-            CheckedExpression::RangeIndex { place, .. } => {
-                place.readonly_field_term(&self.nominals)
-            }
+            CheckedExpression::ReadStorage { root, .. } => root.integer_element_term(),
+            CheckedExpression::RangeIndex { place, .. } => place.integer_element_term(),
             _ => None,
         };
         match term {
             Some(SubscriptedTerm::Represented) => return Ok(true),
-            // A tracked-place offset with projections is admitted by ENT-2
-            // but names no captured value in this compiler: the place is not
-            // rejected, it is not represented [DIAG-1].
-            Some(SubscriptedTerm::Unrepresented) => {
-                return self
-                    .declarations
-                    .unsupported(UnsupportedSemanticFeature::CompositeValues, node);
-            }
             // A measure over a place with any other offset is no term.
             None if matches!(
                 endpoint,

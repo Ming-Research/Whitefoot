@@ -158,11 +158,14 @@ impl Checker<'_, '_> {
                 let complete = place.path.iter().all(|step| match step {
                     PlaceStep::Descendant(_) => false,
                     PlaceStep::Index(value) | PlaceStep::Page(value) => {
-                        self.captured_parameter(*value, bindings).is_some()
+                        self.captured_parameter(value.clone(), bindings).is_some()
                     }
                     PlaceStep::Range(range) => {
-                        self.captured_parameter(range.start, bindings).is_some()
-                            && self.captured_parameter(range.end, bindings).is_some()
+                        self.captured_parameter(range.start.clone(), bindings)
+                            .is_some()
+                            && self
+                                .captured_parameter(range.end.clone(), bindings)
+                                .is_some()
                     }
                     _ => true,
                 });
@@ -186,7 +189,7 @@ impl Checker<'_, '_> {
                 bases,
                 offset: captures
                     .get(index)
-                    .and_then(|value| self.captured_parameter(*value, bindings)),
+                    .and_then(|value| self.captured_parameter(value.clone(), bindings)),
             });
         }
         Ok(EffectCall {

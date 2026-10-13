@@ -283,6 +283,26 @@ impl Input<'_, '_> {
             })
     }
 
+    /// The storage and every selector support used to evaluate one place.
+    pub(super) fn event_kills_selected_place(
+        &self,
+        separations: &dyn SeparationOracle,
+        support: &ResolvedPlace,
+        event: &KillEvent,
+    ) -> bool {
+        let direct = match event {
+            KillEvent::Write {
+                place, relocation, ..
+            }
+            | KillEvent::EntryImageHolderWrite {
+                place, relocation, ..
+            } => self.write_kills_support(separations, support, place, *relocation),
+            KillEvent::Consume { binding, .. } => support.root == PlaceRoot::Binding(*binding),
+            KillEvent::EntryImageHolderConsume { .. } => false,
+        };
+        direct || self.event_kills_offset_support(separations, support, event)
+    }
+
     /// [ENT-5] whether one event writes or consumes a binding an offset
     /// occurring in `support` reads.
     ///
@@ -295,22 +315,24 @@ impl Input<'_, '_> {
         support: &ResolvedPlace,
         event: &KillEvent,
     ) -> bool {
-        support.path.iter().any(|step| {
-            let Some(binding) = step.measure_offset_support() else {
-                return false;
-            };
-            let read = ResolvedPlace::binding(binding);
-            match event {
-                KillEvent::Write { place: written, .. }
-                | KillEvent::EntryImageHolderWrite { place: written, .. } => {
-                    self.resolved_places_overlap(separations, &read, written)
+        support
+            .support_places()
+            .iter()
+            .skip(1)
+            .any(|read| match event {
+                KillEvent::Write {
+                    place: written,
+                    relocation,
+                    ..
                 }
-                KillEvent::Consume {
-                    binding: consumed, ..
-                } => binding == *consumed,
+                | KillEvent::EntryImageHolderWrite {
+                    place: written,
+                    relocation,
+                    ..
+                } => self.write_kills_support(separations, read, written, *relocation),
+                KillEvent::Consume { binding, .. } => read.root == PlaceRoot::Binding(*binding),
                 KillEvent::EntryImageHolderConsume { .. } => false,
-            }
-        })
+            })
     }
 
     pub(super) fn resolve_goal_support(
@@ -791,18 +813,13 @@ impl Vocabulary {
             // [ENT-5] the support of every offset occurring in the place is
             // part of the term's own support, so a term dies with the scope
             // of an offset's binding exactly as it dies with its root's.
-            TermKind::Place(place, _) | TermKind::Measure(_, place) => {
-                let rooted = match place.root {
+            TermKind::Place(place, _) | TermKind::Measure(_, place) => place
+                .support_places()
+                .iter()
+                .any(|support| match support.root {
                     PlaceRoot::Binding(binding) => exited.contains(&binding),
                     PlaceRoot::Constant(_) => false,
-                };
-                rooted
-                    || place.path.iter().any(|projection| {
-                        projection
-                            .measure_offset_support()
-                            .is_some_and(|binding| exited.contains(&binding))
-                    })
-            }
+                }),
         }
     }
 
@@ -1044,11 +1061,8 @@ impl Reasoning<'_, '_, '_> {
             let (place, holders) = self.input.resolve_goal_support(support);
             holders.iter().any(|holder| exited.contains(holder))
                 || matches!(place.root, PlaceRoot::Binding(binding) if exited.contains(&binding))
-                || place.path.iter().any(|projection| {
-                    projection
-                        .measure_offset_support()
-                        .is_some_and(|binding| exited.contains(&binding))
-                })
+                || place.support_places().iter().skip(1).any(|support|
+                    matches!(support.root, PlaceRoot::Binding(binding) if exited.contains(&binding)))
         })
     }
 
@@ -1257,10 +1271,17 @@ impl Reasoning<'_, '_, '_> {
                 .iter()
                 .map(|image| image.place.clone()),
         );
+        // A projected offset can itself name a filled element through an
+        // exact reference. Its ordinary support asks the same live bounds
+        // as the selected storage before applying a window event.
+        places = places
+            .iter()
+            .flat_map(ResolvedPlace::support_places)
+            .collect();
         let mut asked = HashSet::new();
         for place in &places {
             for (depth, step) in place.path.iter().enumerate() {
-                let PlaceStep::Index(index) = *step else {
+                let PlaceStep::Index(index) = step.clone() else {
                     continue;
                 };
                 let window = ResolvedPlace {
@@ -1268,7 +1289,7 @@ impl Reasoning<'_, '_, '_> {
                     root: place.root,
                     path: place.path[..depth].to_vec(),
                 };
-                if !asked.insert((window.clone(), index)) {
+                if !asked.insert((window.clone(), index.clone())) {
                     continue;
                 }
                 let resolved = self.input.places.resolve(window.root, &window.path);
@@ -1276,7 +1297,9 @@ impl Reasoning<'_, '_, '_> {
                     continue;
                 };
                 if written_parts.contains(&(resolved.root, resolved.path.len()))
-                    && self.index_live_proof(&window, index, states).is_some()
+                    && self
+                        .index_live_proof(&window, index.clone(), states)
+                        .is_some()
                 {
                     live.indices.insert((resolved.clone(), index));
                 }
@@ -1286,7 +1309,7 @@ impl Reasoning<'_, '_, '_> {
         for place in &places {
             for resolved in self.input.places.resolve(place.root, &place.path) {
                 for (depth, step) in resolved.path.iter().enumerate() {
-                    let PlaceStep::Range(range) = *step else {
+                    let PlaceStep::Range(range) = step.clone() else {
                         continue;
                     };
                     let window = ResolvedPlace {
@@ -1295,9 +1318,9 @@ impl Reasoning<'_, '_, '_> {
                         path: resolved.path[..depth].to_vec(),
                     };
                     if written_parts.contains(&(window.root, depth))
-                        && asked_ranges.insert((window.clone(), range))
+                        && asked_ranges.insert((window.clone(), range.clone()))
                         && self
-                            .range_within_length_proof(&window, range, states)
+                            .range_within_length_proof(&window, range.clone(), states)
                             .is_some()
                     {
                         live.ranges.insert((window, range));
@@ -1321,7 +1344,7 @@ impl Reasoning<'_, '_, '_> {
             .vocabulary
             .terms
             .interned(&TermKind::Measure(CheckedMeasure::Length, window.clone()))?;
-        let offset = match (index.capture, index.term) {
+        let offset = match (index.capture, index.term.clone()) {
             // A place's term identity reads a binding offset by its spelling,
             // whose current value is the binding's own term [ENT-2].
             (CaptureId::SpellingDetermined, CapturedTerm::Binding(binding)) => {
@@ -1330,7 +1353,7 @@ impl Reasoning<'_, '_, '_> {
                     IntegerType::U64,
                 ))
             }
-            _ => self.captured_index_term(index),
+            _ => self.captured_index_term(index.clone()),
         }?;
         let affine_offset = match index.capture {
             CaptureId::Source(_) | CaptureId::ContractRead { .. } => {

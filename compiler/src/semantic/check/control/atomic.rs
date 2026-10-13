@@ -29,7 +29,8 @@ pub(in crate::semantic::check) const SHARE2_WAIT_OUTSIDE_THE_BLOCK: &str = "move
 pub(in crate::semantic::check) const SHARE2_END_THE_OUTER_STATEMENT: &str = "name both handles as targets of one statement, `atomic outer = &first, inner = &second { … }`, or end the outer statement before starting the inner one";
 pub(in crate::semantic::check) const SHARE2_READ_ONLY_GUARD: &str = "make the guard read only, calling a function whose row writes nothing and moves no argument, and make the update in the block";
 pub(in crate::semantic::check) const SHARE2_WAIT_FOR_THE_TIME_OUTSIDE_THE_GUARD: &str = "wait for the time outside the guard: call `std::time::sleep_until` with the deadline before the statement, or spawn a context that sleeps until the deadline and then fires a cancellation source, and give the statement a target on that source's `cancel_state` whose `fired` the guard reads";
-pub(in crate::semantic::check) const SHARE2_HOLD_A_HANDLE_ONCE: &str = "hold a handle whole once, or name its entries with entry and key-set targets";
+pub(in crate::semantic::check) const SHARE2_HOLD_A_HANDLE_ONCE: &str =
+    "hold a handle whole once, or name its entries with entry and key-set targets";
 pub(in crate::semantic::check) const SHARE2_PROVE_THE_HANDLE_PLACES_APART: &str = "prove before the statement that the positions of the two handle places are distinct, such as by a `requires` clause or an `if` around the statement, or hold the second handle in an atomic statement of its own";
 pub(in crate::semantic::check) const SHARE2_USE_THE_BINDING: &str = "remove the target, or the whole statement when no target is used; a statement holds what its targets name, so a target nothing uses holds a state or entries for nothing";
 struct IndexHeader {
@@ -45,9 +46,9 @@ fn one_value_where_the_statement_begins(position: &CheckedCallSeparationPosition
     let CheckedCallSeparationPositions::Indices(left, right) = position else {
         return false;
     };
-    left.provably_same(*right)
+    left.provably_same(right.clone())
         || matches!(
-            (left.term, right.term),
+            (&left.term, &right.term),
             (CapturedTerm::Binding(first), CapturedTerm::Binding(second)) if first == second
         )
 }

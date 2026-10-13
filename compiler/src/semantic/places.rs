@@ -24,6 +24,9 @@
 //! once captured [REF-1, OWN-7], while the proof that separates two such
 //! values is available only along the control-flow edges it dominates.
 
+mod selector;
+pub(crate) use selector::{ProjectedSelector, SelectorRendering};
+
 use crate::DeclarationId;
 use crate::syntax::NodeId;
 
@@ -116,12 +119,18 @@ const SPELLING_DETERMINED_CAPTURE: CaptureId = CaptureId::SpellingDetermined;
 /// can reason about but this module cannot, and everything else is opaque to
 /// both; each of the latter two is decided, if at all, by the fixed [ENT-6]
 /// families through [`SeparationOracle`].
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) enum CapturedTerm {
     /// A written integer literal.
     Literal(u64),
     /// The value a live `own` integer binding held at the formation.
     Binding(BindingId),
+    /// The selected value of an admitted tracked offset, with its complete
+    /// proof path and ordinary mutable support [ENT-2, ENT-5].
+    Place(ProjectedSelector),
+    /// The same formation after an event changed its selector support.
+    /// It retains occurrence identity but grants no current-place facts.
+    SupersededPlace(ProjectedSelector),
     /// The value a binding held at the formation, once a later write of that
     /// binding has made its spelling name another value [REF-1].
     Superseded(BindingId),
@@ -133,7 +142,7 @@ pub(crate) enum CapturedTerm {
 }
 
 /// The immutable value one index step or range endpoint captured [REF-1].
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) struct CapturedValue {
     pub(crate) capture: CaptureId,
     pub(crate) term: CapturedTerm,
@@ -157,7 +166,7 @@ impl CapturedValue {
     }
 
     /// A current source spelling, rather than one captured formation's extent.
-    pub(crate) const fn is_current_spelling(self) -> bool {
+    pub(crate) const fn is_current_spelling(&self) -> bool {
         matches!(
             self.capture,
             CaptureId::ValueDetermined | CaptureId::SpellingDetermined
@@ -178,23 +187,15 @@ impl CapturedValue {
     /// in [`Self::provably_same`] still distinguishes its evaluations. Only an
     /// opaque offset, and a binding's offset after a later write of that
     /// binding, keep occurrence identity inside a goal datum.
-    pub(crate) const fn goal_identity(self) -> Self {
-        match self.term {
-            CapturedTerm::Literal(_) | CapturedTerm::Const(_) => {
-                Self::new(VALUE_DETERMINED_CAPTURE, self.term)
-            }
-            // [ENT-2] a binding is a spelling, and two byte-identical
-            // spellings rooted at one declaration are one term. The
-            // occurrence is dropped here and not in [`Self::provably_same`]:
-            // term identity under-approximates aliasing while [OWN-7]'s
-            // overlap relation over-approximates it, and a binding's two
-            // reads may still straddle a write when the question is which
-            // storage each selects.
-            CapturedTerm::Binding(_) => Self::new(SPELLING_DETERMINED_CAPTURE, self.term),
-            // The binding's spelling now names a later value, and only the
-            // occurrence still names the one this capture read.
-            CapturedTerm::Superseded(_) | CapturedTerm::Opaque => self,
-        }
+    pub(crate) fn goal_identity(&self) -> Self {
+        let capture = match &self.term {
+            CapturedTerm::Literal(_) | CapturedTerm::Const(_) => VALUE_DETERMINED_CAPTURE,
+            CapturedTerm::Binding(_) | CapturedTerm::Place(_) => SPELLING_DETERMINED_CAPTURE,
+            CapturedTerm::Superseded(_)
+            | CapturedTerm::SupersededPlace(_)
+            | CapturedTerm::Opaque => self.capture,
+        };
+        Self::new(capture, self.term.clone())
     }
 
     /// Whether the two captures hold one value on every execution.
@@ -210,13 +211,17 @@ impl CapturedValue {
     /// when they are the same literal, whether or not one evaluation produced
     /// both, and [`Self::goal_identity`] drops the occurrence from such a
     /// capture, so the occurrence is no longer evidence there.
-    pub(crate) fn provably_same(self, other: Self) -> bool {
-        match (self.term, other.term) {
+    pub(crate) fn provably_same(&self, other: Self) -> bool {
+        match (self.term.clone(), other.term) {
             (CapturedTerm::Literal(left), CapturedTerm::Literal(right)) => left == right,
             (CapturedTerm::Const(left), CapturedTerm::Const(right)) => left == right,
             (
                 CapturedTerm::Binding(left) | CapturedTerm::Superseded(left),
                 CapturedTerm::Binding(right) | CapturedTerm::Superseded(right),
+            ) => left == right && self.capture == other.capture,
+            (
+                CapturedTerm::Place(left) | CapturedTerm::SupersededPlace(left),
+                CapturedTerm::Place(right) | CapturedTerm::SupersededPlace(right),
             ) => left == right && self.capture == other.capture,
             (CapturedTerm::Opaque, CapturedTerm::Opaque) => {
                 self.capture != UNKNOWN_CAPTURE && self.capture == other.capture
@@ -228,30 +233,17 @@ impl CapturedValue {
     /// The half of [OWN-7]'s index separation this module settles without a
     /// proof: two written literals of different value select two slots.
     /// Every other pair is the fixed [ENT-6] families' question.
-    const fn literals_distinct(self, other: Self) -> bool {
+    fn literals_distinct(&self, other: Self) -> bool {
         matches!(
-            (self.term, other.term),
+            (self.term.clone(), other.term),
             (CapturedTerm::Literal(left), CapturedTerm::Literal(right)) if left != right
         )
-    }
-
-    /// The support one captured value contributes to every measure term of
-    /// the place it occurs in [ENT-5]: the binding it read, where the
-    /// binding's spelling still names that value.
-    pub(crate) const fn support(self) -> Option<BindingId> {
-        match self.term {
-            CapturedTerm::Binding(binding) => Some(binding),
-            CapturedTerm::Literal(_)
-            | CapturedTerm::Const(_)
-            | CapturedTerm::Superseded(_)
-            | CapturedTerm::Opaque => None,
-        }
     }
 }
 
 /// One captured range step's two endpoints [REF-4], both evaluated at the
 /// formation under the obligation `lo <= hi` and `hi <= x.len`.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) struct CapturedRange {
     pub(crate) start: CapturedValue,
     pub(crate) end: CapturedValue,
@@ -264,9 +256,9 @@ impl CapturedRange {
     /// A binding or computed endpoint denotes no value this relation can
     /// name, so the length is no constant there and the caller falls back to
     /// the opaque measure term, which only under-derives [ENT-1].
-    pub(crate) const fn constant_length(self) -> Option<i128> {
+    pub(crate) fn constant_length(&self) -> Option<i128> {
         let (CapturedTerm::Literal(start), CapturedTerm::Literal(end)) =
-            (self.start.term, self.end.term)
+            (self.start.term.clone(), self.end.term.clone())
         else {
             return None;
         };
@@ -276,8 +268,8 @@ impl CapturedRange {
     /// The half of [OWN-7]'s index-and-range separation this module settles
     /// without a proof: written literals that put the index before the start
     /// or at or after the end, or make the range empty.
-    const fn literally_excludes(self, index: CapturedValue) -> bool {
-        match (self.start.term, self.end.term, index.term) {
+    fn literally_excludes(&self, index: CapturedValue) -> bool {
+        match (self.start.term.clone(), self.end.term.clone(), index.term) {
             (CapturedTerm::Literal(start), CapturedTerm::Literal(end), _) if end <= start => true,
             (_, CapturedTerm::Literal(end), CapturedTerm::Literal(index)) if end <= index => true,
             (CapturedTerm::Literal(start), _, CapturedTerm::Literal(index)) => index < start,
@@ -317,14 +309,14 @@ impl WindowPart {
 /// Root of a resolved place: a function-local binding — parameters, `let`
 /// bindings of every right-hand form, counted binders and match binders share
 /// the dense [`BindingId`] space — or a named const [CONST-2].
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Ord, PartialOrd)]
 pub(crate) enum PlaceRoot {
     Binding(BindingId),
     Constant(CheckedConstantId),
 }
 
 /// One step below a resolved place's root [REF-1, OWN-7].
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum PlaceStep {
     /// One current target somewhere at or below the preceding anchor.
     /// The identity permits suffix comparison only for this same target;
@@ -355,21 +347,11 @@ impl PlaceStep {
     /// [ENT-2] only a terminal page step can name a page-reference
     /// formation's captured extent. Below it the path selects storage, so
     /// the page selector compares by the same rule as an ordinary index.
-    fn proof_identity(self, terminal: bool) -> Self {
-        match self {
+    fn proof_identity(&self, terminal: bool) -> Self {
+        match self.clone() {
             Self::Index(offset) => Self::Index(offset.goal_identity()),
             Self::Page(offset) if !terminal => Self::Page(offset.goal_identity()),
             other => other,
-        }
-    }
-
-    /// Offset support of a current measure place [MSR-2]. A bound page's
-    /// captured length does not depend on later values of its selector.
-    pub(crate) fn measure_offset_support(&self) -> Option<BindingId> {
-        match self {
-            Self::Index(offset) => offset.support(),
-            Self::Page(offset) if offset.is_current_spelling() => offset.support(),
-            _ => None,
         }
     }
 }
@@ -497,6 +479,37 @@ impl ResolvedPlace {
             }
     }
 
+    /// Every ordinary storage support of this selection, including the
+    /// tracked places read by its offsets. Shared selectors are visited once.
+    pub(crate) fn support_places(&self) -> Vec<ResolvedPlace> {
+        let mut places = vec![self.clone()];
+        let mut seen = std::collections::HashSet::new();
+        let mut cursor = 0;
+        while cursor < places.len() {
+            let path = places[cursor].path.clone();
+            for (position, step) in path.iter().enumerate() {
+                let offset = match step {
+                    PlaceStep::Index(offset) => offset,
+                    PlaceStep::Page(offset)
+                        if position + 1 < path.len() || offset.is_current_spelling() =>
+                    {
+                        offset
+                    }
+                    _ => continue,
+                };
+                match &offset.term {
+                    CapturedTerm::Binding(binding) => places.push(Self::binding(*binding)),
+                    CapturedTerm::Place(selector) if seen.insert(selector.clone()) => {
+                        places.push(selector.place().clone())
+                    }
+                    _ => {}
+                }
+            }
+            cursor += 1;
+        }
+        places
+    }
+
     /// The same root and static path shape at an arbitrary loop header.
     ///
     /// A loop-carried rebinding may evaluate every written index and range
@@ -555,13 +568,43 @@ impl ResolvedPlace {
     /// this path. A range endpoint needs no conversion: its goal identity is
     /// already its formation capture.
     pub(crate) fn supersede_binding(&mut self, binding: BindingId) {
+        self.supersede_selectors(|support| {
+            support
+                .support_places()
+                .iter()
+                .any(|place| place.root == PlaceRoot::Binding(binding))
+        });
+    }
+
+    /// Preserve an evaluated selector's identity after any overlapping write.
+    pub(crate) fn supersede_selectors(&mut self, killed: impl Fn(&ResolvedPlace) -> bool) -> bool {
+        let mut identified = true;
         for step in &mut self.path {
-            if let PlaceStep::Index(index) | PlaceStep::Page(index) = step
-                && index.term == CapturedTerm::Binding(binding)
+            let (PlaceStep::Index(index) | PlaceStep::Page(index)) = step else {
+                continue;
+            };
+            let old = index.term.clone();
+            index.term = match &index.term {
+                CapturedTerm::Binding(binding) if killed(&Self::binding(*binding)) => {
+                    CapturedTerm::Superseded(*binding)
+                }
+                CapturedTerm::Place(selector) if killed(selector.place()) => {
+                    CapturedTerm::SupersededPlace(selector.clone())
+                }
+                other => other.clone(),
+            };
+            if old != index.term
+                && !matches!(
+                    index.capture,
+                    CaptureId::Source(_)
+                        | CaptureId::LoopHeader { .. }
+                        | CaptureId::ContractRead { .. }
+                )
             {
-                *index = CapturedValue::new(index.capture, CapturedTerm::Superseded(binding));
+                identified = false;
             }
         }
+        identified
     }
 
     /// The same path once the index `capture` read from `binding` is
@@ -572,44 +615,70 @@ impl ResolvedPlace {
         for step in &mut self.path {
             if let PlaceStep::Index(index) | PlaceStep::Page(index) = step
                 && index.capture == capture
-                && index.term == CapturedTerm::Binding(binding)
             {
-                *index = CapturedValue::new(capture, CapturedTerm::Superseded(binding));
+                index.term = match &index.term {
+                    CapturedTerm::Binding(current) if *current == binding => {
+                        CapturedTerm::Superseded(binding)
+                    }
+                    CapturedTerm::Place(selector)
+                        if selector
+                            .place()
+                            .support_places()
+                            .iter()
+                            .any(|place| place.root == PlaceRoot::Binding(binding)) =>
+                    {
+                        CapturedTerm::SupersededPlace(selector.clone())
+                    }
+                    other => other.clone(),
+                };
             }
         }
     }
 
-    /// The indices of this path whose binding's spelling still names them,
-    /// each as its capture and that binding, which a later write of the
-    /// binding supersedes [`Self::supersede_binding`].
+    /// Captures whose current selector spelling depends on each binding.
+    /// Projected selectors include the roots of their recursively selected
+    /// offsets, so loop headers and joins supersede the same captured value
+    /// when any of those bindings changes.
     pub(crate) fn spelled_indices(&self) -> impl Iterator<Item = (CaptureId, BindingId)> + '_ {
-        self.path.iter().filter_map(|step| match step {
-            PlaceStep::Index(CapturedValue {
-                capture,
-                term: CapturedTerm::Binding(binding),
-            })
-            | PlaceStep::Page(CapturedValue {
-                capture,
-                term: CapturedTerm::Binding(binding),
-            }) => Some((*capture, *binding)),
-            _ => None,
-        })
+        self.selector_bindings(false).into_iter()
     }
 
-    /// The indices of this path a write of their binding superseded, each as
-    /// its capture and that binding.
+    /// Captures whose selector spelling has already been superseded.
     pub(crate) fn superseded_indices(&self) -> impl Iterator<Item = (CaptureId, BindingId)> + '_ {
-        self.path.iter().filter_map(|step| match step {
-            PlaceStep::Index(CapturedValue {
-                capture,
-                term: CapturedTerm::Superseded(binding),
-            })
-            | PlaceStep::Page(CapturedValue {
-                capture,
-                term: CapturedTerm::Superseded(binding),
-            }) => Some((*capture, *binding)),
-            _ => None,
-        })
+        self.selector_bindings(true).into_iter()
+    }
+
+    fn selector_bindings(&self, superseded: bool) -> Vec<(CaptureId, BindingId)> {
+        let mut bindings = Vec::new();
+        for step in &self.path {
+            let (PlaceStep::Index(value) | PlaceStep::Page(value)) = step else {
+                continue;
+            };
+            match &value.term {
+                CapturedTerm::Binding(binding) if !superseded => {
+                    bindings.push((value.capture, *binding));
+                }
+                CapturedTerm::Superseded(binding) if superseded => {
+                    bindings.push((value.capture, *binding));
+                }
+                CapturedTerm::Place(selector) if !superseded => {
+                    for support in selector.place().support_places() {
+                        if let PlaceRoot::Binding(binding) = support.root {
+                            bindings.push((value.capture, binding));
+                        }
+                    }
+                }
+                CapturedTerm::SupersededPlace(selector) if superseded => {
+                    for support in selector.place().support_places() {
+                        if let PlaceRoot::Binding(binding) = support.root {
+                            bindings.push((value.capture, binding));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        bindings
     }
 
     /// The [ENT-2] steps shared by term and Goal formation. Resolved storage
@@ -711,7 +780,7 @@ impl ResolvedPlace {
                 .path
                 .iter()
                 .zip(&other.path)
-                .all(|(left, right)| steps_provably_same(*left, *right))
+                .all(|(left, right)| steps_provably_same(left.clone(), right.clone()))
     }
 
     /// [REF-2]'s own question: whether this place is a *proper* prefix of
@@ -797,7 +866,9 @@ impl ResolvedPlace {
         self.path.iter().all(|step| match step {
             PlaceStep::Descendant(_) => false,
             PlaceStep::Index(index) | PlaceStep::Page(index) => identified(index),
-            PlaceStep::Range(range) => identified(&range.start) && identified(&range.end),
+            PlaceStep::Range(range) => {
+                identified(&range.start.clone()) && identified(&range.end.clone())
+            }
             PlaceStep::Field(_)
             | PlaceStep::Deref
             | PlaceStep::Payload { .. }
@@ -815,7 +886,7 @@ impl ResolvedPlace {
                 && self.path.len() == other.path.len()
                 && self.path.iter().zip(&other.path).all(|(left, right)| {
                     matches!((left, right), (PlaceStep::Index(_), PlaceStep::Index(_)))
-                        || steps_provably_same(*left, *right)
+                        || steps_provably_same(left.clone(), right.clone())
                 }))
     }
 
@@ -848,9 +919,10 @@ fn steps_provably_same(left: PlaceStep, right: PlaceStep) -> bool {
             },
         ) => left_variant == right_variant && left_field == right_field,
         (PlaceStep::Index(left), PlaceStep::Index(right))
-        | (PlaceStep::Page(left), PlaceStep::Page(right)) => left.provably_same(right),
+        | (PlaceStep::Page(left), PlaceStep::Page(right)) => left.provably_same(right.clone()),
         (PlaceStep::Range(left), PlaceStep::Range(right)) => {
-            left.start.provably_same(right.start) && left.end.provably_same(right.end)
+            left.start.provably_same(right.start.clone())
+                && left.end.provably_same(right.end.clone())
         }
         (PlaceStep::Part(left), PlaceStep::Part(right)) => left == right,
         (PlaceStep::Measure(left), PlaceStep::Measure(right)) => left == right,
@@ -925,16 +997,17 @@ fn separation(
         // both bases are the same storage, so a later step still separates
         // the two places under either answer, which is why the walk goes on.
         (PlaceStep::Page(left), PlaceStep::Page(right)) => {
-            if left.provably_same(right) {
+            if left.provably_same(right.clone()) {
                 StepSeparation::Same
-            } else if left.literals_distinct(right) || oracle.indices_distinct(left, right) {
+            } else if left.literals_distinct(right.clone()) || oracle.indices_distinct(left, right)
+            {
                 StepSeparation::Separate
             } else {
                 StepSeparation::Overlapping
             }
         }
         (PlaceStep::Index(left), PlaceStep::Index(right)) => {
-            if left.literals_distinct(right) || oracle.indices_distinct(left, right) {
+            if left.literals_distinct(right.clone()) || oracle.indices_distinct(left, right) {
                 StepSeparation::Separate
             } else {
                 StepSeparation::Same
@@ -945,7 +1018,9 @@ fn separation(
         // the walk: unequal subscripts below two different range steps never
         // establish separation by themselves.
         (PlaceStep::Range(left), PlaceStep::Range(right)) => {
-            if left.start.provably_same(right.start) && left.end.provably_same(right.end) {
+            if left.start.provably_same(right.start.clone())
+                && left.end.provably_same(right.end.clone())
+            {
                 StepSeparation::Same
             } else if oracle.ranges_disjoint(left, right) {
                 StepSeparation::Separate
@@ -1003,7 +1078,7 @@ fn separation(
         // empty [OWN-7]. Unproved, the index may lie inside the range.
         (PlaceStep::Index(index), PlaceStep::Range(range))
         | (PlaceStep::Range(range), PlaceStep::Index(index)) => {
-            if range.literally_excludes(index) || oracle.index_outside_range(index, range) {
+            if range.literally_excludes(index.clone()) || oracle.index_outside_range(index, range) {
                 StepSeparation::Separate
             } else {
                 StepSeparation::Overlapping
@@ -1069,7 +1144,7 @@ fn paths_overlap(
             root: place.root,
             path: place.path[..depth].to_vec(),
         };
-        match separation(oracle, &window, *left, *right) {
+        match separation(oracle, &window, left.clone(), right.clone()) {
             StepSeparation::Separate => return false,
             StepSeparation::Overlapping => return true,
             StepSeparation::Same => {}
@@ -1114,7 +1189,12 @@ pub(crate) fn overlaps_at_every_position(left: &ResolvedPlace, right: &ResolvedP
             root: left.root,
             path: left.path[..depth].to_vec(),
         };
-        match separation(&EveryPositionSeparable, &window, *left_step, *right_step) {
+        match separation(
+            &EveryPositionSeparable,
+            &window,
+            left_step.clone(),
+            right_step.clone(),
+        ) {
             StepSeparation::Separate => return false,
             StepSeparation::Overlapping => return true,
             StepSeparation::Same => {}
@@ -1183,11 +1263,11 @@ pub(crate) fn range_separation_candidate(
             root: left.root,
             path: left.path[..depth].to_vec(),
         };
-        match separation(&oracle, &window, *left_step, *right_step) {
+        match separation(&oracle, &window, left_step.clone(), right_step.clone()) {
             StepSeparation::Separate => return None,
             StepSeparation::Same => {}
             StepSeparation::Overlapping => {
-                return match (*left_step, *right_step) {
+                return match (left_step.clone(), right_step.clone()) {
                     (PlaceStep::Range(left), PlaceStep::Range(right)) => Some((left, right)),
                     _ => None,
                 };
@@ -1382,7 +1462,7 @@ pub(crate) fn named_place(expression: &CheckedExpression) -> Option<NamedPlace> 
             named(
                 root,
                 steps,
-                vec![PlaceStep::Range(*captured)],
+                vec![PlaceStep::Range(captured.clone())],
                 NamingForm::Range,
             )
         }
@@ -1657,15 +1737,15 @@ mod tests {
         assert_ne!(carried, other_holder);
         assert_eq!(carried.root, original.root);
         assert!(matches!(carried.path[0], PlaceStep::Field(2)));
-        let PlaceStep::Index(carried_index) = carried.path[1] else {
+        let PlaceStep::Index(carried_index) = carried.path[1].clone() else {
             panic!("the index step must remain an index");
         };
-        let PlaceStep::Index(original_index) = original.path[1] else {
+        let PlaceStep::Index(original_index) = original.path[1].clone() else {
             panic!("the source step must be an index");
         };
         assert_eq!(carried_index.term, CapturedTerm::Opaque);
         assert!(!carried_index.provably_same(original_index));
-        let PlaceStep::Range(carried_range) = carried.path[2] else {
+        let PlaceStep::Range(carried_range) = carried.path[2].clone() else {
             panic!("the range step must remain a range");
         };
         assert_eq!(carried_range.start.term, CapturedTerm::Opaque);
@@ -1926,8 +2006,8 @@ mod tests {
             start: CapturedValue::unknown(),
             end: CapturedValue::unknown(),
         });
-        let left = place(0, &[frame, PlaceStep::Index(literal(0, 0))]);
-        let right = place(0, &[frame, PlaceStep::Index(literal(1, 1))]);
+        let left = place(0, &[frame.clone(), PlaceStep::Index(literal(0, 0))]);
+        let right = place(0, &[frame.clone(), PlaceStep::Index(literal(1, 1))]);
 
         assert!(PlaceMap::default().overlaps(&DENIED, &left, &right));
     }
@@ -2183,7 +2263,7 @@ mod tests {
             start: literal(0, 0),
             end: literal(1, 2),
         });
-        let through_frame = place(0, &[frame, PlaceStep::Index(literal(2, 1))]);
+        let through_frame = place(0, &[frame.clone(), PlaceStep::Index(literal(2, 1))]);
         let element = place(0, &[PlaceStep::Index(literal(3, 1))]);
         let below = place(
             0,
@@ -2223,16 +2303,15 @@ mod tests {
             ]
         );
         path.supersede_binding(BindingId(1));
-        let PlaceStep::Index(superseded) = path.path[0] else {
+        let PlaceStep::Index(superseded) = path.path[0].clone() else {
             unreachable!("the first step is an index");
         };
-        let PlaceStep::Index(kept) = path.path[1] else {
+        let PlaceStep::Index(kept) = path.path[1].clone() else {
             unreachable!("the second step is an index");
         };
         assert_eq!(superseded.term, CapturedTerm::Superseded(BindingId(1)));
         assert_eq!(superseded.goal_identity(), superseded);
         assert!(superseded.provably_same(binding(0, 1)));
-        assert_eq!(superseded.support(), None);
         assert_eq!(kept, binding(1, 2));
         assert_ne!(kept.goal_identity(), kept);
         assert_eq!(
@@ -2240,6 +2319,50 @@ mod tests {
             [(CaptureId::source(1), BindingId(2))]
         );
     }
+    /// A selector reached through an exact reference can have earlier
+    /// selectors in its proof path. Every such support participates in
+    /// ordinary writes and loop-header superseding, while the captured old
+    /// offset remains the value the selection already evaluated.
+    #[test]
+    fn projected_selector_support_is_recursive_and_superseding_keeps_its_value() {
+        let inner = ProjectedSelector::new(place(2, &[PlaceStep::Field(0)]));
+        let outer = ProjectedSelector::new(place(
+            1,
+            &[
+                PlaceStep::Index(CapturedValue::new(
+                    CaptureId::source(1),
+                    CapturedTerm::Place(inner),
+                )),
+                PlaceStep::Field(0),
+            ],
+        ));
+        let offset = CapturedValue::new(CaptureId::source(2), CapturedTerm::Place(outer));
+        let mut selected = place(0, &[PlaceStep::Index(offset.clone())]);
+        assert_eq!(selected.support_places().len(), 3);
+        assert_eq!(
+            selected.spelled_indices().collect::<Vec<_>>(),
+            [
+                (CaptureId::source(2), BindingId(1)),
+                (CaptureId::source(2), BindingId(2)),
+            ]
+        );
+        let written = place(2, &[PlaceStep::Field(0)]);
+        assert!(selected.supersede_selectors(|support| {
+            support
+                .support_places()
+                .iter()
+                .any(|read| places_overlap(&DENIED, read, &written))
+        }));
+        let PlaceStep::Index(old) = &selected.path[0] else {
+            unreachable!()
+        };
+        assert!(matches!(old.term, CapturedTerm::SupersededPlace(_)));
+        assert!(old.provably_same(offset));
+        assert_eq!(selected.support_places(), [selected.clone()]);
+        assert!(selected.spelled_indices().next().is_none());
+        assert_eq!(selected.superseded_indices().count(), 2);
+    }
+
     /// [ENT-2] only the final page suffix keeps formation identity; every
     /// enclosing page compares as an index, including above another borrow.
     #[test]
@@ -2309,7 +2432,10 @@ mod tests {
         ] {
             let path = place(
                 0,
-                &[PlaceStep::Page(offset), PlaceStep::Index(literal(7, 0))],
+                &[
+                    PlaceStep::Page(offset.clone()),
+                    PlaceStep::Index(literal(7, 0)),
+                ],
             );
             assert_eq!(path.term_identity().path[0], PlaceStep::Page(offset));
         }

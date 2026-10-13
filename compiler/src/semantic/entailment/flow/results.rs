@@ -626,10 +626,13 @@ impl Analyzer<'_, '_> {
             ),
         };
         let goal = ConcreteGoal::new(payload_goal(&requirement.goal.root, &root, step));
-        let context = self.capture_result(call, argument, state).into_iter().find(|result| {
-            result.route.variant == requirement.route.variant
-                && result.route.field == requirement.route.field
-        });
+        let context = self
+            .capture_result(call, argument, state)
+            .into_iter()
+            .find(|result| {
+                result.route.variant == requirement.route.variant
+                    && result.route.field == requirement.route.field
+            });
         let (Some(binding), Some(context)) = (binding, context) else {
             return (goal, state.facts.clone());
         };
@@ -665,7 +668,7 @@ fn payload_goal(
             PayloadGoalRoot::Binding(binding) => GoalExpression::Datum(GoalDatum::Place {
                 root: *binding,
                 projections: std::iter::once(step)
-                    .chain(projections.iter().copied())
+                    .chain(projections.iter().cloned())
                     .collect(),
                 ty: *ty,
                 admission: GoalAdmission::default(),
@@ -674,7 +677,7 @@ fn payload_goal(
             // is appended to its admitted actual [FN-8]; only the last
             // step's type is the datum's.
             PayloadGoalRoot::Image(image) => std::iter::once(step)
-                .chain(projections.iter().copied())
+                .chain(projections.iter().cloned())
                 .try_fold(image.clone(), |datum, projection| {
                     datum.with_projection(projection, *ty)
                 })
@@ -694,7 +697,7 @@ fn payload_goal(
             result: *result,
             arguments: arguments
                 .iter()
-                .map(|argument| payload_goal(argument, root, step))
+                .map(|argument| payload_goal(argument, root, step.clone()))
                 .collect(),
         },
     }
@@ -920,7 +923,10 @@ impl Reasoning<'_, '_, '_> {
         for (relation, parent) in selected.l0_candidates() {
             if relation.terms().iter().any(|term| {
                 self.vocabulary.terms.any_leaf(*term, &|leaf| {
-                    matches!(self.vocabulary.terms.kind(leaf), TermKind::ResultPayload { .. })
+                    matches!(
+                        self.vocabulary.terms.kind(leaf),
+                        TermKind::ResultPayload { .. }
+                    )
                 })
             }) {
                 continue;
@@ -962,9 +968,10 @@ impl Reasoning<'_, '_, '_> {
                     place: written,
                     relocation,
                     ..
-                } => self
-                    .input
-                    .write_kills_support(&state.separations, &place, written, *relocation),
+                } => {
+                    self.input
+                        .write_kills_support(&state.separations, &place, written, *relocation)
+                }
             }) {
                 return false;
             }
@@ -1048,13 +1055,15 @@ impl Vocabulary {
         for ((binding, _, _), (payload, route, success)) in keys {
             let mut images = Vec::new();
             for (state, ordinary) in states.iter().zip(&ordinary) {
-                let mut result = find(state, binding, route).cloned().unwrap_or(ResultEvidence {
-                    payload,
-                    route,
-                    success,
-                    facts: FactState::new(),
-                    definitely_err: false,
-                });
+                let mut result = find(state, binding, route)
+                    .cloned()
+                    .unwrap_or(ResultEvidence {
+                        payload,
+                        route,
+                        success,
+                        facts: FactState::new(),
+                        definitely_err: false,
+                    });
                 self.refresh_result_from_snapshot(&mut result, ordinary);
                 images.push(result.facts);
             }

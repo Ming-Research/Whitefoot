@@ -1974,9 +1974,10 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             .declarations
             .relation_postcondition_selectors(postcondition_selectors)?;
         let mut postcondition_relations = Vec::with_capacity(postcondition_selectors.len());
+        let mut postcondition_places = Vec::with_capacity(postcondition_selectors.len());
         for selector in &postcondition_selectors {
             let mut postcondition_bindings = parameter_bindings.clone();
-            postcondition_relations.push(self.check_postcondition_clause(
+            let (relation, places, entry_places) = self.check_postcondition_clause(
                 FunctionContext {
                     check_context,
                     function: signature,
@@ -1984,7 +1985,9 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 selector,
                 &mut postcondition_bindings,
                 &mut counters,
-            )?);
+            )?;
+            postcondition_relations.push(relation);
+            postcondition_places.push((places, entry_places));
         }
         self.types
             .declarations
@@ -2164,8 +2167,9 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             let mut postconditions = postcondition_selectors
                 .into_iter()
                 .zip(postcondition_relations)
-                .map(|(selector, relation)| {
-                    self.types.build_checked_postcondition(
+                .zip(postcondition_places)
+                .map(|((selector, relation), (places, entry_places))| {
+                    let mut checked = self.types.build_checked_postcondition(
                         FunctionContext {
                             check_context,
                             function: signature,
@@ -2174,7 +2178,10 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                         selector,
                         relation,
                         &checked.statements,
-                    )
+                    )?;
+                    checked.places = places;
+                    checked.entry_places = entry_places;
+                    Ok::<_, CheckStop>(checked)
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             postconditions.extend(self.type_invariant_postconditions(
@@ -2192,10 +2199,12 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 .cloned();
             let mut admitted = Vec::new();
             let mut postconditions = Vec::new();
-            for (position, (selector, relation)) in postcondition_selectors
-                .into_iter()
-                .zip(postcondition_relations)
-                .enumerate()
+            for (position, ((selector, relation), (places, entry_places))) in
+                postcondition_selectors
+                    .into_iter()
+                    .zip(postcondition_relations)
+                    .zip(postcondition_places)
+                    .enumerate()
             {
                 if source_admitted
                     .as_ref()
@@ -2203,7 +2212,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 {
                     continue;
                 }
-                if let Some(postcondition) = self.types.build_checked_schema_postcondition(
+                if let Some(mut postcondition) = self.types.build_checked_schema_postcondition(
                     FunctionContext {
                         check_context,
                         function: signature,
@@ -2214,6 +2223,8 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                     &checked.statements,
                 )? {
                     admitted.push(position);
+                    postcondition.places = places;
+                    postcondition.entry_places = entry_places;
                     postconditions.push(postcondition);
                 }
             }
@@ -2704,15 +2715,8 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                     // own actual for it exactly as it substitutes a row's
                     // index positions: the offset the place is identified
                     // over is the value that argument names here.
-                    let projection = match projection {
-                        GoalProjection::FormalSubscript { ordinal } => GoalProjection::Subscript(
-                            Checker::goal_argument_offset(arguments.get(*ordinal as usize))?,
-                        ),
-                        GoalProjection::FormalPage { ordinal } => GoalProjection::Page(
-                            Checker::goal_argument_offset(arguments.get(*ordinal as usize))?,
-                        ),
-                        other => *other,
-                    };
+                    let projection =
+                        self.instantiate_goal_projection(projection, signature, arguments)?;
                     image = image
                         .with_projection(projection, final_type)
                         .ok_or(SemanticCompilerFailure::InvalidResolution)?;
@@ -2727,12 +2731,28 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 projections,
                 ty,
                 admission,
-            }) => Ok(GoalExpression::Datum(GoalDatum::NamedConst {
-                declaration: *declaration,
-                projections: projections.clone(),
-                ty: self.instantiate_goal_type(check_context, *ty, signature, regions)?,
-                admission: admission.clone(),
-            })),
+            }) => {
+                let projections = projections
+                    .iter()
+                    .map(|projection| {
+                        self.instantiate_goal_projection(projection, signature, arguments)
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let mut admission = admission.clone();
+                admission.projections = admission
+                    .projections
+                    .iter()
+                    .map(|projection| {
+                        self.instantiate_goal_projection(projection, signature, arguments)
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(GoalExpression::Datum(GoalDatum::NamedConst {
+                    declaration: *declaration,
+                    projections,
+                    ty: self.instantiate_goal_type(check_context, *ty, signature, regions)?,
+                    admission,
+                }))
+            }
             GoalExpression::Datum(GoalDatum::Literal(value)) => {
                 Ok(GoalExpression::Datum(GoalDatum::Literal(
                     self.instantiate_goal_value(check_context, value, signature, regions)?,
@@ -2774,6 +2794,52 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         }
     }
 
+    fn instantiate_goal_projection(
+        &self,
+        projection: &GoalProjection,
+        signature: &FunctionSignature,
+        arguments: &[GoalExpression],
+    ) -> Result<GoalProjection, CheckStop> {
+        Ok(match projection {
+            GoalProjection::FormalSubscript {
+                ordinal,
+                projections,
+            }
+            | GoalProjection::FormalPage {
+                ordinal,
+                projections,
+            } => {
+                let parameter = signature
+                    .parameters
+                    .get(*ordinal as usize)
+                    .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                let mut selector = arguments
+                    .get(*ordinal as usize)
+                    .cloned()
+                    .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                let selected = if parameter.mode == CheckedMode::Own {
+                    projections.as_slice()
+                } else {
+                    projections
+                        .strip_prefix(&[GoalProjection::Deref])
+                        .ok_or(SemanticCompilerFailure::InvalidResolution)?
+                };
+                for step in selected {
+                    selector = selector
+                        .with_projection(step.clone(), CheckedType::Integer(IntegerType::U64))
+                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                }
+                let offset = self.goal_argument_offset(Some(&selector))?;
+                if matches!(projection, GoalProjection::FormalPage { .. }) {
+                    GoalProjection::Page(offset)
+                } else {
+                    GoalProjection::Subscript(offset)
+                }
+            }
+            other => other.clone(),
+        })
+    }
+
     /// The offset one actual supplies to a formal-valued subscript [MSR-1].
     ///
     /// [ENT-2] decides a place's identity by its canonical spelling, so an
@@ -2782,28 +2848,14 @@ impl<'check, 'unit> Checker<'check, 'unit> {
     /// them supplies the unknown offset, which no admitted family separates
     /// -- the conservative reading in both directions [OWN-7].
     fn goal_argument_offset(
+        &self,
         argument: Option<&GoalExpression>,
     ) -> Result<super::places::CapturedValue, CheckStop> {
-        use super::places::{CapturedTerm, CapturedValue};
-        let unknown = CapturedValue::unknown();
-        let Some(GoalExpression::Datum(datum)) = argument else {
-            return Ok(unknown);
-        };
-        Ok(match datum {
-            GoalDatum::Literal(CheckedValue::Integer { bits, .. }) => {
-                CapturedValue::new(unknown.capture, CapturedTerm::Literal(*bits))
-            }
-            GoalDatum::Literal(CheckedValue::ConstGeneric { declaration, .. }) => {
-                CapturedValue::new(unknown.capture, CapturedTerm::Const(*declaration))
-            }
-            GoalDatum::Place {
-                root, projections, ..
-            } if projections.is_empty() => {
-                CapturedValue::new(unknown.capture, CapturedTerm::Binding(*root))
-            }
-            _ => return Ok(unknown),
-        }
-        .goal_identity())
+        Ok(argument
+            .and_then(|argument| {
+                argument.captured_offset(&self.types.constants, &self.types.checked_constants)
+            })
+            .unwrap_or_else(super::places::CapturedValue::unknown))
     }
 
     fn instantiate_goal_operation(

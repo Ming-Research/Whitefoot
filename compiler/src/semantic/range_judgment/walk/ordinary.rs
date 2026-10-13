@@ -50,13 +50,24 @@ impl Walker<'_> {
         };
         for projection in projections {
             let index = match projection {
-                GoalProjection::FormalSubscript { ordinal } => {
-                    match values.get(*ordinal as usize)? {
-                        Value::Int(value) => Some(value.clone()),
-                        _ => return None,
-                    }
+                GoalProjection::FormalSubscript {
+                    ordinal,
+                    projections,
+                } => {
+                    let Value::Int(index) = self.goal_parameter(
+                        state,
+                        function,
+                        values,
+                        *ordinal as usize,
+                        projections,
+                        CheckedType::Integer(IntegerType::U64),
+                    )?
+                    else {
+                        return None;
+                    };
+                    Some(index)
                 }
-                GoalProjection::Subscript(index) => Some(match index.term {
+                GoalProjection::Subscript(index) => Some(match index.term.clone() {
                     CapturedTerm::Literal(value) => Linear::constant(i128::from(value)),
                     CapturedTerm::Binding(binding) => {
                         let ordinal = function
@@ -79,7 +90,37 @@ impl Walker<'_> {
                         };
                         value
                     }
-                    CapturedTerm::Superseded(_) | CapturedTerm::Opaque => return None,
+                    CapturedTerm::Place(selector) => {
+                        let place = selector.place();
+                        let super::super::super::places::PlaceRoot::Binding(binding) = place.root
+                        else {
+                            return None;
+                        };
+                        let ordinal = function
+                            .parameters
+                            .iter()
+                            .position(|parameter| parameter.binding == binding)?;
+                        let projections = place
+                            .path
+                            .iter()
+                            .map(GoalProjection::from_place_step)
+                            .collect::<Option<Vec<_>>>()?;
+                        let Value::Int(index) = self.goal_parameter(
+                            state,
+                            function,
+                            values,
+                            ordinal,
+                            &projections,
+                            CheckedType::Integer(IntegerType::U64),
+                        )?
+                        else {
+                            return None;
+                        };
+                        index
+                    }
+                    CapturedTerm::Superseded(_)
+                    | CapturedTerm::SupersededPlace(_)
+                    | CapturedTerm::Opaque => return None,
                 }),
                 _ => None,
             };

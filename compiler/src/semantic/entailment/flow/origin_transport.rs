@@ -76,8 +76,8 @@ impl OriginKeys {
                     } else if let Some(datum) = expanded.datum.clone() {
                         let mut projected = Some(GoalExpression::Datum(datum));
                         for projection in projections {
-                            projected =
-                                projected.and_then(|value| value.with_projection(*projection, *ty));
+                            projected = projected
+                                .and_then(|value| value.with_projection(projection.clone(), *ty));
                         }
                         projected.map(|value| {
                             let GoalExpression::Datum(datum) = value else {

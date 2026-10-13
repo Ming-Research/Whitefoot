@@ -21,6 +21,7 @@ use super::super::entailment::{
 use super::super::goal::{GoalExpression, GoalOperation};
 use super::super::model::{CheckedFunction, CheckedNumericType, FunctionId};
 use super::super::obligations::{ObligationRecord, RecordAnswer};
+use super::super::places::SelectorRendering;
 use super::control::SHARE2_PROVE_THE_HANDLE_PLACES_APART;
 use super::{CheckStop, references, repairs};
 
@@ -104,7 +105,8 @@ impl<'unit> DeclarationInventory<'unit> {
             RecordAnswer::Obligation(_)
             | RecordAnswer::CallGoal(_)
             | RecordAnswer::Postcondition(_)
-            | RecordAnswer::Uninhabited => &record.site,
+            | RecordAnswer::Uninhabited
+            | RecordAnswer::UnselectedPostconditionPlace { .. } => &record.site,
         };
         Ok(path
             .components()
@@ -595,13 +597,14 @@ impl<'unit> TypeContext<'unit> {
                 &editable,
             ),
         };
-        let condition = match outcome.family {
-            ObligationFamily::Bounds => true,
-            _ => outcome
-                .canonical_goal
-                .as_ref()
-                .is_some_and(repairs::is_source_relation),
-        };
+        let condition = !SelectorRendering::is_diagnostic(&residual)
+            && match outcome.family {
+                ObligationFamily::Bounds => true,
+                _ => outcome
+                    .canonical_goal
+                    .as_ref()
+                    .is_some_and(repairs::is_source_relation),
+            };
         let case = repairs::GoalCase {
             disposition: repair,
             terms: reads.terms,
@@ -620,7 +623,23 @@ impl<'unit> TypeContext<'unit> {
                     Some(TermRead::Constant)
                 );
                 let calls = self.killing_calls(function, &outcome.killed_by)?;
-                let mechanical_fix = if self.declarations.in_requirement(&outcome.node_path)? {
+                let postcondition_entry =
+                    function.entailment.postconditions.iter().find_map(|proof| {
+                        if proof.entry_place_outcomes.contains(&index) {
+                            Some(true)
+                        } else if proof
+                            .place_proofs
+                            .iter()
+                            .any(|place| place.outcomes.contains(&index))
+                        {
+                            Some(false)
+                        } else {
+                            None
+                        }
+                    });
+                let mechanical_fix = if let Some(entry) = postcondition_entry {
+                    repairs::postcondition_bounds(&case, entry)
+                } else if self.declarations.in_requirement(&outcome.node_path)? {
                     repairs::clause_bounds(&case, constant_offset)
                 } else if let (Some(note), false) = (outcome.killed_by.first(), calls.is_empty()) {
                     repairs::bounds_after_kill(&case, &note.measure, &calls)
@@ -684,7 +703,7 @@ impl<'unit> TypeContext<'unit> {
                     .get(query as usize)
                     .ok_or(SemanticCompilerFailure::InvalidResolution)?;
                 let mechanical_fix = repairs::call_separation(
-                    separation.positions.first().copied(),
+                    separation.positions.first().cloned(),
                     separation.one_argument,
                 );
                 SemanticIssueKind::UndischargedCallSeparation {
@@ -765,7 +784,8 @@ impl<'unit> TypeContext<'unit> {
             referenced: reads.referenced,
             called: reads.called,
             text: &outcome.rendered_goal,
-            condition: repairs::is_source_relation(&outcome.goal.root),
+            condition: !SelectorRendering::is_diagnostic(&outcome.rendered_goal)
+                && repairs::is_source_relation(&outcome.goal.root),
             function: &function.name,
         };
         // [OP-14] `free_empty` has its own site: "An undischarged obligation

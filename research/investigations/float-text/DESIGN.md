@@ -785,10 +785,12 @@ so the Stage 1 estimate assumes E2 passes without a gap.
 
 ### Observation and independent witness
 
-This section proposes a language decision; it changes no specification,
-compiler, module source or verdict. The current reading is specification
-v0.144. Rule names below refer to the [active specification](../../../spec/kernel-spec.md);
-line numbers are reading coordinates in that revision, not stable rule identities.
+The owner selected option A, including shared obligations 1–6. The comparison
+and predicted witnesses below describe the pre-amendment v0.144
+[branch specification](https://github.com/Ming-Research/Whitefoot/blob/9e1aa2e921af7e1d0a65857aaf4a3da85a834699/spec/kernel-spec.md);
+its line numbers are reading coordinates, not stable rule identities. The
+[active specification](../../../spec/kernel-spec.md) owns the resulting language
+rules, and conformance cases own their executable evidence.
 
 The corpus at [the tracked-field range amendment](https://github.com/Ming-Research/Whitefoot/commit/d2060013556f5979a8424cb97c7fe1f5ab3467da)
 reported `Source / FN-8 / InvalidRequires` at
@@ -834,8 +836,8 @@ clause (b) place” is inadmissible “even when another clause states their
 domain”. ENT-2(b) (line 3234) requires that the place's “final step selects a
 readonly field”. Here the final step is `[0_u64]`, not a field selection.
 The fact that `0 < 1` is statically known does not change that classification.
-The [ordinary clause validator](../../../compiler/src/semantic/check/requires.rs)
-(lines 954–980) implements precisely this boundary: a subscript ending the
+The [pre-amendment ordinary clause validator](https://github.com/Ming-Research/Whitefoot/blob/9e1aa2e921af7e1d0a65857aaf4a3da85a834699/compiler/src/semantic/check/requires.rs)
+(lines 954–980) implemented precisely this boundary: a subscript ending the
 place yields `InvalidRequires` at its clause. This is declaration admission,
 not FN-8's later call-site `Unproved` or `Refuted` disposition.
 
@@ -983,7 +985,7 @@ subscripted readonly fields already demonstrate this L0-only boundary. No
 ordinary FN-9 obligation is assumed to be discharged by RANGE-2's deferred
 ordinary-obligation route, whose enumerated families do not include FN-9.
 
-### Option A: ordinary integer element terms with tracked offsets (recommended for consideration)
+### Option A: ordinary integer element terms with tracked offsets (selected)
 
 **Proposed scope.** Generalize ENT-2(b) to any fragment-integer final selected
 value below one or more subscripts on a place otherwise admitted there:

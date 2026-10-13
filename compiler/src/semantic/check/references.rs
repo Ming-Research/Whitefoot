@@ -239,7 +239,7 @@ impl ReferenceInfo {
     /// its existing place does not depend on that fact's lexical extent.
     pub(super) fn extend(&mut self, step: PlaceStep) {
         for path in &mut self.paths {
-            path.path.push(step);
+            path.path.push(step.clone());
         }
     }
 
@@ -386,10 +386,10 @@ fn path_shapes_agree(left: &ResolvedPlace, right: &ResolvedPlace) -> bool {
             .path
             .iter()
             .zip(&right.path)
-            .all(|(left, right)| step_shapes_agree(*left, *right))
+            .all(|(left, right)| step_shapes_agree(left, right))
 }
 
-const fn step_shapes_agree(left: PlaceStep, right: PlaceStep) -> bool {
+fn step_shapes_agree(left: &PlaceStep, right: &PlaceStep) -> bool {
     match (left, right) {
         (PlaceStep::Descendant(left), PlaceStep::Descendant(right)) => {
             left.loop_id.0 == right.loop_id.0 && left.holder.0 == right.holder.0
@@ -427,7 +427,7 @@ const fn step_shapes_agree(left: PlaceStep, right: PlaceStep) -> bool {
                 super::super::places::WindowPart::Free
             )
         ),
-        (PlaceStep::Measure(left), PlaceStep::Measure(right)) => left as u8 == right as u8,
+        (PlaceStep::Measure(left), PlaceStep::Measure(right)) => *left as u8 == *right as u8,
         _ => false,
     }
 }
@@ -1237,7 +1237,7 @@ impl<'unit> Checker<'_, 'unit> {
                 bindings,
             );
             for place in &mut places {
-                place.path.push(PlaceStep::Index(captured));
+                place.path.push(PlaceStep::Index(captured.clone()));
             }
             let (path, ty, mut carried, selection) = self.resolve_borrow_storage(
                 context,
@@ -1349,7 +1349,7 @@ impl<'unit> Checker<'_, 'unit> {
                 .iter()
                 .cloned()
                 .map(|mut resolved| {
-                    resolved.path.extend(place.path.iter().copied());
+                    resolved.path.extend(place.path.iter().cloned());
                     resolved
                 })
                 .collect::<Vec<_>>()
@@ -1524,7 +1524,7 @@ impl<'unit> Checker<'_, 'unit> {
                 .iter()
                 .cloned()
                 .map(|mut p| {
-                    p.path.extend(place.path.iter().copied());
+                    p.path.extend(place.path.iter().cloned());
                     p
                 })
                 .collect();
@@ -1626,7 +1626,7 @@ impl<'unit> Checker<'_, 'unit> {
                     .iter()
                     .cloned()
                     .map(|mut resolved| {
-                        resolved.path.extend(formed.path.iter().copied());
+                        resolved.path.extend(formed.path.iter().cloned());
                         resolved
                     })
                     .collect::<Vec<_>>()
@@ -1831,7 +1831,7 @@ impl<'unit> Checker<'_, 'unit> {
             let named = bases
                 .into_iter()
                 .map(|mut place| {
-                    place.path.push(PlaceStep::Index(captured));
+                    place.path.push(PlaceStep::Index(captured.clone()));
                     place
                         .path
                         .extend(path.iter().map(CheckedPlaceStep::place_step));
@@ -1937,7 +1937,7 @@ impl<'unit> Checker<'_, 'unit> {
                         .iter()
                         .cloned()
                         .map(|mut resolved| {
-                            resolved.path.extend(base.path.iter().copied());
+                            resolved.path.extend(base.path.iter().cloned());
                             resolved
                         })
                         .collect()
@@ -2022,7 +2022,7 @@ impl<'unit> Checker<'_, 'unit> {
         let places = base_places
             .into_iter()
             .map(|mut place| {
-                place.path.push(PlaceStep::Range(captured));
+                place.path.push(PlaceStep::Range(captured.clone()));
                 place
             })
             .collect::<Vec<_>>();
@@ -2094,7 +2094,7 @@ impl<'unit> Checker<'_, 'unit> {
                 PlaceStep::Part(part) => CheckedEffectStep::Part(*part),
                 PlaceStep::Measure(measure) => CheckedEffectStep::Measure(*measure),
                 PlaceStep::Page(captured) => {
-                    if let Some(parameter) = self.captured_parameter(*captured, bindings) {
+                    if let Some(parameter) = self.captured_parameter(captured.clone(), bindings) {
                         CheckedEffectStep::Page(parameter)
                     } else {
                         steps.push(CheckedEffectStep::Part(
@@ -2104,15 +2104,16 @@ impl<'unit> Checker<'_, 'unit> {
                     }
                 }
                 PlaceStep::Index(captured) => {
-                    let Some(parameter) = self.captured_parameter(*captured, bindings) else {
+                    let Some(parameter) = self.captured_parameter(captured.clone(), bindings)
+                    else {
                         break;
                     };
                     CheckedEffectStep::Index(parameter)
                 }
                 PlaceStep::Range(range) => {
                     let (Some(start), Some(end)) = (
-                        self.captured_parameter(range.start, bindings),
-                        self.captured_parameter(range.end, bindings),
+                        self.captured_parameter(range.start.clone(), bindings),
+                        self.captured_parameter(range.end.clone(), bindings),
                     ) else {
                         break;
                     };
@@ -2140,11 +2141,15 @@ impl<'unit> Checker<'_, 'unit> {
         captured: CapturedValue,
         bindings: &HashMap<DeclarationId, LocalBinding>,
     ) -> Option<DeclarationId> {
-        let local = match captured.term {
+        let local = match &captured.term {
             CapturedTerm::Binding(binding) | CapturedTerm::Superseded(binding) => {
-                bindings.values().find(|local| local.binding == binding)?
+                bindings.values().find(|local| local.binding == *binding)?
             }
-            CapturedTerm::Literal(_) | CapturedTerm::Const(_) | CapturedTerm::Opaque => {
+            CapturedTerm::Literal(_)
+            | CapturedTerm::Const(_)
+            | CapturedTerm::Place(_)
+            | CapturedTerm::SupersededPlace(_)
+            | CapturedTerm::Opaque => {
                 return None;
             }
         };
@@ -2355,10 +2360,10 @@ impl BodyChecker {
         captured: CapturedValue,
         bindings: &HashMap<DeclarationId, LocalBinding>,
     ) -> CapturedValue {
-        if let CapturedTerm::Binding(binding) = captured.term
+        if let CapturedTerm::Binding(binding) = &captured.term
             && bindings
                 .values()
-                .any(|local| local.binding == binding && local.call_value)
+                .any(|local| local.binding == *binding && local.call_value)
         {
             self.call_value_captures.insert(captured.capture);
         }
@@ -2544,6 +2549,18 @@ impl<'unit> TypeContext<'unit> {
         event: &InvalidationEvent,
         site: Option<&crate::NodePath>,
     ) -> Result<(), CheckStop> {
+        for reference in bindings
+            .values_mut()
+            .filter_map(|local| local.reference.as_mut())
+        {
+            for path in reference.paths.iter_mut().chain(&mut reference.anchors) {
+                path.supersede_selectors(|support| {
+                    support.support_places().iter().any(|support| {
+                        super::super::places::places_overlap(&UnprovedSeparations, support, written)
+                    })
+                });
+            }
+        }
         // [REF-1] a reference keeps the index value its formation read, so a
         // write of that binding leaves the reference valid but ends the
         // binding's spelling as a name for its index. [EFF-1] A parameter no
@@ -2735,7 +2752,10 @@ mod tests {
                     CapturedValue::new(CaptureId::source(0), CapturedTerm::Binding(BindingId(0)));
                 let mut place = ResolvedPlace::binding(BindingId(0));
                 place.path.push(PlaceStep::Field(2));
-                assert_eq!(checker.captured_parameter(capture, &bindings), expected.0);
+                assert_eq!(
+                    checker.captured_parameter(capture.clone(), &bindings),
+                    expected.0
+                );
                 assert_eq!(checker.is_atomic_binder(id), expected.1);
                 let paths = checker
                     .effect_paths_for_place(declarations.tree.root(), &place, &bindings)
@@ -2760,7 +2780,7 @@ mod tests {
                         .is_empty()
                 );
                 bindings.get_mut(&id).unwrap().call_value = false;
-                assert_eq!(checker.captured_parameter(capture, &bindings), None);
+                assert_eq!(checker.captured_parameter(capture.clone(), &bindings), None);
                 checker.body.call_value_captures.insert(capture.capture);
                 let superseded =
                     CapturedValue::new(capture.capture, CapturedTerm::Superseded(BindingId(0)));
@@ -2770,7 +2790,7 @@ mod tests {
                 );
                 checker.body.call_value_captures.clear();
                 bindings.clear();
-                assert_eq!(checker.captured_parameter(capture, &bindings), None);
+                assert_eq!(checker.captured_parameter(capture.clone(), &bindings), None);
                 assert!(
                     checker
                         .effect_paths_for_place(declarations.tree.root(), &place, &bindings)

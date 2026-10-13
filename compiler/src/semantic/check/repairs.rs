@@ -16,7 +16,7 @@
 //! need, the callee's `ensures` among them only when the goal reads a value a
 //! call returned; or a guard where skipping the construct is the program's
 //! intent. An operand
-//! that is no term [ENT-2], such as an element read, admits none of these
+//! that is no term [ENT-2], such as a computed element selector, admits none of these
 //! until a `let` binds it, so that binding is its repair.
 //!
 //! The words of [TYPE-2]'s refusals of an opaque struct's construction and
@@ -1147,9 +1147,30 @@ pub(super) fn clause_bounds(case: &GoalCase<'_>, constant_offset: bool) -> Strin
             case.text,
             refuted_index(constant_offset, true)
         ),
-        Disposition::Unproved => format!(
+        Disposition::Unproved if case.condition => format!(
             "add `requires {};` to the `contract` of `{}` ahead of the requirement that forms this place, which each caller then establishes",
             case.text, case.function
+        ),
+        Disposition::Unproved => format!(
+            "add a `requires` over the parameters of `{}` ahead of the requirement that forms this place, establishing each index below the length of the storage it selects, which each caller then establishes",
+            case.function
+        ),
+    }
+}
+
+/// An indexed postcondition datum forms its place at entry or at a selected
+/// return. Erased clauses cannot be guarded by executable control flow.
+pub(super) fn postcondition_bounds(case: &GoalCase<'_>, entry: bool) -> String {
+    match (case.disposition, entry) {
+        (Disposition::Refuted, true) => String::from(
+            "select an element that exists at function entry, or change the parameter storage type and requirements so that the selected entry element exists",
+        ),
+        (Disposition::Unproved, true) => format!(
+            "add a `requires` over the parameters of `{}` establishing each index below the length of the storage it selects at entry, which each caller then establishes",
+            case.function
+        ),
+        (_, false) => String::from(
+            "retain or restore storage whose length contains every selected index before each selected return, and establish those bounds independently of the postcondition; or state a postcondition over elements that exist there",
         ),
     }
 }

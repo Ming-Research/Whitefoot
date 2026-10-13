@@ -1029,6 +1029,17 @@ pub(crate) struct PostconditionAggregate {
     pub(crate) derivation: Option<DerivationId>,
 }
 
+/// Independent place formation at one candidate return of an FN-9 clause.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct PostconditionPlaceProof {
+    pub(crate) statement: NodePath,
+    /// Exact positions in the function's ordinary partial-operation outcomes.
+    pub(crate) outcomes: Vec<usize>,
+    /// The transported route known to be excluded at this return. This is
+    /// source-shape evidence, not a fabricated proof of any subscript bound.
+    pub(crate) excluded_route: Option<super::postcondition::PayloadRoute>,
+}
+
 /// The checked local FN-9 proof retained with one concrete function.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct FunctionPostconditionProof {
@@ -1041,6 +1052,9 @@ pub(crate) struct FunctionPostconditionProof {
     /// function-local derivation IDs.
     pub(crate) summary: Option<VerifiedPostconditionSummary>,
     pub(crate) exits: Vec<PostconditionExit>,
+    pub(crate) place_proofs: Vec<PostconditionPlaceProof>,
+    /// Entry-measure formation outcomes, before any entry-datum equality.
+    pub(crate) entry_place_outcomes: Vec<usize>,
     /// [TYPE-11] whether the relation is a routed one a type invariant
     /// generated, which holds vacuously where no exit selects it.
     pub(crate) vacuous: bool,
@@ -1378,6 +1392,49 @@ pub(crate) fn answer_records(
                 ObligationSubject::Source { family, conjunct } => obligations
                     .take(&(site, *family, *conjunct))
                     .map(RecordAnswer::Obligation),
+                ObligationSubject::PostconditionEntryPlace { .. } if uninhabited => {
+                    Some(RecordAnswer::Uninhabited)
+                }
+                ObligationSubject::PostconditionEntryPlace {
+                    relation_ordinal,
+                    ordinal,
+                    family,
+                    conjunct,
+                } => entailment
+                    .postconditions
+                    .get(*relation_ordinal as usize)
+                    .and_then(|proof| proof.entry_place_outcomes.get(*ordinal as usize))
+                    .and_then(|index| obligations.take_index(&(site, *family, *conjunct), *index))
+                    .map(RecordAnswer::Obligation),
+                ObligationSubject::PostconditionPlace { .. } if uninhabited => {
+                    Some(RecordAnswer::Uninhabited)
+                }
+                ObligationSubject::PostconditionPlace {
+                    relation_ordinal,
+                    statement,
+                    ordinal,
+                    family,
+                    conjunct,
+                } => {
+                    let relation = *relation_ordinal as usize;
+                    entailment.postconditions.get(relation).and_then(|proof| {
+                        let (occurrence, place) = proof
+                            .place_proofs
+                            .iter()
+                            .enumerate()
+                            .find(|(_, place)| place.statement == *statement)?;
+                        if place.excluded_route.is_some() && place.outcomes.is_empty() {
+                            return Some(RecordAnswer::UnselectedPostconditionPlace {
+                                relation,
+                                occurrence,
+                            });
+                        }
+                        let index = *place.outcomes.get(*ordinal as usize)?;
+                        obligations
+                            .take_index(&(site, *family, *conjunct), index)
+                            .map(RecordAnswer::Obligation)
+                    })
+                }
                 ObligationSubject::CallRequirement {
                     requires_clause,
                     subject,
@@ -1443,6 +1500,13 @@ impl<'judgment, Key: Eq + std::hash::Hash> Judgments<'judgment, Key> {
             .get_mut(key)?
             .pop_front()
             .map(|(index, _)| index)
+    }
+
+    /// Consume exactly the outcome owned by one clause/return occurrence.
+    fn take_index(&mut self, key: &Key, wanted: usize) -> Option<usize> {
+        let entries = self.by_key.get_mut(key)?;
+        let position = entries.iter().position(|(index, _)| *index == wanted)?;
+        entries.remove(position).map(|(index, _)| index)
     }
 
     /// The sites of the judgments no record took.

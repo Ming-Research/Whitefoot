@@ -4148,11 +4148,7 @@ pub(crate) fn implicit_derives(terms: &TermTable, relation: &Relation) -> bool {
             difference,
         } => {
             derives_bound(left, right, difference.saturating_sub(1))
-                || derives_bound(
-                    right,
-                    left,
-                    difference.saturating_neg().saturating_sub(1),
-                )
+                || derives_bound(right, left, difference.saturating_neg().saturating_sub(1))
         }
     }
 }
@@ -8237,7 +8233,7 @@ pub(crate) mod tests {
                         components: vec![0],
                     },
                     target_domain: CheckedTargetDomainObligation::ElementAddress,
-                    captured,
+                    captured: captured.clone(),
                 },
             ))],
             ty,
@@ -8254,7 +8250,7 @@ pub(crate) mod tests {
             arguments: vec![
                 GoalExpression::Datum(GoalDatum::Place {
                     root: BindingId(0),
-                    projections: vec![GoalProjection::Subscript(captured)],
+                    projections: vec![GoalProjection::Subscript(captured.clone())],
                     ty,
                     admission,
                 }),
@@ -9117,7 +9113,8 @@ pub(crate) mod tests {
             for (left, right) in [(left, right), (right, left)] {
                 let (bound, proof) = joined.bounds.get(left, right).expect("correlated equality");
                 assert_eq!(bound, 0);
-                let DerivationNode::JoinBound { parents, .. } = &ledger.nodes[proof.0 as usize] else {
+                let DerivationNode::JoinBound { parents, .. } = &ledger.nodes[proof.0 as usize]
+                else {
                     panic!("an equality stronger than implicit bounds retains a join boundary");
                 };
                 assert_eq!(parents.len(), count);

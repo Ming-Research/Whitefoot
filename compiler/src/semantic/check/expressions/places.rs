@@ -21,9 +21,9 @@ use super::super::super::model::{
     CheckedOwnedTakeCleanup, CheckedPlaceStep, CheckedType, IntegerType,
 };
 use super::super::super::places::{
-    CapturedTerm, CapturedValue, PlaceRoot, PlaceStep, ResolvedPlace, WindowPart,
+    CapturedTerm, CapturedValue, PlaceRoot, PlaceStep, ResolvedPlace, SelectorRendering, WindowPart,
 };
-use super::super::references::{OWN1_ROOTED_CONSUME, WIN3_NO_TAKE};
+use super::super::references::{OWN1_ROOTED_CONSUME, ReferenceKind, WIN3_NO_TAKE};
 
 use super::super::{CheckStop, Checker, EffectSet, LocalBinding, PlaceAccess, TypedExpression};
 use super::{PlaceUseContext, PlaceUseOptions, ResolvedPlaceSet};
@@ -483,14 +483,8 @@ impl<'unit> Checker<'_, 'unit> {
         if !root.live || dereferenced != (root.mode == CheckedMode::Reference) {
             return Ok(None);
         }
-        let place = self.elaborate_place_prefix(
-            check_context,
-            node,
-            node,
-            &suffixes,
-            bindings,
-            root_role,
-        )?;
+        let place =
+            self.elaborate_place_prefix(check_context, node, node, &suffixes, bindings, root_role)?;
         let identity = &place.resolved.identity;
         if !matches!(place.ty, CheckedType::Integer(_))
             || place.measure.is_some()
@@ -1094,7 +1088,7 @@ impl<'unit> TypeContext<'unit> {
     ) -> Result<Vec<CheckedPlaceStep>, CheckStop> {
         let mut checked = Vec::with_capacity(path.len());
         for step in path {
-            match (*step, ty) {
+            match (step.clone(), ty) {
                 (PlaceStep::Field(field), CheckedType::Nominal(id)) => {
                     let CheckedNominalKind::Struct { fields } = &self.nominal(id)?.kind else {
                         return Err(SemanticCompilerFailure::InvalidResolution.into());
@@ -1151,7 +1145,7 @@ impl<'unit> TypeContext<'unit> {
             PlaceRoot::Constant(id) => self.constant(id)?.declared_type,
         };
         for step in &path.path {
-            ty = match *step {
+            ty = match step.clone() {
                 PlaceStep::Descendant(target) => {
                     range = target.range;
                     target.ty
@@ -1266,9 +1260,11 @@ impl<'unit> TypeContext<'unit> {
                 use_node,
                 SemanticIssueKind::InvalidRestrictedTypePlacement {
                     spelling: self.checked_type_name(referent)?,
-                    mechanical_fix: super::super::repairs::runtime_content_move(
-                        &cell, window, droppable,
-                    ),
+                    mechanical_fix: if SelectorRendering::is_diagnostic(&cell) {
+                        "move the enclosing Box and keep the receiving value boxed, accessing its content through `.inner`".to_owned()
+                    } else {
+                        super::super::repairs::runtime_content_move(&cell, window, droppable)
+                    },
                 },
             );
         }
@@ -1678,7 +1674,7 @@ impl<'unit> TypeContext<'unit> {
                     }
                 };
             }
-            match *step {
+            match step.clone() {
                 PlaceStep::Descendant(target) => {
                     if target.frozen_content {
                         return Ok(Some("a descendant of Frozen.inner".to_owned()));
@@ -1814,8 +1810,9 @@ impl<'unit> TypeContext<'unit> {
         }
         Ok(None)
     }
-    /// One resolved place in its source spelling [FORM-2, REF-1]: the place
-    /// expression that names the same storage at this point of the body.
+    /// One resolved place in a diagnostic spelling [FORM-2, REF-1]. Direct
+    /// selectors and live exact aliases keep source spellings; shared nested
+    /// selections use an explicit finite DAG annotation, never source syntax.
     ///
     /// A reference parameter roots every path that goes through it, and the
     /// storage it names is written under `^` [REF-1, TYPE-7]; a local
@@ -1823,8 +1820,8 @@ impl<'unit> TypeContext<'unit> {
     /// by the path it names. A `Box` content step is the field `inner`
     /// [TYPE-9] and a payload step names its variant and field [FORM-2]. An
     /// index or range position spells the value it captured when the place
-    /// was formed [REF-1]: a literal, a const, or the binding it read. A
-    /// computed offset has no source name and renders as `?`, and a loop
+    /// was formed [REF-1]: a literal, a const, a binding or a projected place.
+    /// A computed offset has no source name and renders as `?`, and a loop
     /// summary's unknown descendant cover keeps [REF-1]'s `.**` notation.
     ///
     /// This is the one renderer every checker payload naming a resolved place
@@ -1838,6 +1835,18 @@ impl<'unit> TypeContext<'unit> {
         &self,
         place: &ResolvedPlace,
         bindings: &HashMap<DeclarationId, LocalBinding>,
+    ) -> Result<String, CheckStop> {
+        let mut selectors = SelectorRendering::default();
+        let rendered =
+            self.render_resolved_place_with_selectors(place, bindings, &mut selectors)?;
+        Ok(selectors.finish(rendered))
+    }
+
+    fn render_resolved_place_with_selectors(
+        &self,
+        place: &ResolvedPlace,
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+        selectors: &mut SelectorRendering,
     ) -> Result<String, CheckStop> {
         let mut range = false;
         let mut prefix = 0;
@@ -1863,7 +1872,7 @@ impl<'unit> TypeContext<'unit> {
             }
         };
         for (position, step) in place.path.iter().enumerate() {
-            match *step {
+            match step.clone() {
                 PlaceStep::Descendant(target) => {
                     rendered.push_str(".**");
                     ty = Some(target.ty);
@@ -1922,7 +1931,7 @@ impl<'unit> TypeContext<'unit> {
                 PlaceStep::Page(offset) => {
                     rendered.push_str(&format!(
                         ".pages[{}]",
-                        self.declarations.render_captured_offset(offset, bindings)?
+                        self.render_captured_offset(offset, bindings, selectors)?
                     ));
                     ty = self.selected_element(ty, range)?;
                     range = true;
@@ -1935,7 +1944,7 @@ impl<'unit> TypeContext<'unit> {
                     }
                     rendered.push_str(&format!(
                         "[{}]",
-                        self.declarations.render_captured_offset(offset, bindings)?
+                        self.render_captured_offset(offset, bindings, selectors)?
                     ));
                     // [TYPE-9] a segment is a run of T.
                     let segment = !range && matches!(ty, Some(CheckedType::Segments { .. }));
@@ -1960,10 +1969,8 @@ impl<'unit> TypeContext<'unit> {
                 PlaceStep::Range(span) => {
                     rendered.push_str(&format!(
                         "[{}..{}]",
-                        self.declarations
-                            .render_captured_offset(span.start, bindings)?,
-                        self.declarations
-                            .render_captured_offset(span.end, bindings)?
+                        self.render_captured_offset(span.start, bindings, selectors)?,
+                        self.render_captured_offset(span.end, bindings, selectors)?
                     ));
                     ty = self.selected_element(ty, range)?;
                     range = true;
@@ -2067,6 +2074,74 @@ impl<'unit> TypeContext<'unit> {
         }
         Ok(())
     }
+    /// The value one index step or range endpoint captured, as the source
+    /// names it [REF-1]: an [OP-4] offset is a `u64`, so a literal carries
+    /// that suffix [FORM-5].
+    fn render_captured_offset(
+        &self,
+        offset: CapturedValue,
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+        selectors: &mut SelectorRendering,
+    ) -> Result<String, CheckStop> {
+        Ok(match offset.term {
+            CapturedTerm::Literal(value) => format!("{value}_u64"),
+            CapturedTerm::Const(declaration) => {
+                self.declarations.declaration_spelling(declaration)?
+            }
+            CapturedTerm::Binding(binding) => {
+                match bindings.values().find(|local| local.binding == binding) {
+                    Some(local) => self.declarations.declaration_spelling(local.declaration)?,
+                    None => "?".to_owned(),
+                }
+            }
+            CapturedTerm::Place(selector) => {
+                let alias = bindings.values().filter(|local| {
+                    if !local.live
+                        || !local.mode.is_reference()
+                        || local.ty != CheckedType::Integer(IntegerType::U64)
+                    {
+                        return false;
+                    }
+                    let Some(reference) = &local.reference else {
+                        return false;
+                    };
+                    reference.kind == ReferenceKind::Single
+                        && reference.is_valid()
+                        && reference.preservations.is_empty()
+                        && reference.loop_dependencies().is_empty()
+                        && matches!(reference.paths.as_slice(), [path] if &path.clone().term_identity() == selector.place())
+                }).min_by_key(|local| local.binding);
+                if let Some(alias) = alias {
+                    format!(
+                        "{}^",
+                        self.declarations.declaration_spelling(alias.declaration)?
+                    )
+                } else if !SelectorRendering::needs_label(&selector) {
+                    self.render_resolved_place_with_selectors(
+                        selector.place(),
+                        bindings,
+                        selectors,
+                    )?
+                } else {
+                    let (id, fresh) = selectors.reference(&selector);
+                    if fresh {
+                        let rendered = self.render_resolved_place_with_selectors(
+                            selector.place(),
+                            bindings,
+                            selectors,
+                        )?;
+                        selectors.define(id, rendered);
+                    }
+                    SelectorRendering::label(id)
+                }
+            }
+            // The binding's spelling names a later value than the one this
+            // index read, and no source spelling names that one.
+            CapturedTerm::Superseded(_)
+            | CapturedTerm::SupersededPlace(_)
+            | CapturedTerm::Opaque => "?".to_owned(),
+        })
+    }
 }
 
 impl<'unit> DeclarationInventory<'unit> {
@@ -2094,8 +2169,7 @@ impl<'unit> DeclarationInventory<'unit> {
                 // [MSR-1] the run's one measure ends the place.
                 PlaceSuffix::Member(_)
                     if rest.len() == 1
-                        && self.trailing_measure_member(rest)?
-                            == Some(CheckedMeasure::Length) =>
+                        && self.trailing_measure_member(rest)? == Some(CheckedMeasure::Length) =>
                 {
                     return Ok(());
                 }
@@ -2131,28 +2205,6 @@ impl<'unit> DeclarationInventory<'unit> {
         let name = std::str::from_utf8(self.tree.token_bytes(member.field)?)
             .map_err(|_| SemanticCompilerFailure::InvalidSourceEncoding)?;
         Ok(super::super::types::measure_named(name))
-    }
-    /// The value one index step or range endpoint captured, as the source
-    /// names it [REF-1]: an [OP-4] offset is a `u64`, so a literal carries
-    /// that suffix [FORM-5].
-    fn render_captured_offset(
-        &self,
-        offset: CapturedValue,
-        bindings: &HashMap<DeclarationId, LocalBinding>,
-    ) -> Result<String, CheckStop> {
-        Ok(match offset.term {
-            CapturedTerm::Literal(value) => format!("{value}_u64"),
-            CapturedTerm::Const(declaration) => self.declaration_spelling(declaration)?,
-            CapturedTerm::Binding(binding) => {
-                match bindings.values().find(|local| local.binding == binding) {
-                    Some(local) => self.declaration_spelling(local.declaration)?,
-                    None => "?".to_owned(),
-                }
-            }
-            // The binding's spelling names a later value than the one this
-            // index read, and no source spelling names that one.
-            CapturedTerm::Superseded(_) | CapturedTerm::Opaque => "?".to_owned(),
-        })
     }
     /// [TYPE-10] a window part is effect-row vocabulary and never a place.
     ///

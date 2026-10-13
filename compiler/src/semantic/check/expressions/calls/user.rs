@@ -559,7 +559,32 @@ impl<'unit> Checker<'_, 'unit> {
                             &actual_captures,
                         )?);
                     }
-                    ContractReadStep::Captured(step) => suffix.push(*step),
+                    ContractReadStep::Captured(step) => suffix.push(step.clone()),
+                    ContractReadStep::Selector { template, page } => {
+                        let image = self.instantiate_goal_expression(
+                            check_context,
+                            template,
+                            signature,
+                            &signature.region_parameters,
+                            &goal_arguments,
+                        )?;
+                        let mut offset = image
+                            .captured_offset(&self.types.constants, &self.types.checked_constants)
+                            .unwrap_or_else(CapturedValue::unknown);
+                        offset.capture = CaptureId::ContractRead {
+                            call: node,
+                            position: contract_position,
+                        };
+                        contract_position = contract_position
+                            .checked_add(1)
+                            .ok_or(SemanticCompilerFailure::CounterOverflow)?;
+                        suffix.push(if *page {
+                            PlaceStep::Page(offset.clone())
+                        } else {
+                            PlaceStep::Index(offset.clone())
+                        });
+                        contract_indices.push((offset, image));
+                    }
                     ContractReadStep::Computed(term, definitions) => {
                         let mut pending = Vec::new();
                         let goal = range_term_goal(
@@ -598,7 +623,7 @@ impl<'unit> Checker<'_, 'unit> {
                         contract_position = contract_position
                             .checked_add(1)
                             .ok_or(SemanticCompilerFailure::CounterOverflow)?;
-                        suffix.push(PlaceStep::Index(captured));
+                        suffix.push(PlaceStep::Index(captured.clone()));
                         contract_indices.push((captured, goal));
                     }
                 }
@@ -606,7 +631,7 @@ impl<'unit> Checker<'_, 'unit> {
             for actual in actual_paths.get(argument).into_iter().flatten() {
                 let mut place = actual.clone();
                 let formed = place.path.len();
-                place.path.extend(suffix.iter().copied());
+                place.path.extend(suffix.iter().cloned());
                 compared.push(SubstitutedEntry {
                     contract_read: true,
                     contract_indices: contract_indices.clone(),
@@ -769,7 +794,7 @@ impl<'unit> Checker<'_, 'unit> {
                 .parameters
                 .iter()
                 .position(|candidate| candidate.declaration == parameter)
-                .and_then(|index| actual_captures.get(index).copied())
+                .and_then(|index| actual_captures.get(index).cloned())
                 .unwrap_or_else(CapturedValue::unknown)
         };
         Ok(formal
@@ -914,7 +939,7 @@ impl<'unit> Checker<'_, 'unit> {
                 let named = separable.as_ref().and_then(|(positions, window)| {
                     let positions = positions
                         .iter()
-                        .copied()
+                        .cloned()
                         .filter(|candidate| candidate.names_its_values())
                         .collect::<Vec<_>>();
                     // The window is read only by a position beside its part.
@@ -1046,31 +1071,41 @@ impl<'unit> Checker<'_, 'unit> {
             match steps {
                 (PlaceStep::Index(first), PlaceStep::Index(second))
                 | (PlaceStep::Page(first), PlaceStep::Page(second))
-                    if first.provably_same(*second) =>
+                    if first.provably_same(second.clone()) =>
                 {
                     continue;
                 }
                 (PlaceStep::Range(first), PlaceStep::Range(second))
-                    if first.start.provably_same(second.start)
-                        && first.end.provably_same(second.end) =>
+                    if first.start.provably_same(second.start.clone())
+                        && first.end.provably_same(second.end.clone()) =>
                 {
                     continue;
                 }
                 (PlaceStep::Index(first), PlaceStep::Index(second)) => {
-                    candidates.push(CheckedCallSeparationPositions::Indices(*first, *second));
+                    candidates.push(CheckedCallSeparationPositions::Indices(
+                        first.clone(),
+                        second.clone(),
+                    ));
                 }
                 (PlaceStep::Page(first), PlaceStep::Page(second)) => {
-                    candidates.push(CheckedCallSeparationPositions::Indices(*first, *second));
+                    candidates.push(CheckedCallSeparationPositions::Indices(
+                        first.clone(),
+                        second.clone(),
+                    ));
                     break;
                 }
                 (PlaceStep::Range(first), PlaceStep::Range(second)) => {
-                    candidates.push(CheckedCallSeparationPositions::Ranges(*first, *second));
+                    candidates.push(CheckedCallSeparationPositions::Ranges(
+                        first.clone(),
+                        second.clone(),
+                    ));
                     break;
                 }
                 (PlaceStep::Index(index), PlaceStep::Range(range))
                 | (PlaceStep::Range(range), PlaceStep::Index(index)) => {
                     candidates.push(CheckedCallSeparationPositions::IndexOutsideRange(
-                        *index, *range,
+                        index.clone(),
+                        range.clone(),
                     ));
                     break;
                 }
@@ -1080,10 +1115,10 @@ impl<'unit> Checker<'_, 'unit> {
                 {
                     let position = match steps {
                         (PlaceStep::Index(index), _) | (_, PlaceStep::Index(index)) => {
-                            CheckedCallSeparationPositions::Live(*index)
+                            CheckedCallSeparationPositions::Live(index.clone())
                         }
                         (PlaceStep::Range(range), _) | (_, PlaceStep::Range(range)) => {
-                            CheckedCallSeparationPositions::RangeWithinLength(*range)
+                            CheckedCallSeparationPositions::RangeWithinLength(range.clone())
                         }
                         _ => break,
                     };
@@ -1463,6 +1498,15 @@ impl<'unit> TypeContext<'unit> {
             return Ok(image);
         }
 
+        if let Some(place) = argument.expression.integer_element_proof_place() {
+            return self.goal_referent_image(
+                &place,
+                expected_type,
+                atom,
+                self.call_goal_admission(&argument.expression),
+            );
+        }
+
         // [MSR-6, ENT-2] a const generic read is already the canonical
         // symbolic constant, or its supplied concrete integer. Preserve that
         // checked value just as for a written literal; re-reading the source
@@ -1589,8 +1633,10 @@ impl<'unit> TypeContext<'unit> {
                     CheckedSegmentSelect::One(index) => {
                         GoalProjection::Subscript(index.captured.goal_identity())
                     }
-                    CheckedSegmentSelect::Page(index) => GoalProjection::Page(index.captured),
-                    CheckedSegmentSelect::All(range) => GoalProjection::Range(*range),
+                    CheckedSegmentSelect::Page(index) => {
+                        GoalProjection::Page(index.captured.clone())
+                    }
+                    CheckedSegmentSelect::All(range) => GoalProjection::Range(range.clone()),
                 });
                 admission
             }
@@ -1610,7 +1656,9 @@ impl<'unit> TypeContext<'unit> {
                         .map(|formation| self.call_goal_admission(formation))
                         .unwrap_or_else(|| GoalAdmission::plain_range(root.element_type)),
                 };
-                admission.projections.push(GoalProjection::Range(*captured));
+                admission
+                    .projections
+                    .push(GoalProjection::Range(captured.clone()));
                 admission
             }
             // These forms write no subscript, including a holder whose

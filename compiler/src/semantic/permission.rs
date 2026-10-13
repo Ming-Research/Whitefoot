@@ -1592,7 +1592,7 @@ impl<'check> Program<'check> {
                                         }),
                                 );
                             }
-                            prefix.push(*step);
+                            prefix.push(step.clone());
                         }
                     }
                 }
@@ -1961,7 +1961,7 @@ fn call_range_formations(statement: &CheckedStatement) -> Vec<PermissionRangeFor
             } if matches!(captured.start.capture, CaptureId::Source(_)) => {
                 Some(PermissionRangeFormation {
                     carrier: carrier.clone(),
-                    captured: *captured,
+                    captured: captured.clone(),
                     start: start.as_ref().clone(),
                     end: end.as_ref().clone(),
                 })
@@ -2703,7 +2703,7 @@ mod storage_tests {
     fn storage_conflicts_consume_index_proofs_but_never_separate_unknown_roots() {
         let left = CapturedValue::new(CaptureId::source(1), CapturedTerm::Binding(BindingId(1)));
         let right = CapturedValue::new(CaptureId::source(2), CapturedTerm::Binding(BindingId(2)));
-        let oracle = DistinctIndices(left, right);
+        let oracle = DistinctIndices(left.clone(), right.clone());
         let place = |index| StoragePlace {
             place: Some(ResolvedPlace {
                 root: PlaceRoot::Binding(BindingId(0)),
@@ -2716,12 +2716,12 @@ mod storage_tests {
             owner: false,
         };
         let mut release = CallStorageEffects {
-            released: vec![place(left)],
+            released: vec![place(left.clone())],
             borrowed: Vec::new(),
         };
         let mut borrow = CallStorageEffects {
             released: Vec::new(),
-            borrowed: vec![place(right)],
+            borrowed: vec![place(right.clone())],
         };
         assert!(release.conflict(&UnprovedSeparations, &borrow).is_some());
         assert!(release.conflict(&oracle, &borrow).is_none());
@@ -2729,12 +2729,12 @@ mod storage_tests {
         borrow.borrowed[0].place = None;
         assert!(release.conflict(&oracle, &borrow).is_some());
         assert!(borrow.conflict(&oracle, &release).is_some());
-        borrow.borrowed[0] = place(right);
+        borrow.borrowed[0] = place(right.clone());
         release.released[0].place = None;
         assert!(release.conflict(&oracle, &borrow).is_some());
         assert!(borrow.conflict(&oracle, &release).is_some());
-        release.released[0] = place(left);
-        borrow.borrowed[0] = place(left);
+        release.released[0] = place(left.clone());
+        borrow.borrowed[0] = place(left.clone());
         assert!(
             release.conflict(&oracle, &borrow).is_some(),
             "equal indices still overlap"

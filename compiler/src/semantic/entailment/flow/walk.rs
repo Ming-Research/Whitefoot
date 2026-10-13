@@ -257,7 +257,7 @@ impl Analyzer<'_, '_> {
         // right-hand side; both are judged at this point, then the commit
         // kill applies.
         let target_reached = self.judge_set_target(target, state);
-        let destination = set_target_place(target);
+        let mut destination = set_target_place(target);
         let mut result = self.capture_result(node_path, value, state);
         let affine_value = self
             .reasoning()
@@ -287,7 +287,7 @@ impl Analyzer<'_, '_> {
         // carry the surviving consequences of that value past the write,
         // instead of losing them with the old target value.
         //
-        // Only a direct fragment place can receive that image, so only such a
+        // Only an admitted fragment place can receive that image, so only such a
         // commit forms a value term: with no destination to carry it to, the
         // image would relate nothing to the program's later state.
         let commit_carries_image = self.vocabulary.commit_target_term(target).is_some();
@@ -313,6 +313,27 @@ impl Analyzer<'_, '_> {
         let mut target_kills = Vec::new();
         self.input
             .collect_target_kill(node_path, target, state, &mut target_kills);
+        // SET-1 evaluates the target first. Preserve that selection across
+        // the RHS effects and the commit, never a later selector spelling.
+        if let Some(place) = &mut destination {
+            let identified = place.supersede_selectors(|support| {
+                prepared.as_ref().is_some_and(|prepared| {
+                    prepared.kills.iter().any(|event| {
+                        self.input.event_kills_selected_place(
+                            &prepared.entry_separations(&state.separations),
+                            support,
+                            event,
+                        )
+                    })
+                }) || target_kills.iter().any(|event| {
+                    self.input
+                        .event_kills_selected_place(&state.separations, support, event)
+                })
+            });
+            if !identified {
+                destination = None;
+            }
+        }
         let receivers =
             if let (Some(prepared), Some(receiver_route)) = (prepared.as_ref(), receiver_route) {
                 self.reasoning().prepare_direct_receiver(
@@ -349,7 +370,7 @@ impl Analyzer<'_, '_> {
         // the committed place's measures are the datums minted before them.
         if commit_reached
             && let Some(carry) = &placement
-            && let Some(destination) = set_target_place(target)
+            && let Some(destination) = destination.clone()
         {
             self.reasoning().establish_measure_datums(
                 node_path,
@@ -371,13 +392,13 @@ impl Analyzer<'_, '_> {
             let destination = bound_place(place.binding);
             let _ = self.reasoning().establish_captured_range_length(
                 destination,
-                *captured,
+                captured.clone(),
                 &mut state.affine,
             );
         }
         if commit_reached
             && !constructed.is_empty()
-            && let Some(base) = set_target_place(target)
+            && let Some(base) = destination.clone()
         {
             self.reasoning().establish_construct_placements(
                 node_path,
@@ -397,46 +418,15 @@ impl Analyzer<'_, '_> {
         // target's own kills the events every substitution must survive.
         if commit_reached
             && let Some(prepared) = prepared.as_ref()
-            && let Some(mut place) = destination
+            && let Some(place) = destination.clone()
         {
-            // [SET-1, ENT-2] this place captured its offsets before the RHS.
-            // A write of an offset binding ends that spelling as a name for
-            // the captured value, just as it does for a pre-existing reference.
-            // Keep the evaluation capture so publication cannot reach a later
-            // access through the binding's new value.
-            let bindings = place.spelled_indices().collect::<Vec<_>>();
-            let mut identity_preserved = true;
-            for (capture, binding) in bindings {
-                if prepared.kills.iter().any(|event| {
-                    self.input.affine_event_kills_binding(
-                        &prepared.entry_separations(&state.separations),
-                        binding,
-                        event,
-                    )
-                }) || target_kills.iter().any(|event| {
-                    self.input
-                        .affine_event_kills_binding(&state.separations, binding, event)
-                }) {
-                    // A direct page selection can already have discarded its
-                    // occurrence in favor of current spelling. That spelling
-                    // cannot name the old value after this write, and minting
-                    // a replacement capture would assert an invented identity.
-                    if !matches!(capture, CaptureId::Source(_) | CaptureId::LoopHeader { .. }) {
-                        identity_preserved = false;
-                        break;
-                    }
-                    place.supersede_binding(binding);
-                }
-            }
-            let destinations = vec![identity_preserved.then(|| {
-                (
-                    target.binding(),
-                    ResultDestination::SetTarget {
-                        target: target.clone(),
-                        place,
-                    },
-                )
-            })];
+            let destinations = vec![Some((
+                target.binding(),
+                ResultDestination::SetTarget {
+                    target: target.clone(),
+                    place,
+                },
+            ))];
             self.reasoning().establish_result_list_destinations(
                 node_path,
                 &destinations,
@@ -456,6 +446,7 @@ impl Analyzer<'_, '_> {
                 self.vocabulary.establish_commit_copy_fact(
                     node_path,
                     target,
+                    destination.as_ref(),
                     commit,
                     &mut state.facts,
                     &mut set_image_event,
@@ -703,7 +694,7 @@ impl Analyzer<'_, '_> {
                     {
                         self.establish_range_length(
                             bound_place(*binding),
-                            *captured,
+                            captured.clone(),
                             (start, end),
                             node_path,
                             state,
@@ -793,7 +784,7 @@ impl Analyzer<'_, '_> {
                 // clause, judged over the state that edge leaves with, and of
                 // every route a type invariant generates over the `Err`
                 // field, judged in the operand's own context for that field.
-                self.judging().judge_postcondition_return(
+                self.judge_postcondition_return(
                     node_path,
                     state,
                     None,
@@ -1193,7 +1184,7 @@ impl Analyzer<'_, '_> {
 
                 // [TYPE-11] a return inside an atomic block leaves it.
                 self.judge_atomic_exit(node_path, state);
-                self.judging().judge_postcondition_return(
+                self.judge_postcondition_return(
                     node_path,
                     state,
                     affine_result.as_ref(),
@@ -1214,9 +1205,7 @@ impl Analyzer<'_, '_> {
                     .frames
                     .gives
                     .last()
-                    .is_some_and(|frame| {
-                        value_carrier(frame.result_mode, frame.result_type, value)
-                    })
+                    .is_some_and(|frame| value_carrier(frame.result_mode, frame.result_type, value))
                     .then(|| self.reasoning().mint_value_carrier(node_path, value, state));
                 let mut result = self.capture_result(node_path, value, state);
                 let judgment = self.expression_effects(value, state);
@@ -2005,8 +1994,12 @@ impl Analyzer<'_, '_> {
             if let Some(binder) = arm.binders.iter().find(|binder| {
                 binder.field == result.route.field && binder.mode == CheckedMode::Own
             }) {
-                self.reasoning()
-                    .select_result(&binder.node_path, result, binder.binding, &mut state);
+                self.reasoning().select_result(
+                    &binder.node_path,
+                    result,
+                    binder.binding,
+                    &mut state,
+                );
             }
         }
         self.frames
@@ -2073,7 +2066,7 @@ impl Analyzer<'_, '_> {
     ) {
         let term = self.reasoning().establish_captured_range_length(
             destination,
-            captured,
+            captured.clone(),
             &mut state.affine,
         );
         let Some(term) = term else {

@@ -23,6 +23,12 @@ pub(super) enum ContractReadStep {
     Row(CheckedEffectStep),
     /// Literal and const positions already have a captured value.
     Captured(PlaceStep),
+    /// An ordinary projected formal selector; the caller substitutes its
+    /// pre-transfer actual and records the same checked selection.
+    Selector {
+        template: GoalExpression,
+        page: bool,
+    },
     /// A finite typed range position and the erased definition images its
     /// local roots can name, kept intact until caller substitution.
     Computed(CheckedRangeTerm, Vec<(BindingId, GoalExpression)>),
@@ -221,8 +227,29 @@ fn ordinary_read(
     projections: &[GoalProjection],
     reads: &mut Vec<ContractReadPath>,
 ) {
+    ordinary_selector_reads(signature, projections, reads);
     if let Some(steps) = ordinary_steps(signature, ordinal, projections) {
         add_read(signature, ordinal, steps, reads);
+    }
+}
+
+fn ordinary_selector_reads(
+    signature: &FunctionSignature,
+    projections: &[GoalProjection],
+    reads: &mut Vec<ContractReadPath>,
+) {
+    for projection in projections {
+        if let GoalProjection::FormalSubscript {
+            ordinal,
+            projections,
+        }
+        | GoalProjection::FormalPage {
+            ordinal,
+            projections,
+        } = projection
+        {
+            ordinary_read(signature, *ordinal, projections, reads);
+        }
     }
 }
 
@@ -245,7 +272,7 @@ fn ordinary_steps(
     };
     let steps = projections
         .iter()
-        .map(|projection| match *projection {
+        .map(|projection| match projection.clone() {
             GoalProjection::Deref => ContractReadStep::Row(CheckedEffectStep::Deref),
             GoalProjection::Field(field) => ContractReadStep::Row(CheckedEffectStep::Field(field)),
             GoalProjection::Payload { variant, field } => {
@@ -254,12 +281,28 @@ fn ordinary_steps(
             GoalProjection::Measure(measure) => {
                 ContractReadStep::Row(CheckedEffectStep::Measure(measure))
             }
-            GoalProjection::FormalSubscript { ordinal } => ContractReadStep::Row(
-                CheckedEffectStep::Index(signature.parameters[ordinal as usize].declaration),
-            ),
-            GoalProjection::FormalPage { ordinal } => ContractReadStep::Row(
-                CheckedEffectStep::Page(signature.parameters[ordinal as usize].declaration),
-            ),
+            GoalProjection::FormalSubscript {
+                ordinal,
+                projections,
+            } => ContractReadStep::Selector {
+                template: GoalExpression::Datum(GoalDatum::Parameter {
+                    ordinal,
+                    projections,
+                    ty: CheckedType::Integer(IntegerType::U64),
+                }),
+                page: false,
+            },
+            GoalProjection::FormalPage {
+                ordinal,
+                projections,
+            } => ContractReadStep::Selector {
+                template: GoalExpression::Datum(GoalDatum::Parameter {
+                    ordinal,
+                    projections,
+                    ty: CheckedType::Integer(IntegerType::U64),
+                }),
+                page: true,
+            },
             projection => ContractReadStep::Captured(projection.place_step()),
         })
         .collect();
@@ -277,6 +320,9 @@ fn collect_goal(
             projections,
             ..
         }) => ordinary_read(signature, *ordinal, projections, reads),
+        GoalExpression::Datum(GoalDatum::NamedConst { projections, .. }) => {
+            ordinary_selector_reads(signature, projections, reads);
+        }
         GoalExpression::Operation { row, arguments, .. } => {
             // A measure operation observes one descriptor word of its
             // operand. Recursing into the operand datum instead would
@@ -313,6 +359,11 @@ fn collect_expanded(
             projections,
             ..
         }) => ordinary_read(signature, *ordinal, projections, reads),
+        ExpandedClauseExpression::Datum(ExpandedClauseDatum::NamedConst {
+            projections, ..
+        }) => {
+            ordinary_selector_reads(signature, projections, reads);
+        }
         ExpandedClauseExpression::Operation { row, arguments, .. } => {
             if let Some(measure) = operation_measure(*row)
                 && let [
@@ -829,7 +880,10 @@ fn range_index_projection(
         CheckedRangeTerm::Value(CheckedRangeRoot::Binding(binding))
             if signature.parameters.get(binding.0 as usize).is_some() =>
         {
-            GoalProjection::FormalSubscript { ordinal: binding.0 }
+            GoalProjection::FormalSubscript {
+                ordinal: binding.0,
+                projections: Vec::new(),
+            }
         }
         CheckedRangeTerm::Constant(value) if u64::try_from(*value).is_ok() => {
             GoalProjection::Subscript(CapturedValue::new(
@@ -853,7 +907,7 @@ fn range_index_projection(
                 CapturedTerm::Opaque,
             );
             *position = position.checked_add(1)?;
-            pending.push((captured, goal));
+            pending.push((captured.clone(), goal));
             GoalProjection::Subscript(captured)
         }
     })

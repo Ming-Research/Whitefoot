@@ -1286,10 +1286,6 @@ fn run(function: &CheckedFunction, context: &EntailmentContext<'_>) -> AnalysisR
     analyzer
         .reasoning()
         .initialize_affine_parameters(&mut state.affine);
-    // [MSR-3] the entry placement, before every other source: one immutable
-    // datum per measure of a parameter any declared relation names, equal to
-    // that measure at body entry.
-    analyzer.reasoning().establish_entry_datums(&mut state);
     analyzer
         .frames
         .scopes
@@ -1336,6 +1332,18 @@ fn run(function: &CheckedFunction, context: &EntailmentContext<'_>) -> AnalysisR
         super::super::model::CheckedBodyDisposition::Inhabited
     ) {
         analyzer.judging().initialize_postcondition_proofs();
+        // [OP-4, MSR-3] immutable indexed measures form in entry storage,
+        // using all established requirements but none of their own capture
+        // equalities. A written reference's exit measures form at returns.
+        if function.body.is_some() {
+            for (ordinal, postcondition) in function.postconditions.iter().enumerate() {
+                let start = analyzer.output.obligations.len();
+                analyzer.judge_clause_places(&postcondition.entry_places, &mut state);
+                analyzer.output.postconditions[ordinal].entry_place_outcomes =
+                    (start..analyzer.output.obligations.len()).collect();
+            }
+        }
+        analyzer.reasoning().establish_entry_datums(&mut state);
     }
     if let Some(body) = &function.body {
         analyzer.walk_block(body, &mut state, &mut Vec::new());
@@ -1637,7 +1645,7 @@ impl SeparationLedger {
     }
 
     fn record_ranges_disjoint(&mut self, left: CapturedRange, right: CapturedRange) {
-        self.disjoint_ranges.insert((left, right));
+        self.disjoint_ranges.insert((left.clone(), right.clone()));
         self.disjoint_ranges.insert((right, left));
     }
 
@@ -2342,6 +2350,36 @@ mod range_argument_kill_tests {
         check(&mut analyzer)
     }
 
+    /// Repeated exact selector paths form a DAG. A diagnostic must not
+    /// expand its two references at each level into an exponential string.
+    #[test]
+    fn selector_diagnostics_render_shared_paths_once() {
+        use crate::semantic::places::{ProjectedSelector, SelectorRendering};
+        with_analyzer(Vec::new(), |analyzer| {
+            let mut selected = ProjectedSelector::new(ResolvedPlace::binding(ORIGIN));
+            for _ in 0..24 {
+                let captured = CapturedValue::new(
+                    CaptureId::SpellingDetermined,
+                    CapturedTerm::Place(selected),
+                );
+                let mut path = ResolvedPlace::binding(VIEW);
+                path.path = vec![
+                    PlaceStep::Index(captured.clone()),
+                    PlaceStep::Index(captured),
+                ];
+                selected = ProjectedSelector::new(path);
+            }
+            let rendered = analyzer.input.render_offset(CapturedValue::new(
+                CaptureId::SpellingDetermined,
+                CapturedTerm::Place(selected),
+            ));
+            assert!(SelectorRendering::is_diagnostic(&rendered));
+            assert!(rendered.contains("selection DAG, diagnostic labels only"));
+            assert_eq!(rendered.matches(" = ").count(), 24);
+            assert!(rendered.len() < 10_000);
+        });
+    }
+
     /// [ENT-2, MSR-2] a scalar read through a measure reference uses the
     /// direct measure's word support: another word or an element preserves
     /// it, and its word or its containing owner kills it.
@@ -2414,7 +2452,7 @@ mod range_argument_kill_tests {
             let own = range(20, 1, 3);
             analyzer.reasoning().file_range_image(
                 &carrier,
-                own,
+                own.clone(),
                 &endpoint(1),
                 &endpoint(3),
                 &mut affine,
@@ -2440,7 +2478,10 @@ mod range_argument_kill_tests {
     fn an_inline_range_actual_names_its_formation_path_for_kills() {
         let outer = range(10, 0, 3);
         // `view` names `origin[0..3]`.
-        let origins = vec![Vec::new(), vec![place(vec![PlaceStep::Range(outer)])]];
+        let origins = vec![
+            Vec::new(),
+            vec![place(vec![PlaceStep::Range(outer.clone())])],
+        ];
         with_analyzer(origins, |analyzer| {
             an_inline_range_actual_kills(analyzer, outer)
         });
@@ -2448,16 +2489,19 @@ mod range_argument_kill_tests {
 
     fn an_inline_range_actual_kills(analyzer: &mut Analyzer<'_, '_>, outer: CapturedRange) {
         let inner = range(20, 1, 3);
-        let direct = formation(storage_source(), inner, 1, 3);
+        let direct = formation(storage_source(), inner.clone(), 1, 3);
         assert_eq!(
             analyzer.input.argument_referents(&direct),
-            vec![(place(vec![PlaceStep::Range(inner)]), false)]
+            vec![(place(vec![PlaceStep::Range(inner.clone())]), false)]
         );
-        let reslice = formation(view_source(), inner, 1, 3);
+        let reslice = formation(view_source(), inner.clone(), 1, 3);
         assert_eq!(
             analyzer.input.argument_referents(&reslice),
             vec![(
-                place(vec![PlaceStep::Range(outer), PlaceStep::Range(inner)]),
+                place(vec![
+                    PlaceStep::Range(outer.clone()),
+                    PlaceStep::Range(inner.clone())
+                ]),
                 false
             )]
         );
@@ -2468,7 +2512,7 @@ mod range_argument_kill_tests {
         let separations = SeparationLedger::default();
         for (argument, prefix) in [
             (&direct, Vec::new()),
-            (&reslice, vec![PlaceStep::Range(outer)]),
+            (&reslice, vec![PlaceStep::Range(outer.clone())]),
         ] {
             let mut events = Vec::new();
             analyzer
@@ -2480,7 +2524,7 @@ mod range_argument_kill_tests {
             let mut selected = prefix.clone();
             selected.push(PlaceStep::Index(literal(30, 1)));
             let mut own = prefix;
-            own.push(PlaceStep::Range(inner));
+            own.push(PlaceStep::Range(inner.clone()));
             let [selected, origin, own] = [selected, Vec::new(), own].map(|path| {
                 analyzer
                     .vocabulary

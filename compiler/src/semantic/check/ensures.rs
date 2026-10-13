@@ -600,8 +600,16 @@ impl<'unit> Checker<'_, 'unit> {
         selector: &CheckedPostconditionSelector,
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         counters: &mut ControlCounters<'_>,
-    ) -> Result<RelationTemplate, CheckStop> {
-        let expanded = self.expand_postcondition_clause(context, selector, bindings, counters)?;
+    ) -> Result<
+        (
+            RelationTemplate,
+            Vec<CheckedExpression>,
+            Vec<CheckedExpression>,
+        ),
+        CheckStop,
+    > {
+        let (expanded, places, entry_places) =
+            self.expand_postcondition_clause_with_places(context, selector, bindings, counters)?;
         let clause = self
             .types
             .declarations
@@ -614,9 +622,12 @@ impl<'unit> Checker<'_, 'unit> {
             .tree
             .first_child_with(clause, Production::ClauseExpr)?
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-        self.types
-            .declarations
-            .postcondition_relation(expression, expanded, context.function)
+        let relation = self.types.declarations.postcondition_relation(
+            expression,
+            expanded,
+            context.function,
+        )?;
+        Ok((relation, places, entry_places))
     }
 
     pub(super) fn expand_postcondition_clause(
@@ -626,6 +637,30 @@ impl<'unit> Checker<'_, 'unit> {
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         counters: &mut ControlCounters<'_>,
     ) -> Result<ExpandedClauseExpression, CheckStop> {
+        self.expand_postcondition_clause_with_places(context, selector, bindings, counters)
+            .map(|(expression, _, _)| expression)
+    }
+
+    fn expand_postcondition_clause_with_places(
+        &mut self,
+        context: FunctionContext<'_, '_>,
+        selector: &CheckedPostconditionSelector,
+        bindings: &mut HashMap<DeclarationId, LocalBinding>,
+        counters: &mut ControlCounters<'_>,
+    ) -> Result<
+        (
+            ExpandedClauseExpression,
+            Vec<CheckedExpression>,
+            Vec<CheckedExpression>,
+        ),
+        CheckStop,
+    > {
+        use super::requires::{
+            ClauseDefinition, collect_clause_places, collect_clause_reads, definition_offset,
+            expand_definition_offsets,
+        };
+        let mut definitions: Vec<ClauseDefinition> = Vec::new();
+        let mut definition_offsets = HashMap::new();
         let FunctionContext {
             check_context,
             function,
@@ -737,6 +772,12 @@ impl<'unit> Checker<'_, 'unit> {
                     definition,
                     value,
                 )?;
+                self.types.validate_clause_alias_offsets(
+                    ClauseKind::Postcondition(record),
+                    definition,
+                    value,
+                    &definition_offsets,
+                )?;
                 self.types.validate_clause_copy_local(
                     check_context,
                     ClauseKind::Postcondition(record),
@@ -758,6 +799,21 @@ impl<'unit> Checker<'_, 'unit> {
                         .invalid_postcondition_relation(expression);
                 }
                 expanded_bindings.insert(*binding, expanded);
+                let mut places = Vec::new();
+                collect_clause_places(value, &mut places);
+                for place in &mut places {
+                    expand_definition_offsets(place, &definition_offsets, &self.types)?;
+                }
+                let offset = definition_offset(value, &definition_offsets, &self.types)?;
+                definition_offsets.insert(*binding, offset);
+                let mut uses = Vec::new();
+                collect_clause_reads(value, &mut uses);
+                uses.retain(|read| definitions.iter().any(|earlier| earlier.binding == *read));
+                definitions.push(ClauseDefinition {
+                    binding: *binding,
+                    places,
+                    uses,
+                });
             }
             let expression = self
                 .types
@@ -786,6 +842,12 @@ impl<'unit> Checker<'_, 'unit> {
                 clause,
                 &condition.expression,
             )?;
+            self.types.validate_clause_alias_offsets(
+                ClauseKind::Postcondition(record),
+                clause,
+                &condition.expression,
+                &definition_offsets,
+            )?;
             if condition.mode != CheckedMode::Own || condition.expression.ty() != CheckedType::Bool
             {
                 return self.types.declarations.issue_node(
@@ -801,7 +863,50 @@ impl<'unit> Checker<'_, 'unit> {
                 bindings,
                 &expanded_bindings,
             )?;
-            Ok(expanded)
+            let mut reached = std::collections::HashSet::new();
+            let mut pending = Vec::new();
+            collect_clause_reads(&condition.expression, &mut pending);
+            while let Some(read) = pending.pop() {
+                if let Some(definition) = definitions
+                    .iter()
+                    .find(|definition| definition.binding == read)
+                    && reached.insert(read)
+                {
+                    pending.extend(definition.uses.iter().copied());
+                }
+            }
+            let mut places = Vec::new();
+            for definition in &definitions {
+                if reached.contains(&definition.binding) {
+                    places.extend(definition.places.iter().cloned());
+                }
+            }
+            let own = places.len();
+            collect_clause_places(&condition.expression, &mut places);
+            for place in &mut places[own..] {
+                expand_definition_offsets(place, &definition_offsets, &self.types)?;
+            }
+            // Integer entry images stay available only while their support
+            // remains live. A measure, however, follows [MSR-3]: a written
+            // reference's bare measure reads exit storage, while every other
+            // admitted measure is an immutable entry datum.
+            let (entry_places, places) = places.into_iter().partition(|place| {
+                let measure_binding = match place {
+                    CheckedExpression::ContainerMeasure { root, .. } => root.binding(),
+                    CheckedExpression::RangeElementMeasure { place, .. } => {
+                        Some(place.root.binding)
+                    }
+                    CheckedExpression::RangeMeasure { root, .. } => Some(root.binding),
+                    _ => return false,
+                };
+                !function.parameters.iter().any(|parameter| {
+                    parameter_has_exit_state(function, parameter)
+                        && bindings
+                            .get(&parameter.declaration)
+                            .is_some_and(|local| Some(local.binding) == measure_binding)
+                })
+            });
+            Ok((expanded, places, entry_places))
         }
     }
 
@@ -962,26 +1067,6 @@ impl<'unit> Checker<'_, 'unit> {
                     ty: *ty,
                 })
             }
-            // [FN-9] a parameter or named-const datum carries field and
-            // Box-content projections only: a subscripted readonly field is an
-            // [ENT-2] clause (b) term a requirement may name, but no relation
-            // datum in this version, and only a measure member of a formal
-            // place reaches a relation through a subscript (the arm below).
-            ExpandedClauseExpression::Datum(
-                ExpandedClauseDatum::Parameter { projections, .. }
-                | ExpandedClauseDatum::NamedConst { projections, .. },
-            ) if projections.iter().any(|projection| {
-                matches!(
-                    projection,
-                    GoalProjection::Subscript(_)
-                        | GoalProjection::Page(_)
-                        | GoalProjection::FormalSubscript { .. }
-                        | GoalProjection::FormalPage { .. }
-                )
-            }) =>
-            {
-                None
-            }
             ExpandedClauseExpression::Datum(ExpandedClauseDatum::Parameter {
                 ordinal,
                 projections,
@@ -993,6 +1078,21 @@ impl<'unit> Checker<'_, 'unit> {
                 ty: *ty,
                 denotation: *denotation,
             }),
+            ExpandedClauseExpression::Datum(ExpandedClauseDatum::NamedConst {
+                projections,
+                ..
+            }) if projections.iter().any(|projection| {
+                matches!(
+                    projection,
+                    GoalProjection::Subscript(_)
+                        | GoalProjection::Page(_)
+                        | GoalProjection::FormalSubscript { .. }
+                        | GoalProjection::FormalPage { .. }
+                )
+            }) =>
+            {
+                None
+            }
             ExpandedClauseExpression::Datum(ExpandedClauseDatum::NamedConst {
                 declaration,
                 projections,
@@ -2300,13 +2400,13 @@ impl<'unit> TypeContext<'unit> {
             };
             place.projections.push(match segment {
                 super::super::model::CheckedSegmentSelect::One(index) => {
-                    GoalProjection::Subscript(index.captured.goal_identity())
+                    GoalProjection::Subscript(index.captured.clone().goal_identity())
                 }
                 super::super::model::CheckedSegmentSelect::Page(index) => {
-                    GoalProjection::Page(index.captured.goal_identity())
+                    GoalProjection::Page(index.captured.clone().goal_identity())
                 }
                 super::super::model::CheckedSegmentSelect::All(range) => {
-                    GoalProjection::Range(*range)
+                    GoalProjection::Range(range.clone())
                 }
             });
             place.ty = root.element_type;
@@ -2718,6 +2818,8 @@ impl<'unit> TypeContext<'unit> {
             const_substitutions,
             relation,
             selected_returns,
+            places: Vec::new(),
+            entry_places: Vec::new(),
         })
     }
     #[allow(clippy::too_many_arguments)]

@@ -1,0 +1,15 @@
+struct Cursor {
+  index: u64;
+}
+
+fn probe(values: &Array<u8, 2>, cursor: Cursor) -> result: u8 reads(values) contract {
+  define selected = cursor.index + 0_u64;
+  requires selected < values^.len;
+  requires 1_u8 <= values^[selected];
+} {
+  return values^[0_u64];
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

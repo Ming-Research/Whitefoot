@@ -82,6 +82,162 @@ pub(crate) enum GoalExpression {
 }
 
 impl GoalExpression {
+    /// The ordinary term selecting a contract position. No new snapshot is
+    /// created: projected selectors retain storage and offset support.
+    pub(crate) fn captured_offset(
+        &self,
+        constant_ids: &std::collections::HashMap<DeclarationId, super::model::CheckedConstantId>,
+        constants: &[super::model::CheckedConstant],
+    ) -> Option<super::places::CapturedValue> {
+        use super::places::{CapturedTerm, CapturedValue, ResolvedPlace};
+        if let Self::Operation { row, arguments, .. } = self {
+            let measure = match row {
+                GoalOperation::ArrayMeasure { measure, .. }
+                | GoalOperation::BufferMeasure { measure, .. }
+                | GoalOperation::ContainerMeasure { measure, .. }
+                    if *measure != CheckedMeasure::Pages =>
+                {
+                    *measure
+                }
+                _ => return None,
+            };
+            let [base] = arguments.as_slice() else {
+                return None;
+            };
+            if let Self::Datum(datum) = base {
+                let admission = datum.admission()?;
+                let projections = match datum {
+                    GoalDatum::Place { projections, .. }
+                    | GoalDatum::NamedConst { projections, .. } => projections,
+                    _ => return None,
+                };
+                if admission.written.is_none()
+                    && admission.root_type.is_none()
+                    && projections.iter().any(|step| {
+                        matches!(step, GoalProjection::Subscript(_) | GoalProjection::Page(_))
+                    })
+                {
+                    return None;
+                }
+            }
+            let selected = base.clone().with_projection(
+                GoalProjection::Measure(measure),
+                CheckedType::Integer(super::model::IntegerType::U64),
+            )?;
+            return selected.captured_offset(constant_ids, constants);
+        }
+        if let Self::Datum(datum) = self {
+            let projections: &[GoalProjection] = match datum {
+                GoalDatum::Place { projections, .. }
+                | GoalDatum::NamedConst { projections, .. } => projections,
+                _ => &[],
+            };
+            if let Some(GoalProjection::Measure(measure)) = projections.last() {
+                if *measure == CheckedMeasure::Pages {
+                    return None;
+                }
+                let admission = datum.admission()?;
+                let indexed = |projections: &[GoalProjection]| {
+                    projections.iter().any(|step| {
+                        matches!(
+                            step,
+                            GoalProjection::Subscript(_)
+                                | GoalProjection::Page(_)
+                                | GoalProjection::FormalSubscript { .. }
+                                | GoalProjection::FormalPage { .. }
+                        )
+                    })
+                };
+                let written_indexed = match admission.written.as_deref() {
+                    Some(CheckedSetTarget::Storage(root)) => root
+                        .path
+                        .iter()
+                        .any(|step| matches!(step, CheckedPlaceStep::Subscript(_))),
+                    Some(CheckedSetTarget::RangeIndex(_)) => true,
+                    Some(CheckedSetTarget::Place(_)) => false,
+                    None if admission.root_type.is_some() => false,
+                    None => indexed(projections),
+                };
+                if written_indexed || indexed(&admission.projections) {
+                    return None;
+                }
+            }
+        }
+        let term = match self {
+            Self::Datum(GoalDatum::Literal(CheckedValue::Integer { bits, .. })) => {
+                CapturedTerm::Literal(*bits)
+            }
+            Self::Datum(GoalDatum::Literal(CheckedValue::ConstGeneric { declaration, .. })) => {
+                CapturedTerm::Const(*declaration)
+            }
+            Self::Datum(GoalDatum::NamedConst {
+                declaration,
+                projections,
+                ty,
+                ..
+            }) if matches!(ty, CheckedType::Integer(_)) => {
+                let constant = *constant_ids.get(declaration)?;
+                if projections.is_empty() {
+                    let CheckedValue::Integer { bits, .. } =
+                        &constants.get(constant.0 as usize)?.value
+                    else {
+                        return None;
+                    };
+                    CapturedTerm::Literal(*bits)
+                } else {
+                    if projections.iter().any(|projection| {
+                        matches!(
+                            projection,
+                            GoalProjection::FormalSubscript { .. }
+                                | GoalProjection::FormalPage { .. }
+                        )
+                    }) {
+                        return None;
+                    }
+                    let place = ResolvedPlace {
+                        root: super::places::PlaceRoot::Constant(constant),
+                        path: projections.iter().map(GoalProjection::place_step).collect(),
+                        atomic_aliases: Vec::new(),
+                    };
+                    CapturedTerm::Place(super::places::ProjectedSelector::new(
+                        place.term_identity(),
+                    ))
+                }
+            }
+            Self::Datum(GoalDatum::Place {
+                root,
+                projections,
+                ty,
+                ..
+            }) if matches!(ty, CheckedType::Integer(_)) => {
+                if projections.iter().any(|projection| {
+                    matches!(
+                        projection,
+                        GoalProjection::FormalSubscript { .. } | GoalProjection::FormalPage { .. }
+                    )
+                }) {
+                    return None;
+                }
+                if projections.is_empty() {
+                    CapturedTerm::Binding(*root)
+                } else {
+                    let mut place = ResolvedPlace::binding(*root);
+                    place.path.extend(
+                        projections
+                            .iter()
+                            .cloned()
+                            .map(|projection| projection.place_step()),
+                    );
+                    CapturedTerm::Place(super::places::ProjectedSelector::new(
+                        place.term_identity(),
+                    ))
+                }
+            }
+            _ => return None,
+        };
+        Some(CapturedValue::new(CapturedValue::unknown().capture, term).goal_identity())
+    }
+
     /// The written-place annotations of one interned admission view. They
     /// do not change the exact typed predicate identity [ENT-2, FN-8].
     pub(crate) fn same_admission_view(&self, other: &Self) -> bool {
@@ -133,7 +289,7 @@ impl GoalExpression {
         if let Some(GoalProjection::Page(offset)) = projections.last_mut() {
             *offset = offset.goal_identity();
         }
-        projections.push(projection);
+        projections.push(projection.clone());
         if let Some(admission) = datum.admission_mut() {
             if admission.written.is_none() && admission.root_type.is_none() {
                 admission.root_type = Some(prior_type);
@@ -274,9 +430,9 @@ impl GoalAdmission {
             && self
                 .projections
                 .iter()
-                .copied()
+                .cloned()
                 .map(admission_projection)
-                .eq(other.projections.iter().copied().map(admission_projection))
+                .eq(other.projections.iter().cloned().map(admission_projection))
     }
 
     fn written_view(&self) -> Option<(CheckedType, Vec<GoalProjection>, Option<SubscriptedTerm>)> {
@@ -344,7 +500,7 @@ pub(crate) enum EvaluatedValueOccurrence {
 }
 
 /// Ordered projection identity within one formal or named-constant datum.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum GoalProjection {
     Deref,
     /// One declared readonly descriptor field [OP-15, MSR-2].
@@ -386,20 +542,46 @@ pub(crate) enum GoalProjection {
     /// ordinary [`GoalProjection::Subscript`] before any term is interned.
     FormalSubscript {
         ordinal: u32,
+        projections: Vec<GoalProjection>,
     },
     /// A page selection whose offset names a value parameter, instantiated
     /// like `FormalSubscript` while retaining the distinct [REF-4] page path.
     FormalPage {
         ordinal: u32,
+        projections: Vec<GoalProjection>,
     },
 }
 
 impl GoalProjection {
+    /// Convert an exact proof-path step without widening value identity.
+    pub(crate) fn from_place_step(step: &super::places::PlaceStep) -> Option<Self> {
+        use super::places::PlaceStep;
+        match step {
+            PlaceStep::Deref => Some(GoalProjection::Deref),
+            PlaceStep::Measure(measure) => Some(GoalProjection::Measure(*measure)),
+            PlaceStep::Field(field) => Some(GoalProjection::Field(*field)),
+            PlaceStep::Payload { variant, field } => Some(GoalProjection::Payload {
+                variant: *variant,
+                field: *field,
+            }),
+            PlaceStep::Index(offset) => Some(GoalProjection::Subscript(offset.goal_identity())),
+            // [ENT-2] retain the supplied page identity: borrowed pages carry
+            // their formation capture; direct selectors are already canonical.
+            PlaceStep::Page(offset) => Some(GoalProjection::Page(offset.clone())),
+            // [REF-4] a range step's endpoint captures identify the formation
+            // whose immutable affine image gives the anonymous range its length.
+            // Canonicalizing those captures by endpoint spelling would merge two
+            // formations that read the same binding at different times.
+            PlaceStep::Range(range) => Some(GoalProjection::Range(range.clone())),
+            PlaceStep::Part(_) | PlaceStep::Descendant(_) => None,
+        }
+    }
+
     /// The complete storage projection used by ENT-2 terms and ENT-5 kills.
     /// A formal subscript must be instantiated before it can prove separation.
-    pub(crate) fn place_step(self) -> super::places::PlaceStep {
+    pub(crate) fn place_step(&self) -> super::places::PlaceStep {
         use super::places::{CapturedValue, PlaceStep};
-        match self {
+        match self.clone() {
             Self::Deref => PlaceStep::Deref,
             Self::Measure(measure) => PlaceStep::Measure(measure),
             Self::Field(field) => PlaceStep::Field(field),
@@ -520,10 +702,10 @@ mod tests {
             })
         };
         let range = base(GoalAdmission::plain_range(array))
-            .with_projection(offset, array)
+            .with_projection(offset.clone(), array)
             .unwrap();
         let own = base(GoalAdmission::default())
-            .with_projection(offset, CheckedType::Integer(IntegerType::U8))
+            .with_projection(offset.clone(), CheckedType::Integer(IntegerType::U8))
             .unwrap();
         let GoalExpression::Datum(range) = range else {
             unreachable!()
@@ -535,10 +717,10 @@ mod tests {
         let own = own.admission().unwrap();
         assert_eq!(range.root_type, Some(array));
         assert!(range.root_is_range);
-        assert_eq!(range.projections, vec![offset]);
+        assert_eq!(range.projections, vec![offset.clone()]);
         assert_eq!(own.root_type, Some(array));
         assert!(!own.root_is_range);
-        assert_eq!(own.projections, vec![offset]);
+        assert_eq!(own.projections, vec![offset.clone()]);
         assert!(!range.same_view(own));
     }
 }

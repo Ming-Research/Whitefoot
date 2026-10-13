@@ -853,7 +853,7 @@ fn retained_origin_expansion(
                 let mut expanded = expand(definition, definitions, following);
                 following.remove(root);
                 for projection in projections {
-                    let Some(next) = expanded.with_projection(*projection, *ty) else {
+                    let Some(next) = expanded.with_projection(projection.clone(), *ty) else {
                         return expression.clone();
                     };
                     expanded = next;
@@ -1588,8 +1588,8 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                     DerivationConclusion::AffineConsequence | DerivationConclusion::Contradiction
                 ));
                 DerivationConclusion::RangeSeparation {
-                    left: detail.left,
-                    right: detail.right,
+                    left: detail.left.clone(),
+                    right: detail.right.clone(),
                     ordering: detail.ordering,
                 }
             }
@@ -1597,24 +1597,54 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                 let left = &detail.left;
                 let right = &detail.right;
                 let parent = detail.parent;
+                let current_source = |captured: &crate::semantic::places::CapturedValue| {
+                    use crate::semantic::places::{CapturedTerm, PlaceStep, ResolvedPlace};
+                    let mut place = match &captured.term {
+                        CapturedTerm::Binding(binding) => ResolvedPlace::binding(*binding),
+                        CapturedTerm::Place(selector) => selector.place().clone(),
+                        CapturedTerm::Literal(_)
+                        | CapturedTerm::Const(_)
+                        | CapturedTerm::Superseded(_)
+                        | CapturedTerm::SupersededPlace(_)
+                        | CapturedTerm::Opaque => return None,
+                    };
+                    Some(
+                        if let Some(PlaceStep::Measure(measure)) = place.path.last().cloned() {
+                            place.path.pop();
+                            TermKind::Measure(measure, place)
+                        } else {
+                            TermKind::Place(place, IntegerType::U64)
+                        },
+                    )
+                };
                 let term_for = |captured: &crate::semantic::places::CapturedValue| {
                     use crate::semantic::places::{CaptureId, CapturedTerm};
                     summary
                         .inventory
                         .terms
                         .iter()
-                        .position(|term| match captured.term {
+                        .position(|term| match &captured.term {
                             CapturedTerm::Literal(value) => {
-                                (*term == TermKind::Zero && value == 0)
-                                    || *term == TermKind::Constant(i128::from(value))
+                                (*term == TermKind::Zero && *value == 0)
+                                    || *term == TermKind::Constant(i128::from(*value))
                             }
                             CapturedTerm::Const(declaration) => {
-                                matches!(term, TermKind::ConstParameter(candidate, _) if *candidate == declaration)
+                                matches!(term, TermKind::ConstParameter(candidate, _) if *candidate == *declaration)
                             }
-                            CapturedTerm::Binding(_) | CapturedTerm::Superseded(_) => matches!(
-                                term,
-                                TermKind::IndexCapture { capture } if *capture == captured.capture
-                            ),
+                            CapturedTerm::Binding(_) | CapturedTerm::Place(_)
+                                if captured.capture == CaptureId::SpellingDetermined => {
+                                current_source(captured).as_ref() == Some(term)
+                            }
+                            CapturedTerm::Binding(_)
+                            | CapturedTerm::Superseded(_)
+                            | CapturedTerm::Place(_)
+                            | CapturedTerm::SupersededPlace(_) => {
+                                matches!(captured.capture, CaptureId::Source(_) | CaptureId::ContractRead { .. })
+                                    && matches!(
+                                        term,
+                                        TermKind::IndexCapture { capture } if *capture == captured.capture
+                                    )
+                            },
                             // An erased contract position has no source datum:
                             // its call-entry capture term is the identity the
                             // caller's instantiated image was equated with.
@@ -1651,21 +1681,14 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                     }
                 };
                 if let Some(substitution) = &detail.substitution {
-                    use crate::semantic::places::{CapturedTerm, PlaceRoot};
-                    let (CapturedTerm::Binding(left_binding), CapturedTerm::Binding(right_binding)) =
-                        (left.term, right.term)
-                    else {
-                        panic!("capture substitution is restricted to direct binding captures");
-                    };
-                    for (source, binding) in [
-                        (substitution.source_left, left_binding),
-                        (substitution.source_right, right_binding),
+                    for (source, captured) in [
+                        (substitution.source_left, left),
+                        (substitution.source_right, right),
                     ] {
-                        assert!(matches!(
-                            retained_term(summary, source),
-                            TermKind::Place(place, IntegerType::U64)
-                                if place.root == PlaceRoot::Binding(binding) && place.path.is_empty()
-                        ));
+                        let expected = current_source(captured).expect(
+                            "capture substitution names a current binding or projected place",
+                        );
+                        assert_eq!(retained_term(summary, source), &expected);
                     }
                     let source_expected = if substitution.source_left <= substitution.source_right {
                         Relation::Distinct {

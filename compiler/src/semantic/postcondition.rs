@@ -368,4 +368,9 @@ pub(crate) struct CheckedPostcondition {
     pub(crate) const_substitutions: Vec<(DeclarationId, u64)>,
     pub(crate) relation: RelationTemplate,
     pub(crate) selected_returns: Vec<SelectedPostconditionReturn>,
+    /// Indexed places formed independently in each selected return state [OP-4, FN-9].
+    pub(crate) places: Vec<super::model::CheckedExpression>,
+    /// Indexed immutable measure operands, formed after requirements at entry
+    /// and before their existing [MSR-3] entry datums are established.
+    pub(crate) entry_places: Vec<super::model::CheckedExpression>,
 }

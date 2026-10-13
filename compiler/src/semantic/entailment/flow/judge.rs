@@ -84,7 +84,10 @@ impl Reasoning<'_, '_, '_> {
         state: &mut ProofFlowState,
     ) {
         if !matches!(captured.capture, CaptureId::Source(_))
-            || !matches!(captured.term, CapturedTerm::Binding(_))
+            || !matches!(
+                captured.term,
+                CapturedTerm::Binding(_) | CapturedTerm::Place(_)
+            )
         {
             return;
         }
@@ -292,8 +295,8 @@ impl Judging<'_, '_, '_> {
         state: &mut ProofFlowState,
     ) -> bool {
         use super::super::super::model::CheckedCallSeparationPositions;
-        let proved = separation.positions.iter().copied().find_map(|positions| {
-            let proof = match positions {
+        let proved = separation.positions.iter().cloned().find_map(|positions| {
+            let proof = match positions.clone() {
                 CheckedCallSeparationPositions::Indices(left, right) => {
                     self.reasoning().prove_index_separation(left, right, state)
                 }
@@ -319,7 +322,7 @@ impl Judging<'_, '_, '_> {
         let proof = proved.as_ref().map(|(_, proof)| proof);
         let discharged = proof.is_some();
         if let Some((positions, _)) = &proved {
-            match *positions {
+            match positions.clone() {
                 CheckedCallSeparationPositions::Indices(left, right) => {
                     state.separations.record_indices_distinct(left, right);
                 }
@@ -670,7 +673,7 @@ impl Analyzer<'_, '_> {
                         .flat_map(|separation| separation.positions.iter())
                         .flat_map(|positions| {
                             use super::super::super::model::CheckedCallSeparationPositions as Positions;
-                            match *positions {
+                            match positions.clone() {
                                 Positions::Indices(left, right) => {
                                     vec![left.capture, right.capture]
                                 }
@@ -692,8 +695,11 @@ impl Analyzer<'_, '_> {
                         .collect::<HashSet<_>>();
                     for (argument, captured) in arguments.iter().zip(actual_captures) {
                         if required_captures.contains(&captured.capture) {
-                            self.reasoning()
-                                .establish_index_capture(*captured, argument, states);
+                            self.reasoning().establish_index_capture(
+                                captured.clone(),
+                                argument,
+                                states,
+                            );
                         }
                     }
                 }
@@ -767,15 +773,17 @@ impl Analyzer<'_, '_> {
                     };
                     // The argument's admitted pre-transfer image, as an
                     // ordinary requirement over this parameter reads it.
-                    let image = goal_arguments.get(requirement.subject as usize).map(|captured| {
-                        admitted_call_goal_expression(
-                            captured,
-                            call,
-                            admitted_arguments
-                                .as_deref()
-                                .expect("reached actuals have admitted argument slots"),
-                        )
-                    });
+                    let image = goal_arguments
+                        .get(requirement.subject as usize)
+                        .map(|captured| {
+                            admitted_call_goal_expression(
+                                captured,
+                                call,
+                                admitted_arguments
+                                    .as_deref()
+                                    .expect("reached actuals have admitted argument slots"),
+                            )
+                        });
                     let (goal, facts) =
                         self.routed_requirement_goal(call, argument, image, requirement, states);
                     let (disposition, derivation) = self.judging().judge_call_goal(
@@ -946,7 +954,7 @@ impl Analyzer<'_, '_> {
                 // never re-reads a spelling whose bindings may have moved on.
                 self.reasoning().file_range_image(
                     carrier,
-                    *captured,
+                    captured.clone(),
                     start,
                     end,
                     &mut states.affine,
@@ -1024,10 +1032,10 @@ impl Analyzer<'_, '_> {
                     {
                         let (root, steps) = source.place();
                         for mut place in self.input.places.resolve(root, &steps) {
-                            place.path.push(PlaceStep::Range(*captured));
+                            place.path.push(PlaceStep::Range(captured.clone()));
                             self.establish_range_length(
                                 place.term_identity(),
-                                *captured,
+                                captured.clone(),
                                 (start, end),
                                 carrier,
                                 states,
@@ -1086,7 +1094,7 @@ impl Analyzer<'_, '_> {
                         self.judge_children_reach_parent(std::iter::once(&index.offset), states);
                     if reached && reaches_offset {
                         self.reasoning().establish_index_capture(
-                            index.captured,
+                            index.captured.clone(),
                             &index.offset,
                             states,
                         );
@@ -1125,7 +1133,7 @@ impl Analyzer<'_, '_> {
                         }
                     };
                     let mut current = captured.clone();
-                    captured.path.push(PlaceStep::Page(index.captured));
+                    captured.path.push(PlaceStep::Page(index.captured.clone()));
                     current
                         .path
                         .push(PlaceStep::Page(index.captured.goal_identity()));
@@ -1342,6 +1350,9 @@ impl Analyzer<'_, '_> {
                     // it owes the same bounds as the corresponding borrow.
                     self.judge_children_reach_parent(root.formation.as_deref(), states);
                 }
+                CheckedExpression::ArrayIndex { .. } | CheckedExpression::BufferIndex { .. } => {
+                    self.judge_children_reach_parent(std::iter::once(place), states);
+                }
                 _ => {}
             }
         }
@@ -1386,7 +1397,7 @@ impl Analyzer<'_, '_> {
                                 std::iter::once(&subscript.offset),
                                 states,
                             );
-                        base.path.push(PlaceStep::Index(subscript.captured));
+                        base.path.push(PlaceStep::Index(subscript.captured.clone()));
                         continue;
                     }
                     let Some(measured) = measured_kind(subscript.base_type) else {
@@ -1397,7 +1408,7 @@ impl Analyzer<'_, '_> {
                     let obligation_start = self.output.obligations.len();
                     if reaches_offset {
                         self.reasoning().establish_index_capture(
-                            subscript.captured,
+                            subscript.captured.clone(),
                             &subscript.offset,
                             states,
                         );
@@ -1415,7 +1426,7 @@ impl Analyzer<'_, '_> {
                         && self
                             .judging()
                             .obligations_since_discharged(obligation_start);
-                    base.path.push(PlaceStep::Index(subscript.captured));
+                    base.path.push(PlaceStep::Index(subscript.captured.clone()));
                 }
             }
         }
@@ -1442,7 +1453,7 @@ impl Analyzer<'_, '_> {
         let obligation_start = self.output.obligations.len();
         if reaches_offset {
             self.reasoning()
-                .establish_index_capture(place.captured, &place.offset, states);
+                .establish_index_capture(place.captured.clone(), &place.offset, states);
             self.judge_obligation(
                 base.clone(),
                 MeasuredKind::Range,
@@ -1459,7 +1470,7 @@ impl Analyzer<'_, '_> {
         if !reached {
             return false;
         }
-        base.path.push(PlaceStep::Index(place.captured));
+        base.path.push(PlaceStep::Index(place.captured.clone()));
         for step in &place.path {
             match step {
                 CheckedPlaceStep::Field(field) => base.path.push(PlaceStep::Field(*field)),
@@ -1472,7 +1483,7 @@ impl Analyzer<'_, '_> {
                                 std::iter::once(&subscript.offset),
                                 states,
                             );
-                        base.path.push(PlaceStep::Index(subscript.captured));
+                        base.path.push(PlaceStep::Index(subscript.captured.clone()));
                         continue;
                     }
                     let Some(measured) = measured_kind(subscript.base_type) else {
@@ -1483,7 +1494,7 @@ impl Analyzer<'_, '_> {
                     let obligation_start = self.output.obligations.len();
                     if reaches_offset {
                         self.reasoning().establish_index_capture(
-                            subscript.captured,
+                            subscript.captured.clone(),
                             &subscript.offset,
                             states,
                         );
@@ -1504,7 +1515,7 @@ impl Analyzer<'_, '_> {
                     if !reached {
                         return false;
                     }
-                    base.path.push(PlaceStep::Index(subscript.captured));
+                    base.path.push(PlaceStep::Index(subscript.captured.clone()));
                 }
             }
         }
@@ -1963,12 +1974,8 @@ pub(super) fn container_root_path(root: &CheckedContainerRoot) -> ResolvedPlace 
 /// The place one [SET-1] commit writes, as every measure term over it is
 /// stated [MSR-1]: a plain place, or one element position of a run.
 ///
-/// An element position is a place only where its offset is one a place
-/// relation can name [ENT-2] — a written literal, a live `own` integer
-/// binding, or an in-scope const generic. An offset of any other form is
-/// provably distinct from nothing, itself included, so a measure over it
-/// would relate two elements as one term [OWN-7] and there is no place to
-/// carry a measure to.
+/// An element destination retains the value its selector evaluated. An
+/// unknown offset has no such identity and cannot receive placement facts.
 pub(super) fn set_target_place(target: &CheckedSetTarget) -> Option<ResolvedPlace> {
     match target {
         CheckedSetTarget::Place(place) => Some(ResolvedPlace::spelled(

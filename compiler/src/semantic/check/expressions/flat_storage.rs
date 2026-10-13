@@ -14,7 +14,7 @@ use super::super::super::model::{
     CheckedArrayRoot, CheckedBufferRoot, CheckedConst, CheckedContainerRoot, CheckedExpression,
     CheckedMeasure, CheckedMode, CheckedPlaceStep, CheckedPlaceSubscript, CheckedRangeElementPlace,
     CheckedRangeRoot, CheckedSetTarget, CheckedTargetDomainObligation, CheckedType, IntegerType,
-    MeasureCell, MeasuredKind, SubscriptedTerm,
+    MeasureCell, MeasuredKind,
 };
 use super::super::super::places::{
     CaptureId, CapturedTerm, CapturedValue, PlaceRoot, PlaceStep, ResolvedPlace,
@@ -697,7 +697,7 @@ impl<'unit> Checker<'_, 'unit> {
                     );
                 }
                 let mut resolved = range.resolved;
-                resolved.append_step(PlaceStep::Index(element.captured));
+                resolved.append_step(PlaceStep::Index(element.captured.clone()));
                 for step in element.path.iter().map(CheckedPlaceStep::place_step) {
                     resolved.append_step(step);
                 }
@@ -843,8 +843,6 @@ impl<'unit> Checker<'_, 'unit> {
             measure,
             root: container.root,
         };
-        self.types
-            .refuse_unrepresented_term_place(&expression, use_node)?;
         Ok(TypedExpression {
             expression,
             mode: CheckedMode::Own,
@@ -1014,8 +1012,6 @@ impl<'unit> Checker<'_, 'unit> {
             carrier: self.types.declarations.tree.path(node)?.clone(),
             root: place.root,
         };
-        self.types
-            .refuse_unrepresented_term_place(&expression, node)?;
         Ok(TypedExpression {
             expression,
             mode: CheckedMode::Own,
@@ -1237,7 +1233,7 @@ impl<'unit> Checker<'_, 'unit> {
             ),
             CheckedIndexedPlace::Range(range) => {
                 accesses.extend(range.resolved.members.iter().cloned().map(|mut place| {
-                    place.path.push(PlaceStep::Index(captured));
+                    place.path.push(PlaceStep::Index(captured.clone()));
                     place
                         .path
                         .extend(range_path.iter().map(CheckedPlaceStep::place_step));
@@ -1289,7 +1285,7 @@ impl<'unit> Checker<'_, 'unit> {
             CheckedIndexedPlace::Range(range) => {
                 for member in &range.resolved.members {
                     let mut member = member.clone();
-                    member.path.push(PlaceStep::Index(captured));
+                    member.path.push(PlaceStep::Index(captured.clone()));
                     member
                         .path
                         .extend(range_path.iter().map(CheckedPlaceStep::place_step));
@@ -1314,8 +1310,6 @@ impl<'unit> Checker<'_, 'unit> {
                 return Err(SemanticCompilerFailure::InvalidResolution.into());
             }
         };
-        self.types
-            .refuse_unrepresented_term_place(&expression, use_node)?;
         Ok(TypedExpression {
             expression,
             mode: CheckedMode::Own,
@@ -1478,7 +1472,7 @@ impl<'unit> Checker<'_, 'unit> {
                 effects = effects.union(range.offsets.effects);
                 for member in &range.resolved.members {
                     let mut member = member.clone();
-                    member.path.push(PlaceStep::Index(offset_place));
+                    member.path.push(PlaceStep::Index(offset_place.clone()));
                     member
                         .path
                         .extend(range_path.iter().map(CheckedPlaceStep::place_step));
@@ -1492,7 +1486,7 @@ impl<'unit> Checker<'_, 'unit> {
                     CheckedSetTarget::RangeIndex(Box::new(CheckedRangeElementPlace {
                         root: range.root,
                         offset: offset.expression,
-                        captured: offset_place,
+                        captured: offset_place.clone(),
                         path: range_path.clone(),
                         ty: selected_type,
                         obligation,
@@ -1508,7 +1502,7 @@ impl<'unit> Checker<'_, 'unit> {
         // never the run's own storage, so disjointness and the measure kill
         // both read the element flag rather than the place alone.
         let mut place = place;
-        place.append_step(PlaceStep::Index(offset_place));
+        place.append_step(PlaceStep::Index(offset_place.clone()));
         for step in range_path.iter().map(CheckedPlaceStep::place_step) {
             place.append_step(step);
         }
@@ -1775,28 +1769,9 @@ impl<'unit> Checker<'_, 'unit> {
         offset: &CheckedExpression,
     ) -> Option<CapturedValue> {
         let capture = CaptureId::source(u32::try_from(occurrence.index()).unwrap_or(u32::MAX - 1));
-        match offset {
-            CheckedExpression::Constant(super::super::super::model::CheckedValue::Integer {
-                bits,
-                ..
-            }) => Some(CapturedValue::new(capture, CapturedTerm::Literal(*bits))),
-            CheckedExpression::NamedConstant {
-                value: super::super::super::model::CheckedValue::Integer { bits, .. },
-                ..
-            } => Some(CapturedValue::new(capture, CapturedTerm::Literal(*bits))),
-            CheckedExpression::Constant(
-                super::super::super::model::CheckedValue::ConstGeneric { declaration, .. },
-            ) => Some(CapturedValue::new(
-                capture,
-                CapturedTerm::Const(*declaration),
-            )),
-            CheckedExpression::Binding {
-                binding,
-                consume_root: false,
-                ..
-            } => Some(CapturedValue::new(capture, CapturedTerm::Binding(*binding))),
-            _ => None,
-        }
+        offset
+            .tracked_offset()
+            .map(|term| CapturedValue::new(capture, term))
     }
 
     /// The immutable value one range endpoint produced at this occurrence
@@ -2614,33 +2589,6 @@ impl<'unit> TypeContext<'unit> {
                 root: container.root,
             },
         })
-    }
-    /// [ENT-2, DIAG-1] a measure read or a read whose final step selects a
-    /// readonly field below a subscript is a clause (b) term when every
-    /// offset is a tracked place or a constant. This compiler captures only
-    /// literals, consts and bare bindings, so a tracked-place offset with
-    /// projections is a term it cannot represent. Reading the place anyway as
-    /// no term could turn the missing fact into a source rejection later, so
-    /// the read is reported as the compiler capability it is.
-    fn refuse_unrepresented_term_place(
-        &self,
-        expression: &CheckedExpression,
-        node: NodeId,
-    ) -> Result<(), CheckStop> {
-        let term = match expression {
-            CheckedExpression::ContainerMeasure { root, .. } => root.subscripted_term(),
-            CheckedExpression::ReadStorage { root, .. } => root.readonly_field_term(&self.nominals),
-            CheckedExpression::RangeIndex { place, .. } => {
-                place.readonly_field_term(&self.nominals)
-            }
-            _ => None,
-        };
-        if term == Some(SubscriptedTerm::Unrepresented) {
-            return self
-                .declarations
-                .unsupported(UnsupportedSemanticFeature::CompositeValues, node);
-        }
-        Ok(())
     }
 }
 

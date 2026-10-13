@@ -90,6 +90,41 @@ fn obligation_records(
     // declaration premise.
     if function.body.is_some() {
         for (ordinal, postcondition) in function.postconditions.iter().enumerate() {
+            let start = records.list.len();
+            for place in &postcondition.entry_places {
+                records.expression(place);
+            }
+            for (position, record) in records.list[start..].iter_mut().enumerate() {
+                if let ObligationSubject::Source { family, conjunct } = record.subject {
+                    record.subject = ObligationSubject::PostconditionEntryPlace {
+                        relation_ordinal: u32::try_from(ordinal)
+                            .expect("postcondition ordinal exceeds u32"),
+                        ordinal: u32::try_from(position)
+                            .expect("postcondition entry places exceed u32"),
+                        family,
+                        conjunct,
+                    };
+                }
+            }
+            for selected in &postcondition.selected_returns {
+                let start = records.list.len();
+                for place in &postcondition.places {
+                    records.expression(place);
+                }
+                for (position, record) in records.list[start..].iter_mut().enumerate() {
+                    if let ObligationSubject::Source { family, conjunct } = record.subject {
+                        record.subject = ObligationSubject::PostconditionPlace {
+                            relation_ordinal: u32::try_from(ordinal)
+                                .expect("postcondition ordinal exceeds u32"),
+                            statement: selected.statement.clone(),
+                            ordinal: u32::try_from(position)
+                                .expect("postcondition places exceed u32"),
+                            family,
+                            conjunct,
+                        };
+                    }
+                }
+            }
             records.push(
                 SemanticRule::Fn9,
                 postcondition.selector.selector.clone(),
