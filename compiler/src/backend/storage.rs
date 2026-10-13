@@ -7,9 +7,9 @@
 //! may use the result after every other indirect input reaches private storage.
 //! Loads remain logical snapshots; proved immutable snapshots may read through
 //! their source address. Ordinary projections retain independent backing. A
-//! consumed call input and its consumed struct result field may occupy the
-//! same field of the complete result allocation after a separate interference
-//! check. Exposed backing is
+//! call input selected by `call_reuse_operand` and its consumed struct result
+//! field may occupy the same field of the complete result allocation after a
+//! separate interference check. Exposed backing is
 //! not coalesced, and schedules whose reads can outlive an IR call keep every
 //! value separate until their actual retirement lifetimes are represented.
 
@@ -261,6 +261,7 @@ impl FunctionStoragePlan {
                 members[*slot].push(value);
             }
         }
+        let in_place = in_place_inputs(function, &self.origins);
         // Each selected allocation component is independent. In particular a
         // later candidate cannot place an existing parent inside its own child.
         let mut placed = BTreeSet::new();
@@ -342,7 +343,13 @@ impl FunctionStoragePlan {
                         continue;
                     };
                     let Some(argument) = call_reuse_operand_for_type(
-                        program, function, *call, operation, ty, sequential,
+                        program,
+                        function,
+                        *call,
+                        operation,
+                        ty,
+                        sequential,
+                        |argument| !in_place.contains(&index(argument)),
                     )?
                     else {
                         continue;
@@ -619,7 +626,7 @@ impl FlowGraph {
                         (Vec::new(), Vec::new())
                     }
                 };
-                Ok(FlowBlock {
+                FlowBlock {
                     parameters: block
                         .parameters()
                         .iter()
@@ -628,10 +635,8 @@ impl FlowGraph {
                     instructions: block
                         .instructions()
                         .iter()
-                        .map(|instruction| {
-                            FlowInstruction::from_ir(program, function, instruction, sequential)
-                        })
-                        .collect::<Result<Vec<_>, BackendFailure>>()?,
+                        .map(FlowInstruction::from_ir)
+                        .collect(),
                     terminal_uses: block
                         .terminator()
                         .operands()
@@ -640,10 +645,10 @@ impl FlowGraph {
                         .collect(),
                     successors,
                     transfers,
-                })
+                }
             })
-            .collect::<Result<Vec<_>, BackendFailure>>()?;
-        Ok(Self {
+            .collect();
+        let mut graph = Self {
             entry_parameters: function
                 .parameters()
                 .iter()
@@ -652,7 +657,33 @@ impl FlowGraph {
             blocks,
             // A refused ordinary hand-out reads its arguments at join.
             coalesce: sequential || function.overlaps().is_empty(),
-        })
+        };
+        // Call reuse reads origins, which depend only on definitions and
+        // transfers, so it is selected once the rest of the graph exists.
+        let values = function.value_types().len();
+        graph.validate(values)?;
+        let in_place = in_place_inputs(function, &graph.origins(values));
+        for (flow, block) in graph.blocks.iter_mut().zip(function.blocks()) {
+            for (node, instruction) in flow.instructions.iter_mut().zip(block.instructions()) {
+                if let IrInstruction::Define {
+                    result,
+                    operation: operation @ IrOperation::Call { .. },
+                    ..
+                } = instruction
+                {
+                    node.reuse = call_reuse_operand(
+                        program,
+                        function,
+                        *result,
+                        operation,
+                        sequential,
+                        |argument| !in_place.contains(&index(argument)),
+                    )?
+                    .map(index);
+                }
+            }
+        }
+        Ok(graph)
     }
 
     fn plan(
@@ -892,14 +923,17 @@ impl FlowGraph {
     }
 }
 
-/// Selects the one checked owned binding whose dead backing may receive this
-/// ordinary call's whole result. A callee whose result crosses through a
-/// destination preserves original indirect inputs across result writes, using
-/// entry captures or proved path-local captures before invalidation, so making
-/// that destination equal this one input address preserves argument evaluation.
-/// A callee whose result returns as a value or in registers may read an input
-/// in place, and its caller
-/// stores the result only after the call returns (compiler/storage-placement).
+/// Selects the one checked owned binding whose backing may receive this
+/// ordinary call's whole result: a consumed input, or a copy input for which
+/// `admit_copy` holds. Planning keeps the ordinary interference checks, so an
+/// input read after the call, or exposed, keeps its backing. A callee whose
+/// result crosses through a destination preserves original indirect inputs
+/// across result writes, using entry captures or proved path-local captures
+/// before invalidation, so making that destination equal this one input
+/// address preserves argument evaluation; the callee receives a copied input
+/// exactly as a consumed one. A callee whose result returns as a value or in
+/// registers may read an input in place, and its caller stores the result
+/// only after the call returns (compiler/storage-placement).
 /// Calls which can leave the current synchronous extent keep distinct storage.
 fn call_reuse_operand(
     program: &IrProgram,
@@ -907,9 +941,10 @@ fn call_reuse_operand(
     result: IrValueId,
     operation: &IrOperation,
     sequential: bool,
+    admit_copy: impl Fn(IrValueId) -> bool,
 ) -> Result<Option<IrValueId>, BackendFailure> {
     let ty = caller.value_type(result).ok_or(BackendFailure::InvalidIr)?;
-    call_reuse_operand_for_type(program, caller, result, operation, ty, sequential)
+    call_reuse_operand_for_type(program, caller, result, operation, ty, sequential, admit_copy)
 }
 
 fn call_reuse_operand_for_type(
@@ -919,6 +954,7 @@ fn call_reuse_operand_for_type(
     operation: &IrOperation,
     input_type: IrType,
     sequential: bool,
+    admit_copy: impl Fn(IrValueId) -> bool,
 ) -> Result<Option<IrValueId>, BackendFailure> {
     let IrOperation::Call {
         function,
@@ -961,11 +997,16 @@ fn call_reuse_operand_for_type(
         .zip(source_call.arguments())
         .zip(signature.parameters())
     {
-        let consumes_owned_binding =
-            matches!(source, IrSourceArgument::Binding { consume_root: true })
-                && *mode == IrSourceMode::Own
-                && caller.value_type(*argument) == Some(input_type);
-        if consumes_owned_binding {
+        // A non-consuming occurrence of an owned stored aggregate binding is
+        // a copy [OWN-1], so same-typed inputs are all consumed or all copies.
+        let binding = match source {
+            IrSourceArgument::Binding { consume_root } => *consume_root || admit_copy(*argument),
+            _ => false,
+        };
+        if binding
+            && *mode == IrSourceMode::Own
+            && caller.value_type(*argument) == Some(input_type)
+        {
             if candidate.is_some() {
                 return Ok(None);
             }
@@ -975,23 +1016,52 @@ fn call_reuse_operand_for_type(
     Ok(candidate)
 }
 
+/// Values whose storage may instead be read in place: entry parameters
+/// (incoming places) and Load snapshots (read-through), with every value
+/// carrying one of them unchanged through CFG transfers. Joining such storage
+/// with a non-consumed input's call result would force the private copy the
+/// in-place read avoids (compiler/storage-placement).
+fn in_place_inputs(function: &IrFunction, origins: &[Option<usize>]) -> BTreeSet<usize> {
+    let roots: BTreeSet<_> = function
+        .parameters()
+        .iter()
+        .map(|(value, _)| index(*value))
+        .chain(
+            function
+                .blocks()
+                .iter()
+                .flat_map(|block| block.instructions())
+                .filter_map(|instruction| match instruction {
+                    IrInstruction::Define {
+                        result,
+                        operation: IrOperation::Load { .. },
+                        ..
+                    } => Some(index(*result)),
+                    _ => None,
+                }),
+        )
+        .collect();
+    origins
+        .iter()
+        .enumerate()
+        .filter_map(|(value, origin)| {
+            origin
+                .is_some_and(|origin| roots.contains(&origin))
+                .then_some(value)
+        })
+        .collect()
+}
+
 impl FlowInstruction {
-    fn from_ir(
-        program: &IrProgram,
-        function: &IrFunction,
-        instruction: &IrInstruction,
-        sequential: bool,
-    ) -> Result<Self, BackendFailure> {
+    /// Call reuse needs the complete graph's origins; `FlowGraph::from_function`
+    /// selects it afterwards.
+    fn from_ir(instruction: &IrInstruction) -> Self {
         let (result, reuse, exposed) = match instruction {
             IrInstruction::Define {
                 result, operation, ..
             } => {
                 let reuse = match operation {
                     IrOperation::InsertStruct { aggregate, .. } => Some(index(*aggregate)),
-                    IrOperation::Call { .. } => {
-                        call_reuse_operand(program, function, *result, operation, sequential)?
-                            .map(index)
-                    }
                     _ => None,
                 };
                 let exposed = match operation {
@@ -1006,12 +1076,12 @@ impl FlowInstruction {
             | IrInstruction::Store { .. }
             | IrInstruction::Drops(_) => (None, None, None),
         };
-        Ok(Self {
+        Self {
             result,
             operands: instruction.operands().into_iter().map(index).collect(),
             reuse,
             exposed,
-        })
+        }
     }
 }
 
@@ -1815,6 +1885,224 @@ fn main() -> status: std::process::ExitStatus pure {
                 );
             },
         );
+    }
+
+    /// `Quad` is a copy type of four words, so its results cross through a
+    /// destination. `advance` and `advance_set` are the Halo interpreter's
+    /// shape, with and without a separate binding: a fresh result is kept,
+    /// then replaced on one path by a call that reads it for the last time.
+    const COPY_INPUTS: &[u8] = br#"struct Quad {
+  a: u64;
+  b: u64;
+  c: u64;
+  d: u64;
+}
+
+fn start(seed: u64) -> result: Quad pure {
+  let next = seed +wrap 1_u64;
+  return Quad(a: seed, b: next, c: seed, d: next);
+}
+
+fn charge(value: Quad, amount: u64) -> result: Quad pure {
+  let total = value.a +wrap amount;
+  return Quad(a: total, b: value.b, c: value.c, d: value.d);
+}
+
+fn peek(value: &Quad) -> result: u64 reads(value) {
+  return value^.a;
+}
+
+fn advance(seed: u64, amount: u64) -> result: Quad pure {
+  let entered = start(seed: seed);
+  let step = entered;
+  if amount != 0_u64 {
+    set step = charge(value: entered, amount: amount);
+  }
+  return step;
+}
+
+fn advance_set(seed: u64, amount: u64, direct: Bool) -> result: Quad pure {
+  let step = Quad(a: 0_u64, b: 0_u64, c: 0_u64, d: 0_u64);
+  if direct {
+    set step = start(seed: seed);
+    if amount != 0_u64 {
+      set step = charge(value: step, amount: amount);
+    }
+  } else {
+    set step = start(seed: amount);
+  }
+  return step;
+}
+
+fn reread(seed: u64, amount: u64) -> result: Quad pure {
+  let entered = start(seed: seed);
+  let charged = charge(value: entered, amount: amount);
+  if charged.a == entered.a {
+    return entered;
+  }
+  return charged;
+}
+
+fn relay(value: Quad, amount: u64) -> result: Quad pure {
+  return charge(value: value, amount: amount);
+}
+
+fn borrowed(seed: u64) -> result: Quad pure {
+  let entered = start(seed: seed);
+  let seen = peek(value: &entered);
+  return charge(value: entered, amount: seen);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let first = advance(seed: 3_u64, amount: 2_u64);
+  let base = first.a;
+  let second = reread(seed: base, amount: 1_u64);
+  let third = relay(value: second, amount: 1_u64);
+  let next = third.a;
+  let fourth = borrowed(seed: next);
+  let direct = True();
+  let fifth = advance_set(seed: 1_u64, amount: 1_u64, direct: direct);
+  if fifth.a != 2_u64 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  if fourth.a != 14_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+
+    fn named<'program>(program: &'program IrProgram, name: &str) -> &'program IrFunction {
+        program
+            .functions()
+            .iter()
+            .find(|function| function.name() == name)
+            .unwrap_or_else(|| panic!("missing function {name}"))
+    }
+
+    /// The result and first argument of each call `caller` makes to `callee`.
+    fn calls_to(
+        program: &IrProgram,
+        caller: &IrFunction,
+        callee: &str,
+    ) -> Vec<(IrValueId, IrValueId)> {
+        let target = program
+            .functions()
+            .iter()
+            .position(|function| function.name() == callee)
+            .expect("callee");
+        caller
+            .blocks()
+            .iter()
+            .flat_map(|block| block.instructions())
+            .filter_map(|instruction| match instruction {
+                IrInstruction::Define {
+                    result,
+                    operation:
+                        IrOperation::Call {
+                            function,
+                            arguments,
+                        },
+                    ..
+                } if *function as usize == target => Some((*result, arguments[0])),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Both spellings lower to the same IR: the replacing call reads the
+    /// first call's result as a non-consuming copy. Without that copy's
+    /// reuse, the call's result conflicts with its own operand, so the first
+    /// result or the replacement keeps a separate slot and a transfer into
+    /// the returned place on its path.
+    #[test]
+    fn a_copied_input_dead_after_its_call_shares_the_result_and_join_backing() {
+        with_program(COPY_INPUTS, |program| {
+            for name in ["advance", "advance_set"] {
+                let function = named(program, name);
+                let plan = FunctionStoragePlan::build(program, function).expect("plan");
+                let returned: BTreeSet<_> = function
+                    .blocks()
+                    .iter()
+                    .filter_map(|block| match block.terminator() {
+                        IrTerminator::Return { value, .. } => Some(plan.slot(*value)),
+                        _ => None,
+                    })
+                    .collect();
+                let returned: Vec<_> = returned.into_iter().collect();
+                let [Some(returned)] = returned.as_slice() else {
+                    panic!("{name} returns one stored slot: {returned:?}");
+                };
+                let returned = *returned;
+                let calls = calls_to(program, function, "charge");
+                let [(result, argument)] = calls.as_slice() else {
+                    panic!("{name} calls charge once: {calls:?}");
+                };
+                assert_eq!(plan.slot(*result), Some(returned), "{name}");
+                assert_eq!(plan.slot(*argument), Some(returned), "{name}");
+                for (start, _) in calls_to(program, function, "start") {
+                    assert_eq!(plan.slot(start), Some(returned), "{name}");
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn a_copied_input_read_after_its_call_keeps_separate_backing() {
+        with_program(COPY_INPUTS, |program| {
+            let reread = named(program, "reread");
+            let plan = FunctionStoragePlan::build(program, reread).expect("plan");
+            let calls = calls_to(program, reread, "charge");
+            let [(result, argument)] = calls.as_slice() else {
+                panic!("reread calls charge once: {calls:?}");
+            };
+            assert!(plan.slot(*result).is_some());
+            assert_ne!(plan.slot(*result), plan.slot(*argument));
+        });
+    }
+
+    #[test]
+    fn a_copied_entry_parameter_stays_readable_in_place() {
+        with_program(COPY_INPUTS, |program| {
+            let relay = named(program, "relay");
+            let plan = FunctionStoragePlan::build(program, relay).expect("plan");
+            let parameter = relay.parameters()[0].0;
+            let calls = calls_to(program, relay, "charge");
+            let [(result, argument)] = calls.as_slice() else {
+                panic!("relay calls charge once: {calls:?}");
+            };
+            assert_eq!(*argument, parameter);
+            assert!(plan.slot(*result).is_some());
+            assert_ne!(plan.slot(*result), plan.slot(parameter));
+            assert!(plan.holds_only(parameter));
+        });
+    }
+
+    #[test]
+    fn a_copied_load_snapshot_keeps_its_own_backing() {
+        with_program(COPY_INPUTS, |program| {
+            let borrowed = named(program, "borrowed");
+            let plan = FunctionStoragePlan::build(program, borrowed).expect("plan");
+            let calls = calls_to(program, borrowed, "charge");
+            let [(result, argument)] = calls.as_slice() else {
+                panic!("borrowed calls charge once: {calls:?}");
+            };
+            let loaded = borrowed
+                .blocks()
+                .iter()
+                .flat_map(|block| block.instructions())
+                .any(|instruction| match instruction {
+                    IrInstruction::Define {
+                        result,
+                        operation: IrOperation::Load { .. },
+                        ..
+                    } => result == argument,
+                    _ => false,
+                });
+            assert!(loaded, "the borrowed binding's read is a Load snapshot");
+            assert!(plan.slot(*result).is_some());
+            assert_ne!(plan.slot(*result), plan.slot(*argument));
+        });
     }
 
     #[test]
