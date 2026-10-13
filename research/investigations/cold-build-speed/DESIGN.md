@@ -384,8 +384,10 @@ larger fixes before any of them starts.
 ## Measurement plan
 
 Workflow `.github/workflows/sg-cold-attrib.yml` on branch
-`claude/sg-cold-build`, with the stack roll-up `.github/sg-cold-phases.py`.
-Both are temporary and are removed with the branch. Compilers: release
+`claude/sg-cold-build`, with the stack roll-up `.github/sg-cold-phases.py`
+and the cold-build comparison reporter `.github/sg-cold-compare.py`.
+All three are temporary and are removed with the branch. The existing
+attribution jobs use release
 `wf-d837678c6905`, and commit `d837678c6` built on the runner in three
 ways: the `gate` profile, the plain `release` profile, and the `gate`
 profile with frame pointers and line tables for profiling. Snowghost-wf is
@@ -438,6 +440,61 @@ Job `backend`:
   file and a Rust build using four processors; the comparison is about
   orders of magnitude, since the languages' work per line differs.
 
+Job `comparison`, added for the implemented fragment pool and ThinLTO job
+limit:
+
+- Resolve the base as the branch head's merge base with fetched `main`,
+  record both exact compiler revisions, and build both from source with
+  the same Rust toolchain, `gate` profile, LLVM major and four available
+  processors on one hosted `ubuntu-24.04` runner. The twin is a copy of the
+  base compiler binary with the same digest. Compiler construction is not
+  part of the measured Snowghost build.
+- Build the same pinned Snowghost input with `--par`,
+  `--fragments function`, `--report` and a new empty compiler cache for
+  every sample. This also gives each sample a new ThinLTO cache; operating
+  system file caches are not flushed. The output pathname stays fixed.
+  Start with two rounds: base, twin, head; then head, twin, base. Print
+  each completed sample and the first round before collecting the second.
+- Report wall/user/system time, peak RSS, every build phase and reuse
+  count, and executable hashes. Retain the raw reported phases. When the
+  selected revision has the known compile timer that subtracts split time
+  from a timer started after splitting, add that split time back for the
+  comparison and record the correction explicitly.
+- Print the sample count, minimum, median, maximum and range divided by
+  median for every variant and phase. Screen F1 using the head's compile
+  phase at most 50% of both base medians, with base/twin agreement within
+  10% for each pair and across all four control repeats; screen F3 using
+  the head's link phase at most 85% of both base
+  medians and identical executable bytes. Failed builds or missing phase
+  data are invalid measurements, and unstable twin controls or unequal
+  base/twin images make attribution inconclusive rather than a claimed
+  saving. These full-build compile phases include runtime objects; the
+  existing E4 replays remain the isolated fragment and link comparisons
+  named by the prior criteria below.
+- Two rounds are an initial screen, not the three-run endpoint test or a
+  precise timing claim. Read the spread before choosing more rounds. The
+  reporter's synthetic controls run in this workflow before compiler
+  construction and check missing data, wrong thresholds, unstable twins
+  and executable differences; they run no compiler.
+
+The front-end, fragment/link replay and external-reference jobs remain:
+they answer E1 to E6 independently of the new same-source comparison. Their
+command exit statuses are captured before displaying logs, and top-row
+readers consume saved complete output so that `pipefail` cannot mistake an
+early reader close for an experiment failure.
+The replay reporter prints separate verdicts for the original F1 serial
+versus p4 comparison and F3 default versus all-jobs link comparison. Failed
+commands, unequal object counts and missing records are invalid data; a
+valid batch-byte difference rejects F2 without suppressing the remaining
+link and external-reference measurements.
+
+The new experimental stages have no measured wall-time budget yet. This
+initial pilot retains the workflow's existing 2,700-second execution
+deadline per owned command group; that is an execution limit, not an
+invented timing measurement or a claimed verification budget. Use the
+first CI samples to establish the labeled-stage budgets under the existing
+budget method before turning these experiments into repeated verification.
+
 Prior criteria, fixed before the run:
 
 - H1 holds if Σ t_i is at least 38 s; F4 is then worth doing first among the
@@ -479,7 +536,8 @@ inheritance and return, and a separate design for independently created
 root callers. No cross-process mechanism is implemented here.
 
 Completion, for the fixes once built: the median of three cold runs of
-`sg-cold-build.yml`'s command at or below 120 s on the hosted 4-vCPU runner,
+the documented parallel `layout_oracle` build command at or below 120 s on
+the hosted 4-vCPU runner,
 the same verdicts, an executable identical to the base compiler's (or, where
 a fix changes link inputs on purpose, identical LLVM and passing Snowghost
 oracles), and each fix's saving attributed with interleaved runs of the base,
