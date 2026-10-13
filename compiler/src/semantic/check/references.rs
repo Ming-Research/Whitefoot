@@ -1086,7 +1086,7 @@ impl<'unit> Checker<'_, 'unit> {
                 SemanticRule::Type7,
                 place_node,
                 SemanticIssueKind::MissingDereference {
-                    mechanical_fix: "write `p^` before selecting a member or element",
+                    mechanical_fix: "write `p^` before selecting a member or element".to_owned(),
                 },
             );
         }
@@ -1099,7 +1099,7 @@ impl<'unit> Checker<'_, 'unit> {
                 SemanticRule::Type7,
                 place_node,
                 SemanticIssueKind::MissingDereference {
-                    mechanical_fix: "apply `^` only to a reference; name an owned place as itself",
+                    mechanical_fix: "apply `^` only to a reference; name an owned place as itself".to_owned(),
                 },
             );
         }

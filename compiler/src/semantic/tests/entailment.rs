@@ -6296,6 +6296,233 @@ fn main() -> status: std::process::ExitStatus pure {
     assert_eq!(joins, vec![vec![0, 1]]);
 }
 
+fn unmentioned_aggregate_measure_delivery_source(fields: usize, read_after_give: bool) -> String {
+    let declarations = (0..fields)
+        .map(|field| format!("  field{field}: Box<Slots<u8>>;\n"))
+        .collect::<String>();
+    let allocations = (0..fields)
+        .map(|field| format!("  let field{field} = box_slots_new::<u8>(capacity: 4_u64);\n"))
+        .collect::<String>();
+    let arguments = (0..fields)
+        .map(|field| format!("field{field}: move field{field}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let first_read = if read_after_give {
+        "    let first_length = chosen.field0.inner.len;\n"
+    } else {
+        ""
+    };
+    format!(
+        "struct Bundle {{\n{declarations}}}\n
+enum Envelope {{
+  Left(value: Bundle);
+  Right(value: Bundle);
+}}
+
+fn make(flag: Bool) -> made: Envelope pure {{
+{allocations}  let bundle = Bundle({arguments});
+  if flag {{
+    return Envelope::Left(value: move bundle);
+  }} else {{
+    return Envelope::Right(value: move bundle);
+  }}
+}}
+
+fn driver(flag: Bool) -> result: unit pure {{
+  for @items (i in 0_u64..2_u64) {{
+    let chosen = match make(flag: flag) {{
+      Left(value: held_value) => {{
+        give move held_value;
+      }}
+      Right(value: held_value) => {{
+        give move held_value;
+      }}
+    }}
+{first_read}    release::<Bundle>(value: move chosen);
+  }}
+  return unit;
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
+}}
+"
+    )
+}
+
+#[test]
+fn aggregate_give_does_not_register_unmentioned_measured_descendants() {
+    // Each extra field used to mint source measures and immutable datums in
+    // the driver despite no read naming it. Comparing the complete inventory
+    // observes that source of closure-row growth without a timing threshold.
+    let counts = [1, 8].map(|fields| {
+        let source = unmentioned_aggregate_measure_delivery_source(fields, false);
+        let summary = accepted_entailment(source.as_bytes(), "driver");
+        validate_derivations(&summary);
+        assert!(
+            summary.inventory.terms.iter().all(|term| !matches!(
+                term,
+                TermKind::Measure(..) | TermKind::MeasureDatum { measure: Some(_), .. }
+            )),
+            "{fields} untouched fields must register neither measures nor placement datums"
+        );
+        summary.inventory.terms.len()
+    });
+    assert_eq!(
+        counts[0], counts[1],
+        "unused aggregate fields must not enlarge the driver's term universe"
+    );
+}
+
+#[test]
+fn an_aggregate_descendant_can_be_first_measured_after_give() {
+    let source = unmentioned_aggregate_measure_delivery_source(8, true);
+    let summary = accepted_entailment(source.as_bytes(), "driver");
+    validate_derivations(&summary);
+    let first_path = vec![PlaceStep::Field(0), PlaceStep::Deref];
+    assert!(summary.inventory.terms.iter().any(|term| matches!(
+        term,
+        TermKind::Measure(CheckedMeasure::Length, place) if place.path == first_path
+    )));
+    assert!(
+        summary.inventory.terms.iter().all(|term| match term {
+            TermKind::Measure(_, place) => place.path == first_path,
+            TermKind::MeasureDatum { measure: Some(_), .. } => false,
+            _ => true,
+        }),
+        "a later first read forms its own descendant's measures without transporting untouched ones"
+    );
+}
+
+#[test]
+fn aggregate_give_preserves_a_family_when_length_or_only_capacity_was_read() {
+    // The capacity variant names only cap in the source; ordinary measure
+    // reading can also register its standing family. It protects transport
+    // after that read, rather than a capacity-only interned vocabulary.
+    for capacity_only in [false, true] {
+        let (result, before, after) = if capacity_only {
+            (
+                "unit",
+                "  let limit = bundle.tracked.inner.cap;\n  if limit < 4_u64 {\n  } else {\n    return unit;\n  }\n",
+                "  need_small(limit: chosen.tracked.inner.cap);\n  return unit;\n",
+            )
+        } else {
+            (
+                "u8",
+                "  let length = bundle.tracked.inner.len;\n  if length == 0_u64 {\n    return 0_u8;\n  }\n",
+                "  let value = chosen.tracked.inner[0_u64];\n  return value;\n",
+            )
+        };
+        let source = format!(
+            "struct Bundle {{
+  tracked: Box<Slots<u8>>;
+  untouched: Box<Slots<u8>>;
+}}
+
+fn need_small(limit: u64) -> result: unit pure contract {{
+  requires limit < 4_u64;
+}} {{
+  return unit;
+}}
+
+fn probe(bundle: Bundle, flag: Bool) -> result: {result} pure {{
+{before}  let chosen = if flag {{
+    give move bundle;
+  }} else {{
+    give move bundle;
+  }}
+{after}}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
+}}
+"
+        );
+        let summary = accepted_entailment(source.as_bytes(), "probe");
+        validate_derivations(&summary);
+        if capacity_only {
+            assert_eq!(summary.call_goals.len(), 1);
+            assert_eq!(
+                summary.call_goals[0].disposition,
+                CallGoalDisposition::Discharged,
+                "a capacity-only source read must carry its bound across give"
+            );
+        } else {
+            let bounds = summary
+                .obligations
+                .iter()
+                .filter(|outcome| outcome.family == ObligationFamily::Bounds)
+                .collect::<Vec<_>>();
+            assert_eq!(bounds.len(), 1);
+            assert!(
+                bounds[0].discharged,
+                "the source's nonempty bound survives give"
+            );
+        }
+        let tracked_path = vec![PlaceStep::Field(0), PlaceStep::Deref];
+        for measure in [
+            CheckedMeasure::Length,
+            CheckedMeasure::Capacity,
+            CheckedMeasure::Head,
+        ] {
+            assert!(
+                summary.inventory.terms.iter().any(|term| matches!(
+                    term,
+                    TermKind::MeasureDatum { path, measure: Some(actual), .. }
+                        if *path == tracked_path && *actual == measure
+                )),
+                "a mentioned source retains the whole measure family: {measure:?}"
+            );
+        }
+        assert!(
+            summary.inventory.terms.iter().all(|term| match term {
+                TermKind::Measure(_, place) => place.path == tracked_path,
+                TermKind::MeasureDatum { path, measure: Some(_), .. } => *path == tracked_path,
+                _ => true,
+            }),
+            "tracking one descendant must not register its untouched sibling"
+        );
+    }
+}
+
+#[test]
+fn a_copied_generic_array_give_preserves_a_later_length_equality() {
+    // No source measure is read before give. The array is copied, so its
+    // source remains available and a later read must still relate it to the
+    // receiver. The symbolic length expression prevents a concrete type
+    // constant from proving the equality without that transport.
+    let source = br#"fn need_equal(left: u64, right: u64) -> result: unit pure contract {
+  requires left == right;
+} {
+  return unit;
+}
+
+fn probe<const n: u64>(original: Array<u8, n + 1>, flag: Bool) -> result: unit pure {
+  let chosen = if flag {
+    give original;
+  } else {
+    give original;
+  }
+  need_equal(left: original.len, right: chosen.len);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let summary = accepted_entailment(source, "probe");
+    validate_derivations(&summary);
+    let [goal] = summary.call_goals.as_slice() else {
+        panic!("the copied array has exactly one later length-equality requirement");
+    };
+    assert_eq!(
+        goal.disposition,
+        CallGoalDisposition::Discharged,
+        "a later length read of the copied source must equal the give receiver's length"
+    );
+}
+
 #[test]
 fn a_local_invariant_does_not_discard_an_unrelated_no_ensures_value_if_delivery() {
     let source = br#"const values: Array<u8, 4> =[0_u8, 0_u8, 0_u8, 0_u8];
