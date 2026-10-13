@@ -92,8 +92,8 @@ the logical Whitefoot caller, is consistent with continuation tail transfer.
 ## Comparison and evidence
 
 The temporary
-[`unwind-resume.yml`](../../../.github/workflows/unwind-resume.yml) runs only
-on the work branch. It builds the compiler and compiles this witness through
+[`unwind-resume.yml`](https://github.com/Ming-Research/Whitefoot/blob/5f99db77282601293acdb6d9a47d4d60b2e43592/.github/workflows/unwind-resume.yml) ran only
+on the work branch and was removed before merging. It built the compiler and compiled this witness through
 the downstream native build path with full LTO. Record the compiler revision,
 command, LLVM version, kernel, perf version and executable symbol inventory.
 All three modes sample the software event `cpu-clock:u` at 499 Hz, so the
