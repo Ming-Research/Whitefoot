@@ -29,7 +29,8 @@ impl Checker<'_, '_> {
             contract_queries: &self.analysis.contract_queries,
             binding_names,
         };
-        self.types.explain_unavailable_summary(stop, caller, functions, &inputs)
+        self.types
+            .explain_unavailable_summary(stop, caller, functions, &inputs)
     }
 }
 
