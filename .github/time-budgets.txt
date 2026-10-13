@@ -37,9 +37,9 @@ compiler/test-unit              140    175    -
 
 # gate.yml, corpus group: the ordinary library, the CLI and corpus harnesses,
 # then their cases
-check/corpus                    315    340    -
+check/corpus                    335    360    -
 compiler/test-build-corpus      135    175    -
-compiler/test-corpus            185    185    -
+compiler/test-corpus            205    205    -
 
 # gate.yml, runtime group
 check/runtime                   30     30     -

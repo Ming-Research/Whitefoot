@@ -1,0 +1,87 @@
+alias ExitStatus = std::process::ExitStatus;
+alias SocketAddress = std::net::SocketAddress;
+alias exit_status = std::process::exit_status;
+alias socket_address_ip = std::net::socket_address_ip;
+alias socket_address_port = std::net::socket_address_port;
+alias socket_address_v4 = std::net::socket_address_v4;
+alias socket_address_v6 = std::net::socket_address_v6;
+
+fn ipv4_mismatch(address: &SocketAddress) -> result: u8 reads(address) {
+  doc "Returns 0 when address reads back as the IPv4 address 192.168.1.200 with port 32769, and otherwise the number of the first part that differs [PRE-2]. Every octet differs from every other and the port's two bytes differ, so an octet read from the wrong place or a port read in the wrong byte order is a difference.";
+  let port = socket_address_port(address: address);
+  if port != 32769_u16 {
+    return 1_u8;
+  }
+  match socket_address_ip(address: address) {
+    Ipv4(a: first, b: second, c: third, d: fourth) => {
+      if first != 192_u8 {
+        return 2_u8;
+      }
+      if second != 168_u8 {
+        return 3_u8;
+      }
+      if third != 1_u8 {
+        return 4_u8;
+      }
+      if fourth != 200_u8 {
+        return 5_u8;
+      }
+      return 0_u8;
+    }
+    Ipv6(a: group_a, b: group_b, c: group_c, d: group_d, e: group_e, f: group_f, g: group_g, h: group_h) => {
+      return 6_u8;
+    }
+  }
+}
+
+fn ipv6_mismatch(address: &SocketAddress) -> result: u8 reads(address) {
+  doc "Returns 0 when address reads back as the IPv6 address 2001:db8:1234:5678:9abc:def0:102:fffe with port 48879, and otherwise the number of the first part that differs [PRE-2]. Every group differs from every other and has two different bytes, so a group read from the wrong place or in the wrong byte order is a difference.";
+  let port = socket_address_port(address: address);
+  if port != 48879_u16 {
+    return 11_u8;
+  }
+  match socket_address_ip(address: address) {
+    Ipv4(a: first, b: second, c: third, d: fourth) => {
+      return 12_u8;
+    }
+    Ipv6(a: group_a, b: group_b, c: group_c, d: group_d, e: group_e, f: group_f, g: group_g, h: group_h) => {
+      if group_a != 8193_u16 {
+        return 13_u8;
+      }
+      if group_b != 3512_u16 {
+        return 14_u8;
+      }
+      if group_c != 4660_u16 {
+        return 15_u8;
+      }
+      if group_d != 22136_u16 {
+        return 16_u8;
+      }
+      if group_e != 39612_u16 {
+        return 17_u8;
+      }
+      if group_f != 57072_u16 {
+        return 18_u8;
+      }
+      if group_g != 258_u16 {
+        return 19_u8;
+      }
+      if group_h != 65534_u16 {
+        return 20_u8;
+      }
+      return 0_u8;
+    }
+  }
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "An address built by socket_address_v4 reads back as Ipv4 with the four octets and the port the call took, and one built by socket_address_v6 as Ipv6 with the eight groups and the port the call took [PRE-2].";
+  let four = socket_address_v4(a: 192_u8, b: 168_u8, c: 1_u8, d: 200_u8, port: 32769_u16);
+  let four_outcome = ipv4_mismatch(address: &four);
+  if four_outcome != 0_u8 {
+    return exit_status(code: four_outcome);
+  }
+  let six = socket_address_v6(a: 8193_u16, b: 3512_u16, c: 4660_u16, d: 22136_u16, e: 39612_u16, f: 57072_u16, g: 258_u16, h: 65534_u16, port: 48879_u16);
+  let six_outcome = ipv6_mismatch(address: &six);
+  return exit_status(code: six_outcome);
+}
