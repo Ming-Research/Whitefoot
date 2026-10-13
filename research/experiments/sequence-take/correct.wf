@@ -202,8 +202,8 @@ fn sq_verify(collected: &Shared<SqLog>, table: &Shared<ConcurrentHashMap<u64>>) 
         let view = &bytes[0_u64..8_u64];
         atomic slot = &table^[view] {
           match slot^ {
-            Some(value: held) => {
-              if held^ != own_value {
+            Some(value: present) => {
+              if present^ != own_value {
                 set bad_two = True();
               }
             }
