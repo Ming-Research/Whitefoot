@@ -14,6 +14,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
 mod aggregate;
+mod vacuous;
 use aggregate::RangeOperand;
 
 use crate::syntax::NodeId;
@@ -171,6 +172,7 @@ impl Checker<'_, '_> {
             self.body.unformed_range_facts.insert(declaration);
             return Ok(None);
         }
+        self.reject_vacuous_conclusions(&guards, &conclusions)?;
         Ok(Some(CheckedRangeClause {
             declaration,
             name,

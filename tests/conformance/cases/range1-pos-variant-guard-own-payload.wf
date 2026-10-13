@@ -1,0 +1,17 @@
+enum Instr {
+  Jump(t: u64);
+  Branch(t: u64, c: u64);
+  Halt();
+}
+
+fn follow(code: &Box<Slots<Instr>>, pc: u64) -> r: u64 reads(code) contract {
+  requires pc < code^.inner.len;
+  requires forall targets(j in 0_u64..code^.inner.len) when code^.inner[j] is Jump: code^.inner[j].Jump.t < code^.inner.len;
+} {
+  doc "The guard holds for a Jump element and the conclusion reads that element's Jump target, which is defined exactly there.";
+  return pc;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
