@@ -289,8 +289,6 @@ fn run(code: &Box<Slots<Op>>, funcs: &Box<Slots<Func>>, brtab: &Box<Slots<Target
         let si = cvt::<u32, u64>(slot.s);
         let di = cvt::<u32, u64>(slot.d);
         if slot.k != 0_u32 {
-          invariant table_source_bound: si < 65536_u64;
-          invariant table_destination_bound: di < 65536_u64;
           move_slot(stack: stack, fp: fp, s: si, d: di);
         }
         set pc = target;
