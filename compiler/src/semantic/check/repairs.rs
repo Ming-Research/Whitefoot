@@ -992,6 +992,24 @@ pub(super) fn unavailable_return_summary(
     )
 }
 
+/// The indexed row captures the parameter before its body's assignment.
+pub(super) fn rewritten_effect_index(
+    row: &str,
+    parameter: &str,
+    write: &str,
+    line: u64,
+    access: &str,
+    call: Option<&str>,
+) -> String {
+    let operation = match call {
+        Some(call) => format!("the call `{call}`"),
+        None => format!("the access `{access}`"),
+    };
+    format!(
+        "the row `{row}` uses `{parameter}`'s value at the call, but `{write}` at line {line} rewrites it before {operation}; where this access is the row mismatch to repair, keep the row either by moving {operation} before that write, or by leaving `{parameter}` unchanged, binding the new value in a fresh local, and using that local for the work that needs the new value"
+    )
+}
+
 /// [FN-9, ERR-3] a relation at a propagated error exit, which returns the
 /// propagated outcome with the state the body has reached there.
 pub(super) fn propagated_postcondition(disposition: Disposition) -> &'static str {

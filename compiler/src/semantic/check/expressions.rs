@@ -220,6 +220,7 @@ impl<'unit> Checker<'_, 'unit> {
                     SemanticIssueKind::InvalidSetTarget {
                         root_class: "compiler-updated counted binder".to_owned(),
                         required_classes: SET1_WRITABLE_ROOTS,
+                        mechanical_fix: None,
                     },
                 );
             }
@@ -264,6 +265,7 @@ impl<'unit> Checker<'_, 'unit> {
                 SemanticIssueKind::InvalidSetTarget {
                     root_class: format!("{class:?}"),
                     required_classes: SET1_WRITABLE_ROOTS,
+                    mechanical_fix: None,
                 },
             );
         }
@@ -336,6 +338,7 @@ impl<'unit> Checker<'_, 'unit> {
                 SemanticIssueKind::InvalidSetTarget {
                     root_class: "a reference, which names a path rather than storage".to_owned(),
                     required_classes: SET1_WRITABLE_ROOTS,
+                    mechanical_fix: None,
                 },
             );
         }
@@ -1301,6 +1304,11 @@ impl<'unit> Checker<'_, 'unit> {
             writable &= self.reference_row_writes(function, member, bindings)?;
         }
         if !writable {
+            let mechanical_fix = place.resolved.members.iter().find_map(|member| {
+                self.rewritten_index_repair(context, node, member, bindings, false)
+                    .ok()
+                    .flatten()
+            });
             return self.types.declarations.issue_node(
                 SemanticRule::Set1,
                 node,
@@ -1308,6 +1316,7 @@ impl<'unit> Checker<'_, 'unit> {
                     root_class: "a reference whose declared row does not write this path"
                         .to_owned(),
                     required_classes: SET1_WRITABLE_ROOTS,
+                    mechanical_fix,
                 },
             );
         }

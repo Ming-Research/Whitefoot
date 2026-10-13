@@ -22,6 +22,7 @@ mod interface_applications;
 mod lost_header_relations;
 mod prelude_opaque;
 mod recursive_effects;
+mod rewritten_effect_indices;
 mod selector_scope;
 mod shared_maps;
 mod storage_destructuring;
@@ -3838,6 +3839,7 @@ fn each_pinned_repair_is_carried_out_by_its_programs() {
         .chain(content_moves::CONTENT_MOVES)
         .chain(prelude_opaque::PRELUDE_OPAQUE)
         .chain(recursive_effects::RECURSIVE_EFFECTS)
+        .chain(rewritten_effect_indices::REWRITTEN_EFFECT_INDICES)
         .chain(storage_destructuring::STORAGE_DESTRUCTURING)
         .chain(shared_maps::SHARED_MAPS)
         .chain(floats::FLOATS)

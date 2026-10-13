@@ -639,8 +639,11 @@ impl<'unit> Checker<'_, 'unit> {
             .declarations
             .invalidate_window_operation_references(signature, &substituted, bindings)?;
         self.project_call_effects(
+            FunctionContext {
+                check_context,
+                function,
+            },
             node,
-            function,
             &substituted,
             bindings,
             &mut effects,
@@ -1123,14 +1126,15 @@ impl<'unit> Checker<'_, 'unit> {
     /// atomic statement's binder contributes its path for that statement,
     /// which removes it [SHARE-3].
     fn project_call_effects(
-        &self,
+        &mut self,
+        context: FunctionContext<'_, '_>,
         node: NodeId,
-        caller: &FunctionSignature,
         entries: &[SubstitutedEntry],
         bindings: &HashMap<DeclarationId, LocalBinding>,
         effects: &mut EffectSet,
         retained_reference_parameters: Option<&[ParameterSignature]>,
     ) -> Result<(), CheckStop> {
+        let caller = context.function;
         for entry in entries {
             for path in self.effect_paths_for_place(node, &entry.place, bindings)? {
                 if !caller
@@ -1140,6 +1144,12 @@ impl<'unit> Checker<'_, 'unit> {
                     && !self.is_atomic_binder(path.path.root)
                 {
                     continue;
+                }
+                if entry.write && self.body.rewritten_index_repair.is_none() {
+                    self.body.rewritten_index_repair = self
+                        .rewritten_index_repair(context, node, &entry.place, bindings, true)
+                        .ok()
+                        .flatten();
                 }
                 if retained_reference_parameters
                     .is_some_and(|parameters| parameters[entry.argument].mode != CheckedMode::Own)

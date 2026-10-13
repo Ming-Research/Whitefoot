@@ -375,6 +375,7 @@ fn counted_binder_is_not_source_writable_and_is_not_written_through() {
         SemanticIssueKind::InvalidSetTarget {
             root_class: "compiler-updated counted binder".to_owned(),
             required_classes: SET1_WRITABLE_ROOTS,
+            mechanical_fix: None,
         },
     );
 

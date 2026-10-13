@@ -756,6 +756,8 @@ pub enum SemanticIssueKind {
         root_class: String,
         /// Closed set of classes required by SET-1.
         required_classes: &'static str,
+        /// A cause-specific repair when the rejected path has one.
+        mechanical_fix: Option<String>,
     },
     /// A written reference argument reaches immutable source storage.
     ImmutableWrittenArgument {
