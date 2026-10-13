@@ -635,12 +635,10 @@ impl<'unit> Checker<'_, 'unit> {
         let CheckStop::Issue(mut issue) = stop else {
             return stop;
         };
-        if matches!(issue.kind, SemanticIssueKind::BareAffineUse { .. })
+        if let SemanticIssueKind::BareAffineUse { mechanical_fix, .. } = &mut issue.kind
             && matches!(issue.rule, SemanticRule::Own1)
         {
-            issue.kind = SemanticIssueKind::BareAffineUse {
-                mechanical_fix: "restate the definition or clause over copy operands or non-consuming admitted reads",
-            };
+            *mechanical_fix = "restate the definition or clause over copy operands or non-consuming admitted reads".to_owned();
         }
         CheckStop::Issue(issue)
     }

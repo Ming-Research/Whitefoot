@@ -170,7 +170,7 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "#,
         SemanticRule::Op1,
-        SemanticIssueKind::InvalidOperation,
+        SemanticIssueKind::invalid_operation(),
     );
 }
 
@@ -208,7 +208,7 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "#,
         SemanticRule::Op1,
-        SemanticIssueKind::InvalidOperation,
+        SemanticIssueKind::invalid_operation(),
     );
 }
 
