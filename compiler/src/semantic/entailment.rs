@@ -208,6 +208,10 @@ impl EntailmentCallee {
 pub(crate) struct EntailmentContext<'check> {
     /// Source text for captured values; diagnostic rendering alone reads it.
     pub(crate) source_spellings: &'check HashMap<crate::syntax::NodeId, String>,
+    pub(crate) postcondition_clauses:
+        &'check HashMap<(FunctionId, NodePath), super::postcondition::PostconditionClause>,
+    pub(crate) postcondition_sources:
+        &'check HashMap<NodePath, super::postcondition::PostconditionSource>,
     /// Constructor type names for aggregate constants in diagnostic goals.
     pub(crate) type_spellings: &'check HashMap<CheckedType, String>,
     /// Existing resolved declarations, borrowed for source names in residuals.
@@ -1021,6 +1025,7 @@ pub(crate) struct PostconditionExit {
     pub(crate) statement: NodePath,
     pub(crate) relation: state::Relation,
     pub(crate) residual: String,
+    pub(crate) clause: String,
     pub(crate) entry_images: Vec<PostconditionEntryImageOutcome>,
     pub(crate) disposition: PostconditionDisposition,
     pub(crate) derivation: Option<DerivationId>,

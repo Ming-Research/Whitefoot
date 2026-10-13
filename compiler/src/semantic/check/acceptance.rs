@@ -949,6 +949,7 @@ impl<'unit> TypeContext<'unit> {
                     conjunct: proof.relation_ordinal,
                     selector: self.declarations.node_location(&proof.selector)?,
                     relation: exit.residual.clone(),
+                    clause: exit.clause.clone(),
                     disposition,
                     mechanical_fix: if self
                         .declarations

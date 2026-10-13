@@ -48,6 +48,49 @@ enum SelectorAdmissionType {
     Invalid,
 }
 
+fn postcondition_source(
+    tree: &super::super::tree::TreeView<'_>,
+    node: NodeId,
+) -> Option<super::super::postcondition::PostconditionSource> {
+    use super::super::postcondition::PostconditionSource;
+    let spelling = tree.source_spelling(node).ok()?;
+    let mut source = PostconditionSource {
+        spelling,
+        literal: false,
+        fields: Vec::new(),
+    };
+    if tree
+        .direct_token_with(node, crate::TerminalPredicate::Literal)
+        .ok()?
+        .is_some()
+    {
+        source.literal = true;
+    } else if tree.has_fixed(node, FixedTerminal::Move).ok()? {
+        return postcondition_source(
+            tree,
+            tree.first_child_with(node, Production::Place).ok()??,
+        );
+    } else if let Some(list) = tree.first_child_with(node, Production::FieldinitList).ok()? {
+        source.fields = tree
+            .children_with(list, Production::Fieldinit)
+            .ok()?
+            .iter()
+            .map(|field| {
+                postcondition_source(
+                    tree,
+                    tree.first_child_with(*field, Production::Atom).ok()??,
+                )
+            })
+            .collect::<Option<Vec<_>>>()?;
+    } else if let [child] = tree.children(node).ok()? {
+        let child = postcondition_source(tree, *child)?;
+        source.spelling = child.spelling;
+        source.literal = child.literal;
+        source.fields = child.fields;
+    }
+    Some(source)
+}
+
 #[derive(Clone, Copy)]
 struct PostconditionBindingInfo {
     ty: CheckedType,
@@ -613,9 +656,142 @@ impl<'unit> Checker<'_, 'unit> {
             .tree
             .first_child_with(clause, Production::ClauseExpr)?
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-        self.types
+        let relation = self
+            .types
             .declarations
-            .postcondition_relation(expression, expanded, context.function)
+            .postcondition_relation(expression, expanded.clone(), context.function)?;
+        let capture_sources = !self
+            .types
+            .postcondition_clauses
+            .keys()
+            .any(|(function, _)| *function == context.function.id);
+        if let Some(clause) = Self::postcondition_display_clause(&expanded) {
+            self.types.postcondition_clauses.insert(
+                (context.function.id, selector.block.clone()),
+                clause,
+            );
+        }
+        if !capture_sources {
+            return Ok(relation);
+        }
+        let tree = &self.types.declarations.tree;
+        for production in [
+            Production::Atom,
+            Production::Expr,
+            Production::Call,
+            Production::Place,
+        ] {
+            for node in tree
+                .descendants_with(context.function.node, production)
+                .unwrap_or_default()
+            {
+                if let (Ok(path), Some(source)) = (tree.path(node), postcondition_source(tree, node)) {
+                    self.types.postcondition_sources.insert(path.clone(), source);
+                }
+            }
+        }
+        for production in [Production::ReturnStmt, Production::LetStmt] {
+            for node in tree
+                .descendants_with(context.function.node, production)
+                .unwrap_or_default()
+            {
+                if let (Ok(path), Ok(expressions)) =
+                    (tree.path(node), tree.children_with(node, Production::Expr))
+                {
+                    let mut sources = expressions
+                        .into_iter()
+                        .map(|expression| postcondition_source(tree, expression))
+                        .collect::<Option<Vec<_>>>();
+                    if let Some(sources) = sources.as_mut() {
+                        let source = if sources.len() == 1 {
+                            sources.pop()
+                        } else if sources.is_empty() {
+                            None
+                        } else {
+                            Some(super::super::postcondition::PostconditionSource {
+                                spelling: String::new(),
+                                literal: false,
+                                fields: std::mem::take(sources),
+                            })
+                        };
+                        if let Some(source) = source {
+                            self.types.postcondition_sources.insert(path.clone(), source);
+                        }
+                    }
+                }
+            }
+        }
+        Ok(relation)
+    }
+
+    fn postcondition_display_clause(
+        expanded: &ExpandedClauseExpression,
+    ) -> Option<super::super::postcondition::PostconditionClause> {
+        use super::super::postcondition::PostconditionClause;
+        match expanded {
+            ExpandedClauseExpression::Datum(ExpandedClauseDatum::Literal { value, spelling, .. }) => {
+                Some(PostconditionClause::Literal {
+                    value: value.clone(),
+                    spelling: spelling.clone(),
+                })
+            }
+            ExpandedClauseExpression::Datum(ExpandedClauseDatum::NamedConst {
+                declaration,
+                projections,
+                spelling: Some(spelling),
+                ..
+            }) => Some(PostconditionClause::NamedConst {
+                declaration: *declaration,
+                projections: projections.clone(),
+                spelling: spelling.clone(),
+            }),
+            ExpandedClauseExpression::Datum(datum) => Some(PostconditionClause::Datum(match datum {
+                ExpandedClauseDatum::Result {
+                    ordinal,
+                    projections,
+                    ty,
+                } => RelationDatum::Result {
+                    ordinal: *ordinal,
+                    projections: projections.clone(),
+                    ty: *ty,
+                },
+                ExpandedClauseDatum::Parameter {
+                    ordinal,
+                    projections,
+                    ty,
+                    denotation,
+                } => RelationDatum::Parameter {
+                    ordinal: *ordinal,
+                    projections: projections.clone(),
+                    ty: *ty,
+                    denotation: *denotation,
+                },
+                ExpandedClauseDatum::NamedConst {
+                    declaration,
+                    projections,
+                    ty,
+                    ..
+                } => RelationDatum::NamedConst {
+                    declaration: *declaration,
+                    projections: projections.clone(),
+                    ty: *ty,
+                },
+                ExpandedClauseDatum::Literal { value, origin, .. } => RelationDatum::Literal {
+                    value: value.clone(),
+                    origin: origin.clone(),
+                },
+            })),
+            ExpandedClauseExpression::Operation { row, arguments, .. } => {
+                Some(PostconditionClause::Operation {
+                    row: *row,
+                    arguments: arguments
+                        .iter()
+                        .map(Self::postcondition_display_clause)
+                        .collect::<Option<Vec<_>>>()?,
+                })
+            }
+            ExpandedClauseExpression::InvalidSelectorUse { .. } => None,
+        }
     }
 
     pub(super) fn expand_postcondition_clause(
@@ -996,12 +1172,13 @@ impl<'unit> Checker<'_, 'unit> {
                 declaration,
                 projections,
                 ty,
+                ..
             }) => Some(RelationDatum::NamedConst {
                 declaration: *declaration,
                 projections: projections.clone(),
                 ty: *ty,
             }),
-            ExpandedClauseExpression::Datum(ExpandedClauseDatum::Literal { value, origin }) => {
+            ExpandedClauseExpression::Datum(ExpandedClauseDatum::Literal { value, origin, .. }) => {
                 Some(RelationDatum::Literal {
                     value: value.clone(),
                     origin: origin.clone(),

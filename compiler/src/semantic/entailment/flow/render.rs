@@ -771,7 +771,7 @@ impl Input<'_, '_> {
         }
     }
 
-    fn render_normalized_integer(&self, value: i128, ty: CheckedType) -> String {
+    pub(super) fn render_normalized_integer(&self, value: i128, ty: CheckedType) -> String {
         if matches!(ty, CheckedType::GenericInt(_)) && matches!(value, 0 | 1) {
             return format!("{value}_{}", self.render_numeric_type(ty));
         }
@@ -793,7 +793,7 @@ impl Input<'_, '_> {
         self.render_goal_projections_at(base, root_type, false, 0, projections)
     }
 
-    fn render_goal_projections_at(
+    pub(super) fn render_goal_projections_at(
         &self,
         base: String,
         root_type: Option<CheckedType>,

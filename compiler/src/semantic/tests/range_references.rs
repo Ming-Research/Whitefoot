@@ -780,7 +780,7 @@ fn main() -> status: std::process::ExitStatus pure {{
     assert_call_goal(
         body("3_u64").as_bytes(),
         CallRequirementDisposition::Refuted,
-        "3_u64 < a[2..4].len",
+        "3_u64 < a[2_u64..4_u64].len",
     );
 }
 

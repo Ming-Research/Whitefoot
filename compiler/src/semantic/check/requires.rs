@@ -200,7 +200,7 @@ pub(super) enum ClauseKind<'record> {
 /// One source-stable leaf shared by FN-8 and FN-9 alpha expansion.  The
 /// symbolic result is private to this intermediate tree; conversion to a
 /// GoalTemplate rejects it, so GoalDatum and GoalTemplate remain unchanged.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone)]
 pub(super) enum ExpandedClauseDatum {
     Parameter {
         ordinal: u32,
@@ -216,10 +216,12 @@ pub(super) enum ExpandedClauseDatum {
         declaration: DeclarationId,
         projections: Vec<GoalProjection>,
         ty: CheckedType,
+        spelling: Option<String>,
     },
     Literal {
         value: CheckedValue,
         origin: PostconditionConstantOrigin,
+        spelling: Option<String>,
     },
     /// One [FN-9] clause result datum: the declared result ordinal it
     /// names [CALL-4], the member path written below it, and the type that
@@ -234,6 +236,114 @@ pub(super) enum ExpandedClauseDatum {
         projections: Vec<GoalProjection>,
         ty: CheckedType,
     },
+}
+
+// Source spellings never participate in contract identity or its receipt key.
+impl PartialEq for ExpandedClauseDatum {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (
+                Self::Parameter {
+                    ordinal: a,
+                    projections: b,
+                    ty: c,
+                    denotation: d,
+                },
+                Self::Parameter {
+                    ordinal: w,
+                    projections: x,
+                    ty: y,
+                    denotation: z,
+                },
+            ) => (a, b, c, d) == (w, x, y, z),
+            (
+                Self::NamedConst {
+                    declaration: a,
+                    projections: b,
+                    ty: c,
+                    ..
+                },
+                Self::NamedConst {
+                    declaration: x,
+                    projections: y,
+                    ty: z,
+                    ..
+                },
+            ) => (a, b, c) == (x, y, z),
+            (
+                Self::Result {
+                    ordinal: a,
+                    projections: b,
+                    ty: c,
+                },
+                Self::Result {
+                    ordinal: x,
+                    projections: y,
+                    ty: z,
+                },
+            ) => (a, b, c) == (x, y, z),
+            (
+                Self::Literal {
+                    value: a,
+                    origin: b,
+                    ..
+                },
+                Self::Literal {
+                    value: x,
+                    origin: y,
+                    ..
+                },
+            ) => (a, b) == (x, y),
+            _ => false,
+        }
+    }
+}
+
+impl Eq for ExpandedClauseDatum {}
+
+impl std::fmt::Debug for ExpandedClauseDatum {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Parameter {
+                ordinal,
+                projections,
+                ty,
+                denotation,
+            } => f
+                .debug_struct("Parameter")
+                .field("ordinal", ordinal)
+                .field("projections", projections)
+                .field("ty", ty)
+                .field("denotation", denotation)
+                .finish(),
+            Self::NamedConst {
+                declaration,
+                projections,
+                ty,
+                ..
+            } => f
+                .debug_struct("NamedConst")
+                .field("declaration", declaration)
+                .field("projections", projections)
+                .field("ty", ty)
+                .finish(),
+            Self::Result {
+                ordinal,
+                projections,
+                ty,
+            } => f
+                .debug_struct("Result")
+                .field("ordinal", ordinal)
+                .field("projections", projections)
+                .field("ty", ty)
+                .finish(),
+            Self::Literal { value, origin, .. } => f
+                .debug_struct("Literal")
+                .field("value", value)
+                .field("origin", origin)
+                .finish(),
+        }
+    }
 }
 
 impl ExpandedClauseDatum {
@@ -331,6 +441,7 @@ impl ExpandedClauseExpression {
                 declaration,
                 projections,
                 ty,
+                ..
             }) => Some(GoalExpression::Datum(GoalDatum::NamedConst {
                 declaration,
                 projections,
@@ -1601,6 +1712,8 @@ impl<'unit> TypeContext<'unit> {
                 ExpandedClauseDatum::Literal {
                     value: value.clone(),
                     origin,
+                    spelling: (!matches!(bytes, b"0_T" | b"1_T"))
+                        .then(|| String::from_utf8_lossy(bytes).into_owned()),
                 },
             ));
         }
@@ -1620,6 +1733,7 @@ impl<'unit> TypeContext<'unit> {
                 ExpandedClauseDatum::Literal {
                     value: value.clone(),
                     origin: PostconditionConstantOrigin::ConstGeneric { declaration },
+                    spelling: None,
                 },
             ));
         }
@@ -2131,6 +2245,7 @@ impl<'unit> TypeContext<'unit> {
                             declaration,
                             projections: Vec::new(),
                             ty: self.constant(constant)?.ty,
+                            spelling: self.declarations.tree.source_spelling(pbase).ok(),
                         }),
                         false,
                         false,
@@ -2320,5 +2435,58 @@ impl<'unit> TypeContext<'unit> {
             return self.declarations.invalid_clause(clause, entry);
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::semantic::model::IntegerType;
+
+    #[test]
+    fn diagnostic_spelling_changes_neither_clause_identity_nor_receipt_debug() {
+        let value = CheckedValue::Integer {
+            ty: IntegerType::U8,
+            bits: 97,
+        };
+        let literal = |spelling: &str| ExpandedClauseDatum::Literal {
+            value: value.clone(),
+            origin: PostconditionConstantOrigin::Literal,
+            spelling: Some(spelling.to_owned()),
+        };
+        let character = literal("'a'_u8");
+        let decimal = literal("97_u8");
+        assert_eq!(character, decimal);
+        assert_eq!(format!("{character:?}"), format!("{decimal:?}"));
+        assert_eq!(
+            format!("{character:?}"),
+            format!("Literal {{ value: {value:?}, origin: Literal }}")
+        );
+        let different = ExpandedClauseDatum::Literal {
+            value: CheckedValue::Integer {
+                ty: IntegerType::U8,
+                bits: 98,
+            },
+            origin: PostconditionConstantOrigin::Literal,
+            spelling: Some("'a'_u8".to_owned()),
+        };
+        assert_ne!(character, different);
+        let declaration = DeclarationId::from_index(0).expect("the first declaration fits");
+        let named = |spelling: &str| ExpandedClauseDatum::NamedConst {
+            declaration,
+            projections: Vec::new(),
+            ty: CheckedType::Integer(IntegerType::U8),
+            spelling: Some(spelling.to_owned()),
+        };
+        let alias = named("limits::upper");
+        let absolute = named("pkg::limits::upper");
+        assert_eq!(alias, absolute);
+        assert_eq!(format!("{alias:?}"), format!("{absolute:?}"));
+        assert_eq!(
+            format!("{alias:?}"),
+            format!(
+                "NamedConst {{ declaration: {declaration:?}, projections: [], ty: Integer(U8) }}"
+            )
+        );
     }
 }

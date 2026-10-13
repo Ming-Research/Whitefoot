@@ -5,8 +5,10 @@
 //! pin the shape around them: the summary line, the marked source line,
 //! related positions, escaping, and the complete JSON object.
 
-use super::{DiagnosticFormat, render_driver_failure};
+use super::{DiagnosticFormat, Value, render_driver_failure, write_text};
 use crate::{CompilationFailure, CompilerLimits, SourceInput, check};
+
+mod postconditions;
 
 /// The failure one source-only compilation must stop with.
 fn stop(name: &str, source: &[u8]) -> CompilationFailure {
@@ -19,6 +21,79 @@ fn assert_no_internal_identity(rendered: &str) {
     for identity in ["SourceId", "NodePath", "ByteOffset", "SyntaxCoordinate"] {
         assert!(!rendered.contains(identity), "{identity} in {rendered}");
     }
+}
+
+/// A string-list reader uses quoted items, not comma splitting: the source
+/// text decoder reads each item and leaves its following delimiter intact.
+fn read_string_list(rendered: &str) -> Vec<String> {
+    let mut rest = rendered.strip_prefix('[').expect("a list opens with a bracket");
+    let mut items = Vec::new();
+    while rest != "]" {
+        let quoted = crate::syntax::text::quoted_text(
+            rest.as_bytes(),
+            crate::syntax::text::STRING_QUOTE,
+        )
+        .expect("every string item is quoted and escaped");
+        items.push(
+            quoted
+                .items
+                .iter()
+                .map(|item| item.scalar().expect("a string contains Unicode scalars"))
+                .collect(),
+        );
+        rest = &rest[quoted.suffix_start..];
+        if rest != "]" {
+            rest = rest.strip_prefix(", ").expect("items have a delimiter");
+            assert_ne!(rest, "]", "a list has no trailing delimiter");
+        }
+    }
+    items
+}
+
+#[test]
+fn string_list_items_round_trip_delimiters_and_escapes() {
+    let items = [
+        "writes(stats.count), reads(stats.total)",
+        "quoted \"name\"\\path\n\t\r\u{e9}",
+        "",
+    ];
+    let value = Value::List(
+        items
+            .iter()
+            .map(|item| Value::Text((*item).to_owned()))
+            .collect(),
+    );
+    let mut rendered = String::new();
+    write_text(&mut rendered, &value);
+    assert_eq!(
+        rendered,
+        r#"["writes(stats.count), reads(stats.total)", "quoted \"name\"\\path\n\t\r\u{e9}", ""]"#
+    );
+    assert_eq!(read_string_list(&rendered), items);
+}
+
+#[test]
+fn quoting_string_list_items_preserves_other_value_shapes() {
+    let value = Value::List(vec![
+        Value::Text("IDENT".to_owned()),
+        Value::Exact(b"pkg".to_vec()),
+        Value::Number(3),
+        Value::Fields(vec![("name", Value::Text("bare".to_owned()))]),
+        Value::Variant("Premise", vec![("use_index", Value::Number(0))]),
+        Value::List(vec![Value::Text("nested".to_owned())]),
+    ]);
+    let mut rendered = String::new();
+    write_text(&mut rendered, &value);
+    assert_eq!(
+        rendered,
+        r#"["IDENT", "pkg", 3, {name: bare}, Premise {use_index: 0}, ["nested"]]"#
+    );
+    rendered.clear();
+    write_text(&mut rendered, &Value::List(Vec::new()));
+    assert_eq!(rendered, "[]");
+    rendered.clear();
+    write_text(&mut rendered, &Value::Text("unquoted prose".to_owned()));
+    assert_eq!(rendered, "unquoted prose");
 }
 
 const BOUNDS: &[u8] =
@@ -202,12 +277,13 @@ fn main() -> status: std::process::ExitStatus pure {
   conjunct: 0
   selector: ensures.wf:1:42 "result: i32"
   relation: 0_i32 = value
+  clause: 0_i32 == value
   disposition: Unproved
   mechanical_fix: the postcondition is not proved where this `return` delivers its value: add a `requires` over the parameters the value is computed from, prove the bound before the return with an `invariant` whose `use` steps name the facts it follows from, or state a postcondition the body proves"#
     );
     assert_eq!(
         failure.render(DiagnosticFormat::Json),
-        r#"{"rule":"FN-9","kind":"UndischargedPostcondition","category":"Source","stage":"Semantics","at":{"file":"ensures.wf","line":5,"column":5},"bytes":{"start":118,"end":131},"source":"    return 0_i32;","detail":{"concrete_function":"unproved","postcondition":{"at":{"file":"ensures.wf","line":2,"column":3},"bytes":{"start":71,"end":95},"text":"ensures result == value;"},"conjunct":0,"selector":{"at":{"file":"ensures.wf","line":1,"column":42},"bytes":{"start":41,"end":52},"text":"result: i32"},"relation":"0_i32 = value","disposition":"Unproved","mechanical_fix":"the postcondition is not proved where this `return` delivers its value: add a `requires` over the parameters the value is computed from, prove the bound before the return with an `invariant` whose `use` steps name the facts it follows from, or state a postcondition the body proves"}}"#
+        r#"{"rule":"FN-9","kind":"UndischargedPostcondition","category":"Source","stage":"Semantics","at":{"file":"ensures.wf","line":5,"column":5},"bytes":{"start":118,"end":131},"source":"    return 0_i32;","detail":{"concrete_function":"unproved","postcondition":{"at":{"file":"ensures.wf","line":2,"column":3},"bytes":{"start":71,"end":95},"text":"ensures result == value;"},"conjunct":0,"selector":{"at":{"file":"ensures.wf","line":1,"column":42},"bytes":{"start":41,"end":52},"text":"result: i32"},"relation":"0_i32 = value","clause":"0_i32 == value","disposition":"Unproved","mechanical_fix":"the postcondition is not proved where this `return` delivers its value: add a `requires` over the parameters the value is computed from, prove the bound before the return with an `invariant` whose `use` steps name the facts it follows from, or state a postcondition the body proves"}}"#
     );
 }
 
@@ -292,13 +368,14 @@ fn main() -> status: std::process::ExitStatus pure {
 #[test]
 fn a_grammar_rejection_quotes_the_expected_terminals_and_the_token_it_found() {
     let source = b"fn main() -> status: std::process::ExitStatus pure {\n  let a = 42;\n  return std::process::exit_status(code: 0_u8);\n}\n";
-    // A fixed terminal is quoted as its spelling; a token class is named.
+    // Fixed terminals and token classes are both quoted list items. Exact
+    // terminal spellings already carry their quotes and gain no second pair.
     assert_eq!(
         stop("suffix.wf", source).to_string(),
         r#"suffix.wf:2:11: error[FORM-5]: UnexpectedToken
   source:   let a = 42;
   marker:           ^^
-  expected: [IDENT, TYPEID, "pkg", "std", "&", "entry", "move", "if", "propagate", "match", literal, "musttail", "spawn", OPNAME]
+  expected: ["IDENT", "TYPEID", "pkg", "std", "&", "entry", "move", "if", "propagate", "match", "literal", "musttail", "spawn", "OPNAME"]
   found: "42""#
     );
 }
@@ -549,8 +626,8 @@ fn need(radius: &u64, limit: u64) -> result: unit reads(radius) contract {
 
 fn probe(shapes: &Array<Shape, 1>, limit: u64) -> result: unit reads(shapes) {
   match &shapes^[0_u64] {
-    Circle(radius: radius) => {
-      need(radius: radius, limit: limit);
+    Circle(radius: chosen) => {
+      need(radius: &shapes^[0_u64].Circle.radius, limit: limit);
     }
   }
   return unit;
@@ -571,7 +648,7 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 #[test]
-fn indexed_atomic_goal_names_the_binder_without_its_identity_index() {
+fn call_goals_keep_written_alias_and_indexed_atomic_paths() {
     let source = br#"const key: Array<u8, 2> =[107_u8, 49_u8];
 
 struct Word {
@@ -603,12 +680,21 @@ fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
 "#;
-    let failure = stop("atomic-place-spelling.wf", source);
-    assert_eq!(failure.rule_id(), Some("FN-8"));
-    let rendered = failure.to_string();
-    assert!(
-        rendered.contains("\n  instantiated_goal: slot^.Some.value.value < limit\n"),
-        "{rendered}"
-    );
-    assert!(!rendered.contains("slot^[?]"), "{rendered}");
+    for (argument, goal) in [
+        ("&word^.value", "word^.value < limit"),
+        ("&slot^.Some.value.value", "slot^.Some.value.value < limit"),
+    ] {
+        let source = std::str::from_utf8(source)
+            .expect("the fixture is UTF-8")
+            .replace("&word^.value", argument);
+        let failure = stop("atomic-place-spelling.wf", source.as_bytes());
+        assert_eq!(failure.rule_id(), Some("FN-8"));
+        let rendered = failure.to_string();
+        assert!(
+            rendered.contains(&format!("\n  instantiated_goal: {goal}\n")),
+            "{rendered}"
+        );
+        assert!(rendered.contains("\n  disposition: Unproved\n"), "{rendered}");
+        assert!(!rendered.contains("slot^[?]"), "{rendered}");
+    }
 }

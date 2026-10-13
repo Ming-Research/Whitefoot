@@ -2,6 +2,8 @@ Decision: A compiler stop is one record of labeled fields rendered without `Debu
 
 Decision: Each payload type lists its fields once, and each closed classification it names lists its variants, in the driver's diagnostic module by exhaustive destructuring that takes each label from the field name and each kind from the variant name, and a node a payload names travels with its coordinate from the checker that holds the tree, because a field or variant added to a payload then fails to compile until it is listed, a label cannot drift from its field, and no child-ordinal path, source ordinal or byte offset reaches the default text, instead of rendering from parsed `Debug` text, a serialization dependency, or keeping the resolved tree alive in the driver after a rejection.
 
+Decision: A text-format list writes each string item double-quoted with the text renderer's existing escapes, quotes an exact-source item only once, and retains the typed display of numbers and structured items, because a string can contain the list's comma-and-space separator and expected-terminal lists mix exact tokens with token-class names, instead of ambiguous unquoted string items or converting every item to a string.
+
 Rejected:
 - JSON as the default rendering: rejected because it escapes the source lines and prose the agent compares with its program, drops the marker, and costs more to read per record, while the lean text's labeled lines already parse by label.
 - Repeating the envelope as labeled text lines under the summary line: rejected because the rule, kind and position are already in the summary line, and the category, stage and byte interval of a source rejection give a writer nothing to act on; JSON keeps them for tools.

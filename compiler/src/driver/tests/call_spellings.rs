@@ -115,7 +115,7 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 #[test]
-fn a_function_assignment_target_is_described_in_source_terms() {
+fn a_function_assignment_target_is_rejected_before_writability_checks() {
     let source = br#"fn target() -> result: u64 pure {
   return 0_u64;
 }
@@ -132,6 +132,74 @@ fn main() -> status: std::process::ExitStatus pure {
     .expect_err("a function declaration is no assignable storage");
     assert_eq!(failure.rule_id(), Some("SET-1"));
     let detail = failure.to_string();
-    assert!(detail.contains("\n  root_class: a function\n"), "{detail}");
-    assert!(!detail.contains("\n  root_class: Function\n"), "{detail}");
+    assert!(detail.contains(": UndeclaredSetTarget\n"), "{detail}");
+    assert!(detail.contains("\n  spelling: target\n"), "{detail}");
+    assert!(!detail.contains("\n  root_class:"), "{detail}");
+}
+
+#[test]
+fn a_const_parameter_assignment_target_is_described_in_source_terms() {
+    let source = br#"fn probe<const n: u64>() -> result: unit pure {
+  set n = 1_u64;
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let failure = check(
+        &[SourceInput::new("const-parameter-target.wf", source)],
+        CompilerLimits::default(),
+    )
+    .expect_err("a const parameter resolves as a place base but is not writable");
+    assert_eq!(failure.rule_id(), Some("SET-1"));
+    let detail = failure.to_string();
+    assert!(detail.contains(": InvalidSetTarget\n"), "{detail}");
+    assert!(detail.contains("\n  root_class: a const parameter\n"), "{detail}");
+    assert!(!detail.contains("\n  root_class: ConstGeneric\n"), "{detail}");
+}
+
+#[test]
+fn postcondition_clauses_keep_qualified_constant_spellings() {
+    let graph = crate::form_module_graph(
+        SourceInput::new(
+            "modules.wfg",
+            b"pkg::limits: [];\npkg: [pkg::limits, std::fs, std::io, std::process, std::text];\n\nentry app = pkg::main;\n",
+        ),
+        CompilerLimits::default(),
+    )
+    .expect("the graph forms");
+    let records: [(&str, &[u8]); 3] = [
+        ("limits/module.wfm", b"public const upper: u64 = 10_u64;\n"),
+        ("module.wfm", super::ROOT_INTERFACE),
+        (
+            "main.wf",
+            br#"alias bounds = pkg::limits;
+
+fn small() -> result: u64 pure contract {
+  ensures result < bounds::upper;
+} {
+  return 20_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        ),
+    ];
+    let inputs = module_inputs(&graph, &records);
+    let failure = crate::check_module_program(&graph, &inputs, CompilerLimits::default())
+        .expect_err("the returned value exceeds the constant bound");
+    assert_eq!(failure.rule_id(), Some("FN-9"));
+    assert!(
+        failure.to_string().contains("\n  clause: 20_u64 < bounds::upper\n"),
+        "{failure}"
+    );
+    let json = failure.render(crate::DiagnosticFormat::Json);
+    assert!(
+        json.contains(r#""clause":"20_u64 < bounds::upper""#),
+        "{json}"
+    );
 }

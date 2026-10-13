@@ -542,6 +542,7 @@ fn expanded_contract_goal(
             declaration,
             projections,
             ty,
+            ..
         }) => GoalExpression::Datum(GoalDatum::NamedConst {
             declaration: *declaration,
             projections: projections.clone(),
@@ -575,7 +576,7 @@ fn expanded_contract_goal(
 
 fn normalize_substituted_constants(expression: &mut ExpandedClauseExpression) {
     match expression {
-        ExpandedClauseExpression::Datum(ExpandedClauseDatum::Literal { value, origin }) => {
+        ExpandedClauseExpression::Datum(ExpandedClauseDatum::Literal { value, origin, .. }) => {
             if matches!(value.ty(), CheckedType::Integer(_))
                 && matches!(
                     origin,
@@ -775,6 +776,8 @@ impl<'unit> TypeContext<'unit> {
         let type_spellings = self.diagnostic_constant_type_spellings();
         let context = EntailmentContext {
             source_spellings: &self.source_spellings,
+            postcondition_clauses: &self.postcondition_clauses,
+            postcondition_sources: &self.postcondition_sources,
             type_spellings: &type_spellings,
             declarations: self.declarations.resolved.declarations(),
             callees: &[],

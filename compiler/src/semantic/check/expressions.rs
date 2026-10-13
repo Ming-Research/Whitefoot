@@ -67,6 +67,19 @@ fn declaration_class_phrase(class: DeclarationClass) -> &'static str {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_function_class_has_a_source_phrase() {
+        // A function is outside `pbase`'s lookup domain, so SET-1 refuses
+        // this bare set target first; pin its class rendering directly.
+        assert_eq!(
+            super::declaration_class_phrase(crate::DeclarationClass::Function),
+            "a function"
+        );
+    }
+}
+
 /// One exact-target identity and every storage path a place may name.
 ///
 /// A reference with one resolved member uses that member as `identity`, so

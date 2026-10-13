@@ -567,6 +567,9 @@ struct TypeContext<'unit> {
     declarations: &'unit DeclarationInventory<'unit>,
     /// Exact source text for diagnostic-only captured-value occurrences.
     source_spellings: HashMap<NodeId, String>,
+    postcondition_clauses:
+        HashMap<(FunctionId, crate::NodePath), super::postcondition::PostconditionClause>,
+    postcondition_sources: HashMap<crate::NodePath, super::postcondition::PostconditionSource>,
     view: InventoryView,
     nominals: Vec<CheckedNominal>,
     /// Counts the changes to `nominals`: an instance appended or completed.
@@ -3900,6 +3903,8 @@ impl<'unit> TypeContext<'unit> {
         Self {
             declarations,
             source_spellings: HashMap::new(),
+            postcondition_clauses: HashMap::new(),
+            postcondition_sources: HashMap::new(),
             view: InventoryView::default(),
             nominal_templates: Default::default(),
             prelude_nominals: Default::default(),

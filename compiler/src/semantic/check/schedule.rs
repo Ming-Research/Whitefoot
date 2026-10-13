@@ -102,6 +102,8 @@ impl Checker<'_, '_> {
                     let checked = &functions[*index];
                     let context = EntailmentContext {
                         source_spellings: &types.source_spellings,
+                        postcondition_clauses: &types.postcondition_clauses,
+                        postcondition_sources: &types.postcondition_sources,
                         type_spellings: &type_spellings,
                         declarations: types.declarations.resolved.declarations(),
                         callees,
@@ -335,6 +337,8 @@ impl Checker<'_, '_> {
                         let checked = &functions[*index];
                         let context = EntailmentContext {
                             source_spellings: &types.source_spellings,
+                            postcondition_clauses: &types.postcondition_clauses,
+                            postcondition_sources: &types.postcondition_sources,
                             type_spellings: &type_spellings,
                             declarations: types.declarations.resolved.declarations(),
                             callees,
