@@ -44,6 +44,11 @@ use super::super::model::{
 use super::super::permission::visit_read_bindings;
 use crate::NodePath;
 
+/// [MSR-3] an entry former outside a postcondition cannot select entry state.
+pub(super) const fn entry_outside_postcondition_repair() -> &'static str {
+    "if this expression should read the current value, replace this `entry(...)` former with the place inside its parentheses; entry-state reads belong only in an ensures clause on a reference parameter whose declared row writes it"
+}
+
 pub(super) mod writer_operations;
 pub(super) mod writer_ownership;
 pub(super) mod writer_references;
@@ -1169,17 +1174,27 @@ pub(super) fn bounds_after_kill(
 /// place is formed at body entry in the state the requirements written before
 /// it build, so an earlier requirement establishes the bound; a clause
 /// evaluates nothing, so no guard can skip it.
-pub(super) fn clause_bounds(case: &GoalCase<'_>, constant_offset: bool) -> String {
+pub(super) fn clause_bounds(
+    case: &GoalCase<'_>,
+    constant_offset: bool,
+    existing: Option<&str>,
+) -> String {
     match case.disposition {
         Disposition::Refuted => format!(
             "`{}` is false where this place is formed: {}",
             case.text,
             refuted_index(constant_offset, true)
         ),
-        Disposition::Unproved => format!(
-            "add `requires {};` to the `contract` of `{}` ahead of the requirement that forms this place, which each caller then establishes",
-            case.text, case.function
-        ),
+        Disposition::Unproved => match existing {
+            Some(clause) => format!(
+                "move the existing `{}` and any `define` declarations it needs ahead of the requirement that forms this place, keeping those definitions before their uses; it already states `{}`",
+                clause.trim(), case.text
+            ),
+            None => format!(
+                "add `requires {};` to the `contract` of `{}` ahead of the requirement that forms this place, which each caller then establishes",
+                case.text, case.function
+            ),
+        },
     }
 }
 
