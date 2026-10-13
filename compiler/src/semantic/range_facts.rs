@@ -8,7 +8,7 @@
 //! resulting facts and judges every obligation they create, after the
 //! entailment flow.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use crate::{DeclarationId, NodePath};
 
@@ -266,8 +266,6 @@ pub(crate) struct CheckedRangeFacts {
     pub(crate) constructions: BTreeMap<NodePath, Vec<CheckedRangeClause>>,
     /// TYPE-11 clauses over each atomic target binding.
     pub(crate) atomics: BTreeMap<NodePath, Vec<CheckedRangeClause>>,
-    /// Atomic targets whose possibly shared storage the range walk cannot model yet.
-    pub(crate) atomic_aliases: BTreeSet<NodePath>,
 }
 
 impl CheckedRangeFacts {
