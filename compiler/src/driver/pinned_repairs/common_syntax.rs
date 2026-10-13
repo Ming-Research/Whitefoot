@@ -4,6 +4,65 @@ use super::RepairPair;
 
 pub(super) const COMMON_SYNTAX: &[RepairPair] = &[
     RepairPair {
+        name: "syntax-nested-call-contract-define.wf",
+        rejected: br#"fn widen(value: u8) -> result: u64 pure contract {
+  define wide = cvt::<u32, u64>(cvt::<u8, u32>(value));
+  ensures result == wide;
+} {
+  return cvt::<u8, u64>(value);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "GRAM-9",
+        sentences: &[
+            "\n  mechanical_fix: if the inner operation is a non-consuming, pure, total form admitted by [FN-8], bind it with a fresh preceding `define` in this contract block and use that binder in the atom position; for example, split `define wide = cvt::<u32, u64>(cvt::<u8, u32>(value));` into `define inner = cvt::<u8, u32>(value); define wide = cvt::<u32, u64>(inner);` [GRAM-2, GRAM-9]\n",
+        ],
+        repaired: &[br#"fn widen(value: u8) -> result: u64 pure contract {
+  define inner = cvt::<u8, u32>(value);
+  define wide = cvt::<u32, u64>(inner);
+  ensures result == wide;
+} {
+  return cvt::<u8, u64>(value);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        // The outer call is an affine factor; its argument is atom-only, so
+        // the inner `cvt ::` start reaches DIAG-1 row 2, not an earlier error.
+        // Hoisting it would lose the clause-local payload [TYPE-6, FN-9].
+        // Direct widening is an accepted control, not an emitted repair.
+        name: "syntax-nested-call-routed-payload-no-hoist.wf",
+        rejected: br#"fn wrapped(value: u8) -> result: Option<u8> pure contract {
+  ensures when Some(value: payload): cvt::<u32, u64>(cvt::<u8, u32>(payload)) == cvt::<u8, u64>(value);
+} {
+  return Some<u8>(value: value);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "GRAM-9",
+        sentences: &[],
+        repaired: &[br#"fn wrapped(value: u8) -> result: Option<u8> pure contract {
+  ensures when Some(value: payload): cvt::<u8, u64>(payload) == cvt::<u8, u64>(value);
+} {
+  return Some<u8>(value: value);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
         name: "syntax-effect-row.wf",
         rejected: br#"fn value() -> result: u32 {
   return 0_u32;
@@ -603,7 +662,7 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         rule: "GRAM-5",
         sentences: &[
-            "\n  mechanical_fix: write `band(a, b)` for boolean conjunction and `bor(a, b)` for boolean disjunction; both operations are eager, so bind computed operands first with `let` in a body or `define` in a contract block [OP-1, GRAM-5, GRAM-9]\n",
+            "\n  mechanical_fix: write `band(a, b)` for boolean conjunction and `bor(a, b)` for boolean disjunction; both operations are eager, so bind computed operands first with `let` in a body, or with preceding `define` bindings in a contract definition initializer when [FN-8] admits those operations [OP-1, GRAM-5, GRAM-9]\n",
         ],
         repaired: &[br#"fn value() -> result: Bool pure {
   let a = True();
@@ -631,7 +690,7 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         rule: "GRAM-9",
         sentences: &[
-            "\n  mechanical_fix: bind each operation with its own preceding `define` in this contract block and pass the binding as the operand; a `contract_block` has no `let`, and each expression has one operation over two atoms [GRAM-2, GRAM-6, GRAM-9]\n",
+            "\n  mechanical_fix: if the operations are admitted by [FN-8], split this definition initializer into preceding definitions with fresh binders and pass each binder as the operand; each initializer has one operation over two atoms [GRAM-2, GRAM-6, GRAM-9]\n",
         ],
         repaired: &[br#"fn bounded(x: u32) -> result: u32 pure contract {
   define subtotal = 0_u32 +wrap 1_u32;

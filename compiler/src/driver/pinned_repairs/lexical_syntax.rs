@@ -184,7 +184,7 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         rule: "FORM-1",
         sentences: &[
-            "\n  mechanical_fix: there is no `||`; in a body write eager `bor(a, b)` with computed operands bound first by `let`; in a contract block bind computed operands and the `bor` result with `define`, then use the result binding in an ordinary clause; a range clause admits no call or disjunction, so express a disjunctive guard as one range clause per disjunct with the same conclusion; a disjunctive conclusion has no direct range spelling [FORM-1, OP-1, GRAM-5, GRAM-9, RANGE-1]\n",
+            "\n  mechanical_fix: there is no `||`; in a body write eager `bor(a, b)` with computed operands bound first by `let`; for a contract definition or requires clause, when [FN-8] admits the operations and every operand name is visible in definitions before all clauses, bind computed operands and the `bor` result with fresh `define` bindings and use the result in the requires clause; an ordinary ensures clause admits no Boolean connective [FN-9]; a range clause admits no call or disjunction, so express a disjunctive guard as one range clause per disjunct with the same conclusion; a disjunctive conclusion has no direct range spelling [FORM-1, OP-1, GRAM-5, GRAM-9, RANGE-1]\n",
         ],
         repaired: &[
             br#"fn value(a: Bool, b: Bool) -> result: unit pure contract {
@@ -215,7 +215,7 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         rule: "FORM-1",
         sentences: &[
-            "\n  mechanical_fix: there is no `||`; in a body write eager `bor(a, b)` with computed operands bound first by `let`; in a contract block bind computed operands and the `bor` result with `define`, then use the result binding in an ordinary clause; a range clause admits no call or disjunction, so express a disjunctive guard as one range clause per disjunct with the same conclusion; a disjunctive conclusion has no direct range spelling [FORM-1, OP-1, GRAM-5, GRAM-9, RANGE-1]\n",
+            "\n  mechanical_fix: there is no `||`; in a body write eager `bor(a, b)` with computed operands bound first by `let`; for a contract definition or requires clause, when [FN-8] admits the operations and every operand name is visible in definitions before all clauses, bind computed operands and the `bor` result with fresh `define` bindings and use the result in the requires clause; an ordinary ensures clause admits no Boolean connective [FN-9]; a range clause admits no call or disjunction, so express a disjunctive guard as one range clause per disjunct with the same conclusion; a disjunctive conclusion has no direct range spelling [FORM-1, OP-1, GRAM-5, GRAM-9, RANGE-1]\n",
         ],
         repaired: &[br#"fn value(a: Bool, b: Bool) -> result: Bool pure {
   let left = bnot(a);
@@ -250,7 +250,7 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         rule: "FORM-1",
         sentences: &[
-            "\n  mechanical_fix: there is no `||`; in a body write eager `bor(a, b)` with computed operands bound first by `let`; in a contract block bind computed operands and the `bor` result with `define`, then use the result binding in an ordinary clause; a range clause admits no call or disjunction, so express a disjunctive guard as one range clause per disjunct with the same conclusion; a disjunctive conclusion has no direct range spelling [FORM-1, OP-1, GRAM-5, GRAM-9, RANGE-1]\n",
+            "\n  mechanical_fix: there is no `||`; in a body write eager `bor(a, b)` with computed operands bound first by `let`; for a contract definition or requires clause, when [FN-8] admits the operations and every operand name is visible in definitions before all clauses, bind computed operands and the `bor` result with fresh `define` bindings and use the result in the requires clause; an ordinary ensures clause admits no Boolean connective [FN-9]; a range clause admits no call or disjunction, so express a disjunctive guard as one range clause per disjunct with the same conclusion; a disjunctive conclusion has no direct range spelling [FORM-1, OP-1, GRAM-5, GRAM-9, RANGE-1]\n",
         ],
         repaired: &[br#"struct Node {
   live: Bool;

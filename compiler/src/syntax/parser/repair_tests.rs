@@ -120,6 +120,67 @@ fn completed_infix_operand_keeps_its_contract_repair() {
 }
 
 #[test]
+fn nested_call_in_a_definition_keeps_the_definition_repair() {
+    let source = b"fn f(value: u8) -> r: u64 pure contract { define wide = cvt::<u32, u64>(cvt::<u8, u32>(value)); ensures r == wide; } { return cvt::<u8, u64>(value); }";
+    let result = outcome(source, false);
+    let ParseOutcome::SourceIssue(issue) = result else {
+        panic!("nested definition call must reject: {result:?}");
+    };
+    assert_eq!(issue.rule(), SyntaxRule::Gram9);
+    assert_eq!(issue_bytes(source, issue), b"cvt::");
+    assert_eq!(
+        issue.mechanical_fix,
+        Some(crate::diagnostic_repairs::GRAM9_CONTRACT_FIX)
+    );
+}
+
+#[test]
+fn contract_definition_does_not_offer_to_hoist_a_constructor() {
+    for constructor in ["Some<u8>(value: value)", "Packet(value: value)"] {
+        let source = format!(
+            "fn f(value: u8) -> r: u8 pure contract {{ define inner = inspect({constructor}); requires value == 0_u8; }} {{ return value; }}"
+        );
+        let result = outcome(source.as_bytes(), false);
+        let ParseOutcome::SourceIssue(issue) = result else {
+            panic!("nested constructor must reject: {result:?}");
+        };
+        assert_eq!(issue.rule(), SyntaxRule::Gram9);
+        assert_eq!(issue.mechanical_fix, None);
+    }
+}
+
+#[test]
+fn contract_clauses_do_not_hoist_values_into_definition_scope() {
+    for clause in [
+        "requires cvt::<u32, u64>(cvt::<u8, u32>(value)) == 0_u64;",
+        "requires cvt::<u32, u64>(value: cvt::<u8, u32>(value)) == 0_u64;",
+        "ensures cvt::<u32, u64>(cvt::<u8, u32>(r)) == 0_u64;",
+        "ensures when Some(value: payload): cvt::<u32, u64>(cvt::<u8, u32>(payload)) == 0_u64;",
+        "ensures when r is Some(value: payload): cvt::<u32, u64>(cvt::<u8, u32>(payload)) == 0_u64;",
+        "requires forall each(i in 0_u64..1_u64): values^[cvt::<u64, u64>(i)] == 0_u64;",
+    ] {
+        // A preceding completed definition must not leak its context flag
+        // into the clause. These are parser controls, not typed programs.
+        let source = format!(
+            "fn f(value: u8) -> r: u8 pure contract {{ define first = 0_u64; {clause} }} {{ return value; }}"
+        );
+        let result = outcome(source.as_bytes(), false);
+        let ParseOutcome::SourceIssue(issue) = result else {
+            panic!("nested clause call must reject: {result:?}");
+        };
+        assert_eq!(issue.rule(), SyntaxRule::Gram9, "{clause}");
+        assert_eq!(issue_bytes(source.as_bytes(), issue), b"cvt::", "{clause}");
+        assert_eq!(issue.mechanical_fix, None, "{clause}");
+    }
+}
+
+#[test]
+fn routed_clause_affine_arithmetic_is_not_a_flat_expression_error() {
+    let source = b"fn f(value: u8) -> r: Option<u8> pure contract { ensures when Some(value: payload): payload + 1_u8 + 2_u8 == value; } { return Some<u8>(value: value); }";
+    assert!(matches!(outcome(source, false), ParseOutcome::Complete(_)));
+}
+
+#[test]
 fn completed_infix_operand_does_not_reach_a_later_statement() {
     let source = b"fn f() -> r: u32 pure { let value = 0_u32 +wrap 1_u32; return +wrap 2_u32; }";
     let result = outcome(source, false);
@@ -247,6 +308,40 @@ fn result_route_does_not_offer_match_arm_omission_syntax() {
         ]));
         assert_eq!(issue.mechanical_fix, None);
     }
+}
+
+#[test]
+fn ordinary_contract_conjunctions_do_not_offer_a_definition_hoist() {
+    for clause in [
+        "requires value == 0_u8 && value == 0_u8;",
+        "ensures r == value && r == value;",
+        "ensures when Some(value: payload): payload == value && payload == value;",
+        "ensures when r is Some(value: payload): payload == value && payload == value;",
+    ] {
+        let source = format!(
+            "fn f(value: u8) -> r: u8 pure contract {{ define first = 0_u64; {clause} }} {{ return value; }}"
+        );
+        let result = outcome(source.as_bytes(), false);
+        let ParseOutcome::SourceIssue(issue) = result else {
+            panic!("clause conjunction must reject: {result:?}");
+        };
+        assert_eq!(issue_bytes(source.as_bytes(), issue), b"&", "{clause}");
+        assert_eq!(issue.mechanical_fix, None, "{clause}");
+    }
+}
+
+#[test]
+fn definition_conjunction_keeps_the_applicable_boolean_repair() {
+    let source = b"fn f(a: Bool, b: Bool) -> r: unit pure contract { define combined = a && b; requires combined; } { return unit; }";
+    let result = outcome(source, false);
+    let ParseOutcome::SourceIssue(issue) = result else {
+        panic!("definition conjunction must reject: {result:?}");
+    };
+    assert_eq!(issue_bytes(source, issue), b"&");
+    assert_eq!(
+        issue.mechanical_fix,
+        Some(crate::diagnostic_repairs::BOOLEAN_OPERATION_FIX)
+    );
 }
 
 #[test]

@@ -182,11 +182,13 @@ pub(super) fn attach(
         } else if at(boundary, F::Ampersand)
             && (at(boundary + 1, F::Ampersand) || previous(1, F::Ampersand))
         {
-            Some(if context.in_range {
-                RANGE1_BOOLEAN_AND_FIX
+            if context.in_range {
+                Some(RANGE1_BOOLEAN_AND_FIX)
+            } else if !context.in_contract || context.in_contract_define {
+                Some(BOOLEAN_OPERATION_FIX)
             } else {
-                BOOLEAN_OPERATION_FIX
-            })
+                None
+            }
         } else if !context.in_contract
             && at(boundary, F::LeftBracket)
             && (in_expression

@@ -10,6 +10,10 @@ Decision: An unproved subscript bound formed by a counted loop's header invarian
 
 Decision: A missing qualified name lists accessible declarations in the named module's grammar-selected role, sorted by spelling and limited to eight distinct names, because the writer can select a real name in one repair round, instead of an edit-distance heuristic with no specification ground or an unbounded list of every accessible name.
 
+Decision: A GRAM-9 or ordinary Boolean-conjunction grammar repair that splits a contract expression into preceding `define` bindings is offered only inside a definition initializer, with the condition that FN-8 admits its operations; a nested constructor receives no hoisting repair because FN-8 always excludes construction; the repair is omitted in requires and ensures clauses, including routed and range clauses, because definitions precede every clause [GRAM-2] and cannot name result data, routed payloads or range binders [TYPE-6, FN-9, RANGE-1], and lifting a place may also lose the facts earlier requirements establish; GRAM-9 does not require a repair and DIAG-1 permits omission where no applicable source change has been established, instead of teaching an unconditional hoist merely because the enclosing grammar frame is a contract block.
+
+Decision: The position-independent lexical disjunction repair conditions its definition route on FN-8 admission and names visible before every clause, and uses its Boolean result only in a requires clause, because an ordinary ensures relation admits no Boolean connective [FN-9].
+
 Rejected:
 - Offering a narrower row for every named call: rejected because a callee whose body writes the window holding the length covers it under every row EFF-2 admits [SET-1], so that alternative fails when carried out [DIAG-1].
 - Naming every earlier call whose row covers the measure, found from the source: rejected because the bound may never have held before the call, as when the index is read from storage, and narrowing that row would then change nothing.

@@ -1,6 +1,6 @@
 //! Wording of diagnostic repairs; owning stages select the repair and its instance.
 
-pub(crate) const BOOLEAN_OPERATION_FIX: &str = "write `band(a, b)` for boolean conjunction and `bor(a, b)` for boolean disjunction; both operations are eager, so bind computed operands first with `let` in a body or `define` in a contract block [OP-1, GRAM-5, GRAM-9]";
+pub(crate) const BOOLEAN_OPERATION_FIX: &str = "write `band(a, b)` for boolean conjunction and `bor(a, b)` for boolean disjunction; both operations are eager, so bind computed operands first with `let` in a body, or with preceding `define` bindings in a contract definition initializer when [FN-8] admits those operations [OP-1, GRAM-5, GRAM-9]";
 
 /// RANGE-1's repair for `&&`, selected by the grammar position of a
 /// `range_clause`, where `band` and `bor` are calls and so are not admitted.
@@ -8,7 +8,7 @@ pub(crate) const RANGE1_BOOLEAN_AND_FIX: &str = "a range clause admits no call, 
 
 /// A raw `||` rejection has no grammar position; its repair states the
 /// separate forms admitted in expressions and range clauses.
-pub(crate) const BOOLEAN_DISJUNCTION_FIX: &str = "there is no `||`; in a body write eager `bor(a, b)` with computed operands bound first by `let`; in a contract block bind computed operands and the `bor` result with `define`, then use the result binding in an ordinary clause; a range clause admits no call or disjunction, so express a disjunctive guard as one range clause per disjunct with the same conclusion; a disjunctive conclusion has no direct range spelling [FORM-1, OP-1, GRAM-5, GRAM-9, RANGE-1]";
+pub(crate) const BOOLEAN_DISJUNCTION_FIX: &str = "there is no `||`; in a body write eager `bor(a, b)` with computed operands bound first by `let`; for a contract definition or requires clause, when [FN-8] admits the operations and every operand name is visible in definitions before all clauses, bind computed operands and the `bor` result with fresh `define` bindings and use the result in the requires clause; an ordinary ensures clause admits no Boolean connective [FN-9]; a range clause admits no call or disjunction, so express a disjunctive guard as one range clause per disjunct with the same conclusion; a disjunctive conclusion has no direct range spelling [FORM-1, OP-1, GRAM-5, GRAM-9, RANGE-1]";
 
 pub(crate) const CHARACTER_SUFFIX_FIX: &str = "write a character literal with its mandatory suffix: `u8` for ASCII or `u32` for any Unicode scalar, such as `'a'_u8` [FORM-5, FORM-7]";
 
@@ -44,9 +44,9 @@ pub(crate) const ENTRY_FIX: &str = "remove `entry` before `fn`; declare the entr
 
 pub(crate) const GRAPH_FIX: &str = "write graph declarations as `package name = \"location\";`, then module rows `module_path: [dependency_path, ...];`, then entries `entry name = module_path;`; examples are `package util = \"../util\";`, `pkg::geometry: [];`, and `entry app = pkg::geometry::main;` [GRAM-2]";
 
-/// GRAM-9's repair in the two grammar positions that admit a binding.
+/// GRAM-9's repairs for body expressions and contract definition initializers.
 pub(crate) const GRAM9_BODY_FIX: &str = "a `call` or `construct` in an atom position does not derive [GRAM-9]: bind the inner call with its own preceding `let` in this body and write that binder in the atom position — `let inner = f(x: 0_u64); let outer = g(y: inner);`";
-pub(crate) const GRAM9_CONTRACT_FIX: &str = "a `call` or `construct` in an atom position does not derive [GRAM-9]: a `contract_block` has no `let`, so bind the inner call with a preceding `define` in this same block and write that binder in the atom position — `define inner = f(x: 0_u64); requires g(y: inner);`";
+pub(crate) const GRAM9_CONTRACT_FIX: &str = "if the inner operation is a non-consuming, pure, total form admitted by [FN-8], bind it with a fresh preceding `define` in this contract block and use that binder in the atom position; for example, split `define wide = cvt::<u32, u64>(cvt::<u8, u32>(value));` into `define inner = cvt::<u8, u32>(value); define wide = cvt::<u32, u64>(inner);` [GRAM-2, GRAM-9]";
 
 /// [FORM-3]'s lexical class for each name slot, with the repair a slot filled
 /// from another class admits.
@@ -91,7 +91,7 @@ pub(crate) fn qualified_name(spelling: &str, module_name: &str, names: &[&str]) 
     )
 }
 
-pub(crate) const FLAT_CONTRACT_OPERATION_FIX: &str = "bind each operation with its own preceding `define` in this contract block and pass the binding as the operand; a `contract_block` has no `let`, and each expression has one operation over two atoms [GRAM-2, GRAM-6, GRAM-9]";
+pub(crate) const FLAT_CONTRACT_OPERATION_FIX: &str = "if the operations are admitted by [FN-8], split this definition initializer into preceding definitions with fresh binders and pass each binder as the operand; each initializer has one operation over two atoms [GRAM-2, GRAM-6, GRAM-9]";
 
 /// A bare Bool is tested by a variant relation in a range guard [RANGE-1].
 pub(crate) const RANGE1_BARE_BOOL_FIX: &str = "a range guard is one comparison or one variant relation, and a range postcondition conclusion may also state `unchanged` [RANGE-1]; a Bool datum written alone does not derive: test it with `is True` or `is False`, as in `when nodes^[k].live is True:`";

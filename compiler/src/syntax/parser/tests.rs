@@ -341,27 +341,38 @@ fn dotted_call_spelling_uses_bounded_form3_override() {
 
 #[test]
 fn nested_call_in_atom_only_argument_uses_gram9_override() {
-    let source = b"fn main() -> result: unit pure { outer(inner()); }";
-    let inputs = [SourceInput::new("nested.wf", source)];
-    let bundle = bundle(&inputs);
-    let LexOutcome::Complete(lexed) = lex(&bundle, LEX_LIMITS) else {
-        panic!("test source must lex");
-    };
-    let TerminalOutcome::Complete(classified) = classify_terminals(
-        &lexed,
-        ACTIVE_KERNEL_SPEC_HASH,
-        TerminalLimits { max_tokens: 32 },
-    ) else {
-        panic!("test source must classify");
-    };
-    let outcome = parse(classified, PARSE_LIMITS);
-    let ParseOutcome::SourceIssue(issue) = outcome else {
-        panic!("nested call must be rejected: {outcome:?}");
-    };
-    assert_eq!(issue.rule(), SyntaxRule::Gram9);
-    let start = usize::try_from(issue.coordinate().start().value()).unwrap_or(usize::MAX);
-    let end = usize::try_from(issue.coordinate().end().value()).unwrap_or(usize::MAX);
-    assert_eq!(&source[start..end], b"inner(");
+    for (source, forbidden_start) in [
+        (
+            b"fn main() -> result: unit pure { outer(inner()); }".as_slice(),
+            b"inner(".as_slice(),
+        ),
+        (
+            b"fn main() -> result: unit pure { outer(std::process::exit_status(code: 0_u8)); }"
+                .as_slice(),
+            b"std::".as_slice(),
+        ),
+    ] {
+        let inputs = [SourceInput::new("nested.wf", source)];
+        let bundle = bundle(&inputs);
+        let LexOutcome::Complete(lexed) = lex(&bundle, LEX_LIMITS) else {
+            panic!("test source must lex");
+        };
+        let TerminalOutcome::Complete(classified) = classify_terminals(
+            &lexed,
+            ACTIVE_KERNEL_SPEC_HASH,
+            TerminalLimits { max_tokens: 64 },
+        ) else {
+            panic!("test source must classify");
+        };
+        let outcome = parse(classified, PARSE_LIMITS);
+        let ParseOutcome::SourceIssue(issue) = outcome else {
+            panic!("nested call must be rejected: {outcome:?}");
+        };
+        assert_eq!(issue.rule(), SyntaxRule::Gram9);
+        let start = usize::try_from(issue.coordinate().start().value()).unwrap_or(usize::MAX);
+        let end = usize::try_from(issue.coordinate().end().value()).unwrap_or(usize::MAX);
+        assert_eq!(&source[start..end], forbidden_start);
+    }
 }
 
 #[test]

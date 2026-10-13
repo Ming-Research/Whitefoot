@@ -50,9 +50,11 @@ struct RepairPair {
     /// The numbered rule [DIAG-1] must select.
     rule: &'static str,
     /// Exact substrings of the rendered rejection: the disposition where the
-    /// rule carries one, and the repair.
+    /// rule carries one, and the repair. An empty list pins the absence of a
+    /// repair; its accepted sources are controls, not advertised alternatives.
     sentences: &'static [&'static str],
-    /// One program for each alternative the pair carries out.
+    /// One program for each alternative the pair carries out, or accepted
+    /// controls when `sentences` pins the absence of a repair.
     repaired: &'static [&'static [u8]],
 }
 
@@ -3897,6 +3899,13 @@ fn each_pinned_repair_is_carried_out_by_its_programs() {
             assert_eq!((location.line(), location.column()), (line, column));
         }
         let rendered = format!("{failure}\n");
+        if pair.sentences.is_empty() {
+            assert!(
+                !rendered.contains("\n  mechanical_fix:"),
+                "{}: this position must not offer an unverified repair: {rendered}",
+                pair.name,
+            );
+        }
         for sentence in pair.sentences {
             assert!(
                 rendered.contains(sentence),

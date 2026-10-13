@@ -48,13 +48,11 @@ pub(crate) struct ProbeContext {
     pub(crate) production: Production,
     pub(crate) atom_only: bool,
     /// Whether an open production frame is the `contract_block` of GRAM-2.
-    ///
-    /// The repair GRAM-9 admits is the same restructuring in both positions —
-    /// bind the inner call first and write the binder here — but the binding
-    /// statement is not: a body has `let_stmt` and a `contract_block` has only
-    /// `contract_define`. The grammar position decides which, so it is read
-    /// from the open frames and never from the text of the offending line.
     pub(crate) in_contract: bool,
+    /// Only a definition initializer can be split into preceding definitions
+    /// without moving its operands out of their grammar scope. Result data,
+    /// routed payloads and range binders are unavailable there [TYPE-6, FN-9].
+    pub(crate) in_contract_define: bool,
     /// An open production frame is a `range_clause`, whose relations admit no call.
     pub(crate) in_range: bool,
     /// The nearest atom-bearing grammar role is an `infix_tail` operand.
@@ -357,6 +355,27 @@ fn dotted_override(
     Ok(None)
 }
 
+/// GRAM-9 does not require a repair [DIAG-1]. A clause cannot introduce a
+/// local definition, and lifting its expressions can lose result/payload/range
+/// scope or facts from earlier requirements. Offer no unverified hoist there.
+fn atom_repair(context: ProbeContext, nested_infix: bool) -> Option<&'static str> {
+    if context.in_contract_define {
+        Some(if nested_infix {
+            FLAT_CONTRACT_OPERATION_FIX
+        } else {
+            GRAM9_CONTRACT_FIX
+        })
+    } else if context.in_contract {
+        None
+    } else {
+        Some(if nested_infix {
+            FLAT_OPERATION_FIX
+        } else {
+            GRAM9_BODY_FIX
+        })
+    }
+}
+
 fn forbidden_atom_override(
     source: SourceId,
     tokens: &[ClassifiedToken],
@@ -380,11 +399,7 @@ fn forbidden_atom_override(
                 second.token().id().end(),
             ),
             expected,
-            mechanical_fix: Some(if context.in_contract {
-                FLAT_CONTRACT_OPERATION_FIX
-            } else {
-                FLAT_OPERATION_FIX
-            }),
+            mechanical_fix: atom_repair(context, true),
         });
     }
     if !context.atom_only {
@@ -393,7 +408,7 @@ fn forbidden_atom_override(
     let first = tokens.get(cursor)?;
     let second = tokens.get(cursor.checked_add(1)?)?;
     // [DIAG-1] row 2: a `call` start is a name followed by `(` or by the
-    // `::` type-application or qualified-path delimiter, or `pkg ::`; a
+    // `::` type-application or qualified-path delimiter, or `pkg ::` / `std ::`; a
     // `construct` start is a TYPEID followed by `(`, `<` or the `::` of a
     // type-owned variant [TYPE-6]. `IDENT <` is a comparison, never a call.
     let named_head =
@@ -418,15 +433,13 @@ fn forbidden_atom_override(
                 second.token().id().end(),
             ),
             expected,
-            mechanical_fix: Some(if nested_infix && context.in_contract {
-                FLAT_CONTRACT_OPERATION_FIX
-            } else if nested_infix {
-                FLAT_OPERATION_FIX
-            } else if context.in_contract {
-                GRAM9_CONTRACT_FIX
+            // Construction is always inadmissible in definitions [FN-8],
+            // so even the conditional definition route is known to fail.
+            mechanical_fix: if construct_start && context.in_contract {
+                None
             } else {
-                GRAM9_BODY_FIX
-            }),
+                atom_repair(context, nested_infix)
+            },
         });
     }
     None
@@ -1004,6 +1017,8 @@ fn probe(
                             atom_only: node.is_atom_only_reference(),
                             in_contract: task_context.in_contract
                                 || production == Production::ContractBlock,
+                            in_contract_define: task_context.in_contract_define
+                                || production == Production::ContractDefine,
                             in_range: task_context.in_range
                                 || production == Production::RangeClause,
                             infix_operand: match production {
