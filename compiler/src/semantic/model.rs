@@ -2818,11 +2818,24 @@ pub(crate) struct CheckedMatchBinder {
     pub(crate) ty: CheckedType,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CheckedMatchType {
+    Enum(CheckedEnumType),
+    Integer(CheckedType),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CheckedMatchSelection {
+    Variant(u32),
+    Integer(i128),
+    Else,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CheckedMatchArm {
     pub(crate) node_path: NodePath,
     pub(crate) label: String,
-    pub(crate) tag: u32,
+    pub(crate) selection: CheckedMatchSelection,
     pub(crate) binders: Vec<CheckedMatchBinder>,
     /// [GRAM-10, WIN-3, STOR-3] in an own-place match, the release of each
     /// payload field a final `..` covers, taken on entry to the arm: one
@@ -2999,7 +3012,7 @@ pub(crate) enum CheckedStatement {
         /// The complete written `match` or `if`, including a chained `else if`.
         node_path: NodePath,
         scrutinee: CheckedExpression,
-        enum_type: CheckedEnumType,
+        match_type: CheckedMatchType,
         arms: Vec<CheckedMatchArm>,
         continues: bool,
     },
@@ -3020,7 +3033,7 @@ pub(crate) enum CheckedStatement {
         /// parameter does; no other result mode carries one.
         result_range_element: Option<CheckedElement>,
         scrutinee: CheckedExpression,
-        enum_type: CheckedEnumType,
+        match_type: CheckedMatchType,
         arms: Vec<CheckedMatchArm>,
         continues: bool,
     },
@@ -3410,9 +3423,8 @@ impl CheckedCallSeparationPositions {
     /// is never proved, and a pair with no other candidate is one no named
     /// position separates [EFF-5, OWN-7].
     pub(crate) fn names_its_values(self) -> bool {
-        let named = |value: super::places::CapturedValue| {
-            value != super::places::CapturedValue::unknown()
-        };
+        let named =
+            |value: super::places::CapturedValue| value != super::places::CapturedValue::unknown();
         let named_range =
             |range: super::places::CapturedRange| named(range.start) && named(range.end);
         match self {
@@ -3724,13 +3736,13 @@ impl FunctionMentions {
                 }
                 CheckedStatement::Match {
                     scrutinee,
-                    enum_type,
+                    match_type,
                     arms,
                     ..
                 }
                 | CheckedStatement::ValueMatchLet {
                     scrutinee,
-                    enum_type,
+                    match_type,
                     arms,
                     ..
                 } => {
@@ -3743,8 +3755,12 @@ impl FunctionMentions {
                         self.types.push(*result_type);
                         self.elements.extend(result_range_element.iter().copied());
                     }
-                    if let CheckedEnumType::Nominal(nominal) = enum_type {
-                        self.types.push(CheckedType::Nominal(*nominal));
+                    match match_type {
+                        CheckedMatchType::Enum(CheckedEnumType::Nominal(nominal)) => {
+                            self.types.push(CheckedType::Nominal(*nominal));
+                        }
+                        CheckedMatchType::Integer(ty) => self.types.push(*ty),
+                        CheckedMatchType::Enum(CheckedEnumType::Bool) => {}
                     }
                     self.expression(scrutinee);
                     for arm in arms {

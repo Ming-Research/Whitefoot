@@ -11,6 +11,22 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-13 v0.151: a call forgets only the paths its effect row writes
+
+Rules: changed RANGE-2
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the one-sentence specification change and the two range-judgment design decisions in #466 (head 2f5f1d0)?" (translated), after choosing option A the same day on the direction card "when a callee's effect row writes only one field of an argument (such as `writes(row.g)`), does the call forget the per-element facts on that field, or on the whole argument element?" (translated): forget only the written path. The amendment was written as v0.150 and renumbered to v0.151 because main reached v0.150 first.
+
+Summary: RANGE-2's call sentence said a call forgets every location the callee's row writes through a reference argument, one element where the argument names one element; "location" was read as a whole versioned storage, so a call writing `row.g` forgot the range facts on `row.f` of the same element. It now forgets each path the callee's row writes after substituting the reference argument's path [EFF-5], and every path below it, within that element where the argument names one element. Selection ground: effect rows, ordinary facts killed by calls and the range judgment's direct assignments already distinguish paths, so the call was the one coarser place; the written path is still forgotten, so no fact survives a write that could change it.
+
+## 2026-10-13 v0.150: `match` branches on integer constant values
+
+Rules: added GRAM-12, ENT-3.S17; changed GRAM-4, GRAM-6, TYPE-6, DIAG-1, OWN-13, ERR-2, ENT-1, ENT-2, ENT-3, ENT-4, ENT-5, RANGE-2, RANGE-3
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve Whitefoot#424's specification and design-tree change: match can branch on integer constant values, a value arm gives 'equals that value', `else` gives one 'not among these values' fact? (head commit e8393a057)" (translated); the direction was the owner's earlier choice to add integer-value match for the first release. The branch later merged main, which renumbered the amendment from v0.141 to v0.144 and joined two sentences of TYPE-6 and DIAG-1 with the range variant amendment's wording, keeping both. This amendment was renumbered from v0.144 to v0.150 because main reached v0.149 first.
+
+Summary: GRAM-4 lets an `arm` be an integer literal, a const IDENT or `else`, and GRAM-6 lets `match` take an integer scrutinee (Bool still takes `if`). The new GRAM-12 fixes the arm-value classes: each value has the scrutinee's type, values are pairwise distinct by mathematical value, `else` comes last, at least one value arm is present, the scrutinee is evaluated once, and the first equal arm or `else` is selected. TYPE-6 and DIAG-1 resolve value labels as consts and variant labels only after the scrutinee's class is known; OWN-13 copies an integer scrutinee and binds no payload; ERR-2 requires `else` for a partial integer match and refuses it when the values cover the type. ENT-1 through ENT-5 and the new ENT-3.S17 give a value arm `scrutinee == value` and `else` one exclusion-set fact with ordinary support, kills and joins, and RANGE-2 and RANGE-3 carry integer selections and exclusion sets into range path conditions, splitting an active exclusion into its complement intervals. Selection ground: Firn's command dispatch and interpreter decoders branch on integer codes, and the `if` chain they must write today grows the checker's work quadratically with the number of arms.
+
 ## 2026-10-13 v0.149: a postcondition's subscripts are judged at each selected return, and a formal offset is substituted on both sides of a call
 
 Rules: changed FN-9, ENT-2

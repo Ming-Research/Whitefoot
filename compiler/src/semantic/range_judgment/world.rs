@@ -599,8 +599,12 @@ pub(super) fn negated(literal: &Literal) -> Literal {
         Relation::LessEqual => Relation::Greater,
         Relation::Greater => Relation::LessEqual,
         Relation::GreaterEqual => Relation::Less,
+        Relation::Excluded => Relation::Included,
+        Relation::Included => Relation::Excluded,
     };
-    Literal::new(literal.left.clone(), relation, literal.right.clone())
+    let mut result = literal.clone();
+    result.relation = relation;
+    result
 }
 
 /// One captured range in a reference's ordered source path.

@@ -54,6 +54,7 @@ mod infix;
 mod integer_absolute;
 mod integer_conversion;
 mod integer_extended;
+mod integer_matches;
 mod integer_negation;
 mod loop_invariants;
 mod loop_permission;
@@ -961,9 +962,10 @@ fn nominal_adjacent_unimplemented_behavior_stays_non_language_failure() {
         b"struct Node {\n  next: Node;\n}\n\nfn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 0_u8);\n}\n",
         UnsupportedSemanticFeature::RecursiveNominalLayout,
     );
-    assert_unsupported(
+    assert_rule(
         b"enum Flag {\n  A();\n  B();\n}\n\nfn main() -> status: std::process::ExitStatus pure {\n  let flag = Flag::A();\n  match flag {\n    A() => {\n    }\n    A() => {\n    }\n    B() => {\n    }\n  }\n  return std::process::exit_status(code: 0_u8);\n}\n",
-        UnsupportedSemanticFeature::DuplicateMatchArm,
+        SemanticRule::Err2,
+        SemanticIssueKind::DuplicateMatchVariant { variant: "A".to_owned(), mechanical_fix: "remove the repeated variant arm".to_owned() },
     );
     // Each iteration consumes the local run and installs the returned run in
     // that binding. Ordinary ownership checks the complete replacement without

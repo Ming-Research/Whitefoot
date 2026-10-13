@@ -1611,7 +1611,7 @@ impl<'unit> TypeContext<'unit> {
                 return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
             };
             let bytes = self.declarations.tree.token_bytes(literal)?;
-            let origin = if matches!(bytes, b"0_T" | b"1_T") {
+            let origin = if crate::syntax::terminal::is_generic_numeric_literal(bytes) {
                 let usage = self.declarations.use_at(
                     check_context,
                     atom,
@@ -1626,7 +1626,7 @@ impl<'unit> TypeContext<'unit> {
                 };
                 PostconditionConstantOrigin::GenericNumericIdentity {
                     type_parameter: declaration,
-                    one: bytes == b"1_T",
+                    one: bytes.first() == Some(&b'1'),
                 }
             } else {
                 PostconditionConstantOrigin::Literal
