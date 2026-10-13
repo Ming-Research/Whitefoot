@@ -1,0 +1,163 @@
+alias ExitStatus = std::process::ExitStatus;
+
+nocopy struct Entry {
+  count: u64;
+}
+
+nocopy struct WriteSequence {
+  database: u64;
+  count: u64;
+  invariant selected(sequence): sequence.database < 16_u64;
+}
+
+nocopy struct ExpiryQueue {
+  database: u64;
+  count: u64;
+  invariant selected(due): due.database < 16_u64;
+}
+
+nocopy struct Meta {
+  due: ExpiryQueue;
+  database: u64;
+  invariant selected(meta): meta.database < 16_u64;
+  invariant due_selected(meta): meta.due.database < 16_u64;
+}
+
+struct LogBudget {
+  count: u64;
+}
+
+nocopy struct AccessJournal {
+  count: u64;
+}
+
+nocopy struct AttemptUndo {
+  count: u64;
+}
+
+struct KeyEnv {
+  salt: u64;
+}
+
+struct Time {
+  check: u64;
+}
+
+struct Span {
+  start: u64;
+  length: u64;
+}
+
+nocopy struct Client {
+  count: u64;
+}
+
+fn sequence_new() -> made: WriteSequence pure {
+  return WriteSequence(database: 0_u64, count: 0_u64);
+}
+
+fn due_new() -> made: ExpiryQueue pure {
+  return ExpiryQueue(database: 0_u64, count: 0_u64);
+}
+
+fn meta_new() -> made: Meta pure {
+  let pending = due_new();
+  return Meta(due: move pending, database: 0_u64);
+}
+
+fn sequence_touch(sequence: &WriteSequence) -> result: unit writes(sequence.count) {
+  set sequence^.count = 0_u64;
+  return unit;
+}
+
+fn due_touch(due: &ExpiryQueue) -> result: unit writes(due.count) {
+  set due^.count = 0_u64;
+  return unit;
+}
+
+fn command_held_entries_run_due<A, C, fn apply(sequence: &WriteSequence, effect_budget: &LogBudget, journal: &Option<AccessJournal>, kind: u64, keys: &Entries<Entry>, declared: &KeySet, undo: &Option<AttemptUndo>, fallback: &Bool, due: &ExpiryQueue, effects: &Box<Slots<u8>>, logged: Bool, input: &[u8], args: &A, client: &C, env: &KeyEnv, time: &Time) -> appended: u64 reads(declared), reads(input), reads(args), reads(env), reads(time), writes(sequence), writes(effect_budget), writes(journal), writes(keys), writes(undo), writes(fallback), writes(due), writes(effects), writes(client) contract {
+  requires keys^.len == declared^.len;
+  ensures keys^.len == entry(keys)^.len;
+}>(sequence: &WriteSequence, effect_budget: &LogBudget, journal: &Option<AccessJournal>, kind: u64, keys: &Entries<Entry>, declared: &KeySet, undo: &Option<AttemptUndo>, fallback: &Bool, due: &ExpiryQueue, effects: &Box<Slots<u8>>, logged: Bool, input: &[u8], args: &A, client: &C, env: &KeyEnv, time: &Time) -> appended: u64 reads(declared), reads(input), reads(args), reads(env), reads(time), writes(sequence), writes(effect_budget), writes(journal), writes(keys), writes(undo), writes(fallback), writes(due), writes(effects), writes(client) contract {
+  requires keys^.len == declared^.len;
+  ensures keys^.len == entry(keys)^.len;
+} {
+  return apply(sequence: sequence, effect_budget: effect_budget, journal: journal, kind: kind, keys: keys, declared: declared, undo: undo, fallback: fallback, due: due, effects: effects, logged: logged, input: input, args: args, client: client, env: env, time: time);
+}
+
+fn held_entries_run(sequence: &WriteSequence, effect_budget: &LogBudget, journal: &Option<AccessJournal>, kind: u64, keys: &Entries<Entry>, declared: &KeySet, undo: &Option<AttemptUndo>, fallback: &Bool, due: &ExpiryQueue, effects: &Box<Slots<u8>>, logged: Bool, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> appended: u64 reads(declared), reads(input), reads(args), reads(env), reads(time), writes(sequence), writes(effect_budget), writes(journal), writes(keys), writes(undo), writes(fallback), writes(due), writes(effects), writes(client) contract {
+  requires keys^.len == declared^.len;
+  ensures keys^.len == entry(keys)^.len;
+} {
+  let declared_count = declared^.len;
+  let input_count = input^.len;
+  let argument_count = args^.inner.len;
+  let salt = env^.salt;
+  let tick = time^.check;
+  sequence_touch(sequence: sequence);
+  set effect_budget^.count = 0_u64;
+  match journal^ {
+    Some(value: recording) => {
+      set recording^.count = 0_u64;
+    }
+    None() => {
+    }
+  }
+  for @entries (index in 0_u64..keys^.len) {
+    if index < keys^.len {
+      let slot = &keys^[index];
+      match slot^ {
+        Some(value: stored) => {
+          set stored^.count = 0_u64;
+        }
+        None() => {
+          let record = Entry(count: 0_u64);
+          set slot^ = Some<Entry>(value: move record);
+        }
+      }
+    }
+  }
+  match undo^ {
+    Some(value: saved) => {
+      set saved^.count = 0_u64;
+    }
+    None() => {
+    }
+  }
+  set fallback^ = logged;
+  due_touch(due: due);
+  if effects^.inner.len > 0_u64 {
+    set effects^.inner[0_u64] = 0_u8;
+  }
+  set client^.count = 0_u64;
+  return 0_u64;
+}
+
+fn main() -> status: ExitStatus pure waits {
+  let sequence = sequence_new();
+  let effect_budget = LogBudget(count: 0_u64);
+  let journal = None<AccessJournal>();
+  let undo = None<AttemptUndo>();
+  let fallback = False();
+  let meta = meta_new();
+  let due = due_new();
+  let effects = box_slots_new::<u8>(capacity: 1_u64);
+  place_back(window: &effects.inner, value: 7_u8);
+  let args = box_slots_new::<Span>(capacity: 1_u64);
+  let span = Span(start: 0_u64, length: 1_u64);
+  place_back(window: &args.inner, value: span);
+  let client = Client(count: 0_u64);
+  let env = KeyEnv(salt: 0_u64);
+  let time = Time(check: 0_u64);
+  let logged = False();
+  let kind = 1_u64;
+  let bytes = array_filled::<u8, 1>(value: 107_u8);
+  let input = &bytes[0_u64..1_u64];
+  let declared = key_set_new(capacity: 1_u64);
+  key_set_insert(keys: &declared, key: input);
+  let map = shared_map_new::<Entry>(capacity: 1_u64);
+  atomic keys = &map[declared] {
+    command_held_entries_run_due::<Box<Slots<Span>>, Client, fn held_entries_run>(sequence: &sequence, effect_budget: &effect_budget, journal: &journal, kind: kind, keys: keys, declared: &declared, undo: &undo, fallback: &fallback, due: &due, effects: &effects, logged: logged, input: input, args: &args, client: &client, env: &env, time: &time);
+  }
+  return std::process::exit_status(code: 0_u8);
+}
