@@ -3,8 +3,8 @@
 Whitefoot programs are often written in a loop: write, compile, read the
 rejection, change the source, compile again. Much of that writing is done by
 AI agents, and the rejections are written for whoever is in the loop. Each
-rejection names one rule and one location, states what is still unproved,
-and, where the rule provides for it, lists changes
+compile reports one rejection, which names one rule and one location, states
+what is still unproved, and, where the rule provides for it, lists changes
 that compile when they are applied as written.
 
 This article follows one small function through three compiles, then looks
@@ -39,10 +39,10 @@ the [specification](../../spec/kernel-spec.md), and its text is the complete
 statement of what went wrong. Then comes the source line with the offending
 part marked, and then one `label: value` line per field of the rejection.
 
-The compiler reports syntax defects independently by declaration segment
-[DIAG-1]. Once syntax and canonical formatting pass, semantic checking
-stops at its first rejection. The same compiler, given the same program
-and options, always reports the same ordered diagnostics.
+The compiler reports one rejection per run. It walks the program in a fixed
+order and stops at the first one, so the same compiler, given the same
+program and options, always reports the same rejection. A program with three
+mistakes takes three compiles.
 
 ## 2. Fields say what was found and what was needed
 
@@ -200,10 +200,8 @@ drop the marker.
 - **Not a guess.** A repair is offered only where the rule provides one, and
   it names changes at the rejected construct. When the values are wrong, it
   says so instead of suggesting a guard.
-- **Independent syntax defects.** Syntax diagnostics report the first defect
-  in each declaration segment in source order [DIAG-1]. Canonical formatting
-  and semantic checking begin only after every segment derives; each later
-  stage still reports its first rejection.
+- **Not a batch.** One rejection per compile keeps each one exact, at the
+  cost of a round per mistake.
 - **Not a compiler failure.** A missing compiler capability, an internal
   error or running out of resources also stops the compiler, but the record
   cites no rule and names a category such as `Unsupported` instead of
@@ -213,7 +211,7 @@ drop the marker.
 
 | Step | Rule in the [specification](../../spec/kernel-spec.md) or design |
 |---|---|
-| One rule and one location per rejection, independent syntax segments, repairs only where a rule gives them | DIAG-1 |
+| One rule and one location, the first rejection of a fixed traversal, repairs only where a rule gives them | DIAG-1 |
 | A `set` target needs a local value or a declared write | SET-1, EFF-1 |
 | The integer goal and its routes | OP-2, ENT-6 |
 | A call's requirement, instantiated with its arguments | FN-8 |

@@ -253,6 +253,60 @@ mod tests {
     }
 
     #[test]
+    fn later_segment_resource_failure_replaces_accumulated_source_rejections() {
+        let first = "fn first() -> r: unit {\n  return unit;\n}\n";
+        let second = "fn second() -> r: unit pure {\n  let value = 0_u64;\n  let other = 1_u64;\n  return unit;\n}\n";
+        let source = format!("{first}{second}");
+        let mut limits = CompilerLimits::default();
+        let bundle = SourceBundle::with_limits(
+            &[SourceInput::new("later-resource.wf", source.as_bytes())],
+            limits.source,
+        )
+        .expect("bundle");
+        let ordinary = check(&bundle, limits, false).expect_err("only the first segment rejects");
+        assert_eq!(ordinary.kind(), CompilationFailureKind::Source);
+        assert_eq!(ordinary.diagnostics().count(), 1);
+
+        limits.lexer.max_tokens = 20;
+        let first_bundle = SourceBundle::with_limits(
+            &[SourceInput::new("later-resource.wf", first.as_bytes())],
+            limits.source,
+        )
+        .expect("first segment bundle");
+        let first_failure =
+            check(&first_bundle, limits, false).expect_err("the earlier source rejection completes");
+        assert_eq!(first_failure.kind(), CompilationFailureKind::Source);
+        assert_eq!(
+            first_failure.render(DiagnosticFormat::Json),
+            ordinary.render(DiagnosticFormat::Json)
+        );
+
+        let second_bundle = SourceBundle::with_limits(
+            &[SourceInput::new("later-resource.wf", second.as_bytes())],
+            limits.source,
+        )
+        .expect("second segment bundle");
+        let second_failure = check(&second_bundle, limits, false)
+            .expect_err("the later segment alone exceeds the token ceiling");
+        assert_eq!(second_failure.kind(), CompilationFailureKind::Resource);
+
+        let independent = check(&bundle, limits, false)
+            .expect_err("the later resource stop replaces the earlier source rejection");
+        let actual = canonical_syntax(&bundle, limits, false)
+            .expect_err("the optimized whole-source path preserves segment failure precedence");
+        for failure in [&independent, &actual] {
+            assert_eq!(failure.kind(), CompilationFailureKind::Resource);
+            assert_eq!(failure.diagnostics().count(), 1);
+            assert_eq!(failure.rule_id(), None);
+            assert_eq!(failure.record.expected_terminals(), None);
+        }
+        assert_eq!(
+            actual.render(DiagnosticFormat::Json),
+            independent.render(DiagnosticFormat::Json)
+        );
+    }
+
+    #[test]
     fn declaration_boundaries_are_generated_first_words_at_column_zero() {
         for keyword in [
             "alias", "public", "fn", "struct", "enum", "interface", "binding", "const",

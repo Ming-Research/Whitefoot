@@ -1765,7 +1765,7 @@ This form requires the empty root `NodePath` and carries no source-local byte in
 
 `SourceCoordinate` is `(source_ordinal, byte_start, byte_end)` in the bound [PROG-2] unit.
 Its byte interval is checked, half-open, and contained in that exact source.
-End of source is the zero-width interval whose two offsets equal the source byte length.
+The end of a source or diagnostic segment has the zero-width interval whose two offsets equal its source-local ending byte offset.
 `NodePath` is the sequence of zero-based child ordinals from the finalized compilation-unit root; the root path is the empty sequence.
 Every source-backed node has one checked source-local extent.
 In `SourceNode`, the rule-selected coordinate lies within that extent (`node_start <= byte_start <= byte_end <= node_end`) but need not equal the complete extent; the path identifies the existing offending or owning node while the coordinate identifies its exact offending subinterval or boundary.
@@ -1773,7 +1773,7 @@ In `SourceNode`, the rule-selected coordinate lies within that extent (`node_sta
 A diagnostic never fabricates a node or node path.
 A nested-place rejection additionally renders the offending access-path segment.
 
-The frontend partitions each source into diagnostic segments using its raw bytes.
+The frontend partitions each writer source record [PROG-2, MOD-2] and each graph record [MOD-1] into diagnostic segments using its raw bytes; compiler-owned declaration records follow [PRE-1].
 A line begins at byte offset zero or immediately after LF.
 A declaration start is a line whose column-zero maximal lower word is a fixed terminal in the FIRST set of `item` [GRAM-2].
 A graph-record start is a line whose column-zero maximal lower word satisfies a first-terminal predicate of `package_decl`, `module_row`, or `entry_decl` [GRAM-2].
@@ -1785,9 +1785,10 @@ Thus bytes before the first declaration or graph-record start form a segment of 
 Each segment runs raw lexical formation, terminal membership, and grammar derivation in that order.
 Each stage scans that segment in byte order, reports its first defect, and admits the next stage only on success.
 Source-record segments derive `program`; graph-record segments derive `graph_segment` [GRAM-2].
-Every segment is judged independently, and each failing segment contributes exactly one rejection.
-The frontend reports these rejections together, ordered by source ordinal and then byte offset.
-The end of a segment acts as `SOURCE_END` during its lexical formation and grammar derivation and has a zero-width coordinate at its source-local ending byte offset.
+Every segment is judged independently, and each segment whose completed judgment rejects the source contributes exactly one rejection.
+Once every segment has a completed language judgment, the frontend reports these rejections together, ordered by source ordinal and then byte offset.
+A non-language failure while judging a segment is the sole reported stop and replaces all accumulated segment source rejections.
+The end of a segment acts as `SOURCE_END` during its lexical formation and grammar derivation and uses the boundary coordinate defined above.
 Success of every segment admits the complete source's grammar derivation, which retains its ordinary start production and selects its first defect in source order.
 Success of every complete derivation admits one canonical [FORM-2] rendering stage over the complete ordered source bundle; this stage reports only its first defect in source-ordinal and byte order.
 Success of canonical rendering admits the semantic stages below, which retain their single-rejection selection.
@@ -1893,7 +1894,7 @@ After canonical FORM-2 succeeds for every source, semantic diagnostic selection 
 An empty or define-only block uses `SourceNode` at that complete `contract_block`; no declaration, route reservation, or use role inside such a rejected block is classified or counted.
 Grammar already fixes each admitted block's definitions-before-requirements-before-postconditions structure and excludes every statement form, so no second structural-entry filter exists.
 Only complete unit-wide FN-8 admission permits the remaining resolution stages, each complete over the unit before the next begins: the [GRAM-2] heap-declaration position of a source bundle; the module forms, one scan in source order judging [MOD-4]'s alias placement, [MOD-9]'s heap declaration of a module program, [MOD-6]'s `public` and `readonly` placement and [MOD-7]'s function item forms; ordinary role classification and declaration inventory, whose event order also reports each refused alias target [MOD-4, MOD-5]; lexical resolution, including qualified references [MOD-5]; [MOD-6]'s closure of public signatures, in source order of the offending use; and [MOD-7]'s correspondence of each definition with its interface declaration, in definition source order.
-A module program's graph records are formed first [MOD-1]. A graph record, when read, passes the lexical, grammar and canonical stages and has its locations' form and its repeated names judged [MOD-11]; the walk then judges its bindings in written order, each binding's reached directory, cycle and repeated package, reading a newly reached package's graph record and walking its bindings before the next binding; after the walk each graph's rows and entries are judged in package order. Each graph's segment rejections are reported as defined above; after segment success the first rejection in this graph-formation order is reported. Module records are read only after every graph forms.
+A module program's graph records are formed first [MOD-1]. A graph record, when read, passes the lexical, grammar and canonical stages and has its locations' form and its repeated names judged [MOD-11]; the walk then judges its bindings in written order, each binding's reached directory, cycle and repeated package, reading a newly reached package's graph record and walking its bindings before the next binding; after the walk each graph's rows and entries are judged in package order. Each graph's segment rejections are reported as defined above; after segment success the first rejection in this graph-formation order is reported. After every graph forms, module records are read in [MOD-2]'s order and all their segment rejections are aggregated by the segment-reporting rule above before those records proceed to later stages.
 Within an admitted routed `ensures_clause`, the route's leading lookup and [FN-9] route-admission subjudgment occur before lexical resolution of that clause expression; every unrelated block and event retains the ordinary global ordering.
 Poison declarations and partial resolution are forbidden.
 An early FN-8 rejection outranks every inventory or resolution rejection; inventory still outranks resolution even when the later-stage event has an earlier source coordinate.
@@ -2033,10 +2034,10 @@ A whole-unit requirement with no offending source declaration uses `BundleRoot` 
 Post-resolution semantic rejection never uses `SourceBytes`, fabricates a node, or carries an expected-terminal set.
 
 Two or more simultaneously established post-resolution semantic rejections whose immediate offending source premise is the same use of the same canonical node are one rejection event, and that event cites the established rule whose definition appears first in this specification; a rule whose own text states that it forms no candidate in that situation [FN-1] is not among the established rules, and the event's location follows the cited rule.
-The order among rejection events at distinct nodes is implementation-defined.
-One compiler executable invoked on the identical bound unit with identical options and sufficient resources must use one stable deterministic traversal and produce the same first rejection event.
+The order among post-resolution semantic rejection events at distinct nodes is implementation-defined.
+For those events, one compiler executable invoked on the identical bound unit with identical options and sufficient resources must use one stable deterministic traversal and produce the same first rejection event.
 Selection may not depend on allocation identity, unordered-container iteration, worker scheduling, or backend traversal.
-Different conforming implementations may report different first established rejection events at distinct nodes; the same-node citation above is fixed for every conforming implementation, and neither freedom changes the accepted-program set or checked-program authority.
+Different conforming implementations may report different first established post-resolution semantic rejection events at distinct nodes; the same-node citation above is fixed for every conforming implementation, and neither freedom changes the accepted-program set or checked-program authority.
 
 Semantic success is failure-atomic at its publication boundary.
 Private scratch judgments may be constructed in any deterministic order, but no checked program, lowering input, optimization fact, partially accepted declaration, or other semantic authority is published unless every applicable source-side numbered-rule judgment through complete-unit semantic checking succeeds.
@@ -2377,6 +2378,8 @@ An implementation may hold less than a statement's states, or hold them together
 ## 14. Prelude and host modules (normative, counted)
 
 [PRE-1] The prelude contributes ordinary nominal, constructor, built-in-bound and function declarations to every module. Their source visibility, collisions, typing, ownership and calls are the ordinary rules; an entry's prelude origin supplies only its deterministic diagnostic ordinal [TYPE-6, DIAG-1].
+
+These compiler-owned declaration records are language-defined declaration data, not writer source records [PROG-2], and the compiler validates each complete record against this rule.
 
 The prelude's opaque structs [TYPE-2] are the five storage shapes and the cell `Box` [TYPE-9], built by the construction rows [OP-13], the shared-object handles `Shared` and `SharedRead`, the frozen-object handle `Frozen`, the concurrent hash map `ConcurrentHashMap` and the key set `KeySet` [SHARE-1], and the `Entries` a target over a key set names [SHARE-2]. An opaque struct is not const-eligible [CONST-2]; its capability modifier and the ordinary ownership closure are exactly [OWN-1, PROV-6]. Their declarations are:
 

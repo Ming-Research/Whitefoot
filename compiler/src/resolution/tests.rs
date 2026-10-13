@@ -139,7 +139,7 @@ fn qualified_call_hint_lists_only_module_callables_in_spelling_order() {
     qualified_hint(
         source.as_bytes(),
         LexicalUseRole::IdentifierCallee,
-        "Replace `missing` with an accessible name declared in `pkg` for this grammar position [MOD-5]: `alpha`, `zeta`.",
+        "replace `missing` with an accessible name declared in `pkg` for this grammar position: `alpha`, `zeta` [MOD-5]",
     );
     for name in ["alpha", "zeta"] {
         let repaired = source.replace("pkg::missing", &format!("pkg::{name}"));
@@ -170,7 +170,7 @@ fn qualified_name_hint_caps_sorted_inventory_at_eight_names() {
     qualified_hint(
         source.as_bytes(),
         LexicalUseRole::IdentifierCallee,
-        "Replace `missing` with an accessible name declared in `pkg` for this grammar position [MOD-5]: `alpha`, `beta`, `gamma`, `lambda`, `omega`, `rho`, `sigma`, `theta`.",
+        "replace `missing` with an accessible name declared in `pkg` for this grammar position: `alpha`, `beta`, `gamma`, `lambda`, `omega`, `rho`, `sigma`, `theta` [MOD-5]",
     );
 }
 
@@ -195,7 +195,7 @@ fn qualified_name_hint_uses_type_and_constructor_domains() {
             source.as_bytes(),
             role,
             &format!(
-                "Replace `Missing` with an accessible name declared in `pkg` for this grammar position [MOD-5]: {choices}."
+                "replace `Missing` with an accessible name declared in `pkg` for this grammar position: {choices} [MOD-5]"
             ),
         );
         let repaired = source.replace("pkg::Missing", "pkg::Alpha");
@@ -214,7 +214,7 @@ fn qualified_name_hint_with_empty_domain_requests_an_accessible_declaration() {
     qualified_hint(
         source.as_bytes(),
         LexicalUseRole::Type,
-        "Declare an accessible name in `pkg` for this grammar position [MOD-5].",
+        "declare an accessible name in `pkg` for this grammar position [MOD-5]",
     );
     let repaired = format!("struct Missing {{\n}}\n\n{source}");
     with_one_resolution(repaired.as_bytes(), |outcome| {
@@ -289,7 +289,7 @@ fn qualified_name_hint_excludes_private_declarations_locals_and_other_modules() 
                 };
                 assert_eq!(
                     mechanical_fix,
-                    "Replace `missing` with an accessible name declared in `pkg::leaf` for this grammar position [MOD-5]: `visible`."
+                    "replace `missing` with an accessible name declared in `pkg::leaf` for this grammar position: `visible` [MOD-5]"
                 );
             }
         });

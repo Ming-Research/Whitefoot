@@ -19,7 +19,7 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         rule: "MOD-5",
         sentences: &[
-            "\n  mechanical_fix: Replace `missing` with an accessible name declared in `pkg` for this grammar position [MOD-5]: `alpha`, `main`, `zeta`.\n",
+            "\n  mechanical_fix: replace `missing` with an accessible name declared in `pkg` for this grammar position: `alpha`, `main`, `zeta` [MOD-5]\n",
         ],
         repaired: &[
             br#"fn zeta() -> status: std::process::ExitStatus pure {
@@ -75,7 +75,7 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         rule: "MOD-5",
         sentences: &[
-            "\n  mechanical_fix: Replace `Missing` with an accessible name declared in `pkg` for this grammar position [MOD-5]: `Alpha`, `Zeta`.\n",
+            "\n  mechanical_fix: replace `Missing` with an accessible name declared in `pkg` for this grammar position: `Alpha`, `Zeta` [MOD-5]\n",
         ],
         repaired: &[
             br#"struct Zeta {
@@ -118,7 +118,7 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         rule: "MOD-5",
         sentences: &[
-            "\n  mechanical_fix: Replace `Missing` with an accessible name declared in `std::process` for this grammar position [MOD-5]: `ExitStatus`, `Inputs`, `MemoryMeter`, `StopKind`, `StopListener`, `StopSignals`.\n",
+            "\n  mechanical_fix: replace `Missing` with an accessible name declared in `std::process` for this grammar position: `ExitStatus`, `Inputs`, `MemoryMeter`, `StopKind`, `StopListener`, `StopSignals` [MOD-5]\n",
         ],
         repaired: &[
             br#"fn probe() -> result: std::process::ExitStatus pure {
@@ -189,7 +189,7 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         rule: "MOD-5",
         sentences: &[
-            "\n  mechanical_fix: Declare an accessible name in `pkg` for this grammar position [MOD-5].\n",
+            "\n  mechanical_fix: declare an accessible name in `pkg` for this grammar position [MOD-5]\n",
         ],
         repaired: &[br#"struct Missing {
 }

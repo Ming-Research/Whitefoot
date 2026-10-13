@@ -70,17 +70,37 @@ fn upper_word_underscore_fix_keeps_the_form1_byte() {
 
 #[test]
 fn boolean_disjunction_fix_keeps_the_first_illegal_pipe() {
-    let source = bundle(&[("bool.wf", b"a || b")]);
-    let LexOutcome::SourceIssue(issue) = crate::lex(&source, generous_limits()) else {
-        panic!("a pipe has no raw token spelling");
-    };
-    assert_eq!(issue.kind().rule_id(), "FORM-1");
-    assert_eq!(issue.span().start().value(), 2);
-    assert_eq!(issue.span().end().value(), 3);
-    assert_eq!(
-        issue.mechanical_fix(),
-        Some(crate::diagnostic_repairs::BOOLEAN_OPERATION_FIX)
-    );
+    // Neither source words nor quoted contents provide a grammar position
+    // to raw lexical formation. The same spelling gets the same repair.
+    for bytes in [
+        b"a || b".as_slice(),
+        b"forall a || b",
+        b"forallx a || b",
+        b"\"forall\" a || b",
+        b"\"forall;\" a || b",
+        b"forall; a || b",
+    ] {
+        let start = bytes
+            .windows(2)
+            .position(|pair| pair == b"||")
+            .expect("the source contains a disjunction") as u64;
+        let source = bundle(&[("bool.wf", bytes)]);
+        let LexOutcome::SourceIssue(issue) = crate::lex(&source, generous_limits()) else {
+            panic!("a pipe has no raw token spelling: {bytes:?}");
+        };
+        assert_eq!(issue.kind().rule_id(), "FORM-1");
+        assert_eq!(issue.span().start().value(), start);
+        assert_eq!(issue.span().end().value(), start + 1);
+        assert_eq!(
+            issue.mechanical_fix(),
+            Some(crate::diagnostic_repairs::BOOLEAN_DISJUNCTION_FIX),
+            "source={bytes:?}"
+        );
+    }
+    assert!(matches!(
+        crate::lex(&bundle(&[("quoted.wf", b"\"||\"")]), generous_limits()),
+        LexOutcome::Complete(_)
+    ));
     let source = bundle(&[("pipe.wf", b"a | b")]);
     let LexOutcome::SourceIssue(issue) = crate::lex(&source, generous_limits()) else {
         panic!("a lone pipe also rejects");

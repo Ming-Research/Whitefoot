@@ -2,11 +2,13 @@
 
 pub(crate) const BOOLEAN_OPERATION_FIX: &str = "write `band(a, b)` for boolean conjunction and `bor(a, b)` for boolean disjunction; both operations are eager, so bind computed operands first with `let` in a body or `define` in a contract block [OP-1, GRAM-5, GRAM-9]";
 
-/// RANGE-1's repair for `&&` and `||`, selected by the grammar position of a
+/// RANGE-1's repair for `&&`, selected by the grammar position of a
 /// `range_clause`, where `band` and `bor` are calls and so are not admitted.
 pub(crate) const RANGE1_BOOLEAN_AND_FIX: &str = "a range clause admits no call, so `band` is not available there; join Bool tests with commas, each a variant relation testing one Bool datum, as in `when nodes^[k] is True, flags^[k] is True:`, and the same commas join conclusions [RANGE-1, GRAM-5]";
 
-pub(crate) const RANGE1_BOOLEAN_OR_FIX: &str = "a range clause admits no call and has no disjunction, so `bor` and `||` are not available there; state a disjunctive guard as one range clause per disjunct with the same conclusion, as in `when nodes^[k] is True:` and `when flags^[k] is True:`, and a disjunctive conclusion has no range spelling [RANGE-1, GRAM-5]";
+/// A raw `||` rejection has no grammar position; its repair states the
+/// separate forms admitted in expressions and range clauses.
+pub(crate) const BOOLEAN_DISJUNCTION_FIX: &str = "there is no `||`; in a body write eager `bor(a, b)` with computed operands bound first by `let`; in a contract block bind computed operands and the `bor` result with `define`, then use the result binding in an ordinary clause; a range clause admits no call or disjunction, so express a disjunctive guard as one range clause per disjunct with the same conclusion; a disjunctive conclusion has no direct range spelling [FORM-1, OP-1, GRAM-5, GRAM-9, RANGE-1]";
 
 pub(crate) const CHARACTER_SUFFIX_FIX: &str = "write a character literal with its mandatory suffix: `u8` for ASCII or `u32` for any Unicode scalar, such as `'a'_u8` [FORM-5, FORM-7]";
 
@@ -76,7 +78,7 @@ pub(crate) fn lowercase_name(spelling: &str) -> String {
 pub(crate) fn qualified_name(spelling: &str, module_name: &str, names: &[&str]) -> String {
     if names.is_empty() {
         return format!(
-            "Declare an accessible name in `{module_name}` for this grammar position [MOD-5]."
+            "declare an accessible name in `{module_name}` for this grammar position [MOD-5]"
         );
     }
     let choices = names
@@ -85,7 +87,7 @@ pub(crate) fn qualified_name(spelling: &str, module_name: &str, names: &[&str]) 
         .collect::<Vec<_>>()
         .join(", ");
     format!(
-        "Replace `{spelling}` with an accessible name declared in `{module_name}` for this grammar position [MOD-5]: {choices}."
+        "replace `{spelling}` with an accessible name declared in `{module_name}` for this grammar position: {choices} [MOD-5]"
     )
 }
 

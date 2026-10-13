@@ -184,7 +184,7 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         rule: "FORM-1",
         sentences: &[
-            "\n  mechanical_fix: write `band(a, b)` for boolean conjunction and `bor(a, b)` for boolean disjunction; both operations are eager, so bind computed operands first with `let` in a body or `define` in a contract block [OP-1, GRAM-5, GRAM-9]\n",
+            "\n  mechanical_fix: there is no `||`; in a body write eager `bor(a, b)` with computed operands bound first by `let`; in a contract block bind computed operands and the `bor` result with `define`, then use the result binding in an ordinary clause; a range clause admits no call or disjunction, so express a disjunctive guard as one range clause per disjunct with the same conclusion; a disjunctive conclusion has no direct range spelling [FORM-1, OP-1, GRAM-5, GRAM-9, RANGE-1]\n",
         ],
         repaired: &[
             br#"fn value(a: Bool, b: Bool) -> result: unit pure contract {
@@ -205,7 +205,7 @@ fn main() -> status: std::process::ExitStatus pure {
     RepairPair {
         name: "boolean-disjunction.wf",
         rejected: br#"fn value(a: Bool, b: Bool) -> result: Bool pure {
-  let combined = a || b;
+  let combined = bnot(a) || bnot(b);
   return combined;
 }
 
@@ -215,10 +215,12 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         rule: "FORM-1",
         sentences: &[
-            "\n  mechanical_fix: write `band(a, b)` for boolean conjunction and `bor(a, b)` for boolean disjunction; both operations are eager, so bind computed operands first with `let` in a body or `define` in a contract block [OP-1, GRAM-5, GRAM-9]\n",
+            "\n  mechanical_fix: there is no `||`; in a body write eager `bor(a, b)` with computed operands bound first by `let`; in a contract block bind computed operands and the `bor` result with `define`, then use the result binding in an ordinary clause; a range clause admits no call or disjunction, so express a disjunctive guard as one range clause per disjunct with the same conclusion; a disjunctive conclusion has no direct range spelling [FORM-1, OP-1, GRAM-5, GRAM-9, RANGE-1]\n",
         ],
         repaired: &[br#"fn value(a: Bool, b: Bool) -> result: Bool pure {
-  let combined = bor(a, b);
+  let left = bnot(a);
+  let right = bnot(b);
+  let combined = bor(left, right);
   return combined;
 }
 
@@ -248,7 +250,7 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         rule: "FORM-1",
         sentences: &[
-            "\n  mechanical_fix: a range clause admits no call and has no disjunction, so `bor` and `||` are not available there; state a disjunctive guard as one range clause per disjunct with the same conclusion, as in `when nodes^[k] is True:` and `when flags^[k] is True:`, and a disjunctive conclusion has no range spelling [RANGE-1, GRAM-5]\n",
+            "\n  mechanical_fix: there is no `||`; in a body write eager `bor(a, b)` with computed operands bound first by `let`; in a contract block bind computed operands and the `bor` result with `define`, then use the result binding in an ordinary clause; a range clause admits no call or disjunction, so express a disjunctive guard as one range clause per disjunct with the same conclusion; a disjunctive conclusion has no direct range spelling [FORM-1, OP-1, GRAM-5, GRAM-9, RANGE-1]\n",
         ],
         repaired: &[br#"struct Node {
   live: Bool;
