@@ -3899,8 +3899,11 @@ impl FactState {
 /// One offset disequality, with endpoint reversal negating its offset.
 /// Stored arithmetic follows the saturating i128 convention of difference
 /// bounds, including reversal at MIN. This is not an unbounded integer
-/// representation; the source-folding limit is tracked in status board item
-/// lm-bl-i128-constants.
+/// representation: a written clause's constants are formed exactly and a
+/// clause whose formation leaves i128 is rejected where it is formed
+/// [INV-1, MSR-5], and every term lies within plus or minus 2^66, so
+/// clamping a stored constant at an i128 endpoint never changes whether
+/// its fact holds.
 pub(crate) type DistinctKey = (TermId, TermId, i128);
 
 pub(crate) fn distinct_key(left: TermId, right: TermId, difference: i128) -> DistinctKey {

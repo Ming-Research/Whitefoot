@@ -949,12 +949,7 @@ impl Reasoning<'_, '_, '_> {
             .or_else(|| self.read_operand(right_expression))?;
         let (left, left_constant) = self.vocabulary.terms.constant_part(left);
         let (right, right_constant) = self.vocabulary.terms.constant_part(right);
-        sources::comparison_relation(
-            *operation,
-            left,
-            right,
-            right_constant.checked_sub(left_constant)?,
-        )
+        sources::comparison_relation(*operation, left, right, left_constant, right_constant)
     }
 
     /// [ENT-3] comparison origin of a match scrutinee: shape (a) directly, or
@@ -1420,12 +1415,7 @@ impl Reasoning<'_, '_, '_> {
         // the one constant a difference bound carries.
         let (left, left_constant) = self.goal_side(left)?;
         let (right, right_constant) = self.goal_side(right)?;
-        sources::comparison_relation(
-            *operation,
-            left,
-            right,
-            right_constant.checked_sub(left_constant)?,
-        )
+        sources::comparison_relation(*operation, left, right, left_constant, right_constant)
     }
 
     /// One clause side as a term displaced by a constant [MSR-5].

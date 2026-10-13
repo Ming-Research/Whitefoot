@@ -939,23 +939,38 @@ impl Checker<'_, '_> {
         if rest.is_empty() {
             return Ok(first);
         }
-        let mut terms = vec![(1_i128, first.integer(self, node, names)?)];
+        // [INV-1, RANGE-1] `+` and `-` associate left to right, and each
+        // one forms its term exactly.
+        let mut value = first.integer(self, node, names)?;
         for pair in rest.as_chunks::<2>().0 {
             let [token] = self.types.declarations.tree.direct_token_indices(pair[0])? else {
                 return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
             };
-            let sign = match self.types.declarations.tree.token_bytes(*token)? {
-                b"+" => 1_i128,
-                b"-" => -1_i128,
+            let subtract = match self.types.declarations.tree.token_bytes(*token)? {
+                b"+" => false,
+                b"-" => true,
                 _ => return Err(SemanticCompilerFailure::InvalidCanonicalTree.into()),
             };
-            terms.push((
-                sign,
-                self.range_product(context, pair[1], bindings, names)?
-                    .integer(self, node, names)?,
-            ));
+            let right = self
+                .range_product(context, pair[1], bindings, names)?
+                .integer(self, node, names)?;
+            value = match range_add(value, right, subtract) {
+                Some(value) => value,
+                None => return self.range_formation_overflow(node),
+            };
         }
-        Ok(range_sum(terms).into())
+        Ok(value.into())
+    }
+
+    /// [RANGE-1] a range term whose constant or a coefficient lies outside
+    /// i128, at the node that forms it.
+    fn range_formation_overflow<Value>(&self, node: NodeId) -> Result<Value, CheckStop> {
+        self.invalid_range(
+            SemanticRule::Range1,
+            node,
+            "a range term's folded constant or a coefficient lies outside i128",
+            "fold the constants into a term that fits i128; every integer value lies within the range of its type, so a constant at the operand type's limit states the same relation",
+        )
     }
 
     fn range_product(
@@ -991,7 +1006,10 @@ impl Checker<'_, '_> {
                         );
                     }
                 };
-                Ok(range_sum(vec![(constant, value)]).into())
+                match range_scale(constant, value) {
+                    Some(value) => Ok(value.into()),
+                    None => self.range_formation_overflow(node),
+                }
             }
             _ => Err(SemanticCompilerFailure::InvalidCanonicalTree.into()),
         }
@@ -1080,7 +1098,7 @@ impl Checker<'_, '_> {
             );
         };
         let operand = self.range_place(context, place, bindings, names)?;
-        // Preserve the already-typed place before range_sum can cancel it
+        // Preserve the already-typed place before term formation can cancel it
         // or multiply it by zero. Clause erasure changes no alias premise.
         names
             .contract_reads
@@ -1727,50 +1745,75 @@ impl Checker<'_, '_> {
     }
 }
 
-/// The canonical sum of weighted terms: nested sums flatten, constants fold,
-/// and a single unit term stands alone.
-fn range_sum(terms: Vec<(i128, CheckedRangeTerm)>) -> CheckedRangeTerm {
-    let mut constant = 0_i128;
-    let mut flat: Vec<(i128, CheckedRangeTerm)> = Vec::new();
-    let mut pending = terms;
-    while let Some((weight, term)) = pending.pop() {
-        match term {
-            CheckedRangeTerm::Constant(value) => {
-                constant = constant.saturating_add(weight.saturating_mul(value));
-            }
-            CheckedRangeTerm::Sum {
-                terms,
-                constant: inner,
-            } => {
-                constant = constant.saturating_add(weight.saturating_mul(inner));
-                for (coefficient, nested) in terms {
-                    pending.push((weight.saturating_mul(coefficient), nested));
-                }
-            }
-            other => {
-                if let Some(existing) = flat.iter_mut().find(|(_, term)| *term == other) {
-                    existing.0 = existing.0.saturating_add(weight);
-                } else {
-                    flat.push((weight, other));
-                }
-            }
+/// One range term as its weighted terms and its constant.
+fn range_linear(term: CheckedRangeTerm) -> (Vec<(i128, CheckedRangeTerm)>, i128) {
+    match term {
+        CheckedRangeTerm::Constant(value) => (Vec::new(), value),
+        CheckedRangeTerm::Sum { terms, constant } => (terms, constant),
+        other => (vec![(1, other)], 0),
+    }
+}
+
+/// The exact term `left + right`, or `left - right`, or `None` when its
+/// constant or a coefficient lies outside i128 [RANGE-1].
+fn range_add(
+    left: CheckedRangeTerm,
+    right: CheckedRangeTerm,
+    subtract: bool,
+) -> Option<CheckedRangeTerm> {
+    let (mut terms, constant) = range_linear(left);
+    let (right_terms, right_constant) = range_linear(right);
+    let constant = if subtract {
+        constant.checked_sub(right_constant)?
+    } else {
+        constant.checked_add(right_constant)?
+    };
+    for (coefficient, term) in right_terms {
+        if let Some(existing) = terms.iter_mut().find(|(_, existing)| *existing == term) {
+            existing.0 = if subtract {
+                existing.0.checked_sub(coefficient)?
+            } else {
+                existing.0.checked_add(coefficient)?
+            };
+        } else {
+            let coefficient = if subtract {
+                coefficient.checked_neg()?
+            } else {
+                coefficient
+            };
+            terms.push((coefficient, term));
         }
     }
-    flat.retain(|(weight, _)| *weight != 0);
-    flat.sort_by(|left, right| left.1.cmp(&right.1));
-    if constant == 0 && flat.len() == 1 && flat[0].0 == 1 {
-        return flat
+    Some(range_canonical(terms, constant))
+}
+
+/// The exact term `factor * term`, or `None` when its constant or a
+/// coefficient lies outside i128 [RANGE-1].
+fn range_scale(factor: i128, term: CheckedRangeTerm) -> Option<CheckedRangeTerm> {
+    let (terms, constant) = range_linear(term);
+    let terms = terms
+        .into_iter()
+        .map(|(coefficient, term)| Some((coefficient.checked_mul(factor)?, term)))
+        .collect::<Option<Vec<_>>>()?;
+    Some(range_canonical(terms, constant.checked_mul(factor)?))
+}
+
+/// The canonical sum of weighted terms: zero weights drop, terms sort, and a
+/// single unit term stands alone. Every term of a canonical sum is neither a
+/// constant nor a sum, so combining two canonical terms needs no flattening.
+fn range_canonical(mut terms: Vec<(i128, CheckedRangeTerm)>, constant: i128) -> CheckedRangeTerm {
+    terms.retain(|(weight, _)| *weight != 0);
+    terms.sort_by(|left, right| left.1.cmp(&right.1));
+    if constant == 0 && terms.len() == 1 && terms[0].0 == 1 {
+        return terms
             .pop()
             .map(|(_, term)| term)
             .unwrap_or(CheckedRangeTerm::Constant(0));
     }
-    if flat.is_empty() {
+    if terms.is_empty() {
         return CheckedRangeTerm::Constant(constant);
     }
-    CheckedRangeTerm::Sum {
-        terms: flat,
-        constant,
-    }
+    CheckedRangeTerm::Sum { terms, constant }
 }
 
 const fn integer_value(ty: IntegerType, bits: u64) -> i128 {

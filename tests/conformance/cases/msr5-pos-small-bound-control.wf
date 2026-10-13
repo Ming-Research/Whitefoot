@@ -1,0 +1,11 @@
+fn bump(x: i64) -> result: i64 pure contract {
+  requires x <= 5_i64;
+} {
+  doc "The same body as the cancelling-products case, under the bound that case's side denotes.";
+  let y = x + 9223372036854775802_i64;
+  return y;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

@@ -908,6 +908,7 @@ impl<'unit> Checker<'_, 'unit> {
                 bindings,
                 &expanded_bindings,
             )?;
+            self.types.validate_clause_formation(expression, &expanded)?;
             // [ENT-2, FN-9] each clause forms every place its expansion
             // reaches, at every return that selects it, each over the state
             // it denotes [MSR-3].

@@ -1,0 +1,10 @@
+fn cells_bounded(cells: &[u64]) -> result: unit reads(cells) contract {
+  requires forall bounded(k in 0_u64..cells^.len): cells^[k] <= 18446744073709551615_u64 * 18446744073709551615_u64;
+} {
+  doc "The product (2^64 - 1)^2 is a range term constant outside i128.";
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

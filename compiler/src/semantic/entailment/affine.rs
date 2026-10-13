@@ -394,33 +394,43 @@ impl AffineInequality {
         right: &AffineForm,
         check: &mut AffineCheckState,
     ) -> Result<Self, AffineCheckError> {
-        let difference = left.subtract(right, check)?;
-        Ok(Self {
-            terms: difference.terms,
-            upper: checked_neg(difference.constant)?,
-        })
+        Self::from_bounded_forms(left, right, 0, check)
     }
 
     /// Forms the proposition `left - right <= bound` from two exact current
     /// values and one already-established ordinary difference bound.
+    ///
+    /// [INV-1] judges each formation value by its own mathematical value:
+    /// the coefficients of `left - right` and the right-hand constant
+    /// `bound + right.constant - left.constant`. The difference of the two
+    /// constants is no formation value of its own, so `x > m` at
+    /// `m = i128::MIN`, which reaches here as `m - x <= -1`, forms
+    /// `-x <= i128::MAX` even though `-(m - 0)` alone leaves i128.
     pub(crate) fn from_bounded_forms(
         left: &AffineForm,
         right: &AffineForm,
         bound: i128,
         check: &mut AffineCheckState,
     ) -> Result<Self, AffineCheckError> {
-        let mut inequality = Self::from_forms(left, right, check)?;
-        inequality.upper = checked_add(inequality.upper, bound)?;
-        Ok(inequality)
+        Ok(Self {
+            terms: merge_scaled(left.terms(), right.terms(), -1, check)?.into_boxed_slice(),
+            upper: ExactSum::new(bound)
+                .add(right.constant)
+                .subtract(left.constant)
+                .value()
+                .ok_or(AffineCheckError::ArithmeticOverflow)?,
+        })
     }
 
     /// The exact complement `sum(coefficient * term) >= upper + 1`, in
     /// canonical form. Every atom denotes a mathematical integer, so this is
-    /// the negation an [INV-1] target's refutation derives [MSR-4].
+    /// the negation an [INV-1] target's refutation derives [MSR-4]. Its
+    /// right-hand constant `-1 - upper` always lies in i128, so only a
+    /// coefficient of `i128::MIN` leaves it.
     pub(crate) fn negated(&self, check: &mut AffineCheckState) -> Result<Self, AffineCheckError> {
         Ok(Self {
             terms: merge_scaled(&[], self.terms(), -1, check)?.into_boxed_slice(),
-            upper: checked_sub(checked_neg(self.upper)?, 1)?,
+            upper: checked_sub(-1, self.upper)?,
         })
     }
 
@@ -734,6 +744,10 @@ const AFFINE_CHECK_LIMITS: AffineCheckLimits = AffineCheckLimits {
 /// This is a structural language capacity, not a time or work budget.
 pub(crate) const MAX_CERTIFICATE_PREMISES: usize = AFFINE_CHECK_LIMITS.max_certificate_premises;
 
+/// Maximum number of scheduled expression nodes in one relation's formation
+/// [INV-1], shared by an invariant and a contract clause [MSR-5].
+pub(crate) const MAX_EXPRESSION_NODES: usize = AFFINE_CHECK_LIMITS.max_expression_nodes;
+
 /// One finite capacity of an affine semantic-check operation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum AffineCheckLimit {
@@ -785,6 +799,59 @@ impl AffineCheckState {
 impl Default for AffineCheckState {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// The exact mathematical sum of a few `i128` values, judged once on its
+/// final value [INV-1].
+///
+/// Each step keeps the two's-complement wrap of the running sum and counts
+/// how many times it wrapped in each direction, so the final value lies in
+/// i128 exactly when the net wrap count is zero. No order of the steps, and
+/// no intermediate value, decides whether the sum is representable.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ExactSum {
+    wrapped: i128,
+    carry: i64,
+}
+
+impl ExactSum {
+    pub(crate) const fn new(value: i128) -> Self {
+        Self {
+            wrapped: value,
+            carry: 0,
+        }
+    }
+
+    #[must_use]
+    pub(crate) const fn add(self, value: i128) -> Self {
+        let (wrapped, overflowed) = self.wrapped.overflowing_add(value);
+        let carry = match (overflowed, value > 0) {
+            (false, _) => self.carry,
+            (true, true) => self.carry + 1,
+            (true, false) => self.carry - 1,
+        };
+        Self { wrapped, carry }
+    }
+
+    #[must_use]
+    pub(crate) const fn subtract(self, value: i128) -> Self {
+        let (wrapped, overflowed) = self.wrapped.overflowing_sub(value);
+        let carry = match (overflowed, value > 0) {
+            (false, _) => self.carry,
+            (true, true) => self.carry - 1,
+            (true, false) => self.carry + 1,
+        };
+        Self { wrapped, carry }
+    }
+
+    /// The sum, or `None` when its mathematical value lies outside i128.
+    pub(crate) const fn value(self) -> Option<i128> {
+        if self.carry == 0 {
+            Some(self.wrapped)
+        } else {
+            None
+        }
     }
 }
 
@@ -1847,5 +1914,76 @@ mod tests {
                 .expect("cumulative work never changes affine acceptance");
         assert_eq!(inequality.upper(), 0);
         assert_eq!(check.used(), u64::MAX);
+    }
+
+    #[test]
+    fn exact_sums_judge_only_the_final_value() {
+        assert_eq!(
+            ExactSum::new(i128::MAX).add(1).subtract(1).value(),
+            Some(i128::MAX)
+        );
+        assert_eq!(
+            ExactSum::new(i128::MAX)
+                .add(i128::MAX)
+                .subtract(i128::MAX)
+                .value(),
+            Some(i128::MAX)
+        );
+        assert_eq!(ExactSum::new(-1).subtract(i128::MIN).value(), Some(i128::MAX));
+        assert_eq!(ExactSum::new(i128::MIN).subtract(1).value(), None);
+        assert_eq!(ExactSum::new(i128::MIN).add(i128::MIN).value(), None);
+        assert_eq!(ExactSum::new(i128::MAX).add(1).value(), None);
+        assert_eq!(ExactSum::new(0).subtract(i128::MIN).value(), None);
+    }
+
+    #[test]
+    fn normalization_judges_the_bound_and_not_the_constant_difference() {
+        // [INV-1] `x > m` at m = i128::MIN is `m - x <= -1`, that is
+        // `-x <= i128::MAX`: no formation value leaves i128, although
+        // negating the difference constant first would.
+        let greater = normalize_bounded_less_equal(
+            &constant(i128::MIN),
+            &term(0),
+            -1,
+            &mut AffineCheckState::new(),
+        )
+        .expect("x > i128::MIN forms");
+        assert_eq!(coefficients(&greater), vec![(0, -1)]);
+        assert_eq!(greater.upper(), i128::MAX);
+
+        // `x <= m` at the same m keeps the right-hand constant m itself.
+        let at_most = normalize_bounded_less_equal(
+            &term(0),
+            &constant(i128::MIN),
+            0,
+            &mut AffineCheckState::new(),
+        )
+        .expect("x <= i128::MIN forms");
+        assert_eq!(coefficients(&at_most), vec![(0, 1)]);
+        assert_eq!(at_most.upper(), i128::MIN);
+
+        // `x < m` needs the right-hand constant m - 1, which leaves i128.
+        assert_eq!(
+            normalize_bounded_less_equal(
+                &term(0),
+                &constant(i128::MIN),
+                -1,
+                &mut AffineCheckState::new(),
+            ),
+            Err(AffineCheckError::ArithmeticOverflow)
+        );
+    }
+
+    #[test]
+    fn negation_at_the_minimum_bound_is_exact() {
+        let negated = inequality(&[(0, 1)], i128::MIN)
+            .negated(&mut AffineCheckState::new())
+            .expect("the complement of x <= i128::MIN is -x <= i128::MAX");
+        assert_eq!(coefficients(&negated), vec![(0, -1)]);
+        assert_eq!(negated.upper(), i128::MAX);
+        assert_eq!(
+            inequality(&[(0, i128::MIN)], 0).negated(&mut AffineCheckState::new()),
+            Err(AffineCheckError::ArithmeticOverflow)
+        );
     }
 }

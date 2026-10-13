@@ -1,0 +1,10 @@
+fn same(x: i64) -> result: i64 pure contract {
+  ensures result <= x + -9223372036854775808_i64 * -9223372036854775808_i64 + -9223372036854775808_i64 * -9223372036854775808_i64 - -9223372036854775808_i64 * -9223372036854775808_i64 - -9223372036854775808_i64 * -9223372036854775808_i64;
+} {
+  doc "The right side equals x, but its second addition forms the constant 2^127, outside i128.";
+  return x;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

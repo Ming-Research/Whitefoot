@@ -1,0 +1,11 @@
+fn bump(x: i64) -> result: i64 pure contract {
+  requires x < -9223372036854775808_i64 * 9223372036854775807_i64 + -9223372036854775808_i64 * 9223372036854775807_i64 + -9223372036854775808_i64 + -9223372036854775808_i64;
+} {
+  doc "The right side folds exactly to -2^127, so x < -2^127 normalizes to the bound x <= -2^127 - 1, outside i128.";
+  let y = x + 1_i64;
+  return y;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

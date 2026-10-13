@@ -19,6 +19,7 @@ use super::super::super::model::{
     MeasuredKind, NominalId, SubscriptedTerm,
 };
 use super::super::super::places::CapturedTerm;
+use super::super::affine::ExactSum;
 use super::super::fragment_type;
 use super::super::state::{
     DerivationId, DerivationNode, DistinctKey, FactState, FlowEventId, FlowEventKind,
@@ -1783,46 +1784,54 @@ impl Reasoning<'_, '_, '_> {
 /// The normalized relation of one comparison operation over two read
 /// operands, shared by the comparison-origin shape and S4's substitution.
 ///
-/// `gap` is the displacement the two sides carry, `right`'s constant minus
-/// `left`'s: a clause side is an affine expression [MSR-5], and
+/// `left_constant` and `right_constant` are the displacements the two sides
+/// carry: a clause side is an affine expression [MSR-5], and
 /// `at + 2_u64 <= len_of(run)` is the ordinary difference bound
-/// `at - len_of(run) <= -2`.
+/// `at - len_of(run) <= -2`. Each bound is the one exact right-hand constant
+/// [INV-1] fixes, judged on its own value: `x > m` at `m = i128::MIN` is
+/// `0 - x <= i128::MAX`, although the displacement difference negated alone
+/// leaves i128. A bound outside i128 relates nothing; [MSR-5] rejects such a
+/// written clause where it is formed.
 pub(super) fn comparison_relation(
     operation: CheckedIntegerOperation,
     left: TermId,
     right: TermId,
-    gap: i128,
+    left_constant: i128,
+    right_constant: i128,
 ) -> Option<Relation> {
+    let exact = |bound: i128, plus: i128, minus: i128| {
+        ExactSum::new(bound).add(plus).subtract(minus).value()
+    };
     Some(match operation {
         CheckedIntegerOperation::Equal => Relation::Equal {
             left,
             right,
-            difference: gap,
+            difference: exact(0, right_constant, left_constant)?,
         },
         CheckedIntegerOperation::NotEqual => Relation::Distinct {
             left,
             right,
-            difference: gap,
+            difference: exact(0, right_constant, left_constant)?,
         },
         CheckedIntegerOperation::Less => Relation::Bound {
             left,
             right,
-            bound: gap.checked_sub(1)?,
+            bound: exact(-1, right_constant, left_constant)?,
         },
         CheckedIntegerOperation::LessEqual => Relation::Bound {
             left,
             right,
-            bound: gap,
+            bound: exact(0, right_constant, left_constant)?,
         },
         CheckedIntegerOperation::Greater => Relation::Bound {
             left: right,
             right: left,
-            bound: gap.checked_neg()?.checked_sub(1)?,
+            bound: exact(-1, left_constant, right_constant)?,
         },
         CheckedIntegerOperation::GreaterEqual => Relation::Bound {
             left: right,
             right: left,
-            bound: gap.checked_neg()?,
+            bound: exact(0, left_constant, right_constant)?,
         },
         _ => return None,
     })
@@ -3671,5 +3680,53 @@ impl DeliveryImageBound {
         match self {
             Self::Held { bound, .. } | Self::ThroughZero { bound, .. } => bound,
         }
+    }
+}
+
+#[cfg(test)]
+mod comparison_relation_tests {
+    use super::CheckedIntegerOperation::{Greater, GreaterEqual, Less};
+    use super::*;
+
+    const X: TermId = TermId(1);
+
+    #[test]
+    fn strict_greater_at_the_minimum_is_the_exact_bound() {
+        // [INV-1] `x > m` at m = i128::MIN is `0 - x <= i128::MAX`; negating
+        // the displacement difference first would leave i128 and drop it.
+        assert_eq!(
+            comparison_relation(Greater, X, ZERO, 0, i128::MIN),
+            Some(Relation::Bound {
+                left: ZERO,
+                right: X,
+                bound: i128::MAX,
+            })
+        );
+        // `x - 1 >= i128::MAX` is `0 - x <= i128::MIN`.
+        assert_eq!(
+            comparison_relation(GreaterEqual, X, ZERO, -1, i128::MAX),
+            Some(Relation::Bound {
+                left: ZERO,
+                right: X,
+                bound: i128::MIN,
+            })
+        );
+    }
+
+    #[test]
+    fn strict_less_judges_its_bound_and_not_the_displacement_gap() {
+        // `x - 1 < i128::MAX` is `x <= i128::MAX`, although the gap
+        // `i128::MAX - (-1)` alone leaves i128.
+        assert_eq!(
+            comparison_relation(Less, X, ZERO, -1, i128::MAX),
+            Some(Relation::Bound {
+                left: X,
+                right: ZERO,
+                bound: i128::MAX,
+            })
+        );
+        // `x < i128::MIN` needs the bound i128::MIN - 1; [MSR-5] rejects
+        // such a written clause where it is formed.
+        assert_eq!(comparison_relation(Less, X, ZERO, 0, i128::MIN), None);
     }
 }

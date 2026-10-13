@@ -1951,3 +1951,41 @@ fn main() -> status: std::process::ExitStatus pure {
 // an owned value, and [REF-3]'s `EscapingReference` is the successor refusal
 // for a body that tries to return a reference, kept as the conformance case
 // `ref3-neg-returned-reference`.
+
+/// One requirement over `x` whose relation the test supplies, with a body
+/// whose addition the requirement alone proves.
+const BOUND_PROGRAM: &str = r#"fn bump(x: i64) -> result: i64 pure contract {
+  requires RELATION;
+} {
+  let y = x + 1_i64;
+  return y;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+
+/// A side that folds to exactly -2^127 through steps that each fit i128.
+const FOLDED_MINIMUM: &str = "-9223372036854775808_i64 * 9223372036854775807_i64 + -9223372036854775808_i64 * 9223372036854775807_i64 + -9223372036854775808_i64 + -9223372036854775808_i64";
+
+/// [MSR-5] `x < m` at m = -2^127 needs the bound -2^127 - 1, so the clause
+/// is rejected at its own `clause_expr` rather than dropped, which left the
+/// body's addition unproved under [OP-2]; `x <= m` keeps the bound -2^127,
+/// which fits, contradicts x's type and proves the body.
+#[test]
+fn clause_formation_rejects_at_the_clause_outside_i128() {
+    let strict = format!("x < {FOLDED_MINIMUM}");
+    assert_behavior_site(
+        &BOUND_PROGRAM.replace("RELATION", &strict),
+        SemanticRule::Msr5,
+        &strict,
+    );
+    let at_most = BOUND_PROGRAM.replace("RELATION", &format!("x <= {FOLDED_MINIMUM}"));
+    with_semantics(at_most.as_bytes(), |outcome| {
+        assert!(
+            matches!(outcome, SemanticOutcome::Complete(_)),
+            "{outcome:?}"
+        );
+    });
+}
