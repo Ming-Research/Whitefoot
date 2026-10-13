@@ -143,3 +143,5 @@ branch is ready, together with its three temporary rows in
 initial operational ceilings, not budgets derived from twenty CPU-class
 runs. The witness and protocol remain the reproducible inputs to the retained
 CI evidence.
+
+[`control.c`](control.c) is a C control compiled with `clang -O2 -g0` and sampled in the same job with the same three modes and event: if it shows a similar missing fraction under `cpu-clock:u`, the residual hot-leaf samples without ancestors are a sampling artifact of this host, not a Whitefoot unwind defect; if it reaches about 100%, the residual is Whitefoot-specific.

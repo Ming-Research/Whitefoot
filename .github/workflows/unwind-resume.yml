@@ -100,7 +100,9 @@ jobs:
             compiler/target/gate/whitefootc --emit-llvm research/experiments/unwind-resume/witness.wf -o "$UNWIND_EVIDENCE/raw.ll"
           ' > "$UNWIND_EVIDENCE/compile.log" 2>&1
           cat "$UNWIND_EVIDENCE/compile.log"
-          sha256sum "$UNWIND_EVIDENCE/witness" "$UNWIND_EVIDENCE/raw.ll" >> "$UNWIND_EVIDENCE/inputs.sha256"
+          /usr/bin/clang -O2 -g0 research/experiments/unwind-resume/control.c -o "$UNWIND_EVIDENCE/control"
+          cp research/experiments/unwind-resume/control.c "$UNWIND_EVIDENCE/"
+          sha256sum "$UNWIND_EVIDENCE/witness" "$UNWIND_EVIDENCE/raw.ll" "$UNWIND_EVIDENCE/control" "$UNWIND_EVIDENCE/control.c" >> "$UNWIND_EVIDENCE/inputs.sha256"
 
       - name: Inspect frames, calibrate a small sample, and compare call graphs
         shell: bash
@@ -294,6 +296,66 @@ jobs:
               rows.append(row)
               (root / 'counts.json').write_text(json.dumps(rows, indent=2) + '\n')
 
+          # C control: same perf modes and event on clang -O2 output with
+          # default unwind tables and frame-pointer omission.
+          control_binary = str(root / 'control')
+          def control_trial(batches, label):
+              started = time.monotonic()
+              with (root / f'{label}.stdout').open('w') as out, (root / f'{label}.stderr').open('w') as err:
+                  result = subprocess.run([control_binary] + ['batch'] * batches, stdout=out, stderr=err, timeout=20)
+              elapsed = time.monotonic() - started
+              if result.returncode:
+                  raise RuntimeError(f'{label}: control exit {result.returncode}')
+              return elapsed
+          control_duration = control_trial(16, 'control-sample-16')
+          control_batches = max(1, min(5000, math.ceil(16 * 3.5 / max(control_duration, 0.001))))
+          control_duration = control_trial(control_batches, 'control-selected')
+          control_argv = [control_binary] + ['batch'] * control_batches
+          (root / 'control-invocation.json').write_text(json.dumps({'argv': control_argv,
+              'unprofiled_seconds': control_duration}, indent=2) + '\n')
+
+          def control_counts(script):
+              counts = dict(hot=0, caller_loop=0, main=0)
+              for sample in re.split(r'\n\s*\n', script):
+                  stack = []
+                  for line in sample.splitlines():
+                      match = re.match(r'^\s+([0-9a-fA-F]+)\s+(\S+)', line)
+                      if match:
+                          stack.append(clean_symbol(match[2]))
+                  if not stack or stack[0] != 'hot_leaf':
+                      continue
+                  counts['hot'] += 1
+                  counts['caller_loop'] += 'caller_loop' in stack
+                  counts['main'] += 'main' in stack
+              return counts
+          probe = control_counts("s:\n\t10 hot_leaf+0x1 (control)\n\t20 caller_loop (control)\n\t30 main (control)\n\n"
+                                 "s:\n\t10 hot_leaf (control)\n\n s:\n\t10 other (control)\n\t20 hot_leaf (control)\n")
+          if probe != dict(hot=2, caller_loop=1, main=1):
+              raise RuntimeError(f'Control parser probe failed: {probe}')
+
+          control_rows = []
+          for mode, graph in profiles:
+              started = time.monotonic()
+              with (root / f'control-{mode}.stdout').open('w') as out, (root / f'control-{mode}.stderr').open('w') as err:
+                  result = subprocess.run([perf, 'record', '-e', 'cpu-clock:u', '-F', '499', '--call-graph', graph,
+                                           '-o', str(root / f'control-{mode}.data'), '--'] + control_argv,
+                                          stdout=out, stderr=err, timeout=20)
+              elapsed = time.monotonic() - started
+              if result.returncode:
+                  raise RuntimeError(f'control {mode}: perf record exit {result.returncode}; see stderr')
+              script = capture(f'control-{mode}.script', [perf, 'script', '--no-demangle', '-i', str(root / f'control-{mode}.data')])
+              control_rows.append(dict(mode=mode, seconds=elapsed, counts=control_counts(script)))
+              (root / 'control-counts.json').write_text(json.dumps(control_rows, indent=2) + '\n')
+          control_table = ['C control (clang -O2)',
+                           'mode | hot samples | caller_loop | main | seconds',
+                           '--- | ---: | ---: | ---: | ---:']
+          for row in control_rows:
+              counts = row['counts']
+              hot = counts['hot']
+              cells = [f'{counts[c]}/{hot} ({counts[c] / hot:.1%})' if hot else 'inconclusive (0 hot samples)' for c in ('caller_loop', 'main')]
+              control_table.append(f"{row['mode']} | {hot} | " + ' | '.join(cells) + f" | {row['seconds']:.3f}")
+          control_table.extend(['', 'Same event (cpu-clock:u, 499 Hz), modes and host as the Whitefoot table; only samples whose first IP is hot_leaf count.'])
+
           columns = ['ordinary', 'resume', 'native_main', 'wf_main_resume', 'wf_main_body', 'floor_entry', 'thread_start', 'beyond_resume']
           table = ['mode | hot samples | ' + ' | '.join(columns) + ' | seconds / exit',
                    '--- | ---: | ' + ' | '.join(['---:'] * len(columns)) + ' | ---']
@@ -306,6 +368,7 @@ jobs:
                         'it runs on another thread, so absence is expected rather than an unwind failure.',
                         'wf_main_resume is a logical caller and may be absent after suspension; floor/thread entries are physical ancestors.',
                         'Lost/drop warnings are retained in counts.json and complete per-mode stderr; inspect them before interpreting ratios.'])
+          table.extend([''] + control_table)
           (root / 'table.md').write_text('\n'.join(table) + '\n')
           print((root / 'table.md').read_text(), flush=True)
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as output:
