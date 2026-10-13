@@ -1,4 +1,4 @@
-# Kernel Specification v0.148
+# Kernel Specification v0.149
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -799,7 +799,7 @@ An own-place `match` [OWN-13] is the enum form of the same destructuring.
 
 The release graph of a type `T` has as its nodes the types reachable from `T` through the parts each node owns: its owned fields, enum variant payloads, `Box` content, and the elements of every storage shape [TYPE-9].
 A runtime-capacity `Array<T>`, `Slots<T>`, or `Ring<T>`, a `Segments<T>`, and a `Paged<T>`, is reached in that graph only as the content of its `Box` [TYPE-9], so the `Box` is the leaf every owner's edge lands on and no such shape is ever a node of an owner other than its own cell.
-A type's release action is non-empty by the least fixed point of two clauses: a `Box` or `Paged` [TYPE-9], a `Shared<T>`, `SharedRead<T>` or `Frozen<T>` handle [SHARE-1], or a `DecisionCell` handle [PRE-1], is non-empty, and any type owning a non-empty type is non-empty [STOR-3].
+A type's release action is non-empty by the least fixed point of these clauses: a `Box` or `Paged` [TYPE-9], a `Shared<T>`, `SharedRead<T>` or `Frozen<T>` handle, a `ConcurrentHashMap<V>` or `KeySet` [SHARE-1], or a `DecisionCell` handle [PRE-1], is non-empty; a struct or enum owning a non-empty field or variant payload is non-empty; and a storage shape with a non-empty element type is non-empty when its type has no constant extent or that extent is not statically zero. A symbolic type parameter is non-empty exactly when its written capability bound [FN-2] does not grant `copy`. These action clauses do not change the type-level ownership or linearity judgment above: a zero constant extent executes no element release but still owns its element type.
 The graph has an edge from a node to a sub-node exactly when that sub-node's release action is non-empty.
 One walk performs the compiler-derived release, and it visits exactly the nodes of that graph in [STOR-3]'s order — every owned field of a struct in declaration order, an enum's active variant's payload selected by the discriminant, a cell's content before the cell itself, every element of an `Array` and every slot of a window [WIN-1] in ascending logical index order — freeing each `Box` cell after its content [STOR-8] and running each other non-empty node's release action.
 A field, payload, or element whose release action is empty is never visited, and a container's elements are visited before its backing is released, so a release of a full container needs no emptiness premise.
@@ -886,10 +886,12 @@ A `Slots` or `Ring` release is each element's compiler-derived release over its 
 A `Paged` release visits its initialized elements in [PROV-6]'s order and frees each allocated page; the containing cell, including its directory, is freed by the `Box` action above.
 A `Shared<T>`, `SharedRead<T>` or `Frozen<T>` release is [SHARE-1]'s handle release.
 A `DecisionCell` release is [PRE-1]'s handle release.
+A `KeySet` release returns the storage the runtime holds for that set [SHARE-1].
+A `ConcurrentHashMap<V>` release releases every value its entries hold [SHARE-1], then returns the storage the runtime holds for that map.
 A `const` item [CONST-2] is never released.
 Every other frame-resident owned value [STOR-1] has no release action of its own.
 
-A host handle [PRE-2] has no fields, so its release is empty; a shared or frozen handle takes [SHARE-1]'s handle release; a decision-cell handle takes [PRE-1]'s handle release; and every other opaque struct [TYPE-2] takes the release of the fields it owns [PROV-6] under this rule, the storage shapes and `Box` taking the actions above.
+A host handle [PRE-2] has no fields, so its release is empty. An opaque type with a per-type action above takes that action; every other opaque struct [TYPE-2] takes the release of the fields it owns [PROV-6] under this rule.
 An opaque struct's `nodrop` modifier, and only the ordinary ownership closure of [PROV-6], requires explicit consumption.
 No source declaration, annotation, attribute, contract, or binding attaches a finalizer or any other user-defined action to a value's release.
 
@@ -2315,7 +2317,7 @@ A value of the prelude type `Frozen<T>` [PRE-1] is a handle to a frozen object, 
 A type argument for `T` has no part, at any depth of field, payload field, element or `Box` content, that is a `Shared<U>`, a `SharedRead<U>`, a `DecisionCell` [PRE-1] or a host handle [PRE-2], so nothing a frozen object holds changes; a type argument with such a part is a hard error citing SHARE-1 at that `targ`, with a repair naming the first such part a depth-first walk of the type's parts in declaration order reaches, the walk visiting each type once [DIAG-1].
 A path that ends at or passes through `inner` is a readonly path [TYPE-2] and is never moved or consumed [OWN-1], a `move` or consuming use of one being a hard error citing SHARE-1 at the `place`, with a repair [DIAG-1]; reading it reads the frozen object's value, which is storage of no binding and belongs to no context [WAIT-2], needs no atomic statement, and is admitted wherever a read of the handle is, an atomic statement's guard and block included.
 Releasing a handle releases that handle, and the object's value is released when its last handle has been released [STOR-3].
-A value of the prelude type `ConcurrentHashMap<V>` is a concurrent hash map, which holds for each sequence of bytes, its key, an entry of type `Option<V>`: `Some` with the value the map holds under that key, or `None`. A map is only ever the state of a shared object [TYPE-9]. Releasing a map releases every value its entries hold.
+A value of the prelude type `ConcurrentHashMap<V>` is a concurrent hash map, which holds for each sequence of bytes, its key, an entry of type `Option<V>`: `Some` with the value the map holds under that key, or `None`. A map is only ever the state of a shared object [TYPE-9]. Its release is [STOR-3]'s map action.
 `map_count` returns how many entries of the map its argument names are `Some`.
 Each execution gives every sequence of bytes a position, a `u64`, the same in every map; which position each sequence has is an input of the execution [WAIT-2].
 `map_scan` with cursor `c` takes an extent `e`, an integer greater than `c` and at most two to the 64th, which is an input of the execution and which an implementation may choose by `count`; `count` states nothing else. It inserts into its key set, as `key_set_insert` does, each key whose entry in the map is `Some` and whose position `p` satisfies `c <= p < e`, in increasing order of position and, among keys of one position, in lexicographic order of their bytes as unsigned values with a proper prefix first; it returns `e` modulo two to the 64th, so `0` exactly when `e` is two to the 64th.
