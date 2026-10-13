@@ -1,0 +1,67 @@
+	.file	"placed-granules.ll"
+	.text
+	.globl	accessor                        # -- Begin function accessor
+	.p2align	4
+	.type	accessor,@function
+accessor:                               # @accessor
+# %bb.0:                                # %entry
+	vmovups	16(%rsi), %ymm0
+	vmovups	48(%rsi), %xmm1
+	vmovups	%ymm0, (%rdi)
+	vmovups	%xmm1, 32(%rdi)
+	vzeroupper
+	retq
+.Lfunc_end0:
+	.size	accessor, .Lfunc_end0-accessor
+                                        # -- End function
+	.globl	caller_partial                  # -- Begin function caller_partial
+	.p2align	4
+	.type	caller_partial,@function
+caller_partial:                         # @caller_partial
+# %bb.0:                                # %entry
+	xorl	%eax, %eax
+	testb	$1, %dl
+	jne	.LBB1_1
+# %bb.2:                                # %common.ret
+	retq
+.LBB1_1:                                # %rare
+	pushq	%rbx
+	movq	%rdi, %rbx
+	callq	accessor@PLT
+	movl	(%rbx), %eax
+	popq	%rbx
+	retq
+.Lfunc_end1:
+	.size	caller_partial, .Lfunc_end1-caller_partial
+                                        # -- End function
+	.globl	caller_full                     # -- Begin function caller_full
+	.p2align	4
+	.type	caller_full,@function
+caller_full:                            # @caller_full
+# %bb.0:                                # %entry
+	testb	$1, %cl
+	jne	.LBB2_1
+# %bb.2:                                # %common.ret
+	retq
+.LBB2_1:                                # %rare
+	pushq	%r14
+	pushq	%rbx
+	pushq	%rax
+	movq	%rdi, %rbx
+	movq	%rsi, %rdi
+	movq	%rsi, %r14
+	movq	%rdx, %rsi
+	callq	accessor@PLT
+	vmovups	(%r14), %ymm0
+	vmovups	32(%r14), %xmm1
+	vmovups	%ymm0, (%rbx)
+	vmovups	%xmm1, 32(%rbx)
+	addq	$8, %rsp
+	popq	%rbx
+	popq	%r14
+	vzeroupper
+	retq
+.Lfunc_end2:
+	.size	caller_full, .Lfunc_end2-caller_full
+                                        # -- End function
+	.section	".note.GNU-stack","",@progbits

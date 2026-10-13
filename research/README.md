@@ -90,6 +90,11 @@ the work-branch and merge boundary.
 - [Window growth under parallel workers](investigations/grow-allocator-contention/DESIGN.md):
   why `realloc` growth serialized Snowghost's four workers on glibc's arena
   lock, the copy-below-a-size proposal and its rejection criteria.
+- [Call results read at their source](investigations/result-source/DESIGN.md):
+  a compiler-private second entry that returns the address of a by-value
+  result's source so callers read fields in place, its fragment-build and
+  soundness conditions, and the criteria fixed before measuring it on
+  Snowghost's edit cells.
 - [Readable diagnostics](investigations/readable-diagnostics/DESIGN.md): the
   labeled record every compiler stop prints, its text and JSON renderings,
   and the rejected rendering paths.

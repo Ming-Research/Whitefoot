@@ -1,0 +1,12 @@
+case	accessor_static	partial_static	full_static	partial_taken	full_taken
+direct-granules	6	6	9	5	8
+direct-masked	43	49	53	48	52
+direct-memcpy-tbaa	6	6	9	5	8
+direct-read-through	2	6	9	5	8
+granules	11	12	18	22	28
+masked	48	52	60	51	59
+memcpy-tbaa	11	9	14	8	13
+mixed-direct-granules	25	6	28	5	27
+mixed-granules	30	12	36	41	65
+placed-granules	6	10	20	15	25
+read-through	5	9	14	8	13

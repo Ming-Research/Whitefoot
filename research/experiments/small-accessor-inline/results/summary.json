@@ -1,0 +1,925 @@
+{
+  "versions": {
+    "opt": "Homebrew LLVM version 22.1.8\n  Optimized build.\n  Default target: arm64-apple-darwin27.0.0\n  Host CPU: apple-m4\n",
+    "llc": "Homebrew LLVM version 22.1.8\n  Optimized build.\n  Default target: arm64-apple-darwin27.0.0\n  Host CPU: apple-m4\n\n  Registered Targets:\n    aarch64     - AArch64 (little endian)\n    aarch64_32  - AArch64 (little endian ILP32)\n    aarch64_be  - AArch64 (big endian)\n    amdgcn      - AMD GCN GPUs\n    arm         - ARM\n    arm64       - ARM64 (little endian)\n    arm64_32    - ARM64 (little endian ILP32)\n    armeb       - ARM (big endian)\n    avr         - Atmel AVR Microcontroller\n    bpf         - BPF (host endian)\n    bpfeb       - BPF (big endian)\n    bpfel       - BPF (little endian)\n    hexagon     - Hexagon\n    lanai       - Lanai\n    loongarch32 - 32-bit LoongArch\n    loongarch64 - 64-bit LoongArch\n    mips        - MIPS (32-bit big endian)\n    mips64      - MIPS (64-bit big endian)\n    mips64el    - MIPS (64-bit little endian)\n    mipsel      - MIPS (32-bit little endian)\n    msp430      - MSP430 [experimental]\n    nvptx       - NVIDIA PTX 32-bit\n    nvptx64     - NVIDIA PTX 64-bit\n    ppc32       - PowerPC 32\n    ppc32le     - PowerPC 32 LE\n    ppc64       - PowerPC 64\n    ppc64le     - PowerPC 64 LE\n    r600        - AMD GPUs HD2XXX-HD6XXX\n    riscv32     - 32-bit RISC-V\n    riscv32be   - 32-bit big endian RISC-V\n    riscv64     - 64-bit RISC-V\n    riscv64be   - 64-bit big endian RISC-V\n    sparc       - Sparc\n    sparcel     - Sparc LE\n    sparcv9     - Sparc V9\n    spirv       - SPIR-V Logical\n    spirv32     - SPIR-V 32-bit\n    spirv64     - SPIR-V 64-bit\n    systemz     - SystemZ\n    thumb       - Thumb\n    thumbeb     - Thumb (big endian)\n    ve          - VE\n    wasm32      - WebAssembly 32-bit\n    wasm64      - WebAssembly 64-bit\n    x86         - 32-bit X86: Pentium-Pro and above\n    x86-64      - 64-bit X86: EM64T and AMD64\n    xcore       - XCore\n"
+  },
+  "target": "x86_64-unknown-linux-gnu",
+  "cpu": "alderlake",
+  "cases": {
+    "direct-granules": {
+      "inline_remarks": [
+        "remark: <unknown>:0:0: 'accessor' inlined into 'caller_partial' with (cost=20, threshold=45)",
+        "remark: <unknown>:0:0: 'accessor' inlined into 'caller_full' with (cost=20, threshold=45)"
+      ],
+      "functions": {
+        "accessor": {
+          "static_instructions": 6,
+          "instructions": [
+            "vmovups\t16(%rsi), %ymm0",
+            "vmovups\t48(%rsi), %xmm1",
+            "vmovups\t%ymm0, (%rdi)",
+            "vmovups\t%xmm1, 32(%rdi)",
+            "vzeroupper",
+            "retq"
+          ]
+        },
+        "caller_partial": {
+          "static_instructions": 6,
+          "instructions": [
+            "xorl\t%eax, %eax",
+            "testb\t$1, %sil",
+            "jne\t.LBB1_1",
+            "retq",
+            "movl\t16(%rdi), %eax",
+            "retq"
+          ],
+          "taken_path_instructions_including_accessor": 5
+        },
+        "caller_full": {
+          "static_instructions": 9,
+          "instructions": [
+            "testb\t$1, %dl",
+            "jne\t.LBB2_1",
+            "retq",
+            "vmovups\t16(%rsi), %ymm0",
+            "vmovups\t48(%rsi), %xmm1",
+            "vmovups\t%ymm0, (%rdi)",
+            "vmovups\t%xmm1, 32(%rdi)",
+            "vzeroupper",
+            "retq"
+          ],
+          "taken_path_instructions_including_accessor": 8
+        }
+      }
+    },
+    "direct-masked": {
+      "inline_remarks": [
+        "remark: <unknown>:0:0: 'accessor' inlined into 'caller_partial' with (cost=-30, threshold=45)",
+        "remark: <unknown>:0:0: 'accessor' inlined into 'caller_full' with (cost=-30, threshold=45)"
+      ],
+      "functions": {
+        "accessor": {
+          "static_instructions": 43,
+          "instructions": [
+            "vmovdqa\t.LCPI0_0(%rip), %ymm1",
+            "vbroadcasti128\t.LCPI0_6(%rip), %ymm2",
+            "vpxor\t%xmm0, %xmm0, %xmm0",
+            "vpgatherdd\t%ymm1, 16(%rsi,%ymm2), %ymm0",
+            "vpxor\t%xmm1, %xmm1, %xmm1",
+            "vpcmpeqd\t%ymm2, %ymm2, %ymm2",
+            "vmovdqa\t.LCPI0_2(%rip), %ymm3",
+            "vpgatherdd\t%ymm2, 16(%rsi,%ymm3), %ymm1",
+            "vmovq\t%rdi, %xmm2",
+            "vpbroadcastq\t%xmm2, %ymm2",
+            "vpaddq\t.LCPI0_3(%rip), %ymm2, %ymm3",
+            "vpaddq\t.LCPI0_5(%rip), %ymm2, %ymm4",
+            "vmovq\t%xmm4, %rax",
+            "vmovd\t%xmm1, (%rax)",
+            "vpextrq\t$1, %xmm4, %rax",
+            "vpextrd\t$1, %xmm1, (%rax)",
+            "vextracti128\t$1, %ymm4, %xmm4",
+            "vmovq\t%xmm4, %rax",
+            "vpextrd\t$2, %xmm1, (%rax)",
+            "vpextrq\t$1, %xmm4, %rax",
+            "vpextrd\t$3, %xmm1, (%rax)",
+            "vpaddq\t.LCPI0_4(%rip), %ymm2, %ymm2",
+            "vextracti128\t$1, %ymm1, %xmm1",
+            "vmovq\t%xmm2, %rax",
+            "vmovd\t%xmm1, (%rax)",
+            "vpextrq\t$1, %xmm2, %rax",
+            "vpextrd\t$1, %xmm1, (%rax)",
+            "vextracti128\t$1, %ymm2, %xmm2",
+            "vmovq\t%xmm2, %rax",
+            "vpextrd\t$2, %xmm1, (%rax)",
+            "vpextrq\t$1, %xmm2, %rax",
+            "vpextrd\t$3, %xmm1, (%rax)",
+            "vmovq\t%xmm3, %rax",
+            "vmovd\t%xmm0, (%rax)",
+            "vpextrq\t$1, %xmm3, %rax",
+            "vpextrd\t$1, %xmm0, (%rax)",
+            "vextracti128\t$1, %ymm3, %xmm1",
+            "vmovq\t%xmm1, %rax",
+            "vpextrd\t$2, %xmm0, (%rax)",
+            "vpextrq\t$1, %xmm1, %rax",
+            "vpextrd\t$3, %xmm0, (%rax)",
+            "vzeroupper",
+            "retq"
+          ]
+        },
+        "caller_partial": {
+          "static_instructions": 49,
+          "instructions": [
+            "xorl\t%eax, %eax",
+            "testb\t$1, %sil",
+            "jne\t.LBB1_1",
+            "retq",
+            "vmovdqa\t.LCPI1_0(%rip), %ymm1",
+            "vbroadcasti128\t.LCPI1_6(%rip), %ymm2",
+            "vpxor\t%xmm0, %xmm0, %xmm0",
+            "vpgatherdd\t%ymm1, 16(%rdi,%ymm2), %ymm0",
+            "vpxor\t%xmm1, %xmm1, %xmm1",
+            "vpcmpeqd\t%ymm2, %ymm2, %ymm2",
+            "vmovdqa\t.LCPI1_2(%rip), %ymm3",
+            "vpgatherdd\t%ymm2, 16(%rdi,%ymm3), %ymm1",
+            "leaq\t-48(%rsp), %rax",
+            "vmovq\t%rax, %xmm2",
+            "vpbroadcastq\t%xmm2, %ymm2",
+            "vpaddq\t.LCPI1_3(%rip), %ymm2, %ymm3",
+            "vpaddq\t.LCPI1_5(%rip), %ymm2, %ymm4",
+            "vmovq\t%xmm4, %rax",
+            "vmovd\t%xmm1, (%rax)",
+            "vpextrq\t$1, %xmm4, %rax",
+            "vpextrd\t$1, %xmm1, (%rax)",
+            "vextracti128\t$1, %ymm4, %xmm4",
+            "vmovq\t%xmm4, %rax",
+            "vpextrd\t$2, %xmm1, (%rax)",
+            "vpextrq\t$1, %xmm4, %rax",
+            "vpextrd\t$3, %xmm1, (%rax)",
+            "vpaddq\t.LCPI1_4(%rip), %ymm2, %ymm2",
+            "vextracti128\t$1, %ymm1, %xmm1",
+            "vmovq\t%xmm2, %rax",
+            "vmovd\t%xmm1, (%rax)",
+            "vpextrq\t$1, %xmm2, %rax",
+            "vpextrd\t$1, %xmm1, (%rax)",
+            "vextracti128\t$1, %ymm2, %xmm2",
+            "vmovq\t%xmm2, %rax",
+            "vpextrd\t$2, %xmm1, (%rax)",
+            "vpextrq\t$1, %xmm2, %rax",
+            "vpextrd\t$3, %xmm1, (%rax)",
+            "vmovq\t%xmm3, %rax",
+            "vmovd\t%xmm0, (%rax)",
+            "vpextrq\t$1, %xmm3, %rax",
+            "vpextrd\t$1, %xmm0, (%rax)",
+            "vextracti128\t$1, %ymm3, %xmm1",
+            "vmovq\t%xmm1, %rax",
+            "vpextrd\t$2, %xmm0, (%rax)",
+            "vpextrq\t$1, %xmm1, %rax",
+            "vpextrd\t$3, %xmm0, (%rax)",
+            "movl\t-48(%rsp), %eax",
+            "vzeroupper",
+            "retq"
+          ],
+          "taken_path_instructions_including_accessor": 48
+        },
+        "caller_full": {
+          "static_instructions": 53,
+          "instructions": [
+            "testb\t$1, %dl",
+            "jne\t.LBB2_1",
+            "retq",
+            "vmovdqa\t.LCPI2_0(%rip), %ymm1",
+            "vbroadcasti128\t.LCPI2_6(%rip), %ymm2",
+            "vpxor\t%xmm0, %xmm0, %xmm0",
+            "vpgatherdd\t%ymm1, 16(%rsi,%ymm2), %ymm0",
+            "vpxor\t%xmm1, %xmm1, %xmm1",
+            "vpcmpeqd\t%ymm2, %ymm2, %ymm2",
+            "vmovdqa\t.LCPI2_2(%rip), %ymm3",
+            "vpgatherdd\t%ymm2, 16(%rsi,%ymm3), %ymm1",
+            "leaq\t-56(%rsp), %rax",
+            "vmovq\t%rax, %xmm2",
+            "vpbroadcastq\t%xmm2, %ymm2",
+            "vpaddq\t.LCPI2_3(%rip), %ymm2, %ymm3",
+            "vpor\t.LCPI2_5(%rip), %ymm2, %ymm4",
+            "vmovq\t%xmm4, %rax",
+            "vmovd\t%xmm1, (%rax)",
+            "vpextrq\t$1, %xmm4, %rax",
+            "vpextrd\t$1, %xmm1, (%rax)",
+            "vextracti128\t$1, %ymm4, %xmm4",
+            "vmovq\t%xmm4, %rax",
+            "vpextrd\t$2, %xmm1, (%rax)",
+            "vpextrq\t$1, %xmm4, %rax",
+            "vpextrd\t$3, %xmm1, (%rax)",
+            "vpaddq\t.LCPI2_4(%rip), %ymm2, %ymm2",
+            "vextracti128\t$1, %ymm1, %xmm1",
+            "vmovq\t%xmm2, %rax",
+            "vmovd\t%xmm1, (%rax)",
+            "vpextrq\t$1, %xmm2, %rax",
+            "vpextrd\t$1, %xmm1, (%rax)",
+            "vextracti128\t$1, %ymm2, %xmm2",
+            "vmovq\t%xmm2, %rax",
+            "vpextrd\t$2, %xmm1, (%rax)",
+            "vpextrq\t$1, %xmm2, %rax",
+            "vpextrd\t$3, %xmm1, (%rax)",
+            "vmovq\t%xmm3, %rax",
+            "vmovd\t%xmm0, (%rax)",
+            "vpextrq\t$1, %xmm3, %rax",
+            "vpextrd\t$1, %xmm0, (%rax)",
+            "vextracti128\t$1, %ymm3, %xmm1",
+            "vmovq\t%xmm1, %rax",
+            "vpextrd\t$2, %xmm0, (%rax)",
+            "vpextrq\t$1, %xmm1, %rax",
+            "vpextrd\t$3, %xmm0, (%rax)",
+            "vmovaps\t-56(%rsp), %xmm0",
+            "vmovups\t%xmm0, (%rdi)",
+            "vmovaps\t-40(%rsp), %xmm0",
+            "vmovups\t%xmm0, 16(%rdi)",
+            "vmovaps\t-24(%rsp), %xmm0",
+            "vmovups\t%xmm0, 32(%rdi)",
+            "vzeroupper",
+            "retq"
+          ],
+          "taken_path_instructions_including_accessor": 52
+        }
+      }
+    },
+    "direct-memcpy-tbaa": {
+      "inline_remarks": [
+        "remark: <unknown>:0:0: 'accessor' inlined into 'caller_partial' with (cost=-35, threshold=45)",
+        "remark: <unknown>:0:0: 'accessor' inlined into 'caller_full' with (cost=-35, threshold=45)"
+      ],
+      "functions": {
+        "accessor": {
+          "static_instructions": 6,
+          "instructions": [
+            "vmovups\t16(%rsi), %ymm0",
+            "vmovups\t32(%rsi), %ymm1",
+            "vmovups\t%ymm1, 16(%rdi)",
+            "vmovups\t%ymm0, (%rdi)",
+            "vzeroupper",
+            "retq"
+          ]
+        },
+        "caller_partial": {
+          "static_instructions": 6,
+          "instructions": [
+            "xorl\t%eax, %eax",
+            "testb\t$1, %sil",
+            "jne\t.LBB1_1",
+            "retq",
+            "movl\t16(%rdi), %eax",
+            "retq"
+          ],
+          "taken_path_instructions_including_accessor": 5
+        },
+        "caller_full": {
+          "static_instructions": 9,
+          "instructions": [
+            "testb\t$1, %dl",
+            "jne\t.LBB2_1",
+            "retq",
+            "vmovups\t16(%rsi), %ymm0",
+            "vmovups\t48(%rsi), %xmm1",
+            "vmovups\t%ymm0, (%rdi)",
+            "vmovups\t%xmm1, 32(%rdi)",
+            "vzeroupper",
+            "retq"
+          ],
+          "taken_path_instructions_including_accessor": 8
+        }
+      }
+    },
+    "direct-read-through": {
+      "inline_remarks": [
+        "remark: <unknown>:0:0: 'accessor' inlined into 'caller_partial' with (cost=-35, threshold=45)",
+        "remark: <unknown>:0:0: 'accessor' inlined into 'caller_full' with (cost=-35, threshold=45)"
+      ],
+      "functions": {
+        "accessor": {
+          "static_instructions": 2,
+          "instructions": [
+            "leaq\t16(%rdi), %rax",
+            "retq"
+          ]
+        },
+        "caller_partial": {
+          "static_instructions": 6,
+          "instructions": [
+            "xorl\t%eax, %eax",
+            "testb\t$1, %sil",
+            "jne\t.LBB1_1",
+            "retq",
+            "movl\t16(%rdi), %eax",
+            "retq"
+          ],
+          "taken_path_instructions_including_accessor": 5
+        },
+        "caller_full": {
+          "static_instructions": 9,
+          "instructions": [
+            "testb\t$1, %dl",
+            "jne\t.LBB2_1",
+            "retq",
+            "vmovups\t16(%rsi), %ymm0",
+            "vmovups\t48(%rsi), %xmm1",
+            "vmovups\t%ymm0, (%rdi)",
+            "vmovups\t%xmm1, 32(%rdi)",
+            "vzeroupper",
+            "retq"
+          ],
+          "taken_path_instructions_including_accessor": 8
+        }
+      }
+    },
+    "granules": {
+      "inline_remarks": [
+        "remark: <unknown>:0:0: 'accessor' not inlined into 'caller_partial' because too costly to inline (cost=55, threshold=45)",
+        "remark: <unknown>:0:0: 'accessor' not inlined into 'caller_full' because too costly to inline (cost=55, threshold=45)"
+      ],
+      "functions": {
+        "accessor": {
+          "static_instructions": 11,
+          "instructions": [
+            "pushq\t%rbx",
+            "movq\t%rdi, %rbx",
+            "movq\t%rsi, %rdi",
+            "callq\tresolve_source@PLT",
+            "vmovups\t16(%rax), %ymm0",
+            "vmovups\t48(%rax), %xmm1",
+            "vmovups\t%ymm0, (%rbx)",
+            "vmovups\t%xmm1, 32(%rbx)",
+            "popq\t%rbx",
+            "vzeroupper",
+            "retq"
+          ]
+        },
+        "caller_partial": {
+          "static_instructions": 12,
+          "instructions": [
+            "xorl\t%eax, %eax",
+            "testb\t$1, %sil",
+            "jne\t.LBB1_1",
+            "retq",
+            "subq\t$56, %rsp",
+            "leaq\t8(%rsp), %rax",
+            "movq\t%rdi, %rsi",
+            "movq\t%rax, %rdi",
+            "callq\taccessor@PLT",
+            "movl\t8(%rsp), %eax",
+            "addq\t$56, %rsp",
+            "retq"
+          ],
+          "taken_path_instructions_including_accessor": 22
+        },
+        "caller_full": {
+          "static_instructions": 18,
+          "instructions": [
+            "testb\t$1, %dl",
+            "jne\t.LBB2_1",
+            "retq",
+            "pushq\t%rbx",
+            "subq\t$48, %rsp",
+            "movq\t%rsp, %rax",
+            "movq\t%rdi, %rbx",
+            "movq\t%rax, %rdi",
+            "callq\taccessor@PLT",
+            "vmovaps\t(%rsp), %xmm0",
+            "vmovups\t%xmm0, (%rbx)",
+            "vmovaps\t16(%rsp), %xmm0",
+            "vmovups\t%xmm0, 16(%rbx)",
+            "vmovaps\t32(%rsp), %xmm0",
+            "vmovups\t%xmm0, 32(%rbx)",
+            "addq\t$48, %rsp",
+            "popq\t%rbx",
+            "retq"
+          ],
+          "taken_path_instructions_including_accessor": 28
+        }
+      }
+    },
+    "masked": {
+      "inline_remarks": [
+        "remark: <unknown>:0:0: 'accessor' inlined into 'caller_partial' with (cost=5, threshold=45)",
+        "remark: <unknown>:0:0: 'accessor' inlined into 'caller_full' with (cost=5, threshold=45)"
+      ],
+      "functions": {
+        "accessor": {
+          "static_instructions": 48,
+          "instructions": [
+            "pushq\t%rbx",
+            "movq\t%rdi, %rbx",
+            "movq\t%rsi, %rdi",
+            "callq\tresolve_source@PLT",
+            "vmovdqa\t.LCPI0_0(%rip), %ymm1",
+            "vbroadcasti128\t.LCPI0_6(%rip), %ymm2",
+            "vpxor\t%xmm0, %xmm0, %xmm0",
+            "vpgatherdd\t%ymm1, 16(%rax,%ymm2), %ymm0",
+            "vpxor\t%xmm1, %xmm1, %xmm1",
+            "vpcmpeqd\t%ymm2, %ymm2, %ymm2",
+            "vmovdqa\t.LCPI0_2(%rip), %ymm3",
+            "vpgatherdd\t%ymm2, 16(%rax,%ymm3), %ymm1",
+            "vmovq\t%rbx, %xmm2",
+            "vpbroadcastq\t%xmm2, %ymm2",
+            "vpaddq\t.LCPI0_3(%rip), %ymm2, %ymm3",
+            "vpaddq\t.LCPI0_5(%rip), %ymm2, %ymm4",
+            "vmovq\t%xmm4, %rax",
+            "vmovd\t%xmm1, (%rax)",
+            "vpextrq\t$1, %xmm4, %rax",
+            "vpextrd\t$1, %xmm1, (%rax)",
+            "vextracti128\t$1, %ymm4, %xmm4",
+            "vmovq\t%xmm4, %rax",
+            "vpextrd\t$2, %xmm1, (%rax)",
+            "vpextrq\t$1, %xmm4, %rax",
+            "vpextrd\t$3, %xmm1, (%rax)",
+            "vpaddq\t.LCPI0_4(%rip), %ymm2, %ymm2",
+            "vextracti128\t$1, %ymm1, %xmm1",
+            "vmovq\t%xmm2, %rax",
+            "vmovd\t%xmm1, (%rax)",
+            "vpextrq\t$1, %xmm2, %rax",
+            "vpextrd\t$1, %xmm1, (%rax)",
+            "vextracti128\t$1, %ymm2, %xmm2",
+            "vmovq\t%xmm2, %rax",
+            "vpextrd\t$2, %xmm1, (%rax)",
+            "vpextrq\t$1, %xmm2, %rax",
+            "vpextrd\t$3, %xmm1, (%rax)",
+            "vmovq\t%xmm3, %rax",
+            "vmovd\t%xmm0, (%rax)",
+            "vpextrq\t$1, %xmm3, %rax",
+            "vpextrd\t$1, %xmm0, (%rax)",
+            "vextracti128\t$1, %ymm3, %xmm1",
+            "vmovq\t%xmm1, %rax",
+            "vpextrd\t$2, %xmm0, (%rax)",
+            "vpextrq\t$1, %xmm1, %rax",
+            "vpextrd\t$3, %xmm0, (%rax)",
+            "popq\t%rbx",
+            "vzeroupper",
+            "retq"
+          ]
+        },
+        "caller_partial": {
+          "static_instructions": 52,
+          "instructions": [
+            "xorl\t%eax, %eax",
+            "testb\t$1, %sil",
+            "jne\t.LBB1_1",
+            "retq",
+            "subq\t$56, %rsp",
+            "callq\tresolve_source@PLT",
+            "vmovdqa\t.LCPI1_0(%rip), %ymm1",
+            "vbroadcasti128\t.LCPI1_6(%rip), %ymm2",
+            "vpxor\t%xmm0, %xmm0, %xmm0",
+            "vpgatherdd\t%ymm1, 16(%rax,%ymm2), %ymm0",
+            "vpxor\t%xmm1, %xmm1, %xmm1",
+            "vpcmpeqd\t%ymm2, %ymm2, %ymm2",
+            "vmovdqa\t.LCPI1_2(%rip), %ymm3",
+            "vpgatherdd\t%ymm2, 16(%rax,%ymm3), %ymm1",
+            "leaq\t8(%rsp), %rax",
+            "vmovq\t%rax, %xmm2",
+            "vpbroadcastq\t%xmm2, %ymm2",
+            "vpaddq\t.LCPI1_3(%rip), %ymm2, %ymm3",
+            "vpaddq\t.LCPI1_5(%rip), %ymm2, %ymm4",
+            "vmovq\t%xmm4, %rax",
+            "vmovd\t%xmm1, (%rax)",
+            "vpextrq\t$1, %xmm4, %rax",
+            "vpextrd\t$1, %xmm1, (%rax)",
+            "vextracti128\t$1, %ymm4, %xmm4",
+            "vmovq\t%xmm4, %rax",
+            "vpextrd\t$2, %xmm1, (%rax)",
+            "vpextrq\t$1, %xmm4, %rax",
+            "vpextrd\t$3, %xmm1, (%rax)",
+            "vpaddq\t.LCPI1_4(%rip), %ymm2, %ymm2",
+            "vextracti128\t$1, %ymm1, %xmm1",
+            "vmovq\t%xmm2, %rax",
+            "vmovd\t%xmm1, (%rax)",
+            "vpextrq\t$1, %xmm2, %rax",
+            "vpextrd\t$1, %xmm1, (%rax)",
+            "vextracti128\t$1, %ymm2, %xmm2",
+            "vmovq\t%xmm2, %rax",
+            "vpextrd\t$2, %xmm1, (%rax)",
+            "vpextrq\t$1, %xmm2, %rax",
+            "vpextrd\t$3, %xmm1, (%rax)",
+            "vmovq\t%xmm3, %rax",
+            "vmovd\t%xmm0, (%rax)",
+            "vpextrq\t$1, %xmm3, %rax",
+            "vpextrd\t$1, %xmm0, (%rax)",
+            "vextracti128\t$1, %ymm3, %xmm1",
+            "vmovq\t%xmm1, %rax",
+            "vpextrd\t$2, %xmm0, (%rax)",
+            "vpextrq\t$1, %xmm1, %rax",
+            "vpextrd\t$3, %xmm0, (%rax)",
+            "movl\t8(%rsp), %eax",
+            "addq\t$56, %rsp",
+            "vzeroupper",
+            "retq"
+          ],
+          "taken_path_instructions_including_accessor": 51
+        },
+        "caller_full": {
+          "static_instructions": 60,
+          "instructions": [
+            "testb\t$1, %dl",
+            "jne\t.LBB2_1",
+            "retq",
+            "pushq\t%rbx",
+            "subq\t$48, %rsp",
+            "movq\t%rdi, %rbx",
+            "movq\t%rsi, %rdi",
+            "callq\tresolve_source@PLT",
+            "vmovdqa\t.LCPI2_0(%rip), %ymm1",
+            "vbroadcasti128\t.LCPI2_6(%rip), %ymm2",
+            "vpxor\t%xmm0, %xmm0, %xmm0",
+            "vpgatherdd\t%ymm1, 16(%rax,%ymm2), %ymm0",
+            "vpxor\t%xmm1, %xmm1, %xmm1",
+            "vpcmpeqd\t%ymm2, %ymm2, %ymm2",
+            "vmovdqa\t.LCPI2_2(%rip), %ymm3",
+            "vpgatherdd\t%ymm2, 16(%rax,%ymm3), %ymm1",
+            "movq\t%rsp, %rax",
+            "vmovq\t%rax, %xmm2",
+            "vpbroadcastq\t%xmm2, %ymm2",
+            "vpaddq\t.LCPI2_3(%rip), %ymm2, %ymm3",
+            "vpor\t.LCPI2_5(%rip), %ymm2, %ymm4",
+            "vmovq\t%xmm4, %rax",
+            "vmovd\t%xmm1, (%rax)",
+            "vpextrq\t$1, %xmm4, %rax",
+            "vpextrd\t$1, %xmm1, (%rax)",
+            "vextracti128\t$1, %ymm4, %xmm4",
+            "vmovq\t%xmm4, %rax",
+            "vpextrd\t$2, %xmm1, (%rax)",
+            "vpextrq\t$1, %xmm4, %rax",
+            "vpextrd\t$3, %xmm1, (%rax)",
+            "vpaddq\t.LCPI2_4(%rip), %ymm2, %ymm2",
+            "vextracti128\t$1, %ymm1, %xmm1",
+            "vmovq\t%xmm2, %rax",
+            "vmovd\t%xmm1, (%rax)",
+            "vpextrq\t$1, %xmm2, %rax",
+            "vpextrd\t$1, %xmm1, (%rax)",
+            "vextracti128\t$1, %ymm2, %xmm2",
+            "vmovq\t%xmm2, %rax",
+            "vpextrd\t$2, %xmm1, (%rax)",
+            "vpextrq\t$1, %xmm2, %rax",
+            "vpextrd\t$3, %xmm1, (%rax)",
+            "vmovq\t%xmm3, %rax",
+            "vmovd\t%xmm0, (%rax)",
+            "vpextrq\t$1, %xmm3, %rax",
+            "vpextrd\t$1, %xmm0, (%rax)",
+            "vextracti128\t$1, %ymm3, %xmm1",
+            "vmovq\t%xmm1, %rax",
+            "vpextrd\t$2, %xmm0, (%rax)",
+            "vpextrq\t$1, %xmm1, %rax",
+            "vpextrd\t$3, %xmm0, (%rax)",
+            "vmovaps\t(%rsp), %xmm0",
+            "vmovups\t%xmm0, (%rbx)",
+            "vmovaps\t16(%rsp), %xmm0",
+            "vmovups\t%xmm0, 16(%rbx)",
+            "vmovaps\t32(%rsp), %xmm0",
+            "vmovups\t%xmm0, 32(%rbx)",
+            "addq\t$48, %rsp",
+            "popq\t%rbx",
+            "vzeroupper",
+            "retq"
+          ],
+          "taken_path_instructions_including_accessor": 59
+        }
+      }
+    },
+    "memcpy-tbaa": {
+      "inline_remarks": [
+        "remark: <unknown>:0:0: 'accessor' inlined into 'caller_partial' with (cost=0, threshold=45)",
+        "remark: <unknown>:0:0: 'accessor' inlined into 'caller_full' with (cost=0, threshold=45)"
+      ],
+      "functions": {
+        "accessor": {
+          "static_instructions": 11,
+          "instructions": [
+            "pushq\t%rbx",
+            "movq\t%rdi, %rbx",
+            "movq\t%rsi, %rdi",
+            "callq\tresolve_source@PLT",
+            "vmovups\t16(%rax), %ymm0",
+            "vmovups\t32(%rax), %ymm1",
+            "vmovups\t%ymm0, (%rbx)",
+            "vmovups\t%ymm1, 16(%rbx)",
+            "popq\t%rbx",
+            "vzeroupper",
+            "retq"
+          ]
+        },
+        "caller_partial": {
+          "static_instructions": 9,
+          "instructions": [
+            "xorl\t%eax, %eax",
+            "testb\t$1, %sil",
+            "jne\t.LBB1_1",
+            "retq",
+            "pushq\t%rax",
+            "callq\tresolve_source@PLT",
+            "movl\t16(%rax), %eax",
+            "addq\t$8, %rsp",
+            "retq"
+          ],
+          "taken_path_instructions_including_accessor": 8
+        },
+        "caller_full": {
+          "static_instructions": 14,
+          "instructions": [
+            "testb\t$1, %dl",
+            "jne\t.LBB2_1",
+            "retq",
+            "pushq\t%rbx",
+            "movq\t%rdi, %rbx",
+            "movq\t%rsi, %rdi",
+            "callq\tresolve_source@PLT",
+            "vmovups\t16(%rax), %ymm0",
+            "vmovups\t48(%rax), %xmm1",
+            "vmovups\t%ymm0, (%rbx)",
+            "vmovups\t%xmm1, 32(%rbx)",
+            "popq\t%rbx",
+            "vzeroupper",
+            "retq"
+          ],
+          "taken_path_instructions_including_accessor": 13
+        }
+      }
+    },
+    "mixed-direct-granules": {
+      "inline_remarks": [
+        "remark: <unknown>:0:0: 'accessor' inlined into 'caller_partial' with (cost=20, threshold=45)",
+        "remark: <unknown>:0:0: 'accessor' inlined into 'caller_full' with (cost=20, threshold=45)"
+      ],
+      "functions": {
+        "accessor": {
+          "static_instructions": 25,
+          "instructions": [
+            "movl\t16(%rsi), %eax",
+            "vmovss\t20(%rsi), %xmm0",
+            "movl\t24(%rsi), %ecx",
+            "vmovss\t28(%rsi), %xmm1",
+            "movl\t32(%rsi), %edx",
+            "vmovss\t36(%rsi), %xmm2",
+            "movl\t40(%rsi), %r8d",
+            "vmovss\t44(%rsi), %xmm3",
+            "movl\t48(%rsi), %r9d",
+            "vmovss\t52(%rsi), %xmm4",
+            "movl\t56(%rsi), %r10d",
+            "vmovss\t60(%rsi), %xmm5",
+            "movl\t%eax, (%rdi)",
+            "vmovss\t%xmm0, 4(%rdi)",
+            "movl\t%ecx, 8(%rdi)",
+            "vmovss\t%xmm1, 12(%rdi)",
+            "movl\t%edx, 16(%rdi)",
+            "vmovss\t%xmm2, 20(%rdi)",
+            "movl\t%r8d, 24(%rdi)",
+            "vmovss\t%xmm3, 28(%rdi)",
+            "movl\t%r9d, 32(%rdi)",
+            "vmovss\t%xmm4, 36(%rdi)",
+            "movl\t%r10d, 40(%rdi)",
+            "vmovss\t%xmm5, 44(%rdi)",
+            "retq"
+          ]
+        },
+        "caller_partial": {
+          "static_instructions": 6,
+          "instructions": [
+            "xorl\t%eax, %eax",
+            "testb\t$1, %sil",
+            "jne\t.LBB1_1",
+            "retq",
+            "movl\t16(%rdi), %eax",
+            "retq"
+          ],
+          "taken_path_instructions_including_accessor": 5
+        },
+        "caller_full": {
+          "static_instructions": 28,
+          "instructions": [
+            "testb\t$1, %dl",
+            "jne\t.LBB2_1",
+            "retq",
+            "movl\t16(%rsi), %eax",
+            "vmovss\t20(%rsi), %xmm0",
+            "movl\t24(%rsi), %ecx",
+            "vmovss\t28(%rsi), %xmm1",
+            "movl\t32(%rsi), %edx",
+            "vmovss\t36(%rsi), %xmm2",
+            "movl\t40(%rsi), %r8d",
+            "vmovss\t44(%rsi), %xmm3",
+            "movl\t48(%rsi), %r9d",
+            "vmovss\t52(%rsi), %xmm4",
+            "movl\t56(%rsi), %r10d",
+            "vmovss\t60(%rsi), %xmm5",
+            "movl\t%eax, (%rdi)",
+            "vmovss\t%xmm0, 4(%rdi)",
+            "movl\t%ecx, 8(%rdi)",
+            "vmovss\t%xmm1, 12(%rdi)",
+            "movl\t%edx, 16(%rdi)",
+            "vmovss\t%xmm2, 20(%rdi)",
+            "movl\t%r8d, 24(%rdi)",
+            "vmovss\t%xmm3, 28(%rdi)",
+            "movl\t%r9d, 32(%rdi)",
+            "vmovss\t%xmm4, 36(%rdi)",
+            "movl\t%r10d, 40(%rdi)",
+            "vmovss\t%xmm5, 44(%rdi)",
+            "retq"
+          ],
+          "taken_path_instructions_including_accessor": 27
+        }
+      }
+    },
+    "mixed-granules": {
+      "inline_remarks": [
+        "remark: <unknown>:0:0: 'accessor' not inlined into 'caller_partial' because too costly to inline (cost=55, threshold=45)",
+        "remark: <unknown>:0:0: 'accessor' not inlined into 'caller_full' because too costly to inline (cost=55, threshold=45)"
+      ],
+      "functions": {
+        "accessor": {
+          "static_instructions": 30,
+          "instructions": [
+            "pushq\t%rbx",
+            "movq\t%rdi, %rbx",
+            "movq\t%rsi, %rdi",
+            "callq\tresolve_source@PLT",
+            "movl\t16(%rax), %ecx",
+            "vmovss\t20(%rax), %xmm0",
+            "movl\t24(%rax), %edx",
+            "vmovss\t28(%rax), %xmm1",
+            "movl\t32(%rax), %esi",
+            "vmovss\t36(%rax), %xmm2",
+            "movl\t40(%rax), %edi",
+            "vmovss\t44(%rax), %xmm3",
+            "movl\t48(%rax), %r8d",
+            "vmovss\t52(%rax), %xmm4",
+            "movl\t56(%rax), %r9d",
+            "vmovss\t60(%rax), %xmm5",
+            "movl\t%ecx, (%rbx)",
+            "vmovss\t%xmm0, 4(%rbx)",
+            "movl\t%edx, 8(%rbx)",
+            "vmovss\t%xmm1, 12(%rbx)",
+            "movl\t%esi, 16(%rbx)",
+            "vmovss\t%xmm2, 20(%rbx)",
+            "movl\t%edi, 24(%rbx)",
+            "vmovss\t%xmm3, 28(%rbx)",
+            "movl\t%r8d, 32(%rbx)",
+            "vmovss\t%xmm4, 36(%rbx)",
+            "movl\t%r9d, 40(%rbx)",
+            "vmovss\t%xmm5, 44(%rbx)",
+            "popq\t%rbx",
+            "retq"
+          ]
+        },
+        "caller_partial": {
+          "static_instructions": 12,
+          "instructions": [
+            "xorl\t%eax, %eax",
+            "testb\t$1, %sil",
+            "jne\t.LBB1_1",
+            "retq",
+            "subq\t$56, %rsp",
+            "leaq\t8(%rsp), %rax",
+            "movq\t%rdi, %rsi",
+            "movq\t%rax, %rdi",
+            "callq\taccessor@PLT",
+            "movl\t8(%rsp), %eax",
+            "addq\t$56, %rsp",
+            "retq"
+          ],
+          "taken_path_instructions_including_accessor": 41
+        },
+        "caller_full": {
+          "static_instructions": 36,
+          "instructions": [
+            "testb\t$1, %dl",
+            "jne\t.LBB2_1",
+            "retq",
+            "pushq\t%rbx",
+            "subq\t$48, %rsp",
+            "movq\t%rsp, %rax",
+            "movq\t%rdi, %rbx",
+            "movq\t%rax, %rdi",
+            "callq\taccessor@PLT",
+            "movl\t(%rsp), %eax",
+            "vmovss\t4(%rsp), %xmm0",
+            "movl\t8(%rsp), %ecx",
+            "vmovss\t12(%rsp), %xmm1",
+            "movl\t16(%rsp), %edx",
+            "vmovss\t20(%rsp), %xmm2",
+            "movl\t24(%rsp), %esi",
+            "vmovss\t28(%rsp), %xmm3",
+            "movl\t32(%rsp), %edi",
+            "vmovss\t36(%rsp), %xmm4",
+            "movl\t40(%rsp), %r8d",
+            "vmovss\t44(%rsp), %xmm5",
+            "movl\t%eax, (%rbx)",
+            "vmovss\t%xmm0, 4(%rbx)",
+            "movl\t%ecx, 8(%rbx)",
+            "vmovss\t%xmm1, 12(%rbx)",
+            "movl\t%edx, 16(%rbx)",
+            "vmovss\t%xmm2, 20(%rbx)",
+            "movl\t%esi, 24(%rbx)",
+            "vmovss\t%xmm3, 28(%rbx)",
+            "movl\t%edi, 32(%rbx)",
+            "vmovss\t%xmm4, 36(%rbx)",
+            "movl\t%r8d, 40(%rbx)",
+            "vmovss\t%xmm5, 44(%rbx)",
+            "addq\t$48, %rsp",
+            "popq\t%rbx",
+            "retq"
+          ],
+          "taken_path_instructions_including_accessor": 65
+        }
+      }
+    },
+    "placed-granules": {
+      "inline_remarks": [
+        "remark: <unknown>:0:0: 'accessor' not inlined into 'caller_partial' because too costly to inline (cost=80, threshold=45)",
+        "remark: <unknown>:0:0: 'accessor' not inlined into 'caller_full' because too costly to inline (cost=80, threshold=45)"
+      ],
+      "functions": {
+        "accessor": {
+          "static_instructions": 6,
+          "instructions": [
+            "vmovups\t16(%rsi), %ymm0",
+            "vmovups\t48(%rsi), %xmm1",
+            "vmovups\t%ymm0, (%rdi)",
+            "vmovups\t%xmm1, 32(%rdi)",
+            "vzeroupper",
+            "retq"
+          ]
+        },
+        "caller_partial": {
+          "static_instructions": 10,
+          "instructions": [
+            "xorl\t%eax, %eax",
+            "testb\t$1, %dl",
+            "jne\t.LBB1_1",
+            "retq",
+            "pushq\t%rbx",
+            "movq\t%rdi, %rbx",
+            "callq\taccessor@PLT",
+            "movl\t(%rbx), %eax",
+            "popq\t%rbx",
+            "retq"
+          ],
+          "taken_path_instructions_including_accessor": 15
+        },
+        "caller_full": {
+          "static_instructions": 20,
+          "instructions": [
+            "testb\t$1, %cl",
+            "jne\t.LBB2_1",
+            "retq",
+            "pushq\t%r14",
+            "pushq\t%rbx",
+            "pushq\t%rax",
+            "movq\t%rdi, %rbx",
+            "movq\t%rsi, %rdi",
+            "movq\t%rsi, %r14",
+            "movq\t%rdx, %rsi",
+            "callq\taccessor@PLT",
+            "vmovups\t(%r14), %ymm0",
+            "vmovups\t32(%r14), %xmm1",
+            "vmovups\t%ymm0, (%rbx)",
+            "vmovups\t%xmm1, 32(%rbx)",
+            "addq\t$8, %rsp",
+            "popq\t%rbx",
+            "popq\t%r14",
+            "vzeroupper",
+            "retq"
+          ],
+          "taken_path_instructions_including_accessor": 25
+        }
+      }
+    },
+    "read-through": {
+      "inline_remarks": [
+        "remark: <unknown>:0:0: 'accessor' inlined into 'caller_partial' with (cost=0, threshold=45)",
+        "remark: <unknown>:0:0: 'accessor' inlined into 'caller_full' with (cost=0, threshold=45)"
+      ],
+      "functions": {
+        "accessor": {
+          "static_instructions": 5,
+          "instructions": [
+            "pushq\t%rax",
+            "callq\tresolve_source@PLT",
+            "addq\t$16, %rax",
+            "popq\t%rcx",
+            "retq"
+          ]
+        },
+        "caller_partial": {
+          "static_instructions": 9,
+          "instructions": [
+            "xorl\t%eax, %eax",
+            "testb\t$1, %sil",
+            "jne\t.LBB1_1",
+            "retq",
+            "pushq\t%rax",
+            "callq\tresolve_source@PLT",
+            "movl\t16(%rax), %eax",
+            "addq\t$8, %rsp",
+            "retq"
+          ],
+          "taken_path_instructions_including_accessor": 8
+        },
+        "caller_full": {
+          "static_instructions": 14,
+          "instructions": [
+            "testb\t$1, %dl",
+            "jne\t.LBB2_1",
+            "retq",
+            "pushq\t%rbx",
+            "movq\t%rdi, %rbx",
+            "movq\t%rsi, %rdi",
+            "callq\tresolve_source@PLT",
+            "vmovups\t16(%rax), %ymm0",
+            "vmovups\t48(%rax), %xmm1",
+            "vmovups\t%ymm0, (%rbx)",
+            "vmovups\t%xmm1, 32(%rbx)",
+            "popq\t%rbx",
+            "vzeroupper",
+            "retq"
+          ],
+          "taken_path_instructions_including_accessor": 13
+        }
+      }
+    }
+  }
+}

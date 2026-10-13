@@ -211,6 +211,20 @@ const LTO_LINKER: &[&str] = &["-fuse-ld=lld"];
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 const THIN_LINK_CACHE: &str = "-Wl,--thinlto-cache-dir=";
 
+/// The argument passing this host's linker the ThinLTO import limit for a
+/// link of fragments: the largest pre-link summary instruction count of a
+/// function the link imports into another fragment, 200 in place of LLVM's
+/// default 100. It governs only cross-fragment imports, so whole-program
+/// and non-LTO links do not take it. This is an experiment, specified with
+/// its comparison and rejection criterion in
+/// `research/investigations/in-place-parameters/DESIGN.md`, section
+/// "Fragment-link import limit: question, comparison and rejection
+/// criterion".
+#[cfg(target_os = "windows")]
+const THIN_LINK_IMPORT_LIMIT: &str = "-Wl,/mllvm:-import-instr-limit=200";
+#[cfg(not(target_os = "windows"))]
+const THIN_LINK_IMPORT_LIMIT: &str = "-Wl,-mllvm,-import-instr-limit=200";
+
 /// The libraries this host's link needs. The ordinary Windows library uses
 /// Winsock and the shell's Unicode command-line conversion. The build launcher
 /// defines `main`; argument conversion does not require a `wmain` entry.
@@ -1127,7 +1141,8 @@ fn link_cached_objects(
         command
             .args(LTO_LINKER)
             .arg("-flto=thin")
-            .arg(cache_argument);
+            .arg(cache_argument)
+            .arg(THIN_LINK_IMPORT_LIMIT);
     }
     let status = command
         .arg("-o")

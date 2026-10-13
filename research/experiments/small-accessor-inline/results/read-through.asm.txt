@@ -1,0 +1,73 @@
+	.file	"read-through.ll"
+	.text
+	.globl	accessor                        # -- Begin function accessor
+	.p2align	4
+	.type	accessor,@function
+accessor:                               # @accessor
+	.cfi_startproc
+# %bb.0:                                # %entry
+	pushq	%rax
+	.cfi_def_cfa_offset 16
+	callq	resolve_source@PLT
+	addq	$16, %rax
+	popq	%rcx
+	.cfi_def_cfa_offset 8
+	retq
+.Lfunc_end0:
+	.size	accessor, .Lfunc_end0-accessor
+	.cfi_endproc
+                                        # -- End function
+	.globl	caller_partial                  # -- Begin function caller_partial
+	.p2align	4
+	.type	caller_partial,@function
+caller_partial:                         # @caller_partial
+	.cfi_startproc
+# %bb.0:                                # %entry
+	xorl	%eax, %eax
+	testb	$1, %sil
+	jne	.LBB1_1
+# %bb.2:                                # %common.ret
+	retq
+.LBB1_1:                                # %rare
+	pushq	%rax
+	.cfi_def_cfa_offset 16
+	callq	resolve_source@PLT
+	movl	16(%rax), %eax
+	addq	$8, %rsp
+	.cfi_def_cfa_offset 8
+	retq
+.Lfunc_end1:
+	.size	caller_partial, .Lfunc_end1-caller_partial
+	.cfi_endproc
+                                        # -- End function
+	.globl	caller_full                     # -- Begin function caller_full
+	.p2align	4
+	.type	caller_full,@function
+caller_full:                            # @caller_full
+	.cfi_startproc
+# %bb.0:                                # %entry
+	testb	$1, %dl
+	jne	.LBB2_1
+# %bb.2:                                # %common.ret
+	retq
+.LBB2_1:                                # %rare
+	pushq	%rbx
+	.cfi_def_cfa_offset 16
+	.cfi_offset %rbx, -16
+	movq	%rdi, %rbx
+	movq	%rsi, %rdi
+	callq	resolve_source@PLT
+	vmovups	16(%rax), %ymm0
+	vmovups	48(%rax), %xmm1
+	vmovups	%ymm0, (%rbx)
+	vmovups	%xmm1, 32(%rbx)
+	popq	%rbx
+	.cfi_def_cfa_offset 8
+	.cfi_restore %rbx
+	vzeroupper
+	retq
+.Lfunc_end2:
+	.size	caller_full, .Lfunc_end2-caller_full
+	.cfi_endproc
+                                        # -- End function
+	.section	".note.GNU-stack","",@progbits
