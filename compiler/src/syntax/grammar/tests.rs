@@ -161,7 +161,9 @@ fn complete_inventory_is_pinned() {
     // v0.128's range guard optional comparison adds one decision.
     // v0.136 adds one suffix choice each in clause_expr, range_guard and
     // range_relation; it adds no production.
-    assert_eq!(DECISIONS.len(), 183);
+    // v0.141 adds one arm-label choice among a variant pattern, literal,
+    // named const and `else` [GRAM-4]; it adds no production.
+    assert_eq!(DECISIONS.len(), 184);
     // `continue` adds the same statement prefixes and followers as `break`:
     // 72 rows at existing decisions and 29 at its optional label decision.
     // Together these extend the previous 7,816-row inventory by 101.

@@ -338,6 +338,47 @@ use `musttail` when failure to make the transfer must be a compile-time error.
 The [consuming linked sequence](../tests/programs/tail_list.wf) demonstrates
 moving the next heap cell into a self transfer while releasing the old one.
 
+For a command code represented by an integer, select its constant values
+with `match` [GRAM-12, ERR-2]. This is the specified integer form; compiler
+support is a separate implementation step. A complete dispatch function is:
+
+```whitefoot
+const code_ping: u64 = 1_u64;
+
+const code_echo: u64 = 2_u64;
+
+fn dispatch(code: u64) -> result: u8 pure {
+  match code {
+    code_ping => {
+      return 1_u8;
+    }
+    code_echo => {
+      return 2_u8;
+    }
+    7_u64 => {
+      return 3_u8;
+    }
+    else => {
+      return 0_u8;
+    }
+  }
+}
+```
+
+Use the integer type already carried by the code; the named constants and
+literals have that exact type. Coverage and the final `else` follow [ERR-2].
+For a value rather than an early return, use `let reply = match code { ... }`
+and `give` in the delivering arms [GIVE-1]. Bool conditions keep `if`
+[GRAM-6].
+
+The arm facts of [ENT-3.S17] let a value arm use the selected equality in a
+bounds proof, while `else` can prove that the code is not a listed value.
+Those facts follow the ordinary support and join rules [ENT-5], so changing
+the code cannot reuse its former selection. The complement is represented
+once, rather than accumulated from earlier tests; this specifies fact
+formation, not a measured compiler or runtime speedup. The constant
+selection permits switch lowering without prescribing a backend strategy.
+
 Write an interpreter's dispatch as a `loop` whose body is one `match` on the
 current operation. Each looping arm `set`s the values it changes and ends in
 `continue`; the bounds the arms rely on are header invariants [INV-1]:
