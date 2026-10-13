@@ -15,6 +15,7 @@ use crate::SourceInput;
 mod call_separations;
 mod collisions_and_killed_facts;
 mod content_moves;
+mod enum_routed_ensures;
 mod floats;
 mod interface_applications;
 mod prelude_opaque;
@@ -3838,6 +3839,7 @@ fn each_pinned_repair_is_carried_out_by_its_programs() {
         .chain(floats::FLOATS)
         .chain(interface_applications::INTERFACE_APPLICATIONS)
         .chain(selector_scope::SELECTOR_SCOPE)
+        .chain(enum_routed_ensures::ENUM_ROUTED_ENSURES)
         .chain(collisions_and_killed_facts::COLLISIONS_AND_KILLED_FACTS)
     {
         let failure = compile(
