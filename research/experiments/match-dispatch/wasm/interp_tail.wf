@@ -2694,14 +2694,18 @@ fn grow_memory(mem: Box<Array<u8>>, delta: u64, max_pages: u64) -> (grown: Box<A
   return move fresh, pages;
 }
 
-fn validate_br_tables(code: &Box<Slots<Op>>, brtab: &Box<Slots<Target>>) -> admitted: Result<u64, u64> reads(code), reads(brtab) contract {
+fn validate_code(code: &Box<Slots<Op>>, brtab: &Box<Slots<Target>>) -> admitted: Result<u64, u64> reads(code), reads(brtab) contract {
+  ensures when Ok(value: validated): forall ends(j in 0_u64..code^.inner.len) when j + 1_u64 == code^.inner.len: code^.inner[j] is Return;
   ensures when Ok(value: validated): forall targets(j in 0_u64..brtab^.inner.len): brtab^.inner[j].t < code^.inner.len;
   ensures when Ok(value: validated): forall moves(j in 0_u64..brtab^.inner.len) when brtab^.inner[j].k != 0_u32: brtab^.inner[j].s < 65536_u64, brtab^.inner[j].d < 65536_u64;
   ensures when Ok(value: validated): forall tables(i in 0_u64..code^.inner.len): code^.inner[i].BrTable.start + code^.inner[i].BrTable.count < brtab^.inner.len;
   ensures when Ok(value: validated): forall no_moves(i in 0_u64..code^.inner.len): code^.inner[i].BrTableN.start + code^.inner[i].BrTableN.count < brtab^.inner.len;
   ensures when Ok(value: validated): forall acc_tables(i in 0_u64..code^.inner.len): code^.inner[i].BrTableNC.start + code^.inner[i].BrTableNC.count < brtab^.inner.len;
 } {
-  doc "Validates translated branch tables after all targets have been patched. count excludes the default slot, so start plus count must select an existing entry. Invalid targets, table slices and moved frame slots fail the load with reason 25.";
+  doc "Validates translated code after all targets have been patched. count excludes the default slot, so start plus count must select an existing entry. Invalid targets, table slices and moved frame slots fail the load with reason 25. Empty code or a last instruction other than Return fails with reason 26.";
+  if code^.inner.len == 0_u64 {
+    return Err<u64, u64>(error: 26_u64);
+  }
   for (
     j in 0_u64..brtab^.inner.len,
     invariant forall targets_checked(q in 0_u64..j): brtab^.inner[q].t < code^.inner.len,
@@ -2757,7 +2761,13 @@ fn validate_br_tables(code: &Box<Slots<Op>>, brtab: &Box<Slots<Target>>) -> admi
 @@BRTABLE_VALIDATION_OTHER_ARMS@@
     }
   }
-  return Ok<u64, u64>(value: 0_u64);
+  let last = code^.inner.len - 1_u64;
+  match code^.inner[last] {
+    Return(..) => {
+      return Ok<u64, u64>(value: 0_u64);
+    }
+@@CODE_END_OTHER_ARMS@@
+  }
 }
 
 fn execute(bytes: &Box<Array<u8>>, size: u64, args: &Args, files: &HandleFactory, out: &OutputStream, err: &OutputStream, clock: &Clock) -> status: u8 reads(bytes), reads(args), writes(files), writes(out), writes(err), writes(clock) waits {
@@ -2776,7 +2786,7 @@ fn execute(bytes: &Box<Array<u8>>, size: u64, args: &Args, files: &HandleFactory
     let shown = r8 +wrap 30_u8;
     return shown;
   }
-  match validate_br_tables(code: &code, brtab: &brtab) {
+  match validate_code(code: &code, brtab: &brtab) {
     Ok(value: validated) => {
     }
     Err(error: reason) => {

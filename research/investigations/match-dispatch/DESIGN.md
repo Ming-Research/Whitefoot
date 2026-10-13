@@ -1804,6 +1804,46 @@ CoreMark takes `BrTableN` for 9.15M of its table dispatches. The gain is
 small but stable, and the validation is the interpreter's own, as wasmi's
 is, so the step is kept.
 
+### Sequential successor bounds proved at load
+
+**Question and proposed change.** Can the translator's terminal `Return`
+remove the code-length comparison on every sequential dispatch, including
+a conditional branch's not-taken path? The candidate validates the last
+translated instruction at load time and promises, on success,
+`forall ends(j in 0_u64..code^.inner.len) when j + 1_u64 == code^.inner.len: code^.inner[j] is Return`.
+The interpreter requires this fact. Its match on the current instruction
+then excludes the last index in every sequential arm; the code is read-only
+through the loop. Taken branches retain their existing target checks.
+This uses specification v0.143's variant relation directly, with no local
+copy or repeated invariant to help the checker. A refusal or poor lowering
+stops this part of the experiment and calls for a minimal semantic witness,
+not a source workaround.
+
+**Comparison fixed before measuring.** The temporary manual-only
+`.github/workflows/v2h-seq-bounds.yml` builds the baseline generator and
+templates from a recorded main revision and the candidate with the same
+branch compiler. A byte-copy of the old executable is the twin control.
+On the 14900K, compare seven rotating, interleaved rounds at each of 2000
+and 20000 CoreMark iterations, recording each process's user plus system
+CPU time and the paired new/old and twin/old ratios (lower is faster).
+Validate every result against the list, matrix and state CRCs and the
+independently recorded final CRCs above: 0x4983 at 2000 and 0x382f at 20000.
+Retain the old and new disassembly of three sequential handlers to check
+that the successor comparison and conditional branch actually disappear.
+
+**Rejection criterion and current evidence.** Keep the change only if both
+sizes show a stable CPU-time reduction beyond the byte-copy twin's noise,
+the three inspected handlers lose the successor check, every result is
+correct, and the change adds no complexity or maintenance cost and fits
+the interpreter's architecture. A gain indistinguishable from twin noise,
+an unstable gain, a wrong result, or a proof workaround rejects adoption;
+there is no fixed percentage threshold. Source preparation is not evidence
+of compiler acceptance or performance. This worktree step runs no compiler
+or experiment locally and has no CI result yet; the temporary workflow is
+removed before the branch is ready. Its new stages have no measured time
+budgets yet: the first CI samples must supply that evidence, and the
+workflow reports wrapper times without claiming a time-budget verdict.
+
 ### Constructor and runtime-boundary audit
 
 The handler-word repair distinguishes values built by emitted constructors

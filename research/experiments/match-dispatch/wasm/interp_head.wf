@@ -183,6 +183,7 @@ fn enter(stack: &Box<Array<u64>>, consts: &Box<Slots<u64>>, fp: u64, at: u16, ca
 fn run(code: &Box<Slots<Op>>, funcs: &Box<Slots<Func>>, brtab: &Box<Slots<Target>>, table: &Box<Slots<u64>>, consts: &Box<Slots<u64>>, stack: &Box<Array<u64>>, mem: &Box<Array<u8>>, globals: &Box<Slots<u64>>, pc0: u64, fp0: u64, acc0: u64) -> r: Outcome reads(code), reads(funcs), reads(brtab), reads(table), reads(consts), writes(stack), writes(mem), writes(globals) contract {
   requires pc0 < code^.inner.len;
   requires fp0 + 65536_u64 <= stack^.inner.len;
+  requires forall ends(j in 0_u64..code^.inner.len) when j + 1_u64 == code^.inner.len: code^.inner[j] is Return;
   requires forall brtable_span(j in 0_u64..code^.inner.len): code^.inner[j].BrTable.start + code^.inner[j].BrTable.count < brtab^.inner.len;
   requires forall brtablen_span(j in 0_u64..code^.inner.len): code^.inner[j].BrTableN.start + code^.inner[j].BrTableN.count < brtab^.inner.len;
   requires forall brtablenc_span(j in 0_u64..code^.inner.len): code^.inner[j].BrTableNC.start + code^.inner[j].BrTableNC.count < brtab^.inner.len;
@@ -225,21 +226,22 @@ fn run(code: &Box<Slots<Op>>, funcs: &Box<Slots<Func>>, brtab: &Box<Slots<Target
         let ci = cvt::<u16, u64>(cv^);
         let ct = fp + ci;
         let c = stack^.inner[ct];
-        let next = pc + 1_u64;
         if c != 0_u64 {
-          set next = cvt::<u32, u64>(tv^);
+          let target = cvt::<u32, u64>(tv^);
+          if target < n {
+            set pc = target;
+            continue;
+          }
+          return trap(code: 1_u32, pc: pc);
         }
-        if next < n {
-          set pc = next;
-          continue;
-        }
-        return trap(code: 1_u32, pc: pc);
+        let next = pc + 1_u64;
+        set pc = next;
+        continue;
       }
       BrIfMove(c: cv, e: ev) => {
         let ci = cvt::<u16, u64>(cv^);
         let ct = fp + ci;
         let c = stack^.inner[ct];
-        let next = pc + 1_u64;
         if c != 0_u64 {
           let ei = cvt::<u32, u64>(ev^);
           if ei < brtab^.inner.len {
@@ -249,30 +251,35 @@ fn run(code: &Box<Slots<Op>>, funcs: &Box<Slots<Func>>, brtab: &Box<Slots<Target
             if si < 65536_u64 {
               if di < 65536_u64 {
                 move_slot(stack: stack, fp: fp, s: si, d: di);
-                set next = cvt::<u32, u64>(slot.t);
+                let target = cvt::<u32, u64>(slot.t);
+                if target < n {
+                  set pc = target;
+                  continue;
+                }
+                return trap(code: 1_u32, pc: pc);
               }
             }
           }
         }
-        if next < n {
-          set pc = next;
-          continue;
-        }
-        return trap(code: 1_u32, pc: pc);
+        let next = pc + 1_u64;
+        set pc = next;
+        continue;
       }
       BrUnless(t: tv, c: cv) => {
         let ci = cvt::<u16, u64>(cv^);
         let ct = fp + ci;
         let c = stack^.inner[ct];
-        let next = pc + 1_u64;
         if c == 0_u64 {
-          set next = cvt::<u32, u64>(tv^);
+          let target = cvt::<u32, u64>(tv^);
+          if target < n {
+            set pc = target;
+            continue;
+          }
+          return trap(code: 1_u32, pc: pc);
         }
-        if next < n {
-          set pc = next;
-          continue;
-        }
-        return trap(code: 1_u32, pc: pc);
+        let next = pc + 1_u64;
+        set pc = next;
+        continue;
       }
       BrTable(c: cv, start: startv, count: countv) => {
         let ci = cvt::<u16, u64>(cv^);
@@ -401,22 +408,16 @@ fn run(code: &Box<Slots<Op>>, funcs: &Box<Slots<Func>>, brtab: &Box<Slots<Target
         let di = cvt::<u16, u64>(dv^);
         move_slot(stack: stack, fp: fp, s: si, d: di);
         let next = pc + 1_u64;
-        if next < n {
-          set pc = next;
-          continue;
-        }
-        return trap(code: 1_u32, pc: pc);
+        set pc = next;
+        continue;
       }
       Copy(d: dv, s: sv) => {
         let si = cvt::<u16, u64>(sv^);
         let di = cvt::<u16, u64>(dv^);
         move_slot(stack: stack, fp: fp, s: si, d: di);
         let next = pc + 1_u64;
-        if next < n {
-          set pc = next;
-          continue;
-        }
-        return trap(code: 1_u32, pc: pc);
+        set pc = next;
+        continue;
       }
       Copy2(d: dv, s: sv, e: ev, t: tv) => {
         let si = cvt::<u16, u64>(sv^);
@@ -426,11 +427,8 @@ fn run(code: &Box<Slots<Op>>, funcs: &Box<Slots<Func>>, brtab: &Box<Slots<Target
         let ei = cvt::<u16, u64>(ev^);
         move_slot(stack: stack, fp: fp, s: ti, d: ei);
         let next = pc + 1_u64;
-        if next < n {
-          set pc = next;
-          continue;
-        }
-        return trap(code: 1_u32, pc: pc);
+        set pc = next;
+        continue;
       }
       GlobalGet(d: dv, i: iv) => {
         let iw = cvt::<u32, u64>(iv^);
@@ -440,10 +438,8 @@ fn run(code: &Box<Slots<Op>>, funcs: &Box<Slots<Func>>, brtab: &Box<Slots<Target
           let dt = fp + di;
           set stack^.inner[dt] = v;
           let next = pc + 1_u64;
-          if next < n {
-            set pc = next;
-            continue;
-          }
+          set pc = next;
+          continue;
         }
         return trap(code: 1_u32, pc: pc);
       }
@@ -455,10 +451,8 @@ fn run(code: &Box<Slots<Op>>, funcs: &Box<Slots<Func>>, brtab: &Box<Slots<Target
           let v = stack^.inner[st];
           set globals^.inner[iw] = v;
           let next = pc + 1_u64;
-          if next < n {
-            set pc = next;
-            continue;
-          }
+          set pc = next;
+          continue;
         }
         return trap(code: 1_u32, pc: pc);
       }
@@ -469,11 +463,8 @@ fn run(code: &Box<Slots<Op>>, funcs: &Box<Slots<Func>>, brtab: &Box<Slots<Target
         let dt = fp + di;
         set stack^.inner[dt] = pages;
         let next = pc + 1_u64;
-        if next < n {
-          set pc = next;
-          continue;
-        }
-        return trap(code: 1_u32, pc: pc);
+        set pc = next;
+        continue;
       }
       MemoryGrow(d: dv, s: sv) => {
         let g = Outcome::Grow(pc: pc, fp: fp, d: dv^, s: sv^);
@@ -492,10 +483,8 @@ fn run(code: &Box<Slots<Op>>, funcs: &Box<Slots<Func>>, brtab: &Box<Slots<Target
         let copied = copy_memory(mem: mem, dst: dst, src: src, count: count);
         if copied {
           let next = pc + 1_u64;
-          if next < n {
-            set pc = next;
-            continue;
-          }
+          set pc = next;
+          continue;
         }
         return trap(code: 3_u32, pc: pc);
       }
@@ -513,10 +502,8 @@ fn run(code: &Box<Slots<Op>>, funcs: &Box<Slots<Func>>, brtab: &Box<Slots<Target
         let filled = fill_memory(mem: mem, dst: dst, value: value, count: count);
         if filled {
           let next = pc + 1_u64;
-          if next < n {
-            set pc = next;
-            continue;
-          }
+          set pc = next;
+          continue;
         }
         return trap(code: 3_u32, pc: pc);
       }
@@ -525,9 +512,6 @@ fn run(code: &Box<Slots<Op>>, funcs: &Box<Slots<Func>>, brtab: &Box<Slots<Target
         let dt = fp + di;
         set stack^.inner[dt] = vv^;
         let next = pc + 1_u64;
-        if next < n {
-          set pc = next;
-          continue;
-        }
-        return trap(code: 1_u32, pc: pc);
+        set pc = next;
+        continue;
       }

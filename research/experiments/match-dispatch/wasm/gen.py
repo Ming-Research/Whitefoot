@@ -225,7 +225,7 @@ def tail(pc, ind, acc="acc"):
 
 def advance(ind, acc="acc"):
     p = " " * ind
-    return [f"{p}let next = pc + 1_u64;", f"{p}if next < n {{"] + tail("next", ind + 2, acc) + [f"{p}}}"]
+    return [f"{p}let next = pc + 1_u64;"] + tail("next", ind, acc)
 
 
 def decode(var, word, ty):
@@ -304,7 +304,6 @@ def numeric_arm(name, ins, out, lines):
     else:
         o.append(f"      {fn}({args});")
         o += advance(6)
-        o.append("      return trap(code: 1_u32, pc: pc);")
     o.append("    }")
     return o
 
@@ -422,8 +421,9 @@ def fused_arm(name, op, sign):
     HELPERS.extend(h + ["  " + l for l in b] + ["}", ""])
     o = [f"    {name}(a: av, b: bv, t: tv) => {{",
          f"      let taken = {fn}(stack: stack, fp: fp, a: av^, b: bv^);",
-         "      let next = pc + 1_u64;", "      if taken {", "        set next = cvt::<u32, u64>(tv^);", "      }",
-         "      if next < n {"] + tail("next", 8) + ["      }", "      return trap(code: 1_u32, pc: pc);", "    }"]
+         "      if taken {", "        let target = cvt::<u32, u64>(tv^);", "        if target < n {"]
+    o += tail("target", 10) + ["        }", "        return trap(code: 1_u32, pc: pc);", "      }"]
+    o += advance(6) + ["    }"]
     return o
 
 
@@ -523,7 +523,7 @@ def acc_numeric_arm(name, ins, out, lines, form, fields):
     b += lines
     b += (["let zw = 0_u64;", "if z {", "  set zw = 1_u64;", "}"] if out == "bool" else encode(out))
     o = [f"    {name}{form}({binds}) => {{"] + ["      " + l for l in b] + result(form, 6)
-    return o + ["      return trap(code: 1_u32, pc: pc);", "    }"]
+    return o + ["    }"]
 
 
 def acc_load_arm(name, nbytes, signed, out, form, indexed):
@@ -555,17 +555,19 @@ def acc_store_arm(name, nbytes, form, indexed):
 def acc_fused_arm(name, op, sign, form):
     ty = sign + "32"
     b = word("x", "av", "A", form) + decode("x", "xw", ty) + word("y", "bv", "B", form) + decode("y", "yw", ty)
-    b += [f"let taken = x {op} y;", "let next = pc + 1_u64;", "if taken {", "  set next = cvt::<u32, u64>(tv^);", "}"]
+    b += [f"let taken = x {op} y;"]
     o = [f"    {name}{form}(a: av, b: bv, t: tv) => {{"] + ["      " + l for l in b]
-    return o + ["      if next < n {"] + tail("next", 8) + ["      }", "      return trap(code: 1_u32, pc: pc);", "    }"]
+    o += ["      if taken {", "        let target = cvt::<u32, u64>(tv^);", "        if target < n {"]
+    o += tail("target", 10) + ["        }", "        return trap(code: 1_u32, pc: pc);", "      }"]
+    return o + advance(6) + ["    }"]
 
 
 def acc_control_arms():
     o = []
     for name, test in [("BrIf", "!="), ("BrUnless", "==")]:
-        o += [f"    {name}C(t: tv, c: cv) => {{", "      let next = pc + 1_u64;", f"      if acc {test} 0_u64 {{",
-              "        set next = cvt::<u32, u64>(tv^);", "      }", "      if next < n {"] + tail("next", 8)
-        o += ["      }", "      return trap(code: 1_u32, pc: pc);", "    }"]
+        o += [f"    {name}C(t: tv, c: cv) => {{", f"      if acc {test} 0_u64 {{",
+              "        let target = cvt::<u32, u64>(tv^);", "        if target < n {"] + tail("target", 10)
+        o += ["        }", "        return trap(code: 1_u32, pc: pc);", "      }"] + advance(6) + ["    }"]
     o += ["    BrTableNC(c: cv, start: startv, count: countv) => {", "      let count = cvt::<u32, u64>(countv^);",
           "      let i32v = cvt.wrap::<u64, u32>(acc);", "      let i = cvt::<u32, u64>(i32v);", "      let pick = imin(i, count);",
           "      let base = cvt::<u32, u64>(startv^);", "      let at = base + pick;",
@@ -581,7 +583,7 @@ def acc_control_arms():
             b += ["let di = cvt::<u16, u64>(dv^);", "move_slot(stack: stack, fp: fp, s: si, d: di);"]
             end = advance(6)
         o += [f"    Select{form}(d: dv, a: av, b: bv, c: cv) => {{"] + ["      " + l for l in b] + end
-        o += ["      return trap(code: 1_u32, pc: pc);", "    }"]
+        o += ["    }"]
     return o
 
 
@@ -680,9 +682,9 @@ def inline_helpers(arms, helpers):
         name, arguments = call.group(1), call.group(2)
         result, body = bodies[name]
         if any("give " in b for b in body):
-            # A body that delivers a value from a match stays a call: the
-            # checker's delivery of such values grows with the function
-            # (docs/todo.md, "Checking a function with many value deliveries").
+            # A body that delivers a value from a match stays a call, as
+            # recorded in research/investigations/match-dispatch/DESIGN.md,
+            # "Stage 3 v2 so far"; this step keeps that interpreter form.
             out.append(line)
             kept.add(name)
             i += 1
@@ -713,8 +715,6 @@ def inline_helpers(arms, helpers):
                     out.append(indent + pad + failure)
                 else:
                     out.append(indent + b)
-            if body and body[-1].strip() == "return True();":
-                out.append(indent + failure)
             i = j + 2
         elif result == "taken":
             out += binds
@@ -1072,6 +1072,10 @@ tail_text = tail_text.replace("@@BRTABLE_VALIDATION_OTHER_ARMS@@", "\n".join(
     f"      {name}({'..' if fields else ''}) => {{\n      }}"
     for name, fields, _ in variants
     if name not in {"BrTable", "BrTableN", "BrTableNC"}))
+tail_text = tail_text.replace("@@CODE_END_OTHER_ARMS@@", "\n".join(
+    f"    {name}({'..' if fields else ''}) => {{\n      return Err<u64, u64>(error: 26_u64);\n    }}"
+    for name, fields, _ in variants
+    if name != "Return"))
 aliases_end = head.index("\n\n") + 2
 helper_text = "\n".join(HELPERS).strip("\n")
 program = (head[:aliases_end] + OPS + "\n\n" + (helper_text + "\n\n" if helper_text else "")

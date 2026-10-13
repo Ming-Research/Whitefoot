@@ -1,0 +1,342 @@
+# Temporary phase-3 sequential-bounds comparison. Remove before this branch is ready.
+# research-boundary: manual-only
+# Both generators use this branch's compiler. No timing threshold selects a
+# verdict: the owner judges the paired gain against the old image's twin.
+# Like the temporary call-frame workflow, wrapper timing is report-only.
+# Stage budgets await measured samples; no unmeasured budget is invented.
+name: v2h-seq-bounds
+
+on:
+  workflow_dispatch:
+    inputs:
+      baseline_ref:
+        description: Main revision supplying old gen.py and its matching templates
+        type: string
+        default: 80af3c39f3f065f6991179dfff8af6f2231fa640
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v2h-seq-bounds-14900k
+  cancel-in-progress: false
+
+jobs:
+  compare:
+    runs-on: [self-hosted, 14900k]
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    env:
+      BASELINE_REF: ${{ inputs.baseline_ref }}
+      LC_ALL: C
+      V2H_CPUS: "2"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Record inputs and check the host is available
+        run: |
+          set -euo pipefail
+          if [ -d "$HOME/.cargo/bin" ]; then
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+          taskset -c "$V2H_CPUS" true
+          lock="/tmp/whitefoot-check-$(id -u).lock"
+          if [ -d "$lock" ]; then
+            cat "$lock/pid" "$lock/command"
+            pid=$(cat "$lock/pid")
+            ps -p "$pid" -o pid=,args= || true
+            echo 'Inspect the existing lock owner; this comparison will not remove it.' >&2
+            exit 75
+          fi
+          out="$RUNNER_TEMP/v2h-seq-bounds-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          mkdir -p "$out/old-source"
+          echo "V2H_OUT=$out" >> "$GITHUB_ENV"
+          if [ "$BASELINE_REF" = main ]; then
+            baseline=$(git rev-parse origin/main^{commit})
+          else
+            baseline=$(git rev-parse --verify "$BASELINE_REF^{commit}")
+          fi
+          git merge-base --is-ancestor "$baseline" origin/main
+          printf '%s\n' "$baseline" > "$out/baseline-sha.txt"
+          {
+            printf 'branch/compiler %s\nbaseline %s\n' "$(git rev-parse HEAD)" "$baseline"
+            printf 'iterations 2000 and 20000\nrounds 7 per size\nCPU time child user + system seconds\naffinity CPU %s\n' "$V2H_CPUS"
+            uname -a
+            lscpu
+            /usr/bin/clang --version
+            rustc --version
+          } > "$out/inputs.txt"
+          cat "$out/inputs.txt"
+
+      - name: Build old and new with the branch compiler and copy the twin
+        run: |
+          set -euo pipefail
+          out="$V2H_OUT"
+          baseline=$(cat "$out/baseline-sha.txt")
+          gen=research/experiments/match-dispatch/wasm/gen.py
+          logged() {
+            local label="$1"
+            shift
+            local status=0
+            perl .github/run-check.pl "v2h-seq-bounds/$label" "$@" > "$out/$label.log" 2>&1 || status=$?
+            cat "$out/$label.log"
+            printf '%s\t%s\n' "$label" "$status" >> "$out/build-status.tsv"
+            return "$status"
+          }
+          printf 'stage\texit_status\n' > "$out/build-status.tsv"
+          logged dependencies cargo fetch --locked --manifest-path compiler/Cargo.toml
+          logged compiler make -C compiler build
+          git archive "$baseline" research/experiments/match-dispatch/wasm | tar -x -C "$out/old-source"
+          python3 "$out/old-source/$gen" "$out/old.wf"
+          python3 "$gen" "$out/new.wf"
+          wfc="$PWD/compiler/target/gate/whitefootc"
+          git diff "$baseline" HEAD -- research/experiments/match-dispatch/wasm > "$out/source-diff.txt"
+          sha256sum "$wfc" "$out"/*.wf "$gen" research/experiments/match-dispatch/wasm/interp_*.wf \
+            "$out/old-source/$gen" "$out"/old-source/research/experiments/match-dispatch/wasm/interp_*.wf > "$out/image-sha256.txt"
+          for form in old new; do
+            # A proof refusal stops here unchanged; preserve its diagnostics.
+            logged "compile-$form" "$wfc" --dispatch-ledger "$out/$form.wf" -o "$out/wasm-$form"
+            logged "llvm-$form" "$wfc" --emit-llvm --dispatch-ledger "$out/$form.wf" -o "$out/$form.ll"
+          done
+          cp "$out/wasm-old" "$out/wasm-twin"
+          cmp "$out/wasm-old" "$out/wasm-twin"
+          sha256sum "$out"/wasm-* >> "$out/image-sha256.txt"
+          logged module git clone --quiet https://github.com/mbbill/Silverfir-nano "$out/sf"
+          git -C "$out/sf" checkout --quiet 5f248e44
+          git -C "$out/sf" rev-parse HEAD > "$out/module-repository-sha.txt"
+          cp "$out/sf/benchmarks/wasi/coremark/coremark.wasm" "$out/coremark.wasm"
+          sha256sum "$out/coremark.wasm" >> "$out/image-sha256.txt"
+
+      - name: Map and disassemble the sequential handlers
+        run: |
+          set -euo pipefail
+          out="$V2H_OUT"
+          cat > "$out/disassemble.py" <<'PYCODE'
+          import csv
+          import pathlib
+          import re
+          import subprocess
+          import sys
+
+          out = pathlib.Path(sys.argv[1])
+          # local.get is a provider and local.set redirects its producer.
+          # Neither has a unique native handler. materialize emits Copy;
+          # set_local emits Copy or fuses adjacent copies as Copy2.
+          # The base arithmetic form and its accumulator forms are retained.
+          wanted = [("local.get / copy local.set", "Copy"), ("i32.add", "I32Add"),
+                    ("paired local.set", "Copy2"), ("i32.add accumulator input", "I32AddA"),
+                    ("i32.add accumulator result", "I32AddD"), ("i32.add input/result", "I32AddAD")]
+          with (out / "handler-map.tsv").open("w", newline="") as record:
+              rows = csv.writer(record, delimiter="\t")
+              rows.writerow(["engine", "wasm_equivalent", "operation", "tag", "symbol", "mapping_evidence"])
+              for form in ["old", "new"]:
+                  source = (out / f"{form}.wf").read_text()
+                  enum = re.search(r"enum Op\s*\{(.*?)\n\}", source, re.S)
+                  if enum is None:
+                      raise RuntimeError(f"{form}: missing Op enum")
+                  names = re.findall(r"^\s*(\w+)\(", enum.group(1), re.M)
+                  if not names or len(names) != len(set(names)):
+                      raise RuntimeError(f"{form}: ambiguous Op tags")
+                  llvm = (out / f"{form}.ll").read_text()
+                  ledgers = re.findall(r"^; dispatch: (\S+): split: the loop over Op into (\d+) arms", llvm, re.M)
+                  if len(ledgers) != 1:
+                      raise RuntimeError(f"{form}: expected one split Op family, got {ledgers}")
+                  family, count = ledgers[0]
+                  # The emitter may use a tag-indexed dispatch table, or an
+                  # inline handler word. Inspect the actual emitted mapping;
+                  # enum order is not presumed to equal arm order.
+                  mapping = {}
+                  evidence = {}
+                  table = re.search(r"^@" + re.escape(family) + r"\.dispatch\.table = .*?\[(\d+) x ptr\] \[(.*?)\]", llvm, re.M)
+                  if table is not None:
+                      symbols = re.findall(r"ptr @(\S+?)(?:,|$)", table.group(2))
+                      if len(symbols) != len(names) or int(table.group(1)) != len(names):
+                          raise RuntimeError(f"{form}: incomplete dispatch table")
+                      mapping = dict(enumerate(symbols))
+                      evidence = {tag: table.group(0) for tag in mapping}
+                  else:
+                      # begin_enum_construction writes the constant tag,
+                      # forms the handler-word address, then writes its arm.
+                      pattern = (r"(  store i\d+ (\d+), ptr [^\n]+\n"
+                                 r"  %\S+ = getelementptr inbounds i8, ptr [^\n]+\n"
+                                 r"  store ptr @(" + re.escape(family) + r"\.arm\.\d+), ptr [^\n]+)")
+                      for found in re.finditer(pattern, llvm):
+                          tag, symbol = int(found.group(2)), found.group(3)
+                          if tag in mapping and mapping[tag] != symbol:
+                              raise RuntimeError(f"{form}: conflicting handler words for tag {tag}")
+                          mapping[tag] = symbol
+                          evidence[tag] = found.group(1)
+                  symbols = subprocess.check_output(["nm", "--defined-only", str(out / f"wasm-{form}")], text=True)
+                  (out / f"symbols-{form}.txt").write_text(symbols)
+                  defined = {line.split()[-1] for line in symbols.splitlines() if line.split()}
+                  for meaning, name in wanted:
+                      if name not in names:
+                          raise RuntimeError(f"{form}: missing sequential operation {name}")
+                      tag = names.index(name)
+                      if tag not in mapping:
+                          raise RuntimeError(f"{form}: no emitted mapping for {name} tag {tag}")
+                      symbol = mapping[tag]
+                      arm = re.fullmatch(re.escape(family) + r"\.arm\.(\d+)", symbol)
+                      if arm is None or int(arm.group(1)) >= int(count) or symbol not in defined:
+                          raise RuntimeError(f"{form}: missing/invalid native arm {symbol}")
+                      (out / f"mapping-{form}-{name}.txt").write_text(evidence[tag] + "\n")
+                      result = subprocess.run(["objdump", "-d", "--no-show-raw-insn", f"--disassemble={symbol}",
+                                               str(out / f"wasm-{form}")], capture_output=True, text=True, check=False)
+                      (out / f"handler-{form}-{name}.asm").write_text(result.stdout)
+                      (out / f"handler-{form}-{name}.stderr").write_text(result.stderr)
+                      if result.returncode or f"<{symbol}>:" not in result.stdout:
+                          raise RuntimeError(f"{form}: disassembly failed for {symbol}")
+                      rows.writerow([form, meaning, name, tag, symbol, "dispatch table" if table else "constructor handler word"])
+                      record.flush()
+                      print(f"{form} {meaning}: {name} tag {tag} -> {symbol}", flush=True)
+                      print(result.stdout, flush=True)
+          PYCODE
+          perl .github/run-check.pl v2h-seq-bounds/disassemble python3 "$out/disassemble.py" "$out"
+
+      - name: Sample, then measure seven rotating rounds at each size
+        run: |
+          set -euo pipefail
+          out="$V2H_OUT"
+          cat > "$out/measure.py" <<'PY'
+          import csv
+          import importlib.util
+          import math
+          import pathlib
+          import re
+          import resource
+          import statistics
+          import subprocess
+          import sys
+
+          out = pathlib.Path(sys.argv[1])
+          probe = pathlib.Path(sys.argv[2])
+          cpus = sys.argv[3]
+          spec = importlib.util.spec_from_file_location("coremark", probe)
+          coremark = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(coremark)
+
+          # Independent results: DESIGN.md, phase-3 branch-table outcome,
+          # records 0x4983 at 2000 and 0x382f at 20000 (same pinned module).
+          finals = {2000: "0x4983", 20000: "0x382f"}
+
+          def validate(text, returncode, iterations):
+              if returncode != 0:
+                  raise ValueError(f"exit status {returncode}")
+              score = re.search(r"Iterations/Sec\s*:\s*([0-9.]+)", text)
+              crc_rows = re.findall(r"\[0\](crc\w+)\s*:\s*(0x[0-9a-f]+)", text)
+              crcs = dict(crc_rows)
+              if len(crc_rows) != len(crcs):
+                  raise ValueError("duplicate CoreMark CRC result")
+              if score is None or not math.isfinite(float(score.group(1))) or float(score.group(1)) <= 0:
+                  raise ValueError("missing or invalid CoreMark score")
+              if any(crcs.get(k) != v for k, v in coremark.EXPECTED.items()):
+                  raise ValueError("wrong or missing list, matrix or state CRC")
+              if crcs.get("crcfinal") != finals[iterations]:
+                  raise ValueError("wrong or missing final CRC")
+              return float(score.group(1)), crcs["crcfinal"]
+
+          for iterations, final in finals.items():
+              good = "Iterations/Sec : 1\n" + "\n".join(
+                  f"[0]{key} : {value}" for key, value in {**coremark.EXPECTED, "crcfinal": final}.items())
+              validate(good, 0, iterations)
+              corruptions = [(good, 1), (good.replace("Iterations/Sec", "missing-score"), 0),
+                             (good.replace("Iterations/Sec : 1", "Iterations/Sec : 0"), 0)]
+              for key, value in {**coremark.EXPECTED, "crcfinal": final}.items():
+                  corruptions += [(good.replace(value, "0x0000"), 0),
+                                  (good.replace(f"[0]{key}", "missing-crc"), 0)]
+              for text, status in corruptions:
+                  try:
+                      validate(text, status, iterations)
+                  except ValueError:
+                      continue
+                  raise RuntimeError("CoreMark validator accepted a damaged result")
+          print("CoreMark validator rejected every deliberately damaged result at both sizes", flush=True)
+
+          def launch(name, iterations, stem):
+              before = resource.getrusage(resource.RUSAGE_CHILDREN)
+              process = subprocess.run(
+                  ["taskset", "-c", cpus, str(out / f"wasm-{name}"), "coremark.wasm", "0x0", "0x0", "0x66", str(iterations)],
+                  cwd=out, capture_output=True, text=True, timeout=120, check=False)
+              after = resource.getrusage(resource.RUSAGE_CHILDREN)
+              cpu = (after.ru_utime - before.ru_utime) + (after.ru_stime - before.ru_stime)
+              (out / f"{stem}.stdout").write_text(process.stdout)
+              (out / f"{stem}.stderr").write_text(process.stderr)
+              score, final = validate(process.stdout, process.returncode, iterations)
+              if not math.isfinite(cpu) or cpu <= 0:
+                  raise ValueError(f"{name}: invalid CPU time {cpu}")
+              return cpu, score, final
+
+          # Small timed sample before the 42-launch panel. Its CPU spread
+          # is retained; these diagnostic launches do not enter paired ratios.
+          samples = []
+          for index in range(3):
+              cpu, score, final = launch("old", 2000, f"sample-{index + 1}-old")
+              samples.append(cpu)
+              print(f"sample {index + 1} old 2000: CPU {cpu:.9f}, score {score}, final {final}", flush=True)
+          spread = (max(samples) - min(samples)) / statistics.median(samples)
+          (out / "sample.txt").write_text(f"old 2000 CPU seconds: {samples}\nrelative spread: {spread:.6f}\n")
+          print(f"sample relative spread {spread:.6f}; recording seven pairs per size and their full ranges", flush=True)
+
+          names = ["old", "twin", "new"]
+          pairs = {iterations: [] for iterations in finals}
+          with (out / "runs.tsv").open("w", newline="") as raw, (out / "ratios.tsv").open("w", newline="") as paired:
+              runs = csv.writer(raw, delimiter="\t")
+              ratios = csv.writer(paired, delimiter="\t")
+              runs.writerow(["iterations", "round", "position", "engine", "cpu_seconds", "score", "crcfinal"])
+              ratios.writerow(["iterations", "round", "order", "old_cpu_seconds", "twin_cpu_seconds", "new_cpu_seconds", "new/old", "twin/old"])
+              for iterations in finals:
+                  for round_index in range(7):
+                      offset = round_index % 3
+                      order = names[offset:] + names[:offset]
+                      times = {}
+                      for position, name in enumerate(order, 1):
+                          cpu, score, final = launch(name, iterations, f"round-{iterations}-{round_index + 1}-{name}")
+                          times[name] = cpu
+                          runs.writerow([iterations, round_index + 1, position, name, f"{cpu:.9f}", score, final])
+                          raw.flush()
+                          print(f"iterations {iterations} round {round_index + 1} position {position} {name}: CPU {cpu * 1000:.3f} ms, score {score}, final {final}", flush=True)
+                      new_ratio = times["new"] / times["old"]
+                      twin_ratio = times["twin"] / times["old"]
+                      pairs[iterations].append((new_ratio, twin_ratio))
+                      ratios.writerow([iterations, round_index + 1, ",".join(order), *(f"{times[name]:.9f}" for name in names), f"{new_ratio:.9f}", f"{twin_ratio:.9f}"])
+                      paired.flush()
+                      print(f"iterations {iterations} round {round_index + 1}: new/old {new_ratio:.6f}, twin/old {twin_ratio:.6f}", flush=True)
+          summary = ["CPU ratios: lower than 1 means faster than old; no adoption verdict."]
+          for iterations, samples in pairs.items():
+              for index, label in enumerate(["new/old", "twin/old"]):
+                  values = [pair[index] for pair in samples]
+                  summary.append(f"{iterations} {label}: median {statistics.median(values):.6f}, min {min(values):.6f}, max {max(values):.6f}")
+          (out / "summary.txt").write_text("\n".join(summary) + "\n")
+          print("\n".join(summary), flush=True)
+          PY
+          perl .github/run-check.pl v2h-seq-bounds/measure \
+            python3 "$out/measure.py" "$out" "$PWD/research/experiments/match-dispatch/wasm/coremark.py" "$V2H_CPUS"
+          cat "$out/ratios.tsv"
+          cat "$out/summary.txt" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Retain the experiment inputs, raw outputs and paired CPU times
+        if: always() && env.V2H_OUT != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: v2h-seq-bounds-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.V2H_OUT }}/*.txt
+            ${{ env.V2H_OUT }}/*.tsv
+            ${{ env.V2H_OUT }}/*.log
+            ${{ env.V2H_OUT }}/*.stdout
+            ${{ env.V2H_OUT }}/*.stderr
+            ${{ env.V2H_OUT }}/*.wf
+            ${{ env.V2H_OUT }}/*.py
+            ${{ env.V2H_OUT }}/*.ll
+            ${{ env.V2H_OUT }}/*.asm
+            ${{ env.V2H_OUT }}/wasm-*
+            ${{ env.V2H_OUT }}/old-source/research/experiments/match-dispatch/wasm/gen.py
+            ${{ env.V2H_OUT }}/old-source/research/experiments/match-dispatch/wasm/interp_*.wf
+            ${{ env.V2H_OUT }}/*.wasm
+          if-no-files-found: error
