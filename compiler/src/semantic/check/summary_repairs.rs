@@ -1,6 +1,6 @@
 //! Explanation of unavailable callee summaries, read only after rejection.
 
-use super::{CheckStop, TypeContext, repairs};
+use super::{CheckStop, Checker, TypeContext, repairs};
 use crate::semantic::entailment::{
     ComponentPostconditions, EntailmentCallee, EntailmentContext, VerifiedPostconditionSummary,
     postcondition_schedule, unavailable_summary_discharges_record,
@@ -12,6 +12,25 @@ pub(super) struct SummaryRepairInputs<'a> {
     pub(super) callees: &'a [EntailmentCallee],
     pub(super) contract_queries: &'a [CheckedContractQuery],
     pub(super) binding_names: &'a [String],
+}
+
+impl Checker<'_, '_> {
+    /// Explains a rejection whose proof needed a withheld callee summary.
+    pub(super) fn explain_summary_stop(
+        &self,
+        stop: CheckStop,
+        caller: &CheckedFunction,
+        functions: &[&CheckedFunction],
+        callees: &[EntailmentCallee],
+        binding_names: &[String],
+    ) -> CheckStop {
+        let inputs = SummaryRepairInputs {
+            callees,
+            contract_queries: &self.analysis.contract_queries,
+            binding_names,
+        };
+        self.types.explain_unavailable_summary(stop, caller, functions, &inputs)
+    }
 }
 
 impl TypeContext<'_> {

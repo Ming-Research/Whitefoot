@@ -1436,15 +1436,12 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                         &ranges[index].inconclusive,
                     )
                     .map_err(|stop| {
-                        self.types.explain_unavailable_summary(
+                        self.explain_summary_stop(
                             stop,
                             function,
                             &baseline_functions,
-                            &summary_repairs::SummaryRepairInputs {
-                                callees: &callees,
-                                contract_queries: &self.analysis.contract_queries,
-                                binding_names: &binding_names[index],
-                            },
+                            &callees,
+                            &binding_names[index],
                         )
                     })
                     .map_err(|stop| self.types.attribute_to_request(function.id, stop))
