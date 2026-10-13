@@ -966,7 +966,7 @@ pub(super) fn propagated_postcondition(disposition: Disposition) -> &'static str
             "the state this `propagate` leaves the function with makes the postcondition false: restore the places it relates before the `propagate`, or state a postcondition every exit satisfies"
         }
         Disposition::Unproved => {
-            "the postcondition is not proved where this `propagate` leaves the function: establish it before the `propagate`, writing the places it relates or proving it with an `invariant`, adding `use` steps only when AUTO does not already prove its target, or state a postcondition every exit satisfies"
+            "the postcondition is not proved where this `propagate` leaves the function: when its related places admit these writes, establish it before the `propagate` by writing values that satisfy it into those places; or, for a bound on a writable integer place without a subscript, when available facts prove a suitable value's bound, bind that value with an ordinary `let`, prove the bound over that binding with an `invariant` (adding `use` steps only when AUTO does not already prove its target), and assign the binding to the place before the `propagate`, keeping every place the relation reads unchanged through the early return; or state a postcondition every exit satisfies"
         }
     }
 }

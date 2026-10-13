@@ -520,7 +520,7 @@ fn pass(value: Token) -> result: unit pure {
 }
 "#,
         rule: "FN-9",
-        sentences: &["\n  mechanical_fix: the postcondition is not proved where this `propagate` leaves the function: establish it before the `propagate`, writing the places it relates or proving it with an `invariant`, adding `use` steps only when AUTO does not already prove its target, or state a postcondition every exit satisfies\n"],
+        sentences: &["\n  mechanical_fix: the postcondition is not proved where this `propagate` leaves the function: when its related places admit these writes, establish it before the `propagate` by writing values that satisfy it into those places; or, for a bound on a writable integer place without a subscript, when available facts prove a suitable value's bound, bind that value with an ordinary `let`, prove the bound over that binding with an `invariant` (adding `use` steps only when AUTO does not already prove its target), and assign the binding to the place before the `propagate`, keeping every place the relation reads unchanged through the early return; or state a postcondition every exit satisfies\n"],
         repaired: &[
             br#"fn step(place: &u64, replacement: u64, outcome: Result<u8, unit>) -> result: Result<u8, unit> writes(place) contract {
   ensures place^ <= 8_u64;
@@ -536,7 +536,9 @@ fn pass(value: Token) -> result: unit pure {
   ensures place^ <= 8_u64;
 } {
   set place^ = replacement;
-  invariant ready: place^ <= 8_u64;
+  let snapshot = place^;
+  invariant ready: snapshot <= 8_u64;
+  set place^ = snapshot;
   let value = propagate outcome;
   set place^ = 0_u64;
   return Ok<u8, unit>(value: value);
@@ -624,9 +626,14 @@ fn public_type_invariant_fields_have_working_repairs() {
         CompilerLimits::default(),
     )
     .expect_err("the public writable field is refused");
-    assert_eq!(failure.kind(), CompilationFailureKind::Source);
-    assert_eq!(failure.rule_id(), Some(pair.rule));
     let rendered = format!("{failure}\n");
+    assert_eq!(
+        failure.kind(),
+        CompilationFailureKind::Source,
+        "{}: {rendered}",
+        pair.name
+    );
+    assert_eq!(failure.rule_id(), Some(pair.rule), "{}: {rendered}", pair.name);
     for sentence in pair.sentences {
         assert!(rendered.contains(sentence), "{rendered}");
     }
@@ -721,8 +728,8 @@ public fn consume(value: Parcel) -> result: unit pure doc "Consumes the parcel."
             .as_slice(),
             br#"fn consume(value: Parcel) -> result: unit pure {
   match move value {
-    Full(token: held) => {
-      let Token(value: byte) = move held;
+    Full(token: carried_token) => {
+      let Token(value: byte) = move carried_token;
     }
   }
   return unit;
@@ -767,9 +774,14 @@ public fn consume(value: Parcel) -> result: unit pure doc "Consumes the parcel."
             CompilerLimits::default(),
         )
         .expect_err("the linear value is unconsumed");
-        assert_eq!(failure.kind(), CompilationFailureKind::Source);
-        assert_eq!(failure.rule_id(), Some(pair.rule));
         let rendered = format!("{failure}\n");
+        assert_eq!(
+            failure.kind(),
+            CompilationFailureKind::Source,
+            "{}: {rendered}",
+            pair.name
+        );
+        assert_eq!(failure.rule_id(), Some(pair.rule), "{}: {rendered}", pair.name);
         for sentence in pair.sentences {
             assert!(rendered.contains(sentence), "{rendered}");
         }
