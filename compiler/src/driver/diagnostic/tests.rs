@@ -612,7 +612,7 @@ fn normalized_postcondition_relations_keep_legal_literal_suffixes() {
 }
 
 #[test]
-fn unproved_goal_names_the_written_match_payload_alias() {
+fn unproved_goal_spells_a_match_payload_place_by_variant_and_field_name() {
     let source = br#"enum Shape {
   Circle(radius: u64);
 }
@@ -641,7 +641,7 @@ fn main() -> status: std::process::ExitStatus pure {
     let rendered = failure.to_string();
     assert_eq!(failure.rule_id(), Some("FN-8"), "{rendered}");
     assert!(
-        rendered.contains("\n  instantiated_goal: chosen^ < limit\n"),
+        rendered.contains("\n  instantiated_goal: shapes^[0_u64].Circle.radius < limit\n"),
         "{rendered}"
     );
     assert!(rendered.contains("\n  disposition: Unproved\n"), "{rendered}");
