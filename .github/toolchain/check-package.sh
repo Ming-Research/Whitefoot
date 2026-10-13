@@ -242,7 +242,7 @@ int header_example(void) {
 C
 header_flags=(-std=c11 -nostdlibinc)
 if [ "$mode" = macos ]; then header_flags+=(-isysroot "$sdk"); fi
-run builtin-headers-control "$package/bin/clang" "${header_flags[@]}" \
+run builtin-headers-control "$package/bin/clang" ${header_flags[@]+"${header_flags[@]}"} \
   -c "$work/builtin-headers.c" -o "$work/builtin-headers.o"
 run llvm "$compiler" --emit-llvm -o "$work/waiting.ll" "$witness"
 # A declaration does not witness execution of coroutine lowering.
@@ -264,7 +264,7 @@ for kind in objects fragments; do
   if [ "$kind" = fragments ]; then extra=(--fragments module); fi
   for temperature in cold warm; do
     run "$kind-$temperature-build" "$compiler" --cache "$work/cache-$kind" \
-      "${extra[@]}" --report -o "$work/$kind-$temperature" "$witness"
+      ${extra[@]+"${extra[@]}"} --report -o "$work/$kind-$temperature" "$witness"
     run "$kind-$temperature-run" "$work/$kind-$temperature"
   done
   python3 - "$logs" "$kind" <<'PY'
@@ -298,7 +298,7 @@ expect_failure() {
 missing="$work/missing builtin headers"
 cp -a "$package" "$missing"
 rm -rf "$missing/lib/clang/22/include"
-expect_failure missing-headers stddef.h "$missing/bin/clang" "${header_flags[@]}" \
+expect_failure missing-headers stddef.h "$missing/bin/clang" ${header_flags[@]+"${header_flags[@]}"} \
   -c "$work/builtin-headers.c" -o "$work/missing-headers.o"
 grep -E 'fatal error:.*stddef.h.*(not found|No such)' "$logs/missing-headers.txt"
 missing="$work/missing clang"
