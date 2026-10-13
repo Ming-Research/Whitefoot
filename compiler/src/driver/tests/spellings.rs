@@ -29,6 +29,21 @@ fn relative_to_working_directory(path: &std::path::Path) -> std::path::PathBuf {
     relative
 }
 
+/// The graph record spelled through a symbolic link `root/linked` to the
+/// project directory `root/app`; the link lives inside the test's tree and is
+/// removed with it. Hosts without symbolic links have no such spelling.
+#[cfg(unix)]
+fn symlinked_spelling(root: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let link = root.join("linked");
+    std::os::unix::fs::symlink(root.join("app"), &link).expect("create the symbolic link");
+    vec![link.join("modules.wfg")]
+}
+
+#[cfg(not(unix))]
+fn symlinked_spelling(_root: &std::path::Path) -> Vec<std::path::PathBuf> {
+    Vec::new()
+}
+
 /// A fresh source tree for one test, removed by the returned guard.
 struct SourceTree(std::path::PathBuf);
 
@@ -60,8 +75,9 @@ fn display_of(sources: &[crate::ModuleSourceFile], logical: &str) -> String {
 
 /// [MOD-8, MOD-9] the host paths an invocation spells its records by are no
 /// part of a record's identity: one graph built through a relative path, an
-/// absolute path and an absolute path with a `..` component reuses the entry
-/// build recorded by the first, emits the same module and recomputes no
+/// absolute path, an absolute path with a `..` component and (on Unix) a path
+/// through a symbolic link to the project directory reuses the entry build
+/// recorded by the first, emits the same module and recomputes no
 /// analysis, while an edit to a record or to the graph still prevents reuse.
 #[test]
 fn an_entry_build_is_reused_across_spellings_of_the_same_paths() {
@@ -85,11 +101,12 @@ fn an_entry_build_is_reused_across_spellings_of_the_same_paths() {
         ],
     );
     let absolute = root.join("app/modules.wfg");
-    let spellings = [
+    let mut spellings = vec![
         relative_to_working_directory(&absolute),
         absolute.clone(),
         root.join("app/../app/modules.wfg"),
     ];
+    spellings.extend(symlinked_spelling(&root));
     let build = |graph_path: &std::path::Path, cache: Option<&driver::BuildCache>| {
         let (graph, sources) = spelled_program(graph_path);
         let inputs = sources
@@ -117,7 +134,11 @@ fn an_entry_build_is_reused_across_spellings_of_the_same_paths() {
         .iter()
         .map(|graph_path| display_of(&spelled_program(graph_path).1, "base/half.wf"))
         .collect::<std::collections::BTreeSet<_>>();
-    assert_eq!(displays.len(), 3, "each spelling names the record alone");
+    assert_eq!(
+        displays.len(),
+        spellings.len(),
+        "each spelling names the record alone"
+    );
     let cold = |graph_path: &std::path::Path| {
         let (module, reused) = build(graph_path, None).expect("the cold entry builds");
         assert!(!reused, "a build without a cache reuses nothing");
@@ -152,8 +173,9 @@ fn an_entry_build_is_reused_across_spellings_of_the_same_paths() {
 
 /// [MOD-8, DIAG-1] a rejection prints the paths the invocation names its
 /// records by, never the paths of the invocation that recorded it: the same
-/// rejected graph checked through a relative path, an absolute path and an
-/// absolute path with a `..` component reports each spelling's own paths, as a
+/// rejected graph checked through a relative path, an absolute path, an
+/// absolute path with a `..` component and (on Unix) a path through a symbolic
+/// link to the project directory reports each spelling's own paths, as a
 /// run without a cache does, from module verdicts and from the entry's
 /// composition alike.
 #[test]
@@ -182,12 +204,13 @@ fn a_rejection_prints_the_paths_of_the_invocation_that_reads_it() {
         ],
     );
     let absolute = root.join("app/modules.wfg");
-    let spellings = [
+    let mut spellings = vec![
         relative_to_working_directory(&absolute),
         absolute.clone(),
         root.join("app/../app/modules.wfg"),
         root.join("app/../app/modules.wfg"),
     ];
+    spellings.extend(symlinked_spelling(&root));
     let failures = |graph_path: &std::path::Path, cache: Option<&driver::BuildCache>| {
         let (graph, sources) = spelled_program(graph_path);
         let inputs = sources
