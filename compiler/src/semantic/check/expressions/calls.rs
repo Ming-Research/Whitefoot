@@ -192,7 +192,7 @@ impl<'unit> Checker<'_, 'unit> {
             return self.types.declarations.issue_node(
                 SemanticRule::Op1,
                 node,
-                SemanticIssueKind::InvalidOperation,
+                SemanticIssueKind::invalid_operation(),
             );
         }
         self.types
@@ -246,7 +246,7 @@ impl<'unit> Checker<'_, 'unit> {
                 self.types.declarations.issue_value(
                     SemanticRule::Type5,
                     node,
-                    SemanticIssueKind::InvalidOperation,
+                    SemanticIssueKind::invalid_operation(),
                 )
             })?;
         let arguments = self
@@ -258,7 +258,7 @@ impl<'unit> Checker<'_, 'unit> {
             return self.types.declarations.issue_node(
                 SemanticRule::Op1,
                 node,
-                SemanticIssueKind::InvalidOperation,
+                SemanticIssueKind::invalid_operation(),
             );
         };
         let mut parsed = Vec::with_capacity(2);
@@ -272,7 +272,7 @@ impl<'unit> Checker<'_, 'unit> {
                     self.types.declarations.issue_value(
                         SemanticRule::Op1,
                         node,
-                        SemanticIssueKind::InvalidOperation,
+                        SemanticIssueKind::invalid_operation(),
                     )
                 })?;
             let ty = self.parse_type_with(check_context, type_node, &function.substitution)?;
@@ -291,7 +291,7 @@ impl<'unit> Checker<'_, 'unit> {
                 return self.types.declarations.issue_node(
                     SemanticRule::Op1,
                     node,
-                    SemanticIssueKind::InvalidOperation,
+                    SemanticIssueKind::invalid_operation(),
                 );
             };
             parsed.push(ty);
@@ -375,7 +375,7 @@ impl<'unit> Checker<'_, 'unit> {
                 self.types.declarations.issue_value(
                     SemanticRule::Type5,
                     node,
-                    SemanticIssueKind::InvalidOperation,
+                    SemanticIssueKind::invalid_operation(),
                 )
             })?;
         let targs = self
@@ -387,7 +387,7 @@ impl<'unit> Checker<'_, 'unit> {
             return self.types.declarations.issue_node(
                 SemanticRule::Op1,
                 node,
-                SemanticIssueKind::InvalidOperation,
+                SemanticIssueKind::invalid_operation(),
             );
         }
         let ty = self
@@ -399,7 +399,7 @@ impl<'unit> Checker<'_, 'unit> {
                 self.types.declarations.issue_value(
                     SemanticRule::Op1,
                     node,
-                    SemanticIssueKind::InvalidOperation,
+                    SemanticIssueKind::invalid_operation(),
                 )
             })?;
         self.parse_type_with(check_context, ty, &function.substitution)
@@ -440,7 +440,11 @@ impl<'unit> DeclarationInventory<'unit> {
         node: NodeId,
     ) -> Result<(), CheckStop> {
         if self.tree.argument_list(node)?.is_some() {
-            return self.issue_node(SemanticRule::Op1, node, SemanticIssueKind::InvalidOperation);
+            return self.issue_node(
+                SemanticRule::Op1,
+                node,
+                SemanticIssueKind::invalid_operation(),
+            );
         }
         Ok(())
     }
@@ -476,17 +480,25 @@ impl<'unit> DeclarationInventory<'unit> {
             if expected == 0 {
                 return Ok(Vec::new());
             }
-            return self.issue_node(SemanticRule::Op1, node, SemanticIssueKind::InvalidOperation);
+            return self.issue_node(
+                SemanticRule::Op1,
+                node,
+                SemanticIssueKind::invalid_operation(),
+            );
         };
         let atoms = self.tree.children_with(list, Production::Atom)?;
         if atoms.len() < expected {
-            return self.issue_node(SemanticRule::Op1, node, SemanticIssueKind::InvalidOperation);
+            return self.issue_node(
+                SemanticRule::Op1,
+                node,
+                SemanticIssueKind::invalid_operation(),
+            );
         }
         if atoms.len() > expected {
             return self.issue_node(
                 SemanticRule::Op1,
                 atoms[expected],
-                SemanticIssueKind::InvalidOperation,
+                SemanticIssueKind::invalid_operation(),
             );
         }
         Ok(atoms)
@@ -510,7 +522,7 @@ impl<'unit> TypeContext<'unit> {
             return self.declarations.issue_node(
                 SemanticRule::Op1,
                 node,
-                SemanticIssueKind::InvalidOperation,
+                SemanticIssueKind::invalid_operation(),
             );
         }
         if matches!(
@@ -568,10 +580,37 @@ impl<'unit> TypeContext<'unit> {
                 None => {
                     let selected = argument.expression.ty();
                     if !operation.accepts_operand_type(selected) {
+                        let float_operation = match operation {
+                            CheckedIntegerOperation::Less => Some("flt"),
+                            CheckedIntegerOperation::LessEqual => Some("fle"),
+                            CheckedIntegerOperation::Greater => Some("fgt"),
+                            CheckedIntegerOperation::GreaterEqual => Some("fge"),
+                            _ => None,
+                        };
+                        let kind = match float_operation {
+                            Some(float_operation)
+                                if matches!(
+                                    selected,
+                                    CheckedType::Float(_) | CheckedType::GenericFloat(_)
+                                ) =>
+                            {
+                                SemanticIssueKind::InvalidOperation {
+                                    operation: Some(operation.spelling().to_owned()),
+                                    operand_types: Some(vec![self.checked_type_name(selected)?]),
+                                    mechanical_fix: Some(
+                                        super::super::repairs::writer_operations::float_ordering_repair(
+                                            operation.spelling(),
+                                            float_operation,
+                                        ),
+                                    ),
+                                }
+                            }
+                            _ => SemanticIssueKind::invalid_operation(),
+                        };
                         return self.declarations.issue_node(
                             SemanticRule::Op1,
                             node,
-                            SemanticIssueKind::InvalidOperation,
+                            kind,
                         );
                     }
                     operand_type = Some(selected);

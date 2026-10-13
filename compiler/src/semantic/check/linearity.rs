@@ -385,11 +385,10 @@ impl<'unit> TypeContext<'unit> {
                 {
                     LinearValueKind::Struct
                 }
-                CheckedNominalKind::Box { referent, .. }
-                    if matches!(referent, CheckedType::Window { .. }) =>
-                {
-                    LinearValueKind::Window
-                }
+                CheckedNominalKind::Box {
+                    referent: CheckedType::Window { .. },
+                    ..
+                } => LinearValueKind::Window,
                 _ => LinearValueKind::Whole,
             },
             CheckedType::Window { .. } => LinearValueKind::Window,

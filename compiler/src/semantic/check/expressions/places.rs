@@ -164,9 +164,18 @@ impl<'unit> Checker<'_, 'unit> {
             return self.types.declarations.issue_node(
                 SemanticRule::Own1,
                 use_node,
-                SemanticIssueKind::MoveOfCopy {
-                    mechanical_fix: self.copy_move_repair(use_node)?,
-                },
+                self.ownership_issue(
+                    check_context,
+                    node,
+                    if place.measure.is_some() {
+                        CheckedType::Integer(IntegerType::U64)
+                    } else {
+                        place.ty
+                    },
+                    true,
+                    None,
+                    None,
+                )?,
             );
         }
         for member in &place.resolved.members {
@@ -325,18 +334,23 @@ impl<'unit> Checker<'_, 'unit> {
                 return self.types.declarations.issue_node(
                     SemanticRule::Own1,
                     use_node,
-                    SemanticIssueKind::BareAffineUse {
-                        mechanical_fix: if self
+                    self.ownership_issue(
+                        check_context,
+                        node,
+                        place.ty,
+                        false,
+                        None,
+                        if self
                             .types
                             .declarations
                             .tree
                             .place_has_dereference(node)?
                         {
-                            OWN1_ROOTED_CONSUME
+                            Some(OWN1_ROOTED_CONSUME.to_owned())
                         } else {
-                            super::super::repairs::BARE_AFFINE_USE
+                            None
                         },
-                    },
+                    )?,
                 );
             }
         }
@@ -685,7 +699,7 @@ impl<'unit> Checker<'_, 'unit> {
                     SemanticRule::Type7,
                     suffix,
                     SemanticIssueKind::MissingDereference {
-                        mechanical_fix: "write `p^`",
+                        mechanical_fix: "write `p^`".to_owned(),
                     },
                 );
             }
@@ -982,7 +996,7 @@ impl<'unit> TypeContext<'unit> {
                     .parent(suffix)?
                     .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?,
                 SemanticIssueKind::MissingDereference {
-                    mechanical_fix: "apply `^` only to a reference; name an owned place as itself",
+                    mechanical_fix: "apply `^` only to a reference; name an owned place as itself".to_owned(),
                 },
             );
         }

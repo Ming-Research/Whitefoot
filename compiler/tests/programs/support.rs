@@ -220,11 +220,17 @@ fn unit_and_exit_status_repairs_keep_running_in_the_program_harness() {
 #[test]
 fn a_host_driver_can_call_a_checked_library_without_the_bundled_runner() {
     let source = b"fn main() -> result: u8 pure {\n  return 7_u8;\n}\n";
-    let llvm = compile(
+    let mut llvm = compile(
         &[SourceInput::new("entry.wf", source)],
         CompilerLimits::default(),
     )
-    .expect("a u8 entry is valid library source");
+    .expect("a u8 entry is valid library source")
+    .into_string();
+    // The C host supplies the floor ABI's callback. Declaring it makes the
+    // fallback's call valid LLVM without generating a bundled entry runner.
+    llvm.push_str("\ndeclare i32 @wf__main_body(i32, ptr)\n");
+    whitefoot::require_executable_runner(&llvm)
+        .expect_err("a host callback declaration is not a generated runner");
     let driver = r#"#include <stdint.h>
 extern uint8_t wf_main(void);
 extern int wf__floor_run(int, char **);

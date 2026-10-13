@@ -371,9 +371,14 @@ impl<'unit> Checker<'_, 'unit> {
             return self.types.declarations.issue_node(
                 SemanticRule::Own1,
                 node,
-                SemanticIssueKind::MoveOfCopy {
-                    mechanical_fix: "read the measure without `move`",
-                },
+                self.ownership_issue(
+                    check_context,
+                    node,
+                    CheckedType::Integer(IntegerType::U64),
+                    true,
+                    None,
+                    Some("read the measure without `move`".to_owned()),
+                )?,
             );
         }
         Ok(TypedExpression {
@@ -602,9 +607,14 @@ impl<'unit> Checker<'_, 'unit> {
                 return self.types.declarations.issue_node(
                     SemanticRule::Own1,
                     use_node,
-                    SemanticIssueKind::MoveOfCopy {
-                        mechanical_fix: "read the measure without `move`",
-                    },
+                    self.ownership_issue(
+                        check_context,
+                        place,
+                        CheckedType::Integer(IntegerType::U64),
+                        true,
+                        None,
+                        Some("read the measure without `move`".to_owned()),
+                    )?,
                 );
             }
             let mut effects = range.offsets.effects;
@@ -691,9 +701,14 @@ impl<'unit> Checker<'_, 'unit> {
                     return self.types.declarations.issue_node(
                         SemanticRule::Own1,
                         use_node,
-                        SemanticIssueKind::MoveOfCopy {
-                            mechanical_fix: "read the measure without `move`",
-                        },
+                        self.ownership_issue(
+                            check_context,
+                            place,
+                            CheckedType::Integer(IntegerType::U64),
+                            true,
+                            None,
+                            Some("read the measure without `move`".to_owned()),
+                        )?,
                     );
                 }
                 let mut resolved = range.resolved;
@@ -809,9 +824,14 @@ impl<'unit> Checker<'_, 'unit> {
             return self.types.declarations.issue_node(
                 SemanticRule::Own1,
                 use_node,
-                SemanticIssueKind::MoveOfCopy {
-                    mechanical_fix: "read the measure without `move`",
-                },
+                self.ownership_issue(
+                    check_context,
+                    place,
+                    CheckedType::Integer(IntegerType::U64),
+                    true,
+                    None,
+                    Some("read the measure without `move`".to_owned()),
+                )?,
             );
         }
         for member in &container.resolved.members {
@@ -896,9 +916,14 @@ impl<'unit> Checker<'_, 'unit> {
             return self.types.declarations.issue_node(
                 SemanticRule::Own1,
                 node,
-                SemanticIssueKind::MoveOfCopy {
-                    mechanical_fix: "read the constant's copy scalar without `move`",
-                },
+                self.ownership_issue(
+                    check_context,
+                    node,
+                    place.root.ty,
+                    true,
+                    None,
+                    Some("read the constant's copy scalar without `move`".to_owned()),
+                )?,
             );
         }
         self.check_storage_read(check_context, node, node, place, bindings, options)
@@ -979,19 +1004,28 @@ impl<'unit> Checker<'_, 'unit> {
             return self.types.declarations.issue_node(
                 SemanticRule::Own1,
                 node,
-                SemanticIssueKind::BareAffineUse {
-                    mechanical_fix: "move the element out with take_back or remove_at, or \
-                                     exchange it with swap [OP-10, OP-11]",
-                },
+                self.ownership_issue(
+                    check_context,
+                    source_place,
+                    place.root.ty,
+                    false,
+                    None,
+                    Some("move the element out with take_back or remove_at, or exchange it with swap [OP-10, OP-11]".to_owned()),
+                )?,
             );
         }
         if copy && options.explicit_move && Checker::judges_class_spelling(check_context) {
             return self.types.declarations.issue_node(
                 SemanticRule::Own1,
                 node,
-                SemanticIssueKind::MoveOfCopy {
-                    mechanical_fix: "use the indexed copy place without `move`",
-                },
+                self.ownership_issue(
+                    check_context,
+                    source_place,
+                    place.root.ty,
+                    true,
+                    None,
+                    Some("use the indexed copy place without `move`".to_owned()),
+                )?,
             );
         }
         let mut effects = place.offsets.effects;
@@ -1169,10 +1203,14 @@ impl<'unit> Checker<'_, 'unit> {
             return self.types.declarations.issue_node(
                 SemanticRule::Own1,
                 use_node,
-                SemanticIssueKind::BareAffineUse {
-                    mechanical_fix: "move the element out with take_back or remove_at, or \
-                                     exchange it with swap [OP-10, OP-11]",
-                },
+                self.ownership_issue(
+                    check_context,
+                    place,
+                    selected_type,
+                    false,
+                    None,
+                    Some("move the element out with take_back or remove_at, or exchange it with swap [OP-10, OP-11]".to_owned()),
+                )?,
             );
         }
         if !element_read_out
@@ -1182,9 +1220,14 @@ impl<'unit> Checker<'_, 'unit> {
             return self.types.declarations.issue_node(
                 SemanticRule::Own1,
                 use_node,
-                SemanticIssueKind::MoveOfCopy {
-                    mechanical_fix: "use the indexed copy place without `move`",
-                },
+                self.ownership_issue(
+                    check_context,
+                    place,
+                    selected_type,
+                    true,
+                    None,
+                    Some("use the indexed copy place without `move`".to_owned()),
+                )?,
             );
         }
         if matches!(indexed, CheckedIndexedPlace::Container(_)) {
@@ -2366,7 +2409,7 @@ impl<'unit> Checker<'_, 'unit> {
                         SemanticRule::Type7,
                         node,
                         SemanticIssueKind::MissingDereference {
-                            mechanical_fix: "write `holder^`",
+                            mechanical_fix: "write `holder^`".to_owned(),
                         },
                     );
                 }

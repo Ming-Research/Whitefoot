@@ -25,6 +25,9 @@ mod remaining_repairs;
 mod selector_scope;
 mod shared_maps;
 mod storage_destructuring;
+mod writer_operations;
+mod writer_ownership;
+mod writer_references;
 
 /// One repair [DIAG-1], pinned with the programs it produces: a rejected
 /// source, the rule and the exact repair its rejection carries, and one
@@ -3845,6 +3848,9 @@ fn each_pinned_repair_is_carried_out_by_its_programs() {
         .chain(selector_scope::SELECTOR_SCOPE)
         .chain(enum_routed_ensures::ENUM_ROUTED_ENSURES)
         .chain(collisions_and_killed_facts::COLLISIONS_AND_KILLED_FACTS)
+        .chain(writer_operations::WRITER_OPERATIONS)
+        .chain(writer_ownership::WRITER_OWNERSHIP)
+        .chain(writer_references::WRITER_REFERENCES)
     {
         let failure = compile(
             &[SourceInput::new(pair.name, pair.rejected)],

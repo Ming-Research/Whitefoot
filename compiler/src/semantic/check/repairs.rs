@@ -44,6 +44,10 @@ use super::super::model::{
 use super::super::permission::visit_read_bindings;
 use crate::NodePath;
 
+pub(super) mod writer_operations;
+pub(super) mod writer_ownership;
+pub(super) mod writer_references;
+
 /// The executable builder's signature route does not reject checked source.
 pub(crate) const fn executable_runner_repair() -> &'static str {
     "select a function taking no parameters or one std::process::Inputs and returning std::process::ExitStatus or unit"
@@ -1505,11 +1509,8 @@ pub(super) fn cell_taken_apart(
     }
 }
 
-/// [TYPE-2, OWN-1, TYPE-9, TYPE-11] wording shared by the checking sites.
+/// [TYPE-2, TYPE-9, TYPE-11] wording shared by the checking sites.
 pub(super) const CONTAINER_CONSTRUCTION: &str = "build it with a construction function [OP-13]";
-pub(super) const BARE_AFFINE_USE: &str = "write `move p` for the affine place";
-pub(super) const COPY_PLACE_MOVE: &str = "use the copy place without `move`";
-pub(super) const COPY_DESTRUCTURING_MOVE: &str = "remove `move` from the destructuring: let N(f: a, ...) = p;";
 pub(super) const INLINE_RUNTIME_STORAGE: &str = "wrap it in a Box, or write the constant-capacity form";
 pub(super) const INLINE_SEGMENTS_OR_PAGED: &str = "wrap it in a Box and pass a reference to its content";
 pub(super) const INVARIANT_FIELD_READONLY: &str = "write the field `public readonly`, so that code outside the declaring module reads it and only that module writes it, or make it private";

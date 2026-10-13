@@ -40,7 +40,7 @@ pub(super) const REMAINING_REPAIRS: &[RepairPair] = &[
         sentences: &["\n  mechanical_fix: build it with a construction function [OP-13]\n"],
         repaired: &[br#"fn make() -> result: Box<Segments<u8>> pure {
   let lengths = array_filled::<u64, 2>(value: 3_u64);
-  return box_segments_filled::<u8>(lengths: &lengths, value: 0_u8);
+  return box_segments_filled::<u8>(lengths: &lengths[0_u64..2_u64], value: 0_u8);
 }
 "#],
     },
@@ -224,7 +224,12 @@ fn pass(p: Parcel) -> result: Parcel pure {
 }
 "#,
         rule: "OWN-1",
-        sentences: &["\n  mechanical_fix: write `move p` for the affine place\n"],
+        sentences: &[
+            "\n  binding: p\n",
+            "\n  ty: Parcel\n",
+            "\n  reason: `p` has type Parcel; its type Parcel is declared non-copy\n",
+            "\n  mechanical_fix: write `move p`\n",
+        ],
         repaired: &[br#"nocopy struct Parcel {
   value: u8;
 }
@@ -241,7 +246,12 @@ fn pass(p: Parcel) -> result: Parcel pure {
 }
 "#,
         rule: "OWN-1",
-        sentences: &["\n  mechanical_fix: use the copy place without `move`\n"],
+        sentences: &[
+            "\n  binding: p\n",
+            "\n  ty: u8\n",
+            "\n  reason: `p` has type u8; every part is copy\n",
+            "\n  mechanical_fix: write `p` without `move`\n",
+        ],
         repaired: &[br#"fn pass(p: u8) -> result: u8 pure {
   return p;
 }
@@ -277,7 +287,7 @@ fn pass(p: Parcel) -> result: Parcel pure {
 
 fn main() -> status: std::process::ExitStatus pure {
   let lengths = array_filled::<u64, 2>(value: 3_u64);
-  let segments = box_segments_filled::<u64>(lengths: &lengths, value: 7_u64);
+  let segments = box_segments_filled::<u64>(lengths: &lengths[0_u64..2_u64], value: 7_u64);
   let n = count(segments: &segments.inner);
   return std::process::exit_status(code: 0_u8);
 }
@@ -717,7 +727,7 @@ public fn consume(value: Parcel) -> result: unit pure doc "Consumes the parcel."
     ] {
         let inputs = |source| {
             vec![
-                SourceInput::new("module.wfm", b"").in_module(root, SourceRole::Interface),
+                SourceInput::new("module.wfm", b"\n").in_module(root, SourceRole::Interface),
                 SourceInput::new("parts/module.wfm", interface)
                     .in_module(parts, SourceRole::Interface),
                 SourceInput::new("parts/consume.wf", body)

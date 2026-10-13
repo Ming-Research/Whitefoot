@@ -878,7 +878,7 @@ impl<'unit> Checker<'_, 'unit> {
                 SemanticRule::Type7,
                 node,
                 SemanticIssueKind::MissingDereference {
-                    mechanical_fix: "write `holder^`",
+                    mechanical_fix: "write `holder^`".to_owned(),
                 },
             );
         }
@@ -895,7 +895,7 @@ impl<'unit> Checker<'_, 'unit> {
                 SemanticRule::Type7,
                 node,
                 SemanticIssueKind::MissingDereference {
-                    mechanical_fix: "write `holder^`",
+                    mechanical_fix: "write `holder^`".to_owned(),
                 },
             );
         }
