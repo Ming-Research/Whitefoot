@@ -24,7 +24,13 @@ impl Walker<'_> {
             .into_iter()
             .filter(|place| matches!(place.root, CheckedRangeRoot::Entry(_)))
             .map(|place| {
-                let view = self.place_view(state, &place, segments.contains(&place), roots);
+                let view = self.place_view(
+                    state,
+                    &place,
+                    segments.contains(&place),
+                    clause.field_type(&place),
+                    roots,
+                );
                 (place, view)
             })
             .collect()
@@ -174,7 +180,32 @@ impl Walker<'_> {
                         BTreeMap::new(),
                     );
                 }
-                View::Place(location) => state.havoc_location(&mut self.world, &location),
+                View::Place(location) => {
+                    // A field write kills that field and its descendants, not
+                    // its siblings. Reuse the declared effect paths and the
+                    // ordinary location invalidation that direct stores use.
+                    let paths = formal.map_or(&callee.declared_state_writes, |row| &row.writes);
+                    for path in paths
+                        .iter()
+                        .filter(|path| path.root == parameter.declaration)
+                    {
+                        let mut written = location.clone();
+                        for step in &path.steps {
+                            written = match step {
+                                crate::semantic::model::CheckedEffectStep::Field(field) => {
+                                    written.child(Step::Field(*field))
+                                }
+                                crate::semantic::model::CheckedEffectStep::Deref => {
+                                    written.child(Step::BoxContent)
+                                }
+                                // Retain the walk's existing conservative
+                                // forgetting for a path it cannot place.
+                                _ => break,
+                            };
+                        }
+                        state.havoc_location(&mut self.world, &written);
+                    }
+                }
                 View::Scalar(_) | View::Unknown => state.havoc_everything(&mut self.world),
             }
         }

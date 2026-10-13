@@ -517,6 +517,11 @@ fn collect_range_term(
                 collect_range_term(term, context, reads);
             }
         }
+        CheckedRangeTerm::Field { place, .. } => {
+            if let Some((ordinal, steps)) = range_base(place, signature, definitions) {
+                add_read(signature, ordinal, steps, reads);
+            }
+        }
         CheckedRangeTerm::Measure { place, measure, .. } => {
             if let Some((ordinal, mut steps)) = range_base(place, signature, definitions) {
                 steps.push(ContractReadStep::Row(CheckedEffectStep::Measure(*measure)));
@@ -720,6 +725,11 @@ pub(super) fn range_term_goal(
             }
             datum(*root, path, CheckedType::Integer(*element))
         }
+        CheckedRangeTerm::Field { place, element } => datum(
+            place.root,
+            range_goal_path(place),
+            CheckedType::Integer(*element),
+        ),
         CheckedRangeTerm::Measure { place, measure, .. } => {
             let mut path = range_goal_path(place);
             path.push(GoalProjection::Measure(*measure));

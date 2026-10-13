@@ -25,6 +25,10 @@ cpu epyc-9v45  AMD EPYC 9V45 96-Core Processor
 
 label                           epyc-7763  epyc-9v74  epyc-9v45  macos  windows
 
+# Temporary float-text-check.yml; initial budgets await its first CI sample.
+compiler/float-text-build        190    -      -
+compiler/float-text-module       60     -      -
+
 # gate.yml, static group
 check/static                    80         85         65         125    -
 repository-invariants           25         25         25         30     -

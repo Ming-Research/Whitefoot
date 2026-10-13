@@ -1,0 +1,15 @@
+struct Decimal {
+  count: u64;
+  digits: Array<u8, 1>;
+}
+
+fn inspect(decimal: &Box<Decimal>, digits: &[u8]) -> result: unit reads(decimal), reads(digits) contract {
+  requires forall leading(k in 0_u64..digits^.len) when 0_u64 < decimal^.inner.count: 1_u8 <= digits^[k];
+} {
+  doc "A standalone field read through Box content is outside ENT-6 tracked field places and is not an element projection.";
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

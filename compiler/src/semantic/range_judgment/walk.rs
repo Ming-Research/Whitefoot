@@ -379,7 +379,13 @@ impl<'program> Walker<'program> {
             segment_places(term, &mut segments);
         }
         for place in clause.places() {
-            let view = self.place_view(state, &place, segments.contains(&place), roots);
+            let view = self.place_view(
+                state,
+                &place,
+                segments.contains(&place),
+                clause.field_type(&place),
+                roots,
+            );
             frame.places.insert(place, view);
         }
         let mut values = Vec::new();
@@ -417,6 +423,7 @@ impl<'program> Walker<'program> {
         state: &mut State,
         place: &CheckedRangePlace,
         segments: bool,
+        field_type: Option<IntegerType>,
         roots: &dyn Fn(CheckedRangeRoot) -> Option<Value>,
     ) -> PlaceView {
         enum Reached {
@@ -463,6 +470,29 @@ impl<'program> Walker<'program> {
                     })
                 }
                 _ => return PlaceView::Unknown,
+            };
+        }
+        if let Some(integer) = field_type {
+            // Use the same current slot as executable reads. Capturing this
+            // immutable value does not add a tracker: ordinary location writes,
+            // enclosing writes and loop forgetting replace the slot already.
+            let value = match reached {
+                Reached::Location(location) => {
+                    self.read_location(state, &location, CheckedType::Integer(integer))
+                }
+                Reached::Run(View::Element {
+                    container,
+                    indices,
+                    projection: Some(projection),
+                }) => {
+                    let version = state.version(&mut self.world, container);
+                    Value::Int(self.world.read(version, indices, projection, Some(integer)))
+                }
+                _ => return PlaceView::Unknown,
+            };
+            return match value {
+                Value::Int(value) => PlaceView::Integer(value),
+                _ => PlaceView::Unknown,
             };
         }
         match reached {

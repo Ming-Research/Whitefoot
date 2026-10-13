@@ -1,0 +1,174 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+enum WriteError {
+  TooSmall();
+}
+
+fn write_decimal(destination: &[u8], start: u64, end: u64, value: u64) -> result: Result<u64, WriteError> writes(destination) contract {
+  requires start <= end;
+  requires end <= destination^.len;
+} {
+  doc "Writes the decimal text of a value into the window destination[start..end) when the text fits, and reports TooSmall when it does not. The window is a range reference, so its length is end minus start and every subscript is below the length the single test establishes.";
+  let length = 1_u64;
+  let rest = value / 10_u64;
+  for (
+    step in 0_u64..19_u64,
+    invariant grown: length <= step + 1_u64
+  ) {
+    if rest != 0_u64 {
+      set length = length + 1_u64;
+      set rest = rest / 10_u64;
+    }
+  }
+  let window = &destination^[start..end];
+  let room = window^.len;
+  if length <= room {
+    let position = length;
+    let remaining = value;
+    loop @emit (
+      invariant placed: position <= length
+    ) {
+      if 0_u64 < position {
+      } else {
+        break @emit;
+      }
+      let at = position - 1_u64;
+      let low = remaining % 10_u64;
+      let digit = cvt::<u64, u8>(low);
+      let byte = digit + 48_u8;
+      set window^[at] = byte;
+      set remaining = remaining / 10_u64;
+      set position = at;
+    }
+    return Ok<u64, WriteError>(value: length);
+  }
+  let error = WriteError::TooSmall();
+  return Err<u64, WriteError>(error: error);
+}
+
+fn buffer_digest(buffer: &[u8]) -> result: u64 reads(buffer) {
+  doc "FNV-1a over every byte of a window.";
+  let count = buffer^.len;
+  let hash = 14695981039346656037_u64;
+  for (index in 0_u64..count) {
+    let byte = buffer^[index];
+    let wide = cvt::<u8, u64>(byte);
+    let mixed = ixor(hash, wide);
+    set hash = mixed *wrap 1099511628211_u64;
+  }
+  return hash;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "Writes six values into a 32-byte buffer at different windows and compares the outcome and the whole buffer with the text computed outside the compiler.";
+  let buffer_1 = array_filled::<u8, 32>(value: 0_u8);
+  let window_1 = &buffer_1[0_u64..32_u64];
+  let outcome_1 = write_decimal(destination: window_1, start: 3_u64, end: 8_u64, value: 0_u64);
+  match outcome_1 {
+    Ok(value: length) => {
+      if length == 1_u64 {
+      } else {
+        return exit_status(code: 11_u8);
+      }
+    }
+    Err(error: failure) => {
+      return exit_status(code: 12_u8);
+    }
+  }
+  let view_1 = &buffer_1[0_u64..32_u64];
+  let digest_1 = buffer_digest(buffer: view_1);
+  if digest_1 == 14846948442074541333_u64 {
+  } else {
+    return exit_status(code: 13_u8);
+  }
+  let buffer_2 = array_filled::<u8, 32>(value: 0_u8);
+  let window_2 = &buffer_2[0_u64..32_u64];
+  let outcome_2 = write_decimal(destination: window_2, start: 2_u64, end: 30_u64, value: 18446744073709551615_u64);
+  match outcome_2 {
+    Ok(value: length) => {
+      if length == 20_u64 {
+      } else {
+        return exit_status(code: 21_u8);
+      }
+    }
+    Err(error: failure) => {
+      return exit_status(code: 22_u8);
+    }
+  }
+  let view_2 = &buffer_2[0_u64..32_u64];
+  let digest_2 = buffer_digest(buffer: view_2);
+  if digest_2 == 3221903239664955228_u64 {
+  } else {
+    return exit_status(code: 23_u8);
+  }
+  let buffer_3 = array_filled::<u8, 32>(value: 0_u8);
+  let window_3 = &buffer_3[0_u64..32_u64];
+  let outcome_3 = write_decimal(destination: window_3, start: 0_u64, end: 4_u64, value: 12345_u64);
+  match outcome_3 {
+    Ok(value: length) => {
+      return exit_status(code: 31_u8);
+    }
+    Err(error: failure) => {
+    }
+  }
+  let view_3 = &buffer_3[0_u64..32_u64];
+  let digest_3 = buffer_digest(buffer: view_3);
+  if digest_3 == 901300984310592933_u64 {
+  } else {
+    return exit_status(code: 33_u8);
+  }
+  let buffer_4 = array_filled::<u8, 32>(value: 0_u8);
+  let window_4 = &buffer_4[0_u64..32_u64];
+  let outcome_4 = write_decimal(destination: window_4, start: 5_u64, end: 5_u64, value: 7_u64);
+  match outcome_4 {
+    Ok(value: length) => {
+      return exit_status(code: 41_u8);
+    }
+    Err(error: failure) => {
+    }
+  }
+  let view_4 = &buffer_4[0_u64..32_u64];
+  let digest_4 = buffer_digest(buffer: view_4);
+  if digest_4 == 901300984310592933_u64 {
+  } else {
+    return exit_status(code: 43_u8);
+  }
+  let buffer_5 = array_filled::<u8, 32>(value: 0_u8);
+  let window_5 = &buffer_5[0_u64..32_u64];
+  let outcome_5 = write_decimal(destination: window_5, start: 10_u64, end: 17_u64, value: 1000000_u64);
+  match outcome_5 {
+    Ok(value: length) => {
+      if length == 7_u64 {
+      } else {
+        return exit_status(code: 51_u8);
+      }
+    }
+    Err(error: failure) => {
+      return exit_status(code: 52_u8);
+    }
+  }
+  let view_5 = &buffer_5[0_u64..32_u64];
+  let digest_5 = buffer_digest(buffer: view_5);
+  if digest_5 == 6285461899340433084_u64 {
+  } else {
+    return exit_status(code: 53_u8);
+  }
+  let buffer_6 = array_filled::<u8, 32>(value: 0_u8);
+  let window_6 = &buffer_6[0_u64..32_u64];
+  let outcome_6 = write_decimal(destination: window_6, start: 31_u64, end: 32_u64, value: 999999_u64);
+  match outcome_6 {
+    Ok(value: length) => {
+      return exit_status(code: 61_u8);
+    }
+    Err(error: failure) => {
+    }
+  }
+  let view_6 = &buffer_6[0_u64..32_u64];
+  let digest_6 = buffer_digest(buffer: view_6);
+  if digest_6 == 901300984310592933_u64 {
+  } else {
+    return exit_status(code: 63_u8);
+  }
+  return exit_status(code: 0_u8);
+}

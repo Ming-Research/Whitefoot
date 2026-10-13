@@ -1,0 +1,30 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn consume_shift(amount: i64) -> result: i64 pure contract {
+  requires 0_i64 <= amount;
+  requires amount <= 1080_i64;
+  ensures result == 0_i64;
+} {
+  doc "Observed INV-1 refusal at the next-header proof of remaining_floor. Subtracting min(remaining, 60) cannot make remaining negative, but the checker did not discharge this first header obligation; the cause remains unverified. The later remaining_ceiling obligation, which expresses exhaustion within eighteen chunks, has not yet been reached.";
+  let remaining = amount;
+  for (
+    step in 0_u64..18_u64,
+    invariant remaining_floor: 0_i64 <= remaining,
+    invariant remaining_ceiling: remaining <= 1080_i64 - 60_i64 * step
+  ) {
+    if 0_i64 < remaining {
+      let chunk = imin(remaining, 60_i64);
+      set remaining = remaining - chunk;
+    }
+  }
+  return remaining;
+}
+
+fn main() -> status: ExitStatus pure {
+  let remaining = consume_shift(amount: 1076_i64);
+  if remaining == 0_i64 {
+    return exit_status(code: 0_u8);
+  }
+  return exit_status(code: 1_u8);
+}

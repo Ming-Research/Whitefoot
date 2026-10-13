@@ -36,6 +36,8 @@ use super::world::{
 /// What one place of a clause denotes in a frame.
 #[derive(Clone, Debug)]
 pub(super) enum PlaceView {
+    /// Immutable current image of a tracked integer field.
+    Integer(Linear),
     /// A run of elements: element `k` is the container's element at
     /// `prefix ++ [offset + k]` in `version`.
     Run {
@@ -100,7 +102,9 @@ impl Frame {
                             Some(super::super::model::IntegerType::U64),
                         )
                     }
-                    PlaceView::Segments { .. } | PlaceView::Unknown => return None,
+                    PlaceView::Integer(_) | PlaceView::Segments { .. } | PlaceView::Unknown => {
+                        return None;
+                    }
                 };
                 (length != fixed).then(|| Literal::new(length, Relation::Equal, fixed))
             })
@@ -158,6 +162,10 @@ impl Former<'_> {
                 self.iterations.get(*position as usize).cloned()
             }
             CheckedRangeTerm::Value(root) => self.frame.values.get(root).cloned(),
+            CheckedRangeTerm::Field { place, .. } => match self.frame.places.get(place)? {
+                PlaceView::Integer(value) => Some(value.clone()),
+                _ => None,
+            },
             CheckedRangeTerm::ValueProjection {
                 root,
                 indices,
@@ -618,6 +626,7 @@ fn collect_triggers(term: &CheckedRangeTerm, out: &mut Vec<Trigger>, overflowing
         | CheckedRangeTerm::Bound(_)
         | CheckedRangeTerm::Iteration(_)
         | CheckedRangeTerm::Value(_)
+        | CheckedRangeTerm::Field { .. }
         | CheckedRangeTerm::ValueProjection { .. }
         | CheckedRangeTerm::Measure { .. } => {}
     }
@@ -962,7 +971,7 @@ fn match_trigger(
         PlaceView::Element {
             version, indices, ..
         } => (*version, indices.as_slice(), None),
-        PlaceView::Unknown => return,
+        PlaceView::Integer(_) | PlaceView::Unknown => return,
     };
     let expected = prefix.len() + trigger.positions.len();
     if view_version != version

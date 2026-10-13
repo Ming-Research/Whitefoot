@@ -1,0 +1,25 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn prefix_power(count: u64) -> result: u64 pure contract {
+  requires count <= 17_u64;
+  ensures result <= 100000000000000000_u64;
+} {
+  doc "Expected refusal, not run: INV-1 on the next-header proof of ceiling. Seventeen multiplications by ten produce at most 10^17, but the affine header does not express scale equals ten to position. This is the scale recurrence used while accumulating the first count decimal digits.";
+  let scale = 1_u64;
+  for (
+    position in 0_u64..count,
+    invariant ceiling: scale <= 100000000000000000_u64
+  ) {
+    set scale = scale * 10_u64;
+  }
+  return scale;
+}
+
+fn main() -> status: ExitStatus pure {
+  let power = prefix_power(count: 17_u64);
+  if power == 100000000000000000_u64 {
+    return exit_status(code: 0_u8);
+  }
+  return exit_status(code: 1_u8);
+}

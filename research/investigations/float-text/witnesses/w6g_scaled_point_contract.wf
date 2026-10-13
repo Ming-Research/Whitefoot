@@ -1,0 +1,21 @@
+struct DecimalPoint {
+  point: i64;
+}
+
+fn scale_point(decimal: &DecimalPoint) -> result: unit writes(decimal.point) contract {
+  requires -1000_i64 <= decimal^.point;
+  requires decimal^.point <= 1000_i64;
+  ensures entry(decimal)^.point <= decimal^.point;
+  ensures decimal^.point <= entry(decimal)^.point + 19_i64;
+} {
+  set decimal^.point = decimal^.point + 16_i64;
+  return unit;
+}
+
+fn scale_normalized() -> result: unit pure {
+  doc "Internal contract gap, with an INV-1 refusal predicted and not compiled: the helper adds sixteen to the decimal point but publishes only an increase of at most nineteen. From an initial point of zero its actual result meets the bound eighteen, while its contract permits nineteen. The addition models one point change when a normalized positive decimal is multiplied by 2^53; it is not a decimal arithmetic implementation or an exact SDC witness. It isolates the insufficient point summary at the scaled_point assertion, not a language gap.";
+  let decimal = DecimalPoint(point: 0_i64);
+  scale_point(decimal: &decimal);
+  invariant scaled_point: decimal.point <= 18_i64;
+  return unit;
+}

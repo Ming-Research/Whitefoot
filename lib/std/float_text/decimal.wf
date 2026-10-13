@@ -1,0 +1,374 @@
+struct Decimal {
+  doc "A positive decimal of at most 800 significant digits, most significant first: the value is 0.d1d2...dn times ten to the point, for the count n of digits held, each at most nine, with no trailing zero once trimmed. Digits past the 800 held are dropped, and truncated notes that one of them was nonzero.";
+  digits: Array<u8, 800>;
+  count: u64;
+  point: i64;
+  truncated: Bool;
+  invariant count_ceiling(decimal): decimal.count <= 800_u64;
+  invariant(decimal): forall below_ten(k in 0_u64..decimal^.digits.len): decimal^.digits[k] <= 9_u8;
+}
+
+fn decimal_new() -> result: Decimal pure {
+  doc "An empty decimal, which denotes zero.";
+  let digits = array_filled::<u8, 800>(value: 0_u8);
+  let clean = False();
+  return Decimal(digits: digits, count: 0_u64, point: 0_i64, truncated: clean);
+}
+
+fn decimal_trim(decimal: &Decimal) -> result: unit reads(decimal.digits), writes(decimal.count) contract {
+  ensures decimal^.count <= entry(decimal)^.count;
+  ensures decimal^.point == entry(decimal)^.point;
+} {
+  doc "Drops the trailing zero digits, which do not change the value the decimal denotes.";
+  let original = decimal^.count;
+  let count = original;
+  loop @trim (
+    invariant within: count <= original
+  ) {
+    if 0_u64 < count {
+    } else {
+      invariant finished: count <= original;
+      break @trim;
+    }
+    let last = count - 1_u64;
+    let digit = decimal^.digits[last];
+    if digit == 0_u8 {
+      set count = last;
+    } else {
+      invariant finished: count <= original;
+      break @trim;
+    }
+  }
+  set decimal^.count = count;
+  return unit;
+}
+
+fn decimal_assign(decimal: &Decimal, input: &[u8], first: u64, last: u64) -> (negative: Bool, magnitude: u64) reads(input), writes(decimal) contract {
+  requires first <= last;
+  requires last <= input^.len;
+  ensures decimal^.point == 0_i64;
+  ensures forall leading(k in 0_u64..1_u64) when 0_u64 < decimal^.count: 1_u8 <= decimal^.digits[k];
+} {
+  doc "Replaces the decimal by the digits of the significand text input[first..last), digits with at most one point as scan_significand read them. Leading zeros are not held; the point is the number of integer digits from the first nonzero one, or minus the number of zeros between the point and the first nonzero digit, and is returned as a sign and an unsigned magnitude so the explicit exponent can cancel it before any saturation. The stored point is zero until that combination.";
+  set decimal^.count = 0_u64;
+  set decimal^.truncated = False();
+  let held = 0_u64;
+  let index = first;
+  let seen_point = False();
+  let before = 0_u64;
+  let leading = 0_u64;
+  loop @text (
+    invariant ahead: first <= index,
+    invariant inside: index <= last,
+    invariant held_ceiling: held <= 800_u64,
+    invariant before_seen: before <= index,
+    invariant leading_seen: leading <= index,
+    invariant forall small(k in 0_u64..decimal^.digits.len): decimal^.digits[k] <= 9_u8
+  ) {
+    if index < last {
+    } else {
+      invariant held_done: held <= 800_u64;
+      break @text;
+    }
+    let byte = input^[index];
+    let following = index + 1_u64;
+    if byte == 46_u8 {
+      set seen_point = True();
+      set index = following;
+      continue @text;
+    }
+    if 48_u8 <= byte {
+      if byte <= 57_u8 {
+        let digit = byte - 48_u8;
+        let zero_digit = digit == 0_u8;
+        let nothing_held = held == 0_u64;
+        let skip = band(zero_digit, nothing_held);
+        if skip {
+          if seen_point {
+            set leading = leading + 1_u64;
+          }
+        } else {
+          if seen_point {
+          } else {
+            set before = before + 1_u64;
+          }
+          if held < 800_u64 {
+            set decimal^.digits[held] = digit;
+            set held = held + 1_u64;
+          } else if digit != 0_u8 {
+            set decimal^.truncated = True();
+          }
+        }
+        set index = following;
+        continue @text;
+      }
+    }
+    invariant held_finished: held <= 800_u64;
+    break @text;
+  }
+  set decimal^.count = held;
+  set decimal^.point = 0_i64;
+  decimal_trim(decimal: decimal);
+  if 0_u64 < before {
+    return False(), before;
+  }
+  return True(), leading;
+}
+
+fn decimal_multiply(decimal: &Decimal, shift: u32) -> result: u64 writes(decimal) contract {
+  requires shift <= 60_u32;
+  ensures result <= 1152921504606846976_u64;
+  ensures decimal^.point == entry(decimal)^.point;
+  ensures decimal^.count == entry(decimal)^.count;
+} {
+  doc "The left shift: multiplies the held integer by two to the shift, in place and from the least significant digit, and returns the carry out of the most significant digit. Each step is at most nine times 2^60 plus a carry of at most 2^60. The caller places the decimal digits of the returned carry before the held digits with decimal_front.";
+  let multiplier = ishl(1_u64, shift);
+  let count = decimal^.count;
+  let remaining = count;
+  let carry = 0_u64;
+  loop @digits (
+    invariant within: remaining <= count,
+    invariant carry_bound: carry <= 1152921504606846976_u64,
+    invariant forall small(k in 0_u64..decimal^.digits.len): decimal^.digits[k] <= 9_u8
+  ) {
+    if 0_u64 < remaining {
+    } else {
+      invariant carry_finished: carry <= 1152921504606846976_u64;
+      break @digits;
+    }
+    let index = remaining - 1_u64;
+    let digit = decimal^.digits[index];
+    invariant digit_small: digit <= 9_u8 {
+      use small(index);
+    }
+    let wide = cvt::<u8, u64>(digit);
+    let scaled = wide * multiplier;
+    let total = scaled + carry;
+    let low = total % 10_u64;
+    let high = total / 10_u64;
+    let narrow = cvt::<u64, u8>(low);
+    set decimal^.digits[index] = narrow;
+    set carry = high;
+    set remaining = index;
+  }
+  return carry;
+}
+
+fn decimal_front(decimal: &Decimal, delta: u64) -> result: unit writes(decimal) contract {
+  requires delta <= 19_u64;
+  ensures decimal^.count <= entry(decimal)^.count + delta;
+  ensures decimal^.point == entry(decimal)^.point;
+} {
+  doc "Moves the digits delta places toward the end, dropping low digits past the 800-digit capacity and recording every nonzero dropped digit. The vacated leading digits are zero until the caller fills them with its carry.";
+  let count = decimal^.count;
+  let room = 800_u64 - delta;
+  let retained = imin(count, room);
+  for (lost in retained..count) {
+    let digit = decimal^.digits[lost];
+    if digit != 0_u8 {
+      set decimal^.truncated = True();
+    }
+  }
+  let remaining = retained;
+  loop @move (
+    invariant within: remaining <= retained,
+    invariant forall small(k in 0_u64..decimal^.digits.len): decimal^.digits[k] <= 9_u8
+  ) {
+    if 0_u64 < remaining {
+    } else {
+      break @move;
+    }
+    let index = remaining - 1_u64;
+    let digit = decimal^.digits[index];
+    invariant copied_small: digit <= 9_u8 {
+      use small(index);
+    }
+    let target = index + delta;
+    set decimal^.digits[target] = digit;
+    set remaining = index;
+  }
+  for (
+    index in 0_u64..delta,
+    invariant forall small(k in 0_u64..decimal^.digits.len): decimal^.digits[k] <= 9_u8
+  ) {
+    set decimal^.digits[index] = 0_u8;
+  }
+  set decimal^.count = retained + delta;
+  return unit;
+}
+
+fn decimal_left(decimal: &Decimal, shift: u32) -> result: unit writes(decimal) contract {
+  requires shift <= 60_u32;
+  requires 1_u64 <= decimal^.count;
+  requires 1_u8 <= decimal^.digits[0_u64];
+  requires -1000000000000_i64 <= decimal^.point;
+  requires decimal^.point <= 1000000000000_i64;
+  ensures 1_u64 <= decimal^.count;
+  ensures forall leading(k in 0_u64..1_u64): 1_u8 <= decimal^.digits[k];
+  ensures entry(decimal)^.point <= decimal^.point;
+  ensures decimal^.point <= entry(decimal)^.point + 19_i64;
+} {
+  doc "Multiplies a nonzero normalized decimal by 2^shift. Schoolbook multiplication leaves a carry of at most 19 decimal digits; these are placed before the held digits. Digits displaced beyond 800 contribute to the sticky tail.";
+  let carry = decimal_multiply(decimal: decimal, shift: shift);
+  let leading = array_filled::<u8, 19>(value: 0_u8);
+  let rest = carry;
+  let added = 0_u64;
+  for (
+    index in 0_u64..19_u64,
+    invariant added_bound: added <= 19_u64,
+    invariant forall small(k in 0_u64..leading.len): leading[k] <= 9_u8
+  ) {
+    if rest != 0_u64 {
+      let low = rest % 10_u64;
+      let digit = cvt::<u64, u8>(low);
+      set leading[index] = digit;
+      set rest = rest / 10_u64;
+      set added = index + 1_u64;
+    }
+  }
+  decimal_front(decimal: decimal, delta: added);
+  for (
+    index in 0_u64..added,
+    invariant forall small(k in 0_u64..decimal^.digits.len): decimal^.digits[k] <= 9_u8
+  ) {
+    let back = added - index;
+    let source = back - 1_u64;
+    let digit = leading[source];
+    set decimal^.digits[index] = digit;
+  }
+  let increase = cvt::<u64, i64>(added);
+  set decimal^.point = decimal^.point + increase;
+  decimal_trim(decimal: decimal);
+  return unit;
+}
+
+fn decimal_right(decimal: &Decimal, shift: u32) -> result: unit writes(decimal) contract {
+  requires shift <= 60_u32;
+  requires 1_u64 <= decimal^.count;
+  requires 1_u8 <= decimal^.digits[0_u64];
+  requires -1000000000000_i64 <= decimal^.point;
+  requires decimal^.point <= 1000000000000_i64;
+  ensures 1_u64 <= decimal^.count;
+  ensures forall leading(k in 0_u64..1_u64): 1_u8 <= decimal^.digits[k];
+  ensures entry(decimal)^.point - 19_i64 <= decimal^.point;
+  ensures decimal^.point <= entry(decimal)^.point;
+} {
+  doc "Divides a nonzero normalized decimal by 2^shift with schoolbook long division. Leading quotient zeros lower the decimal point; quotient digits occupy the consumed input slots, then remainder digits extend the tail. A remainder masked by the named power of two stays below the divisor, so every quotient is a decimal digit.";
+  let divisor = ishl(1_u64, shift);
+  let mask = divisor - 1_u64;
+  let count = decimal^.count;
+  let point = decimal^.point;
+  let remainder = 0_u64;
+  let written = 0_u64;
+  let skipped = 0_u64;
+  for (
+    index in 0_u64..count,
+    invariant remainder_bound: remainder <= mask,
+    invariant consumed: written + skipped == index,
+    invariant skipped_bound: skipped <= 19_u64,
+    invariant forall small(k in 0_u64..decimal^.digits.len): decimal^.digits[k] <= 9_u8
+  ) {
+    let digit = decimal^.digits[index];
+    invariant digit_small: digit <= 9_u8 {
+      use small(index);
+    }
+    let wide = cvt::<u8, u64>(digit);
+    let scaled = remainder * 10_u64;
+    let total = scaled + wide;
+    let quotient = ishr(total, shift);
+    let narrow = cvt::<u64, u8>(quotient);
+    let kept = iand(total, mask);
+    set remainder = kept;
+    let not_started = written == 0_u64;
+    let zero_digit = narrow == 0_u8;
+    let leading_zero = band(not_started, zero_digit);
+    if leading_zero {
+      set skipped = skipped + 1_u64;
+    } else {
+      set decimal^.digits[written] = narrow;
+      set written = written + 1_u64;
+    }
+  }
+  loop @tail (
+    invariant remainder_bound: remainder <= mask,
+    invariant written_bound: written <= 800_u64,
+    invariant skipped_bound: skipped <= 19_u64,
+    invariant forall small(k in 0_u64..decimal^.digits.len): decimal^.digits[k] <= 9_u8
+  ) {
+    if remainder != 0_u64 {
+    } else {
+      invariant written_finished: written <= 800_u64;
+      invariant skipped_finished: skipped <= 19_u64;
+      break @tail;
+    }
+    let total = remainder * 10_u64;
+    let quotient = ishr(total, shift);
+    let narrow = cvt::<u64, u8>(quotient);
+    let kept = iand(total, mask);
+    set remainder = kept;
+    let not_started = written == 0_u64;
+    let zero_digit = narrow == 0_u8;
+    let leading_zero = band(not_started, zero_digit);
+    if leading_zero {
+      set skipped = skipped + 1_u64;
+    } else if written < 800_u64 {
+      set decimal^.digits[written] = narrow;
+      set written = written + 1_u64;
+    } else if narrow != 0_u8 {
+      set decimal^.truncated = True();
+    }
+  }
+  let decrease = cvt::<u64, i64>(skipped);
+  set decimal^.point = point - decrease;
+  set decimal^.count = written;
+  decimal_trim(decimal: decimal);
+  return unit;
+}
+
+fn decimal_digit(decimal: &Decimal, index: u64) -> result: u8 reads(decimal) contract {
+  ensures result <= 9_u8;
+} {
+  doc "Returns a held digit, or the zero that follows the exact stored prefix. The sticky flag is consulted separately when rounding.";
+  if index < decimal^.count {
+    let digit = decimal^.digits[index];
+    return digit;
+  }
+  return 0_u8;
+}
+
+fn decimal_round_integer(decimal: &Decimal) -> result: u64 reads(decimal) contract {
+  requires decimal^.point <= 18_i64;
+  ensures result <= 1000000000000000000_u64;
+} {
+  doc "Rounds a nonnegative decimal with at most 18 integer places to the nearest integer, ties to even. A sticky nonzero tail makes an apparent exact half round upward.";
+  if decimal^.point < 0_i64 {
+    return 0_u64;
+  }
+  let whole = cvt::<i64, u64>(decimal^.point);
+  let value = 0_u64;
+  for (
+    index in 0_u64..whole,
+    invariant prefix_bound: value <= 999999999999999999_u64
+  ) {
+    let digit = decimal_digit(decimal: decimal, index: index);
+    let wide = cvt::<u8, u64>(digit);
+    let tens = value * 10_u64;
+    set value = tens + wide;
+  }
+  if whole < decimal^.count {
+    let next = decimal_digit(decimal: decimal, index: whole);
+    let up = 5_u8 < next;
+    if next == 5_u8 {
+      let after = whole + 1_u64;
+      let beyond = after < decimal^.count;
+      let odd_bit = iand(value, 1_u64);
+      let odd = odd_bit == 1_u64;
+      let tail = bor(beyond, decimal^.truncated);
+      set up = bor(tail, odd);
+    }
+    if up {
+      return value + 1_u64;
+    }
+  }
+  return value;
+}

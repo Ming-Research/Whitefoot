@@ -1,0 +1,59 @@
+public enum NonFinite {
+  Infinite(public negative: Bool);
+  NotANumber(public negative: Bool);
+}
+
+public struct FloatDigits {
+  doc "A finite binary64 value as decimal digits: (-1)^negative times digits times 10^exponent, with digits written in count decimal digits (count is at least the number of digits of digits, leading zeros aside). Only the digit-selecting operations of this module make one, so the fields are readonly. Every finite binary64 value needs at most 17 significant digits, and its exponent lies between -340 and 292, inside the bounds the invariants state.";
+  public readonly negative: Bool;
+  public readonly digits: u64;
+  public readonly count: u64;
+  public readonly exponent: i64;
+  invariant count_floor(d): 1_u64 <= d.count;
+  invariant count_ceiling(d): d.count <= 17_u64;
+  invariant digits_ceiling(d): d.digits <= 99999999999999999_u64;
+  invariant exponent_floor(d): -400_i64 <= d.exponent;
+  invariant exponent_ceiling(d): d.exponent <= 400_i64;
+}
+
+public enum ReadError {
+  ReadSyntax();
+  ReadOverflow(public value: f64);
+  ReadUnderflow(public value: f64);
+}
+
+public enum WriteError {
+  WriteTooSmall(public required: u64);
+}
+
+public const float_text_max: u64 = 24_u64;
+
+public const integer_text_max: u64 = 20_u64;
+
+public fn f64_read(input: &[u8], start: u64, end: u64) -> value: Result<f64, ReadError> reads(input) contract {
+  requires start <= end;
+  requires end <= input^.len;
+} doc "Reads the whole window as an optional sign, a significand containing at least one decimal digit and at most one point, and an optional e or E followed by an optional sign and at least one decimal digit. No spaces, non-finite names or hexadecimal forms are admitted. Rounds the denoted number to nearest binary64 with ties to even. A zero retains its sign. ReadSyntax reports any other text; ReadOverflow and ReadUnderflow carry the signed infinity or zero when a nonzero number rounds to one.";
+
+public fn f64_shortest(value: f64) -> digits: Result<FloatDigits, NonFinite> pure doc "Selects the least positive digit count whose decimal value rounds to value; among those selects the nearest decimal value, then the even coefficient on a tie. The sign is value's sign bit, including zero, whose coefficient is zero, count one and exponent zero. Infinity and NaN return their signed NonFinite case.";
+
+public fn f64_significant(value: f64, count: u64) -> digits: Result<FloatDigits, NonFinite> pure contract {
+  requires 1_u64 <= count;
+  requires count <= 17_u64;
+} doc "Rounds value to count significant decimal digits with ties to even. A carry to a power of ten increases the decimal exponent and preserves the requested count. The sign is value's sign bit, including zero, whose coefficient is zero, count one and exponent zero. Infinity and NaN return their signed NonFinite case.";
+
+public fn digits_write(digits: FloatDigits, precision: u64, destination: &[u8], start: u64, end: u64) -> next: Result<u64, WriteError> writes(destination) contract {
+  requires 1_u64 <= precision;
+  requires precision <= 17_u64;
+  requires start <= end;
+  requires end <= destination^.len;
+  ensures when Ok(value: after): start <= after;
+  ensures when Ok(value: after): after <= end;
+} doc "Writes digits in the layout of C's %g at the given precision into destination from start; Ok carries the index after the text and nothing outside start up to that index changes. The text is a minus sign when digits.negative is True, then 0 when digits.digits is zero. Otherwise let G be the count low-order decimal digits of digits.digits without its trailing zeros and L be exponent + count - 1. For -4 <= L < precision the text is fixed: for L >= 0 the first L + 1 digits of G, padded on the right with zeros, then, when G has more digits, a point and the rest of G; for L < 0 the text 0. followed by -L - 1 zeros and G. Otherwise the text is exponential: the first digit of G, then, when G has more than one digit, a point and the rest of G, then e, then + for L >= 0 and - otherwise, then |L| in decimal with a leading zero when it is below 10. A window shorter than the text gets WriteTooSmall carrying the length the text needs and no byte is written. Every text has at most float_text_max bytes.";
+
+public fn i64_write(value: i64, destination: &[u8], start: u64, end: u64) -> next: Result<u64, WriteError> writes(destination) contract {
+  requires start <= end;
+  requires end <= destination^.len;
+  ensures when Ok(value: after): start <= after;
+  ensures when Ok(value: after): after <= end;
+} doc "Writes value in decimal into destination from start: a minus sign when value is negative, then the digits of its magnitude without leading zeros, or 0 for zero. Ok carries the index after the text and nothing outside start up to that index changes; a window shorter than the text gets WriteTooSmall carrying the length the text needs and no byte is written. Every text has at most integer_text_max bytes.";

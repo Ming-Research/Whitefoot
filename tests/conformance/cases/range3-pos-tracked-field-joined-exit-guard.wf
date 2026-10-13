@@ -1,0 +1,22 @@
+struct Decimal {
+  count: u64;
+  digits: Array<u8, 1>;
+}
+
+fn choose(decimal: &Decimal, choice: Bool) -> result: unit writes(decimal) contract {
+  ensures forall leading(k in 0_u64..1_u64) when 0_u64 < decimal^.count: 1_u8 <= decimal^.digits[k];
+} {
+  doc "The join keeps the selected arm's count and digit images together: one arm makes the guard false, and the other establishes the conclusion.";
+  if choice {
+    set decimal^.count = 0_u64;
+    set decimal^.digits[0_u64] = 0_u8;
+  } else {
+    set decimal^.count = 1_u64;
+    set decimal^.digits[0_u64] = 1_u8;
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
