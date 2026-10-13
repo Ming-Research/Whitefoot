@@ -1853,6 +1853,94 @@ CoreMark takes `BrTableN` for 9.15M of its table dispatches. The gain is
 small but stable, and the validation is the interpreter's own, as wasmi's
 is, so the step is kept.
 
+### Return checks and small handlers: machine-code attribution
+
+**Question and scope.** Which extra instructions does v2h execute on the
+return path and in each handler contributing less than 0.3% in the refreshed
+CoreMark attribution, compared with wasmi? For each return check, determine
+the source construct, the specified proof obligation and its checker support,
+whether wasmi performs an equivalent check, and whether the existing language
+can express the natural form without that check. For each small handler,
+record one line explaining its extra instructions as a registered gap, an
+intentional interpreter design difference, or unknown. This is static code
+inspection: neither interpreter, CoreMark, a profiler nor a timing experiment
+is run by this task. Instruction counts alone do not establish cycle costs or
+the fraction of elapsed time a change would save.
+
+**Inputs still needed.** The call-frame paragraph above records the supplied
+2026-10-12 totals, 387.3 ms for v2h and 357.6 ms for wasmi, but this checkout
+does not contain that run's refreshed per-handler table. The older attribution
+above is not its replacement. The below-0.3% membership and the percentage's
+denominator must come from the refreshed attribution, not be reconstructed
+from those totals. Also, the checked-in call-frame workflow's hosted job
+builds only v2h; it supplies no wasmi build recipe. The source pin cited above
+identifies wasmi 2.0.0, but equivalence to the measured wasmi build settings
+remains to be checked against the original artifact.
+
+**Collection method.** The temporary, manually dispatched
+[`v2h-handler-code.yml`](../../../.github/workflows/v2h-handler-code.yml)
+builds the checked-out branch's compiler and generates v2h from its `gen.py`
+and interpreter templates on an x86-64 hosted runner. It builds wasmi from
+the exact source revision cited above, retaining build settings and toolchain
+identities with the artifact. It uses `objdump -d --no-show-raw-insn` filtered
+by symbol. Until the refreshed membership is supplied, the collection covers
+the bounded superset of v2h's `run` dispatch arms and wasmi's executor handlers,
+plus return-path context and the arms' direct Whitefoot callees (the default
+generator places some operation bodies in helpers). It does not claim that
+every dumped handler belongs to the small-handler group. Remove this workflow
+before the branch is ready.
+
+Map v2h symbols to the order of arms in the **generated `run` match**, not to
+enum order or `gen.py --names`. Retain that source and the symbol map so that
+an arm number can be checked against its body. The return handler is authored
+in `interp_head.wf`; `interp_tail.wf` emits its instructions and drives the
+interpreter. Follow branches through shared exit blocks and retained callees
+before declaring a check absent. Read each wasmi handler's operand forms and
+translator selection before pairing it with a v2h arm: slot, accumulator and
+immediate forms are distinct comparisons. Record symbol aliases rather than
+assuming an absent spelling means absent code.
+
+**Analysis and rejection of an attribution.** For each proposed extra check,
+identify the comparison and branch addresses, both successors, the protected
+operation and the source condition. Separate caller-frame and return-PC
+validity from the root-return sentinel, optional result move and saved-link
+offset handling; source branches are candidates, not findings about emitted
+instructions. Trace the corresponding wasmi return path, including validation
+or construction that establishes its preconditions. Reject a claimed extra
+check if the optimized v2h code lacks it or wasmi performs equivalent work on
+the compared path. Read the active specification and checker implementation
+before saying a source guard is required: a specified proof obligation does
+not by itself require a runtime guard.
+
+If the natural form is expressible, explain its proof and distinguish
+source reasoning from compiled evidence. Otherwise give a few-line, standalone
+Whitefoot semantic witness independent of v2h, the missing language or
+compiler capability, and the change that would close it. A witness not yet
+compiled is explicitly unverified; do not replace it with a different spelling
+or a runtime check. Link a registered gap only after verifying that its scope
+covers the observation. Where instruction or source evidence cannot establish
+the reason, use **unknown**. Compare the artifact's revisions and settings
+with the historical attribution before applying conclusions to that run.
+
+**Results pending the owner's artifact.** Empty cells below are intentional;
+no disassembly has been collected or analyzed for this task. The two check
+rows reserve the requested findings without predicting their machine code.
+Expand the small-handler table to one row per selected handler when the
+refreshed attribution is available, preserving its exact membership.
+
+| Return-path check | v2h symbol, addresses and instructions | Source construct and language/checker rule | Equivalent wasmi work, symbol and addresses | Natural form without check; evidence or limitation |
+|---|---|---|---|---|
+| Check 1 | | | | |
+| Check 2 | | | | |
+
+| Confirmed gap, if any | Minimal standalone semantic witness | Required language/compiler change | Registered item and verification status |
+|---|---|---|---|
+| | | | |
+
+| Small handler from refreshed attribution | Recorded share and denominator | Matched v2h / wasmi symbols and paths | Extra v2h instructions | Reason: registered gap / intentional design difference / unknown |
+|---|---|---|---|---|
+| | | | | |
+
 ### Constructor and runtime-boundary audit
 
 The handler-word repair distinguishes values built by emitted constructors

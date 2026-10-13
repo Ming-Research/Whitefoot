@@ -1,0 +1,148 @@
+# Temporary phase-3 machine-code collection. Remove before this branch is ready.
+# research-boundary: manual-only
+# Static inspection only: no interpreter execution, tests, profiling or timing.
+# The refreshed small-handler inventory is absent from this checkout, so retain
+# all run arms and wasmi executor handlers as a bounded superset.
+name: v2h-handler-code
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compile-hosted:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: bash
+    env:
+      LC_ALL: C
+      CARGO_INCREMENTAL: "0"
+      CARGO_TERM_COLOR: never
+      WASMI_REV: 2970aa871cc1001b57b267ccecdcd1e42306199e
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Build the branch compiler, generated v2h and pinned wasmi
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y -qq lld binutils >/dev/null
+          out="$RUNNER_TEMP/v2h-handler-code"
+          mkdir -p "$out/evidence"
+          echo "V2H_CODE_OUT=$out" >> "$GITHUB_ENV"
+          # Same compiler profile as make -C compiler build, without its timing wrapper.
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
+          cargo build --manifest-path compiler/Cargo.toml --profile gate --bin whitefootc --locked --offline
+          python3 research/experiments/match-dispatch/wasm/gen.py "$out/evidence/v2h.wf"
+          compiler/target/gate/whitefootc --dispatch-ledger "$out/evidence/v2h.wf" -o "$out/v2h" > "$out/evidence/v2h-compile.log" 2>&1
+          git clone --quiet https://github.com/wasmi-labs/wasmi "$out/wasmi-source"
+          git -C "$out/wasmi-source" checkout --quiet "$WASMI_REV"
+          test "$(git -C "$out/wasmi-source" rev-parse HEAD)" = "$WASMI_REV"
+          # Default release settings are provisional until compared with the attribution build.
+          cargo build --manifest-path "$out/wasmi-source/Cargo.toml" --release --locked --package wasmi_cli > "$out/evidence/wasmi-build.log" 2>&1
+          {
+            printf 'Whitefoot/source %s\nwasmi/source %s\n' "$(git rev-parse HEAD)" "$WASMI_REV"
+            printf 'v2h: gen.py default; whitefootc --dispatch-ledger; compiler profile gate\n'
+            printf 'wasmi: cargo build --release --locked --package wasmi_cli; no profile overrides\n'
+            printf 'RUSTFLAGS=%s\nCARGO_ENCODED_RUSTFLAGS=%s\n' "${RUSTFLAGS-}" "${CARGO_ENCODED_RUSTFLAGS-}"
+            uname -m
+            rustc --version --verbose
+            cargo --version
+            /usr/bin/clang --version
+            objdump --version
+            sha256sum compiler/target/gate/whitefootc "$out/v2h" "$out/wasmi-source/target/release/wasmi_cli" "$out/evidence/v2h.wf"
+          } > "$out/evidence/inputs.txt"
+          tar -czf "$out/evidence/wasmi-source.tar.gz" -C "$out/wasmi-source" \
+            Cargo.toml Cargo.lock crates/cli/Cargo.toml crates/wasmi/Cargo.toml \
+            crates/wasmi/build.rs crates/wasmi/src/engine/executor crates/wasmi/src/engine/translator
+          cp compiler/Cargo.toml compiler/Cargo.lock "$out/evidence/"
+
+      - name: Dump only interpreter symbols and retained direct handler callees
+        run: |
+          set -euo pipefail
+          python3 - "$V2H_CODE_OUT" <<'PY'
+          import csv
+          import pathlib
+          import re
+          import subprocess
+          import sys
+
+          out = pathlib.Path(sys.argv[1])
+          evidence = out / "evidence"
+          source = (evidence / "v2h.wf").read_text()
+          run_start = source.index("\nfn run(") + 1
+          run_end = source.index("\nfn ", run_start)
+          arms = [(m.group(1), source.count("\n", 0, run_start + m.start()) + 1)
+                  for m in re.finditer(r"^      (\w+)\([^\n]*\) => \{", source[run_start:run_end], re.M)]
+          if not arms or len({name for name, _ in arms}) != len(arms) or "Return" not in dict(arms):
+              raise RuntimeError("generated run arm map is missing, ambiguous or lacks Return")
+
+          def symbols(binary, label):
+              raw = subprocess.check_output(["nm", "--no-sort", "--defined-only", "-j", str(binary)], text=True).splitlines()
+              pretty = subprocess.check_output(["nm", "--no-sort", "--defined-only", "-j", "-C", str(binary)], text=True).splitlines()
+              if len(raw) != len(pretty):
+                  raise RuntimeError("raw/demangled symbol inventory mismatch")
+              subprocess.run(["nm", "-n", "-S", "--defined-only", str(binary)], check=True,
+                             stdout=(evidence / f"{label}-symbols.txt").open("w"))
+              typed = subprocess.check_output(["nm", "--defined-only", "--format=posix", str(binary)], text=True)
+              code = {fields[0] for line in typed.splitlines()
+                      if len(fields := line.split()) >= 2 and fields[1] in {"t", "T", "w", "W"}}
+              return {name: demangled for name, demangled in zip(raw, pretty) if name in code}
+
+          def dump(binary, name):
+              body = subprocess.check_output(["objdump", "-d", "--no-show-raw-insn",
+                                              f"--disassemble={name}", str(binary)], text=True)
+              if not re.search(r"^\s*[0-9a-f]+:\s+\S", body, re.M):
+                  raise RuntimeError(f"empty disassembly for {name}; inspect symbol aliases")
+              return body
+
+          v2h = out / "v2h"
+          wasm = out / "wasmi-source/target/release/wasmi_cli"
+          vs = symbols(v2h, "v2h")
+          ws = symbols(wasm, "wasmi")
+          selected = {name: "run entry/exit context" for name in vs
+                      if name in {"wf_run", "wf_run.dispatch"} or name.startswith("wf_run.cold")}
+          with (evidence / "v2h-arm-map.tsv").open("w") as f:
+              rows = csv.writer(f, delimiter="\t")
+              rows.writerow(["arm", "handler", "generated_source_line", "symbol"])
+              for index, (handler, line) in enumerate(arms):
+                  name = f"wf_run.arm.{index}"
+                  if name not in vs:
+                      raise RuntimeError(f"missing split handler {handler}: {name}")
+                  selected[name] = f"run handler {handler}"
+                  rows.writerow([index, handler, line, name])
+          texts = {name: dump(v2h, name) for name in selected}
+          # Base numeric/load/store arms can call helpers in gen.py's default mode.
+          # One level supplies those bodies and Return's helpers; no runtime closure.
+          for body in list(texts.values()):
+              for target in re.findall(r"\b(?:callq?|jmpq?)\s+[^\n]*<([^>+]+)(?:\+[^>]*)?>", body):
+                  if target.startswith("wf_") and target in vs and target not in selected:
+                      selected[target] = "direct handler callee"
+          texts.update({name: dump(v2h, name) for name in selected if name not in texts})
+          wselected = {name: "executor handler/context" for name, pretty in ws.items()
+                       if "wasmi::engine::executor::handler::" in pretty}
+          if not wselected or not any("return" in ws[name].lower() for name in wselected):
+              raise RuntimeError("wasmi executor/return symbols missing; inspect build settings")
+          with (evidence / "selected-symbols.tsv").open("w") as f:
+              rows = csv.writer(f, delimiter="\t")
+              rows.writerow(["engine", "symbol", "demangled", "reason"])
+              for label, binary, inventory, scope in [("v2h", v2h, vs, selected), ("wasmi", wasm, ws, wselected)]:
+                  with (evidence / f"{label}-handlers.asm").open("w") as asm:
+                      for name, reason in sorted(scope.items()):
+                          rows.writerow([label, name, inventory[name], reason])
+                          asm.write(texts[name] if label == "v2h" else dump(binary, name))
+          for index, path in enumerate(sorted((out / "wasmi-source/target/release/build").glob("wasmi-*/output"))):
+              (evidence / f"wasmi-build-script-{index}.txt").write_bytes(path.read_bytes())
+          PY
+
+      - name: Retain disassembly, maps, identities and build source
+        if: always() && env.V2H_CODE_OUT != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: v2h-handler-code-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.V2H_CODE_OUT }}/evidence/
+          if-no-files-found: error
