@@ -1877,18 +1877,27 @@ builds only v2h; it supplies no wasmi build recipe. The source pin cited above
 identifies wasmi 2.0.0, but equivalence to the measured wasmi build settings
 remains to be checked against the original artifact.
 
-**Collection method.** The temporary, manually dispatched
+**Collection method.** The temporary workflow, triggered manually or by a
+push to the work branch,
 [`v2h-handler-code.yml`](../../../.github/workflows/v2h-handler-code.yml)
 builds the checked-out branch's compiler and generates v2h from its `gen.py`
 and interpreter templates on an x86-64 hosted runner. It builds wasmi from
 the exact source revision cited above, retaining build settings and toolchain
 identities with the artifact. It uses `objdump -d --no-show-raw-insn` filtered
 by symbol. Until the refreshed membership is supplied, the collection covers
-the bounded superset of v2h's `run` dispatch arms and wasmi's executor handlers,
+the bounded superset of v2h's `run` dispatch arms, wasmi's executor handlers
+and its `execute_until_done`, `execute_until_break`, `execute_root_func` and
+`execute_func` dispatch/entry functions,
 plus return-path context and the arms' direct Whitefoot callees (the default
 generator places some operation bodies in helpers). It does not claim that
 every dumped handler belongs to the small-handler group. Remove this workflow
-before the branch is ready.
+before the branch is ready. An empty symbol selection is recorded in
+`disassembly-misses.tsv`, with the symbol's address and declared size. A
+nonzero declared range is also dumped to recover merged aliases; a zero-size
+or still-empty body leaves a miss marker and collection continues. A missing
+symbol is not evidence that the operation is absent. Executor functions cover
+handler bodies inlined by portable dispatch; separate tail handlers remain
+in scope too.
 
 Map v2h symbols to the order of arms in the **generated `run` match**, not to
 enum order or `gen.py --names`. Retain that source and the symbol map so that
@@ -1922,24 +1931,108 @@ covers the observation. Where instruction or source evidence cannot establish
 the reason, use **unknown**. Compare the artifact's revisions and settings
 with the historical attribution before applying conclusions to that run.
 
-**Results pending the owner's artifact.** Empty cells below are intentional;
-no disassembly has been collected or analyzed for this task. The two check
-rows reserve the requested findings without predicting their machine code.
-Expand the small-handler table to one row per selected handler when the
-refreshed attribution is available, preserving its exact membership.
+**Partial artifact, observed.** The owner supplied
+[run 38396415962](https://github.com/Ming-Research/Whitefoot/actions/runs/38396415962).
+Its `inputs.txt` identifies branch/compiler source
+`b99fccbba06bc5995822acc02789059edcfae6cf`, wasmi at the pin above, Clang
+18.1.3, rustc 1.99.0 with LLVM 23.1.1, and x86-64 Linux. Both builds completed;
+collection stopped during wasmi symbol selection. Its v2h assembly and
+generated-source map permit the observations below. Its wasmi assembly does
+not yet permit the requested handler comparisons, so those columns remain
+empty. The dispatch ledger records v2h's C convention with six integer
+argument registers and eight invariant values in the enclosing frame. ABI
+traffic in this artifact is not evidence of the same traffic in the historical
+14900K build, whose toolchain/settings must still be compared.
+
+The failed wasmi `consume_fuel_if` closure for `memory_fill` has address
+`0x313cb0`, size `0x3f`, shared with the closures for `memory_copy`,
+`memory_init` and `memory_copy_within` in `wasmi-symbols.txt`. This explains
+why one symbol spelling can have an empty selection despite a declared code
+body; it does not establish that handlers were inlined. The inventory also
+contains `handler::exec::return` at `0x42a080`, size `0xaa`, and
+`handler::dispatch::backend::execute_until_done` at `0x419090`, size `0x155`.
+The archived `dispatch/backend/tail.rs` dispatches to separate handler
+functions; `dispatch/backend/loop.rs` supports an inlined portable path.
+The revised collection covers both and records selector misses instead of
+aborting. Actual recovery remains unverified until the next hosted run.
+
+**Return, v2h side.** The generated map assigns Return to `wf_run.arm.8`
+at `0x33240`. The saved return PC is loaded into `%rax` at `0x33263`, and
+the caller frame base into `%rdx` at `0x33268`. Both bounds failures below
+reach `0x332bb`, which constructs trap code 1 and returns; success reaches
+`0x332a1` to form the resumed operation address, load its handler word, set
+the resumed PC and tail-jump at `0x332b8`.
 
 | Return-path check | v2h symbol, addresses and instructions | Source construct and language/checker rule | Equivalent wasmi work, symbol and addresses | Natural form without check; evidence or limitation |
 |---|---|---|---|---|
-| Check 1 | | | | |
-| Check 2 | | | | |
+| Caller frame fits | `wf_run.arm.8`: `0x3328d mov $0xffffffffffff0000,%r8`; `0x33294 add (%r14),%r8`; `0x33297 cmp %r8,%rdx`; `0x3329a ja 0x332bb` | `caller <= stack^.inner.len - 65536` supplies `frame_bound` on `continue`; [INV-1] requires its backedge proof, and [OP-4] uses the frame fact for subsequent slot indices. | | Current saved-link contents have no published bound. A complete continuation invariant is needed; no language/compiler refusal has been demonstrated. |
+| Return PC lies in code | `wf_run.arm.8`: `0x3329c cmp %rbx,%rax`; `0x3329f jae 0x332bb` | `ret < n` supplies `code_bound` on `continue`; [INV-1] requires its backedge proof, and [OP-4] requires it for `code[pc]`. | | The current contract does not bound saved return PCs. Proving the Call successor and preservation of its saved value is needed; expressibility and compiled check removal remain unverified. |
+
+These are the source guards in `interp_head.wf`'s Return arm, not bounds
+checks inserted for a subscript. [ENT-3.S1] supplies the branch facts, while
+[OP-4] requires static discharge and does not mandate a runtime branch.
+Other Return decisions are distinct: `0x3324b cmp $0xffff,%rdx` /
+`0x33252 je` rejects a saved-link offset of 65535; `0x3326d cmpw $0,...` /
+`0x33273 je` chooses whether to move a result; `0x33287 cmp $-1,%rax` /
+`0x3328b je 0x332d7` recognizes the root-return sentinel and constructs Done.
+
+**Proof status.** `enter` publishes only preservation of stack length; its
+interface accepts an arbitrary `ret` and `fp`. `run` requires a bounded
+current PC/frame and valid branch-table entries, but no property of saved
+continuations. `Call` saves `pc + 1`; `pc < n` alone permits that value to
+equal `n`. Those interfaces do not justify omitting the return guards.
+The proof must establish that each live non-root continuation has a bounded
+caller and successor PC, distinguish the root sentinel, and show that
+frame/operand writes preserve those links. [RANGE-1] admits stored-value
+relations; [RANGE-2] and [RANGE-3] provide range contracts, loop invariants
+and write-version tracking
+for ordinary obligations. Whether those rules prove the complete natural
+continuation invariant is still open. A simple save/reload program cannot
+honestly be labeled a gap from this evidence; no minimal gap witness or
+language amendment is claimed below.
 
 | Confirmed gap, if any | Minimal standalone semantic witness | Required language/compiler change | Registered item and verification status |
 |---|---|---|---|
 | | | | |
 
-| Small handler from refreshed attribution | Recorded share and denominator | Matched v2h / wasmi symbols and paths | Extra v2h instructions | Reason: registered gap / intentional design difference / unknown |
-|---|---|---|---|---|
-| | | | | |
+**Small-handler analysis started, v2h side only.** The following candidate
+inventory is read from `v2h-handlers.asm` and `v2h-arm-map.tsv`; membership
+in the refreshed below-0.3% group is not yet known. Each row describes observed
+v2h work, not an established excess over wasmi. After the refreshed table is
+supplied, select its exact handlers and add missing rows. Shares, wasmi work
+and the paired reason remain pending rather than guessed.
+
+Every listed fallthrough path computes the next PC and executes a `cmp` /
+`jae` validity guard. This comes from the source's `next < n` condition
+(`gen.py`'s `advance` or a handwritten arm); the current `pc < n` header fact
+does not imply `pc + 1 < n`. Slot-address calculation, loads/stores and the
+handler-word jump are also visible; whether wasmi executes equivalents needs
+its next artifact. Variable shifts/rotates borrow `%cl` for the count and
+save/restore the accumulator carried in `%rcx` in this C-ABI build. `I32Clz`
+and `I32Ctz` handle zero explicitly; the `tzcnt` mnemonic alone does not
+prove the zero branch redundant or the compiled target's feature baseline.
+`I32Popcnt` uses software bit counting; its comparison with wasmi and the
+reason for the target lowering remain unverified.
+
+| Candidate handler / v2h symbol | Observed v2h instructions and path | Recorded share and denominator | Matched wasmi work | Extra versus wasmi | Paired reason |
+|---|---|---|---|---|---|
+| `Select` / `wf_run.arm.12` | `0x33650 cmpq` / `0x33656 sete` selects the operand index at `0x3365a`; next-PC `cmp` / `jae` at `0x33674` / `0x3367d`. | | | | |
+| `GlobalGet` / `wf_run.arm.15` | Global-index `cmp` / `jbe` at `0x337c8` / `0x337cb`; next-PC guard at `0x337e3` / `0x337ed`. | | | | |
+| `GlobalSet` / `wf_run.arm.16` | Global-index `cmp` / `jbe` at `0x33848` / `0x3384b`; next-PC guard at `0x33863` / `0x3386d`. | | | | |
+| `I32Eqz` / `wf_run.arm.53` | Slot `cmpl` / `sete` at `0x35014` / `0x3501a`; next-PC guard at `0x35024` / `0x3502d`. | | | | |
+| `I32EqzA` / `wf_run.arm.253` | Accumulator `test` / `sete` at `0x3c488` / `0x3c48a`; next-PC guard at `0x3c49a` / `0x3c4a3`. | | | | |
+| `I32Clz` / `wf_run.arm.87` | Zero test/branch at `0x3611b` / `0x3611d`; nonzero `bsr` / `xor` at `0x3611f` / `0x36122`, zero gives 32 at `0x36127`; next-PC guard at `0x3613a` / `0x3613d`. | | | | |
+| `I32Ctz` / `wf_run.arm.88` | Zero test/branch at `0x3619b` / `0x3619d`; `tzcnt` at `0x3619f`, zero gives 32 at `0x361a5`; next-PC guard at `0x361b8` / `0x361bb`. | | | | |
+| `I32Popcnt` / `wf_run.arm.89` | Software bit count at `0x36217`–`0x36248`; next-PC guard at `0x36252` / `0x3625b`. | | | | |
+| `I32Sub` / `wf_run.arm.91` | `sub` at `0x36361`, saves/restores `%r14` and `%rbx`; next-PC guard at `0x3636d` / `0x36376`. | | | | |
+| `I32Mul` / `wf_run.arm.92` | `imul` at `0x363df`, saves/restores `%rbx`; next-PC guard at `0x363ec` / `0x363f5`. | | | | |
+| `I32And` / `wf_run.arm.97` | `and` at `0x366e1`, saves/restores `%r14` and `%rbx`; next-PC guard at `0x366ed` / `0x366f6`. | | | | |
+| `I32Or` / `wf_run.arm.98` | `or` at `0x3675f`, saves/restores `%rbx`; next-PC guard at `0x3676b` / `0x36774`. | | | | |
+| `I32Xor` / `wf_run.arm.99` | `xor` at `0x367df`, saves/restores `%rbx`; next-PC guard at `0x367eb` / `0x367f4`. | | | | |
+| `I32ShrS` / `wf_run.arm.101` | Accumulator save/restore at `0x368c3` / `0x3690a`; `sar %cl` at `0x368ea`; next-PC guard at `0x368f4` / `0x368fd`. | | | | |
+| `I32ShrU` / `wf_run.arm.102` | Accumulator save/restore at `0x36943` / `0x3698a`; `shr %cl` at `0x3696a`; next-PC guard at `0x36974` / `0x3697d`. | | | | |
+| `I32Rotl` / `wf_run.arm.103` | Accumulator save/restore at `0x369c3` / `0x36a0a`; `rol %cl` at `0x369ea`; next-PC guard at `0x369f4` / `0x369fd`. | | | | |
+| `I32Rotr` / `wf_run.arm.104` | Accumulator save/restore at `0x36a43` / `0x36a8a`; `ror %cl` at `0x36a6a`; next-PC guard at `0x36a74` / `0x36a7d`. | | | | |
 
 ### Constructor and runtime-boundary audit
 

@@ -84,6 +84,8 @@ jobs:
           if not arms or len({name for name, _ in arms}) != len(arms) or "Return" not in dict(arms):
               raise RuntimeError("generated run arm map is missing, ambiguous or lacks Return")
 
+          misses = []
+
           def symbols(binary, label):
               raw = subprocess.check_output(["nm", "--no-sort", "--defined-only", "-j", str(binary)], text=True).splitlines()
               pretty = subprocess.check_output(["nm", "--no-sort", "--defined-only", "-j", "-C", str(binary)], text=True).splitlines()
@@ -91,22 +93,34 @@ jobs:
                   raise RuntimeError("raw/demangled symbol inventory mismatch")
               subprocess.run(["nm", "-n", "-S", "--defined-only", str(binary)], check=True,
                              stdout=(evidence / f"{label}-symbols.txt").open("w"))
-              typed = subprocess.check_output(["nm", "--defined-only", "--format=posix", str(binary)], text=True)
-              code = {fields[0] for line in typed.splitlines()
-                      if len(fields := line.split()) >= 2 and fields[1] in {"t", "T", "w", "W"}}
-              return {name: demangled for name, demangled in zip(raw, pretty) if name in code}
+              typed = subprocess.check_output(["nm", "-S", "--defined-only", "--format=posix", str(binary)], text=True)
+              code = {fields[0]: (int(fields[2], 16), int(fields[3], 16) if len(fields) > 3 else 0)
+                      for line in typed.splitlines()
+                      if len(fields := line.split()) >= 3 and fields[1] in {"t", "T", "w", "W"}}
+              return ({name: demangled for name, demangled in zip(raw, pretty) if name in code}, code)
 
-          def dump(binary, name):
+          def dump(binary, name, label, bounds):
               body = subprocess.check_output(["objdump", "-d", "--no-show-raw-insn",
                                               f"--disassemble={name}", str(binary)], text=True)
               if not re.search(r"^\s*[0-9a-f]+:\s+\S", body, re.M):
-                  raise RuntimeError(f"empty disassembly for {name}; inspect symbol aliases")
+                  start, size = bounds[name]
+                  # objdump may label shared code with a different alias. Record the
+                  # symbol-selector miss, then retain its declared range if available.
+                  fallback = "no declared body"
+                  if size:
+                      body = subprocess.check_output(["objdump", "-d", "--no-show-raw-insn",
+                                                      f"--start-address={start}", f"--stop-address={start + size}",
+                                                      str(binary)], text=True)
+                      fallback = "address range" if re.search(r"^\s*[0-9a-f]+:\s+\S", body, re.M) else "empty address range"
+                  misses.append([label, name, hex(start), hex(size), "empty symbol selection", fallback])
+                  if fallback != "address range":
+                      return f"\n# MISS {name}: {fallback}\n"
               return body
 
           v2h = out / "v2h"
           wasm = out / "wasmi-source/target/release/wasmi"
-          vs = symbols(v2h, "v2h")
-          ws = symbols(wasm, "wasmi")
+          vs, vb = symbols(v2h, "v2h")
+          ws, wb = symbols(wasm, "wasmi")
           selected = {name: "run entry/exit context" for name in vs
                       if name in {"wf_run", "wf_run.dispatch"} or name.startswith("wf_run.cold")}
           with (evidence / "v2h-arm-map.tsv").open("w") as f:
@@ -118,18 +132,24 @@ jobs:
                       raise RuntimeError(f"missing split handler {handler}: {name}")
                   selected[name] = f"run handler {handler}"
                   rows.writerow([index, handler, line, name])
-          texts = {name: dump(v2h, name) for name in selected}
+          texts = {name: dump(v2h, name, "v2h", vb) for name in selected}
           # Base numeric/load/store arms can call helpers in gen.py's default mode.
           # One level supplies those bodies and Return's helpers; no runtime closure.
           for body in list(texts.values()):
               for target in re.findall(r"\b(?:callq?|jmpq?)\s+[^\n]*<([^>+]+)(?:\+[^>]*)?>", body):
                   if target.startswith("wf_") and target in vs and target not in selected:
                       selected[target] = "direct handler callee"
-          texts.update({name: dump(v2h, name) for name in selected if name not in texts})
+          texts.update({name: dump(v2h, name, "v2h", vb) for name in selected if name not in texts})
           wselected = {name: "executor handler/context" for name, pretty in ws.items()
                        if "wasmi::engine::executor::handler::" in pretty}
-          if not wselected or not any("return" in ws[name].lower() for name in wselected):
-              raise RuntimeError("wasmi executor/return symbols missing; inspect build settings")
+          # Portable dispatch can inline handlers into these executor functions;
+          # the tail backend retains separate handlers. Collect both forms.
+          dispatch = {name: "executor dispatch/entry context" for name, pretty in ws.items()
+                      if "wasmi::engine::" in pretty and
+                      re.search(r"::(?:execute_until_done|execute_until_break|execute_root_func|execute_func)(?:::|<|$)", pretty)}
+          if not dispatch:
+              raise RuntimeError("wasmi executor dispatch symbols missing; inspect build settings")
+          wselected.update(dispatch)
           with (evidence / "selected-symbols.tsv").open("w") as f:
               rows = csv.writer(f, delimiter="\t")
               rows.writerow(["engine", "symbol", "demangled", "reason"])
@@ -137,7 +157,11 @@ jobs:
                   with (evidence / f"{label}-handlers.asm").open("w") as asm:
                       for name, reason in sorted(scope.items()):
                           rows.writerow([label, name, inventory[name], reason])
-                          asm.write(texts[name] if label == "v2h" else dump(binary, name))
+                          asm.write(texts[name] if label == "v2h" else dump(binary, name, label, wb))
+          with (evidence / "disassembly-misses.tsv").open("w") as f:
+              rows = csv.writer(f, delimiter="\t")
+              rows.writerow(["engine", "symbol", "address", "size", "reason", "fallback"])
+              rows.writerows(misses)
           for index, path in enumerate(sorted((out / "wasmi-source/target/release/build").glob("wasmi-*/output"))):
               (evidence / f"wasmi-build-script-{index}.txt").write_bytes(path.read_bytes())
           PY
