@@ -69,16 +69,15 @@ The waiting signature adds `presplitcoroutine`
 ([frames.rs:483](../../../compiler/src/backend/emitter/frames.rs#L483)). Every
 emitted definition uses attribute group zero
 ([emission.rs:413](../../../compiler/src/backend/emission.rs#L413)), which the
-emitter defines with `probe-stack` and, on this work branch, `uwtable`
-([emitter.rs:694](../../../compiler/src/backend/emitter.rs#L694)). The branch
+emitter defines with `probe-stack` and `uwtable`
+([emitter.rs:694](../../../compiler/src/backend/emitter.rs#L694)). The compiler
 explicitly requests unwind tables; it does not explicitly request a frame
 pointer. Inspect the generated resume function's actual FDE and prologue,
 rather than inferring final CFI from raw IR attributes. `nounwind` describes
 exception behavior and does not establish the absence of unwind tables. The
 experiment uses compiler-produced full LTO without patching IR or overriding
-frame-pointer or inlining behavior. This branch's `uwtable` addition is an
-experimental change to emitted attributes, so its binary does not establish
-the unwind behavior of Firn's original compiler release.
+frame-pointer or inlining behavior. Firn's original compiler release predates the
+`uwtable` attribute, so these binaries do not establish its unwind behavior.
 
 The runtime starts the program body on a pthread
 ([wf_floor.c:308](../../../compiler/src/backend/wf_floor.c#L308),
@@ -139,11 +138,10 @@ is expected and says little about DWARF correctness.
 These explanations can coexist. No positive result for this small program
 proves Firn's release has correct CFI, and no absent logical caller establishes
 that the active resume frame itself lacks CFI. The initial protocol selected no
-language change. The work branch additionally requests `uwtable`; the retained
-evidence alone does not establish that attribute's effect against its base.
-The temporary workflow is removed before the
-branch is ready, together with its three temporary rows in
-`.github/time-budgets.txt`. Their 600/120/180-second limits are unsampled
+language change. The `uwtable` attribute's effect against its base is the same-source
+comparison under [retained source-run observations](#retained-source-run-observations).
+The temporary workflow was removed before merging, together with its three
+temporary rows in `.github/time-budgets.txt`. Their 600/120/180-second limits are unsampled
 initial operational ceilings, not budgets derived from twenty CPU-class
 runs. The witness and protocol remain the reproducible inputs to the retained
 CI evidence.
@@ -154,6 +152,17 @@ CI run `38422018983` produced the observed artifacts for revision
 `0ebd5e22545689163345311c3a73604e2864eaae`. Its `revision.txt`, `table.md`,
 `perf.data` files, frame dumps, disassembly and executable are the evidence;
 the follow-up diagnostics below were not part of that run.
+
+The `uwtable` attribute was isolated by two earlier runs of the same workflow
+on revisions that differ only in that attribute and the test pinning it
+(`242c1d371` without it, run `38420627517`; `d40b4967a` with it, run
+`38421090878`). Without it, `readelf` found no frame-description entry covering
+`wf_hot_leaf` (FDE count 0) and DWARF sampling recovered resume in 1,326 of
+1,562 (84.9%) and 1,322 of 1,585 (83.4%) hot-leaf samples at 16,384 and 65,528
+requested bytes. With it, the leaf had one FDE, resume was recovered in 1,480
+of 1,655 (89.4%) and 1,467 of 1,665 (88.1%), and `.eh_frame` grew from 4,088 to
+4,296 bytes (208 bytes). Neither run recovered a caller beyond resume; that
+remaining loss is the linker-layout result below.
 
 | Mode | Hot-leaf samples | Resume recovered | Physical caller beyond resume |
 | --- | ---: | ---: | ---: |
@@ -278,7 +287,7 @@ expected for continuation tail transfer; the physical chain reaches the thread
 entry. The witness executable is 81,040 bytes, against 80,048 bytes for the
 same source built with `uwtable` and without `-z separate-code` in run
 `38424605911`: 992 bytes, 1.2% larger. `uwtable` itself added 208 bytes of
-`.eh_frame` in run `38422018983`.
+`.eh_frame` (runs `38420627517` and `38421090878`, above).
 
 These results cover one small program, x86-64 Linux, perf 6.17 on a hosted
 runner and LLVM 22's LLD. They do not establish the behavior of other

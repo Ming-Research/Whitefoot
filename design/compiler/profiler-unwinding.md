@@ -4,4 +4,4 @@ Decision: The Linux LTO link passes `-z separate-code` to LLD, so that the execu
 
 Rejected:
 - Keeping frame pointers for profiling: rejected because it gives up a register in every function for a diagnostic need that unwind tables meet without changing emitted code.
-- Documenting the profiler limitation for downstream projects without changing the link: rejected because a standard profiler then reports wrong callers for every LLD-linked Whitefoot program, and the fix costs under one page per executable.
+- Documenting the profiler limitation for downstream projects without changing the link: rejected because perf 6.17 then recovers no caller above the resume frame of an LLD-linked program, as in the witness and the LLD-linked C control, while the fix cost 992 bytes in the witness executable.
