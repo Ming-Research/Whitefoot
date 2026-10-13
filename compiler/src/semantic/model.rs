@@ -1069,7 +1069,11 @@ pub(crate) struct CheckedTarget {
     pub(crate) ledger_site: String,
     pub(crate) binding: BindingId,
     pub(crate) handle: Box<CheckedExpression>,
-    pub(crate) borrowed: bool,
+    /// [SHARE-1] whether the handle place keeps the object live until the
+    /// statement completes, because neither its guard nor its block may
+    /// write, move or release that place and no other context reaches it,
+    /// so the statement counts no handle of its own.
+    pub(crate) kept_by_place: bool,
     pub(crate) state: CheckedType,
     pub(crate) kind: CheckedTargetKind,
     pub(crate) referent: CheckedType,

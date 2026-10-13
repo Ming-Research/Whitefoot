@@ -5,6 +5,13 @@ Newest first. One entry per approved change of the tree: a dated title,
 the owner's agent instructions own the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-13 An atomic statement counts its handle only when its block may lose it
+
+Nodes: compiler/waiting-contexts
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve Whitefoot#409 (head commit 37d392caf)'s change to the design tree? The change: an atomic statement no longer updates the object's handle count whenever its block cannot write, move or release the place it read the handle from" (translated), whose background listed the four tree edits; the merge still waits for the registered 14900K throughput criterion.
+
+Summary: The shared-object decision now has an atomic statement count a handle of its own only when its guard or block may write, move or release a place it read the handle from, the release of that place with the rest of its owner when a part beside it is moved out included, or when it read the handle from no place or from a place not rooted at a binding, because a handle place the guard and block leave alone keeps the object live until the statement completes [SHARE-1] and no other context reaches a place rooted at a binding [WAIT-3], while the pair of count updates writes one line every driver's statements on the object share. The figures measured for handles a caller lends moved to the rejection of the replaced rule, and the gain for a handle in a local, a value parameter or a field is stated as not yet measured. Rejected: omitting the count only for a handle reached through a reference parameter whose row writes nothing below it.
 ## 2026-10-13 The final affine family skips only images proved unable to prove the target
 
 Nodes: compiler/proof-query-context
