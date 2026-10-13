@@ -226,10 +226,7 @@ impl Input<'_, '_> {
                         )
                 })
         };
-        std::iter::once(stem.to_owned())
-            .chain((1_u32..).map(|suffix| format!("{stem}{suffix}")))
-            .find(|name| !taken(name))
-            .expect("an unbounded candidate sequence has a free name")
+        crate::semantic::check::repairs::fresh_repair_name(stem, taken)
     }
 
     /// The source spelling of one declaration, such as a generic parameter.
@@ -820,6 +817,37 @@ impl Input<'_, '_> {
                     } else {
                         rendered.push_str(".?");
                         ty = None;
+                    }
+                }
+                CheckedPlaceStep::Payload {
+                    nominal,
+                    variant,
+                    field,
+                } => {
+                    let selected =
+                        self.context
+                            .nominals
+                            .get(nominal.0 as usize)
+                            .and_then(|nominal| match &nominal.kind {
+                                CheckedNominalKind::Enum { variants } => {
+                                    variants.get(*variant as usize).and_then(|variant| {
+                                        variant
+                                            .fields
+                                            .get(*field as usize)
+                                            .map(|field| (&variant.name, &field.name, field.ty))
+                                    })
+                                }
+                                _ => None,
+                            });
+                    match selected {
+                        Some((variant, field, field_type)) => {
+                            rendered.push_str(&format!(".{variant}.{field}"));
+                            ty = Some(field_type);
+                        }
+                        None => {
+                            rendered.push_str(".?.?");
+                            ty = None;
+                        }
                     }
                 }
                 CheckedPlaceStep::BoxReferent(nominal) => {
