@@ -664,6 +664,7 @@ impl Records<'_> {
                     );
                 }
                 CheckedPlaceStep::Field(_)
+                | CheckedPlaceStep::Payload { .. }
                 | CheckedPlaceStep::BoxReferent(_)
                 | CheckedPlaceStep::Measure(_) => {}
             }

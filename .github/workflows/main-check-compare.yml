@@ -139,6 +139,37 @@ jobs:
               done
             done
           done
+      - name: Apply the Halo migration and check it in alternating rounds
+        run: |
+          # Keep the original whole-graph and per-module inputs until those
+          # measurements finish. This patch targets the pinned, renamed tree.
+          git -C "$RUNNER_TEMP/halo" apply "$GITHUB_WORKSPACE/research/investigations/redundant-tests/halo-migration.patch"
+          branch=compiler/target/gate/whitefootc
+          main="$RUNNER_TEMP/main/compiler/target/gate/whitefootc"
+          graph="$RUNNER_TEMP/halo/lib/halo/modules.wfg"
+          failed=0
+          for round in 1 2; do
+            if [ "$round" = 1 ]; then sides="main branch"; else sides="branch main"; fi
+            for side in $sides; do
+              if [ "$side" = main ]; then compiler=$main; else compiler=$branch; fi
+              report="$RUNNER_TEMP/halo-migrated-$round-$side.txt"
+              start=$(date +%s.%N)
+              set +e
+              timeout 1800 "$compiler" --check-modules --report --graph "$graph" > "$report" 2>&1
+              status=$?
+              set -e
+              end=$(date +%s.%N)
+              rejected=$(grep -c '"verdict":"rejected"' "$report" || true)
+              accepted=$(grep -c '"verdict":"accepted"' "$report" || true)
+              op5=$(grep -c 'OP-5' "$report" || true)
+              printf 'RESULT project=halo-migrated round=%s side=%s status=%s seconds=%.2f accepted=%s rejected=%s op5_lines=%s\n' \
+                "$round" "$side" "$status" "$(echo "$end - $start" | bc)" "$accepted" "$rejected" "$op5"
+              if [ "$status" -ne 0 ] || [ "$accepted" -ne 15 ] || [ "$rejected" -ne 0 ]; then
+                failed=1
+              fi
+            done
+          done
+          exit "$failed"
       - name: Keep the branch's Halo and Snowghost diagnostics
         if: always()
         uses: actions/upload-artifact@v4
@@ -146,4 +177,5 @@ jobs:
           name: downstream-diagnostics
           path: |
             ${{ runner.temp }}/halo-branch.txt
+            ${{ runner.temp }}/halo-migrated-*.txt
             ${{ runner.temp }}/snowghost-branch.txt

@@ -210,6 +210,7 @@ type EnteringOrigin = (GoalId, GoalSign, DerivationId, bool);
 #[derive(Clone)]
 struct OriginCollection {
     entering: Vec<EnteringOrigin>,
+    exclusions: Vec<(GoalId, bool)>,
     expressions: Vec<GoalExpression>,
     seen: HashMap<GoalExpression, Vec<GoalExpression>>,
     numeric_views: HashMap<GoalExpression, Vec<GoalExpression>>,
@@ -217,8 +218,9 @@ struct OriginCollection {
 
 /// The expansion DAG survives exactly an unchanged live-definition map;
 /// the source collection additionally requires unchanged ordered signed
-/// sources (including proof and numeric-admission identity). Thus a hit
-/// reproduces the same preorder trees and transport parents. Replaying each
+/// sources (including proof and numeric-admission identity) and ordered
+/// exclusion expression views. Thus a hit reproduces the same preorder
+/// trees and transport parents. Replaying each
 /// expansion's allocation trace restores fresh-build class order, so cached
 /// node identities cannot change which retained proof is selected.
 #[derive(Default)]
@@ -242,12 +244,11 @@ impl OriginQueryCache {
         &mut self,
         goals: &GoalTable,
         entering: &[EnteringOrigin],
+        exclusions: &[(GoalId, bool)],
     ) -> OriginCollection {
-        if self
-            .collection
-            .as_ref()
-            .is_none_or(|collection| collection.entering != entering)
-        {
+        if self.collection.as_ref().is_none_or(|collection| {
+            collection.entering != entering || collection.exclusions != exclusions
+        }) {
             let mut expressions = Vec::new();
             let mut seen = HashMap::new();
             for &(binding, goal, proof) in &self.origins {
@@ -270,8 +271,16 @@ impl OriginQueryCache {
                 }
                 collect(expression, &mut expressions, &mut seen);
             }
+            for &(goal, numeric) in exclusions {
+                let expression = goals.expression(goal).clone();
+                if numeric {
+                    collect(expression.clone(), &mut Vec::new(), &mut numeric_views);
+                }
+                collect(expression, &mut expressions, &mut seen);
+            }
             self.collection = Some(OriginCollection {
                 entering: entering.to_vec(),
+                exclusions: exclusions.to_vec(),
                 expressions,
                 seen,
                 numeric_views,
@@ -405,12 +414,13 @@ impl Reasoning<'_, '_, '_> {
             }
         }
         entering.sort_by_key(|(goal, sign, _, _)| (goal.0, *sign == GoalSign::Negative));
+        let exclusions = entering_exclusion_expressions(&context.facts.exclusions);
         let OriginCollection {
             mut expressions,
             mut seen,
             mut numeric_views,
             ..
-        } = cache.source_collection(&self.vocabulary.goals, &entering);
+        } = cache.source_collection(&self.vocabulary.goals, &entering, &exclusions);
         let keys = &mut cache.keys;
         if let Some(submitted) = submitted {
             collect(submitted.clone(), &mut Vec::new(), &mut numeric_views);
@@ -491,9 +501,53 @@ impl Reasoning<'_, '_, '_> {
                 return None;
             }
         }
+        let mut view = context.facts.clone();
+        // Query-local representatives share the complete set and retain the
+        // ordinary-let links that justify replacing its expression.
+        for fact in &context.facts.exclusions {
+            let source = self.vocabulary.goals.expression(fact.expression).clone();
+            let source_expansion = keys.expansion(&source);
+            for expression in &expressions {
+                let expansion = keys.expansion(expression);
+                if expansion.key != source_expansion.key || expression == &source {
+                    continue;
+                }
+                let goal = self.intern_goal_expression(expression.clone());
+                let numeric = !fact.views.is_empty()
+                    && numeric_views.get(expression).is_some_and(|views| {
+                        views
+                            .iter()
+                            .any(|view| view.same_admission_view(expression))
+                    });
+                let projection = numeric
+                    .then(|| self.exclusion_projection(expression))
+                    .flatten();
+                let mut parents = vec![fact.proof];
+                parents.extend_from_slice(&definition_parents(&source_expansion, &expansion));
+                let proof = self
+                    .vocabulary
+                    .derivations
+                    .intern(DerivationNode::IntegerExclusion {
+                        detail: Box::new(ExclusionProof {
+                            projection,
+                            expression: goal,
+                            values: std::sync::Arc::clone(&fact.values),
+                            conclusion: ExclusionConclusion::Set,
+                            event: None,
+                            parents,
+                        }),
+                    });
+                view.establish_exclusion(Exclusion::from_view(
+                    goal,
+                    std::sync::Arc::clone(&fact.values),
+                    projection,
+                    proof,
+                    &self.vocabulary.goals,
+                ));
+            }
+        }
         let class_keys = keys.collection_order.clone();
         self.vocabulary.origin_queries = cache;
-        let mut view = context.facts.clone();
         for members in integer_classes.values() {
             let (left, left_term, left_offset) = members[0];
             for &(right, right_term, right_offset) in &members[1..] {
@@ -651,6 +705,22 @@ impl Reasoning<'_, '_, '_> {
     }
 }
 
+/// Goal identities are allocated in source order. A join's first input
+/// chooses storage order, which must not choose an OT representative.
+fn entering_exclusion_expressions(exclusions: &[Exclusion]) -> Vec<(GoalId, bool)> {
+    let mut expressions = Vec::new();
+    for fact in exclusions {
+        if fact.views.is_empty() {
+            // Common canonical truth supplies no lost numeric admission.
+            expressions.push((fact.expression, false));
+        } else {
+            expressions.extend(fact.views.iter().map(|view| (view.expression, true)));
+        }
+    }
+    expressions.sort_by_key(|(goal, _)| goal.0);
+    expressions
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -670,11 +740,11 @@ mod tests {
         let new = raw_goal(&mut goals, boolean(2));
         let mut cache = OriginQueryCache::default();
         cache.set_origins(vec![(BindingId(0), old, DerivationId(7))]);
-        cache.source_collection(&goals, &[]);
+        cache.source_collection(&goals, &[], &[]);
         assert_eq!(cache.keys.expansion(&boolean(0)).origins, [DerivationId(7)]);
 
         cache.set_origins(vec![(BindingId(0), new, DerivationId(8))]);
-        let collection = cache.source_collection(&goals, &[]);
+        let collection = cache.source_collection(&goals, &[], &[]);
         assert_eq!(collection.expressions, [boolean(0), boolean(2)]);
         let expanded = cache.keys.expansion(&boolean(0));
         assert_eq!(expanded.key, cache.keys.expansion(&boolean(2)).key);
@@ -683,11 +753,11 @@ mod tests {
 
         // Even an identical RHS needs the current introduction as its parent.
         cache.set_origins(vec![(BindingId(0), new, DerivationId(9))]);
-        cache.source_collection(&goals, &[]);
+        cache.source_collection(&goals, &[], &[]);
         assert_eq!(cache.keys.expansion(&boolean(0)).origins, [DerivationId(9)]);
 
         cache.set_origins(Vec::new());
-        assert!(cache.source_collection(&goals, &[]).expressions.is_empty());
+        assert!(cache.source_collection(&goals, &[], &[]).expressions.is_empty());
         assert!(cache.keys.expansion(&boolean(0)).origins.is_empty());
     }
 
@@ -699,20 +769,54 @@ mod tests {
         let mut cache = OriginQueryCache::default();
         cache.set_origins(Vec::new());
         let first_sources = [(first, GoalSign::Positive, DerivationId(3), true)];
-        let collection = cache.source_collection(&goals, &first_sources);
+        let collection = cache.source_collection(&goals, &first_sources, &[]);
         assert_eq!(collection.expressions, [boolean(1)]);
         assert!(collection.numeric_views.contains_key(&boolean(1)));
 
         let second_sources = [(second, GoalSign::Negative, DerivationId(4), false)];
-        let collection = cache.source_collection(&goals, &second_sources);
+        let collection = cache.source_collection(&goals, &second_sources, &[]);
         assert_eq!(collection.expressions, [boolean(2)]);
         assert!(!collection.numeric_views.contains_key(&boolean(2)));
         assert_eq!(collection.entering, second_sources);
 
         let numeric_sources = [(second, GoalSign::Negative, DerivationId(5), true)];
-        let collection = cache.source_collection(&goals, &numeric_sources);
+        let collection = cache.source_collection(&goals, &numeric_sources, &[]);
         assert!(collection.numeric_views.contains_key(&boolean(2)));
         assert_eq!(collection.entering, numeric_sources);
+    }
+
+    #[test]
+    fn origin_collection_invalidates_changed_exclusion_expression_and_numeric_view() {
+        let integer = |binding| {
+            goal_binding_place(BindingId(binding), [], CheckedType::Integer(IntegerType::U64))
+        };
+        let mut goals = GoalTable::default();
+        let first = raw_goal(&mut goals, integer(1));
+        let second = raw_goal(&mut goals, integer(2));
+        let mut cache = OriginQueryCache::default();
+        cache.set_origins(Vec::new());
+        let first_exclusions = [(first, true)];
+        let collection = cache.source_collection(&goals, &[], &first_exclusions);
+        assert_eq!(collection.expressions, [integer(1)]);
+        assert!(collection.numeric_views.contains_key(&integer(1)));
+
+        let second_exclusions = [(second, true)];
+        let collection = cache.source_collection(&goals, &[], &second_exclusions);
+        assert_eq!(collection.expressions, [integer(2)]);
+        assert!(collection.numeric_views.contains_key(&integer(2)));
+
+        let opaque_exclusions = [(second, false)];
+        let collection = cache.source_collection(&goals, &[], &opaque_exclusions);
+        assert_eq!(collection.expressions, [integer(2)]);
+        assert!(!collection.numeric_views.contains_key(&integer(2)));
+        assert_eq!(collection.exclusions, opaque_exclusions);
+
+        assert!(
+            cache
+                .source_collection(&goals, &[], &[])
+                .expressions
+                .is_empty()
+        );
     }
 
     #[test]
@@ -740,5 +844,56 @@ mod tests {
                 "persistent node ids must not reorder the fixed-point classes"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod exclusion_order_tests {
+    use super::*;
+
+    #[test]
+    fn entering_exclusions_follow_source_allocation_not_first_predecessor_order() {
+        let mut goals = GoalTable::default();
+        for bits in 0..10 {
+            goals.intern(
+                GoalExpression::Datum(GoalDatum::Literal(CheckedValue::Integer {
+                    ty: IntegerType::U8,
+                    bits,
+                })),
+                None,
+                None,
+                Vec::new(),
+            );
+        }
+        let fact = |expression, views: &[u32]| {
+            let make_view = |id| {
+                Exclusion::from_view(
+                    GoalId(id),
+                    std::sync::Arc::from([0_i128]),
+                    None,
+                    DerivationId(0),
+                    &goals,
+                )
+            };
+            let mut fact = make_view(expression);
+            fact.views = views.iter().flat_map(|id| make_view(*id).views).collect();
+            fact
+        };
+        let facts = [fact(8, &[9, 8]), fact(4, &[]), fact(1, &[2, 1])];
+        assert_eq!(
+            entering_exclusion_expressions(&facts),
+            vec![
+                (GoalId(1), true),
+                (GoalId(2), true),
+                (GoalId(4), false),
+                (GoalId(8), true),
+                (GoalId(9), true),
+            ]
+        );
+        let reversed = facts.iter().cloned().rev().collect::<Vec<_>>();
+        assert_eq!(
+            entering_exclusion_expressions(&reversed),
+            entering_exclusion_expressions(&facts)
+        );
     }
 }

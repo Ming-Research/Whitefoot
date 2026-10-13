@@ -819,6 +819,37 @@ impl Input<'_, '_> {
                         ty = None;
                     }
                 }
+                CheckedPlaceStep::Payload {
+                    nominal,
+                    variant,
+                    field,
+                } => {
+                    let selected =
+                        self.context
+                            .nominals
+                            .get(nominal.0 as usize)
+                            .and_then(|nominal| match &nominal.kind {
+                                CheckedNominalKind::Enum { variants } => {
+                                    variants.get(*variant as usize).and_then(|variant| {
+                                        variant
+                                            .fields
+                                            .get(*field as usize)
+                                            .map(|field| (&variant.name, &field.name, field.ty))
+                                    })
+                                }
+                                _ => None,
+                            });
+                    match selected {
+                        Some((variant, field, field_type)) => {
+                            rendered.push_str(&format!(".{variant}.{field}"));
+                            ty = Some(field_type);
+                        }
+                        None => {
+                            rendered.push_str(".?.?");
+                            ty = None;
+                        }
+                    }
+                }
                 CheckedPlaceStep::BoxReferent(nominal) => {
                     rendered.push_str(".inner");
                     ty = self.deref_type(CheckedType::Nominal(*nominal));

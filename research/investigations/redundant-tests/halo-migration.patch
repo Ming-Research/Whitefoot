@@ -1,0 +1,1046 @@
+diff --git a/lib/halo/compile/parse_support.wf b/lib/halo/compile/parse_support.wf
+--- a/lib/halo/compile/parse_support.wf
++++ b/lib/halo/compile/parse_support.wf
+@@ -763,21 +763,19 @@
+     }
+     set n = n -wrap 1_i64;
+     let i = cvt.wrap::<i64, u64>(n);
+-    if id < p^.funcs.inner.len {
+-      if i < p^.funcs.inner[id].locals.inner.len {
+-        let record_index = p^.funcs.inner[id].locals.inner[i];
+-        let record = cvt::<u32, u64>(record_index);
+-        let found = False();
+-        if record < p^.funcs.inner[id].local_debug.inner.len {
+-          set found = p^.funcs.inner[id].local_debug.inner[record].name == h;
++    if i < p^.funcs.inner[id].locals.inner.len {
++      let record_index = p^.funcs.inner[id].locals.inner[i];
++      let record = cvt::<u32, u64>(record_index);
++      let found = False();
++      if record < p^.funcs.inner[id].local_debug.inner.len {
++        set found = p^.funcs.inner[id].local_debug.inner[record].name == h;
++      }
++      if found {
++        if base {
++        } else {
++          mark_upvalue(p: p, id: id, level: n);
+         }
+-        if found {
+-          if base {
+-          } else {
+-            mark_upvalue(p: p, id: id, level: n);
+-          }
+-          return empty_exp(k: 6_u8, info: n);
+-        }
++        return empty_exp(k: 6_u8, info: n);
+       }
+     }
+   }
+diff --git a/lib/halo/embed/engine.wf b/lib/halo/embed/engine.wf
+--- a/lib/halo/embed/engine.wf
++++ b/lib/halo/embed/engine.wf
+@@ -38,12 +38,8 @@
+       let n = engine^.constant_lengths.inner[slot];
+       if slot < engine^.scripts.inner.len {
+         loop {
+-          if slot < engine^.scripts.inner.len {
+-            if engine^.scripts.inner[slot].consts.inner.len > n {
+-              let dropped = take_back(window: &engine^.scripts.inner[slot].consts.inner);
+-            } else {
+-              break;
+-            }
++          if engine^.scripts.inner[slot].consts.inner.len > n {
++            let dropped = take_back(window: &engine^.scripts.inner[slot].consts.inner);
+           } else {
+             break;
+           }
+@@ -52,26 +48,18 @@
+           if s < engine^.constant_lengths.inner.len {
+             let count = engine^.constant_lengths.inner[s];
+             for (i in 0_u64..count) {
+-              if s < engine^.scripts.inner.len {
+-                if i < engine^.scripts.inner[s].consts.inner.len {
+-                  let v = engine^.scripts.inner[s].consts.inner[i];
+-                  if slot < engine^.scripts.inner.len {
+-                    append_value(out: &engine^.scripts.inner[slot].consts, value: v);
+-                  }
+-                }
++              if i < engine^.scripts.inner[s].consts.inner.len {
++                let v = engine^.scripts.inner[s].consts.inner[i];
++                append_value(out: &engine^.scripts.inner[slot].consts, value: v);
+               }
+             }
+           }
+         }
+         for (i in 0_u64..engine^.pins.inner.len) {
+           let v = engine^.pins.inner[i];
+-          if slot < engine^.scripts.inner.len {
+-            append_value(out: &engine^.scripts.inner[slot].consts, value: v);
+-          }
+-        }
+-        if slot < engine^.roots_valid.inner.len {
+-          set engine^.roots_valid.inner[slot] = True();
+-        }
++          append_value(out: &engine^.scripts.inner[slot].consts, value: v);
++        }
++        set engine^.roots_valid.inner[slot] = True();
+       }
+     }
+   }
+@@ -130,20 +118,18 @@
+           grow(cell: &engine^.roots_valid, capacity: cap);
+         }
+         let len = script.consts.inner.len;
+-        if engine^.scripts.inner.len < engine^.scripts.inner.cap {
+-          place_back(window: &engine^.scripts.inner, value: move script);
+-          if engine^.constant_lengths.inner.len < engine^.constant_lengths.inner.cap {
+-            place_back(window: &engine^.constant_lengths.inner, value: len);
+-            if engine^.roots_valid.inner.len < engine^.roots_valid.inner.cap {
+-              let no = False();
+-              place_back(window: &engine^.roots_valid.inner, value: no);
+-            }
+-            invalidate_roots(engine: engine);
+-            let id = ScriptId(slot: n, generation: engine^.generation);
+-            return Ok<ScriptId, CompileError>(value: id);
+-          }
+-          return cache_failure();
+-        }
++        place_back(window: &engine^.scripts.inner, value: move script);
++        if engine^.constant_lengths.inner.len < engine^.constant_lengths.inner.cap {
++          place_back(window: &engine^.constant_lengths.inner, value: len);
++          if engine^.roots_valid.inner.len < engine^.roots_valid.inner.cap {
++            let no = False();
++            place_back(window: &engine^.roots_valid.inner, value: no);
++          }
++          invalidate_roots(engine: engine);
++          let id = ScriptId(slot: n, generation: engine^.generation);
++          return Ok<ScriptId, CompileError>(value: id);
++        }
++        return cache_failure();
+       }
+     }
+   }
+diff --git a/lib/halo/embed/sha1.wf b/lib/halo/embed/sha1.wf
+--- a/lib/halo/embed/sha1.wf
++++ b/lib/halo/embed/sha1.wf
+@@ -129,9 +129,7 @@
+     let part = ishr.wrap(state[word], shift);
+     let index32 = iand(part, 15_u32);
+     let index = cvt::<u32, u64>(index32);
+-    if index < 16_u64 {
+-      set out[i] = sha1_digits[index];
+-    }
++    set out[i] = sha1_digits[index];
+   }
+   return out;
+ }
+diff --git a/lib/halo/embed/values.wf b/lib/halo/embed/values.wf
+--- a/lib/halo/embed/values.wf
++++ b/lib/halo/embed/values.wf
+@@ -227,21 +227,15 @@
+         if n > name_length {
+           set located = True();
+           for (i in 0_u64..name_length) {
+-            if i < engine^.vm.heap.strings.inner[h].payload.bytes.inner.len {
+-              if i < engine^.vm.source.inner.len {
+-                let b = engine^.vm.heap.strings.inner[h].payload.bytes.inner[i];
+-                let expected = engine^.vm.source.inner[i];
+-                if b != expected {
+-                  set located = False();
+-                }
+-              }
++            let b = engine^.vm.heap.strings.inner[h].payload.bytes.inner[i];
++            let expected = engine^.vm.source.inner[i];
++            if b != expected {
++              set located = False();
+             }
+           }
+-          if name_length < engine^.vm.heap.strings.inner[h].payload.bytes.inner.len {
+-            let colon = engine^.vm.heap.strings.inner[h].payload.bytes.inner[name_length];
+-            if colon != 58_u8 {
+-              set located = False();
+-            }
++          let colon = engine^.vm.heap.strings.inner[h].payload.bytes.inner[name_length];
++          if colon != 58_u8 {
++            set located = False();
+           }
+         }
+       }
+diff --git a/lib/halo/execution/execution.wf b/lib/halo/execution/execution.wf
+--- a/lib/halo/execution/execution.wf
++++ b/lib/halo/execution/execution.wf
+@@ -57,9 +57,7 @@
+   let charge_pattern_subs = pattern_subs^.inner.cap *sat 104_u64;
+   set bytes = bytes +sat charge_pattern_subs;
+   for (i in 0_u64..pattern_subs^.inner.len) {
+-    if i < pattern_subs^.inner.len {
+-      set bytes = bytes +sat pattern_subs^.inner[i].output.inner.cap;
+-    }
++    set bytes = bytes +sat pattern_subs^.inner[i].output.inner.cap;
+   }
+   return bytes;
+ }
+diff --git a/lib/halo/heap/gc.wf b/lib/halo/heap/gc.wf
+--- a/lib/halo/heap/gc.wf
++++ b/lib/halo/heap/gc.wf
+@@ -149,12 +149,10 @@
+       return unit;
+     }
+   }
+-  if ti < heap^.tables.inner.len {
+-    let meta = heap^.tables.inner[ti].payload.meta;
+-    if meta != no_handle {
+-      let mv = Value::Tab(h: meta);
+-      gc_mark(heap: heap, v: mv);
+-    }
++  let meta = heap^.tables.inner[ti].payload.meta;
++  if meta != no_handle {
++    let mv = Value::Tab(h: meta);
++    gc_mark(heap: heap, v: mv);
+   }
+   return unit;
+ }
+@@ -315,10 +313,8 @@
+       return unit;
+     }
+   }
+-  if ti < heap^.threads.inner.len {
+-    let error = heap^.threads.inner[ti].payload.error;
+-    gc_mark(heap: heap, v: error);
+-  }
++  let error = heap^.threads.inner[ti].payload.error;
++  gc_mark(heap: heap, v: error);
+   set i = 0_u64;
+   loop {
+     if ti < heap^.threads.inner.len {
+diff --git a/lib/halo/heap/slabs.wf b/lib/halo/heap/slabs.wf
+--- a/lib/halo/heap/slabs.wf
++++ b/lib/halo/heap/slabs.wf
+@@ -76,10 +76,8 @@
+       }
+       grow(cell: &heap^.strings, capacity: capacity);
+     }
+-    if heap^.strings.inner.len < heap^.strings.inner.cap {
+-      place_back(window: &heap^.strings.inner, value: move cell);
+-      return Some<u32>(value: hnew);
+-    }
++    place_back(window: &heap^.strings.inner, value: move cell);
++    return Some<u32>(value: hnew);
+   }
+   return None<u32>();
+ }
+@@ -142,10 +140,8 @@
+       }
+       grow(cell: &heap^.tables, capacity: capacity);
+     }
+-    if heap^.tables.inner.len < heap^.tables.inner.cap {
+-      place_back(window: &heap^.tables.inner, value: move cell);
+-      return Some<u32>(value: hnew);
+-    }
++    place_back(window: &heap^.tables.inner, value: move cell);
++    return Some<u32>(value: hnew);
+   }
+   return None<u32>();
+ }
+@@ -210,10 +206,8 @@
+       }
+       grow(cell: &heap^.closures, capacity: capacity);
+     }
+-    if heap^.closures.inner.len < heap^.closures.inner.cap {
+-      place_back(window: &heap^.closures.inner, value: move cell);
+-      return Some<u32>(value: hnew);
+-    }
++    place_back(window: &heap^.closures.inner, value: move cell);
++    return Some<u32>(value: hnew);
+   }
+   return None<u32>();
+ }
+@@ -274,10 +268,8 @@
+       }
+       grow(cell: &heap^.upvalues, capacity: capacity);
+     }
+-    if heap^.upvalues.inner.len < heap^.upvalues.inner.cap {
+-      place_back(window: &heap^.upvalues.inner, value: cell);
+-      return Some<u32>(value: hnew);
+-    }
++    place_back(window: &heap^.upvalues.inner, value: cell);
++    return Some<u32>(value: hnew);
+   }
+   return None<u32>();
+ }
+diff --git a/lib/halo/heap/strings.wf b/lib/halo/heap/strings.wf
+--- a/lib/halo/heap/strings.wf
++++ b/lib/halo/heap/strings.wf
+@@ -31,11 +31,7 @@
+       if heap^.strings.inner[i].payload.hash == hash {
+         if heap^.strings.inner[i].payload.bytes.inner.len == bytes^.len {
+           for (k in 0_u64..bytes^.len) {
+-            if k < heap^.strings.inner[i].payload.bytes.inner.len {
+-              if heap^.strings.inner[i].payload.bytes.inner[k] != bytes^[k] {
+-                return False();
+-              }
+-            } else {
++            if heap^.strings.inner[i].payload.bytes.inner[k] != bytes^[k] {
+               return False();
+             }
+           }
+@@ -168,40 +164,36 @@
+   doc "Delete the weak entry and reinsert its following probe cluster, retaining a true empty terminator. No tombstone handle is reserved.";
+   let n = heap^.interned.inner.len;
+   for (i in 0_u64..n) {
+-    if i < heap^.interned.inner.len {
+-      if heap^.interned.inner[i] == h {
+-        set heap^.interned.inner[i] = no_handle;
+-        let count = heap^.intern_count;
+-        if count > 0_u64 {
+-          set heap^.intern_count = count - 1_u64;
+-        }
+-        if n > 0_u64 {
+-          let last = n - 1_u64;
+-          let j = i;
+-          for (step in 0_u64..n) {
+-            if j < last {
+-              set j = j + 1_u64;
+-            } else {
+-              set j = 0_u64;
+-            }
+-            if j < heap^.interned.inner.len {
+-              let moved = heap^.interned.inner[j];
+-              if moved == no_handle {
+-                return unit;
+-              }
+-              set heap^.interned.inner[j] = no_handle;
+-              let si = cvt::<u32, u64>(moved);
+-              if si < heap^.strings.inner.len {
+-                if heap^.strings.inner[si].live {
+-                  let hash = heap^.strings.inner[si].payload.hash;
+-                  intern_place(slots: &heap^.interned, hash: hash, h: moved);
+-                }
+-              }
++    if heap^.interned.inner[i] == h {
++      set heap^.interned.inner[i] = no_handle;
++      let count = heap^.intern_count;
++      if count > 0_u64 {
++        set heap^.intern_count = count - 1_u64;
++      }
++      let last = n - 1_u64;
++      let j = i;
++      for (step in 0_u64..n) {
++        if j < last {
++          set j = j + 1_u64;
++        } else {
++          set j = 0_u64;
++        }
++        if j < heap^.interned.inner.len {
++          let moved = heap^.interned.inner[j];
++          if moved == no_handle {
++            return unit;
++          }
++          set heap^.interned.inner[j] = no_handle;
++          let si = cvt::<u32, u64>(moved);
++          if si < heap^.strings.inner.len {
++            if heap^.strings.inner[si].live {
++              let hash = heap^.strings.inner[si].payload.hash;
++              intern_place(slots: &heap^.interned, hash: hash, h: moved);
+             }
+           }
+         }
+-        return unit;
+-      }
++      }
++      return unit;
+     }
+   }
+   return unit;
+diff --git a/lib/halo/heap/tables.wf b/lib/halo/heap/tables.wf
+--- a/lib/halo/heap/tables.wf
++++ b/lib/halo/heap/tables.wf
+@@ -340,10 +340,7 @@
+       set modulus = ior(last, 1_u64);
+     }
+   }
+-  if modulus > 0_u64 {
+-    return hash % modulus;
+-  }
+-  return 0_u64;
++  return hash % modulus;
+ }
+ 
+ fn node_find(heap: &Heap, nodes: &Box<Slots<Node>>, key: Value) -> r: Option<u64> reads(heap.strings), reads(nodes) {
+@@ -571,37 +568,33 @@
+       if free > 4294967295_u64 {
+         return False();
+       }
+-      if free < nodes^.inner.len {
+-        let other = main_position(heap: heap, key: nodes^.inner[mp].key, n: nodes^.inner.len);
+-        if other != mp {
+-          loop @previous {
+-            if other < nodes^.inner.len {
+-              let next = cvt::<u32, u64>(nodes^.inner[other].next);
+-              if next == mp {
+-                break @previous;
+-              }
+-              set other = next;
+-            } else {
+-              return False();
+-            }
+-          }
++      let other = main_position(heap: heap, key: nodes^.inner[mp].key, n: nodes^.inner.len);
++      if other != mp {
++        loop @previous {
+           if other < nodes^.inner.len {
+-            let link = cvt::<u64, u32>(free);
+-            set nodes^.inner[other].next = link;
+-            let displaced = nodes^.inner[mp];
+-            set nodes^.inner[free] = displaced;
+-            set nodes^.inner[mp].next = no_handle;
+-            let nil = Value::Nil();
+-            set nodes^.inner[mp].val = nil;
+-          }
+-        } else {
+-          set nodes^.inner[free].next = nodes^.inner[mp].next;
++            let next = cvt::<u32, u64>(nodes^.inner[other].next);
++            if next == mp {
++              break @previous;
++            }
++            set other = next;
++          } else {
++            return False();
++          }
++        }
++        if other < nodes^.inner.len {
+           let link = cvt::<u64, u32>(free);
+-          set nodes^.inner[mp].next = link;
+-          set mp = free;
++          set nodes^.inner[other].next = link;
++          let displaced = nodes^.inner[mp];
++          set nodes^.inner[free] = displaced;
++          set nodes^.inner[mp].next = no_handle;
++          let nil = Value::Nil();
++          set nodes^.inner[mp].val = nil;
+         }
+       } else {
+-        return False();
++        set nodes^.inner[free].next = nodes^.inner[mp].next;
++        let link = cvt::<u64, u32>(free);
++        set nodes^.inner[mp].next = link;
++        set mp = free;
+       }
+     }
+     if mp < nodes^.inner.len {
+@@ -658,11 +651,9 @@
+       }
+       let live = 0_u64;
+       for (i in lower..limit) {
+-        if i < heap^.tables.inner[ti].payload.array.inner.len {
+-          if is_nil(v: heap^.tables.inner[ti].payload.array.inner[i]) {
+-          } else {
+-            set live = live +sat 1_u64;
+-          }
++        if is_nil(v: heap^.tables.inner[ti].payload.array.inner[i]) {
++        } else {
++          set live = live +sat 1_u64;
+         }
+       }
+       set nums[bin] = nums[bin] +sat live;
+@@ -676,11 +667,9 @@
+       }
+     }
+     for (i in lower..array_length) {
+-      if i < heap^.tables.inner[ti].payload.array.inner.len {
+-        if is_nil(v: heap^.tables.inner[ti].payload.array.inner[i]) {
+-        } else {
+-          set total = total +sat 1_u64;
+-        }
++      if is_nil(v: heap^.tables.inner[ti].payload.array.inner[i]) {
++      } else {
++        set total = total +sat 1_u64;
+       }
+     }
+     for (i in 0_u64..heap^.tables.inner[ti].payload.nodes.inner.len) {
+@@ -789,9 +778,7 @@
+       let array = box_slots_new::<Value>(capacity: size);
+       for (i in 0_u64..size) {
+         let val = Value::Nil();
+-        if i < heap^.tables.inner[ti].payload.array.inner.len {
+-          set val = heap^.tables.inner[ti].payload.array.inner[i];
+-        }
++        set val = heap^.tables.inner[ti].payload.array.inner[i];
+         if array.inner.len < array.inner.cap {
+           place_back(window: &array.inner, value: val);
+         }
+@@ -835,13 +822,11 @@
+         let delta = old - fresh;
+         uncharge(heap: heap, amount: delta);
+       }
+-      if ti < heap^.tables.inner.len {
+-        set heap^.tables.inner[ti].payload.array = move array;
+-        set heap^.tables.inner[ti].payload.nodes = move nodes;
+-        set heap^.tables.inner[ti].payload.node_count = node_count;
+-        set heap^.tables.inner[ti].payload.lastfree = lastfree;
+-        return True();
+-      }
++      set heap^.tables.inner[ti].payload.array = move array;
++      set heap^.tables.inner[ti].payload.nodes = move nodes;
++      set heap^.tables.inner[ti].payload.node_count = node_count;
++      set heap^.tables.inner[ti].payload.lastfree = lastfree;
++      return True();
+     }
+   }
+   return False();
+@@ -922,26 +907,24 @@
+         let i = 0_u64;
+         if j > 0_u64 {
+           let last = j - 1_u64;
+-          if last < heap^.tables.inner[ti].payload.array.inner.len {
+-            if is_nil(v: heap^.tables.inner[ti].payload.array.inner[last]) {
+-              loop @array_border {
+-                if i > j {
+-                  return i;
+-                }
+-                let distance = j - i;
+-                if distance <= 1_u64 {
+-                  return i;
+-                }
+-                let sum = i +sat j;
+-                let m = sum / 2_u64;
+-                let f = cvt.nearest::<u64, f64>(m);
+-                let probe = Value::Num(n: f);
+-                let val = table_get(heap: heap, t: t, key: probe);
+-                if is_nil(v: val) {
+-                  set j = m;
+-                } else {
+-                  set i = m;
+-                }
++          if is_nil(v: heap^.tables.inner[ti].payload.array.inner[last]) {
++            loop @array_border {
++              if i > j {
++                return i;
++              }
++              let distance = j - i;
++              if distance <= 1_u64 {
++                return i;
++              }
++              let sum = i +sat j;
++              let m = sum / 2_u64;
++              let f = cvt.nearest::<u64, f64>(m);
++              let probe = Value::Num(n: f);
++              let val = table_get(heap: heap, t: t, key: probe);
++              if is_nil(v: val) {
++                set j = m;
++              } else {
++                set i = m;
+               }
+             }
+           }
+diff --git a/lib/halo/heap/threads.wf b/lib/halo/heap/threads.wf
+--- a/lib/halo/heap/threads.wf
++++ b/lib/halo/heap/threads.wf
+@@ -111,10 +111,8 @@
+       }
+       grow(cell: &heap^.threads, capacity: capacity);
+     }
+-    if heap^.threads.inner.len < heap^.threads.inner.cap {
+-      place_back(window: &heap^.threads.inner, value: move cell);
+-      return Some<u32>(value: hnew);
+-    }
++    place_back(window: &heap^.threads.inner, value: move cell);
++    return Some<u32>(value: hnew);
+   }
+   uncharge(heap: heap, amount: amount);
+   return None<u32>();
+@@ -189,10 +187,8 @@
+         let shrink = previous - amount;
+         uncharge(heap: heap, amount: shrink);
+       }
+-      if i < heap^.threads.inner.len {
+-        set heap^.threads.inner[i].accounted_bytes = amount;
+-        return True();
+-      }
++      set heap^.threads.inner[i].accounted_bytes = amount;
++      return True();
+     }
+   }
+   return False();
+diff --git a/lib/halo/lex/support.wf b/lib/halo/lex/support.wf
+--- a/lib/halo/lex/support.wf
++++ b/lib/halo/lex/support.wf
+@@ -102,9 +102,7 @@
+   if length == cap {
+     let doubled = cap +sat cap;
+     let target = imax(doubled, 32_u64);
+-    if target >= cap {
+-      grow(cell: buffer, capacity: target);
+-    }
++    grow(cell: buffer, capacity: target);
+   }
+   if buffer^.inner.len < buffer^.inner.cap {
+     place_back(window: &buffer^.inner, value: byte);
+diff --git a/lib/halo/vm/builtins.wf b/lib/halo/vm/builtins.wf
+--- a/lib/halo/vm/builtins.wf
++++ b/lib/halo/vm/builtins.wf
+@@ -368,12 +368,8 @@
+           if total < 9223372036854775807_u64 {
+             let nt = cvt::<u64, i64>(total);
+             if index < 0_i64 {
+-              if index >= -9223372036854775807_i64 {
+-                set index = nt + index;
+-                if index < 9223372036854775807_i64 {
+-                  set index = index + 1_i64;
+-                }
+-              }
++              set index = nt + index;
++              set index = index + 1_i64;
+             }
+             if index > nt {
+               set index = nt + 1_i64;
+diff --git a/lib/halo/vm/calls.wf b/lib/halo/vm/calls.wf
+--- a/lib/halo/vm/calls.wf
++++ b/lib/halo/vm/calls.wf
+@@ -515,9 +515,7 @@
+           }
+           set i = i - 1_u64;
+         }
+-        if fslot < stack^.inner.len {
+-          set stack^.inner[fslot] = tm;
+-        }
++        set stack^.inner[fslot] = tm;
+         set nargs = nargs +sat 1_u64;
+         if vm^.top < room {
+           set vm^.top = room;
+diff --git a/lib/json/decode/pull.wf b/lib/json/decode/pull.wf
+--- a/lib/json/decode/pull.wf
++++ b/lib/json/decode/pull.wf
+@@ -23,13 +23,11 @@
+   let n = decoder^.stack.inner.len;
+   if n > 0_u64 {
+     let i = n - 1_u64;
+-    if i < decoder^.stack.inner.len {
+-      let phase = decoder^.stack.inner[i];
+-      if phase <= 2_u8 {
+-        set decoder^.stack.inner[i] = 1_u8;
+-      } else {
+-        set decoder^.stack.inner[i] = 7_u8;
+-      }
++    let phase = decoder^.stack.inner[i];
++    if phase <= 2_u8 {
++      set decoder^.stack.inner[i] = 1_u8;
++    } else {
++      set decoder^.stack.inner[i] = 7_u8;
+     }
+   } else {
+     set decoder^.root_done = True();
+@@ -120,80 +118,74 @@
+       }
+       break @punctuation;
+     }
+-    if n > 0_u64 {
+-      let i = n - 1_u64;
+-      if i < decoder^.stack.inner.len {
+-        let phase = decoder^.stack.inner[i];
+-        if phase == 0_u8 {
+-          if c == 93_u16 {
+-            let dropped = take_back(window: &decoder^.stack.inner);
+-            set decoder^.offset = p +sat 1_u64;
+-            let event = Event::ArrayEnd();
+-            return Ok<Event, Error>(value: event);
+-          }
+-          break @punctuation;
+-        }
+-        if phase == 2_u8 {
+-          break @punctuation;
+-        }
+-        if phase == 6_u8 {
+-          break @punctuation;
+-        }
+-        if phase == 1_u8 {
+-          if c == 93_u16 {
+-            let dropped = take_back(window: &decoder^.stack.inner);
+-            set decoder^.offset = p +sat 1_u64;
+-            let event = Event::ArrayEnd();
+-            return Ok<Event, Error>(value: event);
+-          }
+-          if c != 44_u16 {
+-            return failure(decoder: decoder, code: 4_u8, offset: p);
+-          }
+-          set decoder^.stack.inner[i] = 2_u8;
++    let i = n - 1_u64;
++    let phase = decoder^.stack.inner[i];
++    if phase == 0_u8 {
++      if c == 93_u16 {
++        let dropped = take_back(window: &decoder^.stack.inner);
++        set decoder^.offset = p +sat 1_u64;
++        let event = Event::ArrayEnd();
++        return Ok<Event, Error>(value: event);
++      }
++      break @punctuation;
++    }
++    if phase == 2_u8 {
++      break @punctuation;
++    }
++    if phase == 6_u8 {
++      break @punctuation;
++    }
++    if phase == 1_u8 {
++      if c == 93_u16 {
++        let dropped = take_back(window: &decoder^.stack.inner);
++        set decoder^.offset = p +sat 1_u64;
++        let event = Event::ArrayEnd();
++        return Ok<Event, Error>(value: event);
++      }
++      if c != 44_u16 {
++        return failure(decoder: decoder, code: 4_u8, offset: p);
++      }
++      set decoder^.stack.inner[i] = 2_u8;
++      set decoder^.offset = p +sat 1_u64;
++    } else if phase == 7_u8 {
++      if c == 125_u16 {
++        let dropped = take_back(window: &decoder^.stack.inner);
++        set decoder^.offset = p +sat 1_u64;
++        let event = Event::ObjectEnd();
++        return Ok<Event, Error>(value: event);
++      }
++      if c != 44_u16 {
++        return failure(decoder: decoder, code: 4_u8, offset: p);
++      }
++      set decoder^.stack.inner[i] = 4_u8;
++      set decoder^.offset = p +sat 1_u64;
++    } else if phase == 5_u8 {
++      if c != 58_u16 {
++        return failure(decoder: decoder, code: 3_u8, offset: p);
++      }
++      set decoder^.stack.inner[i] = 6_u8;
++      set decoder^.offset = p +sat 1_u64;
++    } else {
++      if phase == 3_u8 {
++        if c == 125_u16 {
++          let dropped = take_back(window: &decoder^.stack.inner);
+           set decoder^.offset = p +sat 1_u64;
+-        } else if phase == 7_u8 {
+-          if c == 125_u16 {
+-            let dropped = take_back(window: &decoder^.stack.inner);
+-            set decoder^.offset = p +sat 1_u64;
+-            let event = Event::ObjectEnd();
+-            return Ok<Event, Error>(value: event);
+-          }
+-          if c != 44_u16 {
+-            return failure(decoder: decoder, code: 4_u8, offset: p);
+-          }
+-          set decoder^.stack.inner[i] = 4_u8;
+-          set decoder^.offset = p +sat 1_u64;
+-        } else if phase == 5_u8 {
+-          if c != 58_u16 {
+-            return failure(decoder: decoder, code: 3_u8, offset: p);
+-          }
+-          set decoder^.stack.inner[i] = 6_u8;
+-          set decoder^.offset = p +sat 1_u64;
+-        } else {
+-          if phase == 3_u8 {
+-            if c == 125_u16 {
+-              let dropped = take_back(window: &decoder^.stack.inner);
+-              set decoder^.offset = p +sat 1_u64;
+-              let event = Event::ObjectEnd();
+-              return Ok<Event, Error>(value: event);
+-            }
+-          }
+-          if c != 34_u16 {
+-            return failure(decoder: decoder, code: 2_u8, offset: p);
+-          }
+-          match pkg::text::string(source: source, start: p, decoded: decoded) {
+-            Ok(value: end) => {
+-              set decoder^.offset = end;
+-              if i < decoder^.stack.inner.len {
+-                set decoder^.stack.inner[i] = 5_u8;
+-              }
+-              let event = Event::Key();
+-              return Ok<Event, Error>(value: event);
+-            }
+-            Err(error: e) => {
+-              return relay(decoder: decoder, error: move e);
+-            }
+-          }
++          let event = Event::ObjectEnd();
++          return Ok<Event, Error>(value: event);
++        }
++      }
++      if c != 34_u16 {
++        return failure(decoder: decoder, code: 2_u8, offset: p);
++      }
++      match pkg::text::string(source: source, start: p, decoded: decoded) {
++        Ok(value: end) => {
++          set decoder^.offset = end;
++          set decoder^.stack.inner[i] = 5_u8;
++          let event = Event::Key();
++          return Ok<Event, Error>(value: event);
++        }
++        Err(error: e) => {
++          return relay(decoder: decoder, error: move e);
+         }
+       }
+     }
+diff --git a/lib/json/encode/state.wf b/lib/json/encode/state.wf
+--- a/lib/json/encode/state.wf
++++ b/lib/json/encode/state.wf
+@@ -41,31 +41,26 @@
+     set writer^.root_done = True();
+     return Ok<unit, Error>(value: unit);
+   }
+-  if n > 0_u64 {
+-    let i = n - 1_u64;
+-    if i < writer^.stack.inner.len {
+-      let phase = writer^.stack.inner[i];
+-      if phase == 4_u8 {
+-        set writer^.stack.inner[i] = 3_u8;
+-        return Ok<unit, Error>(value: unit);
++  let i = n - 1_u64;
++  let phase = writer^.stack.inner[i];
++  if phase == 4_u8 {
++    set writer^.stack.inner[i] = 3_u8;
++    return Ok<unit, Error>(value: unit);
++  }
++  if phase >= 2_u8 {
++    return failure(code: 16_u8, offset: output^.inner.len);
++  }
++  if phase == 1_u8 {
++    match emit_byte(output: output, byte: 44_u8) {
++      Ok(value: done) => {
+       }
+-      if phase >= 2_u8 {
+-        return failure(code: 16_u8, offset: output^.inner.len);
++      Err(error: e) => {
++        return Err<unit, Error>(error: move e);
+       }
+-      if phase == 1_u8 {
+-        match emit_byte(output: output, byte: 44_u8) {
+-          Ok(value: done) => {
+-          }
+-          Err(error: e) => {
+-            return Err<unit, Error>(error: move e);
+-          }
+-        }
+-      }
+-      set writer^.stack.inner[i] = 1_u8;
+-      return Ok<unit, Error>(value: unit);
+     }
+   }
+-  return failure(code: 19_u8, offset: output^.inner.len);
++  set writer^.stack.inner[i] = 1_u8;
++  return Ok<unit, Error>(value: unit);
+ }
+ 
+ fn begin(writer: &Writer, output: &Box<Slots<u8>>, object: Bool) -> result: Result<unit, Error> writes(writer), writes(output) {
+@@ -101,34 +96,29 @@
+   if n == 0_u64 {
+     return failure(code: 18_u8, offset: output^.inner.len);
+   }
+-  if n > 0_u64 {
+-    let i = n - 1_u64;
+-    if i < writer^.stack.inner.len {
+-      let phase = writer^.stack.inner[i];
+-      let byte = 93_u8;
+-      if object {
+-        if phase < 2_u8 {
+-          return failure(code: 18_u8, offset: output^.inner.len);
+-        }
+-        if phase == 4_u8 {
+-          return failure(code: 17_u8, offset: output^.inner.len);
+-        }
+-        set byte = 125_u8;
+-      } else if phase >= 2_u8 {
+-        return failure(code: 18_u8, offset: output^.inner.len);
+-      }
+-      match emit_byte(output: output, byte: byte) {
+-        Ok(value: done) => {
+-        }
+-        Err(error: e) => {
+-          return Err<unit, Error>(error: move e);
+-        }
+-      }
+-      let dropped = take_back(window: &writer^.stack.inner);
+-      return Ok<unit, Error>(value: unit);
++  let i = n - 1_u64;
++  let phase = writer^.stack.inner[i];
++  let byte = 93_u8;
++  if object {
++    if phase < 2_u8 {
++      return failure(code: 18_u8, offset: output^.inner.len);
++    }
++    if phase == 4_u8 {
++      return failure(code: 17_u8, offset: output^.inner.len);
++    }
++    set byte = 125_u8;
++  } else if phase >= 2_u8 {
++    return failure(code: 18_u8, offset: output^.inner.len);
++  }
++  match emit_byte(output: output, byte: byte) {
++    Ok(value: done) => {
++    }
++    Err(error: e) => {
++      return Err<unit, Error>(error: move e);
+     }
+   }
+-  return failure(code: 18_u8, offset: output^.inner.len);
++  let dropped = take_back(window: &writer^.stack.inner);
++  return Ok<unit, Error>(value: unit);
+ }
+ 
+ fn finish(writer: &Writer, output: &Box<Slots<u8>>) -> result: Result<unit, Error> reads(writer), reads(output) {
+diff --git a/lib/json/encode/values.wf b/lib/json/encode/values.wf
+--- a/lib/json/encode/values.wf
++++ b/lib/json/encode/values.wf
+@@ -141,42 +141,38 @@
+   let n = writer^.stack.inner.len;
+   if n > 0_u64 {
+     let i = n - 1_u64;
+-    if i < writer^.stack.inner.len {
+-      let phase = writer^.stack.inner[i];
+-      if phase < 2_u8 {
+-        return failure(code: 16_u8, offset: output^.inner.len);
+-      }
+-      if phase == 4_u8 {
+-        return failure(code: 17_u8, offset: output^.inner.len);
+-      }
+-      if phase == 3_u8 {
+-        match emit_byte(output: output, byte: 44_u8) {
+-          Ok(value: done) => {
+-          }
+-          Err(error: e) => {
+-            return Err<unit, Error>(error: move e);
+-          }
+-        }
+-      }
+-      match quoted(writer: writer, output: output, bytes: bytes) {
+-        Ok(value: done) => {
+-        }
+-        Err(error: e) => {
+-          return Err<unit, Error>(error: move e);
+-        }
+-      }
+-      match emit_byte(output: output, byte: 58_u8) {
+-        Ok(value: done) => {
+-        }
+-        Err(error: e) => {
+-          return Err<unit, Error>(error: move e);
+-        }
+-      }
+-      if i < writer^.stack.inner.len {
+-        set writer^.stack.inner[i] = 4_u8;
+-      }
+-      return Ok<unit, Error>(value: unit);
+-    }
++    let phase = writer^.stack.inner[i];
++    if phase < 2_u8 {
++      return failure(code: 16_u8, offset: output^.inner.len);
++    }
++    if phase == 4_u8 {
++      return failure(code: 17_u8, offset: output^.inner.len);
++    }
++    if phase == 3_u8 {
++      match emit_byte(output: output, byte: 44_u8) {
++        Ok(value: done) => {
++        }
++        Err(error: e) => {
++          return Err<unit, Error>(error: move e);
++        }
++      }
++    }
++    match quoted(writer: writer, output: output, bytes: bytes) {
++      Ok(value: done) => {
++      }
++      Err(error: e) => {
++        return Err<unit, Error>(error: move e);
++      }
++    }
++    match emit_byte(output: output, byte: 58_u8) {
++      Ok(value: done) => {
++      }
++      Err(error: e) => {
++        return Err<unit, Error>(error: move e);
++      }
++    }
++    set writer^.stack.inner[i] = 4_u8;
++    return Ok<unit, Error>(value: unit);
+   }
+   return failure(code: 16_u8, offset: output^.inner.len);
+ }
+diff --git a/lib/json/number/scan.wf b/lib/json/number/scan.wf
+--- a/lib/json/number/scan.wf
++++ b/lib/json/number/scan.wf
+@@ -10,9 +10,7 @@
+   let p = start;
+   let c = byte_at(input: source, index: p);
+   if c == 45_u8 {
+-    if p < source^.len {
+-      set p = p + 1_u64;
+-    }
++    set p = p + 1_u64;
+   }
+   if p >= source^.len {
+     return scan_bad(position: p);
+diff --git a/lib/json/text/buffer.wf b/lib/json/text/buffer.wf
+--- a/lib/json/text/buffer.wf
++++ b/lib/json/text/buffer.wf
+@@ -39,9 +39,7 @@
+     }
+     let doubled = cap +sat cap;
+     let target = imax(doubled, 32_u64);
+-    if target >= cap {
+-      grow(cell: buffer, capacity: target);
+-    }
++    grow(cell: buffer, capacity: target);
+   }
+   if buffer^.inner.len < buffer^.inner.cap {
+     place_back(window: &buffer^.inner, value: byte);
+diff --git a/lib/json/text/unicode.wf b/lib/json/text/unicode.wf
+--- a/lib/json/text/unicode.wf
++++ b/lib/json/text/unicode.wf
+@@ -134,20 +134,14 @@
+   }
+   let low = iand(value, 63_u32);
+   let last = ior(low, 128_u32);
+-  if length > 0_u64 {
+-    let tail = length - 1_u64;
+-    if tail < 4_u64 {
+-      set shifts[tail] = last;
+-    }
+-  }
++  let tail = length - 1_u64;
++  set shifts[tail] = last;
+   for (i in 0_u64..length) {
+-    if i < 4_u64 {
+-      let code = shifts[i];
+-      let byte = cvt.wrap::<u32, u8>(code);
+-      if put(buffer: buffer, byte: byte) {
+-      } else {
+-        return False();
+-      }
++    let code = shifts[i];
++    let byte = cvt.wrap::<u32, u8>(code);
++    if put(buffer: buffer, byte: byte) {
++    } else {
++      return False();
+     }
+   }
+   return True();
+diff --git a/lib/msgpack/decode/decode.wf b/lib/msgpack/decode/decode.wf
+--- a/lib/msgpack/decode/decode.wf
++++ b/lib/msgpack/decode/decode.wf
+@@ -126,7 +126,7 @@
+   } else if tag == 215_u8 {
+     set size = 8_u64;
+     set category = 7_u8;
+-  } else if tag == 216_u8 {
++  } else {
+     set size = 16_u64;
+     set category = 7_u8;
+   }
+@@ -188,10 +188,6 @@
+         set kind = reinterpret::<u8, i8>(b);
+         set at = at + 1_u64;
+       }
+-      if at > length {
+-        let e = Error::Offset(offset: at);
+-        return Err<Option<Token>, Error>(error: e);
+-      }
+       let remaining = length - at;
+       if size > remaining {
+         let e = Error::Truncated(start: offset, offset: at, needed: size, available: remaining);

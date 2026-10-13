@@ -54,6 +54,81 @@ instrumented run records 4,380 condition judgments and zero redundant
 conditions. That is an existing accepted-source control, not an equivalent
 migration of either downstream project.
 
+## Halo migration measurement input
+
+[halo-migration.patch](halo-migration.patch) targets Halo revision
+`56878ac4d607f7496c8e23a4c2ffe2d45e9cb552`, after replacing the whole word
+`held` with `held_value` in every `.wf` file. Paths are relative to the Halo
+repository root. This is an input to the temporary comparison workflow, not
+a change to Halo's maintained sources.
+
+The supplied diagnostic inventory contains **11 rejected modules and 32
+reported condition sites**. Each reported condition is True. The patch
+deletes its guard and dead else, retaining the selected statements and
+delivery. The final MessagePack tag test becomes `else`; the table hash
+position's unreachable fallback return is removed. Original source locations
+are listed below, before any migration edits:
+
+| Source under `lib/` | Reported sites (line: function) |
+| --- | --- |
+| `halo/execution/execution.wf` | 60: `storage_buffers` |
+| `halo/lex/support.wf` | 105: `put` |
+| `halo/heap/gc.wf` | 152: `mark_table_contents`; 318: `mark_thread_contents` |
+| `halo/heap/slabs.wf` | 79: `alloc_string_cell`; 145: `alloc_table`; 213: `alloc_closure`; 277: `alloc_upvalue` |
+| `halo/heap/strings.wf` | 34: `string_equal`; 171: `remove_intern` |
+| `halo/heap/tables.wf` | 343: `main_position`; 574: `insert_nodes`; 661: `rehash`; 925: `table_border` |
+| `halo/heap/threads.wf` | 114: `alloc_thread`; 192: `refresh_thread_bytes` |
+| `halo/compile/parse_support.wf` | 766: `resolve` |
+| `halo/vm/builtins.wf` | 371: `builtin` |
+| `halo/vm/calls.wf` | 518: `prepare_inner` |
+| `halo/embed/engine.wf` | 41: `refresh_roots`; 133: `compile` |
+| `halo/embed/sha1.wf` | 132: `sha1hex` |
+| `halo/embed/values.wf` | 230: `format_error` |
+| `json/number/scan.wf` | 13: `scan` |
+| `json/text/buffer.wf` | 42: `put` |
+| `json/text/unicode.wf` | 137: `scalar` |
+| `json/decode/pull.wf` | 26: `mark_value`; 123: `next` |
+| `json/encode/state.wf` | 44: `prefix`; 104: `close` |
+| `json/encode/values.wf` | 144: `key` |
+| `msgpack/decode/decode.wf` | 129: `next` |
+
+Static inspection also deletes 19 further decided conditions in those same
+bodies, which a first-error-per-body inventory does not enumerate:
+
+| Source under `lib/`, original lines | Deciding source facts |
+| --- | --- |
+| `halo/heap/strings.wf`: 178 | The counted loop has `0 <= i < n`, so `n > 0`. |
+| `halo/heap/tables.wf`: 679, 792, 838 | The first index is below the captured array length; the second is below `size < array_length`; the table bound survives calls whose writes reach only separate temporary buffers or heap accounting fields. |
+| `halo/embed/engine.wf`: 55, 58, 68, 72 | The counted script index and entering slot bounds survive writes to each script's nested constant buffer. |
+| `halo/embed/values.wf`: 231, 240 | The loop bound equals the source length, and the entering condition establishes `name_length <` the error string's length. |
+| `halo/vm/builtins.wf`: 373 | Adding a negative index to `nt < i64::MAX` leaves the sum below that maximum. |
+| `json/text/unicode.wf`: 139, 144 | Every joining branch sets `length` to 2, 3 or 4; both `length - 1` and an index below `length` are below 4. |
+| `json/decode/pull.wf`: 125, 187 | `i = stack.len - 1` after the zero-length exit; string decoding writes a separate output buffer and the offset assignment preserves stack length. |
+| `json/encode/state.wf`: 46, 106 | `i = stack.len - 1` after the zero-length exit; the now-unreachable fallback returns are also removed. |
+| `json/encode/values.wf`: 175 | The preceding stack bound survives calls that read the writer and write only output. |
+| `msgpack/decode/decode.wf`: 191 | The width check bounds `at + width` by input length; the optional extension-byte read checks `at < length` before incrementing, so `at > length` is False. |
+
+The sandbox clone failed because GitHub DNS was unavailable. An existing
+local object database contained the exact pinned commit, so the patch was
+derived from that commit's exported tree rather than reconstructed bodies.
+All 32 quoted diagnostic lines matched their recorded source positions after
+the rename. `git apply --check` and then `git apply` succeeded on a fresh
+export with the rename; all 20 resulting files matched the intended edited
+snapshot byte for byte. **Compiler acceptance and timing remain unverified**:
+no compiler or test ran locally. The compile and VM diagnostic inventories
+are incomplete, and further rejected conditions may remain.
+
+The comparison workflow applies the patch after the original whole-graph and
+per-module measurements, failing on any patch rejection. It checks all 15
+Halo modules with both compilers in two rounds, ordered main/branch then
+branch/main, and prints four `RESULT project=halo-migrated` lines. All four
+reports are retained. After printing every round, the step fails if a run
+has a nonzero status, an accepted-module count other than 15, or any rejection.
+The experiment asks whether removing rejection recovery and diagnostics
+removes the excess checking time; accepted migrated sources that retain an
+excess reject rejection recovery as its sole cause. The existing 50% trigger
+and the compiler-version attribution limitation recorded below still apply.
+
 ## What the implementation actually does
 
 1. **Decision and view construction.**

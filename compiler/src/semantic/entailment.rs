@@ -40,8 +40,8 @@ use term::TermId;
 
 #[cfg(test)]
 pub(crate) use state::{
-    CountedRootAtom, DerivationNode, DerivationRootKind, FlowEvent, FlowEventId, FlowEventKind,
-    GoalSign, ImplicitBoundKind, JoinParent, PostconditionCallDetail,
+    CountedRootAtom, DerivationNode, DerivationRootKind, ExclusionConclusion, FlowEvent,
+    FlowEventId, FlowEventKind, GoalSign, ImplicitBoundKind, JoinParent, PostconditionCallDetail,
     PostconditionDeliveryJoinDetail, RangeSeparationOrdering, Relation, TransportedHeaderRelation,
 };
 /// The mathematical value of a checked integer constant [ENT-2].

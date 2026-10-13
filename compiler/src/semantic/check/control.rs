@@ -366,7 +366,7 @@ impl<'unit> Checker<'_, 'unit> {
                         condition: matched.condition,
                         node_path: self.types.declarations.tree.path(node)?.clone(),
                         scrutinee: matched.scrutinee,
-                        enum_type: matched.enum_type,
+                        match_type: matched.match_type,
                         arms: matched.arms,
                         continues: matched.can_continue,
                     },
@@ -385,7 +385,7 @@ impl<'unit> Checker<'_, 'unit> {
                         condition: matched.condition,
                         node_path: self.types.declarations.tree.path(node)?.clone(),
                         scrutinee: matched.scrutinee,
-                        enum_type: matched.enum_type,
+                        match_type: matched.match_type,
                         arms: matched.arms,
                         continues: matched.can_continue,
                     },
@@ -596,7 +596,7 @@ impl<'unit> Checker<'_, 'unit> {
             // [REF-1] a binder every arm of which delivers a reference is
             // itself a reference variable, naming the union of the path sets
             // its delivering arms name, rather than taking a type [TYPE-5].
-            let reference = if mode.is_reference() {
+            let mut reference = if mode.is_reference() {
                 Some(
                     matched
                         .delivered_reference
@@ -606,6 +606,9 @@ impl<'unit> Checker<'_, 'unit> {
             } else {
                 None
             };
+            if let Some(reference) = &mut reference {
+                reference.anchor_selection(self.types.declarations.tree.path(node)?, binding);
+            }
             if matched.can_continue
                 && let Some(reference) = &reference
             {
@@ -626,6 +629,7 @@ impl<'unit> Checker<'_, 'unit> {
                             compiler_updated: false,
                             read_only_state: false,
                             reference,
+                            commit_target: None,
                             refinement_witnesses: Vec::new(),
                             handle_watch: None,
                             call_value: false,
@@ -649,7 +653,7 @@ impl<'unit> Checker<'_, 'unit> {
                     result_mode: mode,
                     result_range_element,
                     scrutinee: matched.scrutinee,
-                    enum_type: matched.enum_type,
+                    match_type: matched.match_type,
                     arms: matched.arms,
                     continues: matched.can_continue,
                 },
@@ -703,7 +707,10 @@ impl<'unit> Checker<'_, 'unit> {
         // that reads a reference variable, is itself a reference variable
         // naming the same path — an alias, not a copy of the referent. The
         // binder takes that reference kind rather than a type [TYPE-5].
-        let reference = value.reference.clone();
+        let mut reference = value.reference.clone();
+        if let Some(reference) = &mut reference {
+            reference.anchor_selection(self.types.declarations.tree.path(node)?, binding);
+        }
         if mode.is_reference() && reference.is_none() {
             return Err(SemanticCompilerFailure::InvalidResolution.into());
         }
@@ -723,6 +730,7 @@ impl<'unit> Checker<'_, 'unit> {
             compiler_updated: false,
             read_only_state: false,
             reference,
+            commit_target: None,
             refinement_witnesses: Vec::new(),
             handle_watch: None,
             call_value: false,

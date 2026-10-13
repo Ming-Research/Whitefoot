@@ -1364,175 +1364,179 @@ fn hash_command(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client:
   let open = bnot(client^.locked);
   let counting = True();
   let plain = False();
-  if code == code_hset {
-    let fits = count >= 4_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
+  match code {
+    code_hset => {
+      let fits = count >= 4_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_hset(store: store, input: input, args: args, client: client, env: env, time: time, counted: counting);
+      }
+      return True();
     }
-    if go {
-      run_hset(store: store, input: input, args: args, client: client, env: env, time: time, counted: counting);
+    code_hmset => {
+      let fits = count >= 4_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_hset(store: store, input: input, args: args, client: client, env: env, time: time, counted: plain);
+      }
+      return True();
     }
-    return True();
-  }
-  if code == code_hmset {
-    let fits = count >= 4_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_hset(store: store, input: input, args: args, client: client, env: env, time: time, counted: plain);
-    }
-    return True();
-  }
-  if code == code_hsetnx {
-    let fits = count == 4_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_hsetnx(store: store, input: input, args: args, client: client, env: env, time: time);
-    }
-    return True();
-  }
-  if code == code_hget {
-    let fits = count == 3_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_hget(store: store, input: input, args: args, client: client, env: env, time: time);
-    }
-    return True();
-  }
-  if code == code_hmget {
-    let fits = count >= 3_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_hmget(store: store, input: input, args: args, client: client, env: env, time: time);
-    }
-    return True();
-  }
-  if code == code_hdel {
-    let fits = count >= 3_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_hdel(store: store, input: input, args: args, client: client, env: env, time: time);
-    }
-    return True();
-  }
-  if code == code_hexists {
-    let fits = count == 3_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_hfield(store: store, input: input, args: args, client: client, env: env, time: time, length: plain);
-    }
-    return True();
-  }
-  if code == code_hstrlen {
-    let fits = count == 3_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_hfield(store: store, input: input, args: args, client: client, env: env, time: time, length: counting);
-    }
-    return True();
-  }
-  if code == code_hlen {
-    let fits = count == 2_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_hlen(store: store, input: input, args: args, client: client, env: env, time: time);
-    }
-    return True();
-  }
-  if code == code_hgetall {
-    let fits = count == 2_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_hall(store: store, input: input, args: args, client: client, env: env, time: time, shown: 2_i64);
-    }
-    return True();
-  }
-  if code == code_hkeys {
-    let fits = count == 2_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_hall(store: store, input: input, args: args, client: client, env: env, time: time, shown: 0_i64);
-    }
-    return True();
-  }
-  if code == code_hvals {
-    let fits = count == 2_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_hall(store: store, input: input, args: args, client: client, env: env, time: time, shown: 1_i64);
-    }
-    return True();
-  }
-  if code == code_hincrby {
-    let fits = count == 4_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_hincrby(store: store, input: input, args: args, client: client, env: env, time: time);
-    }
-    return True();
-  }
-  if code == code_hincrbyfloat {
-    let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_hincrbyfloat[0_u64..12_u64]);
-    if spelled {
+    code_hsetnx => {
       let fits = count == 4_u64;
       let go = band(fits, open);
       if bnot(go) {
         refused(client: client, input: input, name: name, fits: fits);
       }
       if go {
-        run_hincrbyfloat(store: store, input: input, args: args, client: client, env: env, time: time);
+        run_hsetnx(store: store, input: input, args: args, client: client, env: env, time: time);
       }
       return True();
     }
-  }
-  if code == code_hrandfield {
-    let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_hrandfield[0_u64..10_u64]);
-    if spelled {
-      let fits = count >= 2_u64;
+    code_hget => {
+      let fits = count == 3_u64;
       let go = band(fits, open);
       if bnot(go) {
         refused(client: client, input: input, name: name, fits: fits);
       }
       if go {
-        run_hrandfield(store: store, input: input, args: args, client: client, env: env, time: time);
+        run_hget(store: store, input: input, args: args, client: client, env: env, time: time);
       }
       return True();
+    }
+    code_hmget => {
+      let fits = count >= 3_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_hmget(store: store, input: input, args: args, client: client, env: env, time: time);
+      }
+      return True();
+    }
+    code_hdel => {
+      let fits = count >= 3_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_hdel(store: store, input: input, args: args, client: client, env: env, time: time);
+      }
+      return True();
+    }
+    code_hexists => {
+      let fits = count == 3_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_hfield(store: store, input: input, args: args, client: client, env: env, time: time, length: plain);
+      }
+      return True();
+    }
+    code_hstrlen => {
+      let fits = count == 3_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_hfield(store: store, input: input, args: args, client: client, env: env, time: time, length: counting);
+      }
+      return True();
+    }
+    code_hlen => {
+      let fits = count == 2_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_hlen(store: store, input: input, args: args, client: client, env: env, time: time);
+      }
+      return True();
+    }
+    code_hgetall => {
+      let fits = count == 2_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_hall(store: store, input: input, args: args, client: client, env: env, time: time, shown: 2_i64);
+      }
+      return True();
+    }
+    code_hkeys => {
+      let fits = count == 2_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_hall(store: store, input: input, args: args, client: client, env: env, time: time, shown: 0_i64);
+      }
+      return True();
+    }
+    code_hvals => {
+      let fits = count == 2_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_hall(store: store, input: input, args: args, client: client, env: env, time: time, shown: 1_i64);
+      }
+      return True();
+    }
+    code_hincrby => {
+      let fits = count == 4_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_hincrby(store: store, input: input, args: args, client: client, env: env, time: time);
+      }
+      return True();
+    }
+    code_hincrbyfloat => {
+      let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_hincrbyfloat[0_u64..12_u64]);
+      if spelled {
+        let fits = count == 4_u64;
+        let go = band(fits, open);
+        if bnot(go) {
+          refused(client: client, input: input, name: name, fits: fits);
+        }
+        if go {
+          run_hincrbyfloat(store: store, input: input, args: args, client: client, env: env, time: time);
+        }
+        return True();
+      }
+    }
+    code_hrandfield => {
+      let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_hrandfield[0_u64..10_u64]);
+      if spelled {
+        let fits = count >= 2_u64;
+        let go = band(fits, open);
+        if bnot(go) {
+          refused(client: client, input: input, name: name, fits: fits);
+        }
+        if go {
+          run_hrandfield(store: store, input: input, args: args, client: client, env: env, time: time);
+        }
+        return True();
+      }
+    }
+    else => {
     }
   }
   return False();
