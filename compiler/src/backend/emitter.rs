@@ -37,6 +37,7 @@ mod snapshot;
 mod storage_alias;
 mod union_enums;
 mod value_equality;
+mod wait_sites;
 mod wake;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -105,6 +106,15 @@ pub struct LlvmModule {
 }
 
 impl LlvmModule {
+    pub(crate) fn rebind_sources(
+        &mut self,
+        inputs: &[crate::SourceInput<'_>],
+        modules: Option<&[crate::ModuleRecord]>,
+    ) -> Option<()> {
+        self.model.rebind_sources(inputs, modules)?;
+        self.text = self.model.render();
+        Some(())
+    }
     /// Consumes the module and returns its complete textual LLVM.
     #[must_use]
     pub fn into_string(self) -> String {
@@ -451,6 +461,7 @@ fn emit_module(
     text.text("\n");
     emit_nominal_declarations(&mut text, program, target)?;
     constants::emit_global_constants(&mut text, program)?;
+    wait_sites::emit_wait_sites(&mut text, program);
     // An allocation this host refuses is the heap twin of an exhausted stack,
     // and it gets the same treatment: one record naming the resource class,
     // written once, before a defined abort. The bytes carry no `rule_id`, no
@@ -699,7 +710,7 @@ fn emit_module(
     // survive the module path used by both bundle and graph builds.
     for function in program.functions() {
         for line in &function.lock_ledger {
-            emit_ledger_comment(&mut text, LOCK_LEDGER_PREFIX, line);
+            text.source_comment(LOCK_LEDGER_PREFIX, line.clone());
         }
     }
     if text.has_conflict() {
@@ -1111,21 +1122,6 @@ pub const DISPATCH_LEDGER_PREFIX: &str = "; dispatch: ";
 /// Atomic lowering's developer ledger, printed by `whitefootc --lock-ledger`.
 pub const LOCK_LEDGER_PREFIX: &str = "; lock: ";
 
-/// Keep host display paths inside one LLVM comment and leave escapes
-/// unambiguous for the developer channel that reads the comment back.
-fn emit_ledger_comment(module: &mut Module, prefix: &str, line: &str) {
-    let mut comment = String::from(prefix);
-    for character in line.chars() {
-        if character == '\\' || character.is_control() {
-            comment.extend(character.escape_default());
-        } else {
-            comment.push(character);
-        }
-    }
-    comment.push('\n');
-    module.text(comment);
-}
-
 /// The internal symbol a register-returned definition's destination-form
 /// body is emitted under, beside the public entry that keeps `symbol`.
 ///
@@ -1290,7 +1286,7 @@ impl FunctionFramePlan {
                             None,
                         )?;
                     }
-                    IrOperation::ContextAwait { start } => {
+                    IrOperation::ContextAwait { start, .. } => {
                         let IrInstruction::Define { ty, .. } = instruction else {
                             continue;
                         };
@@ -2667,8 +2663,8 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 function,
                 arguments,
             } => self.emit_context_start(result, *function, arguments, true),
-            IrOperation::ContextAwait { start } => self.emit_context_await(result, ty, *start),
-            IrOperation::ContextJoin => self.emit_context_join(result),
+            IrOperation::ContextAwait { start, .. } => self.emit_context_await(result, ty, *start),
+            IrOperation::ContextJoin { .. } => self.emit_context_join(result),
             IrOperation::LoopSplit {
                 splitter,
                 chunk,
@@ -2905,7 +2901,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 self.emit_shared_wait(result, *object, "wf__shared_acquire", "acquire", "")
             }
             IrOperation::SharedTake { object } => self.emit_shared_take(result, *object),
-            IrOperation::SharedWatch { object, test } => {
+            IrOperation::SharedWatch { object, test, .. } => {
                 self.emit_shared_watch(result, *object, test.as_ref())
             }
             IrOperation::SharedUnlock { object, wrote } => {
@@ -3039,7 +3035,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             IrOperation::WatchTable { record, table } => {
                 self.emit_watch_call(result, *record, Some(*table), "wf__watch_table")
             }
-            IrOperation::WatchPark { record } => self.emit_watch_park(result, *record),
+            IrOperation::WatchPark { record, .. } => self.emit_watch_park(result, *record),
             IrOperation::BoxTake { nominal, value } => {
                 self.emit_box_take(result, ty, *nominal, *value)
             }

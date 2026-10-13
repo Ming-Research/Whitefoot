@@ -32,6 +32,7 @@ mod text_literals;
 mod type_invariants;
 mod type_regions;
 mod types;
+mod wait_report_sources;
 
 pub(crate) use receipts::ProofReceipts;
 pub(crate) use repairs::{
@@ -563,6 +564,8 @@ struct DeclarationInventory<'unit> {
     resolved: &'unit ResolvedSyntaxUnit,
     /// Lazily indexed source lines for non-normative lock-ledger locations.
     ledger_line_starts: lock_ledger_sources::SourceLines,
+    /// Target binder locations do not participate in analyzed function bodies.
+    target_ledger_sources: std::cell::RefCell<HashMap<NodePath, crate::SourceDescription>>,
     /// [STOR-8, GRAM-2] whether this compilation unit wrote `program
     /// no_heap;`.
     ///
@@ -951,6 +954,7 @@ impl<'unit> DeclarationInventory<'unit> {
         Ok(Self {
             resolved,
             ledger_line_starts: Default::default(),
+            target_ledger_sources: Default::default(),
             tree,
             no_heap,
         })
@@ -1558,6 +1562,10 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             .types
             .declarations
             .lock_ledger_sources(&functions, &executable_functions);
+        let wait_report_sources = self
+            .types
+            .declarations
+            .wait_report_sources(&functions, &executable_functions);
 
         Ok(CheckedProgramData {
             nominals: self.types.nominals.clone(),
@@ -1602,6 +1610,8 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             permission,
             permission_ledger,
             lock_ledger_sources,
+            target_ledger_sources: self.types.declarations.target_ledger_sources.borrow().clone(),
+            wait_report_sources,
         })
     }
 

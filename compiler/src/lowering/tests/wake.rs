@@ -6,6 +6,92 @@
 use super::*;
 use crate::{IrConstant, IrPlaceStep, IrWakeCode, IrWakeComparison, IrWakeOperand, IrWakeTest};
 
+/// A join without a planned statement follows nonusing siblings and its
+/// description names the owning block's end.
+#[test]
+fn an_unplaced_join_description_matches_the_emitted_instruction_order() {
+    let source = br#"fn delayed() -> result: unit pure waits {
+  return unit;
+}
+
+fn marker() -> result: unit pure {
+  return unit;
+}
+
+fn witness() -> result: unit pure waits {
+  for @body (index in 0_u64..1_u64) {
+    let pending = spawn delayed();
+    marker();
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  witness();
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    with_checked(source, |checked| {
+        let witness = checked
+            .data
+            .functions
+            .iter()
+            .find(|function| function.name == "witness")
+            .unwrap();
+        let [plan] = witness.waiting.context_awaits.as_slice() else {
+            panic!("the fixture has one bound spawn");
+        };
+        assert_eq!(plan.before, None, "no later statement names the binding");
+        let program = lower_checked(checked, OverlapLowering::Off).unwrap();
+        let witness = function(&program, "witness");
+        let markers = witness
+            .blocks()
+            .iter()
+            .flat_map(IrBlock::instructions)
+            .filter_map(|instruction| match instruction {
+                IrInstruction::Define {
+                    result,
+                    operation: IrOperation::Call { function, .. },
+                    ..
+                } if program.functions()[*function as usize].name() == "marker" => Some(*result),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let [marker] = markers.as_slice() else {
+            panic!("the fixture calls its nonusing sibling once");
+        };
+        let (await_index, site, marker_index) = witness
+            .blocks()
+            .iter()
+            .find_map(|block| {
+                let instructions = block.instructions();
+                let marker_index = instructions.iter().position(|instruction| {
+                    matches!(instruction, IrInstruction::Define { result, .. } if result == marker)
+                })?;
+                let (await_index, site) = instructions
+                    .iter()
+                    .enumerate()
+                    .find_map(|(index, instruction)| match instruction {
+                        IrInstruction::Define {
+                            operation: IrOperation::ContextAwait { site, .. },
+                            ..
+                        } => Some((index, site)),
+                        _ => None,
+                    })?;
+                Some((await_index, site, marker_index))
+            })
+            .expect("the join and its sibling share one IR block");
+        assert!(
+            marker_index < await_index,
+            "the nonusing sibling must finish before the block-end await"
+        );
+        assert_eq!(
+            site.to_string(),
+            "waits at test.wf:13:3 to join the context spawned at test.wf:11:5 (implicit join at the end of this loop iteration)"
+        );
+    });
+}
+
 /// A program whose one guarded statement waits on `guard` over the state
 /// `g` of a `Gate`, with the locals `mine`, `yes` and `shut` in scope.
 fn guarded(guard: &str) -> String {

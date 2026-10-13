@@ -1991,7 +1991,9 @@ fn missing_lock_ledger_locations_preserve_lowering() {
         let ledger = &function(program, "main").lock_ledger;
         assert_eq!(ledger.len(), 1, "one lazy target group");
         assert!(
-            ledger[0].contains("targets(cell): u64  on every path; first use test.wf:"),
+            ledger[0]
+                .to_string()
+                .contains("targets(cell): u64  on every path; first use test.wf:"),
             "the witness reaches its lazy acquisition: {ledger:?}"
         );
         program.functions().to_vec()
@@ -2020,8 +2022,8 @@ fn missing_lock_ledger_locations_preserve_lowering() {
                     }
                 })
                 .expect("the witness contains an atomic statement");
-            let atomic_site = checked.data.lock_ledger_sources[&atomic].clone();
-            let first_use_site = checked.data.lock_ledger_sources[&first_use].clone();
+            let atomic_site = checked.data.lock_ledger_sources[&atomic].to_string();
+            let first_use_site = checked.data.lock_ledger_sources[&first_use].to_string();
             if missing_atomic && missing_first_use {
                 checked.data.lock_ledger_sources.clear();
             } else if missing_atomic {
@@ -2042,7 +2044,11 @@ fn missing_lock_ledger_locations_preserve_lowering() {
                 &first_use_site
             };
             assert_eq!(
-                function(&lowered, "main").lock_ledger,
+                function(&lowered, "main")
+                    .lock_ledger
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>(),
                 [format!(
                     "LOCK main  {atomic_site}  targets(cell): u64  on every path; first use {first_use_site}"
                 )]

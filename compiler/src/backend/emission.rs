@@ -7,7 +7,8 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::{self, Write};
 
-use crate::IrBlockId;
+use crate::source::{DescriptionPart, DescriptionPosition, SourceReading};
+use crate::{IrBlockId, ModuleRecord, SourceBundle, SourceDescription, SourceInput};
 
 use super::emitter::BackendFailure;
 
@@ -460,6 +461,10 @@ pub(crate) struct Entity {
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum ModulePart {
     Text(String),
+    SourceComment {
+        prefix: String,
+        description: SourceDescription,
+    },
     Type(String),
     Declaration(String),
     Entity(usize),
@@ -476,6 +481,8 @@ pub(crate) struct Module {
     pub(crate) declarations: BTreeMap<String, Declaration>,
     pub(crate) entities: Vec<Entity>,
     pub(crate) attributes: BTreeMap<u64, String>,
+    source_constants: BTreeMap<usize, SourceDescription>,
+    source_path_constraints: Vec<SourceReading>,
 }
 
 impl Module {
@@ -520,6 +527,12 @@ impl Module {
 
     pub(crate) fn text(&mut self, text: impl Into<String>) {
         self.parts.push(ModulePart::Text(text.into()));
+    }
+    pub(crate) fn source_comment(&mut self, prefix: &str, description: SourceDescription) {
+        self.parts.push(ModulePart::SourceComment {
+            prefix: prefix.to_owned(),
+            description,
+        });
     }
     pub(crate) fn header(&mut self, text: String) {
         self.header.push(text.clone());
@@ -620,6 +633,75 @@ impl Module {
         self.entities[index].fragment_local = true;
     }
 
+    /// One presentation-only byte array with no runtime identity or mutable
+    /// storage. Its structured source parts survive the emitted-module cache.
+    pub(crate) fn source_constant(&mut self, name: String, description: SourceDescription) {
+        let index = self.entities.len();
+        let (ty, value) = description_constant(&description);
+        self.fragment_local_constant(name, ty, value, Some(1));
+        self.source_constants.insert(index, description);
+    }
+
+    /// Rebind only explicitly recorded source constants and comments. Function
+    /// text, ordinary globals and unstructured diagnostics are never inspected.
+    pub(crate) fn rebind_sources(
+        &mut self,
+        inputs: &[SourceInput<'_>],
+        modules: Option<&[ModuleRecord]>,
+    ) -> Option<()> {
+        if !self
+            .source_path_constraints
+            .iter()
+            .all(|reading| reading.matches(inputs, modules))
+        {
+            return None;
+        }
+        for (index, description) in &mut self.source_constants {
+            description.rebind(inputs, modules)?;
+            let entity = self.entities.get_mut(*index)?;
+            if !entity.global
+                || !entity.fragment_local
+                || entity.linkage != Linkage::Private
+                || entity.references != References::default()
+                || !entity.body.is_empty()
+            {
+                return None;
+            }
+            let (ty, value) = description_constant(description);
+            let name = &entity.name;
+            entity.header = format!("@{name} = private unnamed_addr constant {ty} {value}, align 1");
+            entity.hidden_header =
+                format!("@{name} = hidden unnamed_addr constant {ty} {value}, align 1");
+            entity.declaration = format!("@{name} = external hidden constant {ty}, align 1");
+        }
+        for part in &mut self.parts {
+            if let ModulePart::SourceComment { description, .. } = part {
+                description.rebind(inputs, modules)?;
+            }
+        }
+        Some(())
+    }
+
+    /// A rendered rejection can carry nested source locations. Retain its
+    /// source readings instead of interpreting or rewriting diagnostic text.
+    pub(crate) fn require_source_paths(&mut self, bundle: &SourceBundle) {
+        self.source_path_constraints.extend(
+            bundle
+                .files()
+                .iter()
+                .filter(|file| file.prelude().is_none())
+                .map(|file| SourceReading {
+                    module: if bundle.is_module_program() {
+                        bundle.module(file.module()).map(ModuleRecord::qualified_name)
+                    } else {
+                        None
+                    },
+                    logical_path: file.logical_path().as_str().to_owned(),
+                    display_path: file.display_path().to_owned(),
+                }),
+        );
+    }
+
     pub(crate) fn named_type(&mut self, name: String, body: String, references: References) {
         self.parts.push(ModulePart::Type(name.clone()));
         self.types.insert(
@@ -642,6 +724,13 @@ impl Module {
     }
     pub(crate) fn append(&mut self, mut other: Self) {
         let offset = self.entities.len();
+        self.source_constants.extend(
+            std::mem::take(&mut other.source_constants)
+                .into_iter()
+                .map(|(index, description)| (index + offset, description)),
+        );
+        self.source_path_constraints
+            .append(&mut other.source_path_constraints);
         for part in &mut other.parts {
             if let ModulePart::Entity(index) = part {
                 *index += offset;
@@ -707,6 +796,17 @@ impl Module {
         for part in &self.parts {
             match part {
                 ModulePart::Text(part) => text.push_str(part),
+                ModulePart::SourceComment { prefix, description } => {
+                    text.push_str(prefix);
+                    for character in description.to_string().chars() {
+                        if character == '\\' || character.is_control() {
+                            text.extend(character.escape_default());
+                        } else {
+                            text.push(character);
+                        }
+                    }
+                    text.push('\n');
+                }
                 ModulePart::Type(name) => {
                     text.push_str(&self.types[name].text);
                     text.push('\n');
@@ -746,13 +846,18 @@ impl Write for FunctionBody {
 impl Module {
     pub(crate) fn encode(&self) -> Vec<u8> {
         let mut out = ModelWriter(Vec::new());
-        out.text("whitefoot emission 2");
+        out.text("whitefoot emission 4");
         out.number(self.parts.len());
         for part in &self.parts {
             match part {
                 ModulePart::Text(text) => {
                     out.number(0);
                     out.text(text);
+                }
+                ModulePart::SourceComment { prefix, description } => {
+                    out.number(5);
+                    out.text(prefix);
+                    out.description(description);
                 }
                 ModulePart::Type(name) => {
                     out.number(1);
@@ -808,12 +913,23 @@ impl Module {
             out.integer(*id);
             out.text(text);
         }
+        out.number(self.source_constants.len());
+        for (index, description) in &self.source_constants {
+            out.number(*index);
+            out.description(description);
+        }
+        out.number(self.source_path_constraints.len());
+        for reading in &self.source_path_constraints {
+            out.module_name(reading.module.as_deref());
+            out.text(&reading.logical_path);
+            out.text(&reading.display_path);
+        }
         out.0
     }
 
     pub(crate) fn decode(bytes: &[u8]) -> Option<Self> {
         let mut input = ModelReader(bytes);
-        if input.text()? != "whitefoot emission 2" {
+        if input.text()? != "whitefoot emission 4" {
             return None;
         }
         let mut module = Self::default();
@@ -824,6 +940,10 @@ impl Module {
                 2 => ModulePart::Declaration(input.text()?),
                 3 => ModulePart::Entity(input.count()?),
                 4 => ModulePart::Attributes(input.integer()?),
+                5 => ModulePart::SourceComment {
+                    prefix: input.text()?,
+                    description: input.description()?,
+                },
                 _ => return None,
             });
         }
@@ -890,9 +1010,27 @@ impl Module {
                 return None;
             }
         }
+        for _ in 0..input.count()? {
+            let index = usize::try_from(input.integer()?).ok()?;
+            let description = input.description()?;
+            let entity = module.entities.get(index)?;
+            if !entity.fragment_local
+                || !entity.body.is_empty()
+                || module.source_constants.insert(index, description).is_some()
+            {
+                return None;
+            }
+        }
+        for _ in 0..input.count()? {
+            module.source_path_constraints.push(SourceReading {
+                module: input.module_name()?,
+                logical_path: input.text()?,
+                display_path: input.text()?,
+            });
+        }
         if !input.0.is_empty()
             || !module.parts.iter().all(|part| match part {
-                ModulePart::Text(_) => true,
+                ModulePart::Text(_) | ModulePart::SourceComment { .. } => true,
                 ModulePart::Type(name) => module.types.contains_key(name),
                 ModulePart::Declaration(name) => module.declarations.contains_key(name),
                 ModulePart::Entity(index) => *index < module.entities.len(),
@@ -931,6 +1069,34 @@ impl ModelWriter {
             self.integer(*id);
         }
     }
+    fn description(&mut self, description: &SourceDescription) {
+        self.number(description.parts.len());
+        for part in &description.parts {
+            match part {
+                DescriptionPart::Literal(text) => {
+                    self.number(0);
+                    self.text(text);
+                }
+                DescriptionPart::Position(position) => {
+                    self.number(1);
+                    self.module_name(position.module.as_deref());
+                    self.text(&position.logical_path);
+                    self.text(&position.display_path);
+                    self.number(position.line);
+                    self.number(position.column);
+                }
+            }
+        }
+    }
+    fn module_name(&mut self, module: Option<&str>) {
+        match module {
+            Some(name) => {
+                self.number(1);
+                self.text(name);
+            }
+            None => self.number(0),
+        }
+    }
 }
 
 struct ModelReader<'a>(&'a [u8]);
@@ -962,6 +1128,51 @@ impl ModelReader<'_> {
                 .collect::<Option<_>>()?,
         })
     }
+    fn description(&mut self) -> Option<SourceDescription> {
+        let mut parts = Vec::new();
+        for _ in 0..self.count()? {
+            parts.push(match self.integer()? {
+                0 => DescriptionPart::Literal(self.text()?),
+                1 => {
+                    let module = self.module_name()?;
+                    let logical_path = self.text()?;
+                    let display_path = self.text()?;
+                    let line = usize::try_from(self.integer()?).ok()?;
+                    let column = usize::try_from(self.integer()?).ok()?;
+                    if line == 0 || column == 0 {
+                        return None;
+                    }
+                    DescriptionPart::Position(DescriptionPosition {
+                        module,
+                        logical_path,
+                        display_path,
+                        line,
+                        column,
+                    })
+                }
+                _ => return None,
+            });
+        }
+        Some(SourceDescription { parts })
+    }
+    fn module_name(&mut self) -> Option<Option<String>> {
+        match self.integer()? {
+            0 => Some(None),
+            1 => Some(Some(self.text()?)),
+            _ => None,
+        }
+    }
+}
+
+fn description_constant(description: &SourceDescription) -> (String, String) {
+    let mut bytes = description.to_string().into_bytes();
+    bytes.push(0);
+    let mut value = String::from("c\"");
+    for byte in &bytes {
+        let _ = write!(value, "\\{byte:02X}");
+    }
+    value.push('"');
+    (format!("[{} x i8]", bytes.len()), value)
 }
 
 #[cfg(test)]

@@ -2342,9 +2342,10 @@ pub fn build_module_entry_for_emission(
     );
     // Only a build that composed is recorded, so a recorded module implies
     // that every module verdict of its closure held for these inputs.
-    if let Some(module) = cache
+    if let Some(mut module) = cache
         .and_then(|cache| cache.load(ENTRY_MODULES, &material))
         .and_then(|payload| LlvmModule::decode(&payload))
+        && module.rebind_sources(&selected, Some(graph.modules())).is_some()
     {
         return Ok((module, Vec::new(), true));
     }
@@ -2928,6 +2929,7 @@ fn lower_selected(
             }
             if let Some(failure) = caller_failure {
                 let mut comment = crate::backend::emission::Module::default();
+                comment.require_source_paths(bundle);
                 comment.text(format!(
                     "\n; Executable caller was not admitted: {failure}\n"
                 ));

@@ -4,7 +4,8 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 use crate::semantic::model::{CheckedBodyDisposition, CheckedFunction, CheckedStatement, FunctionId};
-use crate::{NodePath, SourceId, SyntaxCoordinate};
+use crate::source::DescriptionPosition;
+use crate::{NodePath, SourceDescription, SourceId, SyntaxCoordinate};
 
 use super::DeclarationInventory;
 
@@ -15,14 +16,14 @@ pub(super) struct SourceLines {
 }
 
 impl DeclarationInventory<'_> {
-    pub(super) fn lock_ledger_site(&self, coordinate: SyntaxCoordinate) -> String {
+    pub(super) fn lock_ledger_site(&self, coordinate: SyntaxCoordinate) -> SourceDescription {
         let site = || {
-            let file = self
+            let bundle = self
                 .resolved
                 .syntax()
                 .classified_bundle()
-                .source_bundle()
-                .file(coordinate.source())?;
+                .source_bundle();
+            let file = bundle.file(coordinate.source())?;
             let start = usize::try_from(coordinate.start().value()).ok()?;
             if start > file.bytes().len() {
                 return None;
@@ -42,9 +43,19 @@ impl DeclarationInventory<'_> {
             let line_start = *line_starts.get(line.checked_sub(1)?)?;
             let prefix = file.bytes().get(line_start..start)?;
             let column = std::str::from_utf8(prefix).ok()?.chars().count() + 1;
-            Some(format!("{}:{line}:{column}", file.display_path()))
+            Some(SourceDescription::position(DescriptionPosition {
+                module: if bundle.is_module_program() {
+                    Some(bundle.module(file.module())?.qualified_name())
+                } else {
+                    None
+                },
+                logical_path: file.logical_path().as_str().to_owned(),
+                display_path: file.display_path().to_owned(),
+                line,
+                column,
+            }))
         };
-        site().unwrap_or_else(|| "<unknown site>".to_owned())
+        site().unwrap_or_else(|| SourceDescription::literal("<unknown site>"))
     }
 
     /// Retain available written locations only. Missing report metadata must
@@ -53,7 +64,7 @@ impl DeclarationInventory<'_> {
         &self,
         functions: &[CheckedFunction],
         executable_functions: &[FunctionId],
-    ) -> HashMap<NodePath, String> {
+    ) -> HashMap<NodePath, SourceDescription> {
         let mut statements = Vec::new();
         for id in executable_functions {
             let Some(function) = functions.get(id.0 as usize) else {
@@ -84,7 +95,7 @@ impl DeclarationInventory<'_> {
                                 .coordinate(descendant)
                                 .ok()
                                 .map(|coordinate| self.lock_ledger_site(coordinate))
-                                .unwrap_or_else(|| "<unknown site>".to_owned());
+                                .unwrap_or_else(|| SourceDescription::literal("<unknown site>"));
                             sources.insert(path.clone(), site);
                         }
                         if let Ok(children) = self.tree.children(descendant) {

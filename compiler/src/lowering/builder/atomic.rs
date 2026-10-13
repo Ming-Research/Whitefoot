@@ -9,7 +9,7 @@ use crate::semantic::{
 use crate::{
     IrAddressed, IrConstant, IrDrop, IrDropSubject, IrMatchTarget, IrNominalId, IrNominalKind,
     IrOperation, IrRecord, IrRecordKind, IrShared, IrTerminator, IrType, IrValueId,
-    LoweringFailure, NodePath,
+    LoweringFailure, NodePath, SourceDescription,
 };
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -25,6 +25,7 @@ pub(super) struct AtomicRegion {
     bindings: HashMap<BindingId, usize>,
     target_bindings: HashMap<BindingId, usize>,
     ledger: Rc<RefCell<AtomicLedger>>,
+    wait_site: SourceDescription,
 }
 #[derive(Clone)]
 struct TargetRegion {
@@ -114,7 +115,7 @@ impl IrBuilder<'_> {
             .lock_ledger_sources
             .get(site)
             .cloned()
-            .unwrap_or_else(|| "<unknown site>".to_owned());
+            .unwrap_or_else(|| SourceDescription::literal("<unknown site>"));
         let ledger = Rc::new(RefCell::new(AtomicLedger::new(ledger_site.clone())));
         let guard_site = guard
             .and_then(CheckedExpression::carrier)
@@ -129,7 +130,12 @@ impl IrBuilder<'_> {
                     target.kind,
                     CheckedTargetKind::MapEntry(_) | CheckedTargetKind::MapSet(_)
                 ) {
-                    Some(target.ledger_site.clone())
+                    Some(
+                        self.target_ledger_sources
+                            .get(&target.node_path)
+                            .cloned()
+                            .unwrap_or_else(|| SourceDescription::literal("<unknown site>")),
+                    )
                 } else if guard_roots.iter().any(|root| root.binding == target.binding) {
                     Some(guard_site.clone())
                 } else {
@@ -149,6 +155,15 @@ impl IrBuilder<'_> {
             bindings: HashMap::new(),
             target_bindings: HashMap::new(),
             ledger: ledger.clone(),
+            wait_site: self
+                .wait_report_sources
+                .get(site)
+                .cloned()
+                .unwrap_or_else(|| {
+                    SourceDescription::literal(
+                        "waits for the guard of an atomic statement (source unavailable)",
+                    )
+                }),
         };
         for (group_index, indexes) in grouped.into_values().enumerate() {
             ledger.borrow_mut().push_group(
@@ -412,7 +427,7 @@ impl IrBuilder<'_> {
                 .ledger_path()
                 .and_then(|path| self.lock_ledger_sources.get(path))
                 .cloned()
-                .unwrap_or_else(|| "<unknown site>".to_owned());
+                .unwrap_or_else(|| SourceDescription::literal("<unknown site>"));
             let direct = reached
                 .into_iter()
                 .map(|group| (group, source.clone()))
@@ -461,7 +476,7 @@ impl IrBuilder<'_> {
         &mut self,
         region: &AtomicRegion,
         last: usize,
-        direct: &BTreeMap<usize, String>,
+        direct: &BTreeMap<usize, SourceDescription>,
         before_guard: bool,
     ) -> Result<(), LoweringFailure> {
         for (index, group) in region.groups.iter().enumerate().take(last + 1) {
@@ -723,8 +738,8 @@ impl IrBuilder<'_> {
         region: &AtomicRegion,
         guard: &CheckedExpression,
         eager: Option<usize>,
-        eager_direct: &BTreeMap<usize, String>,
-        ledger_site: &str,
+        eager_direct: &BTreeMap<usize, SourceDescription>,
+        ledger_site: &SourceDescription,
     ) -> Result<(), LoweringFailure> {
         let mut roots = Vec::new();
         expression_bindings(guard, &mut roots);
@@ -779,6 +794,7 @@ impl IrBuilder<'_> {
                 IrOperation::SharedWatch {
                     object: target.object,
                     test,
+                    site: region.wait_site.clone(),
                 },
             )?;
         } else {
@@ -813,7 +829,13 @@ impl IrBuilder<'_> {
                 }
             }
             self.release_groups(region, true)?;
-            self.define(IrType::Unit, IrOperation::WatchPark { record })?;
+            self.define(
+                IrType::Unit,
+                IrOperation::WatchPark {
+                    record,
+                    site: region.wait_site.clone(),
+                },
+            )?;
         }
         self.terminate(IrTerminator::Jump {
             target: acquire,
