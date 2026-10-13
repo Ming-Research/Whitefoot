@@ -1,0 +1,9 @@
+public fn sq_t1_main(inputs: Inputs) -> status: ExitStatus pure waits doc "Q3 atomic-value t1 arm, built with an experiment compiler release.";
+
+public fn sq_t1off_main(inputs: Inputs) -> status: ExitStatus pure waits doc "Q3 atomic-value t1off arm, built with an experiment compiler release.";
+
+public fn sq_tp_main(inputs: Inputs) -> status: ExitStatus pure waits doc "Q3 atomic-value tp arm, built with an experiment compiler release.";
+
+public fn sq_tc_main(inputs: Inputs) -> status: ExitStatus pure waits doc "Q3 atomic-value tc arm, built with an experiment compiler release.";
+
+public fn sq_c1_main(inputs: Inputs) -> status: ExitStatus pure waits doc "Q3 atomic-value c1 arm, built with an experiment compiler release.";

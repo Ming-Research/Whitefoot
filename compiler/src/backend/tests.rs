@@ -11,6 +11,7 @@
 // and emission belong with the other storage shapes, and a frame-resident
 // constant-capacity `Slots` [TYPE-9] needs no reservation of its own.
 mod arithmetic_obligations;
+mod atomic_values;
 mod arrays;
 mod base64;
 mod checked_division;

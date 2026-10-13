@@ -141,6 +141,12 @@ the work-branch and merge boundary.
   meet only when each takes the next sequence number from a shared Meta object
   at its end, with the control that holds Meta through the computation and the
   duration criterion that compares the two runs in the same test.
+- [Sequence take](investigations/sequence-take/DESIGN.md): how an atomic
+  statement can take the next number of one global sequence, in the order
+  statements take effect, without holding the sequence exclusively; the
+  effect order the specification already defines, candidate forms and why
+  per-driver and logical-clock numbering fail the replay condition, and the
+  measurements registered before choosing.
 - [Repair wording](investigations/repair-wording/DESIGN.md): every repair the
   specification prescribes against the compiler's printed text, refuted and
   unproved probes of each, and whether the words belong to the specification

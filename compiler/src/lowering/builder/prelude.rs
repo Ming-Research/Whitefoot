@@ -67,6 +67,16 @@ impl IrBuilder<'_> {
             "swap" => self.row_swap(),
             "free_empty" => self.row_free_empty(),
             "shared_new" => self.row_shared_new(),
+            "shared_atomic_new" => self.row_shared_atomic_new(),
+            "atomic_load" | "atomic_add" | "atomic_raise" => {
+                let arguments = self
+                    .parameters
+                    .iter()
+                    .map(|(value, _)| *value)
+                    .collect::<Vec<_>>();
+                let value = self.lower_atomic_value_operation(name, &arguments, self.result)?;
+                self.return_value(value)
+            }
             "decision_cell_new" => self.row_decision_cell_new(),
             "decision_cell_read" => self.row_decision_cell(None),
             "claim_written" => self.row_decision_cell(Some(1)),
@@ -183,6 +193,139 @@ impl IrBuilder<'_> {
         )?;
         self.store_addressed(state, value, referent)?;
         self.return_value(object)
+    }
+
+    fn row_shared_atomic_new(&mut self) -> Result<(), LoweringFailure> {
+        let [value] = self.row_parameters()?;
+        let IrType::Nominal(nominal) = self.result else {
+            return Err(LoweringFailure::InvalidCheckedProgram);
+        };
+        let IrNominalKind::Shared {
+            state: IrType::Nominal(state_nominal),
+            shape: IrShared::Object,
+        } = self.nominals[nominal.index()].kind
+        else {
+            return Err(LoweringFailure::InvalidCheckedProgram);
+        };
+        let referent = IrAddressed::Nominal(state_nominal);
+        let content = self.define(
+            referent.ty(),
+            IrOperation::ConstructStruct {
+                nominal: state_nominal,
+                fields: vec![value],
+            },
+        )?;
+        let object = self.define(self.result, IrOperation::SharedNew { nominal })?;
+        let state = self.define(
+            IrType::Address(referent),
+            IrOperation::SharedState { nominal, object },
+        )?;
+        self.store_addressed(state, content, referent)?;
+        self.return_value(object)
+    }
+
+    /// Calls are expanded at their checked sites so the one-target form has
+    /// no call boundary or lock. The row body uses this same implementation.
+    pub(super) fn lower_atomic_value_operation(
+        &mut self,
+        name: &str,
+        arguments: &[IrValueId],
+        result_type: IrType,
+    ) -> Result<IrValueId, LoweringFailure> {
+        let operation = match (name, arguments) {
+            ("atomic_load", [cell]) => IrOperation::AtomicValueLoad { cell: *cell },
+            ("atomic_add", [cell, value]) => IrOperation::AtomicValueAdd {
+                cell: *cell,
+                value: *value,
+            },
+            ("atomic_raise", [cell, value]) => IrOperation::AtomicValueRaise {
+                cell: *cell,
+                value: *value,
+            },
+            _ => return Err(LoweringFailure::InvalidCheckedProgram),
+        };
+        let before = self.define(U64, operation)?;
+        if name != "atomic_add" {
+            return Ok(before);
+        }
+        let IrType::Nominal(nominal) = result_type else {
+            return Err(LoweringFailure::InvalidCheckedProgram);
+        };
+        let IrNominalKind::Enum { variants } = &self.nominals[nominal.index()].kind else {
+            return Err(LoweringFailure::InvalidCheckedProgram);
+        };
+        let some = variants
+            .iter()
+            .find(|variant| variant.fields.len() == 1 && variant.fields[0].ty == U64)
+            .ok_or(LoweringFailure::InvalidCheckedProgram)?
+            .tag;
+        let none = variants
+            .iter()
+            .find(|variant| variant.fields.is_empty())
+            .ok_or(LoweringFailure::InvalidCheckedProgram)?
+            .tag;
+        let cap = self.define(
+            U64,
+            IrOperation::Constant(IrConstant::Integer {
+                ty: U64,
+                bits: 1_u64 << 63,
+            }),
+        )?;
+        let success = self.define(
+            IrType::Bool,
+            IrOperation::Integer {
+                operation: IrIntegerOperation::Less,
+                operand_type: U64,
+                arguments: vec![before, cap],
+            },
+        )?;
+        let good = self.new_block(&[])?.0;
+        let full = self.new_block(&[])?.0;
+        let (done, values) = self.new_block(&[result_type])?;
+        self.terminate(IrTerminator::Match {
+            scrutinee: success,
+            enum_type: crate::lowering::lower_enum_type(self.erasure, CheckedEnumType::Bool)?,
+            targets: vec![
+                IrMatchTarget {
+                    tag: 1,
+                    block: good,
+                },
+                IrMatchTarget {
+                    tag: 0,
+                    block: full,
+                },
+            ],
+        })?;
+        self.current = Some(good);
+        let value = self.define(
+            result_type,
+            IrOperation::ConstructEnum {
+                nominal,
+                variant: some,
+                fields: vec![before],
+            },
+        )?;
+        self.terminate(IrTerminator::Jump {
+            target: done,
+            arguments: vec![value],
+            drops: Vec::new(),
+        })?;
+        self.current = Some(full);
+        let value = self.define(
+            result_type,
+            IrOperation::ConstructEnum {
+                nominal,
+                variant: none,
+                fields: Vec::new(),
+            },
+        )?;
+        self.terminate(IrTerminator::Jump {
+            target: done,
+            arguments: vec![value],
+            drops: Vec::new(),
+        })?;
+        self.current = Some(done);
+        Ok(values[0])
     }
 
     fn row_decision_cell_new(&mut self) -> Result<(), LoweringFailure> {

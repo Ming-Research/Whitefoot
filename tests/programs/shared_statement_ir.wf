@@ -1,0 +1,12 @@
+fn ordinary(cell: &Shared<u64>) -> result: unit reads(cell) waits {
+  atomic state = &cell^ {
+    set state^ = 3_u64;
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let cell = shared_new::<u64>(value: 0_u64);
+  ordinary(cell: &cell);
+  return std::process::exit_status(code: 0_u8);
+}

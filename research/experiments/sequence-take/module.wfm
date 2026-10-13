@@ -1,0 +1,10 @@
+alias ExitStatus = std::process::ExitStatus;
+alias Inputs = std::process::Inputs;
+
+public fn sq_t0_main(inputs: Inputs) -> status: ExitStatus pure waits doc "T0 and, built a second time, T0t: each of CONTEXTS contexts runs one atomic statement per operation on a map entry and its own part for MILLISECONDS; the rate without a number.";
+
+public fn sq_t2_main(inputs: Inputs) -> status: ExitStatus pure waits doc "T2: T0 plus a whole target on one Shared<u64> sequence taken with +checked 1; today's form.";
+
+public fn sq_c2_main(inputs: Inputs) -> status: ExitStatus pure waits doc "Correctness run of T2 with clock readings and every record kept; the status is 0 when N1, N2 and N3 hold.";
+
+public fn sq_cbad_main(inputs: Inputs) -> status: ExitStatus pure waits doc "Correctness run of Tbad, whose numbers are the context index times 2^40 plus a local count; the status has bits 1 and 4 set when N1 and N3 fail, as they must.";

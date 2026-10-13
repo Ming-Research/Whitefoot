@@ -549,6 +549,23 @@ fn objects_met_in_any_order_are_taken_in_one_on_one_driver_and_on_four() {
     run_on_one_driver_and_on_four("map_lock_order.wf", 2);
 }
 
+/// Atomic-value numbers are distinct and dense, their number-order replay
+/// matches eight contended keys, and every completed-before-begun pair keeps
+/// its number order. Independent wrong logs exercise all three oracle bits;
+/// merging records after commits leaves their log lock outside the effect.
+#[test]
+fn atomic_values_order_concurrent_effects_on_one_driver_and_on_four() {
+    run_on_one_driver_and_on_four("atomic_value_order.wf", 1);
+}
+
+/// A polling context reaches immediately answered atomic-only statements.
+/// The existing wait-pass check must let its ready producer run even with
+/// one driver and no registered host deadline; omission hangs the witness.
+#[test]
+fn atomic_value_polling_yields_to_a_ready_producer_on_one_driver_and_on_four() {
+    run_on_one_driver_and_on_four("atomic_value_progress.wf", 1);
+}
+
 /// The computation of one statement in `meta_commit_overlap.wf` and
 /// `meta_commit_held.wf`, in nanoseconds: both programs run until the
 /// monotonic clock has advanced this far, whatever the host's load. It is

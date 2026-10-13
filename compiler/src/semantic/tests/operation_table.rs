@@ -589,23 +589,24 @@ fn measure_rows() -> Vec<MeasureRow> {
 #[test]
 fn the_wf_measures_table_and_the_compilers_measure_table_agree() {
     let rows = measure_rows();
-    // [MSR-1]'s ten rows are ten identities: the two placements of one
+    // [MSR-1]'s rows have distinct identities: the two placements of one
     // shape answer `cap` differently, so a constant-capacity row and a
     // runtime-capacity row of the same shape are two rows and two kinds
     // [TYPE-9].
     let expected = [
-        (MeasuredKind::ConstantArray, "Array<T, N>"),
-        (MeasuredKind::RuntimeArray, "Array<T>"),
-        (MeasuredKind::ConstantSlots, "Slots<T, N>"),
-        (MeasuredKind::RuntimeSlots, "Slots<T>"),
-        (MeasuredKind::ConstantRing, "Ring<T, N>"),
-        (MeasuredKind::RuntimeRing, "Ring<T>"),
-        (MeasuredKind::Paged, "Paged<T>"),
-        (MeasuredKind::Segments, "Segments<T>"),
-        (MeasuredKind::KeySet, "KeySet"),
-        (MeasuredKind::Entries, "Entries<V>"),
-        (MeasuredKind::Range, "&[T]"),
-        (MeasuredKind::Range, "&Run<T>"),
+        (Some(MeasuredKind::ConstantArray), "Array<T, N>"),
+        (Some(MeasuredKind::RuntimeArray), "Array<T>"),
+        (Some(MeasuredKind::ConstantSlots), "Slots<T, N>"),
+        (Some(MeasuredKind::RuntimeSlots), "Slots<T>"),
+        (Some(MeasuredKind::ConstantRing), "Ring<T, N>"),
+        (Some(MeasuredKind::RuntimeRing), "Ring<T>"),
+        (Some(MeasuredKind::Paged), "Paged<T>"),
+        (Some(MeasuredKind::Segments), "Segments<T>"),
+        (None, "AtomicValue"),
+        (Some(MeasuredKind::KeySet), "KeySet"),
+        (Some(MeasuredKind::Entries), "Entries<V>"),
+        (Some(MeasuredKind::Range), "&[T]"),
+        (Some(MeasuredKind::Range), "&Run<T>"),
     ];
     assert_eq!(
         rows.iter()
@@ -627,7 +628,7 @@ fn the_wf_measures_table_and_the_compilers_measure_table_agree() {
             let (written, classification) = cell
                 .rsplit_once(", ")
                 .unwrap_or((cell.as_str(), cell.as_str()));
-            let compiled = measure.cell(measured);
+            let compiled = measured.map_or(MeasureCell::Absent, |kind| measure.cell(kind));
             assert_eq!(
                 classification,
                 compiled.classification(),
@@ -671,7 +672,7 @@ fn the_wf_measures_table_and_the_compilers_measure_table_agree() {
                         written,
                         if measure == CheckedMeasure::Bytes {
                             "retained heap bytes"
-                        } else if measured == MeasuredKind::KeySet {
+                        } else if measured == Some(MeasuredKind::KeySet) {
                             "keys"
                         } else {
                             "window origin"

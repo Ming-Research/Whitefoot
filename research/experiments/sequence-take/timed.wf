@@ -1,0 +1,157 @@
+alias Clock = std::time::Clock;
+alias ExitStatus = std::process::ExitStatus;
+alias Inputs = std::process::Inputs;
+alias Instant = std::time::Instant;
+
+const sq_name_t0: Array<u8, 2> =[116_u8, 48_u8];
+
+const sq_name_t2: Array<u8, 2> =[116_u8, 50_u8];
+
+struct SqPart {
+  doc "A context's own part: a fixed ring of 4096 packed records and the position the next record goes to; a copy type, so no new language form.";
+  ring: Array<u64, 4096>;
+  pos: u64;
+}
+
+fn sq_part_new() -> result: Shared<SqPart> pure {
+  doc "A new part with an empty ring.";
+  let ring = array_filled::<u64, 4096>(value: 0_u64);
+  let part = SqPart(ring: ring, pos: 0_u64);
+  return shared_new::<SqPart>(value: part);
+}
+
+fn sq_key_bytes(key: u64) -> bytes: Array<u8, 8> pure {
+  doc "The eight little-endian bytes of key, the map key of one operation.";
+  let bytes = array_filled::<u8, 8>(value: 0_u8);
+  for @fill (at in 0_u64..8_u64) {
+    let offset = at *wrap 8_u64;
+    let amount = cvt.wrap::<u64, u32>(offset);
+    let shifted = ishr.wrap(key, amount);
+    set bytes[at] = cvt.wrap::<u64, u8>(shifted);
+  }
+  return bytes;
+}
+
+fn sq_record(key: u64, number: u64) -> packed: u64 pure {
+  doc "A record (key, number) in one word: the key above bit 40 and the number below it.";
+  let high = ishl.wrap(key, 40_u32);
+  return ior(high, number);
+}
+
+fn sq_t0_context(table: Shared<ConcurrentHashMap<u64>>, part: Shared<SqPart>, totals: Shared<Totals>, gate: Shared<Gate>, clock: Clock, index: u64) -> result: unit pure waits {
+  doc "T0: until the deadline, one atomic statement per operation on the map entry of a key drawn from 100000 by the local sequence and on the context's own part, which records (key, 0), in batches of 1024, then adds its count to the totals once.";
+  let deadline = gate_pass(gate: &gate, clock: &clock);
+  let state = index;
+  let done = 0_u64;
+  loop @run {
+    for @batch (turn in 0_u64..1024_u64) {
+      set state = step(state: state);
+      let high = ishr.wrap(state, 33_u32);
+      let key = high % 100000_u64;
+      let bytes = sq_key_bytes(key: key);
+      let view = &bytes[0_u64..8_u64];
+      let record = sq_record(key: key, number: 0_u64);
+      atomic slot = &table[view], p = &part {
+        set slot^ = Some<u64>(value: record);
+        let ring_at = p^.pos % 4096_u64;
+        set p^.ring[ring_at] = record;
+        set p^.pos = p^.pos +wrap 1_u64;
+      }
+    }
+    set done = done +wrap 1024_u64;
+    let reading = std::time::now(clock: &clock);
+    if std::time::instant_reached(deadline: deadline, instant: reading) {
+      break @run;
+    }
+  }
+  tally(totals: &totals, done: done, state: state);
+  return unit;
+}
+
+fn sq_t2_context(table: Shared<ConcurrentHashMap<u64>>, part: Shared<SqPart>, seq: Shared<u64>, totals: Shared<Totals>, gate: Shared<Gate>, clock: Clock, index: u64) -> result: unit pure waits {
+  doc "T2: T0's statement with the one Shared<u64> sequence as a third, whole target; the statement takes the sequence's value n, stores n +checked 1, and records (key, n).";
+  let deadline = gate_pass(gate: &gate, clock: &clock);
+  let state = index;
+  let done = 0_u64;
+  loop @run {
+    for @batch (turn in 0_u64..1024_u64) {
+      set state = step(state: state);
+      let high = ishr.wrap(state, 33_u32);
+      let key = high % 100000_u64;
+      let bytes = sq_key_bytes(key: key);
+      let view = &bytes[0_u64..8_u64];
+      let exhausted = False();
+      atomic slot = &table[view], p = &part, s = &seq {
+        let current = s^;
+        let record = sq_record(key: key, number: current);
+        match current +checked 1_u64 {
+          Ok(value: next) => {
+            set s^ = next;
+            set slot^ = Some<u64>(value: record);
+            let ring_at = p^.pos % 4096_u64;
+            set p^.ring[ring_at] = record;
+            set p^.pos = p^.pos +wrap 1_u64;
+          }
+          Err(error: overflow) => {
+            set exhausted = True();
+          }
+        }
+      }
+      if exhausted {
+        break @run;
+      }
+    }
+    set done = done +wrap 1024_u64;
+    let reading = std::time::now(clock: &clock);
+    if std::time::instant_reached(deadline: deadline, instant: reading) {
+      break @run;
+    }
+  }
+  tally(totals: &totals, done: done, state: state);
+  return unit;
+}
+
+fn sq_start(variant: u8, table: &Shared<ConcurrentHashMap<u64>>, seq: &Shared<u64>, totals: &Shared<Totals>, clock: &Clock, millis: u64, contexts: u64) -> started: Instant reads(table), reads(seq), reads(totals), writes(clock) waits {
+  doc "Spawns the contexts of T0 (variant 0) or T2 (variant 2), each with a part of its own, opens the gate and returns the instant it opened, once every context has completed.";
+  let gate = gate_new(clock: clock);
+  for @start (index in 0_u64..contexts) {
+    let table_handle = shared_share::<ConcurrentHashMap<u64>>(shared: table);
+    let part = sq_part_new();
+    let tally_handle = shared_share::<Totals>(shared: totals);
+    let gate_handle = shared_share::<Gate>(shared: &gate);
+    let ticks = std::time::clock_share(clock: clock);
+    if variant == 2_u8 {
+      let seq_handle = shared_share::<u64>(shared: seq);
+      spawn sq_t2_context(table: move table_handle, part: move part, seq: move seq_handle, totals: move tally_handle, gate: move gate_handle, clock: move ticks, index: index);
+    } else {
+      spawn sq_t0_context(table: move table_handle, part: move part, totals: move tally_handle, gate: move gate_handle, clock: move ticks, index: index);
+    }
+  }
+  let started = gate_open(gate: &gate, clock: clock, millis: millis);
+  return started;
+}
+
+fn sq_run(inputs: Inputs, variant: u8, name: &[u8]) -> status: ExitStatus reads(name) waits {
+  doc "Runs one timed arm: CONTEXTS contexts for MILLISECONDS on a map sized for the 100000 keys, and prints the harness line.";
+  let bench = bench_begin(inputs: move inputs);
+  if bench.valid {
+  } else {
+    return std::process::exit_status(code: 2_u8);
+  }
+  let table = shared_map_new::<u64>(capacity: 100000_u64);
+  let seq = shared_new::<u64>(value: 0_u64);
+  let totals = totals_new();
+  let started = sq_start(variant: variant, table: &table, seq: &seq, totals: &totals, clock: &bench.clock, millis: bench.millis, contexts: bench.contexts);
+  let ended = std::time::now(clock: &bench.clock);
+  return bench_end(bench: move bench, name: name, totals: &totals, started: started, ended: ended, verdict: 0_u8);
+}
+
+fn sq_t0_main(inputs: Inputs) -> status: ExitStatus pure waits {
+  doc "T0, and T0t when built a second time: the statement on a map entry and the context's own part.";
+  return sq_run(inputs: move inputs, variant: 0_u8, name: &sq_name_t0[0_u64..2_u64]);
+}
+
+fn sq_t2_main(inputs: Inputs) -> status: ExitStatus pure waits {
+  doc "T2: T0 plus the whole target on one Shared<u64> sequence, today's form.";
+  return sq_run(inputs: move inputs, variant: 2_u8, name: &sq_name_t2[0_u64..2_u64]);
+}

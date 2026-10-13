@@ -186,6 +186,22 @@ pub(crate) fn lower_checked_from(
             }
         })
         .collect::<Result<Vec<_>, LoweringFailure>>()?;
+    let atomic_functions = physical
+        .variants
+        .iter()
+        .map(|variant| {
+            let function = &checked.data.functions[variant.source.0 as usize];
+            if function.body.is_some() {
+                return None;
+            }
+            match function.name.as_str() {
+                "atomic_load" => Some("atomic_load"),
+                "atomic_add" => Some("atomic_add"),
+                "atomic_raise" => Some("atomic_raise"),
+                _ => None,
+            }
+        })
+        .collect::<Vec<_>>();
     let mut functions = physical
         .variants
         .iter()
@@ -200,6 +216,7 @@ pub(crate) fn lower_checked_from(
                 elements: &elements,
                 constants: &constants,
                 function_results: &function_results,
+                atomic_functions: &atomic_functions,
                 synthesis: &synthesis,
                 lock_ledger_sources: &checked.data.lock_ledger_sources,
             };
@@ -266,6 +283,7 @@ struct LoweringContext<'program> {
     constants: &'program [IrGlobalConstant],
     /// Every physical function's declared IR result, indexed by its IR ordinal.
     function_results: &'program [IrType],
+    atomic_functions: &'program [Option<&'static str>],
     synthesis: &'program SynthesisCell,
     lock_ledger_sources: &'program HashMap<NodePath, String>,
 }
@@ -428,10 +446,19 @@ fn lower_nominals(
                     referent: lower_type(erasure, *referent)?,
                     release: lower_release_class(*release),
                 },
+                CheckedNominalKind::Shared {
+                    state,
+                    shape: CheckedShared::AtomicValue,
+                } => IrNominalKind::Struct {
+                    fields: vec![IrField {
+                        ty: lower_type(erasure, *state)?,
+                    }],
+                },
                 CheckedNominalKind::Shared { state, shape } => IrNominalKind::Shared {
                     state: lower_type(erasure, *state)?,
                     shape: match shape {
                         CheckedShared::Object => IrShared::Object,
+                        CheckedShared::AtomicValue => unreachable!("handled as inline state"),
                         CheckedShared::Map { entry } => IrShared::Map {
                             entry: lower_type(erasure, *entry)?,
                         },
@@ -771,6 +798,7 @@ struct IrBuilder<'program> {
     /// call defines exactly the callee's declared result type — an address
     /// for a borrow of addressed content [REF-1, TYPE-7].
     function_results: &'program [IrType],
+    atomic_functions: &'program [Option<&'static str>],
     /// For each statement holding exactly one named-function call in call
     /// position — a `let` right-hand side or a `match` scrutinee — the block
     /// the call's definition landed in and the value it defined. The
@@ -857,6 +885,7 @@ impl<'program> IrBuilder<'program> {
             elements,
             constants,
             function_results,
+            atomic_functions,
             synthesis,
             lock_ledger_sources,
         } = context;
@@ -883,6 +912,7 @@ impl<'program> IrBuilder<'program> {
             result,
             addressed_bindings,
             function_results,
+            atomic_functions,
             call_results: HashMap::new(),
             awaited_sites: HashSet::new(),
             permissions,
@@ -926,6 +956,7 @@ impl<'program> IrBuilder<'program> {
             elements: self.elements,
             constants: self.constants,
             function_results: self.function_results,
+            atomic_functions: self.atomic_functions,
             synthesis: self.synthesis,
             lock_ledger_sources: self.lock_ledger_sources,
         }
@@ -2072,6 +2103,14 @@ impl<'program> IrBuilder<'program> {
                     .function_results
                     .get(function as usize)
                     .ok_or(LoweringFailure::InvalidCheckedProgram)?;
+                if let Some(name) = self
+                    .atomic_functions
+                    .get(function as usize)
+                    .copied()
+                    .flatten()
+                {
+                    return self.lower_atomic_value_operation(name, &arguments, result);
+                }
                 let result = self.define(
                     result,
                     IrOperation::Call {

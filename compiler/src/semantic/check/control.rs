@@ -6,6 +6,7 @@ use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 
 mod atomic;
+mod atomic_values;
 mod commit;
 mod loops;
 mod matches;

@@ -1719,7 +1719,9 @@ impl<'unit> TypeContext<'unit> {
                     | CheckedType::Window { capacity: None, .. }
             );
             let map = matches!(ty, CheckedType::Nominal(id) if matches!(cx.nominals[id.0 as usize].kind, CheckedNominalKind::Shared { shape: super::super::model::CheckedShared::Map { .. }, .. }));
-            if runtime && !matches!(position, Placement::BoxContent | Placement::Reference)
+            let atomic = cx.is_atomic_value_type(ty);
+            if atomic && !matches!(position, Placement::SharedState | Placement::Reference)
+                || runtime && !matches!(position, Placement::BoxContent | Placement::Reference)
                 || map
                     && !matches!(
                         position,
@@ -1827,7 +1829,9 @@ impl<'unit> TypeContext<'unit> {
                 }
             }
         }
-        let mechanical_fix = if source != node {
+        let mechanical_fix = if self.is_atomic_value_type(found) {
+            "an `AtomicValue` is only shared-object state: create `Shared<AtomicValue>` with `shared_atomic_new(value: n)` and use its atomic target binding directly in one atomic-value operation".to_owned()
+        } else if source != node {
             let position = match refused_position {
                 Placement::Value => "an inline value",
                 Placement::Reference => "a reference referent",
@@ -1871,6 +1875,16 @@ impl<'unit> TypeContext<'unit> {
             },
         )
     }
+    pub(super) fn is_atomic_value_type(&self, ty: CheckedType) -> bool {
+        matches!(ty, CheckedType::Nominal(id) if matches!(
+            self.nominals[id.0 as usize].kind,
+            CheckedNominalKind::Shared {
+                shape: super::super::model::CheckedShared::AtomicValue,
+                ..
+            }
+        ))
+    }
+
     /// The static order of concrete state types; object identity orders a type group.
     pub(super) fn atomic_type_order(&self, ty: CheckedType) -> Result<Vec<String>, CheckStop> {
         use super::super::model::{FloatType, WindowShape};
@@ -1906,9 +1920,9 @@ impl<'unit> TypeContext<'unit> {
                 )
             }
             CheckedType::Segments { element } => (14, Some(element)),
-            CheckedType::KeySet => (21, None),
-            CheckedType::Entries { element } => (22, Some(element)),
-            CheckedType::Bool => (23, None),
+            CheckedType::KeySet => (22, None),
+            CheckedType::Entries { element } => (23, Some(element)),
+            CheckedType::Bool => (24, None),
             CheckedType::Nominal(id) => {
                 if let CheckedNominalKind::Box {
                     referent, release, ..
@@ -1934,12 +1948,13 @@ impl<'unit> TypeContext<'unit> {
                         "Shared" => 17,
                         "SharedRead" => 18,
                         "ConcurrentHashMap" => 20,
-                        "Option" => 24,
-                        "Result" => 25,
-                        "Overflow" => 26,
-                        "DivError" => 27,
-                        "NarrowError" => 28,
-                        "ScanStep" => 29,
+                        "Option" => 25,
+                        "Result" => 26,
+                        "Overflow" => 27,
+                        "DivError" => 28,
+                        "NarrowError" => 29,
+                        "ScanStep" => 30,
+                        "AtomicValue" => 21,
                         _ => 100,
                     };
                     result.push(format!("{rank:03}"));

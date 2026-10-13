@@ -1,0 +1,28 @@
+fn atomic_produce(cell: Shared<AtomicValue>) -> result: unit pure waits {
+  atomic state = &cell {
+    atomic_raise(cell: state, value: 1_u64);
+  }
+  return unit;
+}
+
+fn atomic_poll(cell: &Shared<AtomicValue>) -> result: unit reads(cell) waits {
+  doc "Every iteration reaches an atomic waiting boundary. With one driver the ready producer must eventually run, even when no host deadline exists.";
+  loop @poll {
+    let seen = 0_u64;
+    atomic state = &cell^ {
+      set seen = atomic_load(cell: state);
+    }
+    if seen != 0_u64 {
+      break @poll;
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let cell = shared_atomic_new(value: 0_u64);
+  let producer = shared_share::<AtomicValue>(shared: &cell);
+  spawn atomic_produce(cell: move producer);
+  atomic_poll(cell: &cell);
+  return std::process::exit_status(code: 0_u8);
+}

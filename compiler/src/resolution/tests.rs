@@ -2796,10 +2796,12 @@ fn ordinary_prelude_diagnostic_origins_follow_the_complete_record_preorder() {
     // its variants follow. `Bool` collides on its nominal alone, because a
     // prelude enum contributes its variants' spellings to the constructor
     // domain and not its own. DecisionCell's fieldless opaque declaration
-    // contributes records 52 and 53, placing Bool at 54; Bool, Option and
-    // Result contribute 3 + 5 + 7 records before Overflow at 69. The enums
-    // through ScanStep occupy 27 records, so DecisionState is at 81 and its
-    // three tag-only variants occupy 82 through 84.
+    // contributes records 54 and 55, placing Bool at 56; Bool, Option and
+    // Result contribute 3 + 5 + 7 records before Overflow at 71. The enums
+    // through ScanStep occupy 27 records, so DecisionState is at 83 and its
+    // three tag-only variants occupy 84 through 86. AtomicValue, declared
+    // between ConcurrentHashMap and KeySet, contributes its nominal and
+    // refused constructor at 44 and 45.
     for (name, origins) in [
         ("Slots", vec![5, 6]),
         ("Paged", vec![22, 23]),
@@ -2807,14 +2809,15 @@ fn ordinary_prelude_diagnostic_origins_follow_the_complete_record_preorder() {
         ("SharedRead", vec![34, 35]),
         ("Frozen", vec![37, 38]),
         ("ConcurrentHashMap", vec![41, 42]),
-        ("KeySet", vec![44, 45]),
-        ("DecisionCell", vec![52, 53]),
-        ("Bool", vec![54]),
-        ("Overflow", vec![69, 70]),
-        ("DecisionState", vec![81]),
-        ("Open", vec![82]),
-        ("Written", vec![83]),
-        ("Killed", vec![84]),
+        ("AtomicValue", vec![44, 45]),
+        ("KeySet", vec![46, 47]),
+        ("DecisionCell", vec![54, 55]),
+        ("Bool", vec![56]),
+        ("Overflow", vec![71, 72]),
+        ("DecisionState", vec![83]),
+        ("Open", vec![84]),
+        ("Written", vec![85]),
+        ("Killed", vec![86]),
     ] {
         let source = format!("struct {name} {{\n}}\n");
         with_resolution_sources(
@@ -2932,18 +2935,22 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
     assert_eq!(first[42].1, "ConcurrentHashMap");
     assert_eq!(first[42].2, Some(DeclarationClass::StructConstructor));
     assert_eq!(first[43].1, "V");
-    assert_eq!(first[44].1, "KeySet");
+    assert_eq!(first[44].1, "AtomicValue");
     assert_eq!(first[44].2, Some(DeclarationClass::NominalType));
-    assert_eq!(first[46].1, "len");
-    assert_eq!(first[47].1, "bytes");
-    assert_eq!(first[48].1, "Entries");
-    assert_eq!(first[48].2, Some(DeclarationClass::NominalType));
-    assert_eq!(first[50].1, "V");
-    assert_eq!(first[51].1, "len");
-    assert_eq!(first[52].1, "DecisionCell");
-    assert_eq!(first[52].2, Some(DeclarationClass::NominalType));
-    assert_eq!(first[53].1, "DecisionCell");
-    assert_eq!(first[53].2, Some(DeclarationClass::StructConstructor));
+    assert_eq!(first[45].1, "AtomicValue");
+    assert_eq!(first[45].2, Some(DeclarationClass::StructConstructor));
+    assert_eq!(first[46].1, "KeySet");
+    assert_eq!(first[46].2, Some(DeclarationClass::NominalType));
+    assert_eq!(first[48].1, "len");
+    assert_eq!(first[49].1, "bytes");
+    assert_eq!(first[50].1, "Entries");
+    assert_eq!(first[50].2, Some(DeclarationClass::NominalType));
+    assert_eq!(first[52].1, "V");
+    assert_eq!(first[53].1, "len");
+    assert_eq!(first[54].1, "DecisionCell");
+    assert_eq!(first[54].2, Some(DeclarationClass::NominalType));
+    assert_eq!(first[55].1, "DecisionCell");
+    assert_eq!(first[55].2, Some(DeclarationClass::StructConstructor));
     // Then each enum with its variants and their fields, then `Int`,
     // `Float`, `Eq` and the reference-kind name `Run` [TYPE-8], then the
     // construction functions [OP-13], then the window operations in written
@@ -2957,78 +2964,85 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
     // [PRE-1], each with its type, const and value parameters in declared
     // order and then its range postconditions' names and bound variables
     // [RANGE-1].
-    assert_eq!(first[54].1, "Bool");
-    assert_eq!(first[76].1, "ScanStep");
-    assert_eq!(first[77].1, "Next");
-    assert_eq!(first[79].1, "Needs");
-    assert_eq!(first[81].1, "DecisionState");
-    assert_eq!(first[81].2, Some(DeclarationClass::NominalType));
-    assert_eq!(first[82].1, "Open");
-    assert_eq!(first[82].2, Some(DeclarationClass::EnumVariant));
-    assert_eq!(first[83].1, "Written");
-    assert_eq!(first[83].2, Some(DeclarationClass::EnumVariant));
-    assert_eq!(first[84].1, "Killed");
+    assert_eq!(first[56].1, "Bool");
+    assert_eq!(first[78].1, "ScanStep");
+    assert_eq!(first[79].1, "Next");
+    assert_eq!(first[81].1, "Needs");
+    assert_eq!(first[83].1, "DecisionState");
+    assert_eq!(first[83].2, Some(DeclarationClass::NominalType));
+    assert_eq!(first[84].1, "Open");
     assert_eq!(first[84].2, Some(DeclarationClass::EnumVariant));
-    assert_eq!(first[85].1, "Int");
-    assert_eq!(first[86].1, "Float");
-    assert_eq!(first[87].1, "Eq");
-    assert_eq!(first[87].2, Some(DeclarationClass::BuiltinBound));
-    assert_eq!(first[88].1, "Run");
-    assert_eq!(first[88].2, Some(DeclarationClass::NominalType));
-    assert_eq!(first[89].1, "box_new");
-    assert_eq!(first[92].1, "array_filled");
-    assert_eq!(first[93].1, "T");
-    assert_eq!(first[94].1, "n");
-    assert_eq!(first[95].1, "value");
-    assert_eq!(first[96].1, "filled");
-    assert_eq!(first[97].1, "k");
-    assert_eq!(first[98].1, "slots_new");
-    assert_eq!(first[101].1, "ring_new");
-    assert_eq!(first[104].1, "box_array_filled");
-    assert_eq!(first[108].1, "filled");
-    assert_eq!(first[109].1, "k");
-    assert_eq!(first[110].1, "box_segments_filled");
-    assert_eq!(first[125].1, "box_paged_new");
-    assert_eq!(first[136].1, "place_back");
-    assert_eq!(first[171].1, "grow_paged");
-    assert_eq!(first[175].1, "paged_page_len");
-    assert_eq!(first[186].1, "swap");
-    assert_eq!(first[190].1, "shared_new");
-    assert_eq!(first[193].1, "shared_map_new");
-    assert_eq!(first[196].1, "shared_share");
-    assert_eq!(first[199].1, "shared_read");
-    assert_eq!(first[202].1, "shared_read_share");
+    assert_eq!(first[85].1, "Written");
+    assert_eq!(first[85].2, Some(DeclarationClass::EnumVariant));
+    assert_eq!(first[86].1, "Killed");
+    assert_eq!(first[86].2, Some(DeclarationClass::EnumVariant));
+    assert_eq!(first[87].1, "Int");
+    assert_eq!(first[88].1, "Float");
+    assert_eq!(first[89].1, "Eq");
+    assert_eq!(first[89].2, Some(DeclarationClass::BuiltinBound));
+    assert_eq!(first[90].1, "Run");
+    assert_eq!(first[90].2, Some(DeclarationClass::NominalType));
+    assert_eq!(first[91].1, "box_new");
+    assert_eq!(first[94].1, "array_filled");
+    assert_eq!(first[95].1, "T");
+    assert_eq!(first[96].1, "n");
+    assert_eq!(first[97].1, "value");
+    assert_eq!(first[98].1, "filled");
+    assert_eq!(first[99].1, "k");
+    assert_eq!(first[100].1, "slots_new");
+    assert_eq!(first[103].1, "ring_new");
+    assert_eq!(first[106].1, "box_array_filled");
+    assert_eq!(first[110].1, "filled");
+    assert_eq!(first[111].1, "k");
+    assert_eq!(first[112].1, "box_segments_filled");
+    assert_eq!(first[127].1, "box_paged_new");
+    assert_eq!(first[138].1, "place_back");
+    assert_eq!(first[173].1, "grow_paged");
+    assert_eq!(first[177].1, "paged_page_len");
+    assert_eq!(first[188].1, "swap");
+    assert_eq!(first[192].1, "shared_new");
+    assert_eq!(first[195].1, "shared_map_new");
+    // The atomic value's four functions follow, none generic: the function
+    // record and one per parameter, so two, two, three and three records.
+    assert_eq!(first[198].1, "shared_atomic_new");
+    assert_eq!(first[200].1, "atomic_load");
+    assert_eq!(first[202].1, "atomic_add");
+    assert_eq!(first[205].1, "atomic_raise");
+    assert_eq!(first[208].1, "shared_share");
+    assert_eq!(first[211].1, "shared_read");
+    assert_eq!(first[214].1, "shared_read_share");
     // Each frozen function contributes its function, T and value parameter:
     // three records each. Frozen adds four opaque records, and ScanStep adds
     // five enum records before these functions.
-    assert_eq!(first[205].1, "frozen_new");
-    assert_eq!(first[206].1, "T");
-    assert_eq!(first[207].1, "value");
-    assert_eq!(first[208].1, "frozen_share");
-    assert_eq!(first[209].1, "T");
-    assert_eq!(first[210].1, "frozen");
-    assert_eq!(first[211].1, "map_count");
-    assert_eq!(first[214].1, "map_scan");
-    assert_eq!(first[220].1, "map_scan_within");
-    assert_eq!(first[227].1, "map_clear");
-    assert_eq!(first[230].1, "key_set_new");
-    assert_eq!(first[232].1, "key_set_insert");
-    assert_eq!(first[235].1, "key_set_bytes");
-    assert_eq!(first[236].1, "keys");
-    assert_eq!(first[237].1, "key_set_read_key");
-    assert_eq!(first[241].1, "free_empty");
-    assert_eq!(first[244].1, "release");
-    assert_eq!(first[245].1, "T");
-    assert_eq!(first[246].1, "value");
+    assert_eq!(first[217].1, "frozen_new");
+    assert_eq!(first[218].1, "T");
+    assert_eq!(first[219].1, "value");
+    assert_eq!(first[220].1, "frozen_share");
+    assert_eq!(first[221].1, "T");
+    assert_eq!(first[222].1, "frozen");
+    assert_eq!(first[223].1, "map_count");
+    assert_eq!(first[226].1, "map_scan");
+    assert_eq!(first[232].1, "map_scan_within");
+    assert_eq!(first[239].1, "map_clear");
+    assert_eq!(first[242].1, "key_set_new");
+    assert_eq!(first[244].1, "key_set_insert");
+    assert_eq!(first[247].1, "key_set_bytes");
+    assert_eq!(first[248].1, "keys");
+    assert_eq!(first[249].1, "key_set_read_key");
+    assert_eq!(first[253].1, "free_empty");
+    assert_eq!(first[256].1, "release");
+    assert_eq!(first[257].1, "T");
+    assert_eq!(first[258].1, "value");
     // The nullary constructor contributes one function record; each other
     // decision-cell function contributes its function and cell parameter.
-    assert_eq!(first[247].1, "decision_cell_new");
-    assert_eq!(first[248].1, "decision_cell_share");
-    assert_eq!(first[250].1, "decision_cell_read");
-    assert_eq!(first[252].1, "claim_written");
-    assert_eq!(first[254].1, "claim_killed");
-    // PRE-1: 54 opaque records + 31 enum records + four built-in records +
-    // 167 function/parameter/range records = 256. Frozen adds four opaque
+    assert_eq!(first[259].1, "decision_cell_new");
+    assert_eq!(first[260].1, "decision_cell_share");
+    assert_eq!(first[262].1, "decision_cell_read");
+    assert_eq!(first[264].1, "claim_written");
+    assert_eq!(first[266].1, "claim_killed");
+    // PRE-1: 56 opaque records + 31 enum records + four built-in records +
+    // 177 function/parameter/range records = 268. AtomicValue adds two opaque
+    // records and its four functions ten; Frozen adds four opaque
     // records and frozen_new/frozen_share add three each; ScanStep adds five
     // enum records and map_scan_within seven call records; release adds its
     // function, T and value, three records; key_set_bytes adds its function
@@ -3036,7 +3050,7 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
     // DecisionState four enum records and the five decision-cell functions
     // nine records. Count every declaration in the preorder, including
     // owner-local ones.
-    assert_eq!(first.len(), 256);
+    assert_eq!(first.len(), 268);
     assert_eq!(first.last().map(|record| record.1.as_str()), Some("cell"));
     assert!(
         first
@@ -3049,7 +3063,7 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
 /// While the host declarations were PRE-1's the inventory held 397 records,
 /// and this test showed that a late collision kept an ordinal above `u8`. The
 /// host declarations are the standard library's now [PRE-2] and the
-/// inventory holds 256, so no prelude ordinal exceeds `u8`; this still
+/// inventory holds 268, so no prelude ordinal exceeds `u8`; this still
 /// shows that a late function's collision names its own preorder ordinal.
 #[test]
 fn a_late_prelude_function_collision_names_its_preorder_ordinal() {
@@ -3065,10 +3079,10 @@ fn a_late_prelude_function_collision_names_its_preorder_ordinal() {
                 panic!("ordinary function collision: {issue:?}");
             };
             assert_eq!(conflicts.len(), 1);
-            // PRE-1: 54 opaque records + 31 enum records + Int, Float,
-            // Eq, Run + 155 preceding function/parameter/range records.
+            // PRE-1: 56 opaque records + 31 enum records + Int, Float,
+            // Eq, Run + 165 preceding function/parameter/range records.
             assert!(
-                matches!(conflicts[0].origin(), DeclarationOrigin::Prelude(id) if id.ordinal() == 244)
+                matches!(conflicts[0].origin(), DeclarationOrigin::Prelude(id) if id.ordinal() == 256)
             );
         },
     );

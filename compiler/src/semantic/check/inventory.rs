@@ -90,7 +90,7 @@ impl TypeContext<'_> {
         // Allocation closure is a judgment product. A newly selected view
         // starts from the declaration's own base fact, then closes its bodies.
         self.signatures[id.0 as usize].declared_effects.allocates =
-            super::generics::HEAP_ALLOCATING_PRELUDE_FUNCTIONS.contains(&signature.name.as_str());
+            super::generics::prelude_allocates(&signature.name);
         Ok(())
     }
 
@@ -158,7 +158,7 @@ impl TypeContext<'_> {
             // type is live wherever a handle's is, and a map's entries are
             // released as their `Option<V>` [SHARE-1].
             CheckedNominalKind::Shared { state, shape } => match shape {
-                CheckedShared::Object => vec![*state],
+                CheckedShared::Object | CheckedShared::AtomicValue => vec![*state],
                 CheckedShared::Map { entry } => {
                     vec![*state, *entry]
                 }

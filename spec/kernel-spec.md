@@ -1,4 +1,4 @@
-# Kernel Specification v0.150
+# Kernel Specification v0.151
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -437,7 +437,7 @@ The six are ordinary nominals of the nominal-type TYPEID domain [TYPE-6], writte
 In this specification's prose `N` stands for a written const argument; source writes a `const` IDENT, lowercase under [FORM-3], as the [PRE-1] rows do.
 `Slots`, `Ring`, `Segments`, `Paged`, and `Box` are declared `nocopy`, so their values are affine unless an element or content type makes them linear, and an `Array` has exactly the capabilities of its element type [OWN-1, PROV-6].
 A `struct` or `enum` declaration may carry one capability modifier [GRAM-2]: `nodrop`, which states a logical must-consume obligation on values of that nominal in every scope, or `nocopy`, which makes its values non-duplicable although every part could be copied; neither changes a component, layout, or construction route [OWN-1, PROV-6].
-A `struct` declaration may carry the `opaque` modifier [GRAM-2], written before a capability modifier when both are present: an opaque struct has fields and no usable constructor. Its constructor entry [TYPE-6] exists to be refused: a constructor `call` whose leading TYPEID names an opaque struct is a hard error citing TYPE-2 at the complete `call`, and a destructuring `let_stmt` whose TYPEID names one is a hard error citing TYPE-2 at the complete `let_stmt`, each with a repair [DIAG-1]. Its fields obey the ordinary field, ownership, and release rules [OWN-1, PROV-6, STOR-3], and a `move` out of a field it owns [PROV-6] is the ordinary [WIN-3] consume. A value of an opaque struct is formed only by a definition the build supplies: a construction row [OP-13] forms the five storage shapes and `Box<T>`, which the prelude declares [PRE-1], the functions of [SHARE-1] form its shared and frozen handles, maps and key sets, the decision-cell functions [PRE-1] form `DecisionCell` handles, and a host function forms the opaque structs the host modules declare, their host handles among them [PRE-2], so no other opaque struct ever has a value.
+A `struct` declaration may carry the `opaque` modifier [GRAM-2], written before a capability modifier when both are present: an opaque struct has fields and no usable constructor. Its constructor entry [TYPE-6] exists to be refused: a constructor `call` whose leading TYPEID names an opaque struct is a hard error citing TYPE-2 at the complete `call`, and a destructuring `let_stmt` whose TYPEID names one is a hard error citing TYPE-2 at the complete `let_stmt`, each with a repair [DIAG-1]. Its fields obey the ordinary field, ownership, and release rules [OWN-1, PROV-6, STOR-3], and a `move` out of a field it owns [PROV-6] is the ordinary [WIN-3] consume. A value of an opaque struct is formed only by a definition the build supplies: a construction row [OP-13] forms the five storage shapes and `Box<T>`, which the prelude declares [PRE-1], the functions of [SHARE-1] form its shared and frozen handles, maps, atomic values and key sets, the decision-cell functions [PRE-1] form `DecisionCell` handles, and a host function forms the opaque structs the host modules declare, their host handles among them [PRE-2], so no other opaque struct ever has a value.
 A `field` may carry the `readonly` modifier [GRAM-2]; a source field carries it only together with `public` [MOD-6]. Inside the module that declares a source struct its readonly field is an ordinary field. Outside that module — and everywhere, for a PRE-1 struct's field — a path that ends at or passes through a readonly field is never a write target: a `set` whose target is such a path [SET-1], and an argument naming such a path at a reference parameter whose callee row writes that parameter [EFF-5], are each a hard error citing TYPE-2 at the complete target `place` or argument `atom`, with a repair [DIAG-1]. Construction gives a readonly field its value like any other field [GRAM-8], and a construction outside the declaring module supplies none [MOD-5]; a whole-value assignment replaces it together with its owner. Its value otherwise changes only through a compiler-owned [PRE-1] operation whose row declares `writes` of it [OP-10]; a declared row may name a readonly field in `writes`, because a row reports every change its callees make [EFF-2]. `readonly` states that the field is not assignable, not that its value is constant.
 
 [TYPE-11] Type invariants.
@@ -599,6 +599,7 @@ A *placement-restricted* type has its *homes*, the only places a value of it may
 |---|---|
 | a runtime-capacity form, `Segments<T>`, and `Paged<T>` | the content of a `Box`: the type argument of `Box<·>` |
 | `ConcurrentHashMap<V>` [SHARE-1] | the state of a shared object: the type argument of `Shared<·>` or `SharedRead<·>`; and the exchange of a `swap` [OP-11] |
+| `AtomicValue` [SHARE-1] | the state of a shared object: the type argument of `Shared<·>` or `SharedRead<·>` |
 
 The places a value can take are a binding, a value parameter, a result, a field, an enum payload field, an element of a storage shape, an entry value of a `ConcurrentHashMap`, the content of a `Box`, the state of a shared object and the exchange of a `swap`, whose type parameter takes that place [OP-11]. A placement-restricted type takes only its homes among them; any other place is a hard error citing TYPE-9 at the complete `type`, at the complete `targ` for a written type argument, or at the complete `call` for a type argument its operand supplies, with a repair [DIAG-1]. A reference kind takes no place [TYPE-8], so `&T` names any `T`. A type argument takes, in each instance, the places its parameter takes in the signature and the body [FN-2], and a prelude opaque struct's parameter takes that struct's content place: `Box<T>`'s the content of a `Box`, `Shared<T>`'s and `SharedRead<T>`'s the state of a shared object, every other's an element. So a `swap` of two map targets and a `shared_share` of a map handle are admitted, and `shared_new::<ConcurrentHashMap<V>>` is refused.
 
@@ -2340,7 +2341,7 @@ The starting context joins the started one, waiting there until it has completed
 1. for an `expr_stmt`, when the activation that executed the spawn leaves by any edge [FN-1, ERR-3], the started context having released the call's result;
 2. for a `let_stmt`, at the beginning of the first later statement of the `let_stmt`'s block that names the binding or contains an edge leaving that block [ERR-3, GIVE-1], and otherwise at that block's end; the binding holds the call's result from the join on.
 
-[SHARE-1] Shared objects, frozen objects, concurrent hash maps and key sets.
+[SHARE-1] Shared objects, frozen objects, concurrent hash maps, atomic values and key sets.
 A value of either prelude type `Shared<T>` or `SharedRead<T>` [PRE-1] is a handle to a shared object, which holds one value of type `T`, its state.
 `shared_new` moves its argument into a new shared object and returns a handle to it, `shared_map_new` returns a handle to a new shared object whose state is a concurrent hash map whose every entry is `None`, sized for its argument's number of `Some` entries, and `shared_share` returns a further handle to the object its argument names.
 `shared_read` returns a `SharedRead<T>` retaining the same object as its `Shared<T>` argument, and `shared_read_share` returns a further `SharedRead<T>` retaining the object its argument names. There is no conversion from a `SharedRead<T>` handle to a `Shared<T>` handle.
@@ -2365,6 +2366,16 @@ The retained-storage bound of `map_scan_within` is its declared byte-measure pos
 `map_clear` makes every entry of the map its argument names `None`, releasing every value they held.
 `std::process::release_map_reserve` changes no entry of the map that is the state of the object its argument names. It may release storage the map holds beyond what holding its entries needs, and returns the number of bytes by which that release lowers the heap the program holds [PRE-2], which is an input of the execution [WAIT-2].
 A map's entries are the places its subscripts select [OP-4] and the places the targets on its handles name [SHARE-2].
+A value of the prelude type `AtomicValue` holds one `u64` in the inclusive range from zero to 9223372036854775808. `shared_atomic_new` returns a handle to a new shared object whose atomic value is its argument. The atomic-value operations have these outcomes, with `v` the value at the statement's effect point before the operation and `a` the operation's `value` argument:
+
+| operation | condition, in mathematical arithmetic | returned value | value after the operation |
+|---|---|---|---|
+| `atomic_load` | every admitted call | `v` | `v` |
+| `atomic_add` | `v + a < 9223372036854775808` | `Some(value: v)` | `v + a` |
+| `atomic_add` | `v + a >= 9223372036854775808` | `None()` | `9223372036854775808` |
+| `atomic_raise` | every admitted call | `v` | the maximum of `v` and `a` |
+
+The arguments owe the declared requirements [PRE-1, FN-8].
 A value of the prelude type `KeySet` is a key set: its `len` distinct keys, the key at each index from zero being the one whose first insertion was that many insertions of a new key after the set was made.
 `key_set_new` returns an empty set with room for its argument's number of keys.
 `key_set_insert` returns the index of its key: the key's own index when the set holds it, and otherwise `len`, after adding the key there.
@@ -2382,6 +2393,8 @@ A target's place is a handle place, a place of type `Shared<T>` or `SharedRead<T
 | a handle place of type `Shared<ConcurrentHashMap<V>>` or `SharedRead<ConcurrentHashMap<V>>` and an index atom that is a place of type `KeySet` | `&Entries<V>`, whose element at each index is the state's entry under the set's key at that index, and whose `len` is the set's |
 
 Every resolved path formed through a `SharedRead` target binding is read-only, including its root and every selected descendant. Reads and calls whose projected rows only read those paths are admitted; writing, whole-value replacement, exchange and consumption through them are refused. This authority follows reference aliases, projections and call substitution [REF-1, EFF-5]. A violation is a hard error citing SHARE-2 at the complete written or consumed `place`, or the argument `atom` whose projected row writes it, with a repair [DIAG-1].
+
+An atomic-value operation [SHARE-1] is admitted only as a direct call in an atomic statement's block, with its `cell` argument the plain binding of a target whose state type is `AtomicValue`. Each occurrence of such a binding is that argument of such a call. On every control-flow path through the block, at most one atomic-value operation executes, counting all of the statement's atomic-value bindings together. Each such call is outside every loop contained in that block. Branch alternatives contribute their own paths; an edge leaving the block ends its path. The ordinary read-only authority above applies to these operations' declared rows [PRE-1]. A violation is a hard error citing SHARE-2 at the offending `call`, `place` or guard `expr`, with a repair [DIAG-1].
 
 Two targets with overlapping handle places [OWN-7] each have an index step. Hence several entry and key-set targets may name one handle place, while a whole target may name that handle place only once and beside no entry or key-set target on it. A handle place and an index atom form no path through a binding of the statement, since the statement reads them when it begins, before it holds any state.
 
@@ -2401,7 +2414,7 @@ The statement's footprint is its handle places and index atoms, read, together w
 
 [SHARE-3] An atomic statement takes effect at one point after it begins and before it completes.
 Its guard and block execute with exclusive access to the states its targets name, and every read and write they make of those states takes effect at that point. When the statement has a guard, the guard is true in those states at that point.
-The shared effects are atomic statements, cancellation-state updates [PRE-2], and the `decision_cell_read`, `claim_written` and `claim_killed` calls [PRE-1]. They take effect in one total order [WAIT-2], respecting the source order of nonoverlapping constructs in each context and the order of effects whose calls have returned before another begins.
+The shared effects are atomic statements, cancellation-state updates [PRE-2], and the `decision_cell_read`, `claim_written` and `claim_killed` calls [PRE-1]. They take effect in one total order [WAIT-2], respecting the source order of nonoverlapping constructs in each context and the order of effects whose statements or calls have completed before another begins.
 Each decision-cell read or claim takes effect at its own point between its call and return, separate from the enclosing atomic statement's point. Its returned value is the cell's state immediately after that point. The enclosing statement's state accesses retain their single-point meaning above; the verdict publishes no intermediate contents of its targets.
 A decision-cell-free callable boundary has no `DecisionCell` in any parameter or result type, recursively through fields, payload fields, elements, `Box` content and shared or frozen content, and each callable boundary in its function-kind parameters and interface members is decision-cell-free. This judgment uses the concrete substitutions of [FN-2, FN-5] and visits each type and callable boundary once. It inspects declarations and no implementation body.
 A statement whose guard is false in its targets' states at every point after it begins does not complete, as a waiting host operation whose outcome never arrives does not complete [WAIT-2].
@@ -2409,13 +2422,13 @@ A statement that has begun and has not taken effect waits for its guard while it
 Calls with held requirements have this same observation under [HOLD-1].
 A guard writes nothing and reaches no self-changing host handle [SHARE-2], and its context executes nothing else while it waits [WAIT-2], so its value changes only when an atomic statement or a cancellation-state update changes one of its targets' states.
 How many times an implementation evaluates a guard is not observable, since the guard writes nothing.
-An implementation may hold less than a statement's states, or hold them together with other statements, wherever the program's outcomes are those it has when every statement's block executes with exclusive access to its states.
+On every target, including for atomic-value targets, an implementation may hold less than a statement's states, or hold them together with other statements, wherever the program's outcomes are those it has when every statement's block executes with exclusive access to its states and its progress obeys [WAIT-2].
 
 ## 14. Prelude and host modules (normative, counted)
 
 [PRE-1] The prelude contributes ordinary nominal, constructor, built-in-bound and function declarations to every module. Their source visibility, collisions, typing, ownership and calls are the ordinary rules; an entry's prelude origin supplies only its deterministic diagnostic ordinal [TYPE-6, DIAG-1].
 
-The prelude's opaque structs [TYPE-2] are the five storage shapes and the cell `Box` [TYPE-9], built by the construction rows [OP-13], the shared-object handles `Shared` and `SharedRead`, the frozen-object handle `Frozen`, the concurrent hash map `ConcurrentHashMap` and the key set `KeySet` [SHARE-1], the `Entries` a target over a key set names [SHARE-2], and the decision-cell handle `DecisionCell` defined below. An opaque struct is not const-eligible [CONST-2]; its capability modifier and the ordinary ownership closure are exactly [OWN-1, PROV-6]. Their declarations are:
+The prelude's opaque structs [TYPE-2] are the five storage shapes and the cell `Box` [TYPE-9], built by the construction rows [OP-13], the shared-object handles `Shared` and `SharedRead`, the frozen-object handle `Frozen`, the concurrent hash map `ConcurrentHashMap`, the atomic value `AtomicValue` and the key set `KeySet` [SHARE-1], the `Entries` a target over a key set names [SHARE-2], and the decision-cell handle `DecisionCell` defined below. An opaque struct is not const-eligible [CONST-2]; its capability modifier and the ordinary ownership closure are exactly [OWN-1, PROV-6]. Their declarations are:
 
 ```
 opaque struct Array<T, const n: u64> {
@@ -2457,6 +2470,9 @@ opaque nocopy struct Frozen<T: drop> {
 }
 
 opaque nocopy struct ConcurrentHashMap<V: drop> {
+}
+
+opaque nocopy struct AtomicValue {
 }
 
 opaque nocopy struct KeySet {
@@ -2627,6 +2643,19 @@ fn take_front<W, T>(window: &W) -> value: T writes(window) contract {
 fn swap<T>(first: &T, second: &T) -> result: unit writes(first), writes(second);
 fn shared_new<T: drop>(value: T) -> result: Shared<T> pure;
 fn shared_map_new<V: drop>(capacity: u64) -> result: Shared<ConcurrentHashMap<V>> pure;
+fn shared_atomic_new(value: u64) -> result: Shared<AtomicValue> pure contract {
+  requires value <= 9223372036854775808_u64;
+};
+fn atomic_load(cell: &AtomicValue) -> value: u64 reads(cell) contract {
+  ensures value <= 9223372036854775808_u64;
+};
+fn atomic_add(cell: &AtomicValue, value: u64) -> before: Option<u64> writes(cell) contract {
+  requires value <= 4294967296_u64;
+};
+fn atomic_raise(cell: &AtomicValue, value: u64) -> before: u64 writes(cell) contract {
+  requires value <= 9223372036854775808_u64;
+  ensures before <= 9223372036854775808_u64;
+};
 fn shared_share<T: drop>(shared: &Shared<T>) -> result: Shared<T> reads(shared);
 fn shared_read<T: drop>(shared: &Shared<T>) -> result: SharedRead<T> reads(shared);
 fn shared_read_share<T: drop>(shared: &SharedRead<T>) -> result: SharedRead<T> reads(shared);
@@ -2670,7 +2699,7 @@ fn claim_killed(cell: &DecisionCell) -> result: DecisionState reads(cell);
 The definition of `release` returns `unit` and releases its parameter under the ordinary leaving-edge rules [STOR-3, PROV-6].
 Each record is an ordinary callable boundary usable by a direct call or a function-kind binding under FN-2 through FN-5. Its definition is supplied by the build and must satisfy the declared boundary [SCOPE-3]; calls neither inspect nor classify that definition. There is one ordinary callable ABI for definitions written in Whitefoot and definitions supplied by linking. A reference passed to either lasts through that call's return and is not retained beyond it [REF-3]. A missing definition or incompatible physical representation is a build/link failure, not a source-language rejection.
 PRE-1 requirement templates are discharged by FN-8, declared postconditions are instantiated only by CALL-6 and FN-9's ordinary selected-result rules, and range postconditions are taken after a call by [RANGE-2]. The supplied definition is responsible for those propositions under SCOPE-3; its declaration has no Whitefoot body for FN-9 to verify. No compiler-owned operation fact or alternative acceptance judgment exists.
-The declaration preorder is each opaque struct above in written order with its refused constructor and its fields in declaration order, then each enum above in written order with its variants and their fields in declaration order, then `Int`, `Float`, `Eq`, `Run`, then each construction function above in written order, then each window operation and `paged_page_len` above in written order, then `swap`, `shared_new`, `shared_map_new`, `shared_share`, `shared_read`, `shared_read_share`, `frozen_new`, `frozen_share`, `map_count`, `map_scan`, `map_scan_within`, `map_clear`, `key_set_new`, `key_set_insert`, `key_set_bytes`, `key_set_read_key`, `free_empty`, `release`, `decision_cell_new`, `decision_cell_share`, `decision_cell_read`, `claim_written` and `claim_killed`, each with its type, const and value parameters in declared order and then each name and bound variable its range postconditions declare, in written order [RANGE-1]. Owner-local fields and parameters do not enter compilation-root name lookup. This preorder fixes each PRE-1 diagnostic ordinal [DIAG-1].
+The declaration preorder is each opaque struct above in written order with its refused constructor and its fields in declaration order, then each enum above in written order with its variants and their fields in declaration order, then `Int`, `Float`, `Eq`, `Run`, then each construction function above in written order, then each window operation and `paged_page_len` above in written order, then `swap`, `shared_new`, `shared_map_new`, `shared_atomic_new`, `atomic_load`, `atomic_add`, `atomic_raise`, `shared_share`, `shared_read`, `shared_read_share`, `frozen_new`, `frozen_share`, `map_count`, `map_scan`, `map_scan_within`, `map_clear`, `key_set_new`, `key_set_insert`, `key_set_bytes`, `key_set_read_key`, `free_empty`, `release`, `decision_cell_new`, `decision_cell_share`, `decision_cell_read`, `claim_written` and `claim_killed`, each with its type, const and value parameters in declared order and then each name and bound variable its range postconditions declare, in written order [RANGE-1]. Owner-local fields and parameters do not enter compilation-root name lookup. This preorder fixes each PRE-1 diagnostic ordinal [DIAG-1].
 
 [PRE-2] The host modules are the seven standard library modules [MOD-10] `std::time`, `std::io`, `std::text`, `std::fs`, `std::net`, `std::process` and `std::snapshot`, registered by these rows of the standard library's graph:
 
@@ -3352,7 +3381,7 @@ public fn abort(job: Job) -> result: Outcome pure waits doc "Requests child term
 
 [SNAP-1] The type argument of the typed export declared in [PRE-2] obeys its ordinary `drop` bound and the following snapshot-resource-free judgment on the encoder's input graph. This judgment selects the encoder's supported value closure; it introduces no new function kind or held-call admission rule.
 
-A concrete type is snapshot-resource-free exactly when every vertex of its finite owned-type graph belongs to these permitted shapes: a primitive [TYPE-1]; an enum, with edges to every declared variant-payload type in declaration order; a struct declared in a module or source bundle, nonopaque or having at least one declared field, with edges to its declared fields in order; one of the five storage shapes [TYPE-9], with an edge to its element type; or `Box<T>`, with an edge to T. The storage shapes and `Box` use their content edge rather than their representation fields. The prelude `Shared`, `SharedRead`, `Frozen`, `ConcurrentHashMap`, `Entries` and `KeySet` have no permitted shape in this judgment. An opaque struct with no fields has no permitted shape, so fieldless resource handles are refused independently of their module of origin. All payload types participate, including those of inactive variants. Capability modifiers remain governed by [OWN-1]; resource freedom neither grants `copy` nor changes ordinary release.
+A concrete type is snapshot-resource-free exactly when every vertex of its finite owned-type graph belongs to these permitted shapes: a primitive [TYPE-1]; an enum, with edges to every declared variant-payload type in declaration order; a struct declared in a module or source bundle, nonopaque or having at least one declared field, with edges to its declared fields in order; one of the five storage shapes [TYPE-9], with an edge to its element type; or `Box<T>`, with an edge to T. The storage shapes and `Box` use their content edge rather than their representation fields. The prelude `Shared`, `SharedRead`, `Frozen`, `ConcurrentHashMap`, `AtomicValue`, `Entries` and `KeySet` have no permitted shape in this judgment. An opaque struct with no fields has no permitted shape, so fieldless resource handles are refused independently of their module of origin. All payload types participate, including those of inactive variants. Capability modifiers remain governed by [OWN-1]; resource freedom neither grants `copy` nor changes ordinary release.
 
 The graph uses concrete nominal instances and primitive types as vertices and is visited depth first, each vertex once, in declared field and payload order. Finite cycles through `Box` or storage are admitted when each visited vertex has a permitted shape; ordinary finite-layout and instantiation rules still apply [STOR-6, FN-6]. A generic body retains this obligation and each concrete instance discharges it under [FN-2]. Every concrete selection of the export instance obtains the same graph judgment: selection by an ordinary call, by a raw function-kind argument, or by a binding member [FN-3, FN-4], including through aliases [MOD-4]. A selected instance is graph-qualified before its function-kind binding is admitted; forwarding that checked binding retains the qualification and introduces no held-call exception. Complete declarations, including private owned fields, supply the graph at composition; this grants no source field-selection visibility [MOD-5]. Failure is a hard error citing SNAP-1 at the complete `call` for ordinary call selection, the complete `function_arg` for raw function-kind selection, or the complete `fn_bind` for binding-member selection, naming the first forbidden vertex and the owned path that first reaches it, with a repair [DIAG-1].
 
@@ -3574,6 +3603,7 @@ The table in this version is:
 | Ring<T>         | initialized slots, exact | slots taken, exact | window origin, bounded  | absent                       |
 | Paged<T>        | initialized slots, exact | slots taken, exact | absent                  | absent                       |
 | Segments<T>     | segments, exact          | absent             | absent                  | absent                       |
+| AtomicValue     | absent                   | absent             | absent                  | absent                       |
 | KeySet          | keys, bounded            | absent             | absent                  | retained heap bytes, bounded |
 | Entries<V>      | named entries, exact     | absent             | absent                  | absent                       |
 | &[T]            | range elements, exact    | absent             | absent                  | absent                       |

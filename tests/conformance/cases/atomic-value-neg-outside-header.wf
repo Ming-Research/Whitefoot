@@ -1,0 +1,7 @@
+fn outside_atomic(cell: &AtomicValue) -> result: u64 reads(cell) {
+  return atomic_load(cell: cell);
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  return std::process::exit_status(code: 0_u8);
+}

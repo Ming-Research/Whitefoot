@@ -410,6 +410,27 @@ impl FunctionEmitter<'_, '_> {
         Ok(())
     }
 
+    /// Atomic-only statements have no ordinary acquisition to count their
+    /// waiting boundary. Reuse the host-answer pass, including its saved
+    /// coroutine token and resume edge, before touching any target state.
+    pub(super) fn emit_context_pass(
+        &mut self,
+        result: IrValueId,
+        ty: IrType,
+    ) -> Result<(), BackendFailure> {
+        if ty != IrType::Unit || !self.function.waits() {
+            return Err(BackendFailure::InvalidIr);
+        }
+        let prefix = labels("atomic.pass", result);
+        let done = format!("{prefix}.done");
+        self.names(&["wf__context_pass", "llvm.coro.save"]);
+        writeln!(self.output, "  br label %{prefix}.pass")
+            .map_err(|_| BackendFailure::TextEmission)?;
+        self.emit_pass(&prefix, "pass", &done)?;
+        self.output.open_block(done);
+        self.emit_constant(result, IrType::Unit, crate::IrConstant::Unit)
+    }
+
     /// A block `{prefix}.{name}` that counts one wait answered without
     /// suspending and continues at `next`, or yields the context to another
     /// ready one and continues there once it is resumed [WAIT-2].

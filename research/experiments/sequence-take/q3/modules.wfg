@@ -1,0 +1,9 @@
+entry t1 = pkg::sq_t1_main;
+
+entry t1off = pkg::sq_t1off_main;
+
+entry tp = pkg::sq_tp_main;
+
+entry tc = pkg::sq_tc_main;
+
+entry c_t1 = pkg::sq_c1_main;

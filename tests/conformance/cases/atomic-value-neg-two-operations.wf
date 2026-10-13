@@ -1,0 +1,8 @@
+fn main() -> status: std::process::ExitStatus pure waits {
+  let owner = shared_atomic_new(value: 0_u64);
+  atomic s = &owner {
+    let first = atomic_load(cell: s);
+    let second = atomic_add(cell: s, value: 1_u64);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

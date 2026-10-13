@@ -101,6 +101,7 @@ macro_rules! operation_operands {
             | IrOperation::ConstantAddress { .. }
             | IrOperation::Window
             | IrOperation::ContextJoin
+            | IrOperation::ContextPass
             | IrOperation::SnapshotAtomicBegin
             | IrOperation::SnapshotAtomicEnd
             | IrOperation::SharedNew { .. }
@@ -124,6 +125,8 @@ macro_rules! operation_operands {
             | IrOperation::Float { arguments, .. }
             | IrOperation::Boolean { arguments, .. } => arguments.$iter().map($value).collect(),
             IrOperation::ValueEquality { arguments, .. } => arguments.$iter().map($value).collect(),
+            IrOperation::AtomicValueAdd { cell, value }
+            | IrOperation::AtomicValueRaise { cell, value } => vec![$value(cell), $value(value)],
             IrOperation::NumericConversion { value, .. }
             | IrOperation::Reinterpret { value, .. }
             | IrOperation::ArrayFill { value, .. }
@@ -138,6 +141,7 @@ macro_rules! operation_operands {
             | IrOperation::SharedState { object: value, .. }
             | IrOperation::SharedRetain { object: value, .. }
             | IrOperation::DecisionCell { object: value, .. }
+            | IrOperation::AtomicValueLoad { cell: value }
             | IrOperation::SharedAcquire { object: value }
             | IrOperation::SharedTake { object: value }
             | IrOperation::SharedUnlock { object: value, .. }

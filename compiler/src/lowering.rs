@@ -368,7 +368,7 @@ impl From<crate::target::TargetLayoutFailure> for LoweringFailure {
 /// build reaches [`LoweringFailure::UnimplementedPreludeRow`], so a row this
 /// version has not built can never become a module that names a symbol
 /// nothing defines.
-pub(crate) const COMPILER_OWNED_PRELUDE_ROWS: [&str; 44] = [
+pub(crate) const COMPILER_OWNED_PRELUDE_ROWS: [&str; 48] = [
     // [OP-13] construction and storage conversion functions.
     "box_new",
     "array_filled",
@@ -399,6 +399,10 @@ pub(crate) const COMPILER_OWNED_PRELUDE_ROWS: [&str; 44] = [
     // [SHARE-1] mutable, read-only and frozen handle construction/sharing, the map's five
     // and the key set's four.
     "shared_new",
+    "shared_atomic_new",
+    "atomic_load",
+    "atomic_add",
+    "atomic_raise",
     "shared_share",
     "shared_read",
     "shared_read_share",
