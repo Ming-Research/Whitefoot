@@ -166,6 +166,7 @@ jobs:
             ${{ runner.temp }}/call-grain/*.json
             ${{ runner.temp }}/call-grain/*.tsv
             ${{ runner.temp }}/call-grain/*.txt
+            ${{ runner.temp }}/call-grain/identity-diffs/
             ${{ runner.temp }}/call-grain/gen/
             ${{ runner.temp }}/call-grain/identity-llvm/
             ${{ runner.temp }}/call-grain/images/*/*.ledger
