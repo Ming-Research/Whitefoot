@@ -1495,6 +1495,49 @@ impl<'unit> DeclarationInventory<'unit> {
             .map_or(context.result_type, |(_, ty)| ty);
         Ok(Some((usage.origin.clone(), ty)))
     }
+    /// [MSR-3] entry state belongs only to a callable's postconditions,
+    /// including in templates no concrete function instance reaches.
+    pub(super) fn check_entry_positions(&self) -> Result<(), CheckStop> {
+        for base in self
+            .tree
+            .descendants_with(self.tree.root(), Production::Pbase)?
+        {
+            if !self.tree.has_fixed(base, FixedTerminal::Entry)? {
+                continue;
+            }
+            let mut ancestor = self.tree.parent(base)?;
+            let mut in_ensures = false;
+            while let Some(node) = ancestor {
+                match self.tree.production(node)? {
+                    Production::EnsuresClause => {
+                        in_ensures = true;
+                        break;
+                    }
+                    Production::FnDecl | Production::FnSig => break,
+                    _ => ancestor = self.tree.parent(node)?,
+                }
+            }
+            if !in_ensures {
+                return self.reject_entry_outside_postcondition(base);
+            }
+        }
+        Ok(())
+    }
+
+    /// [MSR-3] keeps a refused entry read at its complete former.
+    pub(super) fn reject_entry_outside_postcondition<T>(
+        &self,
+        base: NodeId,
+    ) -> Result<T, CheckStop> {
+        self.issue_node(
+            SemanticRule::Msr3,
+            base,
+            SemanticIssueKind::InvalidEntryFormer {
+                mechanical_fix: super::repairs::entry_outside_postcondition_repair(),
+            },
+        )
+    }
+
     /// The psuffix nodes of every place written through `entry(parameter)`
     /// in one `contract_block` [MSR-3].
     pub(super) fn entry_former_suffixes(
@@ -1567,7 +1610,8 @@ impl<'unit> DeclarationInventory<'unit> {
                 }
             }
             // Clause uses remain provisional until selector admission. This
-            // whole-function position check runs outside an active clause.
+            // parameter check runs outside an active clause; positions have
+            // already been checked across the complete source tree.
             let path = self.tree.path(base)?;
             let usage = self
                 .resolved
@@ -1585,19 +1629,7 @@ impl<'unit> DeclarationInventory<'unit> {
                 matches!(usage.target(), ResolvedTarget::Source { declaration, .. }
                     if declaration == parameter.declaration)
             });
-            let mut ancestor = self.tree.parent(base)?;
-            let mut in_ensures = false;
-            while let Some(node) = ancestor {
-                if self.tree.production(node)? == Production::EnsuresClause {
-                    in_ensures = true;
-                    break;
-                }
-                if node == function.node {
-                    break;
-                }
-                ancestor = self.tree.parent(node)?;
-            }
-            if !in_ensures || !parameter.is_some_and(|p| parameter_has_exit_state(function, p)) {
+            if !parameter.is_some_and(|p| parameter_has_exit_state(function, p)) {
                 return self.issue_node(
                     SemanticRule::Msr3,
                     base,

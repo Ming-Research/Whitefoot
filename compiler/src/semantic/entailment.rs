@@ -28,7 +28,7 @@ mod state;
 mod term;
 mod work;
 
-pub(crate) use flow::operation_facts;
+pub(crate) use flow::{matching_requirement, operation_facts};
 
 pub(crate) use state::DerivationId;
 #[cfg(test)]
