@@ -115,3 +115,27 @@ jobs:
               done
             done
           done
+      - name: Time each Halo module with both compilers
+        run: |
+          # Halo's whole check doubles on this branch while 11 of 15 modules are
+          # rejected; per-module times separate accepted modules (the rule's
+          # judgment alone) from rejected ones (judgment plus diagnostics).
+          branch=compiler/target/gate/whitefootc
+          main="$RUNNER_TEMP/main/compiler/target/gate/whitefootc"
+          graph="$RUNNER_TEMP/halo/lib/halo/modules.wfg"
+          modules=$(grep -o '"module":"[^"]*"' "$RUNNER_TEMP/halo-main.txt" | cut -d'"' -f4 | sort -u)
+          for round in 1 2; do
+            for module in $modules; do
+              for side in main branch; do
+                if [ "$side" = main ]; then compiler=$main; else compiler=$branch; fi
+                start=$(date +%s.%N)
+                set +e
+                timeout 900 "$compiler" --check-module "$module" --report --graph "$graph" > "$RUNNER_TEMP/m.txt" 2>&1
+                status=$?
+                set -e
+                end=$(date +%s.%N)
+                printf 'MODULE round=%s module=%s side=%s status=%s seconds=%.2f\n' \
+                  "$round" "$module" "$side" "$status" "$(echo "$end - $start" | bc)"
+              done
+            done
+          done
