@@ -325,7 +325,8 @@ fn bench_end(bench: Bench, name: &[u8], totals: &Shared<Totals>, started: Instan
   put_text(line: &line, text: &label_read_max[0_u64..13_u64]);
   put_decimal(line: &line, value: read_max_ns);
   put_text(line: &line, text: &label_verdict[0_u64..9_u64]);
-  put_decimal(line: &line, value: cvt::<u8, u64>(verdict));
+  let verdict_wide = cvt::<u8, u64>(verdict);
+  put_decimal(line: &line, value: verdict_wide);
   put_text(line: &line, text: &line_end[0_u64..1_u64]);
   let written = write_line(factory: &factory, output: &output, line: &line);
   if written != 0_u8 {
