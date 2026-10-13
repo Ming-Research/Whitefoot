@@ -3071,8 +3071,9 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
 /// While the host declarations were PRE-1's the inventory held 397 records,
 /// and this test showed that a late collision kept an ordinal above `u8`. The
 /// host declarations are the standard library's now [PRE-2] and the
-/// inventory holds 266, so no prelude ordinal exceeds `u8`; this still
-/// shows that a late function's collision names its own preorder ordinal.
+/// inventory holds 266, past `u8` again, which the `u32` preorder ordinal
+/// carries; this shows that a late function's collision names its own
+/// preorder ordinal.
 #[test]
 fn a_late_prelude_function_collision_names_its_preorder_ordinal() {
     let source = b"fn release() -> result: unit pure {\n  return unit;\n}\n";
