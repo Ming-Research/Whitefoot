@@ -16,6 +16,23 @@
 #
 #   gh workflow run compiler-release.yml -R Ming-Research/Whitefoot -f commit=<hash> -f experiment=true
 #
+# Add `-f bundle_toolchain=true` to opt into a qualified clang/lld package.
+# Its tag gains `-bundled`, and its platform archives are named
+# whitefootc-<platform>-bundled.tar.gz, so existing lightweight releases remain
+# distinct. Each archive contains bin/whitefootc beside its toolchain, the
+# specification/interfaces, licenses, toolchain-manifest.json and SHA256SUMS.
+# LLVM source pins live in .github/toolchain/llvm-assets.json.
+# Bundled candidates are retained as workflow artifacts and must pass reusable
+# exact-archive acceptance before publication, including macOS host-clang
+# isolation. The workflow revision supplies the maintained acceptance runner and
+# witness; the source commit still owns the archived compiler/language bytes and
+# manifest identity. Unsupported witness behavior fails qualification without
+# changing expectations. Only Linux x86-64 and macOS arm64 are offered;
+# no Windows lane exists.
+# Bundled Linux qualification uses Ubuntu 24.04, with host prerequisites from
+# `sudo apt-get install libc6-dev libgcc-13-dev libstdc++6 zlib1g libxml2 libicu74 liblzma5`.
+# This test host does not establish a minimum supported Linux distribution.
+#
 # A downstream pins an experiment release only on an experiment branch, never
 # on its main.
 #
@@ -40,15 +57,15 @@
 # Each compiler is the `gate` Cargo profile the gate tests. Like the gate's,
 # it builds programs with the host's /usr/bin/clang, and on Linux links them
 # with ld.lld, so a downstream host installs both. The Linux compiler is
-# built with the LLVM major the commit pins in .github/llvm-major, and fixes
-# the forms that clang accepts into the executable, so a downstream's Linux
+# built with the LLVM major the commit pins in .github/llvm-major, and probes
+# accepted forms against its selected clang at runtime, so a downstream's Linux
 # host uses that same major, which Whitefoot-kit installs from the manifest's
 # linux_llvm_major (compiler/downstream-releases).
 #
-# A push that changes this file runs it as a dry run: it builds, smoke-tests
-# and packages the pushed commit and keeps the files as a workflow artifact,
-# publishing nothing, so a change to the release path runs before it reaches
-# main.
+# A push that changes this file, package-acceptance.yml or .github/toolchain runs it as a dry run: it builds, smoke-tests
+# and packages the pushed commit as a bundled package, runs that package's
+# acceptance and keeps the files as a workflow artifact, publishing nothing,
+# so a change to the release path runs before it reaches main.
 name: compiler-release
 
 on:
@@ -62,9 +79,15 @@ on:
         description: Release an unmerged commit whose gate passed, as wf-exp-<hash>
         type: boolean
         default: false
+      bundle_toolchain:
+        description: Include the pinned clang/lld subset, qualifying exact archives before publishing
+        type: boolean
+        default: false
   push:
     paths:
       - .github/workflows/compiler-release.yml
+      - .github/workflows/package-acceptance.yml
+      - .github/toolchain/**
 
 permissions:
   contents: write
@@ -96,6 +119,7 @@ jobs:
       gate_run: ${{ steps.resolve.outputs.gate_run }}
       build: ${{ steps.resolve.outputs.build }}
       publish: ${{ steps.resolve.outputs.publish }}
+      bundle: ${{ steps.resolve.outputs.bundle }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -111,6 +135,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REQUESTED: ${{ inputs.commit }}
           EXPERIMENT: ${{ inputs.experiment }}
+          # A push dry run takes the bundled path, the one with acceptance
+          # jobs, so a change to it is qualified before anything is published.
+          BUNDLE_TOOLCHAIN: ${{ inputs.bundle_toolchain || github.event_name == 'push' }}
         run: |
           set -euo pipefail
           git fetch --no-tags --prune origin +refs/heads/main:refs/remotes/origin/main
@@ -146,6 +173,16 @@ jobs:
           if [ -z "$llvm" ]; then
             llvm=$(git show "$commit:.github/workflows/gate.yml" 2>/dev/null \
               | sed -n 's/^ *LLVM_MAJOR: "\([0-9][0-9]*\)"$/\1/p' | head -n 1 || true)
+          fi
+          bundle=false
+          if [ "$BUNDLE_TOOLCHAIN" = true ]; then
+            bundle=true
+            bundle_major=$(jq -r '.llvm_version | split(".")[0]' .github/toolchain/llvm-assets.json)
+            if [ "$llvm" != "$bundle_major" ]; then
+              echo "::error::bundled LLVM major $bundle_major does not match $commit's gate pin ${llvm:-none}"
+              exit 1
+            fi
+            tag="$tag-bundled"
           fi
           if [ -z "$spec" ]; then
             echo "::error::spec/kernel-spec.md at $commit names no version"
@@ -192,6 +229,7 @@ jobs:
             echo "gate_run=$gate_run"
             echo "build=$build"
             echo "publish=$publish"
+            echo "bundle=$bundle"
           } >> "$GITHUB_OUTPUT"
           echo "$tag: $commit, specification $spec, gate run $gate_run, publish $publish"
 
@@ -215,6 +253,15 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.resolve.outputs.commit }}
+
+      # The source commit owns compiler/spec/interface bytes. The workflow
+      # revision owns the acquisition recipe, including when releasing a source
+      # commit from before that recipe existed.
+      - uses: actions/checkout@v4
+        if: needs.resolve.outputs.bundle == 'true'
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .bundle-recipe
 
       - name: Install the host toolchain
         env:
@@ -246,22 +293,152 @@ jobs:
       # that builds and runs a program carries everything a downstream needs
       # from this repository.
       - name: Build and run a program with it
+        if: needs.resolve.outputs.bundle != 'true'
         run: |
           compiler/target/gate/whitefootc -o "$RUNNER_TEMP/geometry_vectors" tests/programs/geometry_vectors.wf
           "$RUNNER_TEMP/geometry_vectors"
 
       - name: Package the compiler
+        if: needs.resolve.outputs.bundle != 'true'
         run: tar -C compiler/target/gate -czf "whitefootc-${{ matrix.platform }}.tar.gz" whitefootc
+
+      - name: Select the bundled LLVM source and scratch paths
+        if: needs.resolve.outputs.bundle == 'true'
+        id: llvm
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib
+          metadata = json.loads(pathlib.Path(".bundle-recipe/.github/toolchain/llvm-assets.json").read_text())
+          platform = metadata["platforms"][os.environ["PLATFORM"]]
+          values = {"ASSET": platform["asset"], "PUBLISHED_SHA256": platform["sha256"],
+                    "LLVM_VERSION": metadata["llvm_version"], "LLVM_TAG": metadata["llvm_tag"],
+                    "ARCHIVE_DIR": os.environ["RUNNER_TEMP"] + "/llvm-archives",
+                    "BUNDLE_WORK": os.environ["RUNNER_TEMP"] + "/release-toolchain",
+                    "BUNDLE_DIR": os.environ["RUNNER_TEMP"] + "/release-toolchain/package"}
+          with open(os.environ["GITHUB_ENV"], "a") as stream:
+              for key, value in values.items():
+                  stream.write(f"{key}={value}\n")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as stream:
+              stream.write(f'asset={platform["asset"]}\n')
+          PY
+
+      - uses: actions/cache@v4
+        if: needs.resolve.outputs.bundle == 'true'
+        with:
+          path: ${{ runner.temp }}/llvm-archives/${{ steps.llvm.outputs.asset }}
+          key: official-llvm-${{ steps.llvm.outputs.asset }}
+
+      - name: Acquire and trim the bundled toolchain
+        if: needs.resolve.outputs.bundle == 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p "$ARCHIVE_DIR" "$BUNDLE_WORK/extracted" "$BUNDLE_WORK/licenses"
+          archive="$ARCHIVE_DIR/$ASSET"
+          if [ ! -f "$archive" ]; then
+            curl --fail --location --retry 3 --max-time 600 \
+              "https://github.com/llvm/llvm-project/releases/download/$LLVM_TAG/$ASSET" -o "$archive.part"
+            mv "$archive.part" "$archive"
+          fi
+          # Check cached bytes too, against the publisher digest owned by the
+          # shared metadata file. This does not authenticate LLVM signatures.
+          python3 - "$archive" "$PUBLISHED_SHA256" <<'PY'
+          import hashlib, sys
+          digest = hashlib.sha256()
+          with open(sys.argv[1], "rb") as stream:
+              for block in iter(lambda: stream.read(1024 * 1024), b""):
+                  digest.update(block)
+          if digest.hexdigest() != sys.argv[2]:
+              raise SystemExit("Official LLVM source checksum mismatch")
+          print("Verified LLVM archive SHA-256:", digest.hexdigest())
+          PY
+          for component in llvm clang lld compiler-rt; do
+            mkdir -p "$BUNDLE_WORK/licenses/$component"
+            curl --fail --location --retry 3 --max-time 120 \
+              "https://raw.githubusercontent.com/llvm/llvm-project/$LLVM_TAG/$component/LICENSE.TXT" \
+              -o "$BUNDLE_WORK/licenses/$component/LICENSE.TXT"
+          done
+          python3 - "$BUNDLE_WORK/licenses" <<'PY'
+          import pathlib, sys
+          root = pathlib.Path(sys.argv[1])
+          for component in ("llvm", "clang", "lld", "compiler-rt"):
+              path = root / component / "LICENSE.TXT"
+              text = path.read_text()
+              if not text.strip() or "Apache License" not in text or "LLVM Exceptions" not in text:
+                  raise SystemExit(f"Missing Apache License or LLVM Exceptions in {path}")
+          PY
+          tar -xJf "$archive" -C "$BUNDLE_WORK/extracted"
+          shopt -s nullglob dotglob
+          roots=("$BUNDLE_WORK/extracted"/*)
+          if [ "${#roots[@]}" -ne 1 ] || [ ! -d "${roots[0]}/bin" ]; then
+            echo 'Expected one official LLVM distribution root containing bin/' >&2
+            exit 1
+          fi
+          bash .bundle-recipe/.github/toolchain/trim-llvm.sh \
+            "${roots[0]}" "$BUNDLE_DIR" "$ASSET" "$PUBLISHED_SHA256" "$BUNDLE_WORK/licenses"
+          rm -rf "$BUNDLE_WORK/extracted"
+
+      - name: Stage the bundled compiler and language files
+        if: needs.resolve.outputs.bundle == 'true'
+        run: |
+          set -euo pipefail
+          cp compiler/target/gate/whitefootc "$BUNDLE_DIR/bin/whitefootc"
+          python3 - "$BUNDLE_DIR" <<'PY'
+          import pathlib, shutil, subprocess, sys
+          root = pathlib.Path(sys.argv[1])
+          names = subprocess.check_output(["git", "ls-files", "-z", "spec/kernel-spec.md",
+              "lib/std/modules.wfg", "lib/std/**/module.wfm"]).split(b"\0")
+          for name in filter(None, names):
+              path = pathlib.Path(name.decode())
+              destination = root / path
+              destination.parent.mkdir(parents=True, exist_ok=True)
+              shutil.copy2(path, destination)
+          for required in ("spec/kernel-spec.md", "lib/std/modules.wfg"):
+              if not (root / required).is_file():
+                  raise SystemExit("Missing bundled language input: " + required)
+          PY
+
+      - name: Smoke-test the staged bundled compiler
+        if: needs.resolve.outputs.bundle == 'true'
+        run: |
+          "$BUNDLE_DIR/bin/whitefootc" -o "$RUNNER_TEMP/geometry_vectors" tests/programs/geometry_vectors.wf
+          "$RUNNER_TEMP/geometry_vectors"
+
+      - name: Checksum and archive the bundled package
+        if: needs.resolve.outputs.bundle == 'true'
+        run: |
+          set -euo pipefail
+          # Native SHA256SUMS covers regular-file bytes, including the compiler,
+          # language inputs and toolchain manifest. The manifest separately
+          # inventories relative symlink text; do not hash symlink referents twice.
+          python3 - "$BUNDLE_DIR" <<'PY'
+          import hashlib, os, pathlib, sys
+          root = pathlib.Path(sys.argv[1])
+          lines = []
+          for directory, _, names in os.walk(root, followlinks=False):
+              for name in names:
+                  path = pathlib.Path(directory) / name
+                  if path.is_symlink() or path == root / "SHA256SUMS":
+                      continue
+                  digest = hashlib.sha256()
+                  with path.open("rb") as stream:
+                      for block in iter(lambda: stream.read(1024 * 1024), b""):
+                          digest.update(block)
+                  lines.append(f"{digest.hexdigest()}  {path.relative_to(root).as_posix()}\n")
+          (root / "SHA256SUMS").write_text("".join(sorted(lines, key=lambda line: line[66:])))
+          PY
+          tar -C "$BUNDLE_DIR" -czf "whitefootc-${{ matrix.platform }}-bundled.tar.gz" .
 
       - uses: actions/upload-artifact@v4
         with:
           name: whitefootc-${{ matrix.platform }}
-          path: whitefootc-${{ matrix.platform }}.tar.gz
+          path: ${{ needs.resolve.outputs.bundle == 'true' && format('whitefootc-{0}-bundled.tar.gz', matrix.platform) || format('whitefootc-{0}.tar.gz', matrix.platform) }}
           if-no-files-found: error
           retention-days: 7
 
-  publish:
-    name: Publish ${{ needs.resolve.outputs.tag }}
+  assemble:
+    name: Assemble ${{ needs.resolve.outputs.tag }}
     needs: [resolve, build]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -269,6 +446,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.resolve.outputs.commit }}
+
+      - uses: actions/checkout@v4
+        if: needs.resolve.outputs.bundle == 'true'
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .bundle-recipe
 
       - uses: actions/download-artifact@v4
         with:
@@ -291,6 +474,7 @@ jobs:
           test "$listing" = "$wanted"
 
       - name: Write the manifest and checksums
+        if: needs.resolve.outputs.bundle != 'true'
         env:
           TAG: ${{ needs.resolve.outputs.tag }}
           COMMIT: ${{ needs.resolve.outputs.commit }}
@@ -312,6 +496,47 @@ jobs:
           ls -l
           cat whitefoot-release.json SHA256SUMS
 
+      - name: Write the bundled manifest and checksums
+        if: needs.resolve.outputs.bundle == 'true'
+        env:
+          TAG: ${{ needs.resolve.outputs.tag }}
+          COMMIT: ${{ needs.resolve.outputs.commit }}
+          SPEC: ${{ needs.resolve.outputs.spec }}
+          LLVM: ${{ needs.resolve.outputs.llvm }}
+          GATE_RUN: ${{ needs.resolve.outputs.gate_run }}
+        run: |
+          set -euo pipefail
+          jq -n --arg tag "$TAG" --arg commit "$COMMIT" --arg spec "$SPEC" --arg gate_run "$GATE_RUN" \
+            --arg llvm "$LLVM" --slurpfile source .bundle-recipe/.github/toolchain/llvm-assets.json \
+            '{tag: $tag, commit: $commit, spec: $spec, gate_run: $gate_run,
+              linux_llvm_major: $llvm, bundle_toolchain: true, llvm_source: $source[0],
+              assets: {"linux-x86_64": "whitefootc-linux-x86_64-bundled.tar.gz",
+                       "macos-arm64": "whitefootc-macos-arm64-bundled.tar.gz",
+                       "language": "whitefoot-language.tar.gz"}}' > release/whitefoot-release.json
+          cd release
+          sha256sum whitefootc-linux-x86_64-bundled.tar.gz whitefootc-macos-arm64-bundled.tar.gz \
+            whitefoot-language.tar.gz whitefoot-release.json > SHA256SUMS
+          ls -l
+          cat whitefoot-release.json SHA256SUMS
+
+      - name: Keep the exact bundled candidate
+        if: needs.resolve.outputs.bundle == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-bundled-candidate
+          path: release
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Stage the lightweight release for publication
+        if: needs.resolve.outputs.bundle != 'true' && needs.resolve.outputs.publish == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-assembled
+          path: release
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Keep the dry run's files
         if: needs.resolve.outputs.publish != 'true'
         uses: actions/upload-artifact@v4
@@ -321,6 +546,50 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  acceptance:
+    name: Qualify the exact bundled candidate
+    needs: [resolve, assemble]
+    if: needs.resolve.outputs.bundle == 'true'
+    # This local call and its runner/witness checkout use the caller workflow
+    # revision; source_commit verifies the unchanged candidate's manifest identity.
+    uses: ./.github/workflows/package-acceptance.yml
+    with:
+      release_tag: ${{ needs.resolve.outputs.tag }}
+      source_commit: ${{ needs.resolve.outputs.commit }}
+      artifact_name: release-bundled-candidate
+
+  qualification-status:
+    name: Report bundled publication eligibility
+    needs: [resolve, assemble, acceptance]
+    if: always() && needs.resolve.outputs.bundle == 'true' && needs.assemble.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Summarize the qualification result
+        env:
+          QUALIFIED: ${{ needs.acceptance.outputs.qualified }}
+        run: |
+          if [ "$QUALIFIED" = true ]; then
+            echo 'The exact bundled archives passed package acceptance, including macOS host-clang isolation.' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo '::warning::Bundled publication is blocked: package acceptance or macOS host-clang isolation is failed or unverified. Candidate bytes remain in release-bundled-candidate.'
+            echo 'Bundled publication is blocked. Package acceptance and verified macOS host-clang isolation are required; inspect the acceptance artifacts. The exact candidate bytes remain in release-bundled-candidate.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  publish:
+    name: Publish ${{ needs.resolve.outputs.tag }}
+    needs: [resolve, assemble, acceptance]
+    # !cancelled() permits the lightweight mode when acceptance is deliberately
+    # skipped while honoring cancellation. Bundled mode requires qualification.
+    if: ${{ !cancelled() && needs.resolve.outputs.publish == 'true' && needs.assemble.result == 'success' && (needs.resolve.outputs.bundle != 'true' || needs.acceptance.outputs.qualified == 'true') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.resolve.outputs.bundle == 'true' && 'release-bundled-candidate' || 'release-assembled' }}
+          path: release
+
       - name: Publish the release
         if: needs.resolve.outputs.publish == 'true'
         env:
@@ -329,6 +598,7 @@ jobs:
           COMMIT: ${{ needs.resolve.outputs.commit }}
           SPEC: ${{ needs.resolve.outputs.spec }}
           GATE_RUN: ${{ needs.resolve.outputs.gate_run }}
+          BUNDLE: ${{ needs.resolve.outputs.bundle }}
         run: |
           set -euo pipefail
           kind=""
@@ -339,10 +609,19 @@ jobs:
               again="$again -f experiment=true"
               ;;
           esac
+          toolchain_notes="whitefootc builds programs with /usr/bin/clang, and on Linux links them with ld.lld."
+          if [ "$BUNDLE" = true ]; then
+            again="$again -f bundle_toolchain=true"
+            toolchain_notes="These Linux x86-64 and macOS arm64 archives contain bin/whitefootc with sibling clang/lld, LLVM resources, licenses, language inputs and package checksums. Linux links with bundled ld.lld. macOS requires Apple's SDK and system linker; its bundled libLTO is used for LTO. No Windows bundle is provided; Windows packaging is unchanged. Exact-archive package acceptance, including verified macOS host-clang isolation, passed before publication."
+            toolchain_notes="$toolchain_notes
+          The Linux qualification test host is Ubuntu 24.04. Install its host prerequisites with:
+          sudo apt-get install libc6-dev libgcc-13-dev libstdc++6 zlib1g libxml2 libicu74 liblzma5
+          This test host does not establish a minimum supported Linux distribution."
+          fi
           notes="The Whitefoot compiler at $COMMIT (specification $SPEC), for projects that pin it.$kind
           Its gate run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GATE_RUN
 
-          whitefootc builds programs with /usr/bin/clang, and on Linux links them with ld.lld.
+          $toolchain_notes
           A release is removed 30 days after it is published unless it is the newest of main; make it again with
           gh workflow run compiler-release.yml -R $GITHUB_REPOSITORY $again"
           gh release create "$TAG" release/* --repo "$GITHUB_REPOSITORY" --target "$COMMIT" \
