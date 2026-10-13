@@ -1,17 +1,7 @@
-# Temporary: attributes the checking-time cost of the OP-5 condition
-# redundancy judgment. It builds this branch's compiler and main's (58743a931)
-# in one job and times `whitefootc --check` on apps/firn three ways:
-#   main-main      main compiler, main's firn sources
-#   main-branch    main compiler, this branch's migrated firn sources
-#   branch-branch  this branch's compiler, this branch's firn sources
-# main-main against main-branch isolates the source migration; main-branch
-# against branch-branch isolates the judgment on the same sources. Each run is
-# timed once without counters, then repeated with WHITEFOOT_CHECK_WORK set to
-# dump the checker's work counters (compiler/src/semantic/entailment/work.rs
-# documents the columns). Remove this workflow before the branch is ready.
-# Halo and Snowghost additionally compare both compilers on identical pinned,
-# unmigrated sources. All-module verdicts continue past source rejections;
-# timing with errors present estimates checking work, not a migrated --check.
+# Temporary OP-5 attribution screen; remove before this branch is ready.
+# Same pinned downstream sources, separate module invocations, no source edits
+# or disabled diagnostics. Hosted samples locate work; they do not invalidate
+# earlier >50% reopening evidence. Precise attribution uses paired 14900K runs.
 name: op5-cost
 
 on:
@@ -26,131 +16,46 @@ concurrency:
 env:
   CARGO_TERM_COLOR: never
   CARGO_INCREMENTAL: 0
+  MAIN_REVISION: 58743a931
+  HALO_REVISION: 56878ac4d607f7496c8e23a4c2ffe2d45e9cb552
+  SNOWGHOST_REVISION: 466e9843f7a0fe4926022be8718d4ab677cafed1
 
 jobs:
-  cost:
-    name: OP-5 checking cost on firn
+  prepare:
     runs-on: ubuntu-24.04
-    timeout-minutes: 240
-    env:
-      MAIN_REVISION: 58743a931
-      WHITEFOOT_CHECK_TIMEOUT: 3000
-      # Current main heads resolved for this extension with GitHub's
-      # branches/main API after git ls-remote failed DNS resolution locally.
-      HALO_REVISION: 56878ac4d607f7496c8e23a4c2ffe2d45e9cb552
-      SNOWGHOST_REVISION: 466e9843f7a0fe4926022be8718d4ab677cafed1
+    timeout-minutes: 75
+    outputs:
+      matrix: ${{ steps.inventory.outputs.matrix }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           submodules: true
-      - name: Prepare the toolchain and main's worktree
+      - name: Build the same two gate compilers once
         run: |
           rustup default stable
           git worktree add --detach "$RUNNER_TEMP/main" "$MAIN_REVISION"
-          git -C "$RUNNER_TEMP/main" log --oneline -1
           cargo fetch --locked --manifest-path compiler/Cargo.toml
           cargo fetch --locked --manifest-path "$RUNNER_TEMP/main/compiler/Cargo.toml"
-      - name: Build both compilers
-        run: |
           perl .github/run-check.pl op5-build-branch \
             cargo build --manifest-path compiler/Cargo.toml --profile gate --locked
           perl .github/run-check.pl op5-build-main \
             cargo build --manifest-path "$RUNNER_TEMP/main/compiler/Cargo.toml" --profile gate --locked
-          ls -l compiler/target/gate/whitefootc "$RUNNER_TEMP/main/compiler/target/gate/whitefootc"
-      # Each module is checked on its own, so one run lists the redundant
-      # conditions of every module instead of stopping at the first.
-      - name: List every module's redundant conditions
+      - name: Collect pinned inputs and record exact identities
         run: |
-          for graph in apps/*/modules.wfg; do
-            echo "== $graph"
-            compiler/target/gate/whitefootc --check-modules --graph "$graph" 2>&1 \
-              | grep -E -A6 'error\[OP-5\]' || true
-          done
-      - name: Time and count the three checks
-        run: |
-          out="$RUNNER_TEMP/op5"
-          mkdir -p "$out"
-          branch_compiler="$PWD/compiler/target/gate/whitefootc"
-          main_compiler="$RUNNER_TEMP/main/compiler/target/gate/whitefootc"
-          branch_graph="$PWD/apps/firn/modules.wfg"
-          main_graph="$RUNNER_TEMP/main/apps/firn/modules.wfg"
-          check() {
-            label=$1 compiler=$2 graph=$3 counters=$4
-            log="$out/$label.log"
-            status=0
-            if [ -n "$counters" ]; then
-              WHITEFOOT_CHECK_WORK="$counters" perl .github/run-check.pl "op5-$label" \
-                "$compiler" --check --graph "$graph" --entry firn > "$log" 2>&1 || status=$?
-            else
-              perl .github/run-check.pl "op5-$label" \
-                "$compiler" --check --graph "$graph" --entry firn > "$log" 2>&1 || status=$?
-            fi
-            grep -E '^== END ' "$log" || echo "== $label: no END line (status $status) =="
-            grep -vE '^== (RUNNING|END|BUDGET) ' "$log" | head -n 20 || true
-          }
-          for run in main-main main-branch branch-branch; do
-            case $run in
-              main-main) compiler=$main_compiler graph=$main_graph ;;
-              main-branch) compiler=$main_compiler graph=$branch_graph ;;
-              branch-branch) compiler=$branch_compiler graph=$branch_graph ;;
-            esac
-            check "time-$run" "$compiler" "$graph" ""
-          done
-          for run in main-main main-branch branch-branch; do
-            case $run in
-              main-main) compiler=$main_compiler graph=$main_graph ;;
-              main-branch) compiler=$main_compiler graph=$branch_graph ;;
-              branch-branch) compiler=$branch_compiler graph=$branch_graph ;;
-            esac
-            check "work-$run" "$compiler" "$graph" "$out/work-$run.tsv"
-          done
-      - name: Summarize the counters
-        if: always()
-        run: |
-          out="$RUNNER_TEMP/op5"
-          summary="$out/summary.txt"
+          bundle="$RUNNER_TEMP/op5-inputs"
+          mkdir -p "$bundle/bin" "$bundle/firn-main" "$bundle/firn-branch"
+          cp compiler/target/gate/whitefootc "$bundle/bin/branch"
+          cp "$RUNNER_TEMP/main/compiler/target/gate/whitefootc" "$bundle/bin/main"
+          cp .github/run-check.pl .github/time-budgets.txt "$bundle/bin/"
+          cp -a apps/firn/. "$bundle/firn-branch/"
+          cp -a "$RUNNER_TEMP/main/apps/firn/." "$bundle/firn-main/"
           {
-            echo "## Wall time (run-check.pl END lines)"
-            grep -h -E '^== END ' "$out"/*.log || true
-            echo
-            echo "## Totals per kind and metric (sum; *_max is the maximum)"
-            for run in main-main main-branch branch-branch; do
-              file="$out/work-$run.tsv"
-              [ -f "$file" ] || { echo "$run: no counters"; continue; }
-              echo "### $run ($(wc -l < "$file") rows, $(cut -f2 "$file" | sort -u | wc -l) analysis runs)"
-              awk -F'\t' '{ key = $4 "\t" $6
-                            if ($6 ~ /_max$/) { if ($7 > total[key]) total[key] = $7 }
-                            else total[key] += $7 }
-                          END { for (key in total) print key "\t" total[key] }' "$file" | sort
-            done
-            echo
-            echo "## Per function: closures, closure cells, affine attempts, final-family exhaustions, conditions, condition queries"
-            echo "## columns: function, then those six for main-main | main-branch | branch-branch; top 40 by branch-branch closure cells"
-            for run in main-main main-branch branch-branch; do
-              file="$out/work-$run.tsv"
-              [ -f "$file" ] || : > "$file"
-              awk -F'\t' -v run="$run" '
-                $4 == "closure" && $6 == "count" { closures[$3] += $7 }
-                $4 == "closure" && $6 == "cells_sum" { cells[$3] += $7 }
-                $4 == "function" && $6 == "affine_attempts" { affine[$3] += $7 }
-                $4 == "function" && $6 == "affine_final_family_exhaustions" { exhausted[$3] += $7 }
-                $4 == "function" && $6 == "conditions" { conditions[$3] += $7 }
-                $4 == "function" && $6 == "condition_queries" { queries[$3] += $7 }
-                { seen[$3] = 1 }
-                END { for (f in seen) printf "%s\t%d\t%d\t%d\t%d\t%d\t%d\n", f, closures[f], cells[f], affine[f], exhausted[f], conditions[f], queries[f] }
-              ' "$file" | sort -t$'\t' -k1,1 > "$out/per-function-$run.tsv"
-            done
-            join -t$'\t' -a2 -e0 -o auto "$out/per-function-main-main.tsv" "$out/per-function-main-branch.tsv" \
-              | join -t$'\t' -a2 -e0 -o auto - "$out/per-function-branch-branch.tsv" \
-              | sort -t$'\t' -k15,15nr | head -n 40 || true
-          } > "$summary"
-          cat "$summary"
-          { echo '```'; cat "$summary"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-      - name: Fetch pinned Halo and Snowghost sources
-        run: |
-          out="$RUNNER_TEMP/op5"
-          mkdir -p "$out"
+            printf 'branch '; git rev-parse HEAD
+            printf 'main '; git -C "$RUNNER_TEMP/main" rev-parse HEAD
+            rustc --version
+            uname -a
+          } > "$bundle/identities.txt"
           for project in halo snowghost; do
             case $project in
               halo) repository=Halo-wf revision=$HALO_REVISION ;;
@@ -160,129 +65,403 @@ jobs:
             git -C "$RUNNER_TEMP/$project" checkout --quiet --detach "$revision"
             actual=$(git -C "$RUNNER_TEMP/$project" rev-parse HEAD)
             [ "$actual" = "$revision" ]
-            printf '%s %s\n' "$repository" "$actual" | tee "$out/$project-source.txt"
+            printf '%s %s\n' "$repository" "$actual" >> "$bundle/identities.txt"
+            mkdir "$bundle/$project"
+            # Keep relative package bindings (Halo's json and msgpack included).
+            git -C "$RUNNER_TEMP/$project" archive --format=tar --output="$RUNNER_TEMP/$project.tar" HEAD
+            tar -xf "$RUNNER_TEMP/$project.tar" -C "$bundle/$project"
           done
-      # Halo is measured on its library graph lib/halo, which holds every module of
-      # the interpreter (value, lexer, compiler, heap, vm, embedding) with its json
-      # and msgpack packages; the test-entry graphs live under Halo's research
-      # directory, which the gate's research-input check refuses. Snowghost's renderer Makefile checks
-      # modules separately because pending interfaces prevent entry builds
-      # (layout_oracle is its renderer entry). --check-modules checks every
-      # module AND every declared entry without emitting code or using a cache.
-      # Pending entry composition can therefore produce non-OP-5 rejections.
-      - name: Time the same downstream sources with both compilers
-        run: |
-          out="$RUNNER_TEMP/op5"
-          for project in halo snowghost; do
-            case $project in
-              halo) graph="$RUNNER_TEMP/halo/lib/halo/modules.wfg" ;;
-              snowghost) graph="$RUNNER_TEMP/snowghost/renderer/modules.wfg" ;;
-            esac
-            for round in 1 2 3; do
-              for variant in main branch; do
-                case $variant in
-                  main) compiler="$RUNNER_TEMP/main/compiler/target/gate/whitefootc" ;;
-                  branch) compiler="$PWD/compiler/target/gate/whitefootc" ;;
-                esac
-                label="downstream-$project-$variant-$round"
-                status=0
-                perl .github/run-check.pl "op5-$label" \
-                  /usr/bin/time -q -f '%e %x' -o "$out/$label.time" \
-                  "$compiler" --check-modules --report --graph "$graph" \
-                  > "$out/$label.log" 2>&1 || status=$?
-                printf '%s\n' "$status" > "$out/$label.status"
-                grep -E '^== END ' "$out/$label.log" || echo "== $label: no END line =="
-                echo "$label: exit $status"
-              done
-            done
-          done
-      - name: Summarize downstream checking cost
-        if: always()
+      - name: Inventory every pinned Snowghost module
+        id: inventory
         run: |
           python3 - <<'PY'
+          import json, os, pathlib, re
+          root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'op5-inputs'
+          name = r'[A-Za-z_][A-Za-z_0-9]*'
+          qualified = name + r'(?:::' + name + r')+'
+          module = re.compile(r'(' + qualified + r')\s*:\s*\[\s*(?:' + qualified + r'(?:\s*,\s*' + qualified + r')*)?\s*\]\s*;')
+          entry = re.compile(r'entry\s+' + name + r'\s*=\s*' + qualified + r'\s*;')
+          package = re.compile(r'package\s+' + name + r'\s*=\s*"[^"\n]+"\s*;')
+          def inventory(path):
+              modules = []
+              # Deliberately strict for these pins; a new/unrecognized statement
+              # fails instead of silently narrowing the measured inventory.
+              for number, raw in enumerate(path.read_text().splitlines(), 1):
+                  line = raw.strip()
+                  if not line or line.startswith('//'):
+                      continue
+                  match = module.fullmatch(line)
+                  if match:
+                      modules.append(match[1])
+                  elif not (entry.fullmatch(line) or package.fullmatch(line)):
+                      raise ValueError(f'{path}:{number}: unsupported graph statement: {line}')
+              assert len(modules) == len(set(modules)), 'duplicate module'
+              return modules
+          halo = inventory(root / 'halo/lib/halo/modules.wfg')
+          snowghost = inventory(root / 'snowghost/renderer/modules.wfg')
+          assert 'pkg::vm' in halo
+          assert len(snowghost) == 52 and all(m.startswith('pkg::') for m in snowghost)
+          cases = [{'id': 'halo-vm', 'project': 'halo', 'module': 'pkg::vm', 'graph': 'halo/lib/halo/modules.wfg'}]
+          cases += [{'id': 'snowghost-' + m.replace('::', '-'), 'project': 'snowghost', 'module': m,
+                     'graph': 'snowghost/renderer/modules.wfg'} for m in snowghost]
+          cases += [{'id': 'firn', 'project': 'firn', 'module': '', 'graph': 'firn-branch/modules.wfg'}]
+          (root / 'inventory.json').write_text(json.dumps(cases, indent=2) + '\n')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
+              out.write('matrix=' + json.dumps({'include': cases}, separators=(',', ':')) + '\n')
+          PY
+      - name: Prepare measurement and summary helper
+        run: |
+          cat > "$RUNNER_TEMP/op5-inputs/screen.py" <<'PY'
           import collections
           import json
           import math
           import os
           import pathlib
-          import statistics
+          import re
+          import subprocess
           import sys
+          import time
 
-          out = pathlib.Path(os.environ["RUNNER_TEMP"]) / "op5"
-          out.mkdir(exist_ok=True)
-          results, errors = {}, []
-          for project in ("halo", "snowghost"):
-              subjects = None
-              for variant in ("main", "branch"):
-                  runs = []
-                  for round in (1, 2, 3):
-                      label = f"downstream-{project}-{variant}-{round}"
+          PHASES = ('analysis', 'condition', 'closure', 'ordinary_prove', 'origin_view_build',
+                    'origin_view_fixed_point', 'origin_view_prove', 'affine_search', 'model_view_build')
+
+          def counters(path, branch):
+              groups = {}
+              rows = path.read_text().splitlines()
+              if not rows:
+                  raise ValueError('missing counters')
+              for line in rows:
+                  fields = line.split('\t')
+                  if len(fields) != 7:
+                      raise ValueError('malformed counter row')
+                  pid, run, function, kind, ordinal, metric, raw = fields
+                  if not all(x.isdecimal() for x in (pid, run, ordinal, raw)):
+                      raise ValueError('nonnumeric counter identity/value')
+                  value = int(raw)
+                  if value >= 2**64 - 1:
+                      raise ValueError('counter saturation')
+                  key = (pid, run, function)
+                  values = groups.setdefault(key, {})
+                  metric_key = (kind, ordinal, metric)
+                  if metric_key in values:
+                      raise ValueError('duplicate counter row')
+                  values[metric_key] = value
+              for values in groups.values():
+                  if ('function', '0', 'joins') not in values:
+                      raise ValueError('missing function counter block')
+                  if branch and any((kind, '0', phase) not in values
+                                    for kind in ('phase_ns', 'phase_calls') for phase in PHASES):
+                      raise ValueError('missing branch phase metrics')
+              return groups
+
+          def classify(record, stdout, stderr, subject):
+              status = record['status']
+              ends = re.findall(r'^== END [^\n]+: ([0-9.]+) s, exit ([0-9]+) ==$', stdout, re.M)
+              if len(ends) != 1 or int(ends[0][1]) != status:
+                  return 'invalid', 'missing or inconsistent wrapper END'
+              if not math.isfinite(record['wall_s']) or record['wall_s'] <= 0:
+                  return 'invalid', 'invalid wall time'
+              if any(message in stderr for message in (
+                      'checker work output unavailable:', 'checker work output failed:')):
+                  return 'invalid', 'checker reported counter-output failure; TSV may be a valid prefix'
+              stopped = '== STOP ' in stderr
+              if status == 124 and stopped and 'deadline exceeded' in stderr:
+                  return 'timeout', '600 s deadline; wall includes wrapper termination'
+              if status not in (0, 1) or stopped:
+                  return 'invalid', f'unexpected exit {status} or interruption'
+              if not subject:  # Existing Firn --check path has no module JSON.
+                  return ('accepted', '') if status == 0 else ('invalid', 'Firn control rejected')
+              try:
+                  verdicts = [json.loads(line) for line in stdout.splitlines() if line.startswith('{')]
+                  if len(verdicts) != 1 or verdicts[0].get('module') != subject:
+                      raise ValueError('missing, duplicate or wrong module verdict')
+                  verdict = verdicts[0]
+                  if verdict.get('reused') is not False:
+                      raise ValueError('missing no-cache provenance')
+                  if status == 0 and verdict['verdict'] == 'accepted':
+                      return 'accepted', ''
+                  if status == 1 and verdict['verdict'] == 'rejected':
+                      if type(verdict.get('complete')) is not bool or not verdict.get('tasks'):
+                          raise ValueError('missing rejection completeness/tasks')
+                      rules = dict(collections.Counter(t.get('rule') or 'no rule' for t in verdict['tasks']))
+                      return ('rejected' if verdict['complete'] else 'incomplete'), json.dumps(rules, sort_keys=True)
+                  raise ValueError('verdict and status disagree')
+              except (ValueError, KeyError, TypeError) as error:
+                  return 'invalid', str(error)
+
+          def run(root, case, out):
+              out.mkdir(parents=True, exist_ok=True)
+              (out / 'case.json').write_text(json.dumps(case) + '\n')
+              (out / 'host.txt').write_text(subprocess.check_output(['uname', '-a'], text=True)
+                                          + pathlib.Path('/proc/cpuinfo').read_text())
+              # Initial sample and same-binary twin before separate instrumentation.
+              variants = [('time-main', 'main', case['graph']), ('time-branch', 'branch', case['graph']),
+                          ('time-main-twin', 'main', case['graph']),
+                          ('work-main', 'main', case['graph']), ('work-branch', 'branch', case['graph'])]
+              if case['project'] == 'firn':
+                  # Preserve main/main vs main/migrated vs branch/migrated controls.
+                  variants.insert(0, ('time-main-original', 'main', 'firn-main/modules.wfg'))
+                  variants.insert(4, ('work-main-original', 'main', 'firn-main/modules.wfg'))
+              for label, compiler, graph in variants:
+                  command = [str(root / 'bin' / compiler), '--graph', str(root / graph)]
+                  command += ['--check-module', case['module'], '--report'] if case['module'] else ['--check', '--entry', 'firn']
+                  env = dict(os.environ, WHITEFOOT_CHECK_TIMEOUT='600')
+                  env.pop('WHITEFOOT_CHECK_WORK', None)
+                  # Experimental censoring, not a new gate-stage time budget.
+                  env.pop('WHITEFOOT_TIME_BUDGET_RECORD', None)
+                  if label.startswith('work-'):
+                      env['WHITEFOOT_CHECK_WORK'] = str(out / (label + '.tsv'))
+                  started = time.monotonic()
+                  with (out / (label + '.stdout')).open('w') as stdout, (out / (label + '.stderr')).open('w') as stderr:
+                      result = subprocess.run(['perl', str(root / 'bin/run-check.pl'), 'op5-' + label, *command],
+                                              stdout=stdout, stderr=stderr, env=env, check=False)
+                  record = {'status': result.returncode, 'wall_s': time.monotonic() - started,
+                            'compiler': compiler, 'graph': graph, 'command': command, 'deadline_s': 600}
+                  (out / (label + '.json')).write_text(json.dumps(record, indent=2) + '\n')
+                  print(case['id'], label, record, flush=True)
+
+          def summarize(root, results, output):
+              output.mkdir(parents=True, exist_ok=True)
+              cases = json.loads((root / 'inventory.json').read_text())
+              measurements, analyses, errors = [], [], []
+              for case in cases:
+                  directory = results / case['id']
+                  labels = ['time-main', 'time-branch', 'time-main-twin', 'work-main', 'work-branch']
+                  if case['project'] == 'firn':
+                      labels += ['time-main-original', 'work-main-original']
+                  for label in labels:
+                      item = {'case': case['id'], 'label': label, 'state': 'invalid', 'wall_s': None}
                       try:
-                          seconds, timed_status = (out / f"{label}.time").read_text().split()
-                          seconds, timed_status = float(seconds), int(timed_status)
-                          status = int((out / f"{label}.status").read_text())
-                          if status not in (0, 1) or timed_status != status:
-                              raise ValueError(f"unexpected exit: wrapper={status}, compiler={timed_status}")
-                          if not math.isfinite(seconds) or seconds <= 0:
-                              raise ValueError(f"invalid elapsed time: {seconds}")
-                          log = (out / f"{label}.log").read_text()
-                          if f"== END op5-{label}:" not in log or "== STOP " in log:
-                              raise ValueError("missing END or interrupted command")
-                          verdicts = [json.loads(line) for line in log.splitlines() if line.startswith("{")]
-                          current = [("module", v["module"]) if "module" in v else ("entry", v["entry"])
-                                     for v in verdicts]
-                          if not current or len(set(current)) != len(current):
-                              raise ValueError("missing or duplicate module/entry verdicts")
-                          if subjects is None:
-                              subjects = current
-                          if current != subjects:
-                              raise ValueError("module/entry coverage differs between runs or compilers")
-                          if any(v["verdict"] not in ("accepted", "rejected") for v in verdicts):
-                              raise ValueError("unknown verdict")
-                          rejected = [v for v in verdicts if v["verdict"] == "rejected"]
-                          if status != int(bool(rejected)):
-                              raise ValueError("exit status disagrees with source verdicts")
-                          # Entry composition can repeat module diagnostics: count each
-                          # source site/function/failure once, separately for each rule.
-                          tasks = {(t["rule"], t["file"], t["line"], t["column"], t["function"], t["failure"])
-                                   for v in rejected for t in v["tasks"]}
-                          counts = collections.Counter(t[0] or "no rule" for t in tasks)
-                          incomplete = sum(not v["complete"] for v in rejected)
-                          runs.append((seconds, status, counts, incomplete))
+                          record = json.loads((directory / (label + '.json')).read_text())
+                          stdout = (directory / (label + '.stdout')).read_text()
+                          stderr = (directory / (label + '.stderr')).read_text()
+                          state, detail = classify(record, stdout, stderr, case['module'])
+                          item.update(record, state=state, detail=detail)
+                          if label.startswith('work-') and state == 'invalid':
+                              item['counter_status'] = 'invalid; excluded from numeric summaries'
+                          elif label.startswith('work-'):
+                              try:
+                                  groups = counters(directory / (label + '.tsv'), record['compiler'] == 'branch')
+                                  for (pid, run_id, function), values in groups.items():
+                                      analyses.append({'case': case['id'], 'label': label, 'pid': pid,
+                                                       'run': run_id, 'function': function,
+                                                       'metrics': {'/'.join(k): v for k, v in values.items()}})
+                                  item['analysis_runs'] = len(groups)
+                                  item['counter_status'] = 'available for completed analyses'
+                                  item['phase_metrics'] = 'present' if any(k[0] == 'phase_ns' for v in groups.values() for k in v) else 'unavailable in this compiler'
+                              except (OSError, ValueError) as error:
+                                  item['counter_error'] = str(error)
+                                  # Constant-only modules can run no function analysis;
+                                  # interruption also loses an unfinished function's rows.
+                                  # Neither absence proves zero work or invalidates a
+                                  # separately complete verdict/timing observation.
+                                  absent = isinstance(error, FileNotFoundError) or str(error) == 'missing counters'
+                                  if absent:
+                                      item['counter_status'] = 'unavailable: no completed rows; no-analysis module or missing evidence'
+                                  else:
+                                      item['counter_status'] = 'invalid; excluded from numeric summaries'
+                                      item['state'] = 'invalid'
+                                      item['detail'] += '; counters: ' + str(error)
+                          if item['state'] == 'invalid':
+                              errors.append(case['id'] + '/' + label + ': ' + item['detail'])
                       except (OSError, ValueError, KeyError, TypeError) as error:
-                          errors.append(f"{label}: {error}")
-                  if len(runs) == 3:
-                      if any(r[1:] != runs[0][1:] for r in runs[1:]):
-                          errors.append(f"{project}/{variant}: status or diagnostic counts changed between rounds")
-                      results[project, variant] = runs
+                          item['detail'] = str(error)
+                          errors.append(case['id'] + '/' + label + ': ' + str(error))
+                      measurements.append(item)
+              (output / 'measurements.json').write_text(json.dumps(measurements, indent=2) + '\n')
+              with (output / 'per-analysis.jsonl').open('w') as out:
+                  for analysis in analyses:
+                      out.write(json.dumps(analysis) + '\n')
+              functions = {}
+              selected = {'conditions', 'condition_queries', 'redundant_conditions',
+                          'origin_view_expressions', 'origin_view_members', 'origin_view_passes'}
+              for analysis in analyses:
+                  key = (analysis['case'], analysis['label'], analysis['function'])
+                  function = functions.setdefault(key, {'case': key[0], 'label': key[1], 'function': key[2],
+                                                        'analysis_runs': 0, 'metrics': {}})
+                  function['analysis_runs'] += 1
+                  for metric, value in analysis['metrics'].items():
+                      kind, _, name = metric.split('/')
+                      if kind in ('phase_ns', 'phase_calls') or kind == 'function' and name in selected:
+                          function['metrics'][metric] = function['metrics'].get(metric, 0) + value
+              # A metric absent from this compiler stays absent, never zero.
+              # Each phase sum is inclusive across invocations; nested analyses
+              # overlap, so these sums do not partition wall time.
+              (output / 'per-function.json').write_text(json.dumps(list(functions.values()), indent=2) + '\n')
+              lines = ['## OP-5 module attribution screen', (root / 'identities.txt').read_text(),
+                       'One hosted sample: main, branch, main twin; separate instrumented main and branch.',
+                       'Each command has a 600 s deadline. Wall time includes wrapper termination and is retained on timeout.',
+                       'No migrated Halo/Snowghost equivalent is established and no existing explanation-disable switch exists.',
+                       'Diagnostics and recovery remain enabled; migrated Firn is the accepted-source control.',
+                       'OP-5-induced diagnostic/recovery cost also counts toward the owner\'s >50% condition; acceptance is not a new restriction on that condition.',
+                       'Module checks exclude entry composition; these are not the previous all-graph timings.',
+                       'Ratios require completed, complete verdicts and an accepted main/twin; rejections are labeled.',
+                       'New experiment labels have no gate budgets; 600 s is a censoring deadline, not a budget approval.',
+                       'A single hosted screen attributes candidates, not precise percentages; it does not erase earlier >50% observations or exempt diagnostic/recovery work.',
+                       '', '| Module/control | Main s/state | Branch s/state | Twin s/state | Branch/main | Twin/main |',
+                       '|---|---|---|---|---|---|']
+              lookup = {(m['case'], m['label']): m for m in measurements}
+              def rank(case):
+                  b = lookup[case['id'], 'time-branch']
+                  return (0 if b['state'] in ('timeout', 'incomplete', 'invalid') else 1, -(b['wall_s'] or 0))
+              for case in sorted(cases, key=rank):
+                  a, b, twin = [lookup[case['id'], label] for label in ('time-main', 'time-branch', 'time-main-twin')]
+                  okay = a['state'] == twin['state'] == 'accepted' and b['state'] in ('accepted', 'rejected')
+                  ratios = [f"{b['wall_s']/a['wall_s']:.3f}", f"{twin['wall_s']/a['wall_s']:.3f}"] if okay else ['unavailable', 'unavailable']
+                  times = ['unavailable/invalid' if m['wall_s'] is None else f"{m['wall_s']:.3f}/{m['state']}" for m in (a, b, twin)]
+                  lines.append('| ' + ' | '.join([case['id'], *times, *ratios]) + ' |')
+              lines += ['', '### Firn source-migration control',
+                        'main-original uses main sources; main and branch use the same migrated branch sources.',
+                        '| Invocation | Wall s | State |', '|---|---:|---|']
+              for label in ('time-main-original', 'time-main', 'time-branch'):
+                  m = lookup['firn', label]
+                  elapsed = 'unavailable' if m['wall_s'] is None else f"{m['wall_s']:.3f}"
+                  lines.append(f"| {label} | {elapsed} | {m['state']} |")
+              lines += ['', '### Instrumentation and verdict details',
+                        'Full per-invocation statuses/times are in measurements.json; every emitted analysis ID and counter is in per-analysis.jsonl and raw TSVs.',
+                        'per-function.json groups every module/function: analysis multiplicity, conditions/queries/redundancies, origin inventory/passes, and each inclusive phase separately. Missing metrics remain absent.',
+                        'phase_ns and phase_calls are inclusive and nested: never add their times, including nested function analyses.',
+                        'Main phase metrics may be unavailable. Missing interrupted analyses are unknown, never zero.',
+                        'A missing/empty counter file is unavailable attribution, not a failed source verdict: constant-only modules may perform no function analysis. Malformed, saturated or failed counter output is invalid and excluded.',
+                        'Repeated function names retain separate process/run identities; repetition alone does not prove erroneous reanalysis.',
+                        'Work/time is instrumentation overhead from one pair, available only for matching complete verdicts; it is not a compiler slowdown ratio.',
+                        '', '| Case/run | State | Analysis runs | Counters/phases | Work/time | Detail |', '|---|---|---:|---|---|---|']
+              for m in measurements:
+                  if m['label'].startswith('work-') or m['state'] != 'accepted':
+                      timed = lookup.get((m['case'], m['label'].replace('work-', 'time-', 1)))
+                      overhead = 'unavailable'
+                      if m['label'].startswith('work-') and m.get('analysis_runs') and timed and m['state'] == timed['state'] and m['state'] in ('accepted', 'rejected'):
+                          overhead = f"{m['wall_s']/timed['wall_s']:.3f}"
+                      lines.append('| ' + ' | '.join([m['case'] + '/' + m['label'], m['state'], str(m.get('analysis_runs', 'unavailable')),
+                                                     m.get('counter_status', 'unavailable') + '; phases: ' + m.get('phase_metrics', 'unavailable'),
+                                                     overhead, m.get('detail', '') + ' ' + m.get('counter_error', '')]) + ' |')
+              lines += ['', '### Largest completed branch analysis invocations (inclusive)',
+                        '| Case | PID/run | Function | Analysis s | Condition s/calls | Origin build s/calls | Origin fixed point s/calls |',
+                        '|---|---|---|---:|---|---|---|']
+              branch = [a for a in analyses if a['label'] == 'work-branch']
+              for a in sorted(branch, key=lambda a: -a['metrics'].get('phase_ns/0/analysis', 0))[:40]:
+                  metrics = a['metrics']
+                  def phase(name):
+                      ns, calls = metrics.get('phase_ns/0/' + name), metrics.get('phase_calls/0/' + name)
+                      return 'unavailable' if ns is None or calls is None else f'{ns/1e9:.4f}/{calls}'
+                  lines.append('| ' + ' | '.join([a['case'], a['pid'] + '/' + a['run'], a['function'],
+                                                 phase('analysis'), phase('condition'), phase('origin_view_build'), phase('origin_view_fixed_point')]) + ' |')
+              if errors:
+                  lines += ['', '### Invalid observations (not source rejections)', *errors]
+              summary = '\n'.join(lines) + '\n'
+              (output / 'summary.md').write_text(summary)
+              print(summary)
+              with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as out:
+                  out.write(summary)
+              return bool(errors)
 
-          lines = ["## Halo and Snowghost checking cost",
-                   "Same pinned sources; 3 interleaved runs per compiler; seconds exclude wrapper overhead.",
-                   "Errors remain: this estimates checking work, including every declared entry.",
-                   "Snowghost pending entry composition may produce non-OP-5 rejections; these are listed separately."]
-          if errors:
-              lines += ["Measurement invalid; no timing comparison reported.", *errors]
-          else:
-              lines += ["", "| Project | Main median s | Branch median s | Branch/main | Main min-max s | Branch min-max s | OP-5 errors main/branch |",
-                        "|---|---:|---:|---:|---|---|---:|"]
-              for project in ("halo", "snowghost"):
-                  main, branch = (results[project, v] for v in ("main", "branch"))
-                  a, b = ([r[0] for r in runs] for runs in (main, branch))
-                  lines.append(f"| {project} | {statistics.median(a):.2f} | {statistics.median(b):.2f} | {statistics.median(b)/statistics.median(a):.3f} | {min(a):.2f}-{max(a):.2f} | {min(b):.2f}-{max(b):.2f} | {main[0][2]['OP-5']}/{branch[0][2]['OP-5']} |")
-              lines += ["", "| Project/compiler | Exit statuses (rounds 1-3) | Other rejection rules (unique diagnostics) | Incomplete verdicts per run |",
-                        "|---|---|---|---:|"]
-              for (project, variant), runs in results.items():
-                  other = {rule: count for rule, count in sorted(runs[0][2].items()) if rule != "OP-5"}
-                  lines.append(f"| {project}/{variant} | {','.join(str(r[1]) for r in runs)} | {json.dumps(other, sort_keys=True)} | {runs[0][3]} |")
-          summary = "\n".join(lines) + "\n"
-          (out / "downstream-summary.md").write_text(summary)
-          print(summary)
-          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as file:
-              file.write(summary)
-          sys.exit(bool(errors))
+          def self_test():
+              import tempfile
+              def sample(status, verdict=None, stop=''):
+                  stdout = f'== END op5-test: 1.00 s, exit {status} ==\n'
+                  if verdict is not None:
+                      stdout += json.dumps(verdict) + '\n'
+                  return classify({'status': status, 'wall_s': 1.0}, stdout, stop, 'pkg::test')[0]
+              accepted = {'module': 'pkg::test', 'verdict': 'accepted', 'reused': False}
+              rejected = dict(accepted, verdict='rejected', complete=True, tasks=[{'rule': 'OP-5'}])
+              assert sample(0, accepted) == 'accepted'
+              assert sample(1, rejected) == 'rejected'
+              assert sample(1, dict(rejected, complete=False)) == 'incomplete'
+              assert sample(124, stop='== STOP op5-test: deadline exceeded ==') == 'timeout'
+              for message in ('checker work output unavailable: denied', 'checker work output failed: disk full'):
+                  assert sample(0, accepted, message) == 'invalid'
+              for status, verdict in [(0, None), (1, accepted), (2, accepted), (124, None), (0, dict(accepted, module='pkg::wrong'))]:
+                  assert sample(status, verdict) == 'invalid'
+              assert classify({'status': 0, 'wall_s': 1}, '', '', 'pkg::test')[0] == 'invalid'
+              with tempfile.TemporaryDirectory() as scratch:
+                  path = pathlib.Path(scratch) / 'work.tsv'
+                  path.write_text('1\t0\tf\tfunction\t0\tjoins\t0\n')
+                  assert counters(path, False)
+                  for text, branch in [('', False), ('truncated\n', False),
+                                       ('1\t0\tf\tfunction\t0\tjoins\t18446744073709551615\n', False),
+                                       ('1\t0\tf\tfunction\t0\tjoins\t0\n', True)]:
+                      path.write_text(text)
+                      try:
+                          counters(path, branch)
+                      except ValueError:
+                          pass
+                      else:
+                          raise AssertionError('invalid counter evidence accepted')
+              print('summary controls: valid, rejected, incomplete, timeout, missing/invalid verdict and counter evidence distinguished')
+
+          if __name__ == '__main__':
+              mode = sys.argv[1]
+              if mode == 'self-test':
+                  self_test()
+              elif mode == 'run':
+                  root, out = map(pathlib.Path, sys.argv[2:4])
+                  case = next(c for c in json.loads((root / 'inventory.json').read_text()) if c['id'] == sys.argv[4])
+                  run(root, case, out / case['id'])
+              elif mode == 'summarize':
+                  sys.exit(summarize(*map(pathlib.Path, sys.argv[2:5])))
+              else:
+                  raise ValueError(mode)
           PY
+          python3 -m py_compile "$RUNNER_TEMP/op5-inputs/screen.py"
+          python3 "$RUNNER_TEMP/op5-inputs/screen.py" self-test
+      - name: Pack shared inputs
+        run: tar -czf "$RUNNER_TEMP/op5-inputs.tar.gz" -C "$RUNNER_TEMP" op5-inputs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: op5-inputs
+          path: ${{ runner.temp }}/op5-inputs.tar.gz
+
+  screen:
+    name: Screen ${{ matrix.id }}
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 80
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: op5-inputs
+          path: ${{ runner.temp }}
+      - name: Unpack inputs
+        run: tar -xzf "$RUNNER_TEMP/op5-inputs.tar.gz" -C "$RUNNER_TEMP"
+      - name: Interleave one sample and twin, then collect per-function work
+        env:
+          CASE_ID: ${{ matrix.id }}
+        run: |
+          python3 "$RUNNER_TEMP/op5-inputs/screen.py" run \
+            "$RUNNER_TEMP/op5-inputs" "$RUNNER_TEMP/op5-results" "$CASE_ID"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: op5-cost
-          path: ${{ runner.temp }}/op5
+          name: op5-result-${{ matrix.id }}
+          path: ${{ runner.temp }}/op5-results
+          if-no-files-found: error
+
+  summary:
+    needs: [prepare, screen]
+    if: always() && needs.prepare.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: op5-inputs
+          path: ${{ runner.temp }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: op5-result-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/op5-results
+      - name: Rank censored modules and completed analyses without inventing zero work
+        run: |
+          tar -xzf "$RUNNER_TEMP/op5-inputs.tar.gz" -C "$RUNNER_TEMP"
+          python3 "$RUNNER_TEMP/op5-inputs/screen.py" summarize \
+            "$RUNNER_TEMP/op5-inputs" "$RUNNER_TEMP/op5-results" "$RUNNER_TEMP/op5-summary"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: op5-summary
+          path: ${{ runner.temp }}/op5-summary
