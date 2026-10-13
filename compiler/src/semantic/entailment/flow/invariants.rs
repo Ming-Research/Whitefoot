@@ -49,12 +49,12 @@ impl Reasoning<'_, '_, '_> {
                             .ok_or(AffineCheckError::CoefficientMismatch)?;
                         values.push(self.vocabulary.measure_atom(term, state));
                     }
-                    // [INV-1, ENT-6] a reference field place factor reads that
+                    // [INV-1, ENT-6] a tracked field place factor reads that
                     // place's current image, retargeted by exactly the events
                     // that kill the place, as a measure factor's is.
                     CheckedAffineExpressionKind::Field(field) => {
                         let value = self
-                            .reference_field_image(field, state)
+                            .tracked_field_image(field, state)
                             .ok_or(AffineCheckError::CoefficientMismatch)?;
                         values.push(value);
                     }

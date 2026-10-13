@@ -68,13 +68,13 @@ impl Reasoning<'_, '_, '_> {
                         view.affine.measure_atoms.borrow_mut().insert(term, image);
                         self.target_measure(term, &mut view, next, &mut targets);
                     }
-                    // [ENT-6] a reference field place has one current image
+                    // [ENT-6] a tracked field place has one current image
                     // shared by all frozen candidate views, as an ordinary
                     // measure does. This adds no premise.
                     CheckedAffineExpressionKind::Field(expression) => {
                         let term = self.read_operand(expression).ok_or(None)?;
                         let image = self
-                            .reference_field_image(expression, &state.affine)
+                            .tracked_field_image(expression, &state.affine)
                             .ok_or(None)?;
                         view.affine.measure_atoms.borrow_mut().insert(term, image);
                     }

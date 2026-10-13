@@ -3,7 +3,7 @@ struct Counter {
 }
 
 fn inspect(s: Counter) -> result: u64 pure {
-  doc "A field of a by-value struct parameter is no reference field place: INV-1 admits a field factor only when its path is written from a reference parameter, so the invariant's factor is refused as a field selection.";
+  doc "A field of a by-value struct parameter is a tracked field place, so INV-1 admits it as a factor and the relation holds over its u64 image.";
   invariant bounded: 0_u64 <= s.count;
   let capacity = s.count;
   return capacity;

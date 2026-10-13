@@ -608,9 +608,9 @@ impl Vocabulary {
             | TermKind::EntryDatum { .. }
             | TermKind::MeasureDatum { .. }
             | TermKind::CallDatum { .. } => Some(self.measure_atom(term, state)),
-            // [ENT-6] a reference field place carries its current image as a
+            // [ENT-6] a tracked field place carries its current image as a
             // measure does.
-            TermKind::Place(_, _) if self.is_reference_field_place(term) => {
+            TermKind::Place(_, _) if self.is_tracked_field_place(term) => {
                 Some(self.measure_atom(term, state))
             }
             TermKind::Place(_, _)
@@ -780,16 +780,16 @@ impl Reasoning<'_, '_, '_> {
         }
     }
 
-    /// [ENT-6] a copy read of a reference field place reads that place's
+    /// [ENT-6] a copy read of a tracked field place reads that place's
     /// current image, minted on first demand; any other expression reads
     /// none here.
-    pub(super) fn reference_field_image(
+    pub(super) fn tracked_field_image(
         &mut self,
         expression: &CheckedExpression,
         state: &AffineFlowState,
     ) -> Option<AffineForm> {
         let term = self.read_operand(expression)?;
-        if !self.vocabulary.is_reference_field_place(term) {
+        if !self.vocabulary.is_tracked_field_place(term) {
             return None;
         }
         Some(self.vocabulary.measure_atom(term, state))
@@ -1079,7 +1079,11 @@ impl Reasoning<'_, '_, '_> {
                 value,
                 ..
             } => self.affine_pure_expression_form(value, state),
-            CheckedExpression::ProjectValue { .. } => self.reference_field_image(expression, state),
+            // [ENT-6] a field read of a value root or through a reference
+            // reads the tracked field place's current image.
+            CheckedExpression::Project { .. } | CheckedExpression::ProjectValue { .. } => {
+                self.tracked_field_image(expression, state)
+            }
             CheckedExpression::IntegerOperation {
                 operation,
                 arguments,

@@ -596,35 +596,6 @@ impl<'unit> Checker<'_, 'unit> {
         // `p^.len`. A bare `p^` naming no measure is still no
         // affine atom, and the refusal for it stands below.
         let dereferenced = self.types.declarations.tree.place_has_dereference(place)?;
-        // [INV-1, ENT-6] a reference field place: a `&T` reference parameter,
-        // its `^`, and field selections ending at an integer field. The flow
-        // carries one current image for that place, as it does for a measure,
-        // so the factor reads that image and evaluates nothing.
-        if dereferenced
-            && let Some((declaration, expression)) = self.reference_field_factor(
-                check_context,
-                &function.parameters,
-                place,
-                bindings,
-                owner.value_role(),
-            )?
-        {
-            if !allowed_values.contains(&declaration) {
-                return self.types.declarations.invalid_affine_proof(
-                    owner,
-                    node,
-                    "an affine relation reads a value outside its admitted entry state",
-                    "read a field of a reference parameter that exists before this proof point",
-                );
-            }
-            return Ok((
-                CheckedAffineExpression {
-                    node_path: self.types.declarations.tree.path(node)?.clone(),
-                    kind: CheckedAffineExpressionKind::Field(Box::new(expression)),
-                },
-                None,
-            ));
-        }
         // [INV-1, OP-15] one `place` formed from an admitted measure place by
         // one measure-member `psuffix`. The relation evaluates nothing and
         // reads no storage, so the factor reaches the resolved place and the
@@ -687,23 +658,26 @@ impl<'unit> Checker<'_, 'unit> {
                 ));
             }
         }
-        if let Some(measure) = self.types.declarations.trailing_measure_member(&suffixes)? {
-            let base = &suffixes[..suffixes.len() - 1];
-            if let Some(SelectedPlaceType::Value(ty)) = self.types.place_prefix_selected_kind(
+        // [TYPE-10] a trailing measure spelling over a prefix of unmeasured
+        // type is an ordinary source field, judged with the other fields
+        // below.
+        let mut trailing_measure = self.types.declarations.trailing_measure_member(&suffixes)?;
+        let mut unmeasured_member = false;
+        if trailing_measure.is_some()
+            && let Some(SelectedPlaceType::Value(ty)) = self.types.place_prefix_selected_kind(
                 check_context,
                 place,
-                base,
+                &suffixes[..suffixes.len() - 1],
                 bindings,
                 owner.value_role(),
-            )? && ty.measured().is_none()
-            {
-                return self.types.declarations.invalid_affine_proof(
-                    owner,
-                    node,
-                    "an affine factor selects a field or an element of a place",
-                    "bind the integer value with a `let` and use that binding",
-                );
-            }
+            )?
+            && ty.measured().is_none()
+        {
+            trailing_measure = None;
+            unmeasured_member = true;
+        }
+        if let Some(measure) = trailing_measure {
+            let base = &suffixes[..suffixes.len() - 1];
             let (expression, declaration) = self.check_proof_measure_place(
                 context,
                 place,
@@ -735,7 +709,31 @@ impl<'unit> Checker<'_, 'unit> {
                 None,
             ));
         }
-        if dereferenced {
+        // [INV-1, ENT-6] a tracked field place: a binding, its `^` exactly
+        // when it is a reference, and field selections ending at an integer
+        // field. The flow carries one current image for that place, as it
+        // does for a measure, so the factor reads that image and evaluates
+        // nothing.
+        if let Some((declaration, expression)) =
+            self.tracked_field_factor(check_context, place, bindings, owner.value_role())?
+        {
+            if !allowed_values.contains(&declaration) {
+                return self.types.declarations.invalid_affine_proof(
+                    owner,
+                    node,
+                    "an affine relation reads a value outside its admitted entry state",
+                    "read a field of a value that exists before this proof point",
+                );
+            }
+            return Ok((
+                CheckedAffineExpression {
+                    node_path: self.types.declarations.tree.path(node)?.clone(),
+                    kind: CheckedAffineExpressionKind::Field(Box::new(expression)),
+                },
+                None,
+            ));
+        }
+        if dereferenced && !unmeasured_member {
             return self.types.declarations.invalid_affine_proof(
                 owner,
                 node,
@@ -979,7 +977,7 @@ fn checked_affine_expression(source: &CheckedAffineExpression) -> Option<AffineE
     let mut pending = vec![AffineConversion::Visit(source)];
     let mut values = Vec::new();
     // [INV-1] the factor shapes with no checker-visible term identity: a
-    // measure former's place or a reference field place, compared by their
+    // measure former's place or a tracked field place, compared by their
     // checked read, and a const generic at the symbolic instance. They share
     // one descending index block so no two of them collide and none collides
     // with a binding's own ascending index.

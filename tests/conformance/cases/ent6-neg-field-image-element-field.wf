@@ -10,7 +10,7 @@ fn store_sum(cells: &Array<Counter, 4>, value: u64, extra: u64) -> result: u64 w
   requires value + extra <= 800_u64;
   ensures result <= 800_u64;
 } {
-  doc "An element's field is no reference field place: the commit gives it no image and the read-back receives a fresh one, so the postcondition stays unproved where the same shape through a field of the parameter itself is proved.";
+  doc "An element's field is no tracked field place: the commit gives it no image and the read-back receives a fresh one, so the postcondition stays unproved where the same shape through a field of the parameter itself is proved.";
   set cells^[0_u64].count = value + extra;
   let again = cells^[0_u64].count;
   return again;

@@ -1,0 +1,20 @@
+struct Reading {
+  value: i64;
+}
+
+fn pick(flag: bool, d: u8) -> result: i64 pure {
+  doc "Each arm commits a different bounded constant to the local's field. The join keeps no image the arms do not share, and the field's joined image reaches the common lower bound 5 through the L0 index, so the subtraction of a widened byte cannot overflow.";
+  let e = Reading(value: 0_i64);
+  if flag {
+    set e.value = 5_i64;
+  } else {
+    set e.value = 9_i64;
+  }
+  let w = cvt::<u8, i64>(d);
+  let r = e.value - w;
+  return r;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

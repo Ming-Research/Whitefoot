@@ -9,7 +9,7 @@ struct Counter {
 fn advance(counter: Counter, delta: u64) -> result: u64 pure contract {
   requires counter.count + delta <= 800_u64;
 } {
-  doc "A field of a by-value parameter is no reference field place, so the requirement gives its read no image and the sum stays unproved.";
+  doc "A field of a by-value parameter is a tracked field place: the requirement normalizes against its entry image, the read takes that same image, and the sum is proved.";
   let count = counter.count;
   let total = count + delta;
   return total;

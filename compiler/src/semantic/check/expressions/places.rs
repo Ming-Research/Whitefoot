@@ -406,14 +406,14 @@ impl<'unit> Checker<'_, 'unit> {
     }
 
     /// [INV-1, ENT-6] the read one written affine factor denotes when it is a
-    /// reference field place: its base names a `&T` reference parameter of
-    /// the function, followed by `^` and one or more field selections, and
-    /// the last selection is an integer field. `None` for every other place,
-    /// which the caller judges by its own rows.
-    pub(in crate::semantic::check) fn reference_field_factor(
+    /// tracked field place: its base names a live binding, followed by `^`
+    /// exactly when that binding is a `&T` reference and then by one or more
+    /// field selections, and its proof path is that root with field
+    /// selections alone, ending at an integer field. `None` for every other
+    /// place, which the caller judges by its own rows.
+    pub(in crate::semantic::check) fn tracked_field_factor(
         &mut self,
         check_context: &CheckContext<'_>,
-        parameters: &[super::super::ParameterSignature],
         node: NodeId,
         bindings: &HashMap<DeclarationId, LocalBinding>,
         root_role: LexicalUseRole,
@@ -424,15 +424,19 @@ impl<'unit> Checker<'_, 'unit> {
             .declarations
             .tree
             .children_with(node, Production::Psuffix)?;
-        let Some((first, fields)) = suffixes.split_first() else {
+        let Some(&first) = suffixes.first() else {
             return Ok(None);
         };
-        if fields.is_empty()
-            || !matches!(
-                self.types.declarations.tree.place_suffix(*first)?,
-                PlaceSuffix::Dereference
-            )
-        {
+        let dereferenced = matches!(
+            self.types.declarations.tree.place_suffix(first)?,
+            PlaceSuffix::Dereference
+        );
+        let fields = if dereferenced {
+            &suffixes[1..]
+        } else {
+            suffixes.as_slice()
+        };
+        if fields.is_empty() {
             return Ok(None);
         }
         for suffix in fields {
@@ -463,9 +467,13 @@ impl<'unit> Checker<'_, 'unit> {
         else {
             return Ok(None);
         };
-        if !parameters.iter().any(|parameter| {
-            parameter.declaration == declaration && parameter.mode == CheckedMode::Reference
-        }) {
+        // The written `^` follows the root exactly when the root is a `&T`
+        // reference; any other spelling is no tracked field place, and the
+        // caller's own rows judge it.
+        let Some(root) = bindings.get(&declaration) else {
+            return Ok(None);
+        };
+        if !root.live || dereferenced != (root.mode == CheckedMode::Reference) {
             return Ok(None);
         }
         let place = self.elaborate_place_prefix(
@@ -476,12 +484,16 @@ impl<'unit> Checker<'_, 'unit> {
             bindings,
             root_role,
         )?;
-        let path = &place.resolved.identity.path;
+        let identity = &place.resolved.identity;
         if !matches!(place.ty, CheckedType::Integer(_))
             || place.measure.is_some()
             || place.range_referent
-            || path.is_empty()
-            || !path.iter().all(|step| matches!(step, PlaceStep::Field(_)))
+            || !matches!(identity.root, PlaceRoot::Binding(_))
+            || identity.path.is_empty()
+            || !identity
+                .path
+                .iter()
+                .all(|step| matches!(step, PlaceStep::Field(_)))
         {
             return Ok(None);
         }

@@ -77,7 +77,7 @@ impl Vocabulary {
     pub(super) fn measure_term_root(&self, term: TermId) -> Option<BindingId> {
         let root = match self.terms.kind(term) {
             TermKind::Measure(_, place) => place.root,
-            TermKind::Place(place, _) if self.is_reference_field_place(term) => place.root,
+            TermKind::Place(place, _) if self.is_tracked_field_place(term) => place.root,
             _ => return None,
         };
         match root {
@@ -86,20 +86,18 @@ impl Vocabulary {
         }
     }
 
-    /// [ENT-6] whether one term is a reference field place: a tracked integer
-    /// place whose proof path is a `&T` reference parameter followed by one
-    /// or more field selections and nothing else. Such a place carries a
-    /// current image exactly as a measure does: minted on first demand,
-    /// replaced by a [SET-1] commit to it, removed by every [ENT-5] event
-    /// that kills the term, and retained by a join only when identical.
-    pub(super) fn is_reference_field_place(&self, term: TermId) -> bool {
+    /// [ENT-6] whether one term is a tracked field place: a tracked integer
+    /// place whose proof path is one binding root, held by value or read
+    /// through its `&T` reference, followed by one or more field selections
+    /// and nothing else. Such a place carries a current image exactly as a
+    /// measure does: minted on first demand, replaced by a [SET-1] commit to
+    /// it, removed by every [ENT-5] event that kills the term, a scope exit
+    /// of its root included, and retained by a join only when identical.
+    pub(super) fn is_tracked_field_place(&self, term: TermId) -> bool {
         let TermKind::Place(place, _) = self.terms.kind(term) else {
             return false;
         };
-        let PlaceRoot::Binding(root) = place.root else {
-            return false;
-        };
-        self.reference_parameters.contains(&root)
+        matches!(place.root, PlaceRoot::Binding(_))
             && !place.path.is_empty()
             && place
                 .path
@@ -222,7 +220,7 @@ impl Vocabulary {
                     | TermKind::CallDatum { .. }
                     | TermKind::EntryDatum { .. }
                     | TermKind::MeasureDatum { .. }
-            ) || self.is_reference_field_place(id)
+            ) || self.is_tracked_field_place(id)
             {
                 self.measure_terms_seen.push(id);
             }
@@ -2875,7 +2873,11 @@ impl Reasoning<'_, '_, '_> {
                 value,
                 ..
             } => self.affine_pre_domain_form(value, state),
-            CheckedExpression::ProjectValue { .. } => self.reference_field_image(expression, state),
+            // [ENT-6] a field read of a value root or through a reference
+            // reads the tracked field place's current image.
+            CheckedExpression::Project { .. } | CheckedExpression::ProjectValue { .. } => {
+                self.tracked_field_image(expression, state)
+            }
             CheckedExpression::IntegerOperation {
                 operation,
                 arguments,
