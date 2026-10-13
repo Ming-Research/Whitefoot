@@ -347,7 +347,7 @@ jobs:
       # The tree a bundled Windows package would carry: clang, clang++,
       # ld.lld, lld and the DLLs they load from bin; the x86-64 MinGW
       # sysroot and shared headers; clang's resource headers and x86-64
-      # runtime libraries. Then that tree, beside a copy of whitefootc and a
+      # runtime libraries for Windows only. Then that tree, beside a copy of whitefootc and a
       # toolchain-manifest.json marker, builds and runs a program with no
       # other toolchain on PATH.
       - name: Measure a trimmed x86-64 llvm-mingw and use it as a package
@@ -399,12 +399,13 @@ jobs:
           echo "resource directory: $relative"
           mkdir -p "$trim/$relative"
           cp -r "$resource/include" "$trim/$relative/"
-          (cd "$resource" && find lib -type f -name '*x86_64*' -print) | while IFS= read -r file; do
+          (cd "$resource" && find lib -type f -name '*x86_64*' \( -path '*windows*' -o -path '*mingw*' \) -print) | while IFS= read -r file; do
             mkdir -p "$trim/$relative/$(dirname "$file")"
             cp "$resource/$file" "$trim/$relative/$file"
           done
           echo "--- largest files in the trimmed tree ---"
-          find "$trim" -type f -printf '%s %P\n' | sort -rn | head -25
+          find "$trim" -type f -printf '%s %P\n' | sort -rn > "$temp/sizes.txt"
+          sed -n 1,25p "$temp/sizes.txt"
           echo "full tree bytes:    $(du -sb "$src" | cut -f1)"
           echo "trimmed tree bytes: $(du -sb "$trim" | cut -f1)"
           echo "trimmed tar.gz -9 bytes: $(tar -C "$trim" -cf - . | gzip -9 | wc -c)"
