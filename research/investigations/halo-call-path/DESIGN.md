@@ -583,3 +583,45 @@ preserve_most option is rejected. If V2 alone reaches V1's three-arm sum
 within 3, the cost is spill placement, not the convention. Also recorded:
 SubRK's entry-block stack stores (9 in B), and Call and Return each counted
 with their callees.
+
+### Result: probe run 38335991774
+
+Instructions per Lua call (callgrind self counts, fib(32), 7,049,155 Lua
+calls; hosted ubuntu-24.04; artifact `halo-probe`, `table.md`). V0
+reproduced B's 841.53 exactly, and every variant printed 2178309.
+
+| Measure | V0 | V1 | V2 | V3 |
+|---|---|---|---|---|
+| SubRK | 60 | 56 | 47 | 47 |
+| LtJmpRK | 53 | 49 | 48 | 46 |
+| GetUpval | 61 | 58 | 56 | 54 |
+| Three-arm sum | 174 | 163 (−11) | 151 (−23) | 147 (−27) |
+| Call | 101 | 100 | 101 | 102 |
+| Return | 112 | 112 | 112 | 112 |
+| Program total | 841.53 | 899.03 (+57.50) | 806.03 (−35.50) | 885.03 (+43.50) |
+| Executed in `.most` clones | 0 | 498 | 0 | 501 |
+
+Against the criteria written before the run:
+
+- The rejection rule is not triggered by its letter: V1 lowers the
+  three-arm sum by 11, one past the threshold of 10. Its program total rises
+  by 57.5 per Lua call, because 15 of the 150 clones run and execute 498
+  instructions per call that the inlined originals did not need.
+- The spill-placement rule holds: V2 alone, with the convention unchanged,
+  lowers the three-arm sum to 151, 12 below V1's 163 rather than merely
+  within 3 of it, and lowers the program total by 35.5 (4.2%). V3 adds the
+  convention to V2 and gains 4 in the arms while losing 79 in the program.
+
+Conclusion: the arm-entry preparation is spill placement under unknown
+branch frequency. Telling code generation which callees are slow removes
+more of it than any preserve_most variant, and the convention's clones cost
+more than they save. Every preserve_most option (in-place, out-of-line
+entries, transitive twins) is rejected on this evidence for this workload.
+What remains open is how the compiler learns which callees are slow without
+the hand-picked list V2 used (`slow`, `heap.intern`, `unwind`,
+`restore_stopped_stack`).
+
+Instrument note: the probe's static count of SubRK entry-block stack
+stores reads 0 for every variant, B included, while the disassembly read
+above shows nine spills after `sub rsp,0xd0`. The static counter's pattern
+does not match this code; the callgrind counts above do not depend on it.
