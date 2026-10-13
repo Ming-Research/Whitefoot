@@ -11,8 +11,8 @@ use super::tree::DerivationExtent;
 use super::{
     DecisionSelection, DerivationElement, DerivationTree, DiagnosticResult, DiagnosticSite, Frame,
     ParseCompilerFailure, ParseInvocationFailure, ParseLimit, ParseLimits, ParseOutcome,
-    ParseResourceFailure, ParseStorage, ParsedBundle, ProbeContext, Work, diagnose_decision,
-    direct_mismatch, select_arm,
+    ParseResourceFailure, ParseStorage, ParsedBundle, ProbeContext, QualifiedValueSite, Work,
+    diagnose_decision, direct_mismatch, qualified_value_path, select_arm,
 };
 
 #[derive(Clone, Copy)]
@@ -151,16 +151,78 @@ impl<'classified> Parser<'classified> {
         Ok(())
     }
 
-    fn current_context(&self) -> Result<ProbeContext, Stop> {
+    /// The open frames' diagnostic context at a frontier where recognition
+    /// stopped with `cursor` at the next token.
+    fn failure_context(
+        &mut self,
+        source: SourceId,
+        tokens: &[ClassifiedToken],
+        cursor: usize,
+    ) -> Result<ProbeContext, Stop> {
         let frame = self
             .frames
             .last()
             .ok_or(Stop::Compiler(ParseCompilerFailure::MissingProductionFrame))?;
+        let (production, atom_only, in_contract) =
+            (frame.production, frame.atom_only, frame.in_contract);
         Ok(ProbeContext {
-            production: frame.production,
-            atom_only: frame.atom_only,
-            in_contract: frame.in_contract,
+            production,
+            atom_only,
+            in_contract,
+            qualified_value: self.qualified_value(source, tokens, cursor)?,
         })
+    }
+
+    /// The qualified path a `call` in a value position has consumed when
+    /// recognition stops at the token after its final IDENT [DIAG-1, MOD-5].
+    ///
+    /// The open frames are the only record that the path is the `callee` of
+    /// a `call` an `expr` or `affine_factor` derives: the innermost frames are
+    /// that call's `callee` and `callee_path` frames, or the call itself once
+    /// its callee is complete. Every terminal the call has consumed lies
+    /// before the cursor, so the path begins where those terminals begin; it
+    /// ends at the last of them or, when the `callee_path` choice failed on
+    /// it, at the IDENT the lookahead begins with.
+    fn qualified_value(
+        &mut self,
+        source: SourceId,
+        tokens: &[ClassifiedToken],
+        cursor: usize,
+    ) -> Result<Option<QualifiedValueSite>, Stop> {
+        let mut frames = self.frames.iter().rev();
+        let call_start = loop {
+            match frames.next() {
+                Some(frame)
+                    if matches!(
+                        frame.production,
+                        Production::Callee | Production::CalleePath
+                    ) => {}
+                Some(frame) if frame.production == Production::Call => break frame.element_start,
+                _ => return Ok(None),
+            }
+        };
+        if !frames.next().is_some_and(|parent| {
+            matches!(
+                parent.production,
+                Production::Expr | Production::AffineFactor
+            )
+        }) {
+            return Ok(None);
+        }
+        let consumed = self.elements.get(call_start..).unwrap_or_default();
+        let consumed_terminals = consumed
+            .iter()
+            .filter(|element| matches!(element, DerivationElement::Terminal { .. }))
+            .count();
+        self.work
+            .spend(u64::try_from(consumed.len()).unwrap_or(u64::MAX))
+            .map_err(Stop::Resource)?;
+        let Some(start) = cursor.checked_sub(consumed_terminals) else {
+            return Ok(None);
+        };
+        let site =
+            qualified_value_path(source, tokens, start, &mut self.work).map_err(Stop::Resource)?;
+        Ok(site.filter(|site| site.applies_at(cursor)))
     }
 
     fn note_child_extent(
@@ -328,7 +390,7 @@ impl<'classified> Parser<'classified> {
         tokens: &[ClassifiedToken],
         cursor: usize,
     ) -> Stop {
-        let context = match self.current_context() {
+        let context = match self.failure_context(source, tokens, cursor) {
             Ok(context) => context,
             Err(stop) => return stop,
         };
@@ -478,7 +540,7 @@ impl<'classified> Parser<'classified> {
                 }
                 Task::Match(expected) => {
                     let Some(token) = tokens.get(cursor).copied() else {
-                        let context = self.current_context()?;
+                        let context = self.failure_context(source, tokens, cursor)?;
                         return Err(direct_mismatch(
                             expected,
                             context,
@@ -494,7 +556,7 @@ impl<'classified> Parser<'classified> {
                         .into());
                     };
                     if !token.terminals().contains(expected) {
-                        let context = self.current_context()?;
+                        let context = self.failure_context(source, tokens, cursor)?;
                         return Err(direct_mismatch(
                             expected,
                             context,

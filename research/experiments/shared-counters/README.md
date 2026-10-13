@@ -56,9 +56,9 @@ and names that reference as the target:
 
 ```
 let mine = &shards[slot];
-atomic held = &mine^ {
-  set state = ixor(state, held^);
-  set held^ = held^ +wrap 1_u64;
+atomic kept = &mine^ {
+  set state = ixor(state, kept^);
+  set kept^ = kept^ +wrap 1_u64;
 }
 ```
 

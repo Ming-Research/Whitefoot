@@ -26,7 +26,7 @@ modules checked like any other; their interfaces are their documentation.
 | [`std::collections::ordered_map`](collections/ordered_map/module.wfm) | Owning B-tree with supplied ordering, insertion/replacement, complete deletion and rebalancing, borrowed lookup/edit, ordered and bounded-range visitation, and explicit consumption. |
 
 The caller-selected capacity ceiling bounds backing growth, or logical entries
-for the fixed-node ordered map. See [the writer pattern](../../docs/patterns.md#p2-choose-the-storage-shape-from-its-occupancy-rule)
+for the fixed-node ordered map. See [the writing guide](https://github.com/Ming-Research/Whitefoot-kit/blob/main/docs/writing.md#where-should-each-piece-of-data-live)
 for the contracts and [the container investigation](../../research/investigations/containers-and-resources/X1-LIBRARY.md)
 for comparison evidence and remaining interface limits. These evolving libraries
 do not claim native parity for every operation.

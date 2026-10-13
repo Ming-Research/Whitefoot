@@ -4,7 +4,7 @@ alias exit_status = std::process::exit_status;
 fn nothing(limit: u64) -> result: Option<u64> pure contract {
   ensures when None(value: gone): gone < limit;
 } {
-  doc "A route names its ordinal's success variant [FN-9]: None is Option's failure variant and carries no payload, so the route is refused.";
+  doc "A route must name a declared field whose type supplies data [FN-9]: None declares no value field, so the route is refused.";
   return None<u64>();
 }
 

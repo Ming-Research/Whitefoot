@@ -242,7 +242,7 @@ impl Judging<'_, '_, '_> {
             };
             // A preservation query is a later reference-use obligation. It
             // does not make this event unreachable or suppress its effects.
-            all_discharged &= discharged || separation.reference_use.is_some();
+            all_discharged &= discharged || separation.reference_use.is_some() || separation.held_use.is_some();
         }
         all_discharged
     }
@@ -344,10 +344,11 @@ impl Judging<'_, '_, '_> {
                 .add_root(DerivationRootKind::BoundsObligation(ordinal), root);
         }
         self.output.obligations.push(ObligationOutcome {
-            node_path: match (&separation.reference_use, &separation.occasion) {
-                (Some(use_site), _) => use_site.site.clone(),
-                (None, CheckedSeparationOccasion::AtomicTargets(target)) => target.clone(),
-                (None, _) => separation.site.clone(),
+            node_path: match (&separation.reference_use, &separation.held_use, &separation.occasion) {
+                (Some(use_site), _, _) => use_site.site.clone(),
+                (None, Some(held_use), _) => held_use.site.clone(),
+                (None, None, CheckedSeparationOccasion::AtomicTargets(target)) => target.clone(),
+                (None, None, _) => separation.site.clone(),
             },
             family: match (&separation.reference_use, &separation.occasion) {
                 (Some(_), _) => ObligationFamily::ReferencePreservation(
@@ -821,9 +822,9 @@ impl Analyzer<'_, '_> {
                     parents.extend(goal_parents);
                     parents.extend(routed_parents);
                     parents.extend(contract_parents.unwrap_or_default());
-                    // A direct call needs an earlier-component verified FN-9
-                    // summary. A bound call needs either those actual
-                    // premises plus its retained FN-4 implication, or a
+                    // A direct call needs an FN-9 summary or a same-component
+                    // induction hypothesis [DIAG-2]. A bound call needs those
+                    // actual premises plus its retained FN-4 implication, or a
                     // zero-premise formal implication. Calls with no
                     // authorized relation retain the pre-S12 kill path.
                     if postconditions.is_empty() {

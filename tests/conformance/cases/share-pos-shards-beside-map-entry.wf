@@ -14,8 +14,8 @@ fn lookup(store: &Shared<ConcurrentHashMap<u8>>, stats: &Shared<Shards<Stats>>, 
   let got = 0_u8;
   atomic slot = &store^[key], st = &stats^[mine] {
     match slot^ {
-      Some(value: held) => {
-        set got = held^;
+      Some(value: kept) => {
+        set got = kept^;
         set st^.hits = st^.hits +wrap 1_u8;
       }
       None() => {

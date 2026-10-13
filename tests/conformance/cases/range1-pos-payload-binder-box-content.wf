@@ -1,0 +1,43 @@
+enum Instr {
+  Jump(t: u64);
+  Halt();
+}
+
+enum Cell {
+  Held(i: Box<Instr>);
+  Empty();
+}
+
+fn need_below(value: u64, bound: u64) -> result: unit pure contract {
+  requires value < bound;
+} {
+  return unit;
+}
+
+fn follow(code: &Box<Slots<Cell>>, pc: u64) -> r: u64 reads(code) contract {
+  requires pc < code^.inner.len;
+  requires forall targets(j in 0_u64..code^.inner.len): code^.inner[j].Held.i.inner.Jump.t < code^.inner.len;
+} {
+  doc "Cell holds a Box, so it is affine and the outer match borrows the element; the inner match's scrutinee held^.inner is the Box content below that payload binder's referent, so jump_to^ is the element projection code^.inner[pc].Held.i.inner.Jump.t and targets bounds it.";
+  let n = code^.inner.len;
+  match &code^.inner[pc] {
+    Held(i: kept) => {
+      match kept^.inner {
+        Jump(t: jump_to) => {
+          need_below(value: jump_to^, bound: n);
+          return jump_to^;
+        }
+        Halt() => {
+          return pc;
+        }
+      }
+    }
+    Empty() => {
+      return pc;
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

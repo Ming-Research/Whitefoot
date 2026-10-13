@@ -68,6 +68,11 @@ impl IrBuilder<'_> {
             "swap" => self.row_swap(),
             "free_empty" => self.row_free_empty(),
             "shared_new" => self.row_shared_new(),
+            "decision_cell_new" => self.row_decision_cell_new(),
+            "decision_cell_read" => self.row_decision_cell(None),
+            "claim_written" => self.row_decision_cell(Some(1)),
+            "claim_killed" => self.row_decision_cell(Some(2)),
+            "decision_cell_share" => self.row_shared_share(),
             "shared_share" | "shared_read" | "shared_read_share" | "frozen_share" => {
                 self.row_shared_share()
             }
@@ -181,6 +186,22 @@ impl IrBuilder<'_> {
         )?;
         self.store_addressed(state, value, referent)?;
         self.return_value(object)
+    }
+
+    fn row_decision_cell_new(&mut self) -> Result<(), LoweringFailure> {
+        let [] = self.row_parameters()?;
+        let IrType::Nominal(nominal) = self.result else {
+            return Err(LoweringFailure::InvalidCheckedProgram);
+        };
+        let object = self.define(self.result, IrOperation::DecisionCellNew { nominal })?;
+        self.return_value(object)
+    }
+
+    fn row_decision_cell(&mut self, winner: Option<u32>) -> Result<(), LoweringFailure> {
+        let [cell] = self.row_parameters()?;
+        let object = self.row_table(cell)?;
+        let verdict = self.define(self.result, IrOperation::DecisionCell { object, winner })?;
+        self.return_value(verdict)
     }
 
     /// `shared_map_new<V>(capacity: u64) -> Shared<ConcurrentHashMap<V>>`: a table holding

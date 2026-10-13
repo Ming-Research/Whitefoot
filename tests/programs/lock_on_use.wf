@@ -1,0 +1,149 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Entry {
+  stores: u64;
+  sequence: u64;
+}
+
+struct Meta {
+  commit_sequence: u64;
+  commits: u64;
+}
+
+struct Keyspace {
+  keys: Shared<ConcurrentHashMap<Entry>>;
+  meta: Shared<Meta>;
+  logging: Bool;
+}
+
+fn set_key(space: &Keyspace, key: &[u8], timed: Bool) -> result: unit reads(space), reads(key) waits {
+  let logged = space^.logging;
+  let kept = bor(logged, timed);
+  atomic slot = &space^.keys[key], m = &space^.meta {
+    let stores = 1_u64;
+    match slot^ {
+      Some(value: seen) => {
+        set stores = seen^.stores +wrap 1_u64;
+      }
+      None() => {
+      }
+    }
+    let sequence = 0_u64;
+    if kept {
+      let next = m^.commit_sequence +wrap 1_u64;
+      set m^.commit_sequence = next;
+      set m^.commits = m^.commits +wrap 1_u64;
+      set sequence = next;
+    }
+    let record = Entry(stores: stores, sequence: sequence);
+    set slot^ = Some<Entry>(value: record);
+  }
+  return unit;
+}
+
+fn write_key(space: Keyspace, key_byte: u8, timed: Bool) -> result: unit pure waits {
+  let bytes = array_filled::<u8, 1>(value: key_byte);
+  let key = &bytes[0_u64..1_u64];
+  for @round (index in 0_u64..200_u64) {
+    set_key(space: &space, key: key, timed: timed);
+  }
+  return unit;
+}
+
+fn share_keyspace(space: &Keyspace, logging: Bool) -> result: Keyspace reads(space) {
+  let keys = shared_share::<ConcurrentHashMap<Entry>>(shared: &space^.keys);
+  let meta = shared_share::<Meta>(shared: &space^.meta);
+  let shared = Keyspace(keys: move keys, meta: move meta, logging: logging);
+  return move shared;
+}
+
+fn write_together(space: &Keyspace) -> result: unit reads(space) waits {
+  let no = False();
+  let yes = True();
+  let plain = share_keyspace(space: space, logging: no);
+  spawn write_key(space: move plain, key_byte: 97_u8, timed: no);
+  let timed = share_keyspace(space: space, logging: no);
+  spawn write_key(space: move timed, key_byte: 98_u8, timed: yes);
+  let logged = share_keyspace(space: space, logging: yes);
+  spawn write_key(space: move logged, key_byte: 99_u8, timed: no);
+  let both = share_keyspace(space: space, logging: yes);
+  spawn write_key(space: move both, key_byte: 100_u8, timed: yes);
+  return unit;
+}
+
+fn check_key(space: &Keyspace, key_byte: u8, kept: Bool) -> result: u8 reads(space) waits {
+  let bytes = array_filled::<u8, 1>(value: key_byte);
+  let key = &bytes[0_u64..1_u64];
+  let wrong = 0_u8;
+  atomic slot = &space^.keys[key] {
+    match slot^ {
+      Some(value: seen) => {
+        if seen^.stores != 200_u64 {
+          set wrong = 1_u8;
+        }
+        if kept {
+          if seen^.sequence == 0_u64 {
+            set wrong = 1_u8;
+          }
+          if seen^.sequence > 600_u64 {
+            set wrong = 1_u8;
+          }
+        } else if seen^.sequence != 0_u64 {
+          set wrong = 1_u8;
+        }
+      }
+      None() => {
+        set wrong = 1_u8;
+      }
+    }
+  }
+  return wrong;
+}
+
+fn main() -> status: ExitStatus pure waits {
+  doc "Four contexts write two hundred times each to distinct keys in one shared map. Logging and timing cover all four Boolean combinations. One atomic statement updates an entry and uses the separate metadata object only when either flag is true. The commit sequence and count must be six hundred, every key must have two hundred writes, and only held writes may publish a positive commit sequence.";
+  let keys = shared_map_new::<Entry>(capacity: 4_u64);
+  let initial = Meta(commit_sequence: 0_u64, commits: 0_u64);
+  let meta = shared_new::<Meta>(value: initial);
+  let no = False();
+  let yes = True();
+  let space = Keyspace(keys: move keys, meta: move meta, logging: no);
+  write_together(space: &space);
+  let commits = 0_u64;
+  let sequence = 0_u64;
+  atomic m = &space.meta {
+    set commits = m^.commits;
+    set sequence = m^.commit_sequence;
+  }
+  if commits != 600_u64 {
+    return exit_status(code: 1_u8);
+  }
+  if sequence != 600_u64 {
+    return exit_status(code: 2_u8);
+  }
+  let count = 0_u64;
+  atomic all = &space.keys {
+    set count = map_count::<Entry>(map: all);
+  }
+  if count != 4_u64 {
+    return exit_status(code: 3_u8);
+  }
+  let plain = check_key(space: &space, key_byte: 97_u8, kept: no);
+  if plain != 0_u8 {
+    return exit_status(code: 4_u8);
+  }
+  let timed = check_key(space: &space, key_byte: 98_u8, kept: yes);
+  if timed != 0_u8 {
+    return exit_status(code: 5_u8);
+  }
+  let logged = check_key(space: &space, key_byte: 99_u8, kept: yes);
+  if logged != 0_u8 {
+    return exit_status(code: 6_u8);
+  }
+  let both = check_key(space: &space, key_byte: 100_u8, kept: yes);
+  if both != 0_u8 {
+    return exit_status(code: 7_u8);
+  }
+  return exit_status(code: 0_u8);
+}

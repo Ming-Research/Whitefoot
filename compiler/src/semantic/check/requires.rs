@@ -488,6 +488,9 @@ impl<'unit> Checker<'_, 'unit> {
             .tree
             .children_with(block, Production::RequiresClause)?
         {
+            if self.types.declarations.tree.first_child_with(clause, Production::HeldClause)?.is_some() {
+                continue;
+            }
             if let Some(range_clause) = self
                 .types
                 .declarations

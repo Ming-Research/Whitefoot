@@ -1,0 +1,29 @@
+fn halves(n: u64) -> total: u64 pure contract {
+  ensures total <= n;
+} {
+  if n <= 1_u64 {
+    return n;
+  }
+  let half = n / 2_u64;
+  let rest = n - half;
+  let a = halves(n: half);
+  let b = halves(n: rest);
+  let total = a + b;
+  return total;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let zero = halves(n: 0_u64);
+  let single = halves(n: 1_u64);
+  let many = halves(n: 17_u64);
+  if zero != 0_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  if single != 1_u64 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  if many != 17_u64 {
+    return std::process::exit_status(code: 3_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

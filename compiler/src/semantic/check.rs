@@ -3,14 +3,17 @@ mod behavior;
 mod cleanup;
 mod contract_reads;
 mod control;
+mod decision_cell;
 mod effect_repairs;
 mod ensures;
 pub(in crate::semantic::check) mod expressions;
 pub(in crate::semantic) mod floats;
 mod frozen;
 mod generics;
+mod held;
 mod inventory;
 mod linearity;
+mod lock_ledger_sources;
 mod nominal_instances;
 mod nominals;
 mod obligations;
@@ -148,6 +151,8 @@ struct FunctionSignature {
     /// [WAIT-1] whether the declaration writes `waits`: a waiting function,
     /// whose calls are admitted only in the body of another waiting function.
     waits: bool,
+    /// Normalized reference parameter ordinals of the ordinary held contract.
+    held_parameters: Vec<usize>,
     /// A callable hypothesis used only while checking generic source spelling.
     /// Concrete calls always select a verified source function instead.
     formal_parameter: Option<generics::GenericParameterKey>,
@@ -278,6 +283,10 @@ struct LocalBinding {
     /// reference binding is rebound; only its flow-sensitive validity meets
     /// at joins.
     refinement_witnesses: Vec<RefinementWitness>,
+    /// [SHARE-2] on an atomic statement's binding, the places its handle was
+    /// read from, which every write and move checked in the statement marks
+    /// when it may overlap one of them. Every copy of this state shares it.
+    handle_watch: Option<std::rc::Rc<references::HandleWatch>>,
     /// [EFF-1] whether this binding is a parameter holding the value its call
     /// passed on every path to here. An index names a row's index parameter
     /// only while it does, since a row evaluates that parameter once at the
@@ -535,11 +544,14 @@ enum PreludeType {
     DivError,
     NarrowError,
     ScanStep,
+    DecisionState,
 }
 
 /// Source declarations and syntax shared read-only by preflight and body checking.
 struct DeclarationInventory<'unit> {
     resolved: &'unit ResolvedSyntaxUnit,
+    /// Lazily indexed source lines for non-normative lock-ledger locations.
+    ledger_line_starts: lock_ledger_sources::SourceLines,
     /// [STOR-8, GRAM-2] whether this compilation unit wrote `program
     /// no_heap;`.
     ///
@@ -661,6 +673,13 @@ struct BodyChecker {
     /// checked: inside one, a waiting call or another atomic statement is
     /// refused.
     atomic_depth: u32,
+    /// Current atomic target origins and protection obligations before framing.
+    held_atomic_roots: Vec<BindingId>,
+    held_calls: Vec<(NodeId, Vec<ResolvedPlace>)>,
+    held_writes: Vec<(NodeId, ResolvedPlace)>,
+    checked_held_calls: Vec<super::model::CheckedHeldCall>,
+    held_atomic_node: Option<crate::NodePath>,
+    held_guard: bool,
     table_set_borrow: Option<NodeId>,
     /// [RANGE-1] the range clauses of the function being checked, published
     /// with its finished body. Every retry starts empty.
@@ -675,6 +694,10 @@ struct BodyChecker {
     /// [ENT-2] the rebound reference parameters and `atomic` binders, whose
     /// own binding roots the path they name; no exact path starts at one.
     rebound_anchors: HashSet<BindingId>,
+    /// [ENT-2] each range alias, `let q = r;` with neither variable rebound,
+    /// to the variable its places are identified through: the source's own
+    /// entry when the source is itself a range alias, else the source.
+    range_alias_sources: HashMap<BindingId, BindingId>,
 }
 
 /// Program-wide judgments and reuse records, published after checking succeeds.
@@ -910,6 +933,7 @@ impl<'unit> DeclarationInventory<'unit> {
         let no_heap = Checker::declares_no_heap(&tree)?;
         Ok(Self {
             resolved,
+            ledger_line_starts: Default::default(),
             tree,
             no_heap,
         })
@@ -1306,6 +1330,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             .map(|signature| {
                 Ok(PermissionSignature {
                     name: signature.name.clone(),
+                    decision_cell: self.types.decision_cell_boundary(signature.id)?,
                     parameter_declarations: signature
                         .parameters
                         .iter()
@@ -1338,6 +1363,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         let optimistic_batch = function_inventory.iter().any(|checked| {
             ordinary[checked.function.id.0 as usize]
                 && (!checked.function.postconditions.is_empty()
+                    || !checked.function.range_facts.postconditions.is_empty()
                     || Checker::statements_contain_value_if(
                         checked.function.body.as_deref().unwrap_or_default(),
                     ))
@@ -1403,12 +1429,12 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                     Err(stop) => return Err(stop),
                 }
             }
-            // Every accepted fresh analysis is kept, whether or not another
-            // function's rejection fails this check [MOD-8].
+            // An accepted component's fresh analyses are kept even when
+            // another component fails this check [MOD-8].
             for (index, judged) in ranges.iter().enumerate() {
                 rejected[index] |= !judged.issues.is_empty();
             }
-            self.record_receipts(&baseline_functions, &rejected);
+            self.record_receipts(&baseline_functions, &rejected, &postcondition_schedule);
             rejections.sort_by(|left, right| {
                 left.0
                     .components()
@@ -1511,6 +1537,11 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             Vec::new()
         };
 
+        let lock_ledger_sources = self
+            .types
+            .declarations
+            .lock_ledger_sources(&functions, &executable_functions);
+
         Ok(CheckedProgramData {
             nominals: self.types.nominals.clone(),
             nominal_confinement: self
@@ -1553,6 +1584,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             generic_requirements: self.analysis.generic_requirements.clone(),
             permission,
             permission_ledger,
+            lock_ledger_sources,
         })
     }
 
@@ -2286,6 +2318,8 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             // its own allocation here.
             allocates: exhibited.allocates,
             requirements,
+            held_parameters: signature.checked_held_parameters()?,
+            held_calls: std::mem::take(&mut self.body.checked_held_calls),
             requirement_places,
             routed_requirements,
             postconditions,
@@ -2368,6 +2402,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 )
             }),
             refinement_witnesses: Vec::new(),
+            handle_watch: None,
             call_value: true,
         })
     }

@@ -12,8 +12,8 @@ fn read_shared_context(counter: Shared<u64>, totals: Shared<Totals>, gate: Share
   let done = 0_u64;
   loop @run {
     for @batch (turn in 0_u64..1024_u64) {
-      atomic held = &counter {
-        set state = ixor(state, held^);
+      atomic kept = &counter {
+        set state = ixor(state, kept^);
       }
       set state = step(state: state);
     }

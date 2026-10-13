@@ -1,0 +1,12 @@
+fn length(r: &[u64]) -> result: u64 reads(r) contract {
+  ensures result == r^.len;
+} {
+  doc "ENT-2, FN-9: returning the length read through the range alias q returns the term r^.len, so the postcondition holds at the return.";
+  let q = r;
+  return q^.len;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "No call is needed to exercise the proof identity.";
+  return std::process::exit_status(code: 0_u8);
+}

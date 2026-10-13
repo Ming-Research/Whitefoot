@@ -8,16 +8,19 @@ use whitefoot::{
     Architecture, BuildCache, COMPLETION_BRIDGE_HEADER, COMPLETION_BRIDGE_SOURCE,
     COMPLETION_CONTRACT_HEADER, COMPLETION_FILE_ADAPTER_HEADER, COMPLETION_FILE_ADAPTER_SOURCE,
     COMPLETION_FILE_POSIX_HEADER, COMPLETION_LINUX_IO_URING_HEADER, COMPLETION_RUNTIME_SOURCE,
-    COMPLETION_SOCKET_ADDRESS_HEADER, COMPLETION_STOP_SIGNALS_SOURCE, COMPLETION_WINDOWS_IOCP_HEADER,
-    CONCURRENT_MAP_HEADER, CONCURRENT_MAP_SOURCE, CallGrain, CheckOutcome, CheckVerdict, CompilationFailure,
-    CompilerLimits, DISPATCH_LEDGER_PREFIX, DiagnosticFormat, FLOOR_STACK_BYTES,
-    FragmentGranularity, HOST_OPTIMIZATION_ARGUMENTS, KEYED_TABLE_SOURCE, ModuleEntry,
+    COMPLETION_SOCKET_ADDRESS_HEADER, COMPLETION_STOP_SIGNALS_SOURCE,
+    COMPLETION_WINDOWS_IOCP_HEADER, CONCURRENT_MAP_HEADER, CONCURRENT_MAP_SOURCE, CallGrain,
+    CheckOutcome, CheckVerdict, CompilationFailure, CompilerLimits, DISPATCH_LEDGER_PREFIX,
+    DiagnosticFormat, FLOOR_STACK_BYTES, FORK_CAPSULE_HEADER, FORK_CAPSULE_SOURCE,
+    FragmentGranularity, HOST_OPTIMIZATION_ARGUMENTS, KEYED_TABLE_SOURCE, LOCK_LEDGER_PREFIX,
+    ModuleEntry,
     ModuleProgramFailure, ORDINARY_VALUES_HEADER, ORDINARY_VALUES_LLVM, ORDINARY_VALUES_SOURCE,
-    OverlapLowering, RecursionBudget, SCHED_CORE_HEADER, SCHED_CORE_SOURCE, SCHED_ENTRY_HEADER,
-    SCHED_ENTRY_SOURCE, SCHED_PRIM_HEADER, SHARDED_STATE_HEADER, SHARDED_STATE_SOURCE,
+    OverlapLowering, RESTRICTED_CHILD_COMPILE_ARGUMENTS, RecursionBudget, SCHED_CORE_HEADER,
+    SCHED_CORE_SOURCE, SCHED_ENTRY_HEADER, SCHED_ENTRY_SOURCE, SCHED_PRIM_HEADER,
+    SHARDED_STATE_HEADER, SHARDED_STATE_SOURCE, SNAPSHOT_EXPORT_HEADER, SNAPSHOT_EXPORT_SOURCE,
     SourceInput, WINDOWS_RUNTIME_HEADER,
-    build_module_entry_for_emission, check, check_module_program, check_with_cache, clang_executable,
-    compile_for_emission, content_digest, discover_module_sources, entry_verdict,
+    build_module_entry_for_emission, check, check_module_program, check_with_cache,
+    clang_executable, compile_for_emission, content_digest, discover_module_sources, entry_verdict,
     form_module_program_graph, module_verdict, render_driver_failure, render_module_interface,
     running_compiler_identity, split_module, stack_ledger,
 };
@@ -39,7 +42,7 @@ use whitefoot::{
 };
 
 const USAGE: &str = "usage: whitefootc [--emit-llvm] [--par] [--par-call-grain auto|off] [--par-sequential-refusal] [--par-recursive-frontier auto|N|off] [--no-overlap] [--par-ledger] \
-[--stack-ledger] [--dispatch-ledger] [--diagnostic-format text|json] [--check] [--cache DIR [--fragments module|function] | --full-lto] [--report] [-o OUTPUT] (SOURCE... | --graph modules.wfg [--entry NAME | --function pkg::module::name | --check-module pkg::module | --check-interface pkg::module | --check-modules | --render-interface pkg::module | --compare-interface pkg::module --against OTHER/modules.wfg])";
+[--stack-ledger] [--dispatch-ledger] [--lock-ledger] [--diagnostic-format text|json] [--check] [--cache DIR [--fragments module|function] | --full-lto] [--report] [-o OUTPUT] (SOURCE... | --graph modules.wfg [--entry NAME | --function pkg::module::name | --check-module pkg::module | --check-interface pkg::module | --check-modules | --render-interface pkg::module | --compare-interface pkg::module --against OTHER/modules.wfg])";
 
 // The compiler walks typed source and lowering trees recursively. Windows
 // gives the process's primary thread a 1 MiB stack by default, which is small
@@ -131,6 +134,14 @@ const COMPLETION_SHARED_UNITS: &[RuntimeUnit] = &[
     unit("completion/contract.h", COMPLETION_CONTRACT_HEADER),
     unit("completion/file_adapter.h", COMPLETION_FILE_ADAPTER_HEADER),
     unit("completion/bridge.h", COMPLETION_BRIDGE_HEADER),
+    unit("completion/snapshot_export.h", SNAPSHOT_EXPORT_HEADER),
+    unit(
+        "concurrent_map_layout.h",
+        whitefoot::CONCURRENT_MAP_LAYOUT_HEADER,
+    ),
+    unit("completion/fork_capsule.h", FORK_CAPSULE_HEADER),
+    unit("completion/snapshot_export.c", SNAPSHOT_EXPORT_SOURCE),
+    unit("completion/fork_capsule.c", FORK_CAPSULE_SOURCE),
     unit("completion/file_posix.h", COMPLETION_FILE_POSIX_HEADER),
     unit(
         "completion/socket_address.h",
@@ -168,6 +179,8 @@ const COMPLETION_COMPILE_UNITS: &[&str] = &[
     "completion/file_adapter.c",
     "completion/file_posix.c",
     "completion/bridge.c",
+    "completion/snapshot_export.c",
+    "completion/fork_capsule.c",
     "completion/stop_signals.c",
     "completion/linux_io_uring.c",
     "keyed_table.c",
@@ -186,6 +199,8 @@ const COMPLETION_COMPILE_UNITS: &[&str] = &[
     "completion/file_adapter.c",
     "completion/file_windows.c",
     "completion/bridge.c",
+    "completion/snapshot_export.c",
+    "completion/fork_capsule.c",
     "completion/stop_signals.c",
     "completion/windows_iocp.c",
     "keyed_table.c",
@@ -779,6 +794,14 @@ fn finish(
             println!("{line}");
         }
     }
+    if options.lock_ledger {
+        for line in module
+            .lines()
+            .filter_map(|line| line.strip_prefix(LOCK_LEDGER_PREFIX))
+        {
+            println!("{line}");
+        }
+    }
     if options.emit_llvm {
         if let Some(output) = &options.output {
             std::fs::write(output, module).map_err(|error| {
@@ -970,6 +993,33 @@ fn compile_executable(
         let mut command = Command::new(clang_executable());
         unit_arguments(&mut command, &directory);
         for relative_path in &compiled {
+            let restricted = restricted_child_arguments(relative_path);
+            if !restricted.is_empty() {
+                // Per-unit flags must not disable ordinary runtime checks or
+                // sanitizers. Compile only the child closure separately.
+                let object = directory.join(relative_path).with_extension("o");
+                let mut child = Command::new(clang_executable());
+                unit_arguments(&mut child, &directory);
+                child.args(HOST_OPTIMIZATION_ARGUMENTS).args(restricted);
+                if full_lto {
+                    child.arg("-flto=full");
+                }
+                let compiled = child
+                    .arg("-c")
+                    .arg(directory.join(relative_path))
+                    .arg("-o")
+                    .arg(&object)
+                    .output()
+                    .map_err(|error| format!("cannot compile restricted child unit: {error}"))?;
+                if !compiled.status.success() {
+                    return Err(format!(
+                        "restricted child unit {relative_path}: {}",
+                        String::from_utf8_lossy(&compiled.stderr)
+                    ));
+                }
+                command.arg("-x").arg("none").arg(object);
+                continue;
+            }
             command
                 .arg("-x")
                 .arg(unit_language(relative_path))
@@ -1000,6 +1050,18 @@ fn unit_arguments(command: &mut Command, directory: &Path) {
         .arg(directory)
         .arg("-I")
         .arg(directory.join("completion"));
+}
+
+/// Options required by the restricted child closure, in every build mode.
+fn restricted_child_arguments(relative_path: &str) -> &'static [&'static str] {
+    if matches!(
+        relative_path,
+        "completion/snapshot_export.c" | "completion/fork_capsule.c"
+    ) {
+        RESTRICTED_CHILD_COMPILE_ARGUMENTS
+    } else {
+        &[]
+    }
 }
 
 /// The clang input language of one runtime unit.
@@ -1053,7 +1115,7 @@ fn link_cached_objects(
         material.extend_from_slice(&runtime);
         material.extend_from_slice(
             format!(
-                "\n{relative_path}\n{TARGET_COMPILE_ARGUMENTS:?} {HOST_OPTIMIZATION_ARGUMENTS:?} {thin:?}\n"
+                "\n{relative_path}\n{TARGET_COMPILE_ARGUMENTS:?} {HOST_OPTIMIZATION_ARGUMENTS:?} {thin:?} {:?}\n", restricted_child_arguments(relative_path)
             )
             .as_bytes(),
         );
@@ -1068,6 +1130,7 @@ fn link_cached_objects(
             }
             command
                 .args(thin)
+                .args(restricted_child_arguments(relative_path))
                 .arg("-x")
                 .arg(unit_language(relative_path))
                 .arg(directory.join(relative_path));
@@ -1409,6 +1472,11 @@ struct Options {
     /// `--check` that emits nothing reports nothing; it changes nothing
     /// about the build.
     dispatch_ledger: bool,
+    /// Print each atomic statement's target-group acquisition timing.
+    /// Developer output on stdout, read from the emitted module, so a
+    /// `--check` that emits nothing reports nothing; it changes nothing
+    /// about the build.
+    lock_ledger: bool,
     /// Check the sources through complete source acceptance and stop.
     check: bool,
     /// The module program's graph file [MOD-1], instead of source records.
@@ -1457,6 +1525,7 @@ impl Options {
         let mut par_ledger = false;
         let mut stack_ledger = false;
         let mut dispatch_ledger = false;
+        let mut lock_ledger = false;
         let mut check = false;
         let mut graph = None;
         let mut entry = None;
@@ -1612,6 +1681,7 @@ impl Options {
                 "--par-ledger" => par_ledger = true,
                 "--stack-ledger" => stack_ledger = true,
                 "--dispatch-ledger" => dispatch_ledger = true,
+                "--lock-ledger" => lock_ledger = true,
                 "-o" => {
                     cursor += 1;
                     let path = arguments
@@ -1720,6 +1790,12 @@ impl Options {
                     .to_owned(),
             );
         }
+        if lock_ledger && emit_llvm && output.is_none() {
+            return Err(
+                "--lock-ledger cannot share stdout with --emit-llvm: name a module output with -o"
+                    .to_owned(),
+            );
+        }
         if stack_ledger && emit_llvm && output.is_none() {
             return Err(
                 "--stack-ledger cannot share stdout with --emit-llvm: name a module output with -o"
@@ -1751,6 +1827,7 @@ impl Options {
             par_ledger,
             stack_ledger,
             dispatch_ledger,
+            lock_ledger,
             check,
             graph,
             entry,
@@ -1876,6 +1953,8 @@ mod tests {
             "sched/core.c",
             "sched/entry.c",
             "completion/bridge.c",
+            "completion/snapshot_export.c",
+            "completion/fork_capsule.c",
             "completion/stop_signals.c",
         ] {
             assert!(
@@ -2041,6 +2120,28 @@ mod tests {
         ])
         .expect("a named module output frees stdout");
         assert!(options.dispatch_ledger && options.emit_llvm);
+    }
+
+    /// Reading the lock ledger changes no lowering and keeps its developer
+    /// lines apart from a module emitted to stdout.
+    #[test]
+    fn the_lock_ledger_is_requested_by_its_own_option() {
+        let options = parse(&["value.wf"]).expect("one source is a complete invocation");
+        assert!(!options.lock_ledger);
+
+        let options = parse(&["--lock-ledger", "value.wf"]).expect("the option is accepted");
+        assert!(options.lock_ledger);
+        assert!(!options.par, "reading the ledger must not enable lowering");
+        assert_eq!(options.sources.len(), 1);
+
+        let message = parse(&["--lock-ledger", "--emit-llvm", "value.wf"])
+            .err()
+            .expect("the two stdout streams must not be mixed");
+        assert!(message.contains("--lock-ledger"), "{message}");
+        assert!(message.contains("-o"), "{message}");
+        let options = parse(&["--lock-ledger", "--emit-llvm", "-o", "out.ll", "value.wf"])
+            .expect("a named module output frees stdout");
+        assert!(options.lock_ledger && options.emit_llvm);
     }
 
     /// The permission ledger is an opt-in developer channel: off unless the

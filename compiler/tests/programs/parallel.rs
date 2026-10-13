@@ -426,6 +426,19 @@ fn shared_objects_keep_every_update_on_one_driver_and_on_four() {
     }
 }
 
+/// [SHARE-1, SHARE-2] sixteen contexts hold the only handles to one counter
+/// and add to it through statements that count no handle of their own, since
+/// no block writes or moves the handle place it was read from. Each context
+/// releases its handle while the others' statements run, and every statement
+/// makes and releases another object, which can reuse a released object's
+/// storage. The counter must live until its last handle is released: an
+/// earlier release loses increments to those objects or faults, and the
+/// program's status names a wrong highest count.
+#[test]
+fn shared_objects_outlive_statements_while_other_contexts_release_handles() {
+    run_on_one_driver_and_on_four("shared_handle_release.wf", 3);
+}
+
 /// Runs one program on one driver and on four, `rounds` times each, and
 /// requires status 0, which each program gives only when every count it
 /// checks is the one every order of its atomic statements gives.
@@ -479,6 +492,15 @@ fn shared_maps_keep_every_update_on_one_driver_and_on_four() {
 #[test]
 fn shared_shards_exclude_writers_from_whole_snapshots_on_one_driver_and_on_four() {
     run_on_one_driver_and_on_four("shared_shards.wf", 3);
+}
+
+/// Four contexts cover every logging/timing combination. Only the three
+/// held writers advance metadata, while all four preserve their entry updates
+/// and publish a sequence exactly on held writes. This checks the program's
+/// results; lock timing itself is not observable from these final counts.
+#[test]
+fn conditional_metadata_keeps_only_held_commits_on_one_driver_and_on_four() {
+    run_on_one_driver_and_on_four("lock_on_use.wf", 3);
 }
 
 /// A value read under a read-only whole-map hold must not lock its cell:

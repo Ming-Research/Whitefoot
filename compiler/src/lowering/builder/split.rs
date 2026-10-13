@@ -197,9 +197,9 @@ pub(crate) struct Synthesis {
 }
 
 impl Synthesis {
-    /// A run and the adjacent-pair recovery can reach the same boundary.
-    /// Report that source conflict once, also across physical instances.
-    pub(super) fn note_storage_conflict(&mut self, line: String) {
+    /// Report a placement or storage boundary once, including when adjacent
+    /// pair recovery or another physical instance reaches the same boundary.
+    pub(super) fn note_narrowing(&mut self, line: String) {
         if !self.ledger.contains(&line) {
             self.ledger.push(line);
         }
@@ -1854,6 +1854,7 @@ mod tests {
             box_keeping_reference_parameters: Vec::new(),
             source_signature: None,
             source_calls: Vec::new(),
+            lock_ledger: Vec::new(),
             result: U64,
             values: types.clone(),
             counted_ranges: Vec::new(),

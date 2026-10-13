@@ -40,9 +40,9 @@ void wf_fork_capsule_dispose(wf_fork_capsule *capsule) {
     capsule->prepared = 0;
 }
 
-int wf_fork_capsule_prepare(
+static int wf_capsule_prepare(
     wf_fork_capsule *capsule, const int *outputs, size_t output_count,
-    size_t scratch_size
+    size_t scratch_size, int source
 ) {
     int channel[2];
     int probe;
@@ -52,7 +52,8 @@ int wf_fork_capsule_prepare(
     capsule->result_read = -1;
     capsule->result_write = -1;
     if (output_count > WF_FORK_CAPSULE_MAX_OUTPUTS
-        || (output_count != 0 && outputs == NULL) || scratch_size == 0) {
+        || (output_count != 0 && outputs == NULL)
+        || (!source && scratch_size == 0)) {
         return EINVAL;
     }
     struct sigaction child_action;
@@ -62,9 +63,11 @@ int wf_fork_capsule_prepare(
     capsule->parent = getpid();
     /* Refuse unsupported kernels before creating any child. If the later
      * pidfd_open fails, the created child still has exactly one reaper. */
-    probe = (int)syscall(SYS_pidfd_open, capsule->parent, 0u);
-    if (probe < 0) return errno;
-    (void)close(probe);
+    if (!source) {
+        probe = (int)syscall(SYS_pidfd_open, capsule->parent, 0u);
+        if (probe < 0) return errno;
+        (void)close(probe);
+    }
     for (size_t i = 0; i < output_count; ++i) {
         if (outputs[i] < 0 || fcntl(outputs[i], F_GETFD) < 0) return EBADF;
         capsule->outputs[i] = outputs[i];
@@ -72,11 +75,13 @@ int wf_fork_capsule_prepare(
     }
     capsule->output_count = output_count;
     capsule->scratch_size = scratch_size;
-    capsule->scratch = mmap(NULL, scratch_size, PROT_READ | PROT_WRITE,
+    if (scratch_size != 0) {
+        capsule->scratch = mmap(NULL, scratch_size, PROT_READ | PROT_WRITE,
                             MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    if (capsule->scratch == MAP_FAILED) {
-        capsule->scratch = NULL;
-        return errno;
+        if (capsule->scratch == MAP_FAILED) {
+            capsule->scratch = NULL;
+            return errno;
+        }
     }
     if (pipe2(channel, O_CLOEXEC | O_NONBLOCK) != 0) {
         error = errno;
@@ -85,6 +90,15 @@ int wf_fork_capsule_prepare(
     }
     capsule->result_read = channel[0];
     capsule->result_write = channel[1];
+    if (source) {
+        int capacity = fcntl(channel[1], F_SETPIPE_SZ, 4096);
+        if (capacity >= 0) capacity = fcntl(channel[1], F_GETPIPE_SZ);
+        if (capacity < 0 || capacity > 4096) {
+            error = capacity < 0 ? errno : ENOTSUP;
+            wf_fork_capsule_dispose(capsule);
+            return error;
+        }
+    }
     capsule->keep[output_count] = channel[1];
     /* Sort and deduplicate outside capture; outputs retain encoder order. */
     for (size_t i = 1; i <= output_count; ++i) {
@@ -103,6 +117,35 @@ int wf_fork_capsule_prepare(
         }
     }
     capsule->prepared = 1;
+    return 0;
+}
+
+int wf_fork_capsule_prepare(wf_fork_capsule *capsule, const int *outputs,
+                           size_t count, size_t scratch) {
+    return wf_capsule_prepare(capsule, outputs, count, scratch, 0);
+}
+
+int wf_fork_capsule_prepare_source(wf_fork_capsule *capsule, int output,
+    size_t scratch, void *stack, size_t stack_size,
+    wf_fork_capsule_source_encoder encoder) {
+    int error = wf_capsule_prepare(capsule, &output, 1, scratch, 1);
+    if (error != 0) return error;
+    if (stack == NULL || stack_size < 4096 || encoder == NULL
+        || (uintptr_t)stack > UINTPTR_MAX - stack_size) {
+        wf_fork_capsule_dispose(capsule);
+        return EINVAL;
+    }
+    capsule->source_stack = stack;
+    capsule->source_stack_size = stack_size;
+    capsule->source_encoder = encoder;
+    return 0;
+}
+
+int wf_fork_capsule_adopt_blocked(wf_fork_capsule *capsule, uint64_t mask) {
+    if (capsule == NULL || !capsule->prepared || capsule->armed
+        || capsule->source_encoder == NULL) return EINVAL;
+    capsule->parent_signal_mask = mask;
+    capsule->armed = 1;
     return 0;
 }
 
@@ -214,6 +257,24 @@ static int wf_capsule_reset_signals(void) {
     return 0;
 }
 
+static _Noreturn void wf_capsule_source_child(
+    const wf_fork_capsule *capsule, const void *captured
+) {
+    int error = wf_capsule_reset_signals();
+    if (error == 0) {
+        long answer = wf_fork_capsule_raw(SYS_prctl, PR_SET_PDEATHSIG,
+            SIGKILL, 0, 0, 0, 0);
+        if (answer < 0) error = (int)-answer;
+        else if (wf_fork_capsule_raw(SYS_getppid, 0, 0, 0, 0, 0, 0)
+                 != capsule->parent) error = ECHILD;
+    }
+    if (error == 0) error = wf_capsule_close_gaps(capsule);
+    int code = capsule->source_encoder(captured, capsule->scratch,
+        capsule->scratch_size, capsule->outputs[0], capsule->result_write, error);
+    (void)wf_fork_capsule_raw(SYS_exit_group, code, 0, 0, 0, 0, 0);
+    __builtin_unreachable();
+}
+
 static _Noreturn void wf_capsule_child(
     const wf_fork_capsule *capsule, const void *captured,
     wf_fork_capsule_encoder encoder
@@ -269,9 +330,24 @@ pid_t wf_fork_capsule_capture_held(
     wf_fork_capsule_encoder encoder
 ) {
     if (capsule == NULL || !capsule->prepared || !capsule->armed
-        || capsule->capture_pid != 0 || encoder == NULL) return -EINVAL;
+        || capsule->capture_pid != 0
+        || (encoder == NULL && capsule->source_encoder == NULL)) return -EINVAL;
     pid_t pid = fork(); /* glibc malloc atfork ordering; never raw SYS_fork. */
-    if (pid == 0) wf_capsule_child(capsule, captured, encoder);
+    if (pid == 0) {
+        if (capsule->source_encoder != NULL) {
+            uintptr_t top = (uintptr_t)capsule->source_stack + capsule->source_stack_size;
+            /* Switch before the source child's first C setup frame. The
+             * synthetic return address supplies SysV entry alignment; the
+             * target is noreturn and never resumes this fork continuation. */
+            __asm__ __volatile__(
+                "mov %0, %%rsp\n\tand $-16, %%rsp\n\tsub $8, %%rsp\n\t"
+                "movq $0, (%%rsp)\n\tjmp *%1"
+                : : "r"(top), "r"(wf_capsule_source_child),
+                    "D"(capsule), "S"(captured) : "memory");
+            __builtin_unreachable();
+        }
+        wf_capsule_child(capsule, captured, encoder);
+    }
     capsule->capture_pid = pid < 0 ? (pid_t)-errno : pid;
     return capsule->capture_pid;
 }
@@ -293,6 +369,41 @@ int wf_fork_capsule_parent_start(wf_fork_capsule *capsule, wf_fork_capsule_job *
     capsule->prepared = 0;
     job->pidfd = (int)syscall(SYS_pidfd_open, pid, 0u);
     job->pidfd_error = job->pidfd < 0 ? errno : 0;
+    return 0;
+}
+
+int wf_fork_capsule_parent_start_owned(wf_fork_capsule *capsule,
+                                      wf_fork_capsule_job *job) {
+    if (capsule == NULL || !capsule->armed || capsule->capture_pid == 0
+        || capsule->source_encoder == NULL || job == NULL) return EINVAL;
+    pid_t pid = capsule->capture_pid;
+    capsule->armed = 0;
+    capsule->capture_pid = 0;
+    if (pid < 0) return (int)-pid;
+    job->pid = pid;
+    job->pidfd = -1;
+    job->pidfd_error = 0;
+    job->result_read = capsule->result_read;
+    capsule->result_read = -1;
+    (void)close(capsule->result_write);
+    capsule->result_write = -1;
+    capsule->prepared = 0;
+    return 0;
+}
+
+int wf_fork_capsule_reap_owned(wf_fork_capsule_job *job,
+                              wf_fork_capsule_result *result) {
+    int status;
+    pid_t answer;
+    if (job == NULL || job->pid <= 0 || result == NULL) return EINVAL;
+    do { answer = waitpid(job->pid, &status, 0); }
+    while (answer < 0 && errno == EINTR);
+    if (answer < 0) return errno;
+    memset(result, 0, sizeof(*result));
+    result->exit_code = -1;
+    if (WIFEXITED(status)) result->exit_code = WEXITSTATUS(status);
+    else if (WIFSIGNALED(status)) result->signal_number = WTERMSIG(status);
+    job->pid = 0;
     return 0;
 }
 

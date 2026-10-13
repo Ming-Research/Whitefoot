@@ -1942,7 +1942,7 @@ impl<'unit> Checker<'_, 'unit> {
                     .declarations
                     .unsupported(UnsupportedSemanticFeature::CompositeValues, node);
             }
-            let (binding, path, _) = self
+            let (binding, path, proof_base) = self
                 .types
                 .declarations
                 .explicit_container_path(&place.expression, node)?;
@@ -1956,6 +1956,7 @@ impl<'unit> Checker<'_, 'unit> {
                     binding,
                     element,
                     element_type: place.ty,
+                    proof_base,
                 },
                 declaration: place.declaration,
                 element_type: place.ty,
@@ -2264,6 +2265,7 @@ impl<'unit> Checker<'_, 'unit> {
                 formation: Some(Box::new(formed.expression)),
                 element,
                 element_type,
+                proof_base: None,
             },
             declaration,
             element_type,

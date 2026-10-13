@@ -683,7 +683,7 @@ fn shards_type_arguments_require_drop_and_forward_a_drop_bound() {
         br#"nodrop struct Token {
 }
 
-fn held(parts: &Shards<Token>) -> result: unit pure {
+fn kept(parts: &Shards<Token>) -> result: unit pure {
   return unit;
 }
 

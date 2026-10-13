@@ -161,8 +161,11 @@ read.
 - `spec/kernel-spec.md`: normative syntax, semantics, judgments, boundaries
   and examples; not compiler convenience presented as law or editing history.
   `spec/log.md` holds its approvals.
-- `docs/patterns.md`: writer problems, usable forms, examples, applicability
-  and costs; not acceptance rules or universal performance claims.
+- Whitefoot-kit's [writing guide](https://github.com/Ming-Research/Whitefoot-kit/blob/main/docs/writing.md): writer
+  problems, usable forms, examples, applicability and costs, for agents;
+  the line that merges a specification change into `main` files a request
+  to Whitefoot-kit on the status board naming the specification version,
+  the rules it changed and what writers must now watch for.
 - `docs/ideas.md` and `docs/why-whitefoot.md`: candidate mechanisms and
   explanatory essays; not a work queue or invented measurements.
 - `docs/articles/`: one idea each for readers outside the project, every
@@ -177,7 +180,7 @@ read.
 
 - Technical claims point to the specification, source and cases, a relevant
   design, or reproducible evidence.
-- The constitution, specification, writer patterns and essays stand without
+- The constitution, specification and essays stand without
   the design trees: they do not link to `design/` or use it as authority.
 - Maintainer navigation (README, this file, the research index) may point to
   the design trees. Research records and PRs may cite decisions as historical
@@ -244,20 +247,25 @@ leaves Cargo and the test harness at every available processor unless
 system time every 30 seconds, and stops a command after 30 minutes unless
 `WHITEFOOT_CHECK_TIMEOUT` gives another limit in seconds. It compares each
 labeled stage with its budget in `.github/time-budgets.txt` without changing
-the command's status: CI fails the job in a final verdict step. On a
-self-hosted runner, inspect an existing lock owner's PID instead of starting
-another heavy command, and after an uncatchable stop inspect the recorded
-PID and command before removing a stale lock.
+the command's status. Linux budgets are per CPU model: the maximum of at least
+its 20 most recent recorded runs plus 10%, rounded up to 5 s, with a 10 s floor.
+Models with fewer runs have no column; unknown models use the stage's largest
+Linux budget, with a note. macOS overruns are report-only; Windows rows keep their rule.
+The final CI verdict fails on Linux and Windows overruns and on a missing row
+for any host. On a self-hosted runner, inspect an existing lock owner's PID
+instead of starting another heavy command, and after an uncatchable stop
+inspect the recorded PID and command before removing a stale lock.
 
 When a stage exceeds its budget, look at what the change adds to it and at the
 job's slowest cases and host; fix a cause you find or bring the raise to the
 owner, and re-run once when you cannot tell; an overrun the change plainly
-cannot cause is reported as runner variance and cleared by a passing re-run.
-A raise is the owner's decision and adds 10 s to the stage and to its group
-stage, if any; lower a budget when a change makes its stage much faster, and
-give a new labeled stage a budget. The `gate` Cargo profile builds the Rust
-compiler with optimization, debug assertions and overflow checks; it does
-not change how WF source is compiled. `WHITEFOOT_TEST_TIMINGS=<scratch TSV>`
+cannot cause is reported as runner variance, and an enforced overrun is
+cleared by a passing re-run. A raise is the owner's decision; recompute Linux
+values by the rule above; Windows raises add 10 s to the stage and its group,
+if any. Lower a budget when a change makes its stage much faster, and give a
+new labeled stage a budget. The `gate` Cargo profile builds the Rust compiler
+with optimization, debug assertions and overflow checks; it does not change
+how WF source is compiled. `WHITEFOOT_TEST_TIMINGS=<scratch TSV>`
 records the phases of the shared test helpers for a slow compiler test.
 
 `WHITEFOOT_CHECK_WORK=<scratch TSV>` appends the checker's per-join,

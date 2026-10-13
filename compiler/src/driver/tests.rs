@@ -4,6 +4,7 @@ use super::{
 };
 use crate::{OverlapLowering, RecursionBudget, SourceInput};
 
+mod recursive_postconditions;
 #[cfg(unix)]
 mod spellings;
 
@@ -1573,9 +1574,10 @@ fn a_syntax_rejection_prints_the_expected_spellings_and_the_offending_line() {
     assert_eq!(failure.rule_id(), Some("GRAM-9"));
     let detail = failure.detail();
     // The set as spellings, in the grammar's own order. `:` follows an atom
-    // that closes a range clause's guard list [GRAM-5].
+    // that closes a range clause's guard list, and `is` one that a variant
+    // relation tests [GRAM-5]; `is` first occurs in a result route.
     assert!(
-        detail.contains(r#"expected: [";", "{", ":", ")", ",", "<", ">", "["#),
+        detail.contains(r#"expected: [";", "{", ":", ")", ",", "is", "<", ">", "["#),
         "{detail}"
     );
     // The line the writer wrote, and where in it the parser stopped.

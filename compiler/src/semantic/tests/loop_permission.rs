@@ -29,6 +29,30 @@ use super::{with_semantics, with_semantics_dark};
 mod dispatch;
 mod fields;
 
+/// A loop that only reads its handle still changes the shared control verdict.
+/// Without the boundary judgment its empty write footprint permits a split.
+#[test]
+fn decision_cell_claims_do_not_gain_loop_overlap() {
+    let source = br#"fn decide(cell: &DecisionCell) -> result: unit reads(cell) {
+  for (i in 0_u64..4_u64) {
+    let winner = claim_written(cell: cell);
+  }
+  return unit;
+}
+
+fn main() -> result: unit pure {
+  let cell = decision_cell_new();
+  return decide(cell: &cell);
+}
+"#;
+    assert!(matches!(
+        denied(source, "decide", 2),
+        LoopDenial::BodyForm {
+            form: "a call with a decision-cell boundary [SHARE-3]"
+        }
+    ));
+}
+
 fn permission_of(source: &[u8]) -> PermissionMetadata {
     with_semantics(source, |outcome| {
         let SemanticOutcome::Complete(program) = outcome else {
@@ -902,9 +926,9 @@ fn main() -> status: std::process::ExitStatus pure {
 fn a_set_of_iteration_own_storage_is_permitted() {
     let source = b"fn main() -> status: std::process::ExitStatus pure {
   for @swap (i in 0_u64..8_u64) {
-    let held = array_filled::<u64, 4>(value: 0_u64);
+    let observed_state = array_filled::<u64, 4>(value: 0_u64);
     let fresh = array_filled::<u64, 4>(value: i);
-    set held = fresh;
+    set observed_state = fresh;
   }
   return std::process::exit_status(code: 0_u8);
 }
@@ -1140,10 +1164,10 @@ fn carried_state_that_is_no_reduction_is_denied_by_condition_one() {
 #[test]
 fn a_set_of_enclosing_storage_is_denied_by_condition_one() {
     let source = b"fn main() -> status: std::process::ExitStatus pure {
-  let held = array_filled::<u64, 4>(value: 0_u64);
+  let observed_state = array_filled::<u64, 4>(value: 0_u64);
   for @swap (i in 0_u64..8_u64) {
     let fresh = array_filled::<u64, 4>(value: i);
-    set held = fresh;
+    set observed_state = fresh;
   }
   return std::process::exit_status(code: 0_u8);
 }
@@ -3804,6 +3828,7 @@ fn indexed_summary_cache_reuses_successes_and_cycle_denials_per_parameter() {
                 .iter()
                 .map(|function| PermissionSignature {
                     name: function.name.clone(),
+                    decision_cell: false,
                     parameter_declarations: function
                         .parameters
                         .iter()

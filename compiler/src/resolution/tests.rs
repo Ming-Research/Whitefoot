@@ -162,7 +162,11 @@ fn minimal_function_publishes_the_closed_prelude_and_source_declaration() {
         let ResolutionOutcome::Complete(resolved) = outcome else {
             panic!("minimal canonical function must resolve: {outcome:?}");
         };
-        assert_eq!(resolved.prelude_declarations().len(), 31);
+        // Without parsed opaque/function records, PRE-1 contributes just
+        // its enum catalog and Int, Float, Eq, Run. The enum preorders have
+        // 3 (Bool), 5 (Option), 7 (Result), 2 (Overflow), 3 (DivError),
+        // 2 (NarrowError), 5 (ScanStep), and 4 (DecisionState) records.
+        assert_eq!(resolved.prelude_declarations().len(), 35);
         assert_eq!(resolved.declarations().len(), 1);
         assert_eq!(resolved.declarations()[0].role(), DeclarationRole::Function);
         assert_eq!(resolved.declarations()[0].spelling(), "probe");
@@ -1761,6 +1765,41 @@ fn probe() -> result: unit pure {
     });
 }
 
+/// [RANGE-1] a variant relation's TYPEID names a variant of the tested
+/// value's enum, so resolution defers it to the checker, as it does an arm
+/// label, and never selects a constructor or type of the same spelling.
+#[test]
+fn tested_variants_wait_for_the_tested_enum() {
+    let source = br#"struct Stop {
+}
+
+enum Step {
+  Next();
+  Halt();
+}
+
+fn probe(steps: &[Step]) -> result: unit pure contract {
+  requires forall ends(k in 0_u64..steps^.len): steps^[k] is not Stop;
+} {
+  return unit;
+}
+"#;
+    with_one_resolution(source, |outcome| {
+        let ResolutionOutcome::Complete(resolved) = outcome else {
+            panic!("a tested variant is deferred to the checker: {outcome:?}");
+        };
+        assert!(resolved.deferred_uses().iter().any(|usage| {
+            usage.role() == DeferredUseRole::TestedVariant && usage.spelling() == "Stop"
+        }));
+        assert!(
+            !resolved
+                .lexical_uses()
+                .iter()
+                .any(|usage| usage.spelling() == "Stop")
+        );
+    });
+}
+
 /// The fixture follows the language rather than the assertions moving.
 /// `OperationCallee` is the OPNAME form specifically (`roles.rs` keys it on
 /// `TerminalPredicate::OperationName`), so it rides `iabs.checked`, a dotted
@@ -1850,8 +1889,8 @@ fn probe() -> result: unit pure {
     break @counted;
   }
   match ordinary {
-    Present(value: held) => {
-      give held;
+    Present(value: observed_state) => {
+      give observed_state;
     }
     Absent() => {
       return unit;
@@ -2658,12 +2697,13 @@ fn ordinary_prelude_names_cannot_be_shadowed_and_an_opaque_constructor_entry_res
             );
         },
     );
-    // [TYPE-6] a source variant belongs to its enum and enters no
-    // constructor domain, so it shares a PRE-1 variant's spelling freely.
+    // [TYPE-6] a source variant belongs to its enum and enters no constructor
+    // domain, so it shares PRE-1 decision-state and PRE-2 host variants'
+    // spellings freely.
     with_resolution_sources(
         &[SourceInput::new(
             "owned.wf",
-            b"enum Collision {\n  NotFound();\n}\n",
+            b"enum Collision {\n  NotFound();\n  Open();\n  Written();\n  Killed();\n}\n",
         )],
         true,
         |outcome| {
@@ -2753,9 +2793,14 @@ fn supplied_signature_locals_do_not_capture_writer_global_names() {
 fn ordinary_prelude_diagnostic_origins_follow_the_complete_record_preorder() {
     // The opaque structs first, each with the nominal and the refused
     // constructor [TYPE-2] its collision names in both domains; `Bool` and
-    // its variants follow. `Bool` collides on its nominal alone, because an
-    // enum contributes its variants' spellings to the constructor domain and
-    // not its own.
+    // its variants follow. `Bool` collides on its nominal alone, because a
+    // prelude enum contributes its variants' spellings to the constructor
+    // domain and not its own. Shards contributes records 52 through 55 and
+    // AnyShard 56 and 57; DecisionCell's fieldless opaque declaration
+    // contributes records 58 and 59, placing Bool at 60; Bool, Option and
+    // Result contribute 3 + 5 + 7 records before Overflow at 75. The enums
+    // through ScanStep occupy 27 records, so DecisionState is at 87 and its
+    // three tag-only variants occupy 88 through 90.
     for (name, origins) in [
         ("Slots", vec![5, 6]),
         ("Paged", vec![22, 23]),
@@ -2766,8 +2811,13 @@ fn ordinary_prelude_diagnostic_origins_follow_the_complete_record_preorder() {
         ("KeySet", vec![44, 45]),
         ("Shards", vec![52, 53]),
         ("AnyShard", vec![56, 57]),
-        ("Bool", vec![58]),
-        ("Overflow", vec![73, 74]),
+        ("DecisionCell", vec![58, 59]),
+        ("Bool", vec![60]),
+        ("Overflow", vec![75, 76]),
+        ("DecisionState", vec![87]),
+        ("Open", vec![88]),
+        ("Written", vec![89]),
+        ("Killed", vec![90]),
     ] {
         let source = format!("struct {name} {{\n}}\n");
         with_resolution_sources(
@@ -2861,9 +2911,10 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
     assert_eq!(first[28].2, Some(DeclarationClass::StructConstructor));
     assert_eq!(first[29].1, "T");
     assert_eq!(first[30].1, "inner");
-    // The shared-object handles, the keyed table, the key set and the keyed
-    // entries [SHARE-1] close the opaque phase: each nominal, its refused
-    // constructor, its type parameter and its readonly measure field.
+    // Shared handles, the keyed table, the key set, keyed entries, the
+    // shards, the shard selector and the decision cell close the opaque
+    // phase: each nominal, its refused constructor, and any type parameters
+    // and readonly measure fields.
     assert_eq!(first[31].1, "Shared");
     assert_eq!(first[31].2, Some(DeclarationClass::NominalType));
     assert_eq!(first[32].1, "Shared");
@@ -2903,6 +2954,10 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
     assert_eq!(first[56].2, Some(DeclarationClass::NominalType));
     assert_eq!(first[57].1, "AnyShard");
     assert_eq!(first[57].2, Some(DeclarationClass::StructConstructor));
+    assert_eq!(first[58].1, "DecisionCell");
+    assert_eq!(first[58].2, Some(DeclarationClass::NominalType));
+    assert_eq!(first[59].1, "DecisionCell");
+    assert_eq!(first[59].2, Some(DeclarationClass::StructConstructor));
     // Then each enum with its variants and their fields, then `Int`,
     // `Float`, `Eq` and the reference-kind name `Run` [TYPE-8], then the
     // construction functions [OP-13], then the window operations in written
@@ -2912,76 +2967,99 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
     // `shared_share`, `shared_read`,
     // `shared_read_share`, `frozen_new`, `frozen_share`, `map_count`,
     // `map_scan`, `map_scan_within`, `map_clear`, `key_set_new`,
-    // `key_set_insert`, `key_set_bytes` and `key_set_read_key` [SHARE-1] and `free_empty`
-    // [OP-14] and `release` [PRE-1], each with its type, const, function-kind and value
-    // parameters in declared order and then its range postconditions' names and bound variables
-    // [RANGE-1].
-    assert_eq!(first[58].1, "Bool");
-    assert_eq!(first[80].1, "ScanStep");
-    assert_eq!(first[81].1, "Next");
-    assert_eq!(first[83].1, "Needs");
-    assert_eq!(first[85].1, "Int");
-    assert_eq!(first[86].1, "Float");
-    assert_eq!(first[87].1, "Eq");
-    assert_eq!(first[87].2, Some(DeclarationClass::BuiltinBound));
-    assert_eq!(first[88].1, "Run");
-    assert_eq!(first[88].2, Some(DeclarationClass::NominalType));
-    assert_eq!(first[89].1, "box_new");
-    assert_eq!(first[92].1, "array_filled");
-    assert_eq!(first[93].1, "T");
-    assert_eq!(first[94].1, "n");
-    assert_eq!(first[95].1, "value");
-    assert_eq!(first[96].1, "filled");
-    assert_eq!(first[97].1, "k");
-    assert_eq!(first[98].1, "slots_new");
-    assert_eq!(first[101].1, "ring_new");
-    assert_eq!(first[104].1, "box_array_filled");
-    assert_eq!(first[108].1, "filled");
-    assert_eq!(first[109].1, "k");
-    assert_eq!(first[110].1, "box_segments_filled");
-    assert_eq!(first[125].1, "box_paged_new");
-    assert_eq!(first[136].1, "place_back");
-    assert_eq!(first[171].1, "grow_paged");
-    assert_eq!(first[175].1, "paged_page_len");
-    assert_eq!(first[186].1, "swap");
-    assert_eq!(first[190].1, "shared_new");
-    assert_eq!(first[193].1, "shared_map_new");
-    assert_eq!(first[196].1, "shared_shards_new");
-    assert_eq!(first[197].1, "T");
-    assert_eq!(first[198].1, "make");
-    assert_eq!(first[198].2, None);
-    assert_eq!(first[199].1, "any_shard");
-    assert_eq!(first[200].1, "shared_share");
-    assert_eq!(first[203].1, "shared_read");
-    assert_eq!(first[206].1, "shared_read_share");
+    // `key_set_insert`, `key_set_bytes` and `key_set_read_key` [SHARE-1] and
+    // `free_empty` [OP-14], `release` and the five decision-cell functions
+    // [PRE-1], each with its type, const, function-kind and value parameters
+    // in declared order and then its range postconditions' names and bound
+    // variables [RANGE-1].
+    assert_eq!(first[60].1, "Bool");
+    assert_eq!(first[82].1, "ScanStep");
+    assert_eq!(first[83].1, "Next");
+    assert_eq!(first[85].1, "Needs");
+    assert_eq!(first[87].1, "DecisionState");
+    assert_eq!(first[87].2, Some(DeclarationClass::NominalType));
+    assert_eq!(first[88].1, "Open");
+    assert_eq!(first[88].2, Some(DeclarationClass::EnumVariant));
+    assert_eq!(first[89].1, "Written");
+    assert_eq!(first[89].2, Some(DeclarationClass::EnumVariant));
+    assert_eq!(first[90].1, "Killed");
+    assert_eq!(first[90].2, Some(DeclarationClass::EnumVariant));
+    assert_eq!(first[91].1, "Int");
+    assert_eq!(first[92].1, "Float");
+    assert_eq!(first[93].1, "Eq");
+    assert_eq!(first[93].2, Some(DeclarationClass::BuiltinBound));
+    assert_eq!(first[94].1, "Run");
+    assert_eq!(first[94].2, Some(DeclarationClass::NominalType));
+    assert_eq!(first[95].1, "box_new");
+    assert_eq!(first[98].1, "array_filled");
+    assert_eq!(first[99].1, "T");
+    assert_eq!(first[100].1, "n");
+    assert_eq!(first[101].1, "value");
+    assert_eq!(first[102].1, "filled");
+    assert_eq!(first[103].1, "k");
+    assert_eq!(first[104].1, "slots_new");
+    assert_eq!(first[107].1, "ring_new");
+    assert_eq!(first[110].1, "box_array_filled");
+    assert_eq!(first[114].1, "filled");
+    assert_eq!(first[115].1, "k");
+    assert_eq!(first[116].1, "box_segments_filled");
+    assert_eq!(first[131].1, "box_paged_new");
+    assert_eq!(first[142].1, "place_back");
+    assert_eq!(first[177].1, "grow_paged");
+    assert_eq!(first[181].1, "paged_page_len");
+    assert_eq!(first[192].1, "swap");
+    assert_eq!(first[196].1, "shared_new");
+    assert_eq!(first[199].1, "shared_map_new");
+    assert_eq!(first[202].1, "shared_shards_new");
+    assert_eq!(first[203].1, "T");
+    assert_eq!(first[204].1, "make");
+    assert_eq!(first[204].2, None);
+    assert_eq!(first[205].1, "any_shard");
+    assert_eq!(first[206].1, "shared_share");
+    assert_eq!(first[209].1, "shared_read");
+    assert_eq!(first[212].1, "shared_read_share");
     // Each frozen function contributes its function, T and value parameter:
     // three records each. Frozen adds four opaque records, and ScanStep adds
     // five enum records before these functions.
-    assert_eq!(first[209].1, "frozen_new");
-    assert_eq!(first[210].1, "T");
-    assert_eq!(first[211].1, "value");
-    assert_eq!(first[212].1, "frozen_share");
-    assert_eq!(first[213].1, "T");
-    assert_eq!(first[214].1, "frozen");
-    assert_eq!(first[215].1, "map_count");
-    assert_eq!(first[218].1, "map_scan");
-    assert_eq!(first[224].1, "map_scan_within");
-    assert_eq!(first[231].1, "map_clear");
-    assert_eq!(first[234].1, "key_set_new");
-    assert_eq!(first[236].1, "key_set_insert");
-    assert_eq!(first[239].1, "key_set_bytes");
-    assert_eq!(first[240].1, "keys");
-    assert_eq!(first[241].1, "key_set_read_key");
-    assert_eq!(first[245].1, "free_empty");
-    assert_eq!(first[248].1, "release");
-    assert_eq!(first[249].1, "T");
-    assert_eq!(first[250].1, "value");
-    // PRE-1 v0.143: 58 opaque records + 27 enum records + four built-in
-    // records + 162 function/parameter/range records = 251. The shards
-    // constructor contributes its function, T and make formal; any_shard
-    // contributes its function alone. Count every owner-local declaration.
-    assert_eq!(first.len(), 251);
-    assert_eq!(first.last().map(|record| record.1.as_str()), Some("value"));
+    assert_eq!(first[215].1, "frozen_new");
+    assert_eq!(first[216].1, "T");
+    assert_eq!(first[217].1, "value");
+    assert_eq!(first[218].1, "frozen_share");
+    assert_eq!(first[219].1, "T");
+    assert_eq!(first[220].1, "frozen");
+    assert_eq!(first[221].1, "map_count");
+    assert_eq!(first[224].1, "map_scan");
+    assert_eq!(first[230].1, "map_scan_within");
+    assert_eq!(first[237].1, "map_clear");
+    assert_eq!(first[240].1, "key_set_new");
+    assert_eq!(first[242].1, "key_set_insert");
+    assert_eq!(first[245].1, "key_set_bytes");
+    assert_eq!(first[246].1, "keys");
+    assert_eq!(first[247].1, "key_set_read_key");
+    assert_eq!(first[251].1, "free_empty");
+    assert_eq!(first[254].1, "release");
+    assert_eq!(first[255].1, "T");
+    assert_eq!(first[256].1, "value");
+    // The nullary constructor contributes one function record; each other
+    // decision-cell function contributes its function and cell parameter.
+    assert_eq!(first[257].1, "decision_cell_new");
+    assert_eq!(first[258].1, "decision_cell_share");
+    assert_eq!(first[260].1, "decision_cell_read");
+    assert_eq!(first[262].1, "claim_written");
+    assert_eq!(first[264].1, "claim_killed");
+    // PRE-1: 60 opaque records + 31 enum records + four built-in records +
+    // 171 function/parameter/range records = 266. Frozen adds four opaque
+    // records and frozen_new/frozen_share add three each; ScanStep adds five
+    // enum records and map_scan_within seven call records; release adds its
+    // function, T and value, three records; key_set_bytes adds its function
+    // and value parameter, two records; Shards adds four opaque records and
+    // AnyShard two; the shards constructor contributes its function, T and
+    // make formal and any_shard its function alone; DecisionCell adds two
+    // opaque records, DecisionState four enum records and the five
+    // decision-cell functions nine records. Count every declaration in the
+    // preorder, including owner-local ones.
+    assert_eq!(first.len(), 266);
+    assert_eq!(first.last().map(|record| record.1.as_str()), Some("cell"));
     assert!(
         first
             .iter()
@@ -2993,8 +3071,8 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
 /// While the host declarations were PRE-1's the inventory held 397 records,
 /// and this test showed that a late collision kept an ordinal above `u8`. The
 /// host declarations are the standard library's now [PRE-2] and the
-/// inventory holds 251, so no prelude ordinal exceeds `u8`; what remains to
-/// show is that the last function's collision names its own preorder ordinal.
+/// inventory holds 266, so no prelude ordinal exceeds `u8`; this still
+/// shows that a late function's collision names its own preorder ordinal.
 #[test]
 fn a_late_prelude_function_collision_names_its_preorder_ordinal() {
     let source = b"fn release() -> result: unit pure {\n  return unit;\n}\n";
@@ -3009,10 +3087,10 @@ fn a_late_prelude_function_collision_names_its_preorder_ordinal() {
                 panic!("ordinary function collision: {issue:?}");
             };
             assert_eq!(conflicts.len(), 1);
-            // PRE-1: 58 opaque records + 27 enum records + Int, Float,
+            // PRE-1: 60 opaque records + 31 enum records + Int, Float,
             // Eq, Run + 159 preceding function/parameter/range records.
             assert!(
-                matches!(conflicts[0].origin(), DeclarationOrigin::Prelude(id) if id.ordinal() == 248)
+                matches!(conflicts[0].origin(), DeclarationOrigin::Prelude(id) if id.ordinal() == 254)
             );
         },
     );

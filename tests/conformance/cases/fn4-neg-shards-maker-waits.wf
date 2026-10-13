@@ -1,8 +1,8 @@
 fn waited_zero() -> made: u8 pure waits {
   let cell = shared_new::<u8>(value: 0_u8);
   let seen = 0_u8;
-  atomic held = &cell {
-    set seen = held^;
+  atomic kept = &cell {
+    set seen = kept^;
   }
   return seen;
 }
