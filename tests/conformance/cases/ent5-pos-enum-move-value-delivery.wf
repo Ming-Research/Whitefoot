@@ -16,7 +16,7 @@ fn delivered(flag: Bool) -> result: u8 pure {
   let selected = if flag {
     give move moved;
   } else {
-    release(value: move moved);
+    release::<RoutedOwned>(value: move moved);
     let other = make();
     give move other;
   }

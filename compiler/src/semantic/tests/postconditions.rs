@@ -1,6 +1,6 @@
 use crate::{
     LexicalUseRole, ResolutionIssueKind, ResolutionOutcome, ResolutionRule, SemanticIssueKind,
-    SemanticLocation, SemanticOutcome, SemanticRule,
+    SemanticOutcome, SemanticRule,
 };
 
 use super::{

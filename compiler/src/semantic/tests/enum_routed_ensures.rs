@@ -100,3 +100,30 @@ fn a_variant_owned_by_another_enum_is_an_fn9_selector_issue() {
         SemanticIssueKind::invalid_postcondition_selector(),
     );
 }
+
+#[test]
+fn a_nondata_generic_instance_is_refused_at_its_route_and_names_its_request() {
+    let source = include_bytes!(
+        "../../../../tests/conformance/cases/fn9-neg-enum-generic-nondata-instance.wf"
+    );
+    with_semantics(source, |outcome| {
+        let SemanticOutcome::SourceIssue { issue } = outcome else {
+            panic!("Bool route admission must be an FN-9 source issue: {outcome:?}");
+        };
+        assert_eq!(issue.rule(), SemanticRule::Fn9);
+        assert_eq!(
+            issue.kind(),
+            &SemanticIssueKind::invalid_postcondition_selector()
+        );
+        let cited = |coordinate: crate::SyntaxCoordinate| {
+            let start = usize::try_from(coordinate.start().value()).expect("offset fits");
+            let end = usize::try_from(coordinate.end().value()).expect("offset fits");
+            &source[start..end]
+        };
+        let SemanticLocation::SourceNode(_, coordinate) = issue.location();
+        assert_eq!(cited(*coordinate), b"Held(data: payload)");
+        let request = issue.request.expect("concrete Bool instance requester");
+        assert_eq!(request.source(), coordinate.source());
+        assert_eq!(cited(request), b"retain::<Bool>(value: flag)");
+    });
+}
