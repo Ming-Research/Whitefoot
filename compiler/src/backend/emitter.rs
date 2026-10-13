@@ -2745,6 +2745,12 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 self.emit_box_new(result, ty, *nominal, *value)
             }
             IrOperation::SharedNew { nominal } => self.emit_shared_new(result, ty, *nominal),
+            IrOperation::DecisionCellNew { nominal } => {
+                self.emit_decision_cell_new(result, ty, *nominal)
+            }
+            IrOperation::DecisionCell { object, winner } => {
+                self.emit_decision_cell(result, ty, *object, *winner)
+            }
             IrOperation::SharedState { nominal, object } => {
                 self.emit_shared_state(result, ty, *nominal, *object)
             }

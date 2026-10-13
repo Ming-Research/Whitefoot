@@ -101,6 +101,7 @@ macro_rules! operation_operands {
             | IrOperation::Window
             | IrOperation::ContextJoin
             | IrOperation::SharedNew { .. }
+            | IrOperation::DecisionCellNew { .. }
             | IrOperation::TableEntrySlot { .. }
             | IrOperation::TableUnlockEntry { .. }
             | IrOperation::TableHoldRead { .. }
@@ -133,6 +134,7 @@ macro_rules! operation_operands {
             | IrOperation::ContextAwait { start: value }
             | IrOperation::SharedState { object: value, .. }
             | IrOperation::SharedRetain { object: value, .. }
+            | IrOperation::DecisionCell { object: value, .. }
             | IrOperation::SharedAcquire { object: value }
             | IrOperation::SharedTake { object: value }
             | IrOperation::SharedUnlock { object: value, .. }

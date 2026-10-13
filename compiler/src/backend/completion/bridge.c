@@ -3731,6 +3731,58 @@ void wf__shared_free(void *object) {
     wf_pool_give(shared, shared->pool_bytes);
 }
 
+/* A separately decided control verdict, not exposed mutable shared state.
+ * Allocation and aliases use the existing shared lifetime protocol, while
+ * read and claim never touch that header's lock or holders. */
+typedef struct {
+    union {
+        wf_shared shared;
+        unsigned char header[WF_SHARED_STATE_OFFSET];
+    };
+    _Atomic unsigned int state;
+} wf_decision_cell;
+_Static_assert(offsetof(wf_decision_cell, state) == WF_SHARED_STATE_OFFSET,
+               "decision cells retain the ordinary shared header");
+_Static_assert(UINT_MAX == UINT32_MAX && sizeof(unsigned int) == sizeof(uint32_t),
+               "decision cells require a 32-bit unsigned int word");
+_Static_assert(ATOMIC_INT_LOCK_FREE == 2,
+               "decision cells require a lock-free 32-bit atomic word");
+
+void *wf__decision_cell_new(void) {
+    wf_decision_cell *cell = wf__shared_new(sizeof(*cell) - WF_SHARED_STATE_OFFSET);
+    atomic_init(&cell->state, WF_DECISION_OPEN);
+    return cell;
+}
+
+uint32_t wf__decision_cell_read(void *object) {
+    wf_decision_cell *cell = object;
+    return atomic_load_explicit(&cell->state, memory_order_seq_cst);
+}
+
+static uint32_t wf_decision_claim(void *object, uint32_t winner) {
+    wf_decision_cell *cell = object;
+    unsigned int expected = WF_DECISION_OPEN;
+    /* Exactly one strong CAS operation: failure returns the absorbing
+     * winner, so there is no runtime retry loop. On an LL/SC target the
+     * compiler may retry exclusive stores inside this lock-free operation;
+     * this is not a bound on machine instructions or a wait-free promise.
+     * The assertion above refuses a target needing a locking fallback. */
+    if (atomic_compare_exchange_strong_explicit(&cell->state, &expected, winner,
+                                               memory_order_seq_cst,
+                                               memory_order_seq_cst)) {
+        return winner;
+    }
+    return expected;
+}
+
+uint32_t wf__claim_written(void *cell) {
+    return wf_decision_claim(cell, WF_DECISION_WRITTEN);
+}
+
+uint32_t wf__claim_killed(void *cell) {
+    return wf_decision_claim(cell, WF_DECISION_KILLED);
+}
+
 /* Whether a statement asking to write, or to read, may hold the object now.
  * Called under the object's lock or, as a hint, without it. */
 static int wf_shared_admits(wf_shared *shared, uint32_t write) {
