@@ -8,7 +8,7 @@ fn part_new() -> made: Part pure {
   return Part(log: move log, write_count: 0_u64);
 }
 
-fn append(parts: Shared<Shards<Part>>, byte: u8) -> result: unit pure waits {
+fn append_byte(parts: Shared<Shards<Part>>, byte: u8) -> result: unit pure waits {
   let mine = any_shard();
   for @round (index in 0_u64..4_u64) {
     atomic part = &parts[mine] {
@@ -23,11 +23,11 @@ fn append(parts: Shared<Shards<Part>>, byte: u8) -> result: unit pure waits {
 
 fn append_three(parts: &Shared<Shards<Part>>) -> result: unit reads(parts) waits {
   let first = shared_share::<Shards<Part>>(shared: parts);
-  spawn append(parts: move first, byte: 1_u8);
+  spawn append_byte(parts: move first, byte: 1_u8);
   let second = shared_share::<Shards<Part>>(shared: parts);
-  spawn append(parts: move second, byte: 2_u8);
+  spawn append_byte(parts: move second, byte: 2_u8);
   let third = shared_share::<Shards<Part>>(shared: parts);
-  spawn append(parts: move third, byte: 3_u8);
+  spawn append_byte(parts: move third, byte: 3_u8);
   return unit;
 }
 
@@ -60,7 +60,7 @@ fn main() -> status: std::process::ExitStatus pure waits {
   append_three(parts: &parts);
   let first = drain(parts: &parts);
   let again = shared_share::<Shards<Part>>(shared: &parts);
-  append(parts: move again, byte: 5_u8);
+  append_byte(parts: move again, byte: 5_u8);
   let second = drain(parts: &parts);
   let third = drain(parts: &parts);
   let write_count = writes_total(parts: &parts);

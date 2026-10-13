@@ -10314,7 +10314,12 @@ fn real_sources_retain_complete_proof_roots_without_counted_false_positives() {
             let SemanticOutcome::Complete(program) = outcome else {
                 panic!("real source bundle must remain accepted: {outcome:?}");
             };
-            for function in &program.data.functions {
+            for function in program
+                .data
+                .functions
+                .iter()
+                .filter(|function| !function.formal_hypothesis)
+            {
                 validate_derivations(&function.entailment);
                 let expected_counted = match (bundle, function.name.as_str()) {
                     (_, "parse") => 1,

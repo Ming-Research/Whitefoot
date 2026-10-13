@@ -221,8 +221,7 @@ fn with_ir<ResultValue>(source: &[u8], run: impl FnOnce(&IrProgram) -> ResultVal
 
 #[test]
 fn any_shard_representation_preserves_unrelated_qualified_host_opaques() {
-    let source = br#"
-fn inspect(meter: &std::process::MemoryMeter) -> result: unit reads(meter) {
+    let source = br#"fn inspect(meter: &std::process::MemoryMeter) -> result: unit pure {
   return unit;
 }
 
@@ -353,8 +352,7 @@ fn shards_run_cases_lower_constructor_calls_and_addressed_elements() {
 
 #[test]
 fn shard_aliases_use_one_identity_ordered_group_with_whole_absorption() {
-    let source = br#"
-fn zero() -> value: u64 pure {
+    let source = br#"fn zero() -> value: u64 pure {
   return 0_u64;
 }
 
@@ -935,11 +933,14 @@ fn main() -> status: std::process::ExitStatus pure {
                 .count();
             // A compiler-owned [PRE-1] record is emitted where a call reaches
             // it: a generic one's instance exists only where called, and the
-            // key set's four, which take no type parameter, are not called
-            // here.
+            // key set's four and any_shard, which take no type parameter,
+            // are not called here.
             let record = function.body.is_none()
                 && crate::lowering::COMPILER_OWNED_PRELUDE_ROWS.contains(&function.name.as_str());
-            let expected = usize::from(!record || !function.name.starts_with("key_set_"));
+            let expected = usize::from(
+                !record
+                    || (!function.name.starts_with("key_set_") && function.name != "any_shard"),
+            );
             assert_eq!(
                 variants, expected,
                 "{}: one heap leaves one release environment, and every ordinary \

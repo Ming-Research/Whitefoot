@@ -476,7 +476,13 @@ fn permission_of_with_discharged_query(
         let SemanticOutcome::Complete(program) = outcome else {
             panic!("permission fixture must check: {outcome:?}");
         };
-        for function in &program.data.functions {
+        // Function-kind hypotheses have no body proof; symbolic templates do.
+        for function in program
+            .data
+            .functions
+            .iter()
+            .filter(|function| !function.formal_hypothesis)
+        {
             super::entailment::validate_derivations(&function.entailment);
         }
         for &(expected_function, expected_ordering) in expected {
@@ -2732,7 +2738,12 @@ fn rebound(v: &[u8], p: u64) -> result: u64 writes(v) contract {
         let SemanticOutcome::Complete(program) = outcome else {
             panic!("permission fixture must check: {outcome:?}");
         };
-        for function in &program.data.functions {
+        for function in program
+            .data
+            .functions
+            .iter()
+            .filter(|function| !function.formal_hypothesis)
+        {
             super::entailment::validate_derivations(&function.entailment);
         }
         let function = program

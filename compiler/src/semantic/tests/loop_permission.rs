@@ -295,7 +295,12 @@ fn runtime_stride_sum_base_and_descendant_helper_calls_are_permitted() {
         let SemanticOutcome::Complete(program) = outcome else {
             panic!("{outcome:?}");
         };
-        for function in &program.data.functions {
+        for function in program
+            .data
+            .functions
+            .iter()
+            .filter(|function| !function.formal_hypothesis)
+        {
             super::entailment::validate_derivations(&function.entailment);
         }
     });

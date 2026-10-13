@@ -1154,8 +1154,7 @@ fn main() -> status: std::process::ExitStatus pure {
         assert!(
             checked
                 .data
-                .functions
-                .iter()
+                .executable_functions()
                 .all(|function| !function.formal_hypothesis)
         );
     });
@@ -1320,11 +1319,19 @@ fn main() -> status: std::process::ExitStatus pure {
         };
         // D7 replaces standalone conformance metadata with checked group
         // expansion. No symbolic function hypothesis reaches executable IR.
+        // PRE-1's shared_shards_new retains its symbolic maker in the full
+        // inventory, so the boundary is the ordinary executable view.
         assert!(
             checked
                 .data
                 .functions
                 .iter()
+                .any(|function| function.formal_hypothesis && function.name == "make")
+        );
+        assert!(
+            checked
+                .data
+                .executable_functions()
                 .all(|function| !function.formal_hypothesis)
         );
         assert_eq!(
@@ -1945,8 +1952,7 @@ fn main() -> status: std::process::ExitStatus pure {
         assert!(
             checked
                 .data
-                .functions
-                .iter()
+                .executable_functions()
                 .all(|function| !function.formal_hypothesis)
         );
     });
@@ -1986,8 +1992,7 @@ fn main() -> status: std::process::ExitStatus pure {
         assert!(
             checked
                 .data
-                .functions
-                .iter()
+                .executable_functions()
                 .all(|function| !function.formal_hypothesis)
         );
     });

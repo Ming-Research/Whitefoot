@@ -1078,6 +1078,8 @@ A W4r ≥ 0.5 × W5p with W4 < 0.5 × W5p is an implementation defect (header
 writes on one-shard statements) to fix before the result counts; it does not
 reject the design.
 
+<a id="shards-implementation-criteria"></a>
+
 ### 8.5 Criteria for the implementation (registered 2026-10-12)
 
 Registered on 2026-10-12, before any implementation and before any C-model

@@ -87,10 +87,10 @@ fn whole_shards_hold_absorbs_aliases_and_selected_aliases_share_one_slot() {
 
 fn main() -> status: std::process::ExitStatus pure waits {
   let stats = shared_shards_new::<u64, fn zero>();
-  let alias = shared_share::<Shards<u64>>(shared: &stats);
+  let other = shared_share::<Shards<u64>>(shared: &stats);
   let whole = shared_share::<Shards<u64>>(shared: &stats);
   let mine = any_shard();
-  atomic first = &stats[mine], second = &alias[mine] {
+  atomic first = &stats[mine], second = &other[mine] {
     set first^ = 2_u64;
     set second^ = second^ +wrap 3_u64;
   }
