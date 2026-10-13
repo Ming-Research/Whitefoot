@@ -1,0 +1,23 @@
+nocopy struct Reading {
+  value: i64;
+}
+
+fn make() -> made: Reading pure contract {
+  ensures -1000_i64 <= made.value;
+} {
+  doc "The construction carries 0 into the field the postcondition names.";
+  return Reading(value: 0_i64);
+}
+
+fn shift(d: u8) -> result: i64 pure {
+  doc "The consume of the root kills the facts over its field, and the binding that receives the value is a new root with no image of its own, so the subtraction of a widened byte may overflow.";
+  let e = make();
+  let moved = move e;
+  let w = cvt::<u8, i64>(d);
+  let v = moved.value - w;
+  return v;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
