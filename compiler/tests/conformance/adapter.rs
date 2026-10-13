@@ -40,11 +40,11 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use whitefoot::{
-    BuildCache, CheckOutcome, CompilationFailure, CompilationFailureKind, CompilerLimits,
-    HOST_LINK_LIBRARIES, HOST_OPTIMIZATION_ARGUMENTS, ModuleEntry, ModuleProgramFailure,
-    SourceInput, check, check_module_entry, check_module_program, check_with_cache, compile,
-    compile_module_program, discover_module_sources, entry_verdict, form_module_program_graph,
-    module_verdict,
+    BuildCache, CheckOutcome, CheckVerdict, CompilationFailure, CompilationFailureKind,
+    CompilerLimits, HOST_LINK_LIBRARIES, HOST_OPTIMIZATION_ARGUMENTS, ModuleEntry, ModuleGraph,
+    ModuleProgramFailure, SourceInput, SourceRole, check, check_module_entry, check_module_program,
+    check_with_cache, compile, compile_module_program, discover_module_sources, entry_verdict,
+    form_module_graph, form_module_program_graph, module_verdict,
 };
 
 use crate::support::{PROGRAM_DEADLINE, ProgramChild, append_runtime_objects};
@@ -411,33 +411,10 @@ fn reach_with_receipts(case: &Case, cache: &BuildCache) -> Verdict {
                 .in_module(source.module, source.role)
         })
         .collect();
-    let mut verdicts = Vec::new();
-    for record in graph.modules() {
-        match module_verdict(
-            &graph,
-            &inputs,
-            &record.qualified_name(),
-            false,
-            limits,
-            Some(cache),
-        ) {
-            Ok(verdict) => verdicts.push(verdict),
-            Err(failure) => return failure_verdict(&failure),
-        }
-    }
-    for entry in graph.entries() {
-        match entry_verdict(
-            &graph,
-            &inputs,
-            ModuleEntry::Named(entry.name()),
-            limits,
-            Some(cache),
-            &verdicts,
-        ) {
-            Ok(verdict) => verdicts.push(verdict),
-            Err(failure) => return failure_verdict(&failure),
-        }
-    }
+    let verdicts = match module_verdicts_with_receipts(&graph, &inputs, cache) {
+        Ok(verdicts) => verdicts,
+        Err(failure) => return failure_verdict(&failure),
+    };
     verdicts
         .iter()
         .find_map(|verdict| match verdict.outcome() {
@@ -445,6 +422,133 @@ fn reach_with_receipts(case: &Case, cache: &BuildCache) -> Verdict {
             CheckOutcome::Accepted { .. } => None,
         })
         .unwrap_or(Verdict::Accept)
+}
+
+/// The same module selection as `check_module_program`, followed by each
+/// entry's composition. [MOD-10] registered library modules are checked only
+/// when an entry selects them; checking all graph rows would add unrelated
+/// library bodies to the cached path alone. Keep the full verdicts so a
+/// regression can identify the source of a rejection before corpus reduction.
+fn module_verdicts_with_receipts(
+    graph: &ModuleGraph,
+    inputs: &[SourceInput<'_>],
+    cache: &BuildCache,
+) -> Result<Vec<CheckVerdict>, CompilationFailure> {
+    let limits = CompilerLimits::default();
+    let mut verdicts = Vec::new();
+    for module in graph.program_modules() {
+        let record = graph
+            .modules()
+            .get(module.index())
+            .expect("a program module is a registered graph row");
+        verdicts.push(module_verdict(
+            graph,
+            inputs,
+            &record.qualified_name(),
+            false,
+            limits,
+            Some(cache),
+        )?);
+    }
+    for entry in graph.entries() {
+        verdicts.push(entry_verdict(
+            graph,
+            inputs,
+            ModuleEntry::Named(entry.name()),
+            limits,
+            Some(cache),
+            &verdicts,
+        )?);
+    }
+    Ok(verdicts)
+}
+
+/// [MOD-8, MOD-10] the cached adapter checks the same source closure as the
+/// ordinary path. Only the dependency edge changes: the invalid library
+/// body must be irrelevant first and then rejected, even with a shared cache.
+/// This does not rely on any shipped library implementation being invalid.
+#[test]
+fn cached_module_checks_follow_the_selected_library_closure() {
+    let limits = CompilerLimits::default();
+    let form = |source: &[u8]| {
+        form_module_graph(SourceInput::new("modules.wfg", source), limits)
+            .expect("the regression graph forms")
+    };
+    let unrelated = form(b"pkg: [std::process];\n\nentry main = pkg::main;\n");
+    let selected =
+        form(b"pkg: [std::process, std::collections::vector];\n\nentry main = pkg::main;\n");
+    let program = unrelated.module_named("pkg").expect("the program module");
+    let vector = unrelated
+        .module_named("std::collections::vector")
+        .expect("the library module");
+    assert_eq!(selected.module_named("pkg"), Some(program));
+    assert_eq!(
+        selected.module_named("std::collections::vector"),
+        Some(vector)
+    );
+    let invalid_path = "std/collections/vector/invalid.wf";
+    let inputs = [
+        SourceInput::new(
+            "module.wfm",
+            b"public fn main() -> status: std::process::ExitStatus pure doc \"Exits successfully.\";\n",
+        )
+        .in_module(program, SourceRole::Interface),
+        SourceInput::new(
+            "main.wf",
+            b"fn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 0_u8);\n}\n",
+        )
+        .in_module(program, SourceRole::Implementation),
+        SourceInput::new(
+            invalid_path,
+            b"fn invalid_input(value: u8) -> result: u8 pure {\n  let next = value + 1_u8;\n  return next;\n}\n",
+        )
+        .in_module(vector, SourceRole::Implementation),
+    ];
+    let directory = invocation_directory();
+    let cache =
+        BuildCache::open(&directory.join("cache"), [0x6b; 32]).expect("the regression cache opens");
+    for (graph, should_reject) in [(&unrelated, false), (&selected, true)] {
+        let fresh = check_module_program(graph, &inputs, limits)
+            .and_then(|()| check_module_entry(graph, &inputs, ModuleEntry::Named("main"), limits));
+        if should_reject {
+            let failure = fresh.expect_err("the selected invalid body must be rejected");
+            assert_eq!(failure.rule_id(), Some("OP-2"));
+            assert_eq!(
+                failure.location().as_ref().map(|at| at.path()),
+                Some(invalid_path)
+            );
+        } else {
+            fresh.expect("an unselected library body is outside the source check");
+        }
+        let cached = module_verdicts_with_receipts(graph, &inputs, &cache)
+            .expect("the cached check returns source verdicts");
+        let rejected = cached.iter().find_map(|verdict| match verdict.outcome() {
+            CheckOutcome::Rejected { rule, failure, .. } => Some((rule, failure)),
+            CheckOutcome::Accepted { .. } => None,
+        });
+        if should_reject {
+            let (rule, failure) = rejected.expect("adding the edge must not reuse acceptance");
+            assert_eq!(rule.as_deref(), Some("OP-2"));
+            assert!(failure.contains(invalid_path), "{failure}");
+        } else {
+            assert!(rejected.is_none(), "{cached:?}");
+            let warm = module_verdicts_with_receipts(graph, &inputs, &cache)
+                .expect("the warm check returns source verdicts");
+            assert!(
+                warm.iter()
+                    .all(|verdict| { matches!(verdict.outcome(), CheckOutcome::Accepted { .. }) })
+            );
+            assert!(
+                warm.iter().any(CheckVerdict::reused),
+                "the warm check uses the cache"
+            );
+            assert!(
+                cache.receipt_counts().1 > 0,
+                "the cold check records proof receipts"
+            );
+        }
+    }
+    std::fs::remove_dir_all(&directory).expect("remove the regression cache");
 }
 
 /// [MOD-8] proof receipts change the work a check does and never its
