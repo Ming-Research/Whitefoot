@@ -108,7 +108,9 @@ fn scan_exponent(input: &[u8], start: u64, end: u64) -> result: Exponent reads(i
   ensures result.next <= end;
 } {
   doc "Reads an optional exponent from start: nothing is a valid empty exponent that consumes nothing, and an e or E must be followed by an optional sign and at least one digit.";
-  let absent = Exponent(valid: True(), value: 0_i64, next: start);
+  let yes = True();
+  let no = False();
+  let absent = Exponent(valid: yes, value: 0_i64, next: start);
   if start < end {
   } else {
     return absent;
@@ -161,14 +163,14 @@ fn scan_exponent(input: &[u8], start: u64, end: u64) -> result: Exponent reads(i
   }
   if 0_u64 < seen {
   } else {
-    return Exponent(valid: False(), value: 0_i64, next: index);
+    return Exponent(valid: no, value: 0_i64, next: index);
   }
   let signed = cvt::<u64, i64>(magnitude);
   if negative {
     let flipped = 0_i64 - signed;
-    return Exponent(valid: True(), value: flipped, next: index);
+    return Exponent(valid: yes, value: flipped, next: index);
   }
-  return Exponent(valid: True(), value: signed, next: index);
+  return Exponent(valid: yes, value: signed, next: index);
 }
 
 fn read_fast(mantissa: u64, exponent: i64) -> value: Option<f64> pure {
