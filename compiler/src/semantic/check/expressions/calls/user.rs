@@ -29,8 +29,7 @@ use super::super::super::generics::{
 };
 use super::super::super::references::InvalidationEvent;
 use super::super::super::{
-    CheckStop, Checker, EffectSet, FunctionSignature, LocalBinding, ParameterSignature,
-    TypedExpression,
+    CheckStop, Checker, EffectSet, FunctionSignature, LocalBinding, TypedExpression,
 };
 
 /// One entry of a call's substituted effect row [EFF-5].
