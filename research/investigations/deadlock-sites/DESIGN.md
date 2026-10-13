@@ -23,7 +23,8 @@ This record owns the synchronization argument and the comparison protocol.
 It is kept with the runtime mechanism and updated if that mechanism changes.
 The eager-roster pilot below is an observation, not acceptance evidence for
 the revised mechanism. The cost criterion was recorded before measurement
-and remains unchanged; this revision has not been measured.
+and remains unchanged; the [full comparison result](#full-comparison-result)
+applies it to the revised mechanism.
 
 ## Selected mechanism and alternatives
 
@@ -213,8 +214,8 @@ site arguments and actual-park pointer writes still remain.
 Repeat the same-source base/twin/candidate comparison after correctness CI,
 keeping the pre-registered criterion below. Use equal batches and more rounds
 chosen from pilot duration/spread to resolve one percent; retain individual
-executions and process-launch cost. No new timing or measurement was run for
-this revision.
+executions and process-launch cost. That comparison ran afterwards; its
+result is recorded in the [full comparison result](#full-comparison-result).
 
 ## Roster-disabled attribution arm
 
@@ -261,7 +262,9 @@ The unchanged rejection criterion uses only base, twin and normal branch.
 Complete production triples remain reportable when an attribution sample is
 missing, and attribution pairs remain reportable independently of a missing
 third production sample. No samples are silently discarded. No attribution
-build, generated-code comparison or measurement has been run for this change.
+build, generated-code comparison or measurement had been run when this
+section was written; the arm's measured result is in the
+[full comparison result](#full-comparison-result).
 
 ## Comparison and rejection criterion, before measurement
 
@@ -377,7 +380,113 @@ reporter locks each roster in turn to protect membership and lifetime while
 reading its slots, retaining the scheduler-counter publication argument.
 Profiles and roster-lock contention evidence distinguish a shared-cache-line
 loss from another cause before attributing the failure. This is a contingency,
-not an implemented runtime change or a measured result.
+not an implemented runtime change or a measured result; the full comparison
+rejected no spawn panel, so it was not triggered.
+
+## Full comparison result
+
+The full comparison is [run 38471254657](https://github.com/Ming-Research/Whitefoot/actions/runs/38471254657),
+job 115550595022, on the organization's i9-14900K self-hosted runner
+(`self-hosted`, `14900k`), 21:31:30Z to 22:42:03Z on 2026-10-13. The measured
+candidate is commit `cfb5d9ff8`; the temporary workflow was added there and
+removed at `446524e29`, and the runtime and compiler code is identical to the
+head apart from the later merge of main. The harness reports 4222.133 s
+elapsed, 155.139 s of recorded build stages and 3990.791 s of measured native
+runtime. Its settings were `DEADLOCK_MODE=full`, nine rounds, work 100,
+client threads 4, 64 bytes, 100 exchanges per connection for the fixed-exchange
+panel, 64 connections and no 1,024-connection panel. Nine rounds is not a
+multiple of four, so the planned arm orders leave one unmatched remainder:
+base took the first position three times, twin the second three times, branch
+the third three times and site-only the fourth three times, and every other
+arm-position pair twice. Each panel retained all nine matched rounds.
+
+The qualified placement was identical for every arm and TCP client:
+
+| Drivers | Physical P cores | Threads per core | CPU mask |
+|---:|---:|---:|---|
+| 1 | 1 | 1 | 0 |
+| 4 | 4 | 1 | 0,2,4,6 |
+| 8 | 8 | 1 | 0,2,4,6,8,10,12,14 |
+| 16 | 8 | 2 | 0,2,4,6,8,10,12,14,1,3,5,7,9,11,13,15 |
+
+Per-panel result, as printed by the harness (median of nine matched rounds of
+`branch / base - 1`; twin spread is the largest absolute `twin / base - 1`;
+threshold is `0.01 + twin spread`):
+
+| Panel | Drivers | Min sample s | Median branch/base − 1 | Twin spread | Rejection threshold | Result |
+|---|---:|---:|---:|---:|---:|---|
+| spawn 0 | 1 | 0.347250 | -0.278709% | 1.375340% | 2.375340% | inconclusive |
+| spawn 0 | 4 | 0.603585 | 1.305828% | 2.693018% | 3.693018% | inconclusive |
+| spawn 0 | 8 | 0.764191 | -0.265599% | 1.587711% | 2.587711% | inconclusive |
+| spawn 0 | 16 | 0.918045 | -0.706606% | 1.027516% | 2.027516% | within recorded noise bound |
+| spawn-concurrent 0 | 1 | 2.369429 | 0.394366% | 0.495998% | 1.495998% | within recorded noise bound |
+| spawn-concurrent 0 | 4 | 7.867055 | -0.306518% | 1.948417% | 2.948417% | inconclusive |
+| spawn-concurrent 0 | 8 | 13.533753 | 0.165132% | 1.061466% | 2.061466% | inconclusive |
+| spawn-concurrent 0 | 16 | 19.432615 | -1.190509% | 1.128155% | 2.128155% | within recorded noise bound |
+| tcp-churn 64 | 1 | 7.623886 | 0.102390% | 0.998929% | outside veto | TCP evidence; outside spawn veto |
+| tcp-churn 64 | 4 | 7.752322 | 0.095636% | 1.191932% | outside veto | TCP evidence; outside spawn veto |
+| tcp-churn 64 | 8 | 7.794649 | 0.054796% | 0.589798% | outside veto | TCP evidence; outside spawn veto |
+| tcp-churn 64 | 16 | 7.869319 | 0.040312% | 0.423339% | outside veto | TCP evidence; outside spawn veto |
+| tcp-exchange 64 | 1 | 3.689409 | 0.119303% | 28.656793% | outside veto | TCP evidence; outside spawn veto |
+| tcp-exchange 64 | 4 | 7.656015 | -0.093842% | 2.661951% | outside veto | TCP evidence; outside spawn veto |
+| tcp-exchange 64 | 8 | 7.946598 | -0.133021% | 1.137056% | outside veto | TCP evidence; outside spawn veto |
+| tcp-exchange 64 | 16 | 8.141232 | 0.117390% | 0.589366% | outside veto | TCP evidence; outside spawn veto |
+
+Verdict against the criterion recorded above. No spawn-heavy panel rejects:
+the largest median overhead is +1.305828% at four drivers on the
+single-spawner fixture, below that panel's threshold of 3.693018%. Three panels
+(single-spawner at sixteen drivers, concurrent spawners at one and sixteen
+drivers) meet the finite within-bound condition
+`median(overhead) + twin spread <= 0.01`: the branch's median wall time is
+within the one-percent bound of base there, for this fixture, these nine
+rounds and this placement. Five panels (single-spawner at one, four and eight
+drivers; concurrent spawners at four and eight drivers) are inconclusive: the
+twin's own spread exceeds the margin that would show a median overhead of at
+most one percent, so these panels neither show the bound nor an overhead above
+the threshold. For those five the record says only that the branch was not
+rejected; it makes no claim of equality with base. The TCP panels are outside
+the veto line. Their medians are within 0.14% of base in either direction,
+with TCP startup and shutdown included in the wall time, but the one-driver
+fixed-exchange panel has a twin spread of 28.656793% (its first three rounds
+show branch/base 1.41, 0.81 and 1.14) and supports no conclusion beyond the
+run completing correctly. The bundle also records client exchange rates; no
+verdict uses them. Results are no wider than these two spawn fixtures, one
+machine and one nine-round run.
+
+Attribution-only arm (`site-only`, roster work disabled). Panel medians over
+nine matched rounds; all counts were 9/9:
+
+| Panel | Drivers | Median site-only/base | Median branch/site-only |
+|---|---:|---:|---:|
+| spawn 0 | 1 | 1.000984 | 0.998072 |
+| spawn 0 | 4 | 1.028970 | 0.986006 |
+| spawn 0 | 8 | 1.035801 | 0.959243 |
+| spawn 0 | 16 | 1.056589 | 0.937297 |
+| spawn-concurrent 0 | 1 | 1.004439 | 0.999390 |
+| spawn-concurrent 0 | 4 | 0.992044 | 1.004745 |
+| spawn-concurrent 0 | 8 | 1.000141 | 1.003376 |
+| spawn-concurrent 0 | 16 | 0.993189 | 0.997318 |
+
+The TCP panels' site-only medians were within 0.4% of base; the per-round
+values are in the bundle. On the single-spawner fixture the site-only build was
+2.9%, 3.6% and 5.7% slower than base at four, eight and sixteen drivers, while
+the full branch matched base within the criterion's bound (medians +1.3%,
+-0.3% and -0.7%); the full branch, which does strictly more diagnostic work
+than site-only, was 1.4%, 4.1% and 6.3% faster than site-only at the same
+drivers. The record already warned that site-only is not a parameter-only
+control, since it differs from the branch in the compiled bridge source and
+retains its own ABI, layout and site-store costs. This result shows that it
+does not isolate the roster's cost, so it supports no attribution claim. The
+cause of its slowdown on the single-spawner fixture is unexplained: no
+profile, assembly comparison or repeat was run, and this record offers no
+hypothesis.
+
+Remaining limits. The eager-roster pilot was not rerun, so this result gives
+the repaired revision's cost relative to base, not its improvement over the
+eager revision. Resolving the five inconclusive panels would need lower twin
+noise or more rounds, as the criterion's "repeat or lengthen only when the
+twin's spread prevents a decision" allows. Windows and macOS cost are not
+measured.
 
 ## Temporary measurement harness
 
@@ -386,9 +495,11 @@ temporary `.github/deadlock-sites-cost.py` helper and request settings in
 `.github/deadlock-sites-cost.env`. The owner changed the trigger to a push
 that edits that request file because a workflow absent from main could not
 be dispatched. This repair retains that trigger and leaves its settings
-untouched. Delete all three temporary files before the
-branch is ready; retain the uploaded measurement bundle as the evidence for
-this investigation. The helper reuses the candidate revision's unchanged
+untouched. The workflow and request file were deleted after the
+full run started and the helper before the branch was marked ready; all
+three remain at commit 446524e29, the measured candidate's harness. The run
+log and uploaded measurement bundle of run 38471254657 remain the evidence
+for this investigation. The helper reuses the candidate revision's unchanged
 `research/experiments/io-completion-bench/netload.c` loopback client, which
 checks every echoed byte. It observes listener readiness without connecting,
 so readiness does not consume one of the server's counted connections.
@@ -425,7 +536,7 @@ This fourth-arm change does not hide that input or alter the checker's
 boundary. The explicit request trigger needs a recognized boundary before
 the static gate can accept it; no checker was executed here.
 
-## Correctness evidence and remaining work
+## Correctness evidence
 
 Maintained compiler/program/runtime tests, independently of this record,
 check the capacity-eight producer/consumer deadlock, source positions and
@@ -443,9 +554,9 @@ fixtures now remove their lazy registration before leaving scope. This fixes
 a test lifetime obligation introduced by registration at the actual park
 rather than only at the native launcher. The native reader fixture no longer
 manually registers a context that waits only for a host result. Ordinary
-tests do not import this directory. These changed tests and the revised
-runtime have not been compiled or run here; earlier results do not validate
-this repair. Linux io_uring and Windows IOCP must compile the same portable C.
+tests do not import this directory. Their validation is the gate on the pushed head,
+recorded in the pull request; the cost run above checked only fixture results
+and driver counts and validates none of these tests. Linux io_uring and Windows IOCP must compile the same portable C.
 
 The previous runtime correctness review covered eager membership. It must
 redo live-set completeness at all-stuck, initialization and non-reading of
@@ -455,9 +566,9 @@ displaced-adoption races, reclamation and pool reuse, and the new
 `watch_lock` to roster-lock nesting. Static descriptor storage and the
 claim-tail/reservation low-bit representation are unchanged; the source
 positions and report-kind regressions must still pass. A fresh gate and both
-host builds establish correctness; repeated pilot/full comparisons, with the
-same sources and the unchanged veto line, must establish cost. No cost result
-is claimed for the repaired revision.
+host builds establish correctness; the full comparison recorded below, with the
+same sources and the unchanged veto line, establishes cost within its stated
+limits. The pilot is not a cost result for the repaired revision.
 
 The predicate-boundary cases exercise ready work, host waits, transfers and
 a published driver not yet included in the driver count, restoring each
