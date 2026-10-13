@@ -1868,3 +1868,112 @@ host conventions. This repair changes no specification rule, conformance
 verdict or runtime map initialization, and leaves the implementations of
 the existing dispatch forms unchanged; it changes which form the affected
 enums receive, from handler-word addressing to tag-and-table dispatch.
+
+### Handler RBP preservation and tail targets on LLVM 22
+
+**Question and rejection criterion.** Can ordinary LLVM emission remove
+per-handler RBP preservation and the target-register copy without changing
+the eleven-integer-argument budget? Compare the same generated interpreter
+before and after emission changes. Reject the RBP attribute if it only parses,
+leaves temporary-register preservation in handlers, loses the enclosing C
+caller's RBP, or breaks direct/indirect `musttail`. Reject an emitter change
+for the tail target if it changes the parameter budget or needs a physical
+register workaround. This is a code-generation correctness investigation,
+not a timing experiment; no performance gain is claimed.
+
+**Observed baseline.** The artifact of [the LLVM 22 handler collection
+run](https://github.com/Ming-Research/Whitefoot/actions/runs/38429460948)
+contains raw and separately optimized IR and native disassembly. The Sub
+handler's raw definition and transfer use `preserve_nonecc`; its optimized
+transfer is already a GEP, pointer load and indirect `musttail`. Native code
+loads the target into R10 and copies it to RAX before jumping. The Clz
+handler additionally pushes RBP, uses it for the count and restores it on
+both the dispatch and failure exits. These are backend costs; neither
+preservation nor the target copy is an operation in the emitted IR.
+
+**RBP mapping.** In LLVM 22.1.8,
+[the definition-side save-set selection](https://github.com/llvm/llvm-project/blob/llvmorg-22.1.8/llvm/lib/Target/X86/X86RegisterInfo.cpp#L238)
+tests `"no_callee_saved_registers"` before the calling-convention switch,
+so its empty save set overrides the RBP-containing `preserve_nonecc` set.
+[Call lowering](https://github.com/llvm/llvm-project/blob/llvmorg-22.1.8/llvm/lib/Target/X86/X86ISelLoweringCall.cpp#L2378)
+uses the same attribute on a call to select an empty preserved-register
+mask. Both sides are necessary: removing a callee's save while retaining a
+caller's promise that RBP survives would be incorrect.
+
+The proposed change adds that attribute to every private part definition
+and every call into or between parts, including the ordinary enclosing
+call. The enclosing definition keeps its C convention and has no such
+attribute. For example, the old form is the following complete module with
+every `"no_callee_saved_registers"` removed; the new form is:
+
+```llvm
+define internal preserve_nonecc i64 @arm(ptr %slot, i64 %state) "no_callee_saved_registers" {
+  ret i64 %state
+}
+
+define internal preserve_nonecc i64 @dispatch(ptr %slot, i64 %state) alwaysinline "no_callee_saved_registers" {
+  %target = load ptr, ptr %slot, align 8
+  %result = musttail call preserve_nonecc i64 %target(ptr %slot, i64 %state) "no_callee_saved_registers"
+  ret i64 %result
+}
+
+define i64 @entry(i64 %state) {
+  %slot = alloca ptr, align 8
+  store ptr @arm, ptr %slot, align 8
+  %result = call preserve_nonecc i64 @dispatch(ptr %slot, i64 %state) "no_callee_saved_registers"
+  ret i64 %result
+}
+```
+
+The [musttail verifier](https://github.com/llvm/llvm-project/blob/llvmorg-22.1.8/llvm/lib/IR/Verifier.cpp#L3861)
+checks conventions, prototypes and parameter ABI attributes, but does not
+check agreement on this target-specific string attribute. Emission tests
+must check agreement explicitly. When the dispatcher is inlined into the
+enclosing ordinary call, [the inliner](https://github.com/llvm/llvm-project/blob/llvmorg-22.1.8/llvm/lib/Transforms/Utils/InlineFunction.cpp#L2733)
+demotes its cloned `musttail`; the cloned call still carries the clobber
+attribute. The C boundary must preserve its caller's RBP once around the
+chain, rather than each handler preserving it on every transfer.
+
+The host probe must generate code that actually clobbers RBP and check both
+the private bodies and the ordinary boundary. LLVM accepts unknown string
+attributes, so syntax acceptance is insufficient. Unsupported hosts retain
+the previous form, including Apple clang; the attribute is selected only on
+x86-64 with an accepted preserve-none convention and a successful semantic
+probe. Parameter ordering, argument budgets, public result ABI and source
+acceptance do not change. The new fact also belongs in the emitted-module
+cache key: a host-clang change must not reuse IR with the old private ABI.
+The cache regression seeds the opposite fact and requires a miss before a
+subsequent unchanged build can hit.
+
+This removes callee preservation of RBP used as a temporary. It does not
+remove a genuinely required frame pointer: [frame lowering](https://github.com/llvm/llvm-project/blob/llvmorg-22.1.8/llvm/lib/Target/X86/X86FrameLowering.cpp#L90)
+can independently require RBP. It also protects an enclosing active frame
+pointer around a clobbering call. Such a function can need extra frame
+maintenance in addition to saving its caller's RBP; the attribute is not a
+universal promise of zero RBP stack instructions.
+
+**Tail target: no emitter repair established.** LLVM's
+[non-Windows x86-64 tail-target register class](https://github.com/llvm/llvm-project/blob/llvmorg-22.1.8/llvm/lib/Target/X86/X86RegisterInfo.td#L592)
+contains RAX, RCX, RDX, RSI, RDI, R8, R9 and R11 as allocatable registers,
+but excludes R10. With these eleven outgoing arguments, only RAX is free
+in that class. The [instruction selection patterns](https://github.com/llvm/llvm-project/blob/llvmorg-22.1.8/llvm/lib/Target/X86/X86InstrCompiler.td#L1242)
+constrain the target to that class and permit memory-target folding only
+through the pattern with at most six call registers. The RBP attribute
+changes neither restriction. Ordinary IR has no operand for choosing this
+physical register class. Changing the calling convention, spilling more
+arguments, weakening `musttail` or adding inline assembly would change the
+agreed lowering, rather than close this LLVM limitation. No such change is
+made. Allocation might incidentally avoid one copy after another change;
+that would not establish removal of the constraint.
+
+**Validation still required.** The temporary handler workflow is intended
+to compile the generator output with the pinned LLVM, retain raw/optimized
+IR and disassembly, reject RBP push/pop in handlers and target-copy dispatch,
+and independently check CoreMark CRCs. The target-copy assertion remains
+strict and is expected to expose the unresolved LLVM limitation. Its
+requested push trigger and research generator input also conflict with the
+ordinary gate's research-input check. The temporary workflow and its support
+files/budget rows must be removed after collection, before readiness; the
+ordinary check is not relaxed. Native before/after results, Apple-clang
+fallback and the full gate remain unverified until CI runs. No specification
+rule or conformance verdict changes.

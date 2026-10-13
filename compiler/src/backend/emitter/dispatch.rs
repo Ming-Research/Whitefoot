@@ -41,10 +41,10 @@ pub(super) fn reachable(function: &IrFunction) -> Result<Vec<bool>, BackendFailu
 }
 
 /// The calling convention of every part, with its argument registers on the
-/// target: the convention without callee-saved registers where the host's
-/// assembler accepts it at run time, so the values the parts pass stay in
-/// registers across the chain, and the C convention otherwise. The register counts
-/// are those measured for each convention and target with the parts' own
+/// target: preserve_none where the host's assembler accepts it at run time,
+/// so the values the parts pass stay in registers across the chain, and the
+/// C convention otherwise. The register counts are those measured for each
+/// convention and target with the parts' own
 /// transfer, a guaranteed tail call through a table-loaded address
 /// (compiler/match-dispatch-lowering): on x86-64 outside Windows that
 /// address takes one of the twelve registers `preserve_none` passes
@@ -618,6 +618,8 @@ pub(super) struct DispatchEmission {
     destination: bool,
     result: String,
     convention: &'static str,
+    /// Matching definition/call attributes of the private parts' ABI.
+    attribute: &'static str,
     /// The enum's pointer field is the dispatch source instead of the table.
     handler_word: Option<usize>,
 }
@@ -970,6 +972,7 @@ impl FunctionEmitter<'_, '_> {
             destination,
             result: result.to_owned(),
             convention,
+            attribute: crate::toolchain::facts().dispatch_attribute(self.target.triple()),
             handler_word,
         }))
     }
@@ -1060,6 +1063,7 @@ impl FunctionEmitter<'_, '_> {
         let symbol = dispatch.symbol.clone();
         let result = dispatch.result.clone();
         let convention = dispatch.convention;
+        let attribute = dispatch.attribute;
         let cursor = dispatch.cursor.clone();
         let header = self.block(target)?;
         if header.parameters().len() != arguments.len()
@@ -1184,11 +1188,11 @@ impl FunctionEmitter<'_, '_> {
         self.output.symbol(symbol.clone());
         let call = if tail { "musttail call" } else { "call" };
         let text = if result == "void" {
-            format!("  {call} {convention}void @{symbol}({list})\n  ret void\n")
+            format!("  {call} {convention}void @{symbol}({list}){attribute}\n  ret void\n")
         } else {
             let temporary = self.next_temporary()?;
             format!(
-                "  %{temporary} = {call} {convention}{result} @{symbol}({list})\n  ret {result} %{temporary}\n"
+                "  %{temporary} = {call} {convention}{result} @{symbol}({list}){attribute}\n  ret {result} %{temporary}\n"
             )
         };
         self.output.push_str(&text);
@@ -1219,6 +1223,7 @@ impl FunctionEmitter<'_, '_> {
         let entries = dispatch.plan.table.len();
         let result = dispatch.result.clone();
         let convention = dispatch.convention;
+        let attribute = dispatch.attribute;
         let handler_word = dispatch.handler_word;
         let matched = dispatch.plan.matched;
         let cursor = dispatch.cursor.as_ref().map(|cursor| cursor.place);
@@ -1273,12 +1278,12 @@ impl FunctionEmitter<'_, '_> {
         let mut text = format!("  %{handler} = load ptr, ptr {slot}, align {align}\n");
         if result == "void" {
             text.push_str(&format!(
-                "  musttail call {convention}void %{handler}({list})\n  ret void\n"
+                "  musttail call {convention}void %{handler}({list}){attribute}\n  ret void\n"
             ));
         } else {
             let returned = self.next_temporary()?;
             text.push_str(&format!(
-                "  %{returned} = musttail call {convention}{result} %{handler}({list})\n  ret {result} %{returned}\n"
+                "  %{returned} = musttail call {convention}{result} %{handler}({list}){attribute}\n  ret {result} %{returned}\n"
             ));
         }
         self.output.push_str(&text);
@@ -1319,6 +1324,7 @@ impl FunctionEmitter<'_, '_> {
         let mut signature = Signature::new(symbol, dispatch.result.clone(), parameters);
         signature.linkage = Linkage::Internal;
         signature.convention = dispatch.convention;
+        signature.suffix.push_str(dispatch.attribute);
         signature.references = references;
         if part == Part::Header {
             signature.suffix.push_str(" alwaysinline");

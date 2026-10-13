@@ -76,3 +76,26 @@ performance-slow-control        55         55         55         -      -
 performance-shifted-images      10         10         10         -      -
 performance-placement-control   45         45         45         -      -
 performance-comparison          45         45         45         -      -
+
+# Temporary handler-rbp.yml; remove these rows with the workflow before ready.
+# Build/test ceilings reuse the corresponding existing corpus/unit stage
+# budgets above; these are not measurements of the focused commands. The
+# generated-program and IR ceilings reuse the other branch's temporary
+# v2h-handler-code 300 s operational ceiling, likewise unsampled. Dependency
+# and module acquisition have a 300 s operational ceiling, not a CPU estimate.
+# Small generator/assertion/CRC stages have an initial 10 s operational floor;
+# retain the first sample and ask the owner about an overrun before scaling.
+handler-rbp/dependencies        300        300        300        -      -
+handler-rbp/compiler-build      135        115        85         -      -
+handler-rbp/unit-build          175        175        130        -      -
+handler-rbp/generate            10         10         10         -      -
+handler-rbp/compile             300        300        300        -      -
+handler-rbp/ir-emission         300        300        300        -      -
+handler-rbp/ir-optimization     300        300        300        -      -
+handler-rbp/toolchain-tests     215        150        100        -      -
+handler-rbp/dispatch-tests      215        150        100        -      -
+handler-rbp/cache-test          215        150        100        -      -
+handler-rbp/inspection-controls 10         10         10         -      -
+handler-rbp/inspection          10         10         10         -      -
+handler-rbp/module              300        300        300        -      -
+handler-rbp/crc                 10         10         10         -      -

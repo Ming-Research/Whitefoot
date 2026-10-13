@@ -1082,12 +1082,16 @@ fn an_entry_build_is_reused_for_an_unchanged_composition() {
             let (modules, selected) =
                 super::composition_inputs(&graph, &all_inputs, selection.module);
             let facts = *crate::toolchain::facts();
-            // Seed all three alternatives before the first ordinary lookup.
+            // Seed all four alternatives before the first ordinary lookup.
             // Omitting any fact from the production key makes that alternative
             // collide and incorrectly reports a cache hit on the first build.
             for foreign in [
                 crate::toolchain::ToolchainFacts {
                     preserve_none: !facts.preserve_none,
+                    ..facts
+                },
+                crate::toolchain::ToolchainFacts {
+                    no_callee_saved_registers: !facts.no_callee_saved_registers,
                     ..facts
                 },
                 crate::toolchain::ToolchainFacts {

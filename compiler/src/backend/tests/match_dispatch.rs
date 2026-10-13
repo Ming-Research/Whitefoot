@@ -154,11 +154,70 @@ fn host_convention() -> (&'static str, usize) {
     }
 }
 
+#[test]
+fn dispatch_register_attribute_requires_both_facts_and_x86_64() {
+    let mut facts = *crate::toolchain::facts();
+    for preserve_none in [false, true] {
+        for no_callee_saved_registers in [false, true] {
+            facts.preserve_none = preserve_none;
+            facts.no_callee_saved_registers = no_callee_saved_registers;
+            for triple in [
+                "x86_64-unknown-linux-gnu",
+                "x86_64-apple-darwin",
+                "x86_64-pc-windows-msvc",
+                "aarch64-apple-darwin",
+            ] {
+                assert_eq!(
+                    !facts.dispatch_attribute(triple).is_empty(),
+                    preserve_none && no_callee_saved_registers && triple.starts_with("x86_64"),
+                    "{triple}, preserve_none={preserve_none}, no_callee_saved_registers={no_callee_saved_registers}"
+                );
+            }
+        }
+    }
+}
+
+fn assert_dispatch_register_attribute(module: &str, base: &str, arms: usize) {
+    const ATTRIBUTE: &str = "\"no_callee_saved_registers\"";
+    let facts = crate::toolchain::facts();
+    let enabled =
+        cfg!(target_arch = "x86_64") && facts.preserve_none && facts.no_callee_saved_registers;
+    let enclosing = definition(module, base);
+    assert!(
+        !enclosing
+            .lines()
+            .next()
+            .expect("definition header")
+            .contains(ATTRIBUTE),
+        "the enclosing function retains its ordinary ABI: {enclosing}"
+    );
+    let entry = enclosing
+        .lines()
+        .find(|line| line.contains("call ") && line.contains(&format!("@{base}.dispatch(")))
+        .expect("the enclosing function calls the private dispatcher");
+    assert_eq!(entry.contains(ATTRIBUTE), enabled, "{entry}");
+    for symbol in std::iter::once(format!("{base}.dispatch"))
+        .chain((0..arms).map(|arm| format!("{base}.arm.{arm}")))
+    {
+        let part = definition(module, &symbol);
+        let header = part.lines().next().expect("definition header");
+        assert_eq!(header.contains(ATTRIBUTE), enabled, "{header}");
+        for call in part.lines().filter(|line| line.contains("musttail call ")) {
+            assert_eq!(
+                call.contains(ATTRIBUTE),
+                enabled,
+                "each direct and indirect private transfer matches the definition ABI: {call}"
+            );
+        }
+    }
+}
+
 fn assert_split(module: &str, base: &str, arms: usize) {
     assert_split_with_table_slots(module, base, arms, arms);
 }
 
 fn assert_split_with_table_slots(module: &str, base: &str, arms: usize, table_slots: usize) {
+    assert_dispatch_register_attribute(module, base, arms);
     let (convention, _) = host_convention();
     let dispatch = definition(module, &format!("{base}.dispatch"));
     assert!(

@@ -1,0 +1,127 @@
+# Temporary handler-ABI correctness evidence. Remove this workflow, its
+# .github/handler-rbp.py helper and temporary budget rows before ready.
+# The requested push trigger consumes the research generator explicitly;
+# check-research-inputs.py therefore rejects this temporary workflow in the
+# ordinary static gate until removal. No formal gate exemption is introduced.
+# The tail-target assertion remains mandatory even if LLVM 22 cannot eliminate
+# its target copy: that unresolved requirement must remain a failing result.
+name: handler-rbp
+
+on:
+  push:
+    branches: [claude/handler-rbp-dispatch]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: handler-rbp-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  handler-code:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: bash
+    env:
+      LC_ALL: C
+      CARGO_INCREMENTAL: "0"
+      CARGO_TERM_COLOR: never
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Prepare diagnostic output
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/handler-rbp"
+          mkdir -p "$out"
+          echo "HANDLER_RBP_OUT=$out" >> "$GITHUB_ENV"
+          echo "WHITEFOOT_SCRATCH_ROOT=$RUNNER_TEMP/whitefoot" >> "$GITHUB_ENV"
+          echo "WHITEFOOT_TIME_BUDGET_RECORD=$out/time-budget-overruns.txt" >> "$GITHUB_ENV"
+          git rev-parse HEAD > "$out/source-revision.txt"
+      - name: Install the pinned host toolchain as gate.yml does
+        run: |
+          set -euo pipefail
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          sudo apt-get install -y -qq binutils
+          test -x /usr/bin/clang
+          /usr/bin/clang --version
+          ld.lld --version
+          python3 --version
+          rustup default stable
+          rustup component add clippy rustfmt
+          cargo --version
+      - name: Build compiler and focused unit-test executable
+        id: compiler
+        run: |
+          set -euo pipefail
+          perl .github/run-check.pl handler-rbp/dependencies cargo fetch --locked --manifest-path compiler/Cargo.toml
+          perl .github/run-check.pl handler-rbp/compiler-build cargo build --manifest-path compiler/Cargo.toml --profile gate --bin whitefootc --locked --offline
+          perl .github/run-check.pl handler-rbp/unit-build cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib --no-run
+          {
+            uname -a
+            grep -m 1 'model name' /proc/cpuinfo
+            rustc --version --verbose
+            cargo --version
+            /usr/bin/clang --version
+            objdump --version
+            sha256sum compiler/target/gate/whitefootc
+          } > "$HANDLER_RBP_OUT/toolchain.txt"
+      - name: Generate and compile v2h and collect its raw and optimized IR
+        id: images
+        run: |
+          set -euo pipefail
+          out="$HANDLER_RBP_OUT"
+          perl .github/run-check.pl handler-rbp/generate python3 research/experiments/match-dispatch/wasm/gen.py "$out/v2h.wf"
+          perl .github/run-check.pl handler-rbp/compile compiler/target/gate/whitefootc --dispatch-ledger "$out/v2h.wf" -o "$out/v2h" > "$out/v2h-compile.log" 2>&1 || { status=$?; cat "$out/v2h-compile.log"; exit "$status"; }
+          cat "$out/v2h-compile.log"
+          perl .github/run-check.pl handler-rbp/ir-emission compiler/target/gate/whitefootc --emit-llvm --dispatch-ledger "$out/v2h.wf" -o "$out/v2h.ll" > "$out/v2h-ir-compile.log" 2>&1 || { status=$?; cat "$out/v2h-ir-compile.log"; exit "$status"; }
+          cat "$out/v2h-ir-compile.log"
+          # driver.rs HOST_OPTIMIZATION_ARGUMENTS, as v2h-handler-code.yml uses.
+          perl .github/run-check.pl handler-rbp/ir-optimization /usr/bin/clang -x ir -S -emit-llvm -O2 -falign-functions=64 -Wno-override-module "$out/v2h.ll" -o "$out/v2h.opt.ll" > "$out/v2h-ir-opt.log" 2>&1 || { status=$?; cat "$out/v2h-ir-opt.log"; exit "$status"; }
+          cat "$out/v2h-ir-opt.log"
+          sha256sum "$out/v2h" "$out/v2h.wf" "$out/v2h.ll" "$out/v2h.opt.ll" > "$out/image-sha256.txt"
+      - name: Run the toolchain and match-dispatch compiler tests
+        if: always() && steps.compiler.outcome == 'success'
+        run: |
+          set -euo pipefail
+          perl .github/run-check.pl handler-rbp/toolchain-tests cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib toolchain::tests
+          perl .github/run-check.pl handler-rbp/dispatch-tests cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib backend::tests::match_dispatch
+          perl .github/run-check.pl handler-rbp/cache-test cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib driver::tests::an_entry_build_is_reused_for_an_unchanged_composition -- --exact
+      - name: Reject handler RBP saves and dispatch target copies
+        if: always() && steps.images.outcome == 'success'
+        run: |
+          set -euo pipefail
+          perl .github/run-check.pl handler-rbp/inspection-controls python3 .github/handler-rbp.py self-test
+          perl .github/run-check.pl handler-rbp/inspection python3 .github/handler-rbp.py inspect "$HANDLER_RBP_OUT"
+      - name: Run one CoreMark CRC correctness sample even when inspection fails
+        if: always() && steps.images.outcome == 'success'
+        run: |
+          set -euo pipefail
+          out="$HANDLER_RBP_OUT"
+          # Same module acquisition as the match-dispatch v2h workflows.
+          perl .github/run-check.pl handler-rbp/module git clone --quiet https://github.com/mbbill/Silverfir-nano "$out/sf"
+          git -C "$out/sf" checkout --quiet 5f248e44
+          git -C "$out/sf" rev-parse HEAD > "$out/module-repository-sha.txt"
+          cp "$out/sf/benchmarks/wasi/coremark/coremark.wasm" "$out/coremark.wasm"
+          sha256sum "$out/coremark.wasm" >> "$out/image-sha256.txt"
+          perl .github/run-check.pl handler-rbp/crc python3 .github/handler-rbp.py crc "$out"
+      - name: Enforce temporary operational time budgets
+        if: always() && env.HANDLER_RBP_OUT != ''
+        run: perl .github/run-check.pl --budget-verdict "$WHITEFOOT_TIME_BUDGET_RECORD"
+      - name: Retain IR, machine code, CRC output and input identities
+        if: always() && env.HANDLER_RBP_OUT != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: handler-rbp-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.HANDLER_RBP_OUT }}/*.*
+            ${{ env.HANDLER_RBP_OUT }}/v2h
+          if-no-files-found: error
