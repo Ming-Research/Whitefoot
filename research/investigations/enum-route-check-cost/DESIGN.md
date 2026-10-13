@@ -440,6 +440,18 @@ remaining execution evidence. The fix includes main's intervening change after
 #431, so fix/after is not a single-commit comparison; fix/before isolates the
 end state against the pre-regression compiler.
 
+Halo's VM test host module checked far slower after #431 (0.83 s with
+wf-d837678c6905, 190.6 s with wf-af7665be672d; Halo-wf run 38424433942):
+constructing a variant stored a contradiction context for every data field
+of every other variant, and every context was joined. A temporary workflow
+([run 38428431313](https://github.com/Ming-Research/Whitefoot/actions/runs/38428431313))
+checked `--graph tests/halo-vm/modules.wfg --check-module pkg::test` at Halo
+9de699da with d837678c6905, main 8ba7da5c6 and this branch `7cb40102e`, three
+interleaved rounds, compiler user+sys CPU: median 1.97 s, 629.55 s and 1.99 s;
+branch/old 1.005 (0.985–1.015), main/old 312.4. Joins were 840, 549,483,471
+and 840. The omitted unread computations cover this case without the
+contradiction-route snapshot change proposed separately.
+
 For the first candidate, an independent read-only review with `gpt-6.1-sol` covered the complete
 uncommitted change against the initial fix checkout, the new workflow and this
 record, ENT-5, the checker-facts decisions, and the directly affected fact-state
