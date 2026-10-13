@@ -419,14 +419,26 @@ the report carry the unresolved scope boundary without inventing a board key.
 ## Validation and outstanding evidence
 
 No compiler, build, test suite or measurement runs on the workstation.
-Focused internal regression checks and existing enum-route tests are scheduled
-in the temporary workflow; the project gate remains required before delivery.
 No conformance source, verdict, specification or approval log is changed.
-The candidates' available timings and focused-test evidence are recorded
-above. The selector repair awaits the owner's commit, push and CI results;
-Halo's third-candidate timing remains unavailable. No new acceptance claim
-uses an earlier candidate's green tests. The temporary
-workflow is removed before the branch is ready, after the measurements finish.
+
+Round 4 of the temporary workflow
+([run 38420072424](https://github.com/Ming-Research/Whitefoot/actions/runs/38420072424))
+measured the selector-repaired third candidate `bd70c6b71` against the
+pre-#431 main `7d9118eba` on the same hosted-runner panel, five interleaved
+rounds, compiler user+sys CPU, no check cache:
+
+| Workload | after/before | fix/before (min–max) | before-twin/before |
+|---|---:|---:|---:|
+| Halo `--check-module pkg::vm` at 80f0ee4 | 1.1891 | 1.0250 (1.0156–1.0363) | 0.9953 |
+| Firn whole program (`--entry firn --check`) | 1.1197 | 0.9780 (0.9729–0.9908) | 0.9964 |
+
+Both are within the 1.03 criterion. The focused results tests and all eight
+`enum_routed_ensures` tests, including the unread-routed-call root test, pass
+in that run. The temporary workflow is removed and the branch merged with
+main (`7e983ba3f`, no conflicts); the project gate on the merged head is the
+remaining execution evidence. The fix includes main's intervening change after
+#431, so fix/after is not a single-commit comparison; fix/before isolates the
+end state against the pre-regression compiler.
 
 For the first candidate, an independent read-only review with `gpt-6.1-sol` covered the complete
 uncommitted change against the initial fix checkout, the new workflow and this
@@ -477,6 +489,5 @@ The temporary experiment follows the supplied bisect workflow's unbudgeted
 measurement labels. It changes no maintained budgets and does not replace a
 project gate. Inspection also found that the existing `compiler/build` label
 in `compiler/Makefile` has no row in `.github/time-budgets.txt`; this unrelated
-budget inventory gap is left unchanged. The focused test-build label has its
-existing budget. No status-board connector was available in this session, so
-the inventory finding could not be filed there.
+budget inventory gap is left unchanged here and recorded as a status-board
+backlog item. The focused test-build label has its existing budget.
