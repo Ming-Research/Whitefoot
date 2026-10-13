@@ -517,3 +517,27 @@ callgrind row: the host inlines every entry into the arm, as the prior
 predicted, and the slow calls inside stay C calls. The three-arm sum moved by
 +1, far from the −10 the change needed. The runs ran on different hosted CPUs
 (EPYC 9V74 and 9V45); instruction counts do not depend on that.
+
+### Result: out-of-line entries, run 38332324517 (D)
+
+The entries became `noinline` `preserve_mostcc` wrappers that call the
+original with the C convention. Executed instructions per Lua call, fib(32):
+
+| Measure | B | C | D |
+|---|---|---|---|
+| Program total | 841.53 | 845.03 | 1150.03 |
+| SubRK + LtJmpRK + GetUpval | 174.0 | 175.0 | 137.0 |
+| Call (arm 63) | 101.0 | 101.0 | 51.0 |
+| Return (arm 65) | 112.0 | 112.0 | 37.0 |
+| Stores to the stack in the five hot arms | 43.0 | — | 21.0 |
+| `wf__most_*` self instructions | 0 | 0 | 474.5 |
+
+The pre-written arm criterion is met (−37 against −10), but the program is
+36.7% slower: every call a part makes now crosses a wrapper, including the
+fast-path helpers (`fast_instruction_sub_rk`, `fast_instruction_lt_jmp_rk`,
+`checked_step`, `instruction_get_upval`, `instruction_call`,
+`instruction_return`) that B inlined into the arms, and each wrapper pushes
+and pops about ten registers. The rule as stated, every call from a part
+through an entry, cannot tell a call the host would inline from one it
+keeps out of line. D ran on an Intel Xeon 6973P-C, B and C on AMD EPYC;
+instruction counts do not depend on the host.
