@@ -92,7 +92,8 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   std::fs::close_directory(factory: &factory, directory: move directory_read);
   match identity {
     Some(value: identifier) => {
-      let sent = local_time_send(factory: &factory, output: &output, negative: False(), magnitude: identifier);
+      let negative = False();
+      let sent = local_time_send(factory: &factory, output: &output, negative: negative, magnitude: identifier);
       if sent != 0_u8 {
         return exit_status(code: sent);
       }

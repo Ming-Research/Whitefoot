@@ -1618,8 +1618,10 @@ static int64_t wf_days_from_civil(int64_t year, int64_t month, int64_t day) {
 
 /* [PRE-2] The offset is the host conversion's local date and time, read as a
  * UTC date and time, minus the second it converted, the greatest second not
- * after `at`. `localtime` implies `tzset`; `localtime_r` does not, so the
- * reading calls it, which also observes a changed system zone. */
+ * after `at`, and is reported only when it is less than one day either way,
+ * the bound the signature's postconditions state. `localtime` implies
+ * `tzset`; `localtime_r` does not, so the reading calls it, which also
+ * observes a changed system zone. */
 void wf__body_local_offset_seconds(wf_optional_i64 *result, const wf_value *clock, int64_t at) {
     int64_t second = at / INT64_C(1000000000);
     struct tm local;
@@ -1640,8 +1642,10 @@ void wf__body_local_offset_seconds(wf_optional_i64 *result, const wf_value *cloc
                                       (int64_t)local.tm_mday);
     int64_t wall = days * INT64_C(86400) + (int64_t)local.tm_hour * 3600 +
                    (int64_t)local.tm_min * 60 + (int64_t)local.tm_sec;
+    int64_t offset = wall - second;
+    if (offset <= -INT64_C(86400) || offset >= INT64_C(86400)) return;
     result->tag = WF_OPTION_SOME;
-    result->value = wall - second;
+    result->value = offset;
 }
 
 /* [PRE-2] no host operation: the driver ends the sleep at its deadline
@@ -1961,6 +1965,19 @@ void wf__body_close_stop_listener(wf_close_result *result, wf_value *factory,
 
 #if !defined(_WIN32)
 #include <sys/resource.h>
+
+/* [PRE-2] c(n): the handle credits a soft open-files limit n gives, keeping
+ * 64 descriptors for the runtime and bounding the budget at 2^20. A host
+ * without the limit starts with 4096 credits and never adds any. */
+static uint64_t wf_limit_credits(uint64_t soft) {
+    uint64_t bounded = soft > (UINT64_C(1) << 20) ? (UINT64_C(1) << 20) : soft;
+    return bounded > 64 ? bounded - 64 : 0;
+}
+
+/* A limit the host reports as unlimited reads as 2^64 - 1 [PRE-2]. */
+static uint64_t wf_limit_value(rlim_t value) {
+    return value == RLIM_INFINITY ? UINT64_MAX : (uint64_t)value;
+}
 #endif
 
 int wf__ordinary_inputs(wf_inputs *inputs, int argc, void *argv) {
@@ -1997,9 +2014,7 @@ int wf__ordinary_inputs(wf_inputs *inputs, int argc, void *argv) {
     cwd = open(".", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
     capacity = 0;
     if (getrlimit(RLIMIT_NOFILE, &limit) == 0) {
-        capacity = limit.rlim_cur == RLIM_INFINITY || limit.rlim_cur > (1u << 20)
-            ? (1u << 20) : (uint64_t)limit.rlim_cur;
-        capacity = capacity > 64 ? capacity - 64 : 0;
+        capacity = wf_limit_credits(wf_limit_value(limit.rlim_cur));
     }
     wf_descriptor_value(&inputs->out, STDOUT_FILENO);
     wf_descriptor_value(&inputs->err, STDERR_FILENO);
@@ -2020,6 +2035,74 @@ int wf__ordinary_inputs(wf_inputs *inputs, int argc, void *argv) {
     wf_handle_budget = capacity;
     inputs->handles.words[2] = (uint64_t)(uintptr_t)&wf_handle_budget;
     return 1;
+}
+
+/* [PRE-2] The open-files limit, origin 11. A raise reads the limit, sets
+ * the soft limit and adds the credits it gives under one lock, so two
+ * contexts raising through related factories add each credit once. */
+#define WF_LIMIT_ORIGIN 11u
+#if !defined(_WIN32)
+static int wf_limit_lock;
+#endif
+
+void wf__body_open_files_limit(wf_limit_result *result, const wf_value *factory) {
+    (void)factory;
+    memset(result, 0, sizeof(*result));
+#if defined(_WIN32)
+    result->tag = 1;
+    wf_error_class(&result->err.error, WF_IO_UNSUPPORTED, 0, 0);
+#else
+    struct rlimit limit;
+    if (getrlimit(RLIMIT_NOFILE, &limit) != 0) {
+        result->tag = 1;
+        wf_error(&result->err.error, errno, WF_LIMIT_ORIGIN);
+        return;
+    }
+    result->ok.value.soft = wf_limit_value(limit.rlim_cur);
+    result->ok.value.hard = wf_limit_value(limit.rlim_max);
+#endif
+}
+
+void wf__body_raise_open_files_limit(wf_limit_result *result, wf_value *factory, uint64_t wanted) {
+    memset(result, 0, sizeof(*result));
+    wf_transition(factory);
+#if defined(_WIN32)
+    (void)wanted;
+    result->tag = 1;
+    wf_error_class(&result->err.error, WF_IO_UNSUPPORTED, 0, 0);
+#else
+    struct rlimit limit;
+    int failure = 0;
+    while (__atomic_test_and_set(&wf_limit_lock, __ATOMIC_ACQUIRE)) {
+    }
+    if (getrlimit(RLIMIT_NOFILE, &limit) != 0) {
+        failure = errno;
+    } else {
+        uint64_t soft = wf_limit_value(limit.rlim_cur);
+        uint64_t hard = wf_limit_value(limit.rlim_max);
+        if (wanted > hard) {
+            failure = EINVAL;
+        } else if (wanted > soft) {
+            struct rlimit raised = limit;
+            raised.rlim_cur = wanted >= (uint64_t)RLIM_INFINITY ? RLIM_INFINITY : (rlim_t)wanted;
+            if (setrlimit(RLIMIT_NOFILE, &raised) != 0) {
+                failure = errno;
+            } else {
+                uint64_t gained = wf_limit_credits(wanted) - wf_limit_credits(soft);
+                __atomic_add_fetch(wf_factory_budget(factory), gained, __ATOMIC_ACQ_REL);
+                soft = wanted;
+            }
+        }
+        result->ok.value.soft = soft;
+        result->ok.value.hard = hard;
+    }
+    __atomic_clear(&wf_limit_lock, __ATOMIC_RELEASE);
+    if (failure != 0) {
+        memset(result, 0, sizeof(*result));
+        result->tag = 1;
+        wf_error(&result->err.error, failure, WF_LIMIT_ORIGIN);
+    }
+#endif
 }
 
 #if defined(_WIN32)

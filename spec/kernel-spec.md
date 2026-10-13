@@ -2656,7 +2656,7 @@ A host handle is an opaque struct [TYPE-2] a host module declares with no fields
 An opaque struct a host module declares with fields, `Instant`, `CancelState`, `CancelSource` or `CancelWatch`, has the representation and capabilities its fields give it [PROV-6], and its fields have their declared visibility [MOD-6]. Its values originate in definitions the build supplies [TYPE-2].
 A host function that carries `waits` [WAIT-1] completes once the host has produced its outcome, and its context may wait for the host meanwhile [WAIT-2]; a host function that does not wait completes without waiting for an outstanding host outcome. The nonwaiting `capture_export` performs the one synchronous creation attempt of [SNAP-3], returning its immediate outcome while the atomic statement holds its states; it neither suspends its context nor waits for child output or termination.
 The host has one monotonic clock, whose reading never decreases, and every `Instant` is one of its readings or an instant `instant_after` forms from one. `now` writes its `Clock`, which orders two reads through one clock [HOST-1]; reads through two clocks that `clock_share` relates are ordered only as [HOST-1] orders them. A context executes its waiting calls one at a time and no statement overlaps one [WAIT-2, PAR-1], so a `now` it executes after `sleep_until(deadline: d, cancel: c)` has returned `Ok`, or after an operation has produced `DeadlinePassed` for `d`, returns a reading not before `d`. The calendar time `unix_nanoseconds` reads is a separate host value, which the host may move in either direction between reads.
-`local_offset_seconds(clock: c, at: t)` reads the host's local time rule for the second s, the greatest integer not above t divided by 10^9, which is the calendar instant s seconds after 1970-01-01T00:00:00Z. It returns `Some` containing the number of seconds by which the local calendar date and time that the following table gives for s, read as a UTC calendar date and time, follows s, negative when it precedes s, and `None` when the table's conversion gives no local calendar time for s. The host may change its local time rule between reads, as it may move the calendar time, and each reading is an input of the execution [WAIT-2], as a clock reading is.
+`local_offset_seconds(clock: c, at: t)` reads the host's local time rule for the second s, the greatest integer not above t divided by 10^9, which is the calendar instant s seconds after 1970-01-01T00:00:00Z. Its offset d is the number of seconds by which the local calendar date and time that the following table gives for s, read as a UTC calendar date and time, follows s, negative when it precedes s. It returns `Some` containing d when the table's conversion gives a local calendar time for s and -86400 < d < 86400, and `None` when the conversion gives none or d lies outside that range. The host may change its local time rule between reads, as it may move the calendar time, and each reading is an input of the execution [WAIT-2], as a clock reading is.
 
 | Host | Local calendar date and time for s |
 |---|---|
@@ -2680,7 +2680,15 @@ Which of the bytes `sync_file` and directory entries `sync_directory` hand to th
 A file open through a `WriteFile` or `ReadFile` keeps its bytes and remains usable through that handle after its name is changed or replaced by `rename_file` or `move_file`, or removed by `remove_file`.
 A name given with a root to a `std::fs` operation denotes an entry directly below that root exactly when it is one nonempty path component other than `.` and `..`; an operation given a name that denotes no such entry returns `InvalidPath`.
 Factories that `factory_share` relates draw on one budget, so whether an acquisition through one of them finds a credit depends on what the others hold; within one context their operations are ordered only as [HOST-1] orders them.
-`TcpConnection`, `AcceptedConnection`, `Directory` and `Inputs` have ordinary public constructors, fields, partial-move and destructuring rules. Their linearity follows their fields. No relation between two fields is implied by constructing a struct.
+The budget the invocation's factory draws on starts with c(n) credits on a POSIX host, where n is the soft open-files limit when the invocation starts and c(n) = max(0, min(n, 2^20) - 64), and with 4096 credits on every other host.
+The open-files limit is the host's per-process limit on the files a process may hold open. `open_files_limit` and `raise_open_files_limit` read and change it by the following table, where a limit the host reports as unlimited reads as 2^64 - 1, a refusal by the host is `Err` carrying the host's code and origin 11 and changes nothing, and each reading is an input of the execution [WAIT-2].
+
+| Host | `open_files_limit(factory: f)` | `raise_open_files_limit(factory: f, wanted: w)` |
+|---|---|---|
+| POSIX | `Ok` containing the soft and hard `RLIMIT_NOFILE` limits `getrlimit` reports | `Ok` containing the limits, unchanged, when w is at most the soft limit; `InvalidInput` carrying `EINVAL` and origin 11, changing nothing, when w exceeds the hard limit; otherwise the outcome of `setrlimit` setting the soft limit to w and keeping the hard limit, whose success returns `Ok` containing the limits after it and adds c(w) - c(n) credits to the budget f draws on, n being the soft limit before the call |
+| Every other host, Windows included | `Unsupported` with code zero and origin zero | `Unsupported` with code zero and origin zero, changing nothing |
+
+`TcpConnection`, `AcceptedConnection`, `Directory`, `Inputs` and `OpenFilesLimit` have ordinary public constructors, fields, partial-move and destructuring rules. Their linearity follows their fields. No relation between two fields is implied by constructing a struct.
 A `SocketAddress` is one IPv4 address or one IPv6 address together with a port. `socket_address_v4` gives the IPv4 address whose four octets in written order are `a` to `d`, `socket_address_v6` gives the IPv6 address whose eight 16-bit groups in written order are `a` to `h`, and each gives `port` as its port. The peer `tcp_accept` returns and the address `local_address` returns are the host's report of one endpoint in that same form: its family is the family the host reports, so an IPv4 peer that the host reports through an IPv6 listener as an IPv4-mapped address is an IPv6 address, and an IPv6 report keeps its address and port without its scope identifier or flow label. `socket_address_ip` returns `Ipv4` carrying the four octets of an IPv4 address, or `Ipv6` carrying the eight groups of an IPv6 address, in written order, and `socket_address_port` returns the port. For all arguments, `socket_address_ip` of `socket_address_v4(a: a, b: b, c: c, d: d, port: p)` returns `Ipv4(a: a, b: b, c: c, d: d)`, `socket_address_ip` of `socket_address_v6` returns `Ipv6` with that call's eight groups in the same order, and `socket_address_port` of either returns `p`. Reading an address reads only that value.
 `local_address` returns the host's report of the local endpoint of the connection whose receiving half `receive` is: for a connection `tcp_accept` returned, the address and port its peer reached; for a connection `tcp_connect` opened, the address and port the host gave its own end. A receiving half denotes its connection until `close_receive` consumes it, whether or not the sending half has been closed. The query transfers no byte and leaves the connection's state unchanged. A host refusal of the query returns `Err` carrying the host's code and origin 10.
 When the invocation [PROG-3] supplies `Inputs`, its `drivers` field holds the number of drivers the runtime uses to execute contexts [WAIT-2], after applying the runtime's configuration and host rules. That count is fixed before the entry runs, remains fixed for the whole execution, and is at least one. Driver threads may start on first need; their later start must establish that same number of drivers. A runtime unable to establish it stops with a report under [SCOPE-3]. These guarantees describe the invocation-supplied value; source construction and assignment retain the ordinary field rules [TYPE-2, SET-1].
@@ -2709,6 +2717,7 @@ A runtime-produced `IoError` with a nonzero `code` carries the failed condition'
 | 8 | Close |
 | 9 | Synchronization, truncation or namespace operation |
 | 10 | Socket address query |
+| 11 | Open-files limit query or change |
 
 `error_copy_description` selects a description by the following table. Its selection ignores `origin`. The host text is host-version dependent.
 
@@ -2820,7 +2829,10 @@ public fn sleep_until(deadline: Instant, cancel: &CancelWatch) -> result: Result
 
 public fn unix_nanoseconds(clock: &WallClock) -> result: i64 reads(clock) doc "Returns the calendar time as nanoseconds since 1970-01-01T00:00:00Z.";
 
-public fn local_offset_seconds(clock: &WallClock, at: i64) -> result: Option<i64> reads(clock) doc "Returns Some with the seconds by which local time is ahead of UTC at the second containing at nanoseconds since 1970-01-01T00:00:00Z, or None when the host gives no local time for that second.";
+public fn local_offset_seconds(clock: &WallClock, at: i64) -> result: Option<i64> reads(clock) contract {
+  ensures when Some(value: offset): -86400_i64 < offset;
+  ensures when Some(value: offset): offset < 86400_i64;
+} doc "Returns Some with the seconds by which local time is ahead of UTC at the second containing at nanoseconds since 1970-01-01T00:00:00Z, less than one day either way, or None when the host gives no local time for that second or one a day or more away.";
 
 public opaque struct CancelSource {
   state: Shared<CancelState>;
@@ -3248,6 +3260,15 @@ public fn heap_in_use(meter: &MemoryMeter) -> bytes: u64 writes(meter) doc "Retu
 public fn resident_bytes(meter: &MemoryMeter) -> bytes: Option<u64> writes(meter) doc "Returns Some resident bytes reported by the host, or None when unavailable.";
 
 public fn release_map_reserve<V: drop>(map: &Shared<ConcurrentHashMap<V>>, meter: &MemoryMeter) -> freed: u64 reads(map), writes(meter) doc "Releases map reserve storage as specified by SHARE-1 and returns the decrease in program heap bytes.";
+
+public struct OpenFilesLimit {
+  public soft: u64;
+  public hard: u64;
+}
+
+public fn open_files_limit(factory: &HandleFactory) -> result: Result<OpenFilesLimit, IoError> reads(factory) doc "Returns the soft and hard limits on the files the process may hold open, as specified by PRE-2.";
+
+public fn raise_open_files_limit(factory: &HandleFactory, wanted: u64) -> result: Result<OpenFilesLimit, IoError> writes(factory) doc "Raises the soft limit on the files the process may hold open to wanted when it is lower, adds the handle credits PRE-2 gives the new limit to the budget factory draws on, and returns the limits after the call.";
 ```
 
 `std::snapshot`, the record `snapshot/module.wfm`:

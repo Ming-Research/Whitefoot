@@ -35,6 +35,9 @@ mod programs {
     #[cfg(unix)]
     mod local_time;
     mod memory;
+    // POSIX `RLIMIT_NOFILE`, set through the shell's `ulimit`.
+    #[cfg(unix)]
+    mod open_files;
     #[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
     mod snapshot_export;
     mod network;

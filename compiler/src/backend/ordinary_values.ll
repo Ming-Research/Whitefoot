@@ -1044,3 +1044,19 @@ entry:
   %freed = call i64 @wf__body_release_map_reserve(ptr %map, ptr %meter)
   ret i64 %freed
 }
+
+declare void @wf__body_open_files_limit(ptr, ptr)
+
+define void @wf_std.process.open_files_limit(ptr %result, ptr %factory) align 64 {
+entry:
+  tail call void @wf__body_open_files_limit(ptr %result, ptr %factory)
+  ret void
+}
+
+declare void @wf__body_raise_open_files_limit(ptr, ptr, i64)
+
+define void @wf_std.process.raise_open_files_limit(ptr %result, ptr %factory, i64 %wanted) align 64 {
+entry:
+  tail call void @wf__body_raise_open_files_limit(ptr %result, ptr %factory, i64 %wanted)
+  ret void
+}
