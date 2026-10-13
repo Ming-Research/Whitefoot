@@ -271,7 +271,7 @@ impl ReferenceInfo {
     /// One freshly formed reference naming every path a joined base may
     /// select at run time [REF-1]. No member is representative: validity,
     /// overlap and effect judgments must retain the complete union.
-    fn formed_paths(kind: ReferenceKind, paths: Vec<ResolvedPlace>) -> Self {
+    pub(super) fn formed_paths(kind: ReferenceKind, paths: Vec<ResolvedPlace>) -> Self {
         Self {
             kind,
             paths,
@@ -735,15 +735,21 @@ impl<'unit> Checker<'_, 'unit> {
         let Some(reference) = &local.reference else {
             return Ok(());
         };
+        self.check_reference_info_valid(local.declaration, reference, node)
+    }
+
+    pub(super) fn check_reference_info_valid(
+        &mut self,
+        declaration: DeclarationId,
+        reference: &ReferenceInfo,
+        node: NodeId,
+    ) -> Result<(), CheckStop> {
         match &reference.validity {
             ReferenceValidity::Invalid(event) => self.types.declarations.issue_node(
                 SemanticRule::Ref2,
                 node,
                 SemanticIssueKind::InvalidReferenceUse {
-                    binder: self
-                        .types
-                        .declarations
-                        .declaration_spelling(local.declaration)?,
+                    binder: self.types.declarations.declaration_spelling(declaration)?,
                     event: event.phrase(),
                     mechanical_fix: REF2_FORM_AGAIN,
                 },
@@ -759,17 +765,15 @@ impl<'unit> Checker<'_, 'unit> {
                     .deferred_loop_reference_uses
                     .push(DeferredLoopReferenceUse {
                         node,
-                        declaration: local.declaration,
+                        declaration,
                         dependencies: reference.loop_dependencies().to_vec(),
                         preservations: reference.preservations.clone(),
                     });
                 Ok(())
             }
-            ReferenceValidity::Valid => self.demand_reference_preservations(
-                node,
-                local.declaration,
-                &reference.preservations,
-            ),
+            ReferenceValidity::Valid => {
+                self.demand_reference_preservations(node, declaration, &reference.preservations)
+            }
         }
     }
 
@@ -809,10 +813,12 @@ impl<'unit> Checker<'_, 'unit> {
         shifts_origin: bool,
     ) {
         HandleWatch::observe(bindings, window);
-        for local in bindings.values_mut() {
-            let Some(reference) = &mut local.reference else {
-                continue;
-            };
+        for reference in bindings.values_mut().flat_map(|local| {
+            local
+                .reference
+                .iter_mut()
+                .chain(local.commit_target.iter_mut())
+        }) {
             // The subject is a reference *into* the window, formed under a
             // bound the operation ends: `&r[i]` under `i < r.len` and
             // `&r[lo..hi]` under `hi <= r.len` [REF-4]. A reference to the
@@ -841,10 +847,12 @@ impl<'unit> Checker<'_, 'unit> {
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         leaving: &[BindingId],
     ) {
-        for local in bindings.values_mut() {
-            let Some(reference) = &mut local.reference else {
-                continue;
-            };
+        for reference in bindings.values_mut().flat_map(|local| {
+            local
+                .reference
+                .iter_mut()
+                .chain(local.commit_target.iter_mut())
+        }) {
             if reference
                 .paths
                 .iter()
@@ -2650,10 +2658,12 @@ impl<'unit> TypeContext<'unit> {
         if written.path.is_empty()
             && let PlaceRoot::Binding(binding) = written.root
         {
-            for reference in bindings
-                .values_mut()
-                .filter_map(|local| local.reference.as_mut())
-            {
+            for reference in bindings.values_mut().flat_map(|local| {
+                local
+                    .reference
+                    .iter_mut()
+                    .chain(local.commit_target.iter_mut())
+            }) {
                 for path in reference.paths.iter_mut().chain(&mut reference.anchors) {
                     path.supersede_binding(binding);
                 }
@@ -2691,46 +2701,61 @@ impl<'unit> TypeContext<'unit> {
         // and naming them reads the same bindings this walk updates.
         let mut preserved = Vec::new();
         for (declaration, local) in bindings.iter_mut() {
-            // A write to the enum itself ends every refinement occurrence for
-            // that enum even when an equal-path reference remains valid under
-            // the proper-prefix write rule. A payload-field write is below
-            // the witnessed enum and therefore does not end the fact.
+            // [ENT-3.S15, ENT-5] the enum's whole storage supports its
+            // variant fact, so any overlapping write ends that occurrence.
+            // An already captured payload reference follows REF-2 separately.
             for witness in &mut local.refinement_witnesses {
-                if written.may_be_prefix_of(&oracle, &witness.place, true) {
+                if places_overlap(&oracle, written, &witness.place) {
                     witness.valid = false;
                 }
             }
-            let Some(reference) = &mut local.reference else {
-                continue;
-            };
-            if primitive_write || !reference.is_valid() {
-                continue;
-            }
-            let mut invalidated = reference
-                .anchors
-                .iter()
-                .any(|anchor| written.may_be_prefix_of(&oracle, anchor, include_equal));
-            for path in &reference.paths {
-                if invalidated {
-                    break;
-                }
-                if !written.may_be_prefix_of(&oracle, path, include_equal) {
+            for (commit_target, reference) in local
+                .reference
+                .iter_mut()
+                .map(|reference| (false, reference))
+                .chain(
+                    local
+                        .commit_target
+                        .iter_mut()
+                        .map(|reference| (true, reference)),
+                )
+            {
+                if primitive_write || !reference.is_valid() {
                     continue;
                 }
-                if let Some((site, (positions, window))) =
-                    site.zip(Checker::separable_by_position(written, path))
-                {
-                    preserved.push((*declaration, site, positions, window, path.clone()));
-                } else {
-                    invalidated = true;
-                    break;
+                let mut invalidated = reference
+                    .anchors
+                    .iter()
+                    .any(|anchor| written.may_be_prefix_of(&oracle, anchor, include_equal));
+                for path in &reference.paths {
+                    if invalidated {
+                        break;
+                    }
+                    if !written.may_be_prefix_of(&oracle, path, include_equal) {
+                        continue;
+                    }
+                    if let Some((site, (positions, window))) =
+                        site.zip(Checker::separable_by_position(written, path))
+                    {
+                        preserved.push((
+                            *declaration,
+                            commit_target,
+                            site,
+                            positions,
+                            window,
+                            path.clone(),
+                        ));
+                    } else {
+                        invalidated = true;
+                        break;
+                    }
+                }
+                if invalidated {
+                    reference.invalidate(event.clone());
                 }
             }
-            if invalidated {
-                reference.invalidate(event.clone());
-            }
         }
-        for (declaration, site, positions, window, path) in preserved {
+        for (declaration, commit_target, site, positions, window, path) in preserved {
             let query = CheckedCallSeparation {
                 site: site.clone(),
                 occasion: super::super::model::CheckedSeparationOccasion::Call,
@@ -2747,10 +2772,13 @@ impl<'unit> TypeContext<'unit> {
                 right_spelling: self.render_resolved_place(&path, bindings)?,
                 one_argument: false,
             };
-            let Some(reference) = bindings
-                .get_mut(&declaration)
-                .and_then(|local| local.reference.as_mut())
-            else {
+            let Some(reference) = bindings.get_mut(&declaration).and_then(|local| {
+                if commit_target {
+                    local.commit_target.as_mut()
+                } else {
+                    local.reference.as_mut()
+                }
+            }) else {
                 continue;
             };
             if !reference.preservations.contains(&query) {
@@ -2826,6 +2854,7 @@ mod tests {
                     loop_depth: 0,
                     compiler_updated: false,
                     reference: None,
+                    commit_target: None,
                     refinement_witnesses: Vec::new(),
                     handle_watch: None,
                     call_value: true,
@@ -2918,6 +2947,7 @@ mod tests {
                     path,
                 },
             )),
+            commit_target: None,
             refinement_witnesses: Vec::new(),
             handle_watch: None,
             call_value: false,

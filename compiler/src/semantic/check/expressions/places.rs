@@ -41,6 +41,12 @@ pub(in crate::semantic::check) enum PlaceMember {
         index: u32,
         ty: CheckedType,
     },
+    Payload {
+        nominal: super::super::super::model::NominalId,
+        variant: u32,
+        field: u32,
+        ty: CheckedType,
+    },
     BoxContent {
         nominal: super::super::super::model::NominalId,
         ty: CheckedType,
@@ -50,7 +56,7 @@ pub(in crate::semantic::check) enum PlaceMember {
 impl PlaceMember {
     pub(in crate::semantic::check) fn ty(self) -> CheckedType {
         match self {
-            Self::Field { ty, .. } | Self::BoxContent { ty, .. } => ty,
+            Self::Field { ty, .. } | Self::Payload { ty, .. } | Self::BoxContent { ty, .. } => ty,
             Self::Measure(_) => CheckedType::Integer(IntegerType::U64),
         }
     }
@@ -58,6 +64,16 @@ impl PlaceMember {
     pub(in crate::semantic::check) fn storage_step(self) -> CheckedPlaceStep {
         match self {
             Self::Field { index, .. } => CheckedPlaceStep::Field(index),
+            Self::Payload {
+                nominal,
+                variant,
+                field,
+                ..
+            } => CheckedPlaceStep::Payload {
+                nominal,
+                variant,
+                field,
+            },
             Self::Measure(measure) => CheckedPlaceStep::Measure(measure),
             Self::BoxContent { nominal, .. } => CheckedPlaceStep::BoxReferent(nominal),
         }
@@ -704,6 +720,10 @@ impl<'unit> Checker<'_, 'unit> {
                     },
                 );
             }
+            let payload = matches!(
+                self.types.declarations.tree.place_suffix(suffix)?,
+                crate::syntax::views::PlaceSuffix::Member(member) if member.variant.is_some()
+            );
             let name = self
                 .types
                 .declarations
@@ -712,7 +732,7 @@ impl<'unit> Checker<'_, 'unit> {
                 .to_owned();
             // [TYPE-10] the selected type determines whether a spelling is
             // a measure, a window part, or an ordinary source field.
-            if let Some(measure) = super::super::types::measure_named(&name) {
+            if !payload && let Some(measure) = super::super::types::measure_named(&name) {
                 // [OP-14, PRE-1] at a boxed argument a compiler-owned row's
                 // measure place instantiates as `window.inner`: the shape
                 // parameter W admits `Box<Slots<T>>` and `Box<Ring<T>>`, and
@@ -765,12 +785,14 @@ impl<'unit> Checker<'_, 'unit> {
                     continue;
                 }
             }
-            self.types.declarations.reject_window_part(
-                suffix,
-                &name,
-                place.ty,
-                place.range_referent,
-            )?;
+            if !payload {
+                self.types.declarations.reject_window_part(
+                    suffix,
+                    &name,
+                    place.ty,
+                    place.range_referent,
+                )?;
+            }
             let member = self
                 .types
                 .elaborate_place_member(check_context, suffix, place.ty)?;
@@ -788,6 +810,41 @@ impl<'unit> Checker<'_, 'unit> {
                         value: Box::new(place.expression),
                     }
                 }
+                PlaceMember::Payload {
+                    nominal,
+                    variant,
+                    field,
+                    ty,
+                } => {
+                    self.require_payload_variant(
+                        suffix,
+                        variant,
+                        &place.resolved.identity,
+                        &place.resolved.members,
+                        bindings,
+                    )?;
+                    let (binding, mut path, proof_base) = self
+                        .types
+                        .declarations
+                        .explicit_container_path(&place.expression, carrier)?;
+                    path.push(CheckedPlaceStep::Payload {
+                        nominal,
+                        variant,
+                        field,
+                    });
+                    place
+                        .resolved
+                        .append_step(PlaceStep::Payload { variant, field });
+                    CheckedExpression::ReadStorage {
+                        carrier: self.types.declarations.tree.path(carrier)?.clone(),
+                        root: CheckedContainerRoot {
+                            root: PlaceRoot::Binding(binding),
+                            path,
+                            ty,
+                            proof_base,
+                        },
+                    }
+                }
                 PlaceMember::Field { nominal, index, ty } => {
                     place.resolved.extend_fields(&[index]);
                     CheckedExpression::ProjectValue {
@@ -802,6 +859,83 @@ impl<'unit> Checker<'_, 'unit> {
             place.ty = member.ty();
         }
         Ok(place)
+    }
+
+    pub(in crate::semantic::check) fn payload_selection_identity(
+        &self,
+        expression: &CheckedExpression,
+        places: &[ResolvedPlace],
+        node: NodeId,
+    ) -> Result<ResolvedPlace, CheckStop> {
+        if let [place] = places {
+            return Ok(place.clone());
+        }
+        if let Some(named) = super::super::super::places::named_place(expression) {
+            let mut path = named.steps;
+            path.extend(named.suffix);
+            return Ok(ResolvedPlace {
+                root: named.root,
+                path,
+                atomic_aliases: Vec::new(),
+            });
+        }
+        let (binding, path, _) = self
+            .types
+            .declarations
+            .explicit_container_path(expression, node)?;
+        Ok(ResolvedPlace {
+            root: PlaceRoot::Binding(binding),
+            path: path.iter().map(CheckedPlaceStep::place_step).collect(),
+            atomic_aliases: Vec::new(),
+        })
+    }
+
+    /// [REF-1, ENT-3.S15] a new payload selection needs a current arm
+    /// witness for every possible enum the written prefix can name.
+    pub(in crate::semantic::check) fn require_payload_variant(
+        &self,
+        suffix: NodeId,
+        variant: u32,
+        selection: &ResolvedPlace,
+        places: &[ResolvedPlace],
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+    ) -> Result<(), CheckStop> {
+        let witnesses = bindings
+            .values()
+            .flat_map(|local| &local.refinement_witnesses)
+            .collect::<Vec<_>>();
+        let established = witnesses.iter().any(|witness| {
+            witness.valid
+                && witness.variant == variant
+                && witness.selection.root == selection.root
+                && witness.selection.contains(selection)
+                && selection.contains(&witness.selection)
+                && places.iter().all(|place| {
+                    witnesses.iter().any(|support| {
+                        support.valid
+                            && support.origin == witness.origin
+                            && support.variant == variant
+                            && support.selection == witness.selection
+                            && support.place.root == place.root
+                            && support.place.contains(place)
+                            && place.contains(&support.place)
+                    })
+                })
+        });
+        if !established {
+            return self.types.declarations.issue_node(
+                SemanticRule::Ref1,
+                suffix,
+                SemanticIssueKind::UnestablishedPayloadVariant {
+                    place: self.types.render_resolved_place(selection, bindings)?,
+                    variant: self.types.declarations
+                        .deferred_use_at(suffix, DeferredUseRole::PayloadVariant)?
+                        .spelling().to_owned(),
+                    mechanical_fix: "match the enum again and select the payload inside its variant arm before any overlapping write",
+                },
+            );
+        }
+        Ok(())
     }
 
     /// [TYPE-7] `place^` denotes the referent of a reference, and
@@ -1011,6 +1145,50 @@ impl<'unit> TypeContext<'unit> {
             .declarations
             .deferred_use_at(suffix, DeferredUseRole::ProjectedField)?
             .spelling();
+        if let crate::syntax::views::PlaceSuffix::Member(member) =
+            self.declarations.tree.place_suffix(suffix)?
+            && member.variant.is_some()
+        {
+            let variant_name = self
+                .declarations
+                .deferred_use_at(suffix, DeferredUseRole::PayloadVariant)?
+                .spelling();
+            if let CheckedType::Nominal(nominal) = ty
+                && let CheckedNominalKind::Enum { variants } = &self.nominal(nominal)?.kind
+                && let Some(variant) = variants.iter().find(|variant| variant.name == variant_name)
+                && let Some((field, selected)) = variant
+                    .fields
+                    .iter()
+                    .enumerate()
+                    .find(|(_, field)| field.name == name)
+            {
+                self.reject_inaccessible_variant(check_context, nominal, variant_name, suffix)?;
+                self.reject_inaccessible_field(
+                    check_context,
+                    nominal,
+                    Some(variant.tag as usize),
+                    field,
+                    name,
+                    suffix,
+                )?;
+                return Ok(PlaceMember::Payload {
+                    nominal,
+                    variant: variant.tag,
+                    field: u32::try_from(field)
+                        .map_err(|_| SemanticCompilerFailure::CounterOverflow)?,
+                    ty: selected.ty,
+                });
+            }
+            return self.declarations.issue_node(
+                SemanticRule::Type5,
+                suffix,
+                SemanticIssueKind::type_mismatch(
+                    "a declared enum variant and its declared payload field",
+                    format!("{}.{variant_name}.{name}", self.checked_type_name(ty)?),
+                ),
+            );
+        }
+
         if name == "pages"
             && matches!(
                 ty,
@@ -1049,7 +1227,7 @@ impl<'unit> TypeContext<'unit> {
             .reject_window_part(suffix, name, ty, false)?;
         let member = self.place_member(ty, name)?;
         match member {
-            Some(PlaceMember::Measure(_)) => {}
+            Some(PlaceMember::Measure(_) | PlaceMember::Payload { .. }) => {}
             Some(PlaceMember::BoxContent { .. }) => {
                 if name != "inner" {
                     return self.declarations.issue_node(
@@ -2008,6 +2186,14 @@ impl<'unit> TypeContext<'unit> {
         mut ty: CheckedType,
     ) -> Result<(), CheckStop> {
         for &suffix in suffixes {
+            if matches!(
+                self.declarations.tree.place_suffix(suffix)?,
+                crate::syntax::views::PlaceSuffix::Member(member) if member.variant.is_some()
+            ) {
+                // Payload selection and its readonly provenance belong to
+                // the ordinary typed place walk, not measure-name routing.
+                return Ok(());
+            }
             if self.declarations.tree.subscript_offset(suffix)?.is_some() {
                 // [MSR-2] a write at an element position reaches that
                 // element's own storage; the offset carries no member name.
@@ -2137,6 +2323,9 @@ impl<'unit> DeclarationInventory<'unit> {
         else {
             return Ok(None);
         };
+        if member.variant.is_some() {
+            return Ok(None);
+        }
         let name = std::str::from_utf8(self.tree.token_bytes(member.field)?)
             .map_err(|_| SemanticCompilerFailure::InvalidSourceEncoding)?;
         Ok(super::super::types::measure_named(name))

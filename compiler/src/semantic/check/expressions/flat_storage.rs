@@ -1665,6 +1665,54 @@ impl<'unit> Checker<'_, 'unit> {
                 let member = self
                     .types
                     .elaborate_place_member(check_context, suffix, ty)?;
+                if let super::places::PlaceMember::Payload { variant, .. } = member {
+                    // This resolver knows the selected type but not its root.
+                    // Reuse ordinary borrow formation for the strictly shorter
+                    // written prefix; its captures keep the source identities,
+                    // and only the original path is emitted or contributes effects.
+                    let place = self
+                        .types
+                        .declarations
+                        .tree
+                        .parent(suffix)?
+                        .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
+                    let written = self
+                        .types
+                        .declarations
+                        .tree
+                        .children_with(place, Production::Psuffix)?;
+                    let position = written
+                        .iter()
+                        .position(|node| *node == suffix)
+                        .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
+                    let prefix = self.check_place_borrow_through(
+                        context,
+                        place,
+                        place,
+                        place,
+                        bindings,
+                        loop_depth,
+                        false,
+                        Some(&written[..position]),
+                        LexicalUseRole::PlaceBase,
+                    )?;
+                    let reference = prefix
+                        .reference
+                        .as_ref()
+                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                    let selection = self.payload_selection_identity(
+                        &prefix.expression,
+                        &reference.paths,
+                        place,
+                    )?;
+                    self.require_payload_variant(
+                        suffix,
+                        variant,
+                        &selection,
+                        &reference.paths,
+                        bindings,
+                    )?;
+                }
                 path.push(member.storage_step());
                 ty = member.ty();
                 continue;
@@ -2128,8 +2176,8 @@ impl<'unit> Checker<'_, 'unit> {
                         pages = false;
                     }
                 }
-                crate::syntax::views::PlaceSuffix::Member(_) => {
-                    if range {
+                crate::syntax::views::PlaceSuffix::Member(member) => {
+                    if member.variant.is_some() || range {
                         return Ok(None);
                     }
                     let name = self
@@ -2576,6 +2624,7 @@ fn field_prefix(path: &[CheckedPlaceStep]) -> Option<Vec<u32>> {
         .map(|step| match step {
             CheckedPlaceStep::Field(field) => Some(*field),
             CheckedPlaceStep::BoxReferent(_)
+            | CheckedPlaceStep::Payload { .. }
             | CheckedPlaceStep::Subscript(_)
             | CheckedPlaceStep::Measure(_) => None,
         })
@@ -2711,6 +2760,12 @@ impl<'unit> DeclarationInventory<'unit> {
     ) -> Result<ExplicitContainerPath, CheckStop> {
         match expression {
             CheckedExpression::Binding { binding, .. } => Ok((*binding, Vec::new(), None)),
+            CheckedExpression::ReadStorage { root, .. } => Ok((
+                root.binding()
+                    .ok_or(SemanticCompilerFailure::InvalidResolution)?,
+                root.path.clone(),
+                root.proof_base.clone(),
+            )),
             CheckedExpression::DerefAddressed { binding, proof, .. } => {
                 Ok((*binding, Vec::new(), proof.clone()))
             }

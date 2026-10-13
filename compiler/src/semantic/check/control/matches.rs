@@ -14,7 +14,7 @@ use super::super::super::model::{
     CheckedEnumType, CheckedExpression, CheckedField, CheckedMatchArm, CheckedMatchBinder,
     CheckedMode, CheckedNominalKind, CheckedProjectedDrop, CheckedStatement, CheckedType,
 };
-use super::super::super::places::PlaceStep;
+use super::super::super::places::{PlaceRoot, PlaceStep};
 use super::super::super::tree::ConditionalAlternative;
 use super::super::references::{ReferenceInfo, RequiredReferent};
 use super::super::{CheckStop, Checker, EffectSet, LocalBinding, RefinementWitness};
@@ -59,7 +59,9 @@ enum ScrutineeSpelling {
     /// `p^` and anything selected below it: the storage a reference
     /// names, reached under the step [REF-1] requires.
     Dereferenced,
-    /// Every other written form: an owned place, a call result, a literal.
+    /// An owned place, whose stored enum may receive a refinement.
+    OwnedPlace,
+    /// A computed expression or literal, whose operands receive no refinement.
     Other,
 }
 
@@ -92,8 +94,10 @@ impl<'unit> Checker<'_, 'unit> {
         // not one of these at v0.60: its content is the ordinary field
         // `inner` [TYPE-9], so a `Box` scrutinee is the ordinary wrong-type
         // judgment [TYPE-5] the descriptor below makes.
-        if spelling == ScrutineeSpelling::Other
-            && scrutinee.reference_value
+        if matches!(
+            spelling,
+            ScrutineeSpelling::Other | ScrutineeSpelling::OwnedPlace
+        ) && scrutinee.reference_value
             && self
                 .types
                 .satisfies_referent_requirement(scrutinee.expression.ty(), RequiredReferent::Enum)?
@@ -222,6 +226,49 @@ impl<'unit> Checker<'_, 'unit> {
                 give_context: local_give_context.as_ref().or(scope.give_context),
             };
             let mut arm_bindings = base_bindings.clone();
+            // [ENT-3.S15] the arm witnesses its tracked scrutinee, even
+            // when `..` binds no payload. Keep that occurrence on its root's
+            // ordinary flow state so writes, aliases and joins share the
+            // existing witness invalidation machinery.
+            let origin = self.types.declarations.tree.path(arm_node)?.clone();
+            let places = if let Some(reference) = &scrutinee.reference {
+                reference.paths.clone()
+            } else if spelling == ScrutineeSpelling::OwnedPlace {
+                scrutinee
+                    .accesses
+                    .iter()
+                    .filter(|access| access.selected)
+                    .map(|access| access.place.clone())
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            let selection = if places.is_empty() {
+                None
+            } else {
+                Some(self.payload_selection_identity(
+                    &scrutinee.expression,
+                    &places,
+                    expression_node,
+                )?)
+            };
+            for place in places {
+                if let PlaceRoot::Binding(root) = place.root
+                    && let Some(local) = arm_bindings
+                        .values_mut()
+                        .find(|local| local.binding == root)
+                {
+                    local.refinement_witnesses.push(RefinementWitness {
+                        origin: origin.clone(),
+                        selection: selection
+                            .clone()
+                            .ok_or(SemanticCompilerFailure::InvalidResolution)?,
+                        place,
+                        variant: variant.tag,
+                        valid: true,
+                    });
+                }
+            }
             let variant_ordinal = descriptor
                 .variants
                 .iter()
@@ -243,6 +290,16 @@ impl<'unit> Checker<'_, 'unit> {
                 .children_with(arm_node, Production::Stmt)?;
             let mut checked =
                 self.check_block(context, &statements, &mut arm_bindings, counters, arm_scope)?;
+            // Arm-local evidence cannot cross any normal, give or loop
+            // transfer edge. A captured payload reference is independent of
+            // the witness and retains its ordinary REF-2 validity.
+            Checker::forget_refinement_occurrence(&mut arm_bindings, &origin);
+            for state in &mut checked.give_states {
+                Checker::forget_refinement_occurrence(state, &origin);
+            }
+            for state in &mut checked.loop_transfers {
+                state.forget_refinement_occurrence(&origin);
+            }
             let leaving = Checker::bindings_leaving_scope(&arm_bindings, &base_keys);
             Checker::invalidate_control_exits(
                 &mut arm_bindings,
@@ -762,25 +819,6 @@ impl<'unit> Checker<'_, 'unit> {
             } else {
                 None
             };
-            let refinement_witnesses = if mode.is_reference() {
-                let origin = self.types.declarations.tree.path(arm)?.clone();
-                scrutinee
-                    .reference
-                    .as_ref()
-                    .ok_or(SemanticCompilerFailure::InvalidResolution)?
-                    .paths
-                    .iter()
-                    .cloned()
-                    .map(|place| RefinementWitness {
-                        origin: origin.clone(),
-                        place,
-                        variant: variant.tag,
-                        valid: true,
-                    })
-                    .collect()
-            } else {
-                Vec::new()
-            };
             if let Some(reference) = &reference {
                 self.body
                     .record_reference_origins(binding, &reference.paths);
@@ -798,7 +836,8 @@ impl<'unit> Checker<'_, 'unit> {
                         compiler_updated: false,
                         read_only_state: false,
                         reference,
-                        refinement_witnesses,
+                        commit_target: None,
+                        refinement_witnesses: Vec::new(),
                         handle_watch: None,
                         call_value: false,
                     },
@@ -859,6 +898,17 @@ impl<'unit> Checker<'_, 'unit> {
         Ok((binders, releases))
     }
 
+    pub(super) fn forget_refinement_occurrence(
+        bindings: &mut HashMap<DeclarationId, LocalBinding>,
+        origin: &crate::NodePath,
+    ) {
+        for local in bindings.values_mut() {
+            local
+                .refinement_witnesses
+                .retain(|witness| &witness.origin != origin);
+        }
+    }
+
     /// Applies [REF-2]'s two arm/branch-exit events to every state that can
     /// cross that boundary. A normal edge, `give`, and `break` carry separate
     /// ownership maps, while a delivered reference is accumulated separately
@@ -915,7 +965,7 @@ impl<'unit> DeclarationInventory<'unit> {
         Ok(if self.tree.place_has_dereference(place)? {
             ScrutineeSpelling::Dereferenced
         } else {
-            ScrutineeSpelling::Other
+            ScrutineeSpelling::OwnedPlace
         })
     }
     /// [GRAM-6] the two `else` spellings the rule refuses, each reported at

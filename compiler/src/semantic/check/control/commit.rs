@@ -201,8 +201,23 @@ impl<'unit> Checker<'_, 'unit> {
         // [SET-1] evaluates the right-hand side under ordinary ownership.
         // [OP-12] alone recognizes its direct call's first target actual as
         // an atomic read-out rather than a root-killing consume.
-        let (value, atomic_read_out) =
-            self.check_commit_value(context, &mutation, value_node, bindings, scope.loops.len())?;
+        if !Checker::commit_reinitializes_binding(&mutation) {
+            bindings
+                .get_mut(&mutation.declaration)
+                .ok_or(SemanticCompilerFailure::InvalidResolution)?
+                .commit_target = Some(super::super::references::ReferenceInfo::formed_paths(
+                super::super::references::ReferenceKind::Single,
+                mutation.place.members.clone(),
+            ));
+        }
+        let outcome =
+            self.check_commit_value(context, &mutation, value_node, bindings, scope.loops.len());
+        let captured_target = bindings
+            .get_mut(&mutation.declaration)
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?
+            .commit_target
+            .take();
+        let (value, atomic_read_out) = outcome?;
         effects = effects.union(value.effects.clone());
 
         // [TYPE-5] "the right-hand side of `set p = e;` must produce exactly
@@ -248,6 +263,7 @@ impl<'unit> Checker<'_, 'unit> {
             &mutation,
             target_node,
             atomic_read_out,
+            captured_target.as_ref(),
             bindings,
         )?;
         // [WIN-3, STOR-3] "Assigning over a live owned place releases the old
@@ -346,6 +362,7 @@ impl<'unit> Checker<'_, 'unit> {
         mutation: &MutationTarget,
         target_node: NodeId,
         atomic_read_out: bool,
+        captured_target: Option<&super::super::references::ReferenceInfo>,
         bindings: &HashMap<DeclarationId, LocalBinding>,
     ) -> Result<(), CheckStop> {
         // The root's liveness is re-established after the right-hand side
@@ -369,6 +386,9 @@ impl<'unit> Checker<'_, 'unit> {
             );
         }
         self.revalidate_mutation_access(mutation.through_reference, bindings, target_node)?;
+        if !atomic_read_out && let Some(reference) = captured_target {
+            self.check_reference_info_valid(mutation.declaration, reference, target_node)?;
+        }
         let ty = mutation.target.ty();
         if self.types.is_copy_type(check_context, ty)? || atomic_read_out || !root_live {
             return Ok(());
@@ -492,6 +512,17 @@ impl<'unit> Checker<'_, 'unit> {
                 )?
             {
                 return Err(CheckStop::ReferenceSummaryChanged);
+            }
+        }
+        // A joined holder's identity denotes its current target. Rebinding
+        // it cannot retarget an earlier arm's selection to the new storage.
+        for local in bindings.values_mut() {
+            for witness in &mut local.refinement_witnesses {
+                if witness.selection.root
+                    == super::super::super::places::PlaceRoot::Binding(binding)
+                {
+                    witness.valid = false;
+                }
             }
         }
         self.body

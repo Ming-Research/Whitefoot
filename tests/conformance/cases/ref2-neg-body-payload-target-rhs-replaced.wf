@@ -1,0 +1,22 @@
+fn erase_enum(cell: &Option<u64>) -> result: u64 writes(cell) {
+  doc "The right-hand-side call replaces the enum containing the previously selected set target.";
+  set cell^ = None<u64>();
+  return 0_u64;
+}
+
+fn write_after_erase(cell: &Option<u64>) -> result: unit reads(cell), writes(cell) {
+  doc "SET-1 must reject committing through a payload target invalidated while its right-hand side is evaluated.";
+  match &cell^ {
+    None() => {
+      return unit;
+    }
+    Some(..) => {
+      set cell^.Some.value = erase_enum(cell: cell);
+      return unit;
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

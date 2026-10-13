@@ -281,8 +281,11 @@ struct LocalBinding {
     /// was the loan apparatus's way of stating what [REF-2] now states
     /// directly as a validity fact.
     reference: Option<ReferenceInfo>,
-    /// [REF-2, ENT-3.S15] the borrowed-match refinement occurrences this
-    /// binding witnesses. The occurrence identity is immutable even when a
+    /// A set target's captured address while its right-hand side is checked.
+    /// It uses the same REF-2 validity and preservation rules as a reference.
+    commit_target: Option<ReferenceInfo>,
+    /// [REF-2, ENT-3.S15] the match refinement occurrences rooted at this
+    /// binding. The occurrence identity is immutable even when a
     /// reference binding is rebound; only its flow-sensitive validity meets
     /// at joins.
     refinement_witnesses: Vec<RefinementWitness>,
@@ -301,6 +304,8 @@ struct LocalBinding {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct RefinementWitness {
     origin: NodePath,
+    /// The selected target, distinct from the possible storage supports.
+    selection: ResolvedPlace,
     place: ResolvedPlace,
     variant: u32,
     valid: bool,
@@ -308,7 +313,10 @@ struct RefinementWitness {
 
 impl RefinementWitness {
     fn same_occurrence(&self, other: &Self) -> bool {
-        self.origin == other.origin && self.place == other.place && self.variant == other.variant
+        self.origin == other.origin
+            && self.selection == other.selection
+            && self.place == other.place
+            && self.variant == other.variant
     }
 }
 
@@ -2396,6 +2404,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                     ResolvedPlace::binding(binding),
                 )
             }),
+            commit_target: None,
             refinement_witnesses: Vec::new(),
             handle_watch: None,
             call_value: true,

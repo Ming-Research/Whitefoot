@@ -590,6 +590,7 @@ impl<'unit> Checker<'_, 'unit> {
                     compiler_updated: true,
                     read_only_state: false,
                     reference: None,
+                    commit_target: None,
                     refinement_witnesses: Vec::new(),
                     handle_watch: None,
                     call_value: false,
@@ -1164,6 +1165,10 @@ impl<'unit> Checker<'_, 'unit> {
 }
 
 impl LoopTransferState {
+    pub(super) fn forget_refinement_occurrence(&mut self, origin: &crate::NodePath) {
+        Checker::forget_refinement_occurrence(&mut self.bindings, origin);
+    }
+
     /// [REF-2] the scope of the local variables a break edge leaves ends
     /// there, so a reference whose path starts at one of them is invalid on
     /// this edge.

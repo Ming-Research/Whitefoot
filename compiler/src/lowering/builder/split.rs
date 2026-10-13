@@ -294,6 +294,28 @@ impl<'program> IrBuilder<'program> {
         let Some(actualization) = permission.actualization else {
             return Ok(false);
         };
+        // IrIndexedRoot retains only struct-field projections. A payload
+        // root uses the complete ordinary CFG until indexed blocks carry
+        // enum projections as well; no source acceptance depends on a split.
+        if permission
+            .indexed
+            .iter()
+            .chain(self.indexed_roots.iter().map(|(family, _, _)| family))
+            .chain(&self.indexed_block_families)
+            .any(|family| {
+                family
+                    .root
+                    .path
+                    .iter()
+                    .any(|step| matches!(step, crate::semantic::CheckedPlaceStep::Payload { .. }))
+            })
+        {
+            self.note(
+                node_path,
+                "declined: indexed private blocks require a struct-field root path",
+            );
+            return Ok(false);
+        }
         let accumulator = match actualization {
             LoopActualization::IndependentMap => None,
             LoopActualization::Reduction { accumulator, .. } => Some(accumulator),
