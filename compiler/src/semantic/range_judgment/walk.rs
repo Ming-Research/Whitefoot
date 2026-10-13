@@ -778,14 +778,21 @@ impl<'program> Walker<'program> {
                         self.ordinary_relation_places(&mut state, relation);
                     }
                 }
-                let written = self.written_instances(&state, &proof.uses);
-                self.ordinary_goal(
-                    &state,
-                    &proof.node_path,
-                    &ObligationSubject::SourceProof,
-                    literals.as_deref().map_err(|failure| *failure),
-                    written.as_deref(),
-                );
+                match self.written_instances(&state, &proof.uses) {
+                    Err(facts::Unformed::Arithmetic) => {
+                        self.ordinary_arithmetic_limit(
+                            &proof.node_path,
+                            &ObligationSubject::SourceProof,
+                        );
+                    }
+                    written => self.ordinary_goal(
+                        &state,
+                        &proof.node_path,
+                        &ObligationSubject::SourceProof,
+                        literals.as_deref().map_err(|failure| *failure),
+                        written.as_deref().ok(),
+                    ),
+                }
                 if let Ok(literals) = literals {
                     state.conds.extend(literals);
                 }
