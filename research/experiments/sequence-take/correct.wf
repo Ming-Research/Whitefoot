@@ -130,7 +130,7 @@ fn sq_verify(collected: &Shared<SqLog>, table: &Shared<ConcurrentHashMap<u64>>) 
   let befores = box_array_filled::<u64>(count: 32768_u64, value: 0_u64);
   let afters = box_array_filled::<u64>(count: 32768_u64, value: 0_u64);
   let used = 0_u64;
-  atomic c = &collected {
+  atomic c = &collected^ {
     set used = c^.log.len;
     for @copy (at in 0_u64..c^.log.len) {
       if at < 32768_u64 {
@@ -200,7 +200,7 @@ fn sq_verify(collected: &Shared<SqLog>, table: &Shared<ConcurrentHashMap<u64>>) 
         let own_value = values.inner[i];
         let bytes = sq_key_bytes(key: own_key);
         let view = &bytes[0_u64..8_u64];
-        atomic slot = &table[view] {
+        atomic slot = &table^[view] {
           match slot^ {
             Some(value: held) => {
               if held^ != own_value {
@@ -216,7 +216,7 @@ fn sq_verify(collected: &Shared<SqLog>, table: &Shared<ConcurrentHashMap<u64>>) 
     }
   }
   let entries = 0_u64;
-  atomic all = &table {
+  atomic all = &table^ {
     set entries = map_count::<u64>(map: all);
   }
   if entries != latest {

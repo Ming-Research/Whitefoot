@@ -24,7 +24,8 @@ fn sq_key_bytes(key: u64) -> bytes: Array<u8, 8> pure {
   doc "The eight little-endian bytes of key, the map key of one operation.";
   let bytes = array_filled::<u8, 8>(value: 0_u8);
   for @fill (at in 0_u64..8_u64) {
-    let amount = cvt.wrap::<u64, u32>(at *wrap 8_u64);
+    let offset = at *wrap 8_u64;
+    let amount = cvt.wrap::<u64, u32>(offset);
     let shifted = ishr.wrap(key, amount);
     set bytes[at] = cvt.wrap::<u64, u8>(shifted);
   }
