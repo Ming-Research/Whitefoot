@@ -1298,9 +1298,9 @@ pub enum SemanticIssueKind {
         /// route.
         mechanical_fix: String,
     },
-    /// A variant selector does not spell exact `Ok(value: result)`.
+    /// A route does not bind exactly one declared field of its variant.
     InvalidPostconditionFields {
-        /// Exact closed field list required by the admitted selector.
+        /// Declared field names from which one routed field must be selected.
         required_fields: Vec<String>,
     },
     /// The symbolic result candidate conflicts with a live declaration.

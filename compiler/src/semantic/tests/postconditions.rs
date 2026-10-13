@@ -2748,10 +2748,7 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 #[test]
-fn a_successfully_resolved_foreign_variant_is_an_fn9_source_issue() {
-    // [TYPE-6] a route label resolves against its result ordinal's enum, so
-    // the resolved variant here belongs to the result's own source enum;
-    // FN-9 then admits only the prelude `Ok` route.
+fn a_successfully_resolved_source_variant_is_an_admitted_route() {
     let source = br#"enum Foreign {
   ForeignCase(value: i32);
 }
@@ -2766,20 +2763,7 @@ fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
 "#;
-    with_semantics(source, |outcome| {
-        let SemanticOutcome::SourceIssue { issue } = outcome else {
-            panic!("foreign selector variant must be FN-9, got {outcome:?}");
-        };
-        assert_eq!(issue.rule(), SemanticRule::Fn9);
-        assert_eq!(
-            issue.kind(),
-            &SemanticIssueKind::invalid_postcondition_selector()
-        );
-        let SemanticLocation::SourceNode(_, coordinate) = issue.location();
-        let start = usize::try_from(coordinate.start().value()).expect("offset fits");
-        let end = usize::try_from(coordinate.end().value()).expect("offset fits");
-        assert_eq!(&source[start..end], b"ForeignCase(value: payload)");
-    });
+    assert_complete(source);
 }
 
 #[test]

@@ -251,16 +251,10 @@ impl Checker<'_, '_> {
             } else {
                 Vec::new()
             };
-            // [FN-9] the success variant a route names, by its tag.
-            let tag = match selector.variant {
-                None => None,
-                Some(crate::BuiltinPreludeId::SOME) => Some(1),
-                Some(crate::BuiltinPreludeId::OK) => Some(0),
-                Some(_) => return Err(SemanticCompilerFailure::InvalidResolution.into()),
-            };
-            let route = tag.map(|tag| CheckedRangeRoute {
+            let route = selector.route.map(|route| CheckedRangeRoute {
                 ordinal: selector.ordinal,
-                tag,
+                tag: route.tag,
+                field: route.field,
                 payload: selector.result_type,
             });
             if let Some(range) = self

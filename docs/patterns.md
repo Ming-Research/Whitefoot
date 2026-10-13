@@ -766,14 +766,29 @@ pattern does not authorize retired syntax or a new mechanism. Reduce the need
 to a small source case, identify the specification rule that admits or refuses
 it, and record measured cost only when performance selects between alternatives.
 
-## P15. Keep a Result's or Option's evidence with its value
+## P15. Keep an enum field's evidence with its value
 
-A local `Result` or `Option` retains its verified success relations when named,
-copied, moved, assigned or delivered by `give`, whether its success payload is
-an integer or a struct whose integer fields and measures the relations name. A
-match's own `Ok` or `Some` binder and a successful `propagate` make those
-relations available, at the binder itself or at its fields. The failure edge
-keeps its ordinary return and cleanup behavior [FN-9, ENT-5].
+A local own enum retains each variant field's routed relations when named,
+copied, moved, assigned or delivered by `give`, whether that field is an integer
+or a struct whose integer fields and measures the relations name. A match arm
+taking the route's variant receives its surviving relations over the binder for
+that field. Each clause binds one declared field; separate clauses may route
+different fields of one variant. `Result.Ok` and `Option.Some` use this same
+transport, and a successful `propagate` selects its `Ok` relation. The failure
+edge keeps its ordinary return and cleanup behavior [FN-9, ENT-5].
+
+A lookup returning a source enum can promise a different index bound for each
+variant:
+
+```whitefoot
+ensures when Array(value: i): i < array^.inner.len;
+ensures when Node(value: j): j < nodes^.inner.len;
+```
+
+These clauses are a contract fragment for a lookup returning `Slot` with the
+declared variants `Array(value: u64)`, `Node(value: u64)` and `Missing()`.
+The [complete slot-write case](../tests/conformance/cases/fn9-pos-enum-halo-slot-write.wf)
+uses the returned value's own match arms to write the corresponding table.
 
 ```whitefoot
 let outcome = bounded(count: limit);

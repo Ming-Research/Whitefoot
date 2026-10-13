@@ -135,12 +135,6 @@ impl Input<'_, '_> {
             AvailablePostcondition {
                 relation: postcondition.relation.clone(),
                 route: postcondition.selector.route,
-                variant: postcondition.selector.variant,
-                field: postcondition
-                    .selector
-                    .field
-                    .as_ref()
-                    .map(|field| field.declaration),
                 authority: super::super::RelationProvenance::Verified(summary),
             }
         };
@@ -210,12 +204,6 @@ impl Input<'_, '_> {
                 Some(AvailablePostcondition {
                     relation: boundary.relation.clone(),
                     route: boundary.selector.route,
-                    variant: boundary.selector.variant,
-                    field: boundary
-                        .selector
-                        .field
-                        .as_ref()
-                        .map(|field| field.declaration),
                     authority: super::super::RelationProvenance::FormalBoundary {
                         query: boundary.query,
                         actual: function,
@@ -2634,8 +2622,8 @@ impl Judging<'_, '_, '_> {
                 continue;
             };
             // [FN-9, TYPE-11] the forwarded value's context for the route
-            // this clause is restricted to: its written success variant, or
-            // the variant field a type invariant's route names.
+            // this clause is restricted to, whether written or generated
+            // by a type invariant.
             let route = postcondition.selector.route;
             let forwarded = forwarded
                 .get(postcondition.selector.ordinal as usize)

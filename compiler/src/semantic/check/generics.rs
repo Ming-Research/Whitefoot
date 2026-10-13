@@ -1061,6 +1061,8 @@ impl<'unit> Checker<'_, 'unit> {
         let [first_result, ..] = results.as_slice() else {
             return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
         };
+        self.types
+            .reject_borrowed_postcondition_routes(template.node, &results)?;
         // [VIEW-6] two results of the same view type at the same formal
         // region are refused at the second `result_binding`: [FN-1]'s ceiling
         // is stated over the type and the region, so each of them would carry

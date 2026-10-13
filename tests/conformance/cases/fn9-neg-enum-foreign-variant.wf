@@ -1,0 +1,17 @@
+enum RouteOwner {
+  OwnCase(index: u64);
+}
+
+enum RouteOther {
+  OtherCase(index: u64);
+}
+
+fn selected(value: u64) -> result: RouteOwner pure contract {
+  ensures when OtherCase(index: payload): payload == value;
+} {
+  return RouteOwner::OwnCase(index: value);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
