@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 the owner's agent instructions own the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-13 A postcondition's places are formed at each selected return and a formal offset is substituted at each call
+
+Nodes: language/checks-and-proofs/requires-entry-contract
+
+Owner-approved: On the shared status board on 2026-10-12, written in Chinese, the owner chose option A, "approve the specification revision (v0.134 to v0.135) and design-tree change for postcondition formal subscripts, exactly the content at commit 1e1e19ee3" (translated), on the card "approve the specification revision (v0.134 to v0.135) and design-tree change of Whitefoot#380 at commit 1e1e19ee3?" (translated); it carries out the owner's 2026-09-25 ruling that a postcondition's subscripts are checked at each return the clause applies to, as a precondition's are at entry. The revision merged here differs from 1e1e19ee3 by the merge of main (adapting place formation to main's per-variant payload evidence, with two added conformance cases for a forwarded success route), and the renumbering of the specification from v0.135 to v0.143.
+
+Summary: One decision is added: a postcondition's places are formed at each return that selects the clause and judged over what each place denotes (an offset's entry value, an entry datum's entry length or an exit term's length at the return, an unknown element below a rebound offset), and a formal written as a subscript offset is substituted by the body's formal and by the caller's actual, so facts from calls with different offsets never stand for one element. Refused: forming the places at body entry, since a routed clause's subscript could not rely on the guard selecting its success return; leaving their subscripts unjudged, since the relation would name an element that need not exist; judging on the offset's current binding and the base's length at the return, since the clause names the entry element; and reading the relation over a rebound offset through an entry datum, since a place's offset must be a tracked place or a constant for kills to reach it.
+
 ## 2026-10-13 A statement that cannot park queues a claim on the object it missed
 
 Nodes: compiler/waiting-contexts, compiler/waiting-contexts/state-locks
