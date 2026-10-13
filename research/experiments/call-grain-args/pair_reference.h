@@ -15,17 +15,17 @@ static inline uint64_t pair_multiplier(unsigned k) {
             ((UINT64_C(1) << 63) - 1)) | 1;
 }
 static inline uint64_t pair_mix(uint64_t *words, uint64_t count, uint64_t salt) {
-    uint64_t total = salt;
+    uint64_t state = salt;
     for (uint64_t i = 0; i < count; ++i) {
-        uint64_t value = words[i] ^ i;
+        uint64_t value = words[i] ^ state;
         uint64_t rounds = 4 + (value & 7);
         for (uint64_t r = 0; r < rounds; ++r)
             for (unsigned k = 0; k < MIX_STEPS; ++k)
                 value = ((pair_rotl(value, pair_rotation(k)) * pair_multiplier(k)) ^ r) + (k + 1);
         words[i] = value;
-        total += value;
+        state = value;
     }
-    return total;
+    return state;
 }
 static inline uint64_t pair_reference(uint64_t repetitions, uint64_t extent, uint64_t seed) {
     if (extent > PAIR_LIMIT) return 0;

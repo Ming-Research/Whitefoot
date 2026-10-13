@@ -2,7 +2,8 @@
 """Emit pair.wf, the minimal example of the call-grain-args investigation.
 
 Two adjacent calls of mix_words over two disjoint heap arrays are permitted to
-overlap (PAR-1). Each call loops over its own range; each element runs a data
+overlap (PAR-1). Each call loops over its own range, carrying a state from word to word
+so that the compiler cannot split the loop; each element runs a data
 dependent number of rounds (4 to 11) of STEPS mixing steps. The compiler prices
 that inner loop at the fixed 16 trips of its call grain, so the static work of
 mix_words is about 16 * (units per element); `run.py calibrate` picks STEPS so
@@ -35,12 +36,12 @@ def source(steps):
         body.append(f"      set value = c{k} +wrap {k + 1}_u64;")
     steps_text = "\n".join(body)
     return f"""fn mix_words(words: &[u64], salt: u64) -> result: u64 writes(words) {{
-  doc "Mixes every word of its own range in place and returns their sum with the salt. Each word runs four to eleven rounds, the count read from the word itself, so the rounds loop has no closed-form trip count.";
+  doc "Mixes every word of its own range in place and returns the final state. The state carries from word to word (each word is mixed with the state the previous word left), so the loop has no reassociable accumulator and is refused by the loop rule; only the two calls side by side can overlap. Each word runs four to eleven rounds, the count read from the word itself, so the rounds loop has no closed-form trip count.";
   let count = words^.len;
-  let total = salt;
+  let state = salt;
   for (i in 0_u64..count) {{
     let word = words^[i];
-    let value = ixor(word, i);
+    let value = ixor(word, state);
     let low = iand(value, 7_u64);
     let rounds = 4_u64 +wrap low;
     let r = 0_u64;
@@ -52,9 +53,9 @@ def source(steps):
       set r = r +wrap 1_u64;
     }}
     set words^[i] = value;
-    set total = total +wrap value;
+    set state = value;
   }}
-  return total;
+  return state;
 }}
 
 fn workload(repetitions: u64, extent: u64, seed: u64) -> result: u64 pure {{

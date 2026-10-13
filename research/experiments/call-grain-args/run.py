@@ -29,6 +29,7 @@ PER_ELEMENT_TOLERANCE = 0.10
 PIN = {1: [2], 2: [2, 4], 4: [2, 4, 6, 8]}
 SEED = 17
 ARMS = {"seq": ("base", ""), "base": ("base", "--par"), "chg": ("cand", "--par")}
+SPLIT = re.compile(r"PAR split\s+\S*mix_words")
 OMITTED = re.compile(r"omitted offer of \S*mix_words \(static work (\d+) below")
 
 
@@ -66,8 +67,11 @@ def image(out, arm, workload):
 def ledger_work(wfc, source, scratch):
     text = identity.compile_llvm(wfc, source, ["--par"], scratch / "calibrate.ll", ledger=True)
     match = OMITTED.search(text)
-    if not match:
-        raise SystemExit("calibration: main's ledger does not omit the offer of mix_words:\n" + text)
+    if SPLIT.search(text) or not match:
+        reason = ("mix_words' own loop is split by main (a permitted loop), so the call offer is not what decides"
+                  if SPLIT.search(text) else "main's ledger has no 'omitted offer of mix_words' line")
+        print(text)
+        raise SystemExit("calibration: " + reason)
     return int(match.group(1))
 
 
@@ -134,6 +138,7 @@ def cmd_identity(a):
     result["pair_emission_differs"] = not identity.same_bytes(raw("base"), raw("chg"))
     ledger = lambda arm: (out / "images" / arm / "pair.ll.ledger").read_text()
     result["ledger_base_omits_mix_words"] = bool(OMITTED.search(ledger("base")))
+    result["ledger_base_splits_mix_words"] = bool(SPLIT.search(ledger("base")))
     result["ledger_cand_omits_mix_words"] = bool(OMITTED.search(ledger("chg")))
     scratch = out / "identity-llvm"
     identity.compile_llvm(cand_wfc, out / "gen" / "pair.wf", [], scratch / "pair.cand-seq.ll")
@@ -326,8 +331,8 @@ def cmd_summarize(a):
     pre = [("P1 host is the i9-14900K", "14900K" in meta["host_model"] or a.mode == "smoke"),
            ("P2 the two compilers differ and emit different LLVM for the pair", meta["wfc_sha256"]["base"] != meta["wfc_sha256"]["cand"]
             and ident.get("pair_emission_differs", False)),
-           ("P3 main's ledger omits the offer of mix_words; the change's does not",
-            ident.get("ledger_base_omits_mix_words", False) and not ident.get("ledger_cand_omits_mix_words", True)),
+           ("P3 main's ledger omits the offer of mix_words and does not split its loop; the change's does not omit it",
+            ident.get("ledger_base_omits_mix_words", False) and not ident.get("ledger_base_splits_mix_words", True) and not ident.get("ledger_cand_omits_mix_words", True)),
            ("P4 identity method: deterministic compiles, nonempty output, difference control detected",
             bool(ident.get("llvm")) and all(v["deterministic"] and v["has_code"] and v["control_detects_difference"] for v in ident.get("llvm", {}).values())),
            ("P5 fixtures identical between the two revisions", meta["fixtures_identical"]),
