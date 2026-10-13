@@ -1,0 +1,28 @@
+struct Cursor {
+  k: u64;
+  other: u64;
+}
+
+fn touch(s: &Cursor) -> result: unit writes(s.other) {
+  doc "The written boundary exhibits the assignment to other.";
+  set s^.other = 0_u64;
+  return unit;
+}
+
+fn select(table: &[Slots<u8, 8>], s: &Cursor, i: u64) -> result: u8 reads(table), reads(s.k), writes(s.other) contract {
+  requires s^.k < table^.len;
+} {
+  doc "ENT-5 and EFF-2: the callee's sibling-field write projects onto storage disjoint from the offset, preserving the selected row's bound.";
+  if i < table^[s^.k].len {
+    touch(s: s);
+    if s^.k < table^.len {
+      return table^[s^.k][i];
+    }
+  }
+  return 0_u8;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "The body must retain the guarded inner bound through the disjoint write.";
+  return std::process::exit_status(code: 0_u8);
+}

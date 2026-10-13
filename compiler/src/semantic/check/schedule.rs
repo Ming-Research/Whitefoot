@@ -100,6 +100,7 @@ impl Checker<'_, '_> {
                 crate::in_parallel(&fresh, |index| {
                     let checked = &functions[*index];
                     let context = EntailmentContext {
+                        captured_places: &types.captured_places,
                         declarations: types.declarations.resolved.declarations(),
                         callees,
                         constants: &types.checked_constants,
@@ -331,6 +332,7 @@ impl Checker<'_, '_> {
                     crate::in_parallel(&fresh, |index| {
                         let checked = &functions[*index];
                         let context = EntailmentContext {
+                            captured_places: &types.captured_places,
                             declarations: types.declarations.resolved.declarations(),
                             callees,
                             constants: &types.checked_constants,

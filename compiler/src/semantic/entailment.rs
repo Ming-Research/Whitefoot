@@ -206,6 +206,7 @@ impl EntailmentCallee {
 
 /// Program-level context the per-function analysis reads.
 pub(crate) struct EntailmentContext<'check> {
+    pub(crate) captured_places: &'check super::places::CapturedPlaceTable,
     /// Existing resolved declarations, borrowed for source names in residuals.
     pub(crate) declarations: &'check [crate::DeclarationRecord],
     /// Callee projections indexed by [`FunctionId`].

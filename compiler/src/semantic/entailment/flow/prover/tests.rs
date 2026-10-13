@@ -11,7 +11,9 @@ fn with_analyzer(check: impl FnOnce(&mut Analyzer<'_, '_>)) {
 fn with_integer_parameters(types: &[IntegerType], check: impl FnOnce(&mut Analyzer<'_, '_>)) {
     let constant_ids = HashMap::new();
     let const_parameter_types = HashMap::new();
+    let captured_places = crate::semantic::places::CapturedPlaceTable::default();
     let context = EntailmentContext {
+        captured_places: &captured_places,
         declarations: &[],
         callees: &[],
         constants: &[],

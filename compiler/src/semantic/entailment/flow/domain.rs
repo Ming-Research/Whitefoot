@@ -351,7 +351,10 @@ impl Input<'_, '_> {
         let represented = |offset: &CapturedValue| {
             matches!(
                 offset.term,
-                CapturedTerm::Literal(_) | CapturedTerm::Const(_) | CapturedTerm::Binding(_)
+                CapturedTerm::Literal(_)
+                    | CapturedTerm::Const(_)
+                    | CapturedTerm::Binding(_)
+                    | CapturedTerm::Place(_)
             )
         };
         for step in projections {
