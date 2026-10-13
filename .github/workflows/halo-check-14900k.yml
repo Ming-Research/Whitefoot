@@ -221,9 +221,10 @@ jobs:
             token=$(env -u GH_TOKEN -u GITHUB_TOKEN gh auth token --hostname github.com 2>/dev/null) || true
           fi
           if [ -z "$token" ]; then
-            echo '::error::Halo requires secrets.HALO_READ_TOKEN or an existing runner gh login with Halo read access.'
-            exit 1
-          fi
+            # Halo-wf is public: fall back to an anonymous clone.
+            git -c credential.helper= clone --quiet https://github.com/Ming-Research/Halo-wf.git "$root/halo" \
+              > "$out/halo-fetch.stdout" 2> "$out/halo-fetch.stderr"
+          else
           echo "::add-mask::$token"
           export HALO_GIT_TOKEN="$token"
           unset token HALO_READ_TOKEN GH_TOKEN GITHUB_TOKEN
@@ -242,6 +243,7 @@ jobs:
               clone --quiet https://github.com/Ming-Research/Halo-wf.git "$root/halo" \
               > "$out/halo-fetch.stdout" 2> "$out/halo-fetch.stderr"
           unset HALO_GIT_TOKEN
+          fi
           git -C "$root/halo" checkout --quiet --detach "$HALO_REF"
           git -C "$root/halo" rev-parse HEAD > "$out/halo-sha.txt"
           [[ "$(cat "$out/halo-sha.txt")" = "$HALO_REF"* ]]
