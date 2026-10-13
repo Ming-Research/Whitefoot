@@ -182,23 +182,32 @@ impl AtomicLedger {
             }
             colors[index] = 1;
             pending.push((block, true));
-            match &blocks[index].terminator {
-                Some(IrTerminator::Jump { target, .. }) => pending.push((*target, false)),
-                Some(IrTerminator::Match { targets, .. }) => {
-                    let mut successors = targets
-                        .iter()
-                        .map(|target| target.block())
-                        .collect::<Vec<_>>();
-                    successors.sort_by_key(|target| target.index());
-                    successors.dedup();
-                    paths.conditional |= successors.len() > 1;
-                    paths.bypass |= successors.is_empty();
-                    pending.extend(successors.into_iter().rev().map(|target| (target, false)));
+            let mut successors = match &blocks[index].terminator {
+                Some(IrTerminator::Jump { target, .. }) => {
+                    pending.push((*target, false));
+                    continue;
                 }
+                Some(IrTerminator::Match { targets, .. }) => targets
+                    .iter()
+                    .map(|target| target.block())
+                    .collect::<Vec<_>>(),
+                Some(IrTerminator::IntegerMatch {
+                    targets, default, ..
+                }) => targets
+                    .iter()
+                    .map(|target| target.block())
+                    .chain(default.iter().copied())
+                    .collect::<Vec<_>>(),
                 Some(IrTerminator::Return { .. } | IrTerminator::Unreachable) | None => {
                     paths.bypass = true;
+                    continue;
                 }
-            }
+            };
+            successors.sort_by_key(|target| target.index());
+            successors.dedup();
+            paths.conditional |= successors.len() > 1;
+            paths.bypass |= successors.is_empty();
+            pending.extend(successors.into_iter().rev().map(|target| (target, false)));
         }
         paths.first = first.into_iter().collect();
         paths

@@ -70,7 +70,7 @@ use super::{CheckStop, CheckedProgram};
 use control::{ControlCounters, ControlScope};
 use generics::{GenericParameter, GenericSubstitution};
 use inventory::InventoryView;
-use references::ReferenceInfo;
+use references::{ReferenceInfo, ReferenceSelection};
 
 /// The syntax tree, as the permission ledger's citations reach it.
 struct PermissionLedgerSource<'view, 'unit> {
@@ -282,8 +282,12 @@ struct LocalBinding {
     /// was the loan apparatus's way of stating what [REF-2] now states
     /// directly as a validity fact.
     reference: Option<ReferenceInfo>,
-    /// [REF-2, ENT-3.S15] the borrowed-match refinement occurrences this
-    /// binding witnesses. The occurrence identity is immutable even when a
+    /// A set target's newly selected payload storage and later storage
+    /// selections while its RHS is checked, excluding trailing inline fields.
+    /// It uses the same REF-2 validity and preservation rules as a reference.
+    commit_target: Option<ReferenceInfo>,
+    /// [REF-2, ENT-3.S15] the match refinement occurrences rooted at this
+    /// binding. The occurrence identity is immutable even when a
     /// reference binding is rebound; only its flow-sensitive validity meets
     /// at joins.
     refinement_witnesses: Vec<RefinementWitness>,
@@ -302,6 +306,8 @@ struct LocalBinding {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct RefinementWitness {
     origin: NodePath,
+    /// The selected target, distinct from the possible storage supports.
+    selection: ReferenceSelection,
     place: ResolvedPlace,
     variant: u32,
     valid: bool,
@@ -309,7 +315,10 @@ struct RefinementWitness {
 
 impl RefinementWitness {
     fn same_occurrence(&self, other: &Self) -> bool {
-        self.origin == other.origin && self.place == other.place && self.variant == other.variant
+        self.origin == other.origin
+            && self.selection == other.selection
+            && self.place == other.place
+            && self.variant == other.variant
     }
 }
 
@@ -370,12 +379,11 @@ impl LocalBinding {
             }
     }
 
-    /// A loop header is checked once rather than materialized by `join_from`.
-    /// Its reference validity has a separate finite equation, but every
-    /// non-reference refinement witness must therefore still agree exactly
-    /// with the backedge as it did before loop-header widening.
+    /// Loop-header reference validity uses its finite equations, and variant
+    /// witnesses use the same structural retry's entry/backedge meet. Their
+    /// flow validity is therefore excluded from this structural comparison.
     fn loop_agrees_with(&self, other: &Self) -> bool {
-        self.agrees_with(other) && self.refinement_witnesses == other.refinement_witnesses
+        self.agrees_with(other)
     }
 }
 
@@ -667,6 +675,11 @@ struct BodyChecker {
     /// retries, and a new member restarts the walk, as a new loop-header
     /// summary path does.
     loop_superseded_bindings: HashMap<super::model::CheckedLoopId, HashSet<BindingId>>,
+    /// [ENT-3.S15, ENT-5] enclosing match occurrences whose variant fact
+    /// does not survive every executable backedge of this loop. Each newly
+    /// recorded occurrence restarts the existing structural walk; header
+    /// formation applies the kills before checking any iteration's body.
+    loop_invalidated_refinements: HashMap<super::model::CheckedLoopId, Vec<RefinementWitness>>,
     /// [EFF-1] the index and range-endpoint captures that read a parameter
     /// while it held its call value on every path to their formation, which
     /// name the row's index parameter whatever later writes and joins do.
@@ -889,6 +902,7 @@ fn check_semantics_attempt(
     repair_mode: effect_repairs::RepairMode,
 ) -> Result<CheckedProgramData, CheckStop> {
     DeclarationInventory::new(resolved).and_then(|declarations| {
+        declarations.check_entry_positions()?;
         let mut types = TypeContext::new(&declarations);
         types.effect_repairs = repair_mode;
         if !resolved.postconditions().is_empty() {
@@ -1851,6 +1865,9 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                         loop_superseded_bindings: std::mem::take(
                             &mut body.loop_superseded_bindings,
                         ),
+                        loop_invalidated_refinements: std::mem::take(
+                            &mut body.loop_invalidated_refinements,
+                        ),
                         ..BodyChecker::default()
                     };
                 }
@@ -2198,8 +2215,24 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 },
             );
         }
+        // [TYPE-11, FN-2] generated promises follow the written clauses in
+        // both concrete and symbolic instances. A known invariant struct
+        // supplies its ordinary integer relations even while another type
+        // remains symbolic. Schema admission and renamed-instance reuse
+        // must retain those clauses with the written ones, so FN-4's actual
+        // premises have the FN-9 summaries a bound call requires.
+        for (invariant, subject, selector) in
+            self.type_invariant_postcondition_selectors(signature)?
+        {
+            postcondition_selectors.push(selector);
+            postcondition_relations.push(type_invariants::substitute_relation(
+                &invariant.relation,
+                subject,
+            ));
+            postcondition_places.push(Vec::new());
+        }
         let postconditions = if signature.substitution.is_concrete(&self.types.elements) {
-            let mut postconditions = postcondition_selectors
+            postcondition_selectors
                 .into_iter()
                 .zip(postcondition_relations)
                 .zip(postcondition_places)
@@ -2217,16 +2250,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                     postcondition.places = places;
                     Ok::<_, CheckStop>(postcondition)
                 })
-                .collect::<Result<Vec<_>, _>>()?;
-            postconditions.extend(self.type_invariant_postconditions(
-                FunctionContext {
-                    check_context,
-                    function: signature,
-                },
-                &parameters,
-                &checked.statements,
-            )?);
-            postconditions
+                .collect::<Result<Vec<_>, _>>()?
         } else {
             let source_admitted = summary_source
                 .and_then(|source| self.analysis.symbolic_admitted.get(&source))
@@ -2406,6 +2430,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                     ResolvedPlace::binding(binding),
                 )
             }),
+            commit_target: None,
             refinement_witnesses: Vec::new(),
             handle_watch: None,
             call_value: true,

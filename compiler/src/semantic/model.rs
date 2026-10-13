@@ -1972,6 +1972,7 @@ impl CheckedRangeElementPlace {
             .chain(self.path.iter().filter_map(|step| match step {
                 CheckedPlaceStep::Subscript(index) => Some(&index.offset),
                 CheckedPlaceStep::Field(_)
+                | CheckedPlaceStep::Payload { .. }
                 | CheckedPlaceStep::BoxReferent(_)
                 | CheckedPlaceStep::Measure(_) => None,
             }))
@@ -1986,6 +1987,7 @@ impl CheckedRangeElementPlace {
             .chain(self.path.iter_mut().filter_map(|step| match step {
                 CheckedPlaceStep::Subscript(index) => Some(&mut index.offset),
                 CheckedPlaceStep::Field(_)
+                | CheckedPlaceStep::Payload { .. }
                 | CheckedPlaceStep::BoxReferent(_)
                 | CheckedPlaceStep::Measure(_) => None,
             }))
@@ -2091,11 +2093,17 @@ pub(crate) struct CheckedContainerRoot {
 }
 
 /// One step below a storage place's root [REF-1]: a field selection, one
-/// `Box.inner` selection [TYPE-9], or one [OP-4] subscript together with
-/// the obligation that subscript owes.
+/// enum payload selection [GRAM-5], `Box.inner` selection [TYPE-9], or
+/// one [OP-4] subscript together with the obligation that subscript owes.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum CheckedPlaceStep {
     Field(u32),
+    /// One selected enum payload field [GRAM-5, REF-1].
+    Payload {
+        nominal: NominalId,
+        variant: u32,
+        field: u32,
+    },
     /// A declared readonly descriptor field [TYPE-2, OP-15, MSR-2].
     Measure(CheckedMeasure),
     /// One `Box.inner` selection [TYPE-9]. It is an ordinary path step
@@ -2152,6 +2160,7 @@ impl CheckedContainerRoot {
     pub(crate) fn offsets(&self) -> impl Iterator<Item = &CheckedExpression> {
         self.path.iter().filter_map(|step| match step {
             CheckedPlaceStep::Field(_)
+            | CheckedPlaceStep::Payload { .. }
             | CheckedPlaceStep::BoxReferent(_)
             | CheckedPlaceStep::Measure(_) => None,
             CheckedPlaceStep::Subscript(index) => Some(&index.offset),
@@ -2161,6 +2170,7 @@ impl CheckedContainerRoot {
     pub(crate) fn offsets_mut(&mut self) -> impl Iterator<Item = &mut CheckedExpression> {
         self.path.iter_mut().filter_map(|step| match step {
             CheckedPlaceStep::Field(_)
+            | CheckedPlaceStep::Payload { .. }
             | CheckedPlaceStep::BoxReferent(_)
             | CheckedPlaceStep::Measure(_) => None,
             CheckedPlaceStep::Subscript(index) => Some(&mut index.offset),
@@ -2237,6 +2247,7 @@ fn subscript_offsets(
     path.iter().filter_map(|step| match step {
         CheckedPlaceStep::Subscript(index) => Some((&index.offset, index.captured)),
         CheckedPlaceStep::Field(_)
+        | CheckedPlaceStep::Payload { .. }
         | CheckedPlaceStep::BoxReferent(_)
         | CheckedPlaceStep::Measure(_) => None,
     })
@@ -2305,6 +2316,24 @@ fn selects_readonly_fragment_field(
                 Some(field) => field.ty,
                 None => return false,
             },
+            CheckedPlaceStep::Payload { variant, field, .. } => {
+                let CheckedType::Nominal(nominal) = ty else {
+                    return false;
+                };
+                let Some(CheckedNominalKind::Enum { variants }) = nominals
+                    .get(nominal.0 as usize)
+                    .map(|nominal| &nominal.kind)
+                else {
+                    return false;
+                };
+                let Some(field) = variants
+                    .get(*variant as usize)
+                    .and_then(|variant| variant.fields.get(*field as usize))
+                else {
+                    return false;
+                };
+                field.ty
+            }
             CheckedPlaceStep::BoxReferent(nominal) => {
                 match nominals
                     .get(nominal.0 as usize)
@@ -2356,6 +2385,10 @@ impl CheckedPlaceStep {
     pub(crate) fn goal_projection(&self) -> super::goal::GoalProjection {
         match self {
             Self::Field(field) => super::goal::GoalProjection::Field(*field),
+            Self::Payload { variant, field, .. } => super::goal::GoalProjection::Payload {
+                variant: *variant,
+                field: *field,
+            },
             Self::Measure(measure) => super::goal::GoalProjection::Measure(*measure),
             Self::BoxReferent(_) => super::goal::GoalProjection::Deref,
             Self::Subscript(index) => {
@@ -2367,6 +2400,10 @@ impl CheckedPlaceStep {
     pub(crate) fn place_step(&self) -> super::places::PlaceStep {
         match self {
             Self::Field(field) => super::places::PlaceStep::Field(*field),
+            Self::Payload { variant, field, .. } => super::places::PlaceStep::Payload {
+                variant: *variant,
+                field: *field,
+            },
             Self::Measure(measure) => super::places::PlaceStep::Measure(*measure),
             Self::BoxReferent(_) => super::places::PlaceStep::Deref,
             Self::Subscript(index) => super::places::PlaceStep::Index(index.captured),
@@ -2779,11 +2816,24 @@ pub(crate) struct CheckedMatchBinder {
     pub(crate) ty: CheckedType,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CheckedMatchType {
+    Enum(CheckedEnumType),
+    Integer(CheckedType),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CheckedMatchSelection {
+    Variant(u32),
+    Integer(i128),
+    Else,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CheckedMatchArm {
     pub(crate) node_path: NodePath,
     pub(crate) label: String,
-    pub(crate) tag: u32,
+    pub(crate) selection: CheckedMatchSelection,
     pub(crate) binders: Vec<CheckedMatchBinder>,
     /// [GRAM-10, WIN-3, STOR-3] in an own-place match, the release of each
     /// payload field a final `..` covers, taken on entry to the arm: one
@@ -2960,7 +3010,7 @@ pub(crate) enum CheckedStatement {
         /// The complete written `match` or `if`, including a chained `else if`.
         node_path: NodePath,
         scrutinee: CheckedExpression,
-        enum_type: CheckedEnumType,
+        match_type: CheckedMatchType,
         arms: Vec<CheckedMatchArm>,
         continues: bool,
     },
@@ -2981,7 +3031,7 @@ pub(crate) enum CheckedStatement {
         /// parameter does; no other result mode carries one.
         result_range_element: Option<CheckedElement>,
         scrutinee: CheckedExpression,
-        enum_type: CheckedEnumType,
+        match_type: CheckedMatchType,
         arms: Vec<CheckedMatchArm>,
         continues: bool,
     },
@@ -3371,9 +3421,8 @@ impl CheckedCallSeparationPositions {
     /// is never proved, and a pair with no other candidate is one no named
     /// position separates [EFF-5, OWN-7].
     pub(crate) fn names_its_values(self) -> bool {
-        let named = |value: super::places::CapturedValue| {
-            value != super::places::CapturedValue::unknown()
-        };
+        let named =
+            |value: super::places::CapturedValue| value != super::places::CapturedValue::unknown();
         let named_range =
             |range: super::places::CapturedRange| named(range.start) && named(range.end);
         match self {
@@ -3690,13 +3739,13 @@ impl FunctionMentions {
                 }
                 CheckedStatement::Match {
                     scrutinee,
-                    enum_type,
+                    match_type,
                     arms,
                     ..
                 }
                 | CheckedStatement::ValueMatchLet {
                     scrutinee,
-                    enum_type,
+                    match_type,
                     arms,
                     ..
                 } => {
@@ -3709,8 +3758,12 @@ impl FunctionMentions {
                         self.types.push(*result_type);
                         self.elements.extend(result_range_element.iter().copied());
                     }
-                    if let CheckedEnumType::Nominal(nominal) = enum_type {
-                        self.types.push(CheckedType::Nominal(*nominal));
+                    match match_type {
+                        CheckedMatchType::Enum(CheckedEnumType::Nominal(nominal)) => {
+                            self.types.push(CheckedType::Nominal(*nominal));
+                        }
+                        CheckedMatchType::Integer(ty) => self.types.push(*ty),
+                        CheckedMatchType::Enum(CheckedEnumType::Bool) => {}
                     }
                     self.expression(scrutinee);
                     for arm in arms {
@@ -3862,6 +3915,9 @@ impl FunctionMentions {
         for step in steps {
             match step {
                 CheckedPlaceStep::Field(_) | CheckedPlaceStep::Measure(_) => {}
+                CheckedPlaceStep::Payload { nominal, .. } => {
+                    self.types.push(CheckedType::Nominal(*nominal));
+                }
                 CheckedPlaceStep::BoxReferent(nominal) => {
                     self.types.push(CheckedType::Nominal(*nominal));
                 }

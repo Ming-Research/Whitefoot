@@ -3184,6 +3184,52 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 }
                 .map_err(|_| BackendFailure::TextEmission)
             }
+            IrTerminator::IntegerMatch {
+                scrutinee,
+                targets,
+                default,
+            } => {
+                self.materialize_operands([*scrutinee])?;
+                let Some(IrType::Integer { width, signed }) = self.value_type(*scrutinee) else {
+                    return Err(BackendFailure::InvalidIr);
+                };
+                if !matches!(width, 8 | 16 | 32 | 64) {
+                    return Err(BackendFailure::InvalidIr);
+                }
+                let default_label = default.map_or_else(|| invalid_tag_label(block), block_label);
+                writeln!(
+                    self.output,
+                    "  switch i{width} {}, label %{default_label} [",
+                    self.value_name(*scrutinee)
+                )
+                .map_err(|_| BackendFailure::TextEmission)?;
+                let mut seen = BTreeSet::new();
+                let (min, max) = if signed {
+                    (-(1_i128 << (width - 1)), (1_i128 << (width - 1)) - 1)
+                } else {
+                    (0, (1_i128 << width) - 1)
+                };
+                for target in targets {
+                    if target.value() < min || target.value() > max || !seen.insert(target.value())
+                    {
+                        return Err(BackendFailure::InvalidIr);
+                    }
+                    writeln!(
+                        self.output,
+                        "    i{width} {}, label %{}",
+                        target.value(),
+                        block_label(target.block())
+                    )
+                    .map_err(|_| BackendFailure::TextEmission)?;
+                }
+                writeln!(self.output, "  ]").map_err(|_| BackendFailure::TextEmission)?;
+                if default.is_none() {
+                    // ERR-2 establishes complete type-domain coverage.
+                    self.output.open_block(default_label);
+                    writeln!(self.output, "  unreachable")?;
+                }
+                Ok(())
+            }
             IrTerminator::Match {
                 scrutinee,
                 enum_type,

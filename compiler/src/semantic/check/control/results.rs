@@ -82,6 +82,7 @@ impl<'unit> Checker<'_, 'unit> {
                         compiler_updated: false,
                         read_only_state: false,
                         reference: None,
+                        commit_target: None,
                         refinement_witnesses: Vec::new(),
                         handle_watch: None,
                         call_value: false,
@@ -168,7 +169,7 @@ impl<'unit> Checker<'_, 'unit> {
             return self.types.declarations.issue_node(
                 SemanticRule::Type2,
                 node,
-                SemanticIssueKind::ContainerConstruction {
+                SemanticIssueKind::OpaqueDestructuring {
                     nominal: written,
                     mechanical_fix,
                 },
@@ -330,6 +331,7 @@ impl<'unit> Checker<'_, 'unit> {
                         compiler_updated: false,
                         read_only_state: false,
                         reference: None,
+                        commit_target: None,
                         refinement_witnesses: Vec::new(),
                         handle_watch: None,
                         call_value: false,
@@ -574,6 +576,7 @@ impl<'unit> Checker<'_, 'unit> {
                     compiler_updated: false,
                     read_only_state: false,
                     reference: None,
+                    commit_target: None,
                     refinement_witnesses: Vec::new(),
                     handle_watch: None,
                     call_value: false,
