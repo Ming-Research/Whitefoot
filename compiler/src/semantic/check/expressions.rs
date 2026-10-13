@@ -1305,7 +1305,7 @@ impl<'unit> Checker<'_, 'unit> {
         }
         if !writable {
             let mechanical_fix = place.resolved.members.iter().find_map(|member| {
-                self.rewritten_index_repair(context, node, member, bindings, false)
+                self.rewritten_index_repair(context, node, member, bindings, None)
                     .ok()
                     .flatten()
             });

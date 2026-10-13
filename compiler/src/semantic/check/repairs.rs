@@ -993,13 +993,19 @@ pub(super) fn rewritten_effect_index(
     line: u64,
     access: &str,
     call: Option<&str>,
+    move_before_write: bool,
 ) -> String {
     let operation = match call {
         Some(call) => format!("the call `{call}`"),
         None => format!("the access `{access}`"),
     };
+    let route = if move_before_write {
+        format!("either by moving {operation} before that write, or by leaving")
+    } else {
+        "by leaving".to_owned()
+    };
     format!(
-        "the row `{row}` uses `{parameter}`'s value at the call, but `{write}` at line {line} rewrites it before {operation}; where this access is the row mismatch to repair, keep the row either by moving {operation} before that write, or by leaving `{parameter}` unchanged, binding the new value in a fresh local, and using that local for the work that needs the new value"
+        "the row `{row}` uses `{parameter}`'s value at the call, but `{write}` at line {line} rewrites it before {operation}; where this access is the row mismatch to repair, keep the row {route} `{parameter}` unchanged, binding the new value in a fresh local, and using that local for the work that needs the new value"
     )
 }
 
