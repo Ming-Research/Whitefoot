@@ -360,7 +360,11 @@ jobs:
           echo "--- top level of the full tree ---"; ls "$src"
           echo "--- lld and clang executables in bin ---"; ls "$src/bin" | grep -iE "^(clang|ld\.lld|lld)[^/]*\.exe$" || true
           tools=()
-          for tool in clang.exe clang++.exe ld.lld.exe lld.exe; do
+          # clang.exe here is a small launcher that runs the real driver,
+          # bin/clang-<major> (with or without .exe), which must come too.
+          ls -la "$src/bin" | grep -iE " clang(-[0-9]+)?(\.exe)?$" || true
+          real=$(cd "$src/bin" && ls | grep -E "^clang-[0-9]+(\.exe)?$" || true)
+          for tool in clang.exe clang++.exe ld.lld.exe lld.exe $real; do
             if [ -f "$src/bin/$tool" ]; then tools+=("$tool"); cp "$src/bin/$tool" "$trim/bin/"; fi
           done
           for tool in clang.exe ld.lld.exe; do
