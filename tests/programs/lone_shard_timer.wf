@@ -15,7 +15,8 @@ fn timer_shard_writer(counter: Shared<Shards<u64>>, started: Shared<Bool>, stop:
     atomic part = &counter[mine] {
       set part^ = part^ +sat 1_u64;
     }
-    if decision_cell_read(cell: &stop) != open {
+    let verdict = decision_cell_read(cell: &stop);
+    if verdict != open {
       break @write;
     }
   }
