@@ -453,7 +453,14 @@ impl<'unit> Checker<'_, 'unit> {
             .tree
             .first_child_with(node, Production::Pbase)?
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-        if !self.types.declarations.tree.children(pbase)?.is_empty() {
+        if !self.types.declarations.tree.children(pbase)?.is_empty()
+            && !(check_context.active_postcondition.is_some()
+                && self
+                    .types
+                    .declarations
+                    .tree
+                    .has_fixed(pbase, crate::FixedTerminal::Entry)?)
+        {
             return Ok(None);
         }
         let usage = self

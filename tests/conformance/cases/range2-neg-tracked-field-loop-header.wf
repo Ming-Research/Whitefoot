@@ -1,0 +1,27 @@
+struct Counter {
+  count: u64;
+}
+
+fn need_one(digit: u8) -> result: unit pure contract {
+  requires 1_u8 <= digit;
+} {
+  return unit;
+}
+
+fn inspect(counter: &Counter, digits: &Array<u8, 1>) -> result: unit writes(counter), reads(digits) contract {
+  requires forall leading(k in 0_u64..1_u64) when 0_u64 < counter^.count: 1_u8 <= digits^[k];
+} {
+  doc "A loop header forgets the tracked field its backedge writes before examining the positive guard, so a later iteration cannot reuse the old guarded fact.";
+  loop {
+    if 0_u64 < counter^.count {
+      let digit = digits^[0_u64];
+      need_one(digit: digit);
+    }
+    set counter^.count = 1_u64;
+    continue;
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

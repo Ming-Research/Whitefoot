@@ -1434,8 +1434,8 @@ impl Checker<'_, '_> {
                         .into());
                     }
                     if at_end && matches!(name.as_str(), "len" | "cap" | "bytes") {
-                        let measure = super::types::measure_named(&name)
-                            .expect("admitted measure spelling");
+                        let measure =
+                            super::types::measure_named(&name).expect("admitted measure spelling");
                         let measured = match selected {
                             Selected::Run(_) => measure == CheckedMeasure::Length,
                             Selected::Value(ty) => ty
@@ -1483,11 +1483,22 @@ impl Checker<'_, '_> {
                 ty,
                 names,
             )),
+            Selected::Value(CheckedType::Integer(element))
+                if matches!(root, CheckedRangeRoot::Binding(_) | CheckedRangeRoot::Entry(_))
+                    && self.tracked_field_factor(
+                        context.check_context, place, bindings, LexicalUseRole::PlaceBase,
+                    )?.is_some() =>
+            {
+                Ok(CheckedRangeTerm::Field {
+                    place: CheckedRangePlace { root, path, fixed_length: None },
+                    element,
+                }.into())
+            }
             _ => self.invalid_range(
                 SemanticRule::Range1,
                 place,
-                "a range term reads a place that is not an integer value, a measure or an element",
-                "bind the integer in a `let` before the clause, or read one integer element",
+                "a range term reads a place that is not an integer value, a tracked integer field, a measure or an element",
+                "read a live integer binding, a tracked struct field, a measure or an integer element; a tracked field uses only struct field selections after its binding or reference dereference",
             ),
         }
     }
