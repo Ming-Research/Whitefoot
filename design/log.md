@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 the owner's agent instructions own the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-13 A call inside its own call-graph component receives every callee postcondition as an induction hypothesis
+
+Nodes: language, language/checks-and-proofs, language/checks-and-proofs/obligation-discharge
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the specification revision (v0.142 to v0.143) and design-tree change of Whitefoot#427 at commit ae19f6b4e?" (translated); before it, the same day, the owner chose option A on the direction card "after a recursive function calls itself (or another member of its cycle), may it use the ensures the callee wrote?" (translated): in-component calls receive every callee postcondition as an induction hypothesis on call-return order.
+
+Summary: The obligation-discharge decision now gives a call to a member of its own component every callee postcondition, written and generated, affine and range, unrouted and routed, as an induction hypothesis on call-return order, with every selected return proved once and no summary fixed point, because the strong-induction argument for partial correctness does not depend on whether a clause was written or generated and Snowghost's recursive halving count needs a written result bound after its recursive calls; the old refusal of written postcondition hypotheses, grounded only on no program having needed one, is replaced by a refusal of limiting hypotheses to generated type-invariant postconditions. The cached-compilation decision in `language` and the multi-module component decision in `language/checks-and-proofs` are reworded to point to that judgment; their choices are unchanged.
+
 ## 2026-10-13 Borrowed parameters a recursive group forwards unchanged travel in one record
 
 Nodes: compiler/recursive-environment
