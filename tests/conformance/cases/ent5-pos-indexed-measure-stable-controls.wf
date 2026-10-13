@@ -1,7 +1,7 @@
 alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
-fn unchanged(rows: &Slots<Slots<u8, 4>, 2>, index: u64) -> result: u8 reads(rows) contract {
+fn preserved_value(rows: &Slots<Slots<u8, 4>, 2>, index: u64) -> result: u8 reads(rows) contract {
   requires index < rows^.len;
 } {
   doc "Both signs of an indexed measure goal survive while its named offset is unchanged [ENT-5]. The opposite branches remain unreachable [ENT-4].";
