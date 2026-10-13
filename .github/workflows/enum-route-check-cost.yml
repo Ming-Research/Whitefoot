@@ -1,0 +1,342 @@
+# Temporary attribution experiment; remove before the branch is ready.
+# Same downstream source, gate-profile compilers, no build in check timings.
+# Hosted timings are exploratory, not the precise 14900K performance gate.
+# The fix also includes main's intervening #432 deletion of pattern guidance;
+# before/after isolates #431, while fix/after is not a single-commit comparison.
+# Falsifier: if the fix retains the regression and work does not decrease,
+# contradiction refresh is not the full cause. The before twin measures noise.
+# Temporary labels have no maintained budgets, as in the bisect template:
+# run-check reports them but this experiment does not raise or invent budgets.
+name: enum-route-check-cost
+
+on:
+  push:
+    branches: [claude/enum-route-check-cost]
+    paths: [.github/workflows/enum-route-check-cost.yml, 'compiler/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: enum-route-check-cost-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+  BEFORE_REVISION: 7d9118ebaf88beac3ecdcd87d408dcd61db6cf3d
+  AFTER_REVISION: af7665be672d29912d878dd5da8c3932bb6f296c
+  HALO_REVISION: 80f0ee4
+  WHITEFOOT_CHECK_TIMEOUT: 1800
+
+jobs:
+  measure:
+    name: ${{ matrix.workload }} check cost
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        workload: [halo, firn]
+    env:
+      WORKLOAD: ${{ matrix.workload }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Identify toolchain, compilers and downstream source
+        run: |
+          mkdir -p "$RUNNER_TEMP/route-cost"
+          rustup default stable
+          git worktree add --detach "$RUNNER_TEMP/before" "$BEFORE_REVISION"
+          git worktree add --detach "$RUNNER_TEMP/after" "$AFTER_REVISION"
+          if [ "$WORKLOAD" = halo ]; then
+            git clone --quiet https://github.com/Ming-Research/Halo-wf.git "$RUNNER_TEMP/halo"
+            git -C "$RUNNER_TEMP/halo" checkout --quiet --detach "$HALO_REVISION"
+          else
+            git clone --quiet --branch main --single-branch https://github.com/Ming-Research/Firn-wf.git "$RUNNER_TEMP/firn"
+            # Freeze the fetched main once; all compiler invocations below use
+            # this exact worktree without refetching or modifying source.
+            git -C "$RUNNER_TEMP/firn" checkout --quiet --detach HEAD
+          fi
+          {
+            printf 'before=%s\nafter=%s\nfix=%s\n' "$BEFORE_REVISION" "$AFTER_REVISION" "$(git rev-parse HEAD)"
+            printf 'source=%s\n' "$(git -C "$RUNNER_TEMP/$WORKLOAD" rev-parse HEAD)"
+            printf 'workload=%s\nprofile=gate; incremental=0; no persistent check cache; counters unset for timing\n' "$WORKLOAD"
+            rustc -vV
+            cargo --version
+            uname -a
+            lscpu
+          } | tee "$RUNNER_TEMP/route-cost/identity.txt"
+          for tree in "$RUNNER_TEMP/before" "$RUNNER_TEMP/after" "$GITHUB_WORKSPACE"; do
+            perl .github/run-check.pl route-cost-fetch cargo fetch --locked --manifest-path "$tree/compiler/Cargo.toml"
+          done
+      - name: Build gate compilers separately from measurement
+        run: |
+          for tree in "$RUNNER_TEMP/before" "$RUNNER_TEMP/after" "$GITHUB_WORKSPACE"; do
+            perl .github/run-check.pl compiler/build cargo build --manifest-path "$tree/compiler/Cargo.toml" --profile gate --bin whitefootc --locked --offline
+          done
+          cp "$RUNNER_TEMP/before/compiler/target/gate/whitefootc" "$RUNNER_TEMP/before-twin"
+          sha256sum "$RUNNER_TEMP/before/compiler/target/gate/whitefootc" "$RUNNER_TEMP/before-twin" "$RUNNER_TEMP/after/compiler/target/gate/whitefootc" compiler/target/gate/whitefootc \
+            | tee "$RUNNER_TEMP/route-cost/compiler-sha256.txt"
+      - name: Focused route and flow regressions on the fix
+        if: matrix.workload == 'halo'
+        run: |
+          perl .github/run-check.pl compiler/test-build-unit cargo test --manifest-path compiler/Cargo.toml --profile gate --lib --no-run --locked --offline
+          for filter in semantic::entailment::flow::results::tests enum_routed_ensures; do
+            label="route-cost-test-${filter//::/-}"
+            perl .github/run-check.pl "$label" cargo test --manifest-path compiler/Cargo.toml --profile gate --lib --locked --offline "$filter" \
+              > "$RUNNER_TEMP/route-cost/$label.log" 2>&1 || { cat "$RUNNER_TEMP/route-cost/$label.log"; exit 1; }
+            cat "$RUNNER_TEMP/route-cost/$label.log"
+            grep -E 'test result: ok\. [1-9][0-9]* passed' "$RUNNER_TEMP/route-cost/$label.log"
+          done
+      - name: Inspect Halo enum and postcondition source
+        if: matrix.workload == 'halo'
+        run: |
+          # Preserve the grep census for human inspection, including interfaces.
+          grep -RnE -C 2 --include='*.wf' --include='*.wfm' 'enum |ensures|when .* is ' "$RUNNER_TEMP/halo/lib/halo" \
+            > "$RUNNER_TEMP/route-cost/halo-enum-ensures-grep.txt" || [ "$?" -eq 1 ]
+          cat "$RUNNER_TEMP/route-cost/halo-enum-ensures-grep.txt"
+          echo 'Source census only: inspect all ensures selectors against user enum declarations before claiming this workload has no user-enum routes.' \
+            | tee "$RUNNER_TEMP/route-cost/halo-source-qualification.txt"
+      - name: Warm, select accepted workload, measure and collect checker work
+        run: |
+          python3 - <<'PY'
+          import collections, csv, json, os, pathlib, re, statistics, subprocess
+          temp = pathlib.Path(os.environ['RUNNER_TEMP'])
+          out = temp / 'route-cost'
+          workspace = pathlib.Path(os.environ['GITHUB_WORKSPACE'])
+          workload = os.environ['WORKLOAD']
+          source = temp / workload
+          graph = 'lib/halo/modules.wfg' if workload == 'halo' else 'firn/modules.wfg'
+          binaries = {
+              'before': temp / 'before/compiler/target/gate/whitefootc',
+              'after': temp / 'after/compiler/target/gate/whitefootc',
+              'fix': workspace / 'compiler/target/gate/whitefootc',
+              'before-twin': temp / 'before-twin',
+          }
+          command = ['--graph', graph, '--check-module', 'pkg::vm'] if workload == 'halo' else ['--graph', graph, '--entry', 'firn', '--check']
+          env = dict(os.environ)
+          env.pop('WHITEFOOT_CHECK_WORK', None)
+          env.pop('WHITEFOOT_TIME_BUDGET_RECORD', None)
+          def run(which, label, args, counters=False):
+              log = out / (label + '.log')
+              timing = out / (label + '.time')
+              child_env = dict(env)
+              if counters:
+                  child_env['WHITEFOOT_CHECK_WORK'] = str(out / (which + '-work.tsv'))
+              invocation = ['perl', str(workspace / '.github/run-check.pl'), 'route-cost-' + label,
+                            '/usr/bin/time', '-q', '-f', '%e\t%U\t%S', '-o', str(timing), str(binaries[which]), *args]
+              with log.open('w') as stream:
+                  result = subprocess.run(invocation, cwd=source, env=child_env, stdout=stream, stderr=subprocess.STDOUT)
+              print(f'{label}: exit={result.returncode}; timing={timing.read_text().strip() if timing.exists() else "missing"}', flush=True)
+              if result.returncode:
+                  print(log.read_text(), flush=True)
+              return result.returncode, timing
+          # The first useful samples warm binaries and expose source
+          # failures before the five-round panel. No scale is chosen from a build.
+          initial = [run(which, 'sample-' + which, command)[0] for which in ('before', 'after', 'fix')]
+          if any(initial):
+              if workload != 'firn':
+                  raise SystemExit('Halo target failed; no accepted same-source timing panel.')
+              print('Firn whole-program check failed. Diagnostics require review for compatibility or regression; probing modules without editing source.', flush=True)
+              root = source / pathlib.Path(graph).parent
+              # MOD graph rows register one directory; direct .wf files plus
+              # module.wfm are precisely that module's own records. Rank by own
+              # source lines, not presumed checking cost, and stop at first accepted.
+              text = (source / graph).read_text()
+              names = re.findall(r'^\s*(pkg::[A-Za-z_0-9:]+)\s*:', text, flags=re.M)
+              candidates = []
+              for name in set(names):
+                  directory = root.joinpath(*name.split('::')[1:])
+                  files = sorted(directory.glob('*.wf')) + [directory / 'module.wfm']
+                  lines = sum(len(path.read_bytes().splitlines()) for path in files if path.is_file())
+                  candidates.append((lines, name))
+              candidates.sort(key=lambda row: (-row[0], row[1]))
+              (out / 'firn-module-candidates.json').write_text(json.dumps(candidates, indent=2) + '\n')
+              selected = None
+              for index, (lines, name) in enumerate(candidates):
+                  args = ['--graph', graph, '--check-module', name]
+                  statuses = [run(which, f'candidate-{index}-{which}', args)[0] for which in ('before', 'after', 'fix')]
+                  if not any(statuses):
+                      selected = (lines, name, args)
+                      break
+              if selected is None:
+                  raise SystemExit('No Firn module accepted by all three compilers; diagnostics uploaded, comparison unavailable.')
+              lines, name, command = selected
+              print(f'Firn fallback: largest accepted own-source module {name}, {lines} lines (not whole-program evidence).', flush=True)
+          selection = {'workload': workload, 'command': command, 'full_check_exits': dict(zip(('before', 'after', 'fix'), initial)), 'source_revision': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=source, text=True).strip()}
+          (out / 'selection.json').write_text(json.dumps(selection, indent=2) + '\n')
+          # After selecting the target, warm every binary on exactly that target.
+          for which in binaries:
+              if run(which, 'warm-' + which, command)[0]:
+                  raise SystemExit('Selected workload warm-up failed.')
+          rows = []
+          order = list(binaries)
+          with (out / 'timings.tsv').open('w') as stream:
+              writer = csv.writer(stream, delimiter='\t')
+              writer.writerow(['round', 'position', 'which', 'wall', 'user', 'sys', 'cpu'])
+              for round_number in range(1, 6):
+                  # Alternate forward/reverse; rotate to avoid fixed first/last
+                  # position. Every round uses the same source and no check cache.
+                  current = order[:] if round_number % 2 else list(reversed(order))
+                  shift = (round_number - 1) % len(current)
+                  current = current[shift:] + current[:shift]
+                  for position, which in enumerate(current, 1):
+                      status, timing = run(which, f'{which}-{round_number}', command)
+                      if status:
+                          raise SystemExit('Timed check failed; no median for an incomplete panel.')
+                      wall, user, system = map(float, timing.read_text().split())
+                      row = [round_number, position, which, wall, user, system, user + system]
+                      rows.append(row)
+                      writer.writerow(row)
+                      stream.flush()
+                      print(f'{which} round {round_number}: wall={wall:.2f}s user={user:.2f}s sys={system:.2f}s CPU={user + system:.2f}s', flush=True)
+          paired = collections.defaultdict(dict)
+          for round_number, _, which, _, _, _, cpu in rows:
+              paired[round_number][which] = cpu
+          if any(values['before'] <= 0 for values in paired.values()):
+              raise SystemExit('Before CPU time is zero; ratio precision is inadequate.')
+          lines = [f'## {workload}: exploratory checker CPU ratios', '', f'Command: `{ " ".join(command) }`', '', '| Comparison | Median paired CPU ratio | Minimum | Maximum |', '|---|---:|---:|---:|']
+          for which in ('after', 'fix', 'before-twin'):
+              ratios = [values[which] / values['before'] for values in paired.values()]
+              lines.append(f'| {which}/before | {statistics.median(ratios):.4f} | {min(ratios):.4f} | {max(ratios):.4f} |')
+          lines += ['', 'CPU is user+sys of the compiler only. Builds, wrapper overhead, counter runs and perf runs are excluded.', 'Before-twin is a byte-identical copy of before; its spread shows observed run-to-run variation, not a precise regression gate.', 'The fix includes the intervening main change after the routed-postcondition merge.']
+          if workload == 'firn' and any(initial):
+              lines += ['', f'Full Firn check exit codes: before={initial[0]}, after={initial[1]}, fix={initial[2]}.', 'Fallback comparison covers only the selected module. Full-check diagnostics require review; failures, including different exits, may reflect compatibility issues or a regression and are not classified as unrelated.']
+          summary = '\n'.join(lines) + '\n'
+          print(summary, flush=True)
+          (out / 'summary.md').write_text(summary)
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as stream:
+              stream.write(summary)
+          # One instrumented check per compiler, kept out of the timing panel.
+          # Proxy includes separate emitted event categories only: total function
+          # intern calls (not duplicate per-join intern calls), evaluated join
+          # pairs, snapshot/closure/probe cells_sum, and lazy affine candidates.
+          # It excludes counts, maxima, row dimensions, cache stats, retained
+          # pairs and affine hit/miss aggregates. Units differ: not a CPU model.
+          selected_metrics = {('function', 'intern_calls'), ('join', 'pairs_evaluated'),
+                              ('snapshot', 'cells_sum'), ('closure', 'cells_sum'), ('probe', 'cells_sum'),
+                              ('function', 'affine_left_candidates_scanned')}
+          work_by_compiler, top_by_compiler = {}, {}
+          for which in ('before', 'after', 'fix'):
+              if run(which, 'instrumented-' + which, command, counters=True)[0]:
+                  raise SystemExit('Instrumented check failed.')
+              path = out / (which + '-work.tsv')
+              if not path.exists() or not path.stat().st_size:
+                  raise SystemExit(f'{which} work TSV missing or empty; counter attribution unavailable.')
+              totals = collections.defaultdict(collections.Counter)
+              with path.open() as stream:
+                  for row in csv.reader(stream, delimiter='\t'):
+                      if len(row) != 7:
+                          raise SystemExit(f'Malformed counter row in {path}: {row!r}')
+                      _, _, function, kind, _, metric, value = row
+                      value = int(value)
+                      if value == 2**64 - 1:
+                          raise SystemExit('Saturated counter makes work attribution unusable.')
+                      if (kind, metric) in selected_metrics:
+                          totals[function][kind + ':' + metric] += value
+              if not totals:
+                  raise SystemExit(f'{which} emitted no selected work metrics; attribution unavailable.')
+              ranked = sorted(totals.items(), key=lambda row: (-sum(row[1].values()), row[0]))
+              work_by_compiler[which] = totals
+              top_by_compiler[which] = [name for name, _ in ranked[:20]]
+              report = ['total_work_proxy\tfunction\tcomponents']
+              report += [f'{sum(metrics.values())}\t{name}\t{json.dumps(dict(sorted(metrics.items())), sort_keys=True)}' for name, metrics in ranked]
+              (out / (which + '-functions.tsv')).write_text('\n'.join(report) + '\n')
+              top = '\n'.join(report[:21]) + '\n'
+              (out / (which + '-top20.tsv')).write_text(top)
+              print(f'{which} top 20 functions; total_work_proxy is event-count attribution, not estimated CPU:\n{top}', flush=True)
+              with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as stream:
+                  stream.write(f'\n### {which} top 20 work counters\n\n```text\n{top}```\n')
+          keys = set(top_by_compiler['before']) | set(top_by_compiler['after'])
+          total = lambda which, name: sum(work_by_compiler[which][name].values())
+          names = sorted(keys, key=lambda name: (-max(total('before', name), total('after', name)), name))
+          table = ['function\tbefore_total_work_proxy\tafter_total_work_proxy\tfix_total_work_proxy\tbefore_components\tafter_components\tfix_components']
+          markdown = ['\n### Union of before/after top 20 functions', '', '| Function | Before work proxy | After work proxy | Fix work proxy |', '|---|---:|---:|---:|']
+          for name in names:
+              values = [total(which, name) for which in ('before', 'after', 'fix')]
+              components = [json.dumps(dict(sorted(work_by_compiler[which][name].items())), sort_keys=True) for which in ('before', 'after', 'fix')]
+              table.append('\t'.join([name, *map(str, values), *components]))
+              markdown.append(f'| {name.replace("|", "&#124;")} | {values[0]} | {values[1]} | {values[2]} |')
+          comparison = '\n'.join(table) + '\n'
+          (out / 'top20-comparison.tsv').write_text(comparison)
+          print('Side-by-side work proxy and metric components:\n' + comparison, flush=True)
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as stream:
+              stream.write('\n'.join(markdown) + '\n')
+          PY
+      - name: Install profiling tools after timing
+        if: always()
+        run: |
+          perl .github/run-check.pl route-cost-perf-install sudo apt-get update
+          perl .github/run-check.pl route-cost-perf-install sudo apt-get install -y linux-tools-generic
+          perf_bin=$(find /usr/lib/linux-tools -type f -name perf | sort | tail -1)
+          test -n "$perf_bin" || { echo '::error::No Linux perf binary installed'; exit 1; }
+          printf '%s\n' "$perf_bin" > "$RUNNER_TEMP/route-cost/perf-path.txt"
+      - name: Profile after compiler to cover work not distinguished by counters
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib, subprocess
+          temp = pathlib.Path(os.environ['RUNNER_TEMP'])
+          out = temp / 'route-cost'
+          selection_path = out / 'selection.json'
+          perf_path = out / 'perf-path.txt'
+          if not selection_path.exists() or not perf_path.exists():
+              print('::error::After profiling unavailable: no accepted workload or perf installation.')
+              raise SystemExit(1)
+          selection = json.loads(selection_path.read_text())
+          perf = perf_path.read_text().strip()
+          wrapper = pathlib.Path(os.environ['GITHUB_WORKSPACE']) / '.github/run-check.pl'
+          env = dict(os.environ)
+          env.pop('WHITEFOOT_CHECK_WORK', None)
+          env.pop('WHITEFOOT_TIME_BUDGET_RECORD', None)
+          # Always collect once after timing: counter equality does not establish
+          # equality of uninstrumented contradiction-refresh or allocator work.
+          record = ['perl', str(wrapper), 'route-cost-perf-record', 'sudo', perf, 'record', '-g',
+                    '--call-graph', 'dwarf', '-e', 'cpu-clock', '-o', str(out / 'after-perf.data'), '--',
+                    str(temp / 'after/compiler/target/gate/whitefootc'), *selection['command']]
+          with (out / 'after-perf-record.log').open('w') as stream:
+              result = subprocess.run(record, cwd=temp / selection['workload'], env=env, stdout=stream, stderr=subprocess.STDOUT)
+          print((out / 'after-perf-record.log').read_text())
+          # sudo perf may create a root-only data file; retain readable stacks
+          # for the ordinary-user artifact upload even when recording fails.
+          if (out / 'after-perf.data').exists():
+              subprocess.run(['sudo', 'chmod', 'a+r', str(out / 'after-perf.data')], check=True)
+          if result.returncode:
+              print(f'::error::perf record failed with exit {result.returncode}; profile attribution unavailable (diagnostics uploaded).')
+              raise SystemExit(result.returncode)
+          report = ['perl', str(wrapper), 'route-cost-perf-report', 'sudo', perf, 'report', '--stdio',
+                    '--no-children', '--call-graph', 'none', '--percent-limit', '0', '-i', str(out / 'after-perf.data')]
+          with (out / 'after-perf-report.txt').open('w') as stream:
+              result = subprocess.run(report, env=env, stdout=stream, stderr=subprocess.STDOUT)
+          text = (out / 'after-perf-report.txt').read_text()
+          # Print the leading profile lines including the first 20 symbol rows;
+          # the complete flat report and recorded stacks remain in the artifact.
+          lines, symbols = [], 0
+          for line in text.splitlines():
+              lines.append(line)
+              if line.lstrip()[:1].isdigit() and '%' in line:
+                  symbols += 1
+              if symbols == 20:
+                  break
+          top = '\n'.join(lines) + '\n'
+          print(top)
+          (out / 'after-perf-top20.txt').write_text(top)
+          if result.returncode or symbols == 0:
+              print('::error::perf report failed or contained no sampled symbols; inspect uploaded diagnostics.')
+              raise SystemExit(result.returncode or 1)
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as stream:
+              stream.write('\n### After perf top symbols\n\n```text\n' + top + '```\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: enum-route-check-cost-${{ matrix.workload }}
+          path: ${{ runner.temp }}/route-cost/
+          if-no-files-found: error
