@@ -1,3 +1,9 @@
+fn need_below(value: u64, bound: u64) -> result: unit pure contract {
+  requires value < bound;
+} {
+  return unit;
+}
+
 enum Instr {
   Jump(t: u64);
   Branch(t: u64, c: u64);
@@ -9,7 +15,20 @@ fn follow(code: &Box<Slots<Instr>>, pc: u64) -> r: u64 reads(code) contract {
   requires forall targets(j in 0_u64..code^.inner.len) when code^.inner[j] is Jump: code^.inner[j].Jump.t < code^.inner.len;
 } {
   doc "The guard holds for a Jump element and the conclusion reads that element's Jump target, which is defined exactly there.";
-  return pc;
+  let n = code^.inner.len;
+  match code^.inner[pc] {
+    Jump(t: jump_to) => {
+      let jump = jump_to^;
+      need_below(value: jump, bound: n);
+      return jump;
+    }
+    Branch(..) => {
+      return pc;
+    }
+    Halt() => {
+      return pc;
+    }
+  }
 }
 
 fn main() -> status: std::process::ExitStatus pure {
