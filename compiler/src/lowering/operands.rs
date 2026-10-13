@@ -238,10 +238,7 @@ macro_rules! operation_operands {
             IrOperation::WindowBlockNew { capacity, .. } => vec![$value(capacity)],
             IrOperation::WindowGrow { cell, capacity, .. } => vec![$value(cell), $value(capacity)],
             IrOperation::CellFree { value, .. } => vec![$value(value)],
-            IrOperation::SliceRange { slice, start, end }
-            | IrOperation::IndexedRange {
-                slice, start, end, ..
-            } => {
+            IrOperation::SliceRange { slice, start, end } => {
                 vec![$value(slice), $value(start), $value(end)]
             }
             IrOperation::BufferIndex { buffer, offset, .. } => vec![$value(buffer), $value(offset)],

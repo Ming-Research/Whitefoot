@@ -1,338 +1,312 @@
-//! Private indexed families for a structured range split. One slab per
-//! family contains the leaves' dense scalar cells or masks in leaf order. Only this site owns those
-//! allocations; chunks borrow disjoint ranges and cannot release them.
+//! Private indexed contributions of a granted far range half.
+//!
+//! A range driver passes its current destinations to both halves. When the
+//! lane for the far half is granted, the offering activation acquires one
+//! neutral contribution per storage group (a dense slab per family, or one
+//! root-shaped block shared by a call-updated root's families), stores it in
+//! the lane frame in place of the destination, and publishes. After the join
+//! it combines each contribution into its destination in ascending cell
+//! order and frees it before releasing the lane. A refused lane runs the far
+//! half inline after the near half, on the destinations themselves, and
+//! allocates nothing. The far task and its descendants only borrow the
+//! contribution; only its acquiring activation releases it.
 
-use super::parallel::{LoopSplitSite, SplitArgument};
 use super::*;
-use crate::ir::{IrIndexedFamilyKind, IrIndexedProjection};
+use crate::ir::{IrIndexedFamilyKind, IrIndexedProjection, IrIndexedReduction};
 
-pub(super) struct IndexedPrivate {
-    pub(super) budget: String,
-    active: Option<String>,
-    roots: Vec<PrivateRoot>,
+/// The first argument of a range driver's captures: seed, lower, upper.
+const CAPTURES: usize = 3;
+
+/// One storage group of a granted far half: the family that owns its
+/// capture position, and the raw allocation acquired for it.
+pub(super) struct FarGroup {
+    /// Ordinal of the group's first family; every family of the group
+    /// shares its `capture` and `private` positions.
+    first: usize,
+    /// The allocation's base and its byte size, for the acquired-prefix
+    /// release on a later group's failure.
+    pointer: String,
+    bytes: String,
 }
 
-#[derive(Clone)]
-pub(super) struct PrivateRoot {
-    pub(super) pointer: String,
-    pub(super) bytes: String,
-    pub(super) cells: String,
-    pub(super) total: String,
-    pub(super) original: String,
-    pub(super) spec: usize,
-    pub(super) block_bytes: Option<String>,
+/// The granted far half's private storage, replacing frame fields.
+pub(super) struct FarBundle {
+    groups: Vec<FarGroup>,
+    /// `(argument index, frame operand)` written instead of the argument.
+    pub(super) fields: Vec<(usize, String)>,
+}
+
+/// The ordinals of each storage group's first family, in family order.
+fn group_leaders(families: &[IrIndexedReduction]) -> Vec<usize> {
+    let mut leaders: Vec<usize> = Vec::new();
+    for (ordinal, family) in families.iter().enumerate() {
+        if !leaders
+            .iter()
+            .any(|leader| families[*leader].capture == family.capture)
+        {
+            leaders.push(ordinal);
+        }
+    }
+    leaders
 }
 
 impl FunctionEmitter<'_, '_> {
-    /// Scheduling arithmetic saturates; allocation arithmetic below fails
-    /// through STOR-8 instead. Overflow must never make a costly split cheap.
-    fn indexed_saturating(
-        &mut self,
-        opcode: &str,
-        left: &str,
-        right: &str,
-    ) -> Result<String, BackendFailure> {
-        let name = format!("llvm.{opcode}.with.overflow.i64");
-        self.intrinsics.insert(IntrinsicDeclaration::Overflow {
-            name: name.clone(),
-            ty: "i64".to_owned(),
-        });
-        self.output.symbol(&name);
-        let pair = self.next_temporary()?;
-        let value = self.next_temporary()?;
-        let overflow = self.next_temporary()?;
-        let result = self.next_temporary()?;
-        writeln!(
-            self.output,
-            "  %{pair} = call {{ i64, i1 }} @{name}(i64 {left}, i64 {right})\n  %{value} = extractvalue {{ i64, i1 }} %{pair}, 0\n  %{overflow} = extractvalue {{ i64, i1 }} %{pair}, 1\n  %{result} = select i1 %{overflow}, i64 -1, i64 %{value}"
-        )?;
-        Ok(format!("%{result}"))
+    pub(super) fn far_argument(
+        arguments: &[IrValueId],
+        capture: usize,
+    ) -> Result<IrValueId, BackendFailure> {
+        capture
+            .checked_add(CAPTURES)
+            .and_then(|index| arguments.get(index))
+            .copied()
+            .ok_or(BackendFailure::InvalidIr)
     }
 
-    pub(super) fn emit_indexed_prepare(
+    /// Acquires and initializes the far half's contributions on the granted
+    /// edge, before any frame field is written or the task is published.
+    ///
+    /// Sizes use checked allocation arithmetic [OP-9]. A size or allocator
+    /// failure frees the groups this bundle already acquired and enters the
+    /// shared heap-exhaustion termination [STOR-8]; the reserved lane was
+    /// never published, so no worker can observe the abandoned slot.
+    pub(super) fn emit_far_bundle(
         &mut self,
-        split: &LoopSplitSite<'_>,
-        span: &str,
-        weight: &str,
-        budget: &str,
-        arguments: &mut [SplitArgument],
-    ) -> Result<IndexedPrivate, BackendFailure> {
-        if split.indexed.is_empty() {
-            return Ok(IndexedPrivate {
-                budget: budget.to_owned(),
-                active: None,
-                roots: Vec::new(),
-            });
-        }
+        families: &[IrIndexedReduction],
+        arguments: &[IrValueId],
+    ) -> Result<FarBundle, BackendFailure> {
         let id = self.next_temporary()?;
-        let allocate = format!("indexed.{id}.allocate");
-        let sequential = format!("indexed.{id}.sequential");
-        let ready = format!("indexed.{id}.ready");
-        let join = format!("indexed.{id}.join");
-        // The runtime's budget is small; guarding the shift also makes this
-        // internal boundary total for a future budget policy. A leaf must
-        // receive at least one source iteration.
-        writeln!(
-            self.output,
-            "  %indexed.{id}.bounded = icmp ult i64 {budget}, 64\n  %indexed.{id}.shift = select i1 %indexed.{id}.bounded, i64 {budget}, i64 0\n  %indexed.{id}.leaves = shl i64 1, %indexed.{id}.shift\n  %indexed.{id}.nontrivial = icmp ugt i64 %indexed.{id}.leaves, 1\n  %indexed.{id}.fits = icmp ule i64 %indexed.{id}.leaves, {span}\n  %indexed.{id}.shape = and i1 %indexed.{id}.nontrivial, %indexed.{id}.fits"
-        )?;
-        let leaves = format!("%indexed.{id}.leaves");
-        let mut cells = "0".to_owned();
-        for root in split.indexed {
-            let count = *split
-                .captures
-                .get(root.count)
-                .ok_or(BackendFailure::InvalidIr)?;
-            if self.value_type(count)
-                != Some(IrType::Integer {
-                    width: 64,
-                    signed: false,
-                })
-            {
-                return Err(BackendFailure::InvalidIr);
-            }
-            cells = self.indexed_saturating("uadd", &cells, &self.value_name(count))?;
-        }
-        // Charge one copy-equivalent traversal, identity fill, and combine
-        // per leaf cell. No copy of a source seed is actually necessary.
-        let replicated = self.indexed_saturating("umul", &cells, &leaves)?;
-        let overhead = self.indexed_saturating("umul", &replicated, "3")?;
-        let work = self.indexed_saturating("umul", span, weight)?;
-        let active = format!("%indexed.{id}.active");
-        let selected_budget = format!("%indexed.{id}.budget");
-        writeln!(
-            self.output,
-            "  %indexed.{id}.pays = icmp ugt i64 {work}, {overhead}\n  {active} = and i1 %indexed.{id}.shape, %indexed.{id}.pays\n  {selected_budget} = select i1 {active}, i64 {budget}, i64 0\n  br i1 {active}, label %{allocate}, label %{sequential}"
-        )?;
-        self.output.open_block(allocate);
-        let mut roots: Vec<PrivateRoot> = Vec::new();
-        for (ordinal, root) in split.indexed.iter().enumerate() {
-            if roots
-                .iter()
-                .any(|previous| split.indexed[previous.spec].capture == root.capture)
-            {
-                continue;
-            }
-            if root.root.is_some() {
-                let private = self.emit_indexed_blocks_prepare(
-                    split,
-                    ordinal,
-                    &leaves,
-                    &roots,
-                    &format!("indexed.{id}.{ordinal}"),
-                )?;
-                roots.push(private);
-                continue;
-            }
-            let range = *split
-                .captures
-                .get(root.capture)
-                .ok_or(BackendFailure::InvalidIr)?;
-            let Some(IrType::Range { element }) = self.value_type(range) else {
-                return Err(BackendFailure::InvalidIr);
-            };
-            if self.program.element(element) != Some(root.projection.root_element) {
-                return Err(BackendFailure::InvalidIr);
-            }
-            let ty = self.output.type_name(self.program, root.private_type())?;
-            let count = self.value_name(split.captures[root.count]);
-            let prefix = format!("indexed.{id}.{ordinal}");
-            let failed = format!("{prefix}.failed");
-            let size = format!("{prefix}.size");
-            let malloc = format!("{prefix}.malloc");
-            let init = format!("{prefix}.init");
-            let head = format!("{prefix}.fill.head");
-            let body = format!("{prefix}.fill.body");
-            let done = format!("{prefix}.fill.done");
-            let total = self.emit_allocation_size(&count, &leaves, "0", &failed, &size)?;
-            let stride = format!("ptrtoint (ptr getelementptr ({ty}, ptr null, i64 1) to i64)");
-            let bytes = self.emit_allocation_size(&total, &stride, "0", &failed, &malloc)?;
-            let pointer = format!("%{prefix}.allocation");
-            self.output.symbol("wf__heap_take");
-            writeln!(
-                self.output,
-                "  %{prefix}.empty = icmp eq i64 {bytes}, 0\n  %{prefix}.bytes = select i1 %{prefix}.empty, i64 1, i64 {bytes}\n  {pointer} = call ptr @wf__heap_take(i64 %{prefix}.bytes)\n  %{prefix}.ok = icmp ne ptr {pointer}, null\n  br i1 %{prefix}.ok, label %{init}, label %{failed}"
-            )?;
-            self.output.open_block(failed);
-            self.emit_indexed_release(&roots, &format!("{prefix}.cleanup"))?;
-            self.output.symbol("wf_resource_abort");
-            writeln!(
-                self.output,
-                "  call void @wf_resource_abort()\n  unreachable"
-            )?;
-            self.output.open_block(init.clone());
-            writeln!(self.output, "  br label %{head}")?;
-            self.output.open_block(head.clone());
-            writeln!(
-                self.output,
-                "  %{prefix}.i = phi i64 [ 0, %{init} ], [ %{prefix}.next, %{body} ]\n  %{prefix}.more = icmp ult i64 %{prefix}.i, {total}\n  br i1 %{prefix}.more, label %{body}, label %{done}"
-            )?;
-            self.output.open_block(body);
-            let identity = match root.kind {
-                IrIndexedFamilyKind::Reduce { identity, .. } => identity,
-                IrIndexedFamilyKind::Mark { .. } => IrConstant::Bool(false),
-            };
-            let identity = constant_operand(identity, root.private_type())?;
-            writeln!(
-                self.output,
-                "  %{prefix}.cell = getelementptr inbounds {ty}, ptr {pointer}, i64 %{prefix}.i\n  store {ty} {identity}, ptr %{prefix}.cell\n  %{prefix}.next = add i64 %{prefix}.i, 1\n  br label %{head}"
-            )?;
-            self.output.open_block(done);
-            roots.push(PrivateRoot {
-                pointer,
-                bytes: format!("%{prefix}.bytes"),
-                cells: count,
-                total,
-                original: self.value_name(range),
-                spec: ordinal,
-                block_bytes: None,
-            });
-        }
-        writeln!(self.output, "  br label %{ready}")?;
-        self.output.open_block(ready.clone());
-        writeln!(self.output, "  br label %{join}")?;
-        self.output.open_block(sequential.clone());
-        writeln!(self.output, "  br label %{join}")?;
-        self.output.open_block(join);
-        // Emit every phi before descriptor construction or ABI projections.
-        for (ordinal, root) in roots.iter_mut().enumerate() {
-            let pointer = format!("%indexed.{id}.{ordinal}.private");
-            let bytes = format!("%indexed.{id}.{ordinal}.requested");
-            let total = format!("%indexed.{id}.{ordinal}.total");
-            writeln!(
-                self.output,
-                "  {pointer} = phi ptr [ {}, %{ready} ], [ null, %{sequential} ]\n  {bytes} = phi i64 [ {}, %{ready} ], [ 0, %{sequential} ]\n  {total} = phi i64 [ {}, %{ready} ], [ 0, %{sequential} ]",
-                root.pointer, root.bytes, root.total
-            )?;
-            if let Some(block_bytes) = &mut root.block_bytes {
-                let joined = format!("%indexed.{id}.{ordinal}.block_bytes");
-                writeln!(
-                    self.output,
-                    "  {joined} = phi i64 [ {block_bytes}, %{ready} ], [ 0, %{sequential} ]"
-                )?;
-                *block_bytes = joined;
-            }
-            root.pointer = pointer;
-            root.bytes = bytes;
-            root.total = total;
-        }
-        for (ordinal, root) in roots.iter().enumerate() {
-            let spec = &split.indexed[root.spec];
-            let range = split.captures[spec.capture];
-            let range_type = self.value_type(range).ok_or(BackendFailure::InvalidIr)?;
-            let ty = self.output.type_name(self.program, range_type)?;
-            let prefix = format!("indexed.{id}.{ordinal}");
-            writeln!(
-                self.output,
-                "  %{prefix}.pointer = insertvalue {ty} zeroinitializer, ptr {}, 0\n  %{prefix}.range = insertvalue {ty} %{prefix}.pointer, i64 {}, 1\n  %{prefix}.selected = select i1 {active}, {ty} %{prefix}.range, {ty} {}",
-                root.pointer, root.total, root.original
-            )?;
-            arguments[3 + spec.capture] = SplitArgument::Prepared(self.value_argument(
-                ParameterAbi::Value(range_type),
-                &format!("%{prefix}.selected"),
-            )?);
-            let original_private = self.value_name(split.captures[spec.private]);
-            writeln!(
-                self.output,
-                "  %{prefix}.is_private = or i1 {active}, {original_private}"
-            )?;
-            arguments[3 + spec.private] = SplitArgument::Prepared(self.value_argument(
-                ParameterAbi::Value(IrType::Bool),
-                &format!("%{prefix}.is_private"),
-            )?);
-        }
-        Ok(IndexedPrivate {
-            budget: selected_budget,
-            active: Some(active),
-            roots,
-        })
-    }
-
-    pub(super) fn emit_indexed_finish(
-        &mut self,
-        split: &LoopSplitSite<'_>,
-        private: IndexedPrivate,
-    ) -> Result<(), BackendFailure> {
-        let Some(active) = private.active else {
-            return Ok(());
+        let mut bundle = FarBundle {
+            groups: Vec::new(),
+            fields: Vec::new(),
         };
-        let id = self.next_temporary()?;
-        let combine = format!("indexed.{id}.combine");
-        let finished = format!("indexed.{id}.finished");
-        writeln!(
-            self.output,
-            "  br i1 {active}, label %{combine}, label %{finished}"
-        )?;
-        self.output.open_block(combine);
-        for (ordinal, root) in private.roots.iter().enumerate() {
-            let spec = &split.indexed[root.spec];
-            if spec.root.is_some() {
-                self.emit_indexed_blocks_finish(split, root, &format!("indexed.{id}.{ordinal}"))?;
-                continue;
+        for (group, first) in group_leaders(families).into_iter().enumerate() {
+            let family = &families[first];
+            let destination = Self::far_argument(arguments, family.capture)?;
+            let range_type = self
+                .value_type(destination)
+                .ok_or(BackendFailure::InvalidIr)?;
+            let IrType::Range { element } = range_type else {
+                return Err(BackendFailure::InvalidIr);
+            };
+            let prefix = format!("indexed.far.{id}.{group}");
+            let acquired = if family.root.is_some() {
+                self.emit_far_block(families, first, arguments, &bundle.groups, &prefix)?
+            } else {
+                if self.program.element(element) != Some(family.projection.root_element) {
+                    return Err(BackendFailure::InvalidIr);
+                }
+                self.emit_far_slab(family, arguments, &bundle.groups, &prefix)?
+            };
+            let (pointer, bytes, length) = acquired;
+            let ty = self.output.type_name(self.program, range_type)?;
+            writeln!(
+                self.output,
+                "  %{prefix}.descriptor.pointer = insertvalue {ty} zeroinitializer, ptr {pointer}, 0\n  %{prefix}.descriptor = insertvalue {ty} %{prefix}.descriptor.pointer, i64 {length}, 1"
+            )?;
+            bundle.fields.push((
+                CAPTURES + family.capture,
+                format!("{ty} %{prefix}.descriptor"),
+            ));
+            for member in families
+                .iter()
+                .filter(|member| member.capture == family.capture)
+            {
+                if Self::far_argument(arguments, member.private)
+                    .ok()
+                    .and_then(|value| self.value_type(value))
+                    != Some(IrType::Bool)
+                {
+                    return Err(BackendFailure::InvalidIr);
+                }
+                let field = CAPTURES + member.private;
+                if !bundle.fields.iter().any(|(index, _)| *index == field) {
+                    bundle.fields.push((field, "i1 true".to_owned()));
+                }
             }
-            let prefix = format!("indexed.{id}.{ordinal}");
-            let entry = format!("{prefix}.entry");
-            let head = format!("{prefix}.combine.head");
-            let body = format!("{prefix}.combine.body");
-            let done = format!("{prefix}.free");
-            if let IrIndexedFamilyKind::Mark { constant } = spec.kind {
-                self.emit_indexed_mark_finish(split, root, spec, &prefix, constant)?;
-                continue;
-            }
-            let ty = self
-                .output
-                .type_name(self.program, spec.projection.value_type)?;
-            writeln!(self.output, "  br label %{entry}")?;
-            self.output.open_block(entry.clone());
-            writeln!(self.output, "  br label %{head}")?;
-            self.output.open_block(head.clone());
-            // Flat ascending index is leaf-major, cell-minor. Empty roots
-            // never enter the body, so the remainder always has nonzero cells.
-            writeln!(
-                self.output,
-                "  %{prefix}.i = phi i64 [ 0, %{entry} ], [ %{prefix}.next, %{body} ]\n  %{prefix}.more = icmp ult i64 %{prefix}.i, {}\n  br i1 %{prefix}.more, label %{body}, label %{done}",
-                root.total
-            )?;
-            self.output.open_block(body);
-            writeln!(
-                self.output,
-                "  %{prefix}.index = urem i64 %{prefix}.i, {}",
-                root.cells
-            )?;
-            let destination = self.indexed_pointer(
-                &format!("{prefix}.destination"),
-                (
-                    &root.original,
-                    self.value_type(split.captures[spec.capture])
-                        .ok_or(BackendFailure::InvalidIr)?,
-                ),
-                &format!("%{prefix}.index"),
-                &self.value_name(split.captures[spec.private]),
-                &spec.projection,
-                spec.private_type(),
-            )?;
-            writeln!(
-                self.output,
-                "  %{prefix}.from = getelementptr inbounds {ty}, ptr {}, i64 %{prefix}.i\n  %{prefix}.left = load {ty}, ptr {destination}\n  %{prefix}.right = load {ty}, ptr %{prefix}.from",
-                root.pointer
-            )?;
-            self.emit_indexed_combine_value(spec, &prefix, &ty)?;
-            writeln!(
-                self.output,
-                "  store {ty} %{prefix}.value, ptr {destination}\n  %{prefix}.next = add i64 %{prefix}.i, 1\n  br label %{head}"
-            )?;
-            self.output.open_block(done);
-            self.output.symbol("wf__heap_give");
+            bundle.groups.push(FarGroup {
+                first,
+                pointer,
+                bytes,
+            });
+        }
+        Ok(bundle)
+    }
+
+    /// The initialized-cell count a family's count position carries.
+    pub(super) fn far_count(
+        &self,
+        family: &IrIndexedReduction,
+        arguments: &[IrValueId],
+    ) -> Result<String, BackendFailure> {
+        let count = Self::far_argument(arguments, family.count)?;
+        if self.value_type(count) != Some(U64) {
+            return Err(BackendFailure::InvalidIr);
+        }
+        Ok(self.value_name(count))
+    }
+
+    /// Frees every group acquired before a failing one, then terminates.
+    pub(super) fn emit_far_failure(
+        &mut self,
+        acquired: &[FarGroup],
+        failed: &str,
+    ) -> Result<(), BackendFailure> {
+        self.output.open_block(failed.to_owned());
+        self.output.symbol("wf__heap_give");
+        for group in acquired {
             writeln!(
                 self.output,
                 "  call void @wf__heap_give(ptr {}, i64 {})",
-                root.pointer, root.bytes
+                group.pointer, group.bytes
             )?;
         }
-        writeln!(self.output, "  br label %{finished}")?;
-        self.output.open_block(finished);
+        self.output.symbol("wf_resource_abort");
+        writeln!(
+            self.output,
+            "  call void @wf_resource_abort()\n  unreachable"
+        )?;
         Ok(())
     }
+
+    /// A dense family's contribution: its initialized cell count of
+    /// operation identities or false marks. Returns base, bytes and length.
+    fn emit_far_slab(
+        &mut self,
+        family: &IrIndexedReduction,
+        arguments: &[IrValueId],
+        acquired: &[FarGroup],
+        prefix: &str,
+    ) -> Result<(String, String, String), BackendFailure> {
+        let ty = self.output.type_name(self.program, family.private_type())?;
+        let count = self.far_count(family, arguments)?;
+        let failed = format!("{prefix}.failed");
+        let stride = format!("ptrtoint (ptr getelementptr ({ty}, ptr null, i64 1) to i64)");
+        let bytes =
+            self.emit_allocation_size(&count, &stride, "0", &failed, &format!("{prefix}.size"))?;
+        let pointer = format!("%{prefix}.allocation");
+        self.output.symbol("wf__heap_take");
+        writeln!(
+            self.output,
+            "  %{prefix}.empty = icmp eq i64 {bytes}, 0\n  %{prefix}.bytes = select i1 %{prefix}.empty, i64 1, i64 {bytes}\n  {pointer} = call ptr @wf__heap_take(i64 %{prefix}.bytes)\n  %{prefix}.ok = icmp ne ptr {pointer}, null\n  br i1 %{prefix}.ok, label %{prefix}.init, label %{failed}"
+        )?;
+        self.emit_far_failure(acquired, &failed)?;
+        self.output.open_block(format!("{prefix}.init"));
+        writeln!(self.output, "  br label %{prefix}.fill.head")?;
+        self.output.open_block(format!("{prefix}.fill.head"));
+        writeln!(
+            self.output,
+            "  %{prefix}.i = phi i64 [ 0, %{prefix}.init ], [ %{prefix}.next, %{prefix}.fill.body ]\n  %{prefix}.more = icmp ult i64 %{prefix}.i, {count}\n  br i1 %{prefix}.more, label %{prefix}.fill.body, label %{prefix}.fill.done"
+        )?;
+        self.output.open_block(format!("{prefix}.fill.body"));
+        let identity = constant_operand(family.private_identity(), family.private_type())?;
+        writeln!(
+            self.output,
+            "  %{prefix}.cell = getelementptr inbounds {ty}, ptr {pointer}, i64 %{prefix}.i\n  store {ty} {identity}, ptr %{prefix}.cell\n  %{prefix}.next = add i64 %{prefix}.i, 1\n  br label %{prefix}.fill.head"
+        )?;
+        self.output.open_block(format!("{prefix}.fill.done"));
+        Ok((pointer, format!("%{prefix}.bytes"), count))
+    }
+
+    /// On the granted edge after the join, before the lane is released:
+    /// combine each contribution into the destination the far call named,
+    /// in ascending cell order, then free it once.
+    pub(super) fn emit_far_combine(
+        &mut self,
+        families: &[IrIndexedReduction],
+        arguments: &[IrValueId],
+        frame: &str,
+        frame_type: &str,
+    ) -> Result<(), BackendFailure> {
+        let id = self.next_temporary()?;
+        for (group, first) in group_leaders(families).into_iter().enumerate() {
+            let family = &families[first];
+            let destination = Self::far_argument(arguments, family.capture)?;
+            let range_type = self
+                .value_type(destination)
+                .ok_or(BackendFailure::InvalidIr)?;
+            let range = self.output.type_name(self.program, range_type)?;
+            let prefix = format!("indexed.join.{id}.{group}");
+            let field = CAPTURES + family.capture;
+            writeln!(
+                self.output,
+                "  %{prefix}.field = getelementptr inbounds {frame_type}, ptr {frame}, i32 0, i32 {field}\n  %{prefix}.descriptor = load {range}, ptr %{prefix}.field\n  %{prefix}.pointer = extractvalue {range} %{prefix}.descriptor, 0"
+            )?;
+            let pointer = format!("%{prefix}.pointer");
+            if family.root.is_some() {
+                self.emit_far_block_combine(families, first, arguments, &pointer, &prefix)?;
+                continue;
+            }
+            let count = self.far_count(family, arguments)?;
+            let destination_private =
+                self.value_name(Self::far_argument(arguments, family.private)?);
+            let destination = self.value_name(destination);
+            writeln!(self.output, "  br label %{prefix}.entry")?;
+            self.output.open_block(format!("{prefix}.entry"));
+            writeln!(self.output, "  br label %{prefix}.combine.head")?;
+            self.output.open_block(format!("{prefix}.combine.head"));
+            writeln!(
+                self.output,
+                "  %{prefix}.i = phi i64 [ 0, %{prefix}.entry ], [ %{prefix}.next, %{prefix}.advance ]\n  %{prefix}.more = icmp ult i64 %{prefix}.i, {count}\n  br i1 %{prefix}.more, label %{prefix}.combine.body, label %{prefix}.free"
+            )?;
+            self.output.open_block(format!("{prefix}.combine.body"));
+            let address = self.indexed_pointer(
+                &format!("{prefix}.destination"),
+                (&destination, range_type),
+                &format!("%{prefix}.i"),
+                &destination_private,
+                &family.projection,
+                family.private_type(),
+            )?;
+            let private_ty = self.output.type_name(self.program, family.private_type())?;
+            writeln!(
+                self.output,
+                "  %{prefix}.from = getelementptr inbounds {private_ty}, ptr {pointer}, i64 %{prefix}.i\n  %{prefix}.right = load {private_ty}, ptr %{prefix}.from"
+            )?;
+            match family.kind {
+                IrIndexedFamilyKind::Reduce { .. } => {
+                    writeln!(
+                        self.output,
+                        "  %{prefix}.left = load {private_ty}, ptr {address}"
+                    )?;
+                    self.emit_indexed_combine_value(family, &prefix, &private_ty)?;
+                    writeln!(
+                        self.output,
+                        "  store {private_ty} %{prefix}.value, ptr {address}\n  br label %{prefix}.advance"
+                    )?;
+                }
+                // A true far mask marks the source cell with its constant or
+                // sets the enclosing private mask, by the destination's mode.
+                IrIndexedFamilyKind::Mark { constant } => {
+                    writeln!(
+                        self.output,
+                        "  br i1 %{prefix}.right, label %{prefix}.mark, label %{prefix}.advance"
+                    )?;
+                    self.output.open_block(format!("{prefix}.mark"));
+                    self.emit_indexed_mark(
+                        &address,
+                        &destination_private,
+                        constant,
+                        family.projection.value_type,
+                    )?;
+                    writeln!(self.output, "  br label %{prefix}.advance")?;
+                }
+            }
+            self.output.open_block(format!("{prefix}.advance"));
+            writeln!(
+                self.output,
+                "  %{prefix}.next = add i64 %{prefix}.i, 1\n  br label %{prefix}.combine.head"
+            )?;
+            self.output.open_block(format!("{prefix}.free"));
+            // Acquisition computed this product without overflow.
+            self.output.symbol("wf__heap_give");
+            writeln!(
+                self.output,
+                "  %{prefix}.size = mul nuw i64 {count}, ptrtoint (ptr getelementptr ({private_ty}, ptr null, i64 1) to i64)\n  %{prefix}.empty = icmp eq i64 %{prefix}.size, 0\n  %{prefix}.bytes = select i1 %{prefix}.empty, i64 1, i64 %{prefix}.size\n  call void @wf__heap_give(ptr {pointer}, i64 %{prefix}.bytes)"
+            )?;
+        }
+        Ok(())
+    }
+
     pub(super) fn emit_indexed_combine_value(
         &mut self,
         spec: &crate::ir::IrIndexedReduction,
@@ -473,83 +447,6 @@ impl FunctionEmitter<'_, '_> {
             "  store {ty} {constant}, ptr {address}\n  br label %{prefix}.done"
         )?;
         self.output.open_block(format!("{prefix}.done"));
-        Ok(())
-    }
-
-    fn emit_indexed_mark_finish(
-        &mut self,
-        split: &LoopSplitSite<'_>,
-        root: &PrivateRoot,
-        spec: &crate::ir::IrIndexedReduction,
-        prefix: &str,
-        constant: IrConstant,
-    ) -> Result<(), BackendFailure> {
-        let entry = format!("{prefix}.entry");
-        let head = format!("{prefix}.cells");
-        let leaves = format!("{prefix}.leaves");
-        let scan = format!("{prefix}.scan");
-        let decide = format!("{prefix}.decide");
-        let store = format!("{prefix}.store");
-        let next = format!("{prefix}.next");
-        let done = format!("{prefix}.free");
-        writeln!(self.output, "  br label %{entry}")?;
-        self.output.open_block(entry.clone());
-        writeln!(self.output, "  br label %{head}")?;
-        self.output.open_block(head.clone());
-        writeln!(
-            self.output,
-            "  %{prefix}.cell = phi i64 [ 0, %{entry} ], [ %{prefix}.nextcell, %{next} ]\n  %{prefix}.more = icmp ult i64 %{prefix}.cell, {}\n  br i1 %{prefix}.more, label %{leaves}, label %{done}",
-            root.cells
-        )?;
-        self.output.open_block(leaves.clone());
-        writeln!(
-            self.output,
-            "  %{prefix}.i = phi i64 [ %{prefix}.cell, %{head} ], [ %{prefix}.nextleaf, %{scan} ]\n  %{prefix}.any = phi i1 [ false, %{head} ], [ %{prefix}.merged, %{scan} ]\n  %{prefix}.hasleaf = icmp ult i64 %{prefix}.i, {}\n  br i1 %{prefix}.hasleaf, label %{scan}, label %{decide}",
-            root.total
-        )?;
-        self.output.open_block(scan);
-        writeln!(
-            self.output,
-            "  %{prefix}.from = getelementptr inbounds i1, ptr {}, i64 %{prefix}.i\n  %{prefix}.marked = load i1, ptr %{prefix}.from\n  %{prefix}.merged = or i1 %{prefix}.any, %{prefix}.marked\n  %{prefix}.nextleaf = add i64 %{prefix}.i, {}\n  br label %{leaves}",
-            root.pointer, root.cells
-        )?;
-        self.output.open_block(decide);
-        writeln!(
-            self.output,
-            "  br i1 %{prefix}.any, label %{store}, label %{next}"
-        )?;
-        self.output.open_block(store);
-        let destination = self.indexed_pointer(
-            &format!("{prefix}.destination"),
-            (
-                &root.original,
-                self.value_type(split.captures[spec.capture])
-                    .ok_or(BackendFailure::InvalidIr)?,
-            ),
-            &format!("%{prefix}.cell"),
-            &self.value_name(split.captures[spec.private]),
-            &spec.projection,
-            IrType::Bool,
-        )?;
-        self.emit_indexed_mark(
-            &destination,
-            &self.value_name(split.captures[spec.private]),
-            constant,
-            spec.projection.value_type,
-        )?;
-        writeln!(self.output, "  br label %{next}")?;
-        self.output.open_block(next);
-        writeln!(
-            self.output,
-            "  %{prefix}.nextcell = add i64 %{prefix}.cell, 1\n  br label %{head}"
-        )?;
-        self.output.open_block(done);
-        self.output.symbol("wf__heap_give");
-        writeln!(
-            self.output,
-            "  call void @wf__heap_give(ptr {}, i64 {})",
-            root.pointer, root.bytes
-        )?;
         Ok(())
     }
 }

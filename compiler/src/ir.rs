@@ -883,7 +883,7 @@ pub enum IrPlaceStep {
     EntriesElement { offset: IrValueId },
 }
 
-/// A total, nonnegative estimate evaluated only for a parallel split budget.
+/// A total, nonnegative estimate evaluated only for a range driver's price.
 /// Its leaves are existing scalar captures or descriptor lengths, never
 /// element reads or user calls. Arithmetic saturates rather than overflowing.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -1247,20 +1247,14 @@ pub enum IrOperation {
         private_type: IrType,
         target_domain: IrTargetDomainObligation,
     },
-    /// Split a private slab using its dense value stride, irrespective of the
-    /// source element type recorded on the descriptor.
-    IndexedRange {
-        slice: IrValueId,
-        start: IrValueId,
-        end: IrValueId,
-        private_type: IrType,
-    },
     /// A singleton block-pointer directory borrowing the source allocation.
-    /// Split sites replace it with one separately allocated block per leaf.
+    /// A granted far offer receives a singleton directory naming its own
+    /// private block instead.
     IndexedBlocks {
         address: IrValueId,
     },
-    /// Borrow the first block of a leaf's directory (also the sequential root).
+    /// Borrow the block a singleton directory names: the source root or a
+    /// granted far contribution's private block.
     IndexedBlock {
         blocks: IrValueId,
     },
@@ -1650,15 +1644,16 @@ pub enum IrOperation {
     ///
     /// The whole loop is one instruction here because it has exactly two
     /// renderings and the choice between them is the world, not the source. The
-    /// overlapped world enters `splitter` with a runtime-extent price for
-    /// segmented non-indexed work or a bounded allowance for indexed work;
-    /// the sequential world calls `chunk`, which *is* the
-    /// loop, so that world runs the code the loop always had. A reduction uses
-    /// the first argument and result for its accumulator. An independent map
-    /// uses `Unit` in both positions as a synchronization token; its observable
-    /// result is the disjoint stores completed before the call returns. The
-    /// site additionally owns any indexed private ranges through the join and
-    /// combines their cells in leaf order independently of the scalar result.
+    /// overlapped world enters `splitter`, the segmented range driver, with a
+    /// positive runtime-extent price; the sequential world calls `chunk`,
+    /// which *is* the loop, so that world runs the code the loop always had.
+    /// A reduction uses the first argument and result for its accumulator. An
+    /// independent map uses `Unit` in both positions as a synchronization
+    /// token; its observable result is the disjoint stores completed before
+    /// the call returns. The site passes indexed roots as their current
+    /// destinations and allocates nothing; `indexed` records the families the
+    /// driver's far offer privatizes when a lane is granted (see
+    /// [`IrOverlap`]).
     ///
     /// `splitter` and `chunk` are ordinary synthesized [`IrFunction`]s: the
     /// splitter's two recursive calls are one ordinary overlap group, so the
@@ -1937,9 +1932,19 @@ pub enum RecursionBudget {
 /// monomorphized function on the same arguments. Optional refusal/frontier
 /// controls may choose a same-ABI sequential clone that declines descendant
 /// offers; the original operations, arguments and join boundary remain.
+///
+/// `indexed` is empty except in a range driver whose loop carries indexed
+/// families. Their `capture`, `private` and `count` positions index the
+/// handed-out member's arguments after its seed and endpoints. The member's
+/// arguments name the driver's current destinations, which a refused or
+/// inline member writes after the retained member, in source order. Only a
+/// granted lane replaces them with one neutral private contribution per
+/// storage group, acquired after the lane and before publication, combined
+/// into those destinations after the join and freed before the lane returns.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct IrOverlap {
     pub(crate) members: Vec<IrValueId>,
+    pub(crate) indexed: Vec<IrIndexedReduction>,
 }
 
 impl IrOverlap {

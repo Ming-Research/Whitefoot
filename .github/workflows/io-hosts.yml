@@ -212,9 +212,6 @@ jobs:
         run: |
           WF_WORKERS=2 "$RUNNER_TEMP/completion/windows-sched-cpu-levels.exe" host
           "$RUNNER_TEMP/completion/windows-sched-cpu-levels.exe" wake
-          make -C compiler sched-split-policy-cases WINDOWS_CC=clang WINDOWS_SCHED_CC=clang SHELL=bash \
-            COMPLETION_TMP="$(cygpath -u "$RUNNER_TEMP")/completion" \
-            SCHED_POLICY_EXE="$(cygpath -u "$RUNNER_TEMP")/completion/windows-sched-cpu-levels.exe"
           for mode in fit oversubscribed unknown-count mixed; do
             WF_WORKERS=4 "$RUNNER_TEMP/completion/windows-sched-cpu-levels.exe" "$mode"
           done

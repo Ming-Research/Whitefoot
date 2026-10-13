@@ -26,7 +26,6 @@ void wf__par_release(void *frame);
  * before its first request poll. Startup refusal preserves the active answer
  * but leaves acquisition to refuse. Repeated selection is idempotent. */
 int wf__par_pool_active(void);
-uint64_t wf__par_split_budget(uint64_t span, uint64_t weight);
 uint64_t wf__par_recursion_budget(void);
 unsigned long wf__par_grants(void);
 unsigned wf__sched_pool_running(void);

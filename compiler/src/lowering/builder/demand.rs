@@ -1,4 +1,9 @@
 //! Segmented range execution with request-driven hand-out of the far half.
+//!
+//! An indexed reduction passes its current destinations to both halves. The
+//! overlap group carries the families, so only a granted lane receives a
+//! neutral private contribution (see [`crate::IrOverlap`]); a refused far
+//! half writes the same destinations after the near half, in source order.
 use super::IrBuilder;
 use super::loops::U64;
 use crate::semantic::LoopActualization;
@@ -19,6 +24,7 @@ impl IrBuilder<'_> {
         actualization: LoopActualization,
         result_type: IrType,
         capture_types: &[IrType],
+        indexed: &[crate::ir::IrIndexedReduction],
     ) -> Result<IrFunction, LoweringFailure> {
         let mut b = IrBuilder::new(
             self.context(),
@@ -45,6 +51,23 @@ impl IrBuilder<'_> {
         let work_less_one = b.demand_constant(WORK_UNIT - 1)?;
         let quotient = b.demand_binary(Op::DivideExact, work_less_one, weight)?;
         let minimum_span = b.demand_binary(Op::AddWrap, quotient, one)?;
+        // A granted far half must pay for its private contribution: three
+        // traversals of every family's initialized cells, saturating. With
+        // H that charge, far * price > H exactly when far > floor(H / price).
+        let setup_floor = if indexed.is_empty() {
+            None
+        } else {
+            let mut cells = b.demand_constant(0)?;
+            for family in indexed {
+                let count = *captures
+                    .get(family.count)
+                    .ok_or(LoweringFailure::InvalidCheckedProgram)?;
+                cells = b.demand_binary(Op::AddSaturating, cells, count)?;
+            }
+            let twice = b.demand_binary(Op::AddSaturating, cells, cells)?;
+            let charge = b.demand_binary(Op::AddSaturating, twice, cells)?;
+            Some(b.demand_binary(Op::DivideExact, charge, weight)?)
+        };
         let (header, carried) = b.new_block(&[result_type, U64])?;
         let (done, _) = b.new_block(&[])?;
         let (check, _) = b.new_block(&[])?;
@@ -71,13 +94,27 @@ impl IrBuilder<'_> {
         let span = b.demand_binary(Op::SubtractWrap, upper, cursor)?;
         let worth = b.demand_binary(Op::GreaterEqual, span, minimum_span)?;
         let divisible = b.demand_binary(Op::Greater, span, one)?;
-        let worth = b.define(
+        let mut worth = b.define(
             IrType::Bool,
             IrOperation::Boolean {
                 operation: crate::IrBooleanOperation::And,
                 arguments: vec![worth, divisible],
             },
         )?;
+        if let Some(setup_floor) = setup_floor {
+            // The far half is the larger one: span - floor(span / 2).
+            let two = b.demand_constant(2)?;
+            let near = b.demand_binary(Op::DivideExact, span, two)?;
+            let far = b.demand_binary(Op::SubtractWrap, span, near)?;
+            let pays = b.demand_binary(Op::Greater, far, setup_floor)?;
+            worth = b.define(
+                IrType::Bool,
+                IrOperation::Boolean {
+                    operation: crate::IrBooleanOperation::And,
+                    arguments: vec![worth, pays],
+                },
+            )?;
+        }
         // Only a range worth handing out reads the request word: a range
         // below the minimum span never touches the word idle workers write.
         // Its remaining computation is still the ordinary subrange body.
@@ -115,6 +152,8 @@ impl IrBuilder<'_> {
         };
         // Publish the far half first; the owner retains the near half.
         // Seeds and near-before-far combination preserve source leaf order.
+        // Both halves name the current indexed destinations; a granted lane
+        // alone substitutes private storage for the far half.
         let mut far = vec![right_seed, middle, upper];
         far.extend(captures.iter().copied());
         far.push(weight);
@@ -148,9 +187,10 @@ impl IrBuilder<'_> {
         })?;
         overlaps.push(IrOverlap {
             members: vec![first, second],
+            indexed: indexed.to_vec(),
         });
         b.finish(
-            format!("_par_split_{name}"),
+            super::split::splitter_symbol(name),
             overlaps,
             Some(IrSynthesis::Splitter),
         )

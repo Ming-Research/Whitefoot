@@ -256,7 +256,6 @@ int main(int argc, char **argv) {
     }
     wf_test_guard_phase("scheduler frame capacity/reverse joins");
     check(wf__par_acquire_lane(UINT64_MAX) == NULL, "oversized frame was truncated");
-    check(wf__par_split_budget(UINT64_MAX, UINT64_MAX) <= 10, "u64 split ABI failed");
     void *frames[WF_SCHED_LANE_SLOTS];
     for (unsigned i = 0; i < WF_SCHED_LANE_SLOTS; ++i) {
         frames[i] = wf__par_acquire_lane(8);

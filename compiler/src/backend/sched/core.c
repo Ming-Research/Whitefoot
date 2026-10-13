@@ -202,94 +202,6 @@
 #ifndef WF_PAR_YIELD_ROUNDS
 #define WF_PAR_YIELD_ROUNDS 16
 #endif
-/* Legacy private-leaf budget retained for indexed reductions. Non-indexed
- * ranges now use the compiler's request-driven segmented driver. The historical
- * non-indexed measurements below describe the preceding common policy.
- * How many chunks an independent map may be split into, as a multiple of the
- * lane count. `wf__par_split_budget` below combines this with the work term --
- * span / ceil(work unit / weight), the floor on chunk size entry.c owns -- by
- * a MINIMUM, so this is a ceiling on chunk count and never a floor on chunk
- * size: a range too small to be worth splitting stays bounded by the work term
- * however much oversubscription this allows.
- *
- * What is known about 16, which arrived with the splitter: at the work unit
- * entry.c now carries, 150,000, it is the BINDING term for all three of the
- * compute scoreboard's map kernels at the widths a four- or eight-CPU host
- * records. The work term affords mandelbrot 143 chunks (weight 219 over 98,304
- * points), records 708 (weight 812 over 131,072 records) and fir 524 (weight
- * 150 over 524,288 outputs), so every one of them reads 32 chunks at two
- * lanes, 64 at four and 128 at eight: the cap, not the grain. Past that the
- * two large maps stay on the cap -- records and fir read 256 at sixteen lanes
- * and 512 at thirty-two -- while mandelbrot's work term binds again from
- * sixteen lanes up and holds it at 128. So for these sizes this cap IS the
- * grain at the recorded widths, and it is no longer slack anywhere below
- * sixteen lanes. (Until 2026-09-12 the work unit was 1,200,000, and the
- * division was the other way: records and fir were cap-bound at 32 and 64
- * while mandelbrot could afford only 17 chunks, so its 16 were the grain --
- * which is why the work unit's own sweep could not move the records or fir row
- * at either width. That remains a true statement about those runs
- * (research/investigations/compute-runtime/RESULTS.md, the split work unit
- * swept against the Mandelbrot grain).) Against any of these counts oneTBB's
- * auto_partitioner hands the same skewed mandelbrot map out as about 1,536
- * callbacks.
- *
- * What keeps the cap at 16 now that it is the binding term is the M1 Pro grain
- * twin of 2026-09-11, the run that moved the work unit
- * (research/investigations/compute-runtime/RESULTS.md, the M1 Pro grain twin;
- * its `wf-b` arm was built -DWF_PAR_SPLIT_WORK_UNIT=150000
- * -DWF_PAR_SPLIT_OVERSUBSCRIBE=32). That arm and the runtime now shipped agree
- * on mandelbrot at W=8: a cap of 32 per lane wants 256 chunks there and only
- * 143 are affordable, so both give 128, and the 0.692 [0.65-0.75] with five of
- * five pairs lower that the twin read at W=8 is what the work unit alone now
- * buys. Where they differ is W=4 -- 128 chunks against the 64 this cap allows
- * -- and that is the width the twin charged for: paired CPU 1.189 on
- * mandelbrot and 1.177 on fir to buy wall inside 1.5 percent either way (1.015
- * and 0.998), three to four percent of process CPU for nothing at the width a
- * four-CPU table records. The twin moved both terms at once, so those figures
- * price the finer grain as a whole rather than the cap alone; what stands
- * against 32 is that the only reading of a 32-per-lane build spends CPU at W=4
- * and returns nothing at W=8 that a 16-per-lane build does not already return,
- * while the hosted four-CPU twin that reached only the 64 chunks this cap
- * allows (run 34630112178) read neutral at W=4. So the cap stays at 16 and the
- * work unit is what moved.
- *
- * It was also swept directly, and that sweep selects nothing. The compute
- * scoreboard ran three candidate pairs against the shipped runtime through its
- * A/B twin -- the cap and the work unit raised together, so mandelbrot's chunk
- * count could pass its own cap rather than stop at it -- one
- * `compare PASSES=5 CALLS=5` each on the four-CPU Linux development host, the
- * plain image byte-identical in all three. The chunk counts moved exactly as
- * the rule predicts: (64, 300,000) gave mandelbrot 64 chunks at every width
- * with records and fir at 128/256/256, (256, 75,000) gave 256 with
- * 512/1024/1024, and (1024, 20,000) gave 1,024 with records 2048/4096/4096 and
- * fir 2,048 at every width. The acceptance was
- * mandelbrot's W=4 `wf-b/wf` wall below 1.000 with at least four of five
- * paired passes lower, no kernel reproducibly worse at W=2 or W=4, W=4 paired
- * CPU no worse than 1.05, and W=1 unchanged. It read 0.999 (3/5), 0.992 (3/5)
- * and 0.970 (5/5), and the third is not selectable, because QUADRATURE IS A
- * NULL ARM IN EVERY ONE OF THOSE RUNS -- it emits no split call at all, so its
- * two images do identical work -- and in that same third run quadrature's own
- * W=4 pair read 0.940 with five of five lower. Over the four runs quadrature's
- * identical-work W=4 pair spans 0.936 to 1.086, including both a 5/5-lower and
- * a 0/5-lower reading, which is the one thing a within-pass twin cannot remove:
- * the two images differ in bytes and therefore in code placement, this bundle's
- * largest confound. (1024, 20,000) also took fir's W=2 pair to 1.053 with one
- * of five lower. So nothing in THAT sweep selects a cap; what 16 stands on is
- * the grain twin's W=4 CPU column above, not these three pairs
- * (research/investigations/compute-runtime/RESULTS.md, the oversubscription
- * cap measured with the A/B twin). Reopen on a host whose null arm holds
- * inside one percent, or on an eight-CPU host where W=8 is the
- * recorded block -- at the oversubscribed W=8 here the middle candidate read
- * fir 0.909 with five of five lower and paired CPU 0.922.
- *
- * The guard is what lets the compute scoreboard build a runtime at another
- * value through its WF_RUNTIME_CONTROL_FLAGS and A/B twin, so the cap can be
- * swept against the shipped runtime inside one set of passes instead of edited
- * per run. This selects how finely an admitted program is actualized in
- * parallel; no acceptance path reads it. */
-#ifndef WF_PAR_SPLIT_OVERSUBSCRIBE
-#define WF_PAR_SPLIT_OVERSUBSCRIBE 16
-#endif
 /* Sequential leaves a recursive component is cut into, per lane, by
  * wf__par_recursion_budget. Measured on the compute scoreboard's quadrature
  * kernel (research/investigations/compute-runtime/RESULTS.md, the
@@ -634,25 +546,6 @@ static void wf__par_trace_chunk(struct wf__par_lane *lane, uint64_t elapsed_ns) 
     if ((index & (index - 1)) == 0) {
         wf__par_trace_probe(lane, index);
     }
-}
-
-/* The head of one top-level call: the splitter's single entry query, asked by
- * the offering lane before it publishes anything, with the idle mask as it
- * stood at that moment so a call where no lane had parked is visible as such. */
-static void wf__par_trace_call_head(struct wf__par_lane *lane) {
-    struct wf__par_trace_ring *ring;
-    if (lane == NULL) {
-        return;
-    }
-    ring = &wf__par_trace_rings[lane - wf__par_lanes];
-    ring->depth = 0;
-    ring->in_call = 1;
-    wf__par_trace_arm_all();
-    wf__par_trace_put(lane, WF_PAR_TRACE_CALL_HEAD,
-                      (int64_t)__atomic_load_n(&wf__par_idle, __ATOMIC_RELAXED));
-    /* The offering lane's own reading at the head, the reference every helper's
-     * post-wake probe is read against. */
-    wf__par_trace_probe(lane, 0);
 }
 
 /* Every publish reaches this, so the ordinary mid-call publish -- no lane
@@ -1502,53 +1395,11 @@ int wf__par_pool_active(void) {
     return active;
 }
 
-uint64_t wf__par_split_budget(uint64_t span, uint64_t weight) {
-    struct wf__par_lane *lane = wf__par_self;
-    int lanes = wf__sched_lanes();
-    uint64_t work = wf__sched_split_work();
-    uint64_t want;
-    uint64_t affordable;
-    uint64_t chunks;
-    uint64_t budget;
-    if (lanes < 2 || work == 0) {
-        return 0;
-    }
-    if (lane != NULL) {
-        unsigned long long bottom = __atomic_load_n(&lane->bottom, __ATOMIC_RELAXED);
-        unsigned long long top = __atomic_load_n(&lane->top, __ATOMIC_RELAXED);
-        if ((long long)(bottom - top) > 0) {
-            return 0;
-        }
-    }
-#if defined(WF_PAR_TRACE)
-    wf__par_trace_call_head(lane);
-#endif
-    if (weight == 0) {
-        weight = 1;
-    }
-    want = (uint64_t)lanes * WF_PAR_SPLIT_OVERSUBSCRIBE;
-
-    if (weight >= work) {
-        affordable = span;
-    } else {
-        affordable = span / ((work + weight - 1) / weight);
-    }
-    chunks = (want < affordable) ? want : affordable;
-
-    budget = 0;
-    while ((chunks >> 1) != 0) {
-        chunks >>= 1;
-        budget += 1;
-    }
-    return budget;
-}
-
 /* How many times a call into an ordinary recursive component may hand work
  * out before its callees enter the sequential clone.
  *
- * The loop splitter's allowance above answers the same question for a counted
- * range and is read the same way: one query at entry, an ordinary value
- * carried down, and a leaf world with no scheduler test below the cut. With no
+ * One query at entry, an ordinary value carried down, and a leaf world with no
+ * scheduler test below the cut. With no
  * pool -- fewer than two lanes -- one lane's worth of leaves is still the
  * honest answer, because the compiled entry may run without a pool and its
  * sequential clone is what it then descends into. A scheduler-less link never

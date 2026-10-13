@@ -1656,6 +1656,104 @@ fn probe_needle_counts(program: &IrProgram) -> Vec<usize> {
         .collect()
 }
 
+/// An indexed site enters the same request-driven range driver as every
+/// other range. Its far offer names the driver's current destinations; the
+/// overlap group carries exactly the site's families, so only a granted lane
+/// privatizes them, and the request word is read once, after the far half's
+/// setup charge over every family's initialized cells.
+#[test]
+fn indexed_drivers_pass_destinations_and_carry_their_families_on_the_far_offer() {
+    let source = include_bytes!("../../../tests/programs/parallel/indexed_reductions.wf");
+    with_ir_mode(source, OverlapLowering::On, |program| {
+        let mut sites = 0;
+        for function in program.functions() {
+            for instruction in function
+                .blocks()
+                .iter()
+                .flat_map(|block| block.instructions())
+            {
+                let IrInstruction::Define {
+                    operation:
+                        IrOperation::LoopSplit {
+                            splitter,
+                            captures,
+                            indexed,
+                            ..
+                        },
+                    ..
+                } = instruction
+                else {
+                    continue;
+                };
+                let driver = &program.functions()[*splitter as usize];
+                let [overlap] = driver.overlaps() else {
+                    panic!("{}: one far offer", driver.name());
+                };
+                assert_eq!(&overlap.indexed, indexed, "{}", driver.name());
+                if indexed.is_empty() {
+                    continue;
+                }
+                sites += 1;
+                let [far] = overlap.handed_out() else {
+                    panic!("{}: one handed-out half", driver.name());
+                };
+                let definitions: Vec<_> = driver
+                    .blocks()
+                    .iter()
+                    .flat_map(|block| block.instructions())
+                    .filter_map(|instruction| match instruction {
+                        IrInstruction::Define {
+                            result, operation, ..
+                        } => Some((*result, operation)),
+                        _ => None,
+                    })
+                    .collect();
+                let arguments = definitions
+                    .iter()
+                    .find_map(|(result, operation)| match operation {
+                        IrOperation::Call { arguments, .. } if result == far => Some(arguments),
+                        _ => None,
+                    })
+                    .expect("the far offer is a call");
+                let parameters = driver.parameters();
+                for position in 3..3 + captures.len() {
+                    assert_eq!(
+                        arguments[position],
+                        parameters[position].0,
+                        "{}: the far offer names the current destination",
+                        driver.name()
+                    );
+                }
+                assert_eq!(
+                    definitions
+                        .iter()
+                        .filter(|(_, operation)| matches!(operation, IrOperation::DemandRequested))
+                        .count(),
+                    1,
+                    "{}",
+                    driver.name()
+                );
+                for family in indexed {
+                    let count = parameters[3 + family.count].0;
+                    assert!(
+                        definitions.iter().any(|(_, operation)| matches!(
+                            operation,
+                            IrOperation::Integer {
+                                operation: IrIntegerOperation::AddSaturating,
+                                arguments,
+                                ..
+                            } if arguments.contains(&count)
+                        )),
+                        "{}: the setup charge counts every family's cells",
+                        driver.name()
+                    );
+                }
+            }
+        }
+        assert_eq!(sites, 3, "histogram, extrema and products");
+    });
+}
+
 #[test]
 fn indexed_aliases_select_one_private_family_and_one_block_per_resolved_root() {
     let source =

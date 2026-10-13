@@ -849,8 +849,8 @@ fn the_sequential_world_of_a_split_loop_is_the_ordinary_loop() {
 /// The synthesized halves are numbered after every source function, so their
 /// ordinals move whenever a fixture gains one. Reading the symbol out of the
 /// module keeps these cases about the shape rather than about the count. The
-/// tail has to be a number, because the runtime's own `wf__par_split_budget`
-/// shares a prefix with the splitter and is not one of these.
+/// tail has to be a number, so a runtime symbol sharing the driver's prefix
+/// is never one of these.
 fn synthesized(module: &str, prefix: &str) -> String {
     let found = synthesized_symbols(module, prefix);
     let [only] = found.as_slice() else {
@@ -948,11 +948,7 @@ fn control_range_transport(module: &str) -> String {
                 protected.push(format!("@{symbol}"));
             }
         }
-        if source_or_chunk
-            && line.contains("call ")
-            && line.contains("@wf__par_split_")
-            && !line.contains("@wf__par_split_budget(")
-        {
+        if source_or_chunk && line.contains("call ") && line.contains("@wf__par_split_") {
             let (_, arguments) = line.split_once("@wf__par_split_").unwrap();
             let (_, arguments) = arguments.split_once('(').unwrap();
             let (arguments, _) = arguments.rsplit_once(')').unwrap();
@@ -1461,7 +1457,6 @@ fn nested_boxed_array_payload_reductions_preserve_the_unsplit_result() {
         let mut command = Command::new(&executable);
         command
             .env("WF_WORKERS", "4")
-            .env_remove("WF_SPLIT_WORK")
             .env_remove("WF_TEST_ZERO_BUDGET");
         if zero {
             command.env("WF_TEST_ZERO_BUDGET", "1");
@@ -1591,7 +1586,6 @@ fn an_independent_map_joins_and_preserves_its_outer_buffer() {
         let mut command = Command::new(&executable);
         command
             .env("WF_WORKERS", "4")
-            .env_remove("WF_SPLIT_WORK")
             .env_remove("WF_TEST_ZERO_BUDGET");
         if zero {
             command.env("WF_TEST_ZERO_BUDGET", "1");

@@ -92,7 +92,6 @@ pub(super) struct LoopSplitSite<'ir> {
     pub(super) captures: &'ir [IrValueId],
     pub(super) weight: u64,
     pub(super) work: Option<&'ir IrWorkEstimate>,
-    pub(super) indexed: &'ir [crate::ir::IrIndexedReduction],
 }
 
 /// The Windows parallel ABI as external obligations.
@@ -129,18 +128,6 @@ pub(super) fn parallel_runtime_declarations() -> Result<Module, BackendFailure> 
 pub(super) fn parallel_pool_query_declaration() -> Result<Module, BackendFailure> {
     let mut module = Module::default();
     let signature = Signature::new("wf__par_pool_active", "i32", vec![]);
-    module.declare(signature);
-    Ok(module)
-}
-
-/// The fail-closed Windows declaration of the loop split budget query.
-pub(super) fn parallel_split_budget_declaration() -> Result<Module, BackendFailure> {
-    let mut module = Module::default();
-    let signature = Signature::new(
-        "wf__par_split_budget",
-        "i64",
-        vec![Parameter::unnamed("i64"), Parameter::unnamed("i64")],
-    );
     module.declare(signature);
     Ok(module)
 }
@@ -267,40 +254,10 @@ pub(super) fn parallel_pool_query_fallback() -> Result<Module, BackendFailure> {
     Ok(module)
 }
 
-/// The runtime's answer to "how many times may a split of this span halve",
-/// and a non-Windows module's own weak answer of "not at all".
-///
-/// Carried by the optional-runtime path for the same reason as the query above:
-/// with no runtime linked there are no lanes, so the honest allowance is zero
-/// and a splitter that gets it descends straight to its leaf — one call, then
-/// the loop. Windows leaves the external query unresolved until native link.
-///
-/// It is a separate definition rather than a fifth lane-protocol entry point
-/// because it takes no frame, publishes nothing, and moves no work; keeping it
-/// apart also leaves the four protocol signatures' bytes exactly as they were.
-pub(super) fn parallel_split_budget_fallback() -> Result<Module, BackendFailure> {
-    let mut module = Module::default();
-    let mut signature = Signature::new(
-        "wf__par_split_budget",
-        "i64",
-        vec![
-            Parameter::named("i64", "%span"),
-            Parameter::named("i64", "%weight"),
-        ],
-    );
-    signature.linkage = Linkage::Weak;
-    let mut body = FunctionBody::default();
-    body.open_block("entry".to_owned());
-    body.instructions("  ret i64 0\n", &[]);
-    module.define(signature.define(body, "")?);
-    module.text("\n");
-    Ok(module)
-}
-
 /// The runtime's answer to "how many levels of this recursive component may
 /// still hand work out", and a non-Windows module's own weak answer of "none".
 ///
-/// Carried by the optional-runtime path for the same reason as the allowance
+/// Carried by the optional-runtime path for the same reason as the pool query
 /// above: with no runtime linked there are no lanes, so the honest answer is
 /// zero and the component's ordinary entry descends straight into its
 /// sequential clone — the world a pool-less run wants anyway. Windows leaves
@@ -498,9 +455,6 @@ pub(crate) struct ParallelThunks {
     /// How many thunks each function's emission has registered, which
     /// numbers the next one's symbol within that function alone.
     local: std::collections::HashMap<String, u32>,
-    /// Whether any emitted function asked the runtime for a split allowance, so
-    /// a module that splits no loop names that symbol nowhere.
-    queries_split_budget: bool,
     pub(super) queries_demand: bool,
     /// The thunks of started contexts [WAIT-3], which name the bridge's context
     /// entry points and no compute scheduler symbol.
@@ -553,10 +507,6 @@ impl ParallelThunks {
         Ok(symbol)
     }
 
-    pub(crate) const fn queries_split_budget(&self) -> bool {
-        self.queries_split_budget
-    }
-
     pub(crate) const fn queries_recursion_budget(&self) -> bool {
         self.queries_recursion_budget
     }
@@ -598,6 +548,9 @@ pub(crate) struct ComputeHandedOut {
     frame: String,
     /// The frame field the result occupies: the argument count.
     result_field: usize,
+    /// A range half's indexed families and the far call's arguments, whose
+    /// granted contributions the wait edge combines and frees.
+    indexed: Option<(Vec<crate::ir::IrIndexedReduction>, Vec<IrValueId>)>,
     /// The call the refused edge makes with the original operands. Normally
     /// the thunk's symbol; the opt-in policy may select its same-ABI clone.
     callee: String,
@@ -765,6 +718,13 @@ impl FunctionEmitter<'_, '_> {
             }?;
             self.output.open_block(offer.to_string());
         };
+        // A granted range half receives neutral private contributions in
+        // place of its indexed destinations, complete before publication.
+        let indexed = self.overlap_indexed.get(&result).cloned();
+        let substituted = match &indexed {
+            Some(families) => self.emit_far_bundle(families, arguments)?.fields,
+            None => Vec::new(),
+        };
         for (index, operand) in operands.iter().enumerate() {
             let field = format!("%{}", self.next_temporary()?);
             writeln!(
@@ -772,7 +732,15 @@ impl FunctionEmitter<'_, '_> {
                 "  {field} = getelementptr inbounds {frame_type}, ptr {frame}, i32 0, i32 {index}"
             )
             .map_err(|_| BackendFailure::TextEmission)?;
-            self.store_frame_operand(operand, &field)?;
+            if let Some((_, value)) = substituted.iter().find(|(position, _)| *position == index) {
+                if !matches!(operand, FrameOperand::Value(_)) {
+                    return Err(BackendFailure::InvalidIr);
+                }
+                writeln!(self.output, "  store {value}, ptr {field}")
+                    .map_err(|_| BackendFailure::TextEmission)?;
+            } else {
+                self.store_frame_operand(operand, &field)?;
+            }
         }
         if let (Some(field), Some(budget)) = (budget_field, budget.as_ref()) {
             let slot = format!("%{}", self.next_temporary()?);
@@ -805,6 +773,7 @@ impl FunctionEmitter<'_, '_> {
             frame_type,
             frame,
             result_field,
+            indexed: indexed.map(|families| (families, arguments.to_vec())),
             callee: if refused_to_clone {
                 sequential_clone_symbol(target.name())
             } else {
@@ -820,10 +789,11 @@ impl FunctionEmitter<'_, '_> {
     ///
     /// The sequential world calls the chunk — the loop itself, seeded with the
     /// accumulator's incoming value — and is therefore the code the loop always
-    /// had, behind one call its only caller inlines back. A non-indexed range
-    /// enters the segmented driver with its positive runtime extent price.
-    /// Indexed reductions retain their bounded allowance and private leaves.
-    /// The ordinary entrance and call-grain decisions are separate policies.
+    /// had, behind one call its only caller inlines back. Every range enters
+    /// the segmented driver with its positive runtime extent price; indexed
+    /// destinations pass as they are, and only the driver's granted far
+    /// offers acquire private storage. The ordinary entrance and call-grain
+    /// decisions are separate policies.
     pub(super) fn emit_loop_split(
         &mut self,
         result: IrValueId,
@@ -842,9 +812,8 @@ impl FunctionEmitter<'_, '_> {
             .ok_or(BackendFailure::InvalidIr)?;
         let abi = FunctionAbi::build(self.program, function)?;
         let declared = abi.parameters();
-        // The splitter alone takes one trailing word: the demand driver's
-        // positive price, or the indexed splitter's allowance. The chunk and
-        // splitter otherwise share the typed internal parameter/result ABI.
+        // The driver alone takes one trailing word, its positive price. The
+        // chunk and driver otherwise share the typed internal ABI.
         let expected = declared
             .len()
             .checked_sub(usize::from(self.sequential_clones.is_none()))
@@ -875,14 +844,12 @@ impl FunctionEmitter<'_, '_> {
         } else {
             SplitArgument::Prepared(format!("{result_type} {}", self.split_operand(split.seed)?))
         });
-        let mut endpoints = Vec::with_capacity(2);
         for endpoint in [split.lower, split.upper] {
             if self.value_type(endpoint) != Some(U64) {
                 return Err(BackendFailure::InvalidIr);
             }
             let operand = self.split_operand(endpoint)?;
             arguments.push(SplitArgument::Prepared(format!("i64 {operand}")));
-            endpoints.push(operand);
         }
         for (capture, parameter) in split.captures.iter().zip(&declared[3..]) {
             let deferred = self.defers_record_slot(*capture);
@@ -906,52 +873,17 @@ impl FunctionEmitter<'_, '_> {
             return self.emit_split_call(result, abi.result(), &callee, arguments);
         }
 
-        if split.indexed.is_empty() {
-            let weight = if let Some(work) = split.work {
-                let estimate =
-                    self.emit_work_estimate(work, &mut std::collections::HashMap::new())?;
-                // Runtime extents may be zero. Positive price keeps every
-                // driver's division total, including empty source ranges.
-                self.emit_work_binary("llvm.umax.i64", &estimate, "1")?
-            } else {
-                split.weight.max(1).to_string()
-            };
-            arguments.push(SplitArgument::Prepared(format!("i64 {weight}")));
-            let arguments = self.resolve_split_arguments(arguments)?;
-            return self.emit_split_call(result, abi.result(), &callee, arguments);
-        }
-
-        // The span, computed so an inverted range asks for nothing rather than
-        // for a bogus 2^63 one. The splitter guards the same way; this keeps a
-        // wrapped width out of the allowance as well as out of the descent.
-        let width = format!("%{}", self.next_temporary()?);
-        let ascending = format!("%{}", self.next_temporary()?);
-        let span = format!("%{}", self.next_temporary()?);
-        let budget = format!("%{}", self.next_temporary()?);
-        let lower = &endpoints[0];
-        let upper = &endpoints[1];
         let weight = if let Some(work) = split.work {
-            self.emit_work_estimate(work, &mut std::collections::HashMap::new())?
+            let estimate = self.emit_work_estimate(work, &mut std::collections::HashMap::new())?;
+            // Runtime extents may be zero. Positive price keeps every
+            // driver's division total, including empty source ranges.
+            self.emit_work_binary("llvm.umax.i64", &estimate, "1")?
         } else {
-            split.weight.to_string()
+            split.weight.max(1).to_string()
         };
-        {
-            self.output.symbol("wf__par_split_budget");
-            writeln!(
-                self.output,
-                "  {width} = sub i64 {upper}, {lower}\n  \
-             {ascending} = icmp ugt i64 {upper}, {lower}\n  \
-             {span} = select i1 {ascending}, i64 {width}, i64 0\n  \
-             {budget} = call i64 @wf__par_split_budget(i64 {span}, i64 {weight})"
-            )
-        }
-        .map_err(|_| BackendFailure::TextEmission)?;
-        self.parallel.queries_split_budget = true;
-        let private = self.emit_indexed_prepare(split, &span, &weight, &budget, &mut arguments)?;
-        arguments.push(SplitArgument::Prepared(format!("i64 {}", private.budget)));
+        arguments.push(SplitArgument::Prepared(format!("i64 {weight}")));
         let arguments = self.resolve_split_arguments(arguments)?;
-        self.emit_split_call(result, abi.result(), &callee, arguments)?;
-        self.emit_indexed_finish(split, private)
+        self.emit_split_call(result, abi.result(), &callee, arguments)
     }
 
     /// Scheduling arithmetic is total even when the priced source branch
@@ -1176,8 +1108,18 @@ impl FunctionEmitter<'_, '_> {
                 callee,
                 arguments,
                 result_field,
+                indexed,
                 ..
             } = &pending;
+            // The granted edge combines and frees its far contributions
+            // after the join and before the lane returns; the phi then
+            // names the block that release ends in.
+            let released = format!("{wait}.released");
+            let wait_exit = if indexed.is_some() {
+                released.clone()
+            } else {
+                wait.clone()
+            };
             self.output.symbol(callee.as_str());
             // A memory-only result is constructed in its destination by the
             // inline call and copied there from the lane frame by the wait
@@ -1207,6 +1149,9 @@ impl FunctionEmitter<'_, '_> {
                 .map_err(|_| BackendFailure::TextEmission)?;
                 let frame = frame.clone();
                 self.copy_storage(pending.result_abi.ty(), &field, &destination)?;
+                if let Some((families, far)) = indexed {
+                    self.emit_far_combine(families, far, &frame, frame_type)?;
+                }
                 write!(
                     self.output,
                     "  call void @wf__par_release(ptr {frame})\n  br label %{done}\n"
@@ -1226,7 +1171,7 @@ impl FunctionEmitter<'_, '_> {
                     format!(
                         "call void @{callee}({arguments})\n  {refused} = load {result_type}, ptr {destination}"
                     ),
-                    format!("store {result_type} {waited}, ptr {destination}\n  "),
+                    format!("  store {result_type} {waited}, ptr {destination}\n"),
                 )
             } else {
                 (
@@ -1242,16 +1187,23 @@ impl FunctionEmitter<'_, '_> {
                 write!(self.output, "  {inline_call}\n  br label %{done}\n")
                     .map_err(|_| BackendFailure::TextEmission)?;
                 self.output.open_block(wait.to_string());
-                {
-                    self.output.symbol("wf__par_join");
-                    self.output.symbol("wf__par_release");
-                    write!(
-                        self.output,
-                        "  call void @wf__par_join(ptr {frame})\n  {field} = getelementptr inbounds {frame_type}, ptr {frame}, i32 0, i32 {result_field}\n  {waited} = load {result_type}, ptr {field}\n  {save_waited}call void @wf__par_release(ptr {frame})\n  br label %{done}\n"
-                    )
-                }?;
+                self.output.symbol("wf__par_join");
+                self.output.symbol("wf__par_release");
+                write!(
+                    self.output,
+                    "  call void @wf__par_join(ptr {frame})\n  {field} = getelementptr inbounds {frame_type}, ptr {frame}, i32 0, i32 {result_field}\n  {waited} = load {result_type}, ptr {field}\n{save_waited}"
+                )?;
+                if let Some((families, far)) = indexed {
+                    self.emit_far_combine(families, far, frame, frame_type)?;
+                    writeln!(self.output, "  br label %{released}")?;
+                    self.output.open_block(released.clone());
+                }
+                write!(
+                    self.output,
+                    "  call void @wf__par_release(ptr {frame})\n  br label %{done}\n"
+                )?;
                 self.output.open_block(done.to_string());
-                writeln!(self.output, "  {emission_argument_0} = phi {result_type} [ {refused}, %{inline} ], [ {waited}, %{wait} ]").map_err(|_| BackendFailure::TextEmission)?;
+                writeln!(self.output, "  {emission_argument_0} = phi {result_type} [ {refused}, %{inline} ], [ {waited}, %{wait_exit} ]").map_err(|_| BackendFailure::TextEmission)?;
             };
             self.save_value_result(pending.result)?;
         }

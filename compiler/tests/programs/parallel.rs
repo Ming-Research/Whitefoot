@@ -306,10 +306,7 @@ fn range_fold_preserves_bytes_and_ordinary_runtime_reports() {
     }
     for workers in ["1", "4"] {
         for report in ["0", "1", "2"] {
-            let output = parallel.run_with_settings(
-                Some(workers),
-                &[("WF_SPLIT_WORK", "60000"), ("WF_SCHED_REPORT", report)],
-            );
+            let output = parallel.run_with_settings(Some(workers), &[("WF_SCHED_REPORT", report)]);
             assert!(output.status.success(), "{output:?}");
             assert_eq!(output.stdout, expected);
             if report == "2" {
@@ -329,29 +326,16 @@ fn range_fold_preserves_bytes_and_ordinary_runtime_reports() {
             }
         }
     }
-    let disabled = parallel.run_with_settings(Some("4"), &[("WF_SPLIT_WORK", "0")]);
-    assert!(disabled.status.success());
-    assert_eq!(disabled.stdout, expected);
-    for (name, value, expected_error) in [
-        (
-            "WF_SCHED_REPORT",
-            "3",
-            "whitefoot scheduler: WF_SCHED_REPORT must be an integer from 0 through 2\n",
-        ),
-        (
-            "WF_SPLIT_WORK",
-            "no",
-            "whitefoot scheduler: WF_SPLIT_WORK must be an integer from 0 through 1000000000\n",
-        ),
-    ] {
-        let output = parallel.run_with_settings(Some("4"), &[(name, value)]);
-        assert_eq!(output.status.code(), Some(1));
-        assert!(
-            output.stdout.is_empty(),
-            "configuration must be refused before WF output"
-        );
-        assert_eq!(String::from_utf8_lossy(&output.stderr), expected_error);
-    }
+    let output = parallel.run_with_settings(Some("4"), &[("WF_SCHED_REPORT", "3")]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        output.stdout.is_empty(),
+        "configuration must be refused before WF output"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "whitefoot scheduler: WF_SCHED_REPORT must be an integer from 0 through 2\n"
+    );
 }
 
 /// The parallel lowering linked from the link fragments a modular build
@@ -666,8 +650,9 @@ fn statements_on_different_keys_compute_together_and_meet_only_at_the_meta_commi
 }
 
 /// Requested overlap must preserve the histogram and signed-extrema oracle.
-/// This is the unmodified runtime policy and its sequential twin. The backend
-/// indexed split test separately forces and observes the private-buffer path.
+/// This is the unmodified runtime's demand splitting and its sequential twin
+/// at every width. The backend indexed tests separately force and observe the
+/// private contributions of granted far halves.
 #[test]
 fn indexed_histogram_and_extrema_preserve_sequential_results() {
     for path in [
@@ -680,7 +665,7 @@ fn indexed_histogram_and_extrema_preserve_sequential_results() {
         assert_eq!(reference.status.code(), Some(0), "{reference:?}");
         assert!(reference.stderr.is_empty());
         let parallel = build_program(&compile_program_with_overlap(path));
-        for workers in ["1", "4"] {
+        for workers in ["1", "2", "4", "8"] {
             let output = parallel.run_with_workers(Some(workers));
             assert_eq!(output.status.code(), Some(0), "{workers}: {output:?}");
             assert_eq!(output.stdout, reference.stdout);

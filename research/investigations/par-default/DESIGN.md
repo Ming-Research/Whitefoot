@@ -314,6 +314,43 @@ this length-based estimate. Overflow in price arithmetic saturates and
 cannot make an expensive setup look cheap. An all-cheap entry predicate must
 include this setup comparison where its inputs are entry-invariant.
 
+### Indexed implementation as built
+
+The implementation on the stage-3 branch follows the mechanism above with
+these concrete choices; it is unmeasured until the comparison below runs.
+
+- Placement. Lowering gives an indexed site the same range driver as every
+  other range and records the site's families on the driver's far-half
+  overlap. The site itself allocates nothing and queries no budget; the
+  fixed-leaf splitter and the runtime split-budget query are removed. The
+  far half's private storage is created in the emitted offer block after
+  `wf__par_acquire_lane` grants a lane and before `wf__par_publish`; a
+  refused acquisition runs far inline on the current destinations.
+- Setup charge. The driver computes `H` with saturating addition over each
+  family's captured initialized count and tests
+  `far_iterations > floor(H / price)` before reading the request word, which
+  is exactly `far_iterations * price > H` without a multiplication.
+- Representation. A dense family is one checked allocation of identity cells
+  or false masks. A root with a call-form update is one checked allocation
+  laid out as `{ block pointer slot, size word, root-shaped block }`: the
+  slot stands where a source root's owner pointer would, so ordinary
+  summarized callees read the same header and stride, and the size word
+  lets the join free the allocation without recomputing it.
+- Combination and freeing. After the join edge observes completion, the
+  acquiring activation combines each family into its current destination in
+  family order and ascending cell order, frees each group once, then calls
+  `wf__par_release`. The near half's result precedes far's in the scalar
+  combination, matching source order.
+- Failure. A size overflow or a failed `wf__heap_take` frees the groups
+  already acquired for this far bundle and calls `wf_resource_abort`, the
+  STOR-8 termination path, then is unreachable. The reserved lane is
+  abandoned rather than cancelled, because no runtime operation cancels an
+  unpublished reservation and the program terminates before any other task
+  could observe the slot. Running inline on refusal of storage was rejected:
+  a converted failure would hide the exhaustion STOR-8 requires to
+  terminate, and the bundle exists only on a granted lane, so inline far
+  needs no storage and has no failure to convert.
+
 ### Indexed comparison and rejection criterion
 
 The semantic mechanism can be proposed before measuring; production adoption

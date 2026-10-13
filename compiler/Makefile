@@ -405,7 +405,7 @@ sched-deque-tsan: $(COMPLETION_TMP)/sched-deque-tsan $(COMPLETION_TMP)/sched-deq
 	TSAN_OPTIONS=halt_on_error=1 "$(COMPLETION_TMP)/sched-deque-tsan-no-stats"
 	TSAN_OPTIONS=halt_on_error=1 "$(COMPLETION_TMP)/sched-demand-tsan"
 
-sched-policy-test: sched-split-policy-cases $(COMPLETION_TMP)/sched-policy $(COMPLETION_TMP)/sched-policy-asymmetric $(COMPLETION_TMP)/sched-policy-disabled $(COMPLETION_TMP)/sched-policy-clamped
+sched-policy-test: $(COMPLETION_TMP)/sched-policy $(COMPLETION_TMP)/sched-policy-asymmetric $(COMPLETION_TMP)/sched-policy-disabled $(COMPLETION_TMP)/sched-policy-clamped
 	WF_WORKERS=2 "$(COMPLETION_TMP)/sched-policy" host
 	"$(COMPLETION_TMP)/sched-policy" wake
 	@set -e; for variant in '' -asymmetric -disabled; do \
@@ -455,21 +455,7 @@ cpu-affinity-test: $(COMPLETION_TMP)/cpu-affinity-probe $(SCHED_PROBE_OBJECT_DIR
 sched-policy-test: cpu-affinity-test
 endif
 
-# Shared on POSIX and native Windows; each environment is a fresh process.
 SCHED_POLICY_EXE ?= $(COMPLETION_TMP)/sched-policy
-sched-split-policy-cases: $(SCHED_POLICY_EXE)
-	@set -e; unset WF_SPLIT_WORK; WF_WORKERS=4 "$(SCHED_POLICY_EXE)" split 0 2 6 6
-	@set -e; for row in 'empty 0 2 6 6' '0 0 0 0 0' '1 0 6 6 6' '60000 0 3 6 6' '1200000 0 0 3 6' '1000000000 0 0 0 6'; do \
-		set -- $$row; policy=$$1; shift; test "$$policy" != empty || policy=''; \
-		WF_WORKERS=4 WF_SPLIT_WORK="$$policy" "$(SCHED_POLICY_EXE)" split "$$@"; \
-	done
-	WF_WORKERS=64 WF_SPLIT_WORK=1 "$(SCHED_POLICY_EXE)" split 0 10 10 10
-	@set -e; for policy in -1 no 1000000001 18446744073709551616; do \
-		status=0; WF_WORKERS=4 WF_SPLIT_WORK="$$policy" "$(SCHED_POLICY_EXE)" split 0 0 0 0 > "$(COMPLETION_TMP)/split.out" 2> "$(COMPLETION_TMP)/split.err" || status=$$?; \
-		test "$$status" = 1; test ! -s "$(COMPLETION_TMP)/split.out"; \
-		tr -d '\r' < "$(COMPLETION_TMP)/split.err" > "$(COMPLETION_TMP)/split.normalized"; \
-		printf '%s\n' 'whitefoot scheduler: WF_SPLIT_WORK must be an integer from 0 through 1000000000' | cmp - "$(COMPLETION_TMP)/split.normalized"; \
-	done
 
 # The floor body is C-only host evidence. The hooked variant substitutes only
 # floor setup/park calls; compatible scheduler support objects are shared.
@@ -1009,4 +995,4 @@ completion-windows-wine:
 	completion-sanitize \
 	completion-core-read-sanitize completion-default-route-test ordinary-values-test \
 	completion-default-route-sanitize completion-default-route-tsan sched-smoke sched-request-test \
-	sched-deque-test sched-deque-tsan sched-policy-test sched-split-policy-cases floor-test sched-wake-measure completion-windows-cross completion-windows-route-build windows-runtime-sources completion-windows-wine
+	sched-deque-test sched-deque-tsan sched-policy-test floor-test sched-wake-measure completion-windows-cross completion-windows-route-build windows-runtime-sources completion-windows-wine

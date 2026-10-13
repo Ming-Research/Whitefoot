@@ -295,7 +295,6 @@ fn run_compute_oracle(executable: &Path, name: &str, parallel: bool) {
     for workers in widths {
         let output = Command::new(executable)
             .env("WF_WORKERS", workers.to_string())
-            .env_remove("WF_SPLIT_WORK")
             .bounded_output()
             .expect("run independent compute oracle");
         assert!(
@@ -334,10 +333,7 @@ fn observe_range_prices(module: &str) -> String {
     let mut observed = String::new();
     let mut ordinal = 0;
     for line in module.lines() {
-        if line.contains("call ")
-            && line.contains("@wf__par_split_")
-            && !line.contains("@wf__par_split_budget(")
-        {
+        if line.contains("call ") && line.contains("@wf__par_split_") {
             let (_, arguments) = line.split_once("@wf__par_split_").unwrap();
             let (_, arguments) = arguments.split_once('(').unwrap();
             let (arguments, _) = arguments.rsplit_once(')').unwrap();
@@ -350,7 +346,7 @@ fn observe_range_prices(module: &str) -> String {
                 .strip_prefix("i64 ")
                 .expect("runtime price");
             observed.push_str(&format!(
-                "  %price.observe.{ordinal}.valid = icmp ult i64 {lower}, {upper}\n  %price.observe.{ordinal}.difference = sub i64 {upper}, {lower}\n  %price.observe.{ordinal}.span = select i1 %price.observe.{ordinal}.valid, i64 %price.observe.{ordinal}.difference, i64 0\n  %price.observe.{ordinal}.answer = call i64 @wf_work_budget(i64 %price.observe.{ordinal}.span, i64 {price})\n"
+                "  %price.observe.{ordinal}.valid = icmp ult i64 {lower}, {upper}\n  %price.observe.{ordinal}.difference = sub i64 {upper}, {lower}\n  %price.observe.{ordinal}.span = select i1 %price.observe.{ordinal}.valid, i64 %price.observe.{ordinal}.difference, i64 0\n  %price.observe.{ordinal}.answer = call i64 @wf_observe_price(i64 %price.observe.{ordinal}.span, i64 {price})\n"
             ));
             ordinal += 1;
         }
@@ -409,18 +405,14 @@ fn main() -> status: std::process::ExitStatus pure {
     // left with the storage class [TYPE-9, OP-13].
     let mut llvm = observe_range_prices(&emitted)
         .replace("@main(", "@wf_total_work_main(")
-        .replace("@wf__main_body(", "@wf_total_work_body(")
-        .replace(
-            "call i64 @wf__par_split_budget(",
-            "call i64 @wf_work_budget(",
-        );
-    llvm.push_str("\ndeclare i64 @wf_work_budget(i64, i64)\n");
+        .replace("@wf__main_body(", "@wf_total_work_body(");
+    llvm.push_str("\ndeclare i64 @wf_observe_price(i64, i64)\n");
     let host = r#"#include <stdint.h>
 #include <stdio.h>
 extern int wf__floor_run(int, char **);
 extern uint64_t wf_write_work(uint64_t, uint64_t, uint64_t);
 static uint64_t price;
-uint64_t wf_work_budget(uint64_t span, uint64_t weight) {
+uint64_t wf_observe_price(uint64_t span, uint64_t weight) {
     (void)span; price = weight; return 0;
 }
 int wf__main_body(int argc, char **argv) {
@@ -579,12 +571,8 @@ fn probe_{name}(count: u64, iterations: u64) -> result: u64 pure contract {{
     );
     let mut llvm = observe_range_prices(&emit_with_overlap(source.as_bytes()))
         .replace("@main(", "@wf_reference_price_main(")
-        .replace("@wf__main_body(", "@wf_reference_price_body(")
-        .replace(
-            "call i64 @wf__par_split_budget(",
-            "call i64 @wf_work_budget(",
-        );
-    llvm.push_str("\ndeclare i64 @wf_work_budget(i64, i64)\n");
+        .replace("@wf__main_body(", "@wf_reference_price_body(");
+    llvm.push_str("\ndeclare i64 @wf_observe_price(i64, i64)\n");
     let host = r#"#include <stdint.h>
 #include <stdio.h>
 extern int wf__floor_run(int, char **);
@@ -595,7 +583,7 @@ extern uint64_t wf_probe_shared(uint64_t, uint64_t);
 typedef uint64_t (*probe)(uint64_t, uint64_t);
 static uint64_t first_price;
 static unsigned observed;
-uint64_t wf_work_budget(uint64_t span, uint64_t price) {
+uint64_t wf_observe_price(uint64_t span, uint64_t price) {
     (void)span;
     if (observed++ == 0) first_price = price;
     return 0;
@@ -690,24 +678,20 @@ fn write_{extent}_{position}(upper: u64, repeats: u64) -> result: u64 pure {{
     );
     let mut llvm = observe_range_prices(&emit_with_overlap(source.as_bytes()))
         .replace("@main(", "@wf_continuation_main(")
-        .replace("@wf__main_body(", "@wf_continuation_body(")
-        .replace(
-            "call i64 @wf__par_split_budget(",
-            "call i64 @wf_work_budget(",
-        );
+        .replace("@wf__main_body(", "@wf_continuation_body(");
     // The agreement of the two written slots, which the retired `{ ptr, i64 }`
     // probe computed by loading them out of a `buffer<u64>` descriptor, is now
     // computed where the run lives: the worker reads its own frame-resident
     // `Array<u64, 2>` [TYPE-9] and returns one scalar, so the case needs no
     // hand-written descriptor ABI and no `release_work` consumer.
-    llvm.push_str("\ndeclare i64 @wf_work_budget(i64, i64)\n");
+    llvm.push_str("\ndeclare i64 @wf_observe_price(i64, i64)\n");
     let host = r#"#include <stdint.h>
 #include <stdio.h>
 extern int wf__floor_run(int, char **);
 extern uint64_t wf_write_known_before(uint64_t, uint64_t), wf_write_known_after(uint64_t, uint64_t);
 extern uint64_t wf_write_fallback_before(uint64_t, uint64_t), wf_write_fallback_after(uint64_t, uint64_t);
 static uint64_t price;
-uint64_t wf_work_budget(uint64_t span, uint64_t weight) {
+uint64_t wf_observe_price(uint64_t span, uint64_t weight) {
     (void)span; price = weight; return 0;
 }
 int wf__main_body(int argc, char **argv) {
@@ -767,30 +751,25 @@ fn runtime_block_sizes_change_budget_prices_without_changing_scan_results() {
     let adapter = include_str!("../../../../tests/programs/compute/prefix_host.ll");
     let mut llvm = observe_range_prices(&bind_compute_host_adapter(&module, adapter))
         .replace("@main(", "@wf_extent_test_main(")
-        .replace("@wf__main_body(", "@wf_extent_test_body(")
-        .replace(
-            "call i64 @wf__par_split_budget(",
-            "call i64 @wf_work_budget(",
-        );
-    llvm.push_str("\ndeclare i64 @wf_work_budget(i64, i64)\n");
+        .replace("@wf__main_body(", "@wf_extent_test_body(");
+    llvm.push_str("\ndeclare i64 @wf_observe_price(i64, i64)\n");
     let host = r#"#include <stdint.h>
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 extern int wf__floor_run(int, char **);
 extern int wf__par_pool_active(void);
-extern uint64_t wf__par_split_budget(uint64_t, uint64_t);
 /* The owned result is a Box<Array<u64>> cell; the adapter hands that cell back
  * as the retained handle and the release row consumes exactly it. */
 extern void wf_bench_prefix(const uint64_t *, uint64_t, uint64_t, uint64_t, uint64_t **, uint64_t *, void **);
 extern void wf_bench_prefix_release(void *);
 static _Atomic uint64_t observed;
-uint64_t wf_work_budget(uint64_t span, uint64_t weight) {
+uint64_t wf_observe_price(uint64_t span, uint64_t weight) {
     if (span == 128) {
         uint64_t previous = atomic_load(&observed);
         while (previous < weight && !atomic_compare_exchange_weak(&observed, &previous, weight)) {}
     }
-    return wf__par_split_budget(span, weight);
+    return 0;
 }
 int wf__main_body(int argc, char **argv) {
     (void)argc; (void)argv;
@@ -830,7 +809,6 @@ int main(int argc, char **argv) { return wf__floor_run(argc, argv); }
     for workers in [1, 2, 4] {
         let output = Command::new(&executable)
             .env("WF_WORKERS", workers.to_string())
-            .env_remove("WF_SPLIT_WORK")
             .bounded_output()
             .expect("run runtime extent price probe");
         assert!(output.status.success(), "workers={workers}: {output:?}");

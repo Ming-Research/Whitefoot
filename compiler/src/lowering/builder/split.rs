@@ -3,16 +3,17 @@
 //!
 //! # What is emitted
 //!
-//! Non-indexed ranges use the demand driver in `demand`: it executes ordinary
+//! Every range uses the demand driver in `demand`: it executes ordinary
 //! subrange loops, polls the lane's request word at work-priced boundaries,
 //! and publishes the far half while retaining the near half. Runtime extent
 //! prices replace available static factors. A scalar reduction keeps its seed
 //! only in the retained work and combines near before far.
 //!
-//! Indexed reductions retain their bounded splitter and private leaf storage
-//! until their separate demand-storage port. Their trailing word is a split
-//! budget; the demand driver's same-position word is a positive work price.
-//! Both use the existing typed chunk and overlap-group transport.
+//! Indexed reductions pass their current destinations to both halves. The
+//! driver's overlap group carries the families, so only a granted far lane
+//! receives neutral private storage, which the offering activation combines
+//! into its destinations after the join and frees. No storage is predicted
+//! or allocated at the site.
 //!
 //! # Why the leaf is the loop and never one iteration
 //!
@@ -55,8 +56,8 @@ use crate::semantic::{
 use crate::target::{LANE_FRAME_BYTES, parallel_lane_frame_layout};
 use crate::{
     IrAddressed, IrBlock, IrBlockId, IrBooleanOperation, IrConstant, IrEnumType, IrFunction,
-    IrInstruction, IrIntegerOperation, IrMatchTarget, IrNominalKind, IrOperation, IrOverlap,
-    IrSynthesis, IrTerminator, IrType, IrValueId, LoweringFailure, NodePath,
+    IrInstruction, IrIntegerOperation, IrMatchTarget, IrNominalKind, IrOperation, IrSynthesis,
+    IrTerminator, IrType, IrValueId, LoweringFailure, NodePath,
 };
 
 use super::loops::U64;
@@ -65,12 +66,6 @@ use super::{BuildingBlock, IrBuilder};
 /// The widest scalar the backend puts in a frame, and so the alignment every
 /// frame field is conservatively charged.
 const FRAME_FIELD_ALIGN: u64 = 8;
-
-/// The type every shift amount carries in this IR.
-const SHIFT_AMOUNT: IrType = IrType::Integer {
-    width: 32,
-    signed: false,
-};
 
 /// Why one permitted loop was not actualized.
 ///
@@ -705,7 +700,7 @@ impl<'program> IrBuilder<'program> {
             Some(seed) => seed,
             None => self.define(IrType::Unit, IrOperation::Constant(IrConstant::Unit))?,
         };
-        let splitter_function = self.build_splitter(
+        let splitter_function = self.build_demand_driver(
             (splitter, &splitter_name),
             chunk,
             actualization,
@@ -1217,267 +1212,6 @@ impl<'program> IrBuilder<'program> {
         Ok(())
     }
 
-    /// The recursive range splitter, whose two halves are one ordinary overlap
-    /// group.
-    ///
-    /// The group here is produced by this lowering, not judged: it actualizes
-    /// the loop's own permission, and there is no pair of source statements for
-    /// the window judgment to have looked at. Everything downstream — the
-    /// lane acquisition, the frame, the thunk, the deque, and the join — is
-    /// the machinery a permitted pair already uses, unchanged.
-    fn build_splitter(
-        &self,
-        (ordinal, name): (u32, &str),
-        chunk: u32,
-        actualization: LoopActualization,
-        result_type: IrType,
-        capture_types: &[IrType],
-        indexed: &[crate::ir::IrIndexedReduction],
-    ) -> Result<IrFunction, LoweringFailure> {
-        if indexed.is_empty() {
-            return self.build_demand_driver(
-                (ordinal, name),
-                chunk,
-                actualization,
-                result_type,
-                capture_types,
-            );
-        }
-        let mut builder = IrBuilder::new(
-            self.context(),
-            result_type,
-            std::collections::HashSet::new(),
-            None,
-            self.overlap,
-            self.function_name,
-        )?;
-        let seed = builder.new_parameter(result_type)?;
-        let lower = builder.new_parameter(U64)?;
-        let upper = builder.new_parameter(U64)?;
-        let captures = capture_types
-            .iter()
-            .map(|ty| builder.new_parameter(*ty))
-            .collect::<Result<Vec<_>, _>>()?;
-        let budget = builder.new_parameter(U64)?;
-
-        let (empty_block, _) = builder.new_block(&[])?;
-        let (nonempty, _) = builder.new_block(&[])?;
-        let (leaf, _) = builder.new_block(&[])?;
-        let (halve, _) = builder.new_block(&[])?;
-
-        // **`hi <= lo` before any width arithmetic.** An inverted range whose
-        // width is computed first wraps to something near 2^64 and splits a
-        // range that does not exist; the loop it stands for runs zero times.
-        let nonempty_guard = builder.define(
-            IrType::Bool,
-            IrOperation::Integer {
-                operation: IrIntegerOperation::Less,
-                operand_type: U64,
-                arguments: vec![lower, upper],
-            },
-        )?;
-        builder.branch(nonempty_guard, nonempty, empty_block)?;
-
-        // An empty range folds or writes nothing, so its incoming value — the
-        // accumulator for a reduction, Unit for a map — arrives unchanged.
-        builder.current = Some(empty_block);
-        builder.terminate(IrTerminator::Return {
-            value: seed,
-            drops: Vec::new(),
-        })?;
-
-        // Two ways to reach the leaf: the allowance is spent, or the range is
-        // too thin to halve into two nonempty halves.
-        builder.current = Some(nonempty);
-        let width = builder.define(
-            U64,
-            IrOperation::Integer {
-                operation: IrIntegerOperation::SubtractWrap,
-                operand_type: U64,
-                arguments: vec![upper, lower],
-            },
-        )?;
-        let one = builder.define(
-            U64,
-            IrOperation::Constant(IrConstant::Integer { ty: U64, bits: 1 }),
-        )?;
-        let zero = builder.define(
-            U64,
-            IrOperation::Constant(IrConstant::Integer { ty: U64, bits: 0 }),
-        )?;
-        let affordable = builder.define(
-            IrType::Bool,
-            IrOperation::Integer {
-                operation: IrIntegerOperation::Less,
-                operand_type: U64,
-                arguments: vec![zero, budget],
-            },
-        )?;
-        let divisible = builder.define(
-            IrType::Bool,
-            IrOperation::Integer {
-                operation: IrIntegerOperation::Less,
-                operand_type: U64,
-                arguments: vec![one, width],
-            },
-        )?;
-        let splittable = builder.define(
-            IrType::Bool,
-            IrOperation::Boolean {
-                operation: crate::IrBooleanOperation::And,
-                arguments: vec![affordable, divisible],
-            },
-        )?;
-        builder.branch(splittable, halve, leaf)?;
-
-        builder.current = Some(leaf);
-        let mut leaf_arguments = vec![seed, lower, upper];
-        leaf_arguments.extend(captures.iter().copied());
-        let result = builder.define(
-            result_type,
-            IrOperation::Call {
-                function: chunk,
-                arguments: leaf_arguments,
-            },
-        )?;
-        builder.terminate(IrTerminator::Return {
-            value: result,
-            drops: Vec::new(),
-        })?;
-
-        builder.current = Some(halve);
-        // A shift amount is `u32` throughout the IR, so the halving carries its
-        // own constant rather than reusing the `u64` one above.
-        let one_bit = builder.define(
-            SHIFT_AMOUNT,
-            IrOperation::Constant(IrConstant::Integer {
-                ty: SHIFT_AMOUNT,
-                bits: 1,
-            }),
-        )?;
-        let half = builder.define(
-            U64,
-            IrOperation::Integer {
-                operation: IrIntegerOperation::ShiftRightWrap,
-                operand_type: U64,
-                arguments: vec![width, one_bit],
-            },
-        )?;
-        let middle = builder.define(
-            U64,
-            IrOperation::Integer {
-                operation: IrIntegerOperation::AddWrap,
-                operand_type: U64,
-                arguments: vec![lower, half],
-            },
-        )?;
-        let remaining = builder.define(
-            U64,
-            IrOperation::Integer {
-                operation: IrIntegerOperation::SubtractWrap,
-                operand_type: U64,
-                arguments: vec![budget, one],
-            },
-        )?;
-        // A reduction sends the incoming accumulator left and the identity
-        // right, preserving `seed, e0, e1, …` as the tree's leaf order. An
-        // independent map sends the same Unit token both ways: it carries no
-        // source value, but the two calls still form the ordinary overlap group
-        // whose join completes every disjoint store before this helper returns.
-        let right_seed = match actualization {
-            LoopActualization::IndependentMap => seed,
-            LoopActualization::Reduction { combine, .. } => {
-                builder.identity_value(combine, result_type)?
-            }
-        };
-        let mut left_captures = captures.clone();
-        let mut right_captures = captures.clone();
-        let mut split_captures = Vec::new();
-        for root in indexed {
-            if split_captures.contains(&root.capture) {
-                continue;
-            }
-            split_captures.push(root.capture);
-            let private_type = if let Some(block) = &root.root {
-                IrType::Address(
-                    IrAddressed::of(block.block_type)
-                        .ok_or(LoweringFailure::InvalidCheckedProgram)?,
-                )
-            } else {
-                root.private_type()
-            };
-            let slice = captures[root.capture];
-            let length = builder.define(U64, IrOperation::SliceMeasure { slice })?;
-            let half_cells = builder.define(
-                U64,
-                IrOperation::Integer {
-                    operation: IrIntegerOperation::ShiftRightWrap,
-                    operand_type: U64,
-                    arguments: vec![length, one_bit],
-                },
-            )?;
-            left_captures[root.capture] = builder.define(
-                capture_types[root.capture],
-                IrOperation::IndexedRange {
-                    private_type,
-                    slice,
-                    start: zero,
-                    end: half_cells,
-                },
-            )?;
-            right_captures[root.capture] = builder.define(
-                capture_types[root.capture],
-                IrOperation::IndexedRange {
-                    private_type,
-                    slice,
-                    start: half_cells,
-                    end: length,
-                },
-            )?;
-        }
-        let mut left_arguments = vec![seed, lower, middle];
-        left_arguments.extend(left_captures);
-        left_arguments.push(remaining);
-        let left = builder.define(
-            result_type,
-            IrOperation::Call {
-                function: ordinal,
-                arguments: left_arguments,
-            },
-        )?;
-        let mut right_arguments = vec![right_seed, middle, upper];
-        right_arguments.extend(right_captures);
-
-        right_arguments.push(remaining);
-        let right = builder.define(
-            result_type,
-            IrOperation::Call {
-                function: ordinal,
-                arguments: right_arguments,
-            },
-        )?;
-        // Left before right, always. A reduction combines in source order; a
-        // map only needs the join and may return either identical Unit token.
-        let result = match actualization {
-            LoopActualization::IndependentMap => right,
-            LoopActualization::Reduction { combine, .. } => {
-                builder.combine_values(combine, result_type, left, right)?
-            }
-        };
-        builder.terminate(IrTerminator::Return {
-            value: result,
-            drops: Vec::new(),
-        })?;
-
-        builder.finish(
-            splitter_symbol(name),
-            vec![IrOverlap {
-                members: vec![left, right],
-            }],
-            Some(IrSynthesis::Splitter),
-        )
-    }
-
     /// Materializes the combine's identity element.
     pub(super) fn identity_value(
         &mut self,
@@ -1636,7 +1370,7 @@ const fn identity(combine: LoopCombine, ty: IrType) -> Option<IrConstant> {
 /// Both live in the `wf__par_` namespace [FORM-3] puts out of reach of every
 /// source IDENT, so a synthesized function can never collide with a declared
 /// one.
-fn splitter_symbol(name: &str) -> String {
+pub(super) fn splitter_symbol(name: &str) -> String {
     format!("_par_split_{name}")
 }
 

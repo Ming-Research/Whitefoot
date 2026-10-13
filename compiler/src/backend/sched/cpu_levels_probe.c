@@ -72,25 +72,6 @@ static int probe_idle_policy(const char *mode) {
     return 0;
 }
 
-static int probe_split_policy(int argc, char **argv) {
-    if (argc != 4) return 2;
-    const uint64_t spans[] = {0, 4096, 65536, UINT64_MAX};
-    for (unsigned i = 0; i < 4; ++i) {
-        uint64_t actual = wf__par_split_budget(spans[i], i == 3 ? UINT64_MAX : 219);
-        uint64_t expected = strtoull(argv[i], NULL, 10);
-        if (actual != expected) {
-            fprintf(stderr, "split budget row %u: actual=%llu expected=%llu\n", i,
-                    (unsigned long long)actual, (unsigned long long)expected);
-            return 1;
-        }
-    }
-    if (wf__sched_pool_running()) {
-        fputs("budget queries started a compute pool\n", stderr);
-        return 1;
-    }
-    return 0;
-}
-
 int main(int argc, char **argv) {
     wf_test_guard_start(60);
     const char *mode = argc > 1 ? argv[1] : "host";
@@ -98,7 +79,6 @@ int main(int argc, char **argv) {
     int result;
     if (!strcmp(mode, "wake")) result = wf_probe_wake(argc - 1, argv + 1);
     else if (!strcmp(mode, "budget")) result = wf_probe_recursion_budget(argc - 1, argv + 1);
-    else if (!strcmp(mode, "split")) result = probe_split_policy(argc - 2, argv + 2);
     else result = probe_idle_policy(mode);
     wf_test_guard_finish();
     return result;

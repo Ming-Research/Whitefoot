@@ -1128,7 +1128,10 @@ impl<'program> IrBuilder<'program> {
             if members.len() >= 2 {
                 let members: Vec<_> = members.into_iter().map(|(value, _)| value).collect();
                 claimed.extend(members.iter().copied());
-                overlaps.push(IrOverlap { members });
+                overlaps.push(IrOverlap {
+                    members,
+                    indexed: Vec::new(),
+                });
             }
         };
         let runs = permissions

@@ -22,8 +22,8 @@ use std::collections::HashMap;
 use super::{IrFunction, IrInstruction, IrOperation};
 
 /// The work a callee must reach to be offered, in the static summary's units:
-/// the runtime's default split work unit (`WF_PAR_SPLIT_WORK_UNIT` in
-/// `backend/sched/entry.c`), the price a range chunk must reach.
+/// the estimated work of one range driver slice (`SLICE_WORK` in
+/// `lowering/builder/demand.rs`).
 pub(super) const CALL_OFFER_WORK_UNIT: u64 = 150_000;
 
 /// Every function each function calls, a split counting its splitter and chunk.

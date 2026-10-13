@@ -73,8 +73,7 @@ use parallel::{
     HandedOut, LoopSplitSite, ParallelThunks, parallel_pool_query_declaration,
     parallel_pool_query_fallback, parallel_recursion_budget_declaration,
     parallel_recursion_budget_fallback, parallel_runtime_declarations, parallel_runtime_fallback,
-    parallel_split_budget_declaration, parallel_split_budget_fallback, sequential_clone_set,
-    sequential_clone_symbol,
+    sequential_clone_set, sequential_clone_symbol,
 };
 use resource_records::{
     emit_posix_resource_write, latched_resource_record_writer, resource_record_latch,
@@ -635,13 +634,6 @@ fn emit_module(
                 parallel_pool_query_declaration()?
             } else {
                 parallel_pool_query_fallback()?
-            });
-        }
-        if thunks.queries_split_budget() {
-            text.append(if windows {
-                parallel_split_budget_declaration()?
-            } else {
-                parallel_split_budget_fallback()?
             });
         }
         if thunks.queries_recursion_budget() {
@@ -1622,6 +1614,9 @@ struct FunctionEmitter<'program, 'state> {
     /// complete them.
     overlap_handed_out: HashSet<IrValueId>,
     overlap_join_sites: HashSet<IrValueId>,
+    /// The indexed families a handed-out range half privatizes when its lane
+    /// is granted, keyed by that member; see [`crate::IrOverlap`].
+    overlap_indexed: HashMap<IrValueId, Vec<crate::ir::IrIndexedReduction>>,
     /// Selected-target layouts of the exact `{ arguments..., result }`
     /// aggregates this world may place in runtime lane storage.
     ///
@@ -1757,6 +1752,16 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             .iter()
             .filter_map(crate::IrOverlap::join_site)
             .collect();
+        let overlap_indexed = overlaps
+            .iter()
+            .filter(|overlap| !overlap.indexed.is_empty())
+            .flat_map(|overlap| {
+                overlap
+                    .handed_out()
+                    .iter()
+                    .map(|member| (*member, overlap.indexed.clone()))
+            })
+            .collect();
         let storage =
             FunctionStoragePlan::build_in_world(program, function, sequential_clones.is_some())?;
         let result_slot = places::returned_storage_slot(function, &storage);
@@ -1794,6 +1799,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             parallel,
             overlap_handed_out,
             overlap_join_sites,
+            overlap_indexed,
             ordinary_lane_frames,
             handed_out: Vec::new(),
             sequential_clones,
@@ -2719,7 +2725,8 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 captures,
                 weight,
                 work,
-                indexed,
+                // The driver's overlap group carries these families.
+                indexed: _,
             } => self.emit_loop_split(
                 result,
                 ty,
@@ -2732,7 +2739,6 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                     captures,
                     weight: *weight,
                     work: work.as_ref(),
-                    indexed,
                 },
             ),
             IrOperation::Integer {
@@ -2873,7 +2879,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             }
             IrOperation::SliceFromRun { run } => self.emit_slice_from_run(result, ty, *run),
             IrOperation::SliceRange { slice, start, end } => {
-                self.emit_slice_range(result, ty, *slice, *start, *end, None)
+                self.emit_slice_range(result, ty, *slice, *start, *end)
             }
             IrOperation::IndexedBlocks { address } => {
                 self.emit_indexed_blocks(result, ty, *address)
@@ -2882,12 +2888,6 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             IrOperation::IndexedReference { original, roots } => {
                 self.emit_indexed_reference(result, *original, roots)
             }
-            IrOperation::IndexedRange {
-                slice,
-                start,
-                end,
-                private_type,
-            } => self.emit_slice_range(result, ty, *slice, *start, *end, Some(*private_type)),
             IrOperation::IndexedAddress {
                 slice,
                 offset,
