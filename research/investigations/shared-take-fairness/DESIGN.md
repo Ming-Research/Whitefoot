@@ -202,8 +202,10 @@ measured firn engine throughput at 1/7.5–1/47 of control with strict turns,
 and putting a spinner behind a grantee unable to run on its driver recreates
 the borrowing deadlock. Those are selection grounds, not a measurement of
 this spinner-ticket alternative. Option C was declined because a single
-arbiter has the widest interface and proof scope and is premature while the
-guard-fairness cost sources are still being separated. First-acquisition
+arbiter would replace the guard reservation's arbitration, which was measured
+and approved on its own, and would have to prove all three kinds of waiter
+together; claims beside it need one added rule, that a reservation never
+delays a claim. First-acquisition
 resumption arrived separately, as the guard-fairness base's first-group
 acquire (see the progress shapes above).
 
