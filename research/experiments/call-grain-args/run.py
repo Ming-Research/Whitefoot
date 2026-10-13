@@ -353,13 +353,14 @@ def one_thread_differences(clones, change_vs_main):
                 continue
             twin = identity.CLONE + name[3:]
             counterpart = twin if twin in delta else name
-            if base_pairs.get(name, "identical") != "identical" and verdict != "missing" \
+            required = workload == "pair" and name == "wf_workload"
+            if not required and base_pairs.get(name, "identical") != "identical" and verdict != "missing" \
                     and delta.get(counterpart) == "identical":
                 carried.append(f"{workload}/{name} ({verdict} on main and in the change, the change's clone identical to main's)")
             else:
                 new.append(f"{workload}/{name}: {verdict} in the change, main {base_pairs.get(name, 'absent')}, "
                            f"change vs main clone {delta.get(counterpart, 'absent')}")
-        if workload == "pair" and entry["pairs"].get("wf_workload") != "identical":
+        if workload == "pair" and "wf_workload" not in entry["pairs"]:
             new.append(f"pair/wf_workload: required and {entry['pairs'].get('wf_workload', 'absent')}")
     return new, carried
 

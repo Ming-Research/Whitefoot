@@ -184,6 +184,12 @@ class Normalization(unittest.TestCase):
         self.assertEqual(len(run.one_thread_differences(clones("different", "different"), moved)[0]), 1)
         self.assertEqual(len(run.one_thread_differences(clones("different", "missing"), same)[0]), 1)
         self.assertEqual(len(run.one_thread_differences(clones("identical", "identical", "different"), same)[0]), 1)
+        both = clones("identical", "identical", "different")
+        both["base"]["pair"]["pairs"]["wf_workload"] = "different"
+        self.assertEqual(len(run.one_thread_differences(both, same)[0]), 1)
+        absent = clones("identical", "identical")
+        del absent["chg"]["pair"]["pairs"]["wf_workload"]
+        self.assertEqual(len(run.one_thread_differences(absent, same)[0]), 1)
 
 
 class Program(unittest.TestCase):
