@@ -384,7 +384,7 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
     ),
     (
         "prelude/shared_shards_new.wf",
-        PreludeSource::Function,
+        PreludeSource::FunctionCallingActuals,
         r#"fn shared_shards_new<T: drop, fn make() -> made: T pure>() -> result: Shared<Shards<T>> pure;
 "#,
     ),

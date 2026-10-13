@@ -187,11 +187,14 @@ closes.
 
 ## Running the C model
 
-The C model (W5p, W5pN, W7, W7t, W7rd; DESIGN.md section 8.6) runs through
+The C model (W5p, W5pN, W7, W7t, W7rd; DESIGN.md section 8.6) ran through
 the temporary dispatch-only workflow `.github/workflows/tmp-shared-counters.yml`,
-which replaced the one above on the work branch and needs no compiler release:
+which replaced the one above and needs no compiler release. The workflow was
+removed after its results were recorded. To repeat it, restore the C-model
+version from commit `66b8aa5ea` on a work branch, push, and dispatch it there:
 
 ```
+git show 66b8aa5ea:.github/workflows/tmp-shared-counters.yml > .github/workflows/tmp-shared-counters.yml
 gh workflow run tmp-shared-counters.yml --ref <branch> -f mode=smoke
 gh workflow run tmp-shared-counters.yml --ref <branch> -f mode=pilot
 gh workflow run tmp-shared-counters.yml --ref <branch> -f mode=main

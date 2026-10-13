@@ -975,6 +975,20 @@ fn main() -> status: std::process::ExitStatus pure {
             .find(|function| function.name == "shared_shards_new")
             .expect("the forwarded maker selects a constructor instance");
         assert_eq!(constructor.function_actuals, vec![maker.id]);
+        assert_eq!(constructor.supplied_body_calls(), &[maker.id]);
+        assert!(maker.supplied_body_calls().is_empty());
+        // Supplied-body edges are record metadata, independent of names.
+        let mut renamed = constructor.clone();
+        renamed.name = "another_supplied_body".to_owned();
+        assert_eq!(renamed.supplied_body_calls(), &[maker.id]);
+        renamed.calls_function_actuals = false;
+        assert!(renamed.supplied_body_calls().is_empty());
+        renamed.calls_function_actuals = true;
+        renamed.formal_hypothesis = true;
+        assert!(renamed.supplied_body_calls().is_empty());
+        renamed.formal_hypothesis = false;
+        renamed.body = Some(Vec::new());
+        assert!(renamed.supplied_body_calls().is_empty());
         assert!(!maker.formal_hypothesis);
     });
 }

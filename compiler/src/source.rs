@@ -563,6 +563,14 @@ impl fmt::Debug for SourceFile {
 pub(crate) enum PreludeSource {
     Opaque,
     Function,
+    /// A supplied function body calls every function-kind actual.
+    FunctionCallingActuals,
+}
+
+impl PreludeSource {
+    pub(crate) const fn is_function(self) -> bool {
+        matches!(self, Self::Function | Self::FunctionCallingActuals)
+    }
 }
 
 impl SourceFile {

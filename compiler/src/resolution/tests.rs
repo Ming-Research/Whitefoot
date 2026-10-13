@@ -2976,7 +2976,7 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
     assert_eq!(first[248].1, "release");
     assert_eq!(first[249].1, "T");
     assert_eq!(first[250].1, "value");
-    // PRE-1 v0.141: 58 opaque records + 27 enum records + four built-in
+    // PRE-1 v0.143: 58 opaque records + 27 enum records + four built-in
     // records + 162 function/parameter/range records = 251. The shards
     // constructor contributes its function, T and make formal; any_shard
     // contributes its function alone. Count every owner-local declaration.

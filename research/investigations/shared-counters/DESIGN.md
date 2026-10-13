@@ -3,9 +3,9 @@
 ## Status
 
 A design study, then the measurements the owner asked for before a language
-change, then a drafted change. Sections 1 to 8 were written before any
+change, then the approved sharded-state change. Sections 1 to 8 were written before any
 implementation or measurement and check the active specification
-`spec/kernel-spec.md` (title v0.134) and the compiler and runtime at
+at the time and the compiler and runtime at
 Whitefoot `4ad4f5786` (main); line numbers there cite that revision.
 
 The owner chose (board card on what Whitefoot should offer for a count many
@@ -39,19 +39,17 @@ maximum, across two runs, so about 5% within the twins' spread there
 ([section 9.4](#94-firn-without-reading-memory-usage)).
 
 Neither the writer pattern nor single-step cells is selected, so the ruling's
-third outcome applies: the sharded state. Its specification change is
-drafted on the work branch as v0.136 over main's v0.135
-([section 10](#10-specification-changes)); whichever of this branch and
-another that also takes v0.136 merges second re-versions. Its design-tree
-decisions are written as proposals ([section 11](#11-design-tree-changes)),
-and its implementation is planned, not done
-([section 12](#12-implementation-plan)). All of it awaits the owner's
-approval card. The drafted conformance cases, and the two compiler tests that
-compare the prelude records and the measure table with the specification,
-fail until the compiler implements the change. The registered comparison
+third outcome applies: the sharded state. Its specification and design
+decisions are owner-approved; the specification change is recorded as
+v0.143 in `spec/log.md` ([section 10](#10-specification-changes)). The
+checker, lowering and runtime are implemented on this branch
+([section 12](#12-implementation-plan)); the conformance cases reached their
+verdicts and unit tests passed in CI at `8cf048252`. The lean shard path,
+with no handle-count write on a shard statement, waits for PR #409 (skip
+handle count). The 14900K acceptance measurement has not run. The registered comparison
 that could still reject the change after its implementation, the sharded
 state at most 1.25 times the array's rate at every CPU count (R2), waits for
-that implementation. The criteria the implementation must meet, and a C model
+the lean path and its acceptance measurement. The criteria the implementation must meet, and a C model
 that gates it, were registered on 2026-10-12 before any implementation or
 C-model measurement, replacing the earlier prediction P1
 ([section 8.5](#85-criteria-for-the-implementation-registered-2026-10-12)),
@@ -62,7 +60,7 @@ Firn then asked that each driver's shard can own a buffer or a queue and that
 one statement can swap out every shard's content (Firn's analysis of writes
 without one exclusive hold on its metadata object, gap G1: a write command
 appends to its driver's pending AOF buffer beside the key it holds, and the
-disk writer swaps every buffer for a fresh one every 10 ms). The draft folds
+disk writer swaps every buffer for a fresh one every 10 ms). The approved change folds
 that need into the same design rather than a second kind of state: the
 shard type needs only `drop`, and the constructor calls a maker once per
 shard instead of copying one value
@@ -1499,17 +1497,16 @@ and its implementation plan section 12. The maximum needs no language change
 
 ## 10. Specification changes
 
-For the recommendation (c), drafted on the work branch as specification
-v0.136 over main's v0.135 (archived byte for byte as
-`spec/kernel-spec-v0.135.md`). Every change awaits the owner's approval card;
-no `spec/log.md` entry exists yet. The surface is section 5.4's with one name
+The owner-approved sharded-state change (c) is recorded as specification
+v0.143 in `spec/log.md`; the merged base is archived byte for byte as
+`spec/kernel-spec-v0.142.md`. The surface is section 5.4's with one name
 changed, the token being called the *shard selector* and a target naming one
 shard a *shard target*, and with the copy bound and copied argument replaced
 by a `drop` bound and a maker ([owned shard values](#owned-shard-values)).
 
 ### 10.1 Rule by rule
 
-| Rule | Before (v0.135) | After (v0.136) |
+| Rule | Before the sharded-state amendment | Approved sharded-state amendment |
 |---|---|---|
 | TYPE-2 | The functions of SHARE-1 form the shared and frozen handles, maps and key sets. | They also form shards states and the shard selector. |
 | TYPE-9 | Homes table: storage forms in a `Box`; a map in a shared object's state or a `swap`'s exchange. | Adds `Shards<T>`, whose one home is a shared object's state, not a `swap`'s exchange; the consequence sentence says a `swap` of two whole shards targets is refused. |
@@ -1597,10 +1594,9 @@ and followed as any other.
 
 Twenty cases in `tests/conformance/cases/`, their manifest lines after the
 existing shared-object cases. Each states the verdict the specification
-requires; every one fails until the compiler implements the change, and so do
-the two compiler unit tests that compare the compiler's prelude records and
-measure table with the specification's text. That is expected on this draft
-branch; no verdict was chosen to pass.
+requires; all reached those verdicts in CI at `8cf048252`, whose unit tests
+also passed, including the prelude-record and measure-table comparisons
+with the specification's text. No verdict was chosen to pass.
 
 | Case | Verdict | What it shows |
 |---|---|---|
@@ -1634,9 +1630,13 @@ is the same for every number of shards and every selection. It does not
 observe a leak or a double free; the runtime test under AddressSanitizer in
 section 12 does.
 
-The program test that section 5.4 names (16 contexts counting, an exact whole
-read after the joins) belongs in `tests/programs/` with the implementation,
-since it exercises the runtime's shard selection rather than a rule.
+The program test that section 5.4 names is `tests/programs/shared_shards.wf`:
+16 contexts each increment two fields together 20 000 times, while a reader
+checks 10 000 whole snapshots with separate passes over the two fields.
+Both final sums after the joins must be 320 000. Its program-test adapter
+builds once and runs on one driver and on four, three times each. It exercises
+the runtime's shard selection and exclusion rather than a source rule;
+this added coverage awaits CI.
 
 For (b): no specification change (SHARE-3's last sentence). For (a), if ever
 adopted: PRE-1 declarations of `SharedCell<T: Int>` and its ten functions, a
@@ -1647,7 +1647,7 @@ evidence against it for counts.
 
 ## 11. Design-tree changes
 
-Proposed on the work branch, each awaiting the owner's approval:
+Owner-approved on the work branch, as recorded in `design/log.md`:
 
 - New node `design/language/waiting/shared-objects/sharded-states.md`: the
   shards state and its two target forms; that the number of shards and the
@@ -1687,9 +1687,12 @@ Proposed on the work branch, each awaiting the owner's approval:
 
 ## 12. Implementation plan
 
-Not implemented on this branch. The order follows the gate: the checker first,
-so the reject cases pass, then lowering and the runtime, so the run cases
-pass, then the measurement.
+The checker, lowering and runtime are implemented on this branch. The
+conformance cases reached their verdicts and unit tests passed in CI at
+`8cf048252`. The end-to-end contention program completes the program-test
+coverage below. The lean shard path still waits for PR #409 (skip handle
+count), and the 14900K acceptance measurement has not run. The bullets
+below describe the implementation obligations, including that prerequisite.
 
 **Gate before any of it.** The C model of section 8.5 (W7) runs first, under
 the procedure and decision rule of section 8.6; below 0.5 × W5p the plan
@@ -1700,8 +1703,8 @@ every statement through a value handle counts the handle on the header
 (section 2.2; W3 shows it, section 9.2), which would put one contended line
 back on every update. The board item "an atomic statement through a value
 handle does not change the handle count" (gran-skip-handle-count: skip the
-count when the block neither moves nor writes the handle place) is completed
-before this implementation; the lean shard path of section 8.5 depends on it.
+count when the block neither moves nor writes the handle place) is PR #409,
+not yet merged here; the lean shard path of section 8.5 depends on it.
 W4r in section 8.2 separates the two if it is not.
 
 **Checker.**
@@ -1748,8 +1751,8 @@ W4r in section 8.2 separates the two if it is not.
 - A shard target lowers to the address of the running thread's shard, its
   lock taken and released by a fast path inlined in the generated code, with
   the runtime called only when a whole target holds the lock; the binding is
-  that address. The update changes neither the handle count nor the holder
-  count (section 8.5). The statement's lock-order group is the object's type,
+  that address. It changes no holder count; omitting the handle-count write
+  on a shard statement waits for PR #409 (section 8.5). The statement's lock-order group is the object's type,
   as for any target (state-locks, second decision).
 - A whole target over a shards state takes every shard's lock in index order
   and binds the object's shard array; `all^.len` reads the header word and
@@ -1817,7 +1820,7 @@ already holds wait; ones on shards it has not reached proceed.
 **Validation.**
 
 - The twenty conformance cases of section 10.3, the compiler record and
-  measure tests, and the program test of section 10.3.
+  measure tests, and `tests/programs/shared_shards.wf` of section 10.3.
 - A runtime test of the shard lock and the whole hold under ThreadSanitizer,
   as the concurrent map's test runs, with a whole reader racing shard
   writers and an exact total checked after the joins, and the same test
@@ -1942,13 +1945,12 @@ from the thresholds, 2.0 to 9.7 times that noise, not on the registered rule
 (section 9.6). Measured by Firn and quoted (section 9.4): Firn's GET with the
 lock-free heap reading at 0.950 of the build without a peak, across two runs.
 
-Unverified: every cost estimate for (c) in sections 5, 6 and 12, since no
-sharded state exists to measure (W4); R2's final reading, which needs W4;
-B2's LLVM-model correctness; that the specification draft of section 10 is
-complete and consistent, which was checked only by reading it against the
-rules it touches and which the approval card and the implementation will
-test; that the conformance cases compile and reach their verdicts, which
-needs the implementation, each negative case having been read against the
-rules that could refuse it first; the reader's latency for a whole target; the shard
+The specification amendment is owner-approved and recorded as v0.143 in
+`spec/log.md`. The checker, lowering and runtime are implemented, and the
+conformance cases reached their verdicts in CI at `8cf048252`.
+
+Unverified: every cost estimate for (c) in sections 5, 6 and 12, since the
+14900K acceptance measurement has not run (W4); R2's final reading, which needs W4;
+B2's LLVM-model correctness; the reader's latency for a whole target; the shard
 selection's correctness under a driver handoff to a spare thread (argued from
 distinct thread numbers giving each thread its own shard, section 3.6, not tested); that the lean shard path reaches the criteria of section 8.5, which the C model W7 and then W4 will show; that owned shard values are released exactly once at the object's end and that Firn's pending buffers scale as its acceptance needs, which the AddressSanitizer test and Firn's run of section 12 will show.

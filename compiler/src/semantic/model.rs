@@ -3150,6 +3150,9 @@ pub(crate) struct CheckedFunction {
     /// [FN-9] forms a caller's component as though an instance of another
     /// module's generic callable calls every one of them.
     pub(crate) function_actuals: Vec<FunctionId>,
+    /// The PRE-1 record supplies a body that calls every function-kind
+    /// actual. Source bodies expose their calls through their statements.
+    pub(crate) calls_function_actuals: bool,
     /// Formal regions in the same declaration order `UserCall::goal_regions`
     /// uses. Retained for post-acceptance physical release specialization;
     /// semantic identity remains the canonical [`FunctionId`].
@@ -3220,7 +3223,7 @@ impl CheckedFunction {
     /// ordinary edge lets allocation, entry closure and proof scheduling
     /// follow the actual even though the constructor has no source body.
     pub(crate) fn supplied_body_calls(&self) -> &[FunctionId] {
-        if self.body.is_none() && !self.formal_hypothesis && self.name == "shared_shards_new" {
+        if self.body.is_none() && !self.formal_hypothesis && self.calls_function_actuals {
             &self.function_actuals
         } else {
             &[]

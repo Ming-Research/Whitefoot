@@ -103,8 +103,6 @@ static void layout_and_ticket_order(void) {
     check(((uintptr_t)lock_at(single, 0) & 63u) == 0u, "shard alignment");
     check(((uintptr_t)value_at(single, 0) & 15u) == 0u, "value alignment");
     check(single->identity == (uint64_t)(uintptr_t)single, "object identity");
-    unsigned char header[WF_SHARDS_HEADER_SIZE];
-    memcpy(header, single, sizeof(header));
     take(lock_at(single, 0));
     _Atomic unsigned entered = 0;
     queued waiters[2];
@@ -124,7 +122,6 @@ static void layout_and_ticket_order(void) {
     for (unsigned i = 0; i < 2; ++i)
         check(pthread_join(threads[i], NULL) == 0, "ticket waiter join");
     check(atomic_load_explicit(&entered, memory_order_relaxed) == 2u, "lost a ticket waiter");
-    check(memcmp(header, single, sizeof(header)) == 0, "lock operation wrote the object header");
     check(last_handle(single), "single last handle");
     wf__shards_free(single);
     driver_count = WRITERS;

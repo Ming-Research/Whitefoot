@@ -437,7 +437,7 @@ impl<'classified> Parser<'classified> {
         tokens: &[ClassifiedToken],
         declaration: Option<crate::source::PreludeSource>,
     ) -> Result<(), Stop> {
-        if declaration == Some(crate::source::PreludeSource::Function) {
+        if declaration.is_some_and(crate::source::PreludeSource::is_function) {
             self.push_frame(Production::Item, false)?;
             self.push_task(Task::Finish(Production::Item))?;
             self.push_task(Task::Match(TerminalPredicate::Fixed(

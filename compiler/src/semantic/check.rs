@@ -2239,6 +2239,23 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         } else {
             None
         };
+        let source = self
+            .types
+            .declarations
+            .tree
+            .coordinate(signature.node)?
+            .source();
+        let calls_function_actuals = self
+            .types
+            .declarations
+            .resolved
+            .syntax()
+            .classified_bundle()
+            .source_bundle()
+            .file(source)
+            .is_some_and(|file| {
+                file.prelude() == Some(crate::source::PreludeSource::FunctionCallingActuals)
+            });
         let function = CheckedFunction {
             prelude_element,
             formal_hypothesis: signature.formal_parameter.is_some(),
@@ -2255,6 +2272,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             name: signature.name.clone(),
             symbol: signature.symbol.clone(),
             function_actuals: self.types.function_actual_ids(&signature.substitution)?,
+            calls_function_actuals,
             region_parameters: signature.region_parameters.clone(),
             parameters,
             result_mode: signature.result_mode,

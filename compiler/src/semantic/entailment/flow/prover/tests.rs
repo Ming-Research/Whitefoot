@@ -36,6 +36,7 @@ fn with_integer_parameters(types: &[IntegerType], check: impl FnOnce(&mut Analyz
         name: String::new(),
         symbol: String::new(),
         function_actuals: Vec::new(),
+        calls_function_actuals: false,
         region_parameters: Vec::new(),
         parameters: types
             .iter()
