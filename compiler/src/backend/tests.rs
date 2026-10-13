@@ -72,6 +72,7 @@ mod reinterpret;
 mod requires;
 mod resource_enums;
 mod result_abi;
+mod result_source;
 mod shared_maps;
 mod stack_ledger;
 mod storage_alias;

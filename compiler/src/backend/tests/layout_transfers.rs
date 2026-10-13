@@ -531,8 +531,13 @@ pub(super) fn transfer_region(body: &str) -> (&str, &str, &str) {
 #[test]
 fn struct_and_union_transfers_respect_leaf_boundaries() {
     let module = emit(SOURCE);
-    assert!(module.contains(&format!("{} = type {{ i32, [12 x i8], [0 x ", nominal_type("Value"))),
-        "the raw carrier merges the four-byte prefix without changing its sixteen-byte extent: {module}");
+    assert!(
+        module.contains(&format!(
+            "{} = type {{ i32, [12 x i8], [0 x ",
+            nominal_type("Value")
+        )),
+        "the raw carrier merges the four-byte prefix without changing its sixteen-byte extent: {module}"
+    );
     let frame = emitted_function(&module, "make_frame_into");
     assert_typed_transfer(
         frame,
@@ -554,10 +559,7 @@ fn struct_and_union_transfers_respect_leaf_boundaries() {
     let value = emitted_function(&module, "make_value_into");
     // Every view leaves bytes 1..4 vacant. Tag and common padding share
     // one four-byte prefix, without crossing the u32 boundary at 4.
-    assert_typed_transfer(
-        value,
-        &[(0, "i32"), (4, "i32"), (8, "i64")],
-    );
+    assert_typed_transfer(value, &[(0, "i32"), (4, "i32"), (8, "i64")]);
     assert!(
         !value.contains("@llvm.memmove") && !value.contains("@llvm.memcpy"),
         "{value}"
@@ -572,11 +574,24 @@ fn struct_and_union_transfers_respect_leaf_boundaries() {
     assert_typed_transfer(byte_overlay, &[(0, "i8"), (1, "i8"), (2, "i8")]);
     let byte_value = emitted_function(&module, "copy_byte_value");
     assert_typed_transfer(byte_value, &[(0, "i8"), (1, "i8")]);
-    assert!(module.contains(&format!("{} = type {{ i8, [1 x i8], [0 x ", nominal_type("ByteValue"))),
-        "a byte-aligned union remains exactly two bytes: {module}");
-    assert_typed_transfer(emitted_function(&module, "copy_half_value"), &[(0, "i16"), (2, "i16")]);
-    assert!(module.contains(&format!("{} = type {{ i16, [2 x i8], [0 x ", nominal_type("HalfValue"))),
-        "one common padding byte gives a two-byte prefix in a four-byte union: {module}");
+    assert!(
+        module.contains(&format!(
+            "{} = type {{ i8, [1 x i8], [0 x ",
+            nominal_type("ByteValue")
+        )),
+        "a byte-aligned union remains exactly two bytes: {module}"
+    );
+    assert_typed_transfer(
+        emitted_function(&module, "copy_half_value"),
+        &[(0, "i16"), (2, "i16")],
+    );
+    assert!(
+        module.contains(&format!(
+            "{} = type {{ i16, [2 x i8], [0 x ",
+            nominal_type("HalfValue")
+        )),
+        "one common padding byte gives a two-byte prefix in a four-byte union: {module}"
+    );
     // Inclusive limit: a 128-byte/16-leaf scalar record still expands. The
     // 17-byte ManyLeaves fixture independently detects a missing leaf bound;
     // LargeScalars exceeds both limits (current scalar leaves are <=8 bytes).
@@ -693,7 +708,7 @@ fn incoming_and_external_transfers_keep_granules_across_call_boundaries() {
 }
 
 #[test]
-fn heap_union_snapshot_and_unchanged_call_result_use_the_public_destination() {
+fn heap_union_snapshot_and_forwarded_call_result_read_at_their_source() {
     let source = br#"enum Snapshot {
   Number(n: u64);
   Function(id: u64);
@@ -756,25 +771,42 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "#;
     let module = emit(source);
+    // The public entry keeps the destination ABI: it calls the source entry
+    // and transfers from the address it returns, with the snapshot's own
+    // granules, unless the entry built the result in the destination.
     let pick = emitted_function(&module, "pick");
+    assert!(
+        pick.contains("call ptr @wf_pick.source(ptr %wf.result,"),
+        "{pick}"
+    );
     assert_typed_transfer(pick, &[(0, "i32"), (4, "i32"), (8, "i64")]);
     assert_eq!(
         pick.matches("  ; layout-bounded transfer from ").count(),
         1,
         "{pick}"
     );
-    assert_eq!(
-        transfer_region(pick).2,
-        "%wf.result",
-        "the unavoidable heap snapshot writes directly into the result: {pick}"
-    );
+    assert_eq!(transfer_region(pick).2, "%wf.result", "{pick}");
     assert!(
         !pick.contains("@llvm.memmove") && !pick.contains("@llvm.memcpy"),
         "{pick}"
     );
     assert!(!pick.contains("alloca"), "{pick}");
-    let relay = emitted_function(&module, "relay");
-    assert!(relay.contains("@wf_pick(ptr %wf.result,"), "{relay}");
+    // The source entry copies nothing: the heap element's address is the
+    // result's source (compiler/storage-placement).
+    let pick_source = emitted_function(&module, "pick.source");
+    assert!(
+        !pick_source.contains("; layout-bounded transfer ")
+            && !pick_source.contains("@llvm.memmove")
+            && !pick_source.contains("ret ptr %wf.result"),
+        "{pick_source}"
+    );
+    // relay hands its own destination to pick's source entry and returns the
+    // address that entry returned, so neither entry copies.
+    let relay = emitted_function(&module, "relay.source");
+    assert!(
+        relay.contains("call ptr @wf_pick.source(ptr %wf.result,"),
+        "{relay}"
+    );
     assert!(!relay.contains("alloca"), "{relay}");
     assert!(!relay.contains("@llvm.memmove"), "{relay}");
     assert!(!relay.contains("; layout-bounded transfer "), "{relay}");
@@ -916,10 +948,20 @@ fn main() -> status: std::process::ExitStatus pure {
 #[test]
 fn union_constructors_store_only_the_common_tag_and_padding_prefix() {
     let module = emit(SOURCE);
-    assert!(module.contains(&format!("{} = type {{ i8, [15 x i8], [0 x ", nominal_type("MixedPrefix"))),
-        "another variant's live byte limits even the wide variant's prefix: {module}");
-    assert!(module.contains(&format!("{} = type {{ i8, i8, i8 }}", nominal_type("Product"))),
-        "register-returned products retain the count-sized tag leaf: {module}");
+    assert!(
+        module.contains(&format!(
+            "{} = type {{ i8, [15 x i8], [0 x ",
+            nominal_type("MixedPrefix")
+        )),
+        "another variant's live byte limits even the wide variant's prefix: {module}"
+    );
+    assert!(
+        module.contains(&format!(
+            "{} = type {{ i8, i8, i8 }}",
+            nominal_type("Product")
+        )),
+        "register-returned products retain the count-sized tag leaf: {module}"
+    );
     for (name, ty, width, tag) in [
         ("nil_value", "Value", 32, 0),
         ("handle_value", "Value", 32, 3),
@@ -930,23 +972,38 @@ fn union_constructors_store_only_the_common_tag_and_padding_prefix() {
     ] {
         let body = emitted_body(&module, name);
         let ty = nominal_type(ty);
-        assert!(body.contains(&format!("store {ty} zeroinitializer, ptr %wf.result")),
-            "inactive payload remains initialized: {body}");
-        let address = body.lines().find_map(|line| {
-            let (address, gep) = line.trim().split_once(" = ")?;
-            (gep == format!("getelementptr inbounds {ty}, ptr %wf.result, i32 0, i32 0"))
-                .then_some(address)
-        }).expect("the tag prefix starts at field zero of the destination");
-        assert!(body.lines().any(|line| line.trim() == format!("store i{width} {tag}, ptr {address}")),
-            "tag and common padding use one store with the independently expected width: {body}");
+        assert!(
+            body.contains(&format!("store {ty} zeroinitializer, ptr %wf.result")),
+            "inactive payload remains initialized: {body}"
+        );
+        let address = body
+            .lines()
+            .find_map(|line| {
+                let (address, gep) = line.trim().split_once(" = ")?;
+                (gep == format!("getelementptr inbounds {ty}, ptr %wf.result, i32 0, i32 0"))
+                    .then_some(address)
+            })
+            .expect("the tag prefix starts at field zero of the destination");
+        assert!(
+            body.lines()
+                .any(|line| line.trim() == format!("store i{width} {tag}, ptr {address}")),
+            "tag and common padding use one store with the independently expected width: {body}"
+        );
         for other in [8, 16, 24, 32].into_iter().filter(|other| *other != width) {
-            assert!(!body.lines().any(|line| line.trim().starts_with(&format!("store i{other} "))
-                && line.ends_with(&format!(", ptr {address}"))),
-                "the prefix is not split or widened across an occupied payload: {body}");
+            assert!(
+                !body
+                    .lines()
+                    .any(|line| line.trim().starts_with(&format!("store i{other} "))
+                        && line.ends_with(&format!(", ptr {address}"))),
+                "the prefix is not split or widened across an occupied payload: {body}"
+            );
         }
     }
     let bits = emitted_function(&module, "bit_choice");
-    assert!(bits.contains("or i1 0, 1"), "a two-state tag-only value remains one bit: {bits}");
+    assert!(
+        bits.contains("or i1 0, 1"),
+        "a two-state tag-only value remains one bit: {bits}"
+    );
     for (name, nominal, variant, field, width) in [
         ("handle_value", "Value", Some(3), 1, 32),
         ("byte_value", "ByteValue", Some(2), 1, 8),
@@ -959,14 +1016,22 @@ fn union_constructors_store_only_the_common_tag_and_padding_prefix() {
             Some(tag) => format!("{}.v{tag}", nominal_type(nominal)),
             None => nominal_type(nominal),
         };
-        let address = body.lines().find_map(|line| {
-            let (address, gep) = line.trim().split_once(" = ")?;
-            (gep == format!("getelementptr inbounds {view}, ptr %wf.result, i32 0, i32 {field}"))
+        let address = body
+            .lines()
+            .find_map(|line| {
+                let (address, gep) = line.trim().split_once(" = ")?;
+                (gep == format!(
+                    "getelementptr inbounds {view}, ptr %wf.result, i32 0, i32 {field}"
+                ))
                 .then_some(address)
-        }).expect("the selected payload has its declared field address");
-        assert!(body.lines().any(|line| line.trim().starts_with(&format!("store i{width} "))
-            && line.ends_with(&format!(", ptr {address}"))),
-            "prefix transport preserves each selected payload's own typed store: {body}");
+            })
+            .expect("the selected payload has its declared field address");
+        assert!(
+            body.lines()
+                .any(|line| line.trim().starts_with(&format!("store i{width} "))
+                    && line.ends_with(&format!(", ptr {address}"))),
+            "prefix transport preserves each selected payload's own typed store: {body}"
+        );
     }
     for variant in 0..5 {
         let fields = match variant {
@@ -974,8 +1039,13 @@ fn union_constructors_store_only_the_common_tag_and_padding_prefix() {
             1 => "double",
             _ => "i32",
         };
-        assert!(module.contains(&format!("{}.v{variant} = type {{ i8, {fields} }}", nominal_type("Value"))),
-            "variant views retain their count-sized tag: {module}");
+        assert!(
+            module.contains(&format!(
+                "{}.v{variant} = type {{ i8, {fields} }}",
+                nominal_type("Value")
+            )),
+            "variant views retain their count-sized tag: {module}"
+        );
     }
 }
 

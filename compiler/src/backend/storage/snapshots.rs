@@ -22,15 +22,15 @@ pub(in crate::backend) struct IncomingSnapshots {
     pub(in crate::backend) backing: BTreeMap<Point, BTreeMap<usize, usize>>,
 }
 
-type MaterializationSites = BTreeMap<(usize, usize), BTreeSet<usize>>;
+pub(super) type MaterializationSites = BTreeMap<(usize, usize), BTreeSet<usize>>;
 
-struct SnapshotFacts<'a> {
+pub(super) struct SnapshotFacts<'a> {
     program: &'a IrProgram,
     function: &'a IrFunction,
     origins: &'a [Option<usize>],
     definitions: Vec<Option<&'a IrOperation>>,
     /// Checked source reference roots, and fresh local allocation identities.
-    roots: Vec<Option<usize>>,
+    pub(super) roots: Vec<Option<usize>>,
     /// Callee plans are deliberately built without snapshot selection, so
     /// recursion cannot recursively invoke this analysis.
     immutable: BTreeMap<u32, BTreeSet<usize>>,
@@ -359,7 +359,7 @@ fn incoming_capture_sites(
 }
 
 impl<'a> SnapshotFacts<'a> {
-    fn new(
+    pub(super) fn new(
         program: &'a IrProgram,
         function: &'a IrFunction,
         origins: &'a [Option<usize>],
@@ -581,7 +581,7 @@ impl<'a> SnapshotFacts<'a> {
     /// An ineligible observation gets private backing just for that operation.
     /// Exposed or mixed-origin storage was excluded by holds_origin: letting an
     /// address escape here would require tracking later mutations of the copy.
-    fn materialization_sites(
+    pub(super) fn materialization_sites(
         &mut self,
         graph: &FlowGraph,
         parts: &[Option<usize>],
@@ -681,7 +681,7 @@ impl<'a> SnapshotFacts<'a> {
     /// mutation after the last use is harmless; one on ANY path to a use is
     /// not. Re-executing the Load starts a new interval (old carries were
     /// excluded above). This finite walk also covers loops and cleanup edges.
-    fn source_survives(
+    pub(super) fn source_survives(
         &self,
         graph: &FlowGraph,
         load: (usize, usize),
@@ -739,11 +739,58 @@ impl<'a> SnapshotFacts<'a> {
         Ok(true)
     }
 
-    fn may_alias(&self, value: IrValueId, root: Option<usize>) -> bool {
+    /// Whether storage under `root` stays unchanged and valid from just after
+    /// `start` until the activation leaves through the `Return` ending block
+    /// `exit`, that return's drops included: the caller of a source entry
+    /// reads the returned address after the callee's cleanup. Re-executing
+    /// `start` begins a new interval, as in [`Self::source_survives`].
+    pub(super) fn stable_to_return(
+        &self,
+        graph: &FlowGraph,
+        start: (usize, usize),
+        root: Option<usize>,
+        exit: usize,
+    ) -> Result<bool, BackendFailure> {
+        let mut pending = vec![(start.0, start.1 + 1, false)];
+        let mut seen = BTreeSet::new();
+        while let Some((block, at, dirty)) = pending.pop() {
+            if (block, at) == start || !seen.insert((block, at, dirty)) {
+                continue;
+            }
+            let body = &self.function.blocks()[block];
+            if let Some(instruction) = body.instructions().get(at) {
+                let dirty = dirty || self.invalidates(instruction, root)?;
+                pending.push((block, at + 1, dirty));
+                continue;
+            }
+            let drops = match body.terminator() {
+                IrTerminator::Jump { drops, .. } | IrTerminator::Return { drops, .. } => {
+                    drops.as_slice()
+                }
+                _ => &[],
+            };
+            let dirty = dirty
+                || drops
+                    .iter()
+                    .any(|drop| self.may_alias(drop.operand(), root));
+            if block == exit && dirty {
+                return Ok(false);
+            }
+            pending.extend(
+                graph.blocks[block]
+                    .successors
+                    .iter()
+                    .map(|next| (*next, 0, dirty)),
+            );
+        }
+        Ok(true)
+    }
+
+    pub(super) fn may_alias(&self, value: IrValueId, root: Option<usize>) -> bool {
         root.is_none_or(|root| self.roots[index(value)].is_none_or(|other| other == root))
     }
 
-    fn invalidates(
+    pub(super) fn invalidates(
         &self,
         instruction: &IrInstruction,
         root: Option<usize>,

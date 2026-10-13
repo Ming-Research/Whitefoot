@@ -6,6 +6,7 @@
 //! the bridge between those two representations and the internal call ABI.
 
 use super::*;
+use crate::backend::storage::ValueSource;
 
 /// [REF-1, PRE-1, MSR-1, STOR-7] immutable target backing for type-fixed
 /// readonly fields, deduplicated by value in each emitted module.
@@ -222,6 +223,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                     .slot(result)
                     .and_then(|slot| self.storage.read_through(slot))
                     .is_none()
+                    && self.storage.value_source(result).is_none()
                 {
                     self.load_place_result(result, ty, &self.value_name(*address))?;
                 }
@@ -724,10 +726,12 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             // The storage plan proved every incoming value is the original
             // argument's or Load's unchanged contents. The selected source
             // already holds those bytes, even if this edge has another slot.
-            if self.storage.slot(*parameter).is_some_and(|slot| {
-                self.incoming_places.contains_key(&slot)
-                    || self.storage.read_through(slot).is_some()
-            }) {
+            if self.storage.value_source(*parameter).is_some()
+                || self.storage.slot(*parameter).is_some_and(|slot| {
+                    self.incoming_places.contains_key(&slot)
+                        || self.storage.read_through(slot).is_some()
+                })
+            {
                 continue;
             }
             if self.storage.slot(*parameter).is_some()
@@ -968,7 +972,21 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         self.entry_slot(FunctionSlot::Address(value))
     }
 
+    /// Where a value's bytes are read: its call's returned source address for
+    /// a call result read at its source, the snapshot's own address for a Load
+    /// a source entry returns (compiler/storage-placement), otherwise its
+    /// storage.
     pub(super) fn value_place(&mut self, value: IrValueId) -> Result<String, BackendFailure> {
+        match self.storage.value_source(value) {
+            Some(ValueSource::Call(call)) => Ok(super::result_source::result_source_name(call)),
+            Some(ValueSource::Load(address)) => Ok(self.value_name(address)),
+            None => self.value_backing(value),
+        }
+    }
+
+    /// A value's own planned storage, which a call reading its result at the
+    /// source still passes as its destination.
+    pub(super) fn value_backing(&mut self, value: IrValueId) -> Result<String, BackendFailure> {
         let slot = self.storage.slot(value).ok_or(BackendFailure::InvalidIr)?;
         if let Some(field) = self.storage.field_destination(slot) {
             let parent = self.slot_place(field.parent_slot)?;
@@ -1002,10 +1020,13 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
     /// Consume both copy schedules before evaluating any operand or effect.
     /// Load backing is per-use; incoming backing persists exactly where the
     /// CFG proof says it was captured on every path, never by emission order.
+    /// A source entry's return of a Load snapshot hands back the snapshot's
+    /// address instead, so its slot, `returned`, takes no copy there.
     pub(super) fn prepare_snapshot_use(
         &mut self,
         block: IrBlockId,
         at: usize,
+        returned: Option<usize>,
     ) -> Result<(), BackendFailure> {
         self.incoming_backing = self
             .incoming_snapshots
@@ -1030,6 +1051,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         }
         self.snapshot_copies.clear();
         for slot in self.storage.snapshot_copies(block.index(), at) {
+            if Some(slot) == returned {
+                continue;
+            }
             let address = self
                 .storage
                 .read_through(slot)

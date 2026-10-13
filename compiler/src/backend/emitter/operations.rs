@@ -134,16 +134,18 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         if self.owner_alias.scopes().next().is_some()
             && let [block] = target.blocks()
             && block.parameters().is_empty()
-            && let [IrInstruction::Define {
-                result: returned,
-                ty: IrType::Unit,
-                operation:
-                    IrOperation::RunBoundary {
-                        row,
-                        run,
-                        value: Some(value),
-                    },
-            }] = block.instructions()
+            && let [
+                IrInstruction::Define {
+                    result: returned,
+                    ty: IrType::Unit,
+                    operation:
+                        IrOperation::RunBoundary {
+                            row,
+                            run,
+                            value: Some(value),
+                        },
+                },
+            ] = block.instructions()
             && row.places()
             && let IrTerminator::Return {
                 value: actual_return,
@@ -181,8 +183,13 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         }
         let mut rendered = Vec::with_capacity(arguments.len());
         let stored_result = abi.result().uses_destination();
+        // A result read at its source still has its own destination, which
+        // the callee's source entry returns when it builds the result there.
+        let sourced = self.storage.value_source(result)
+            == Some(crate::backend::storage::ValueSource::Call(result));
+        let mut destination = String::new();
         if stored_result {
-            let destination = self.value_place(result)?;
+            destination = self.value_backing(result)?;
             rendered.push(format!("ptr {destination}"));
         }
         for (argument, parameter) in arguments.iter().zip(abi.parameters()) {
@@ -201,8 +208,19 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         // remaining levels as the callee variant's trailing parameter, the way
         // a split carries its allowance into the splitter.
         let (callee, budget) = self.callee_target(function, target.name(), result);
+        let budgeted = budget.is_some();
         if let Some(budget) = budget {
             rendered.push(format!("i64 {budget}"));
+        }
+        if stored_result && sourced {
+            return self.emit_source_call(
+                result,
+                &callee,
+                target.name(),
+                budgeted,
+                &destination,
+                &rendered.join(", "),
+            );
         }
         if stored_result {
             return {

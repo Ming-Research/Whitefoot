@@ -305,6 +305,19 @@ pub(crate) struct Entity {
     pub(crate) references: References,
 }
 
+impl Entity {
+    /// Replaces what other fragments declare for this definition with
+    /// `signature`'s declaration: a header may state facts its body alone
+    /// proves, while a user's fragment depends on the signature alone.
+    pub(crate) fn declare_as(&mut self, signature: &Signature) {
+        let mut signature = signature.clone();
+        signature.references.attributes.insert(0);
+        signature.suffix.push_str(" #0");
+        self.declaration = signature.header(false, self.linkage.is_local());
+        self.declaration_references = signature.references;
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum ModulePart {
     Text(String),

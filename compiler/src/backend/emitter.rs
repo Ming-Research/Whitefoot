@@ -27,6 +27,7 @@ mod paged;
 mod parallel;
 pub(super) mod places;
 mod reinterpret;
+mod result_source;
 mod runs;
 mod segments;
 mod shared;
@@ -68,6 +69,7 @@ use parallel::{
     parallel_split_budget_declaration, parallel_split_budget_fallback, sequential_clone_set,
     sequential_clone_symbol,
 };
+pub(crate) use result_source::RESULT_SOURCE_SUFFIX;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BackendFailure {
@@ -391,6 +393,41 @@ fn emit_module(
                     },
                 )?
                 .emit()?,
+            );
+        }
+    }
+    // Linked definitions and budgeted members define the source entries
+    // their callers name here, once per symbol (result_source).
+    let requested = result_source::requested_entries(&functions);
+    let mut sourced = HashSet::new();
+    for (ordinal, function) in program.functions().iter().enumerate() {
+        let symbol = source_symbol(function.name());
+        if !requested.contains(&result_source::result_source_symbol(&symbol))
+            || !sourced.insert(symbol)
+        {
+            continue;
+        }
+        if frontiers.grain(ordinal).is_some() {
+            functions.append(result_source::bare_source_entry(program, target, function)?);
+        } else if function.blocks().is_empty() {
+            functions.append(
+                FunctionEmitter::new(
+                    program,
+                    target,
+                    function,
+                    ModuleState {
+                        intrinsics: &mut intrinsics,
+                        owner_scopes: &owner_scopes,
+                        parallel: &mut thunks,
+                        sequential_clones: None,
+                        refusal_clones: &refusal_clones,
+                        frontiers: &frontiers,
+                        grain: None,
+                        window_address_facts,
+                        dispatch_layout,
+                    },
+                )?
+                .linked_source_entry()?,
             );
         }
     }
@@ -1627,8 +1664,16 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             .iter()
             .filter_map(crate::IrOverlap::join_site)
             .collect();
-        let storage =
+        let mut storage =
             FunctionStoragePlan::build_in_world(program, function, sequential_clones.is_some())?;
+        // Only the plain world defines `<symbol>.source`; clones and budget
+        // variants keep their destination entries.
+        storage.select_result_sources(
+            program,
+            function,
+            sequential_clones.is_some(),
+            sequential_clones.is_none() && grain.is_none(),
+        )?;
         let result_slot = places::returned_storage_slot(function, &storage);
         let frame = FunctionFramePlan::build(
             target,
@@ -1940,8 +1985,23 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let reachable = self.reachable_blocks()?;
         let waiting = self.function.waits();
         let (symbol, body_symbol, public, abi, entry) = self.body_abi()?;
-        let (mut parameters, mut references) = self.signature_parameters(&abi)?;
-        let result = if abi.result().uses_destination() {
+        // A body that returns a source on some path is the `.source` entry
+        // itself, behind a public entry that transfers (result_source).
+        let sourced = !declaration && self.storage.returns_sources();
+        let ledger_symbol = body_symbol.clone();
+        let body_symbol = if sourced {
+            result_source::result_source_symbol(&symbol)
+        } else {
+            body_symbol
+        };
+        let (mut parameters, mut references) = if sourced {
+            self.source_parameters(&abi, |position| self.storage.returns_referent(position))?
+        } else {
+            self.signature_parameters(&abi)?
+        };
+        let result = if sourced {
+            self.source_result_type(abi.result().ty())?
+        } else if abi.result().uses_destination() {
             "void".to_owned()
         } else {
             llvm_type_with_references(self.program, abi.result().ty(), &mut references.types)?
@@ -1949,7 +2009,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         if !declaration {
             self.dispatch = self.plan_dispatch(
                 &reachable,
-                &body_symbol,
+                &ledger_symbol,
                 abi.result().uses_destination(),
                 &result,
             )?;
@@ -2001,7 +2061,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             Signature::new(body_symbol.clone(), result, parameters)
         };
         signature.references = references;
-        if entry {
+        if entry || sourced {
             signature.linkage = Linkage::Internal;
         }
         if declaration {
@@ -2100,10 +2160,16 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         }
         let public_entry = if entry {
             Some(self.public_entry(&symbol, &body_symbol, &public, &abi)?)
+        } else if sourced {
+            Some(self.sourced_public_entry(&symbol, &body_symbol, &public)?)
         } else {
-            None
+            Some(self.built_source_entry(&symbol, &public)?)
         };
-        module.define(signature.define(std::mem::take(&mut self.output), &self.entry_prelude)?);
+        let mut body = signature.define(std::mem::take(&mut self.output), &self.entry_prelude)?;
+        if sourced {
+            body.declare_as(&self.source_declaration(&symbol, &public)?);
+        }
+        module.define(body);
         module.text("\n");
         if self.dispatch.is_some() {
             self.emit_dispatch_parts(&mut module)?;
@@ -2335,7 +2401,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         index: usize,
         instruction: &IrInstruction,
     ) -> Result<(), BackendFailure> {
-        self.prepare_snapshot_use(block, index)?;
+        self.prepare_snapshot_use(block, index, None)?;
         match instruction {
             IrInstruction::StoreSlice {
                 slice,
@@ -2935,7 +3001,8 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         block: IrBlockId,
         terminator: &IrTerminator,
     ) -> Result<(), BackendFailure> {
-        self.prepare_snapshot_use(block, self.block(block)?.instructions().len())?;
+        let returned = self.source_returned_slot(block, terminator);
+        self.prepare_snapshot_use(block, self.block(block)?.instructions().len(), returned)?;
         match terminator {
             IrTerminator::Unreachable => {
                 writeln!(self.output, "  unreachable").map_err(|_| BackendFailure::TextEmission)
@@ -2979,6 +3046,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 let abi = FunctionAbi::build(self.program, self.function)?.body();
                 if self.value_type(*value) != Some(abi.result().ty()) {
                     return Err(BackendFailure::InvalidIr);
+                }
+                if abi.result().uses_destination() && self.storage.returns_sources() {
+                    return self.emit_source_return(block, *value, drops);
                 }
                 if abi.result().uses_destination() {
                     self.store_value_at(*value, RESULT_POINTER)?;
