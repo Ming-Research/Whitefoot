@@ -690,9 +690,8 @@ impl<'unit> TypeContext<'unit> {
                     .direct_token_with(atom, TerminalPredicate::Literal)?
                 {
                     Some(literal)
-                        if matches!(
+                        if crate::syntax::terminal::is_generic_numeric_literal(
                             self.declarations.tree.token_bytes(literal)?,
-                            b"0_T" | b"1_T"
                         ) =>
                     {
                         CheckedIntegerArgumentSource::GenericNumericIdentity
