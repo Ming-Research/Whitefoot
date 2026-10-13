@@ -737,8 +737,7 @@ variant_names! {
         Generics, PreludeNominalValues, ReferenceFormation, CompositeValues,
         RecursiveNominalLayout, OwnershipJoin, OperationFamily,
         RangeArithmetic, RangeOrdinaryGoal, RangeOperationIntervals,
-        RangeLoopNesting, RangeCallFootprint, RangeAtomicAliases,
-        PageLengthPostcondition,
+        RangeLoopNesting, RangeCallFootprint, PageLengthPostcondition,
     }
 }
 

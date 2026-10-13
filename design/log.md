@@ -13,6 +13,13 @@ Owner-approved: On the shared status board on 2026-10-13, written in Chinese, th
 
 Summary: Two decisions are added. Provisionally, when a call's argument is a formed range, its write footprint is bounded by the first captured range and the full path frame is kept only as diagnostic provenance, because that separates range overlap from read identity without adding equalities to the accepting query, instead of versioning storage by full path, whose correspondence to the fixed derivation rules is unsettled; some same-range sibling-field proofs report an implementation limit until a program needs that precision. A capability limit is judged per failed obligation from its conclusion, quantifier bounds, guards and read domains, instead of replacing every conclusion of a function with an unresolved write, and the counterfactual queries that explain a precision loss serve diagnostics only and never acceptance.
 
+## 2026-10-13 The range walk checks every object partition of possibly aliased atomic targets
+
+Nodes: compiler/range-judgment
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the design-tree change: for several atomic targets that may be the same object, the range judgment checks every possible object partition? (Ming-Research/Whitefoot#441, head cb26294b1)" (translated).
+
+Summary: At an atomic statement the range walk checks each partition of the possibly aliased whole-object targets that their pairwise relations allow, giving targets placed in one object one storage location and the others separate ones, so the existing write, call, branch and exit judgments keep a same-or-different relation throughout the block; it replaces the unsupported report for multi-target blocks with range type invariants. Refused were treating possible aliases as always equal or always distinct (each misjudges one case) and conditional alias handling at every mutation. The invariants to restore at exit are keyed by the original entry targets, and loop proof records merge only after every partition proves them. The provisional cost grows with the Bell number of the targets, without a work bound; it is reassessed when real multi-target atomic blocks slow development.
 ## 2026-10-13 Conformance rejections pin their byte range, and an out-of-order requirement is moved rather than restated
 
 Nodes: compiler/verification, compiler/diagnostic-repairs

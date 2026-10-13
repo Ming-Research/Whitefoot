@@ -1664,9 +1664,6 @@ pub enum UnsupportedSemanticFeature {
     /// A call's retained formal row has an unresolved index capture, or a
     /// query needs a reference frame the range walk cannot version precisely.
     RangeCallFootprint,
-    /// A range walk through atomic targets that may name the same shared object.
-    /// The checker does not yet version these targets with their alias relation.
-    RangeAtomicAliases,
     /// A page's length in a postcondition has no return-site measure term yet.
     PageLengthPostcondition,
 }

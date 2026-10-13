@@ -1,6 +1,6 @@
 //! The forward walk of one function body [RANGE-2, RANGE-3, RANGE-5].
 //!
-//! The walk evaluates every statement once over a symbolic state. A branch
+//! The walk evaluates each atomic alias case over a symbolic state. A branch
 //! forks the state and the arms rejoin through a join whose values remember
 //! which arm produced them; a loop header forgets what the body writes and
 //! assumes the loop's invariants; a call discharges the callee's range
@@ -17,6 +17,7 @@ use super::super::obligations::ObligationSubject;
 use crate::NodePath;
 
 mod aggregate;
+mod atomic;
 mod calls;
 mod effects;
 mod operations;
@@ -959,65 +960,7 @@ impl<'program> Walker<'program> {
                 body,
                 continues,
                 ..
-            } => {
-                let aliases = self.function.range_facts.atomic_aliases.contains(node_path);
-                if aliases
-                    && self
-                        .function
-                        .range_facts
-                        .atomics
-                        .get(node_path)
-                        .is_some_and(|clauses| !clauses.is_empty())
-                {
-                    self.issues.push(RangeIssue::Unsupported {
-                        node: node_path.clone(),
-                        feature: super::super::UnsupportedSemanticFeature::RangeAtomicAliases,
-                    });
-                    return None;
-                }
-                self.cite = node_path.clone();
-                for target in targets
-                    .iter()
-                    .flat_map(crate::semantic::CheckedTarget::expressions)
-                {
-                    let _ = self.eval(&mut state, target);
-                }
-                state.havoc_everything(&mut self.world);
-                self.unplaced(None, true, true);
-                for target in targets {
-                    // Possibly aliased targets retain the unplaced-write
-                    // treatment: a write must forget what another target read.
-                    let view = if aliases {
-                        View::Unknown
-                    } else {
-                        View::Place(Location::root(Origin::Constructed(self.world.new_origin())))
-                    };
-                    state.values.insert(target.binding, Value::Ref(view));
-                }
-                self.enter_atomic(&mut state, node_path);
-                if let Some(guard) = guard {
-                    let condition = match self.eval(&mut state, guard) {
-                        Value::Bool(condition, _) => condition,
-                        _ => Cond::Unknown,
-                    };
-                    if condition.excludes(true) {
-                        self.atomic = None;
-                        return None;
-                    }
-                    condition.literals(true, &mut state.conds);
-                }
-                let after = self.block(state, body);
-                if let Some(after) = &after {
-                    self.owe_atomic(after, node_path, true);
-                }
-                self.atomic = None;
-                if !continues {
-                    return None;
-                }
-                let mut after = after?;
-                after.havoc_everything(&mut self.world);
-                Some(after)
-            }
+            } => self.atomic_statement(state, targets, node_path, guard.as_deref(), body, *continues),
         }
     }
 
@@ -3525,12 +3468,33 @@ impl<'program> Walker<'program> {
                 node: apart.node.clone(),
                 failure,
             }),
-            None => self.certified.push(CertifiedLoop {
+            None => self.retain_certificate(CertifiedLoop {
                 id,
                 node: node.clone(),
                 writes: certified_writes,
                 reads: certified_reads,
             }),
+        }
+    }
+
+    /// One loop can be judged under several atomic object-identity cases.
+    /// Every case must prove the certificate; a failed case emits an issue.
+    /// Coverage is the union of proved sites: an omitted site in another
+    /// case is unreachable or accesses storage no iteration writes there.
+    fn retain_certificate(&mut self, mut certificate: CertifiedLoop) {
+        if let Some(retained) = self
+            .certified
+            .iter_mut()
+            .find(|retained| retained.id == certificate.id)
+        {
+            retained.writes.append(&mut certificate.writes);
+            retained.reads.append(&mut certificate.reads);
+            retained.writes.sort();
+            retained.writes.dedup();
+            retained.reads.sort();
+            retained.reads.dedup();
+        } else {
+            self.certified.push(certificate);
         }
     }
 
