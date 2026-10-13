@@ -1,8 +1,9 @@
 //! Import an independently lowered sequential world from its recorded graph.
 //!
-//! LLVM text is only rewritten at symbol tokens. It never supplies graph edges.
+//! LLVM text is rewritten only at identifier tokens, including metadata IDs.
+//! It never supplies graph edges; unrecorded metadata references are rejected.
 
-use super::{Declaration, Entity, Linkage, Module, ModulePart, References};
+use super::{Declaration, Entity, Linkage, Metadata, Module, ModulePart, References};
 use crate::backend::emitter::BackendFailure;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -11,6 +12,7 @@ enum Dependency {
     Symbol(String),
     Type(String),
     Attributes(u64),
+    Metadata(u64),
 }
 
 #[derive(Default)]
@@ -19,9 +21,17 @@ struct Closure {
     declarations: BTreeSet<String>,
     types: BTreeSet<String>,
     attributes: BTreeSet<u64>,
+    metadata: BTreeSet<u64>,
 }
 
 fn dependencies(pending: &mut BTreeSet<Dependency>, references: &References) {
+    pending.extend(
+        references
+            .metadata
+            .iter()
+            .copied()
+            .map(Dependency::Metadata),
+    );
     pending.extend(references.symbols.iter().cloned().map(Dependency::Symbol));
     pending.extend(references.types.iter().cloned().map(Dependency::Type));
     pending.extend(
@@ -70,6 +80,7 @@ fn compatible_contract_dependencies(
 ) -> bool {
     let mut pending = references.types.clone();
     let mut attributes = references.attributes.clone();
+    let mut metadata = references.metadata.clone();
     let mut visited = BTreeSet::new();
     while let Some(name) = pending.pop_first() {
         if !visited.insert(name.clone()) {
@@ -83,9 +94,19 @@ fn compatible_contract_dependencies(
         }
         pending.extend(declaration.references.types.iter().cloned());
         attributes.extend(declaration.references.attributes.iter().copied());
+        metadata.extend(declaration.references.metadata.iter().copied());
+    }
+    let Ok(metadata) = canonical.metadata_closure(&metadata) else {
+        return false;
+    };
+    if !metadata
+        .iter()
+        .all(|id| canonical.metadata.get(id) == destination.metadata.get(id))
+    {
+        return false;
     }
     attributes.iter().all(|id| {
-        canonical.attributes.get(id).is_some()
+        canonical.attributes.contains_key(id)
             && canonical.attributes.get(id) == destination.attributes.get(id)
     })
 }
@@ -181,6 +202,14 @@ fn closure(
                 closure.types.insert(name);
                 dependencies(&mut pending, &declaration.references);
             }
+            Dependency::Metadata(id) => {
+                let node = canonical
+                    .metadata
+                    .get(&id)
+                    .ok_or(BackendFailure::InvalidIr)?;
+                closure.metadata.insert(id);
+                pending.extend(node.references.iter().copied().map(Dependency::Metadata));
+            }
             Dependency::Attributes(id) => {
                 if !canonical.attributes.contains_key(&id) {
                     return Err(BackendFailure::InvalidIr);
@@ -224,16 +253,18 @@ fn renamed_dependencies(
     renaming: &BTreeMap<String, String>,
     types: &BTreeMap<String, String>,
 ) -> bool {
-    entity
-        .references
-        .symbols
-        .iter()
-        .chain(&entity.declaration_references.symbols)
-        .any(|name| {
-            renaming
-                .get(name)
-                .is_some_and(|replacement| replacement != name)
-        })
+    !entity.references.metadata.is_empty()
+        || !entity.declaration_references.metadata.is_empty()
+        || entity
+            .references
+            .symbols
+            .iter()
+            .chain(&entity.declaration_references.symbols)
+            .any(|name| {
+                renaming
+                    .get(name)
+                    .is_some_and(|replacement| replacement != name)
+            })
         || entity
             .references
             .types
@@ -347,6 +378,7 @@ fn references(
     references: &References,
     renaming: &BTreeMap<String, String>,
     types: &BTreeMap<String, String>,
+    metadata: &BTreeMap<u64, u64>,
 ) -> References {
     References {
         symbols: references
@@ -360,6 +392,11 @@ fn references(
             .map(|name| types.get(name).unwrap_or(name).clone())
             .collect(),
         attributes: references.attributes.clone(),
+        metadata: references
+            .metadata
+            .iter()
+            .map(|id| metadata.get(id).copied().unwrap_or(*id))
+            .collect(),
     }
 }
 
@@ -400,6 +437,7 @@ fn symbol_text(
     text: &str,
     renaming: &BTreeMap<String, String>,
     types: &BTreeMap<String, String>,
+    metadata: &BTreeMap<u64, u64>,
 ) -> Result<String, BackendFailure> {
     let bytes = text.as_bytes();
     let mut out = Vec::new();
@@ -416,6 +454,20 @@ fn symbol_text(
             let end = quoted_end(bytes, at)?;
             out.extend_from_slice(&bytes[at..end]);
             at = end;
+        } else if bytes[at] == b'!' && bytes.get(at + 1).is_some_and(u8::is_ascii_digit) {
+            at += 1;
+            let begin = at;
+            while at < bytes.len() && bytes[at].is_ascii_digit() {
+                at += 1;
+            }
+            let id = text[begin..at]
+                .parse::<u64>()
+                .map_err(|_| BackendFailure::InvalidIr)?;
+            // The graph selected the closure before text rewriting. A token
+            // outside that map is a missing producer record, not a new edge
+            // to infer and never a reference to the destination's same ID.
+            let replacement = metadata.get(&id).ok_or(BackendFailure::InvalidIr)?;
+            out.extend_from_slice(format!("!{replacement}").as_bytes());
         } else if bytes[at] == b'@' || bytes[at] == b'%' {
             let start = at;
             let sigil = bytes[at];
@@ -467,10 +519,11 @@ fn declaration(
     value: &Declaration,
     renaming: &BTreeMap<String, String>,
     types: &BTreeMap<String, String>,
+    metadata: &BTreeMap<u64, u64>,
 ) -> Result<Declaration, BackendFailure> {
     Ok(Declaration {
-        text: symbol_text(&value.text, renaming, types)?,
-        references: references(&value.references, renaming, types),
+        text: symbol_text(&value.text, renaming, types, metadata)?,
+        references: references(&value.references, renaming, types, metadata),
     })
 }
 
@@ -478,18 +531,24 @@ fn entity(
     value: &Entity,
     renaming: &BTreeMap<String, String>,
     types: &BTreeMap<String, String>,
+    metadata: &BTreeMap<u64, u64>,
 ) -> Result<Entity, BackendFailure> {
     Ok(Entity {
         name: renaming.get(&value.name).unwrap_or(&value.name).clone(),
-        header: symbol_text(&value.header, renaming, types)?,
-        hidden_header: symbol_text(&value.hidden_header, renaming, types)?,
-        declaration: symbol_text(&value.declaration, renaming, types)?,
-        body: symbol_text(&value.body, renaming, types)?,
-        declaration_references: references(&value.declaration_references, renaming, types),
+        header: symbol_text(&value.header, renaming, types, metadata)?,
+        hidden_header: symbol_text(&value.hidden_header, renaming, types, metadata)?,
+        declaration: symbol_text(&value.declaration, renaming, types, metadata)?,
+        body: symbol_text(&value.body, renaming, types, metadata)?,
+        declaration_references: references(
+            &value.declaration_references,
+            renaming,
+            types,
+            metadata,
+        ),
         linkage: value.linkage,
         global: value.global,
         fragment_local: value.fragment_local,
-        references: references(&value.references, renaming, types),
+        references: references(&value.references, renaming, types, metadata),
     })
 }
 
@@ -510,13 +569,25 @@ impl Module {
         let selected = closure(canonical, self, roots, shared, &source, &existing)?;
         let types = type_renaming(&selected, canonical, self)?;
         let renaming = renaming(&selected, &source, &existing, self, &types)?;
+        // Numeric IDs belong to one emitted module. Freshen every selected
+        // node, including self-referential distinct domains/scopes, rather
+        // than equating independent functions' promises by their old IDs.
+        let mut next = self.metadata.keys().next_back().copied();
+        let mut metadata = BTreeMap::new();
+        for id in &selected.metadata {
+            let fresh = next
+                .map_or(Some(0), |id| id.checked_add(1))
+                .ok_or(BackendFailure::CounterOverflow)?;
+            metadata.insert(*id, fresh);
+            next = Some(fresh);
+        }
         let mut imported = Module::default();
         for part in &canonical.parts {
             match part {
                 ModulePart::Entity(index)
                     if selected.entities.contains(&canonical.entities[*index].name) =>
                 {
-                    let value = entity(&canonical.entities[*index], &renaming, &types)?;
+                    let value = entity(&canonical.entities[*index], &renaming, &types, &metadata)?;
                     if let Some(previous) = existing.get(&value.name) {
                         if **previous != value {
                             return Err(BackendFailure::InvalidIr);
@@ -534,7 +605,8 @@ impl Module {
                     }
                 }
                 ModulePart::Declaration(name) if selected.declarations.contains(name) => {
-                    let value = declaration(&canonical.declarations[name], &renaming, &types)?;
+                    let value =
+                        declaration(&canonical.declarations[name], &renaming, &types, &metadata)?;
                     if let Some(previous) = self.declarations.get(name) {
                         if previous != &value {
                             return Err(BackendFailure::InvalidIr);
@@ -549,7 +621,7 @@ impl Module {
                     }
                 }
                 ModulePart::Type(name) if selected.types.contains(name) => {
-                    let value = declaration(&canonical.types[name], &renaming, &types)?;
+                    let value = declaration(&canonical.types[name], &renaming, &types, &metadata)?;
                     let imported_name = types.get(name).unwrap_or(name);
                     if let Some(previous) = self.types.get(imported_name) {
                         if previous != &value {
@@ -559,6 +631,17 @@ impl Module {
                         imported.parts.push(ModulePart::Type(imported_name.clone()));
                         imported.types.insert(imported_name.clone(), value);
                     }
+                }
+                ModulePart::Metadata(id) if selected.metadata.contains(id) => {
+                    let node = &canonical.metadata[id];
+                    imported.parts.push(ModulePart::Metadata(metadata[id]));
+                    imported.metadata.insert(
+                        metadata[id],
+                        Metadata {
+                            body: symbol_text(&node.body, &renaming, &types, &metadata)?,
+                            references: node.references.iter().map(|id| metadata[id]).collect(),
+                        },
+                    );
                 }
                 ModulePart::Attributes(id) if selected.attributes.contains(id) => {
                     let value = &canonical.attributes[id];
@@ -614,6 +697,130 @@ mod tests {
         destination
             .import_canonical_closure(canonical, &roots("wf_root"), &BTreeSet::new())
             .unwrap();
+    }
+
+    fn scoped_module() -> Module {
+        let mut module = module();
+        module.metadata_node(0, "distinct !{!0}".to_owned(), [0].into());
+        module.metadata_node(1, "distinct !{!1, !0}".to_owned(), [0, 1].into());
+        module.metadata_node(2, "!{!1}".to_owned(), [1].into());
+        module.metadata_node(3, "!{!1}".to_owned(), [1].into());
+        module.declare(Signature::new(
+            "llvm.experimental.noalias.scope.decl",
+            "void",
+            vec![Parameter::unnamed("metadata")],
+        ));
+        let mut body = FunctionBody::default();
+        body.open_block("entry".to_owned());
+        body.instructions(
+            "  call void @llvm.experimental.noalias.scope.decl(metadata !2)\n",
+            &["llvm.experimental.noalias.scope.decl"],
+        );
+        body.instructions("  %value = load i64, ptr %source, !alias.scope !2\n  store i64 %value, ptr %destination, !noalias !3\n  ret void\n", &[]);
+        body.references.metadata.extend([2, 3]);
+        let signature = Signature::new(
+            "wf_root",
+            "void",
+            vec![
+                Parameter::named("ptr", "%source"),
+                Parameter::named("ptr", "%destination"),
+            ],
+        );
+        module.define(signature.define(body, "").unwrap());
+        module
+    }
+
+    #[test]
+    fn imported_metadata_remaps_colliding_scopes_and_all_transitive_edges() {
+        let canonical = scoped_module();
+        let mut destination = scoped_module();
+        let original = destination.clone();
+        import(&mut destination, &canonical);
+        let imported = destination.entities.last().unwrap();
+        assert_eq!(imported.name, "wf__par_seq_root");
+        assert!(imported.body.contains("scope.decl(metadata !6)"));
+        assert!(imported.body.contains("!alias.scope !6"));
+        assert!(imported.body.contains("!noalias !7"));
+        assert_eq!(imported.references.metadata, [6, 7].into());
+        assert_eq!(destination.metadata[&4].body, "distinct !{!4}");
+        assert_eq!(destination.metadata[&4].references, [4].into());
+        assert_eq!(destination.metadata[&5].body, "distinct !{!5, !4}");
+        assert_eq!(destination.metadata[&5].references, [4, 5].into());
+        for id in [6, 7] {
+            assert_eq!(destination.metadata[&id].body, "!{!5}");
+            assert_eq!(destination.metadata[&id].references, [5].into());
+        }
+        assert_eq!(destination.entities[0], original.entities[0]);
+        for (id, node) in &original.metadata {
+            assert_eq!(&destination.metadata[id], node);
+        }
+        assert_eq!(Module::decode(&destination.encode()), Some(destination));
+    }
+
+    #[test]
+    fn missing_metadata_nodes_edges_and_conflicts_fail_atomically() {
+        for defect in [
+            "root",
+            "transitive",
+            "unrecorded root",
+            "unrecorded edge",
+            "source conflict",
+            "destination conflict",
+        ] {
+            let mut canonical = scoped_module();
+            let mut destination = scoped_module();
+            match defect {
+                "root" => {
+                    canonical.metadata.remove(&2);
+                }
+                "transitive" => {
+                    canonical.metadata.remove(&0);
+                }
+                "unrecorded root" => {
+                    canonical.entities[0].references.metadata.clear();
+                }
+                "unrecorded edge" => {
+                    canonical
+                        .metadata
+                        .get_mut(&1)
+                        .unwrap()
+                        .references
+                        .remove(&0);
+                }
+                "source conflict" => {
+                    canonical.metadata_node(0, "distinct !{!0, i64 1}".to_owned(), [0].into())
+                }
+                "destination conflict" => {
+                    destination.metadata_node(0, "distinct !{!0, i64 1}".to_owned(), [0].into())
+                }
+                _ => unreachable!(),
+            }
+            let before = destination.clone();
+            assert_eq!(
+                destination.import_canonical_closure(
+                    &canonical,
+                    &roots("wf_root"),
+                    &BTreeSet::new()
+                ),
+                Err(BackendFailure::InvalidIr),
+                "{defect}"
+            );
+            assert_eq!(destination, before, "{defect}");
+        }
+    }
+
+    #[test]
+    fn metadata_token_renaming_preserves_strings_comments_and_exact_numbers() {
+        assert_eq!(
+            symbol_text(
+                "metadata !2, !20, !\"!2\", c\"!2\" ; !2\n",
+                &BTreeMap::new(),
+                &BTreeMap::new(),
+                &BTreeMap::from([(2, 8), (20, 9)])
+            )
+            .unwrap(),
+            "metadata !8, !9, !\"!2\", c\"!2\" ; !2\n"
+        );
     }
 
     #[test]
@@ -748,7 +955,7 @@ mod tests {
         let renaming = BTreeMap::from([("wf_leaf".to_owned(), "wf__par_seq_leaf".to_owned())]);
         let text = "call @wf_leaf(), @wf_leaf_long(), @\"wf_leaf\"(), @\"wf\\5Fleaf\"()\nc\"@wf_leaf \\22 @wf_leaf_long\" ; @wf_leaf\n";
         assert_eq!(
-            symbol_text(text, &renaming, &BTreeMap::new()).unwrap(),
+            symbol_text(text, &renaming, &BTreeMap::new(), &BTreeMap::new()).unwrap(),
             "call @wf__par_seq_leaf(), @wf_leaf_long(), @\"wf__par_seq_leaf\"(), @\"wf__par_seq_leaf\"()\nc\"@wf_leaf \\22 @wf_leaf_long\" ; @wf_leaf\n"
         );
     }

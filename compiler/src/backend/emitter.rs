@@ -121,7 +121,7 @@ impl LlvmModule {
 
     pub(crate) fn append(&mut self, module: Module) -> Result<(), BackendFailure> {
         self.model.append(module);
-        if self.model.has_conflict() {
+        if self.model.has_conflict() || self.model.missing_metadata().is_some() {
             return Err(BackendFailure::InvalidIr);
         }
         self.text = self.model.render();
@@ -141,7 +141,7 @@ impl LlvmModule {
             _ => return None,
         };
         let model = Module::decode(bytes)?;
-        if model.has_conflict() {
+        if model.has_conflict() || model.missing_metadata().is_some() {
             return None;
         }
         Some(Self {
@@ -705,6 +705,14 @@ fn emit_module(
         text.declare_global("wf__empty_window".to_owned(), "[64 x i8]", 64);
     }
     text.attribute_group(0, format!("\"probe-stack\"=\"{}\"", target.stack_probe()));
+    // Every emitted body may use the small fixed storage-role vocabulary,
+    // including cleanup/transfer helpers built outside FunctionEmitter. Keep
+    // these roots explicit without recovering dependencies from LLVM text.
+    for entity in &mut text.entities {
+        if !entity.global {
+            entity.references.metadata.extend(12..22);
+        }
+    }
     if let Some(canonical) = canonical.filter(|_| !canonical_roots.is_empty()) {
         let selected = prepare_dispatch_layout(canonical, target, fragments)?;
         validate_crossovers(program, &selected.program, &crossovers)?;
@@ -730,7 +738,7 @@ fn emit_module(
             emit_ledger_comment(&mut text, LOCK_LEDGER_PREFIX, line);
         }
     }
-    if text.has_conflict() {
+    if text.has_conflict() || text.missing_metadata().is_some() {
         return Err(BackendFailure::InvalidIr);
     }
     Ok(LlvmModule {
@@ -2115,6 +2123,10 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 self.function,
                 &self.incoming,
             );
+            self.output
+                .references
+                .metadata
+                .extend(self.owner_alias.metadata_roots());
             for scope in self.owner_alias.scopes() {
                 self.intrinsics.insert(IntrinsicDeclaration::OwnerScope);
                 self.output.symbol("llvm.experimental.noalias.scope.decl");

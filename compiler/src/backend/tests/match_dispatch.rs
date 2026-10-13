@@ -2129,12 +2129,50 @@ fn paired_cell(cell: &Cell) -> result: u32 reads(cell) {
             let ordinary_module =
                 crate::backend::emitter::emit_prepared_llvm(&ordinary, target).unwrap();
             assert_eq!(
-                definition(&module, "wf__par_seq_run.dispatch").replace("@wf__par_seq_", "@wf_"),
+                canonical_dispatch_definition(&module, &ordinary_module)
+                    .replace("@wf__par_seq_", "@wf_"),
                 definition(&ordinary_module, "wf_run.dispatch")
             );
             let split = definition(&module, "wf_run.dispatch");
+            let table = module
+                .model
+                .entities
+                .iter()
+                .find(|entity| entity.name == "wf_run.dispatch.table")
+                .expect("split dispatch has its own handler table");
+            for arm in 0..3 {
+                assert!(
+                    table.body.contains(&format!("ptr @wf_run.arm.{arm}")),
+                    "split table must bind split handlers: {}",
+                    table.body
+                );
+            }
+            assert!(!table.body.contains("@wf__par_seq_"), "{}", table.body);
+            // A spare argument register carries the table base from the
+            // enclosing function instead of rematerializing it in each part.
+            let table_operand = if split
+                .lines()
+                .next()
+                .unwrap()
+                .contains("ptr %wf.dispatch.base")
+            {
+                let enclosing = emitted_body(&module, "run");
+                assert!(
+                    enclosing.lines().any(|line| {
+                        line.contains("call ")
+                            && line.contains("@wf_run.dispatch(")
+                            && line.contains("ptr @wf_run.dispatch.table")
+                    }),
+                    "the enclosing split body binds its table: {enclosing}"
+                );
+                "%wf.dispatch.base"
+            } else {
+                "@wf_run.dispatch.table"
+            };
             assert!(
-                split.contains("@wf_run.dispatch.table"),
+                split.contains(&format!(
+                    "getelementptr inbounds [3 x ptr], ptr {table_operand}, i64 0, i64 "
+                )),
                 "split dispatch uses its own frame: {split}"
             );
             let constructor = emitted_body(&module, "make_add");
@@ -2287,12 +2325,37 @@ fn canonical_world_keeps_the_explicit_fragment_dispatch_mode() {
         }
         assert!(!module.threaded_layout);
         assert_eq!(
-            definition(&module, "wf__par_seq_run.dispatch")
+            canonical_dispatch_definition(&module, &ordinary_module)
                 .replace("@wf__par_seq_", "@wf_")
                 .replace("@.wf__par_seq_global.", "@"),
             definition(&ordinary_module, "wf_run.dispatch")
         );
     });
+}
+
+fn canonical_dispatch_definition(
+    module: &crate::LlvmModule,
+    ordinary: &crate::LlvmModule,
+) -> String {
+    let actual = module
+        .model
+        .entities
+        .iter()
+        .find(|entity| entity.name == "wf__par_seq_run.dispatch")
+        .unwrap();
+    let expected = ordinary
+        .model
+        .entities
+        .iter()
+        .find(|entity| entity.name == "wf_run.dispatch")
+        .unwrap();
+    super::canonical_compute::restore_metadata(
+        &module.model,
+        &ordinary.model,
+        actual,
+        expected,
+        definition(module, "wf__par_seq_run.dispatch"),
+    )
 }
 
 /// Follow the loaded target from the cursor parameter through the word GEP

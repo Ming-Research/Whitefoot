@@ -426,17 +426,26 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 fn fold_module(parallel: bool) -> String {
+    fold_emission(parallel).into_string()
+}
+
+fn fold_emission(parallel: bool) -> crate::LlvmModule {
     use std::sync::OnceLock;
-    static PLAIN: OnceLock<String> = OnceLock::new();
-    static PARALLEL: OnceLock<String> = OnceLock::new();
+    static PLAIN: OnceLock<crate::LlvmModule> = OnceLock::new();
+    static PARALLEL: OnceLock<crate::LlvmModule> = OnceLock::new();
     let cell = if parallel { &PARALLEL } else { &PLAIN };
     let module = cell
         .get_or_init(|| {
-            if parallel {
-                emit_with_overlap(OVERLAPPING_FOLD)
-            } else {
-                emit(OVERLAPPING_FOLD)
-            }
+            crate::compile_with_overlap(
+                &[crate::SourceInput::new("test.wf", OVERLAPPING_FOLD)],
+                crate::CompilerLimits::default(),
+                if parallel {
+                    crate::OverlapLowering::On
+                } else {
+                    crate::OverlapLowering::Off
+                },
+            )
+            .expect("fold fixture emits")
         })
         .clone();
     super::exhaustion::assert_stack_probes(&module);
@@ -1447,13 +1456,13 @@ fn handing_a_call_out_adds_no_stack_slot() {
 /// an operand read in a different order — would be a second lowering nobody
 /// audited, and this case is what stops that.
 ///
-/// The comparison restores the clone's own symbols, because the calls inside a
-/// clone name clones: that renaming *is* the difference between the two
-/// worlds, and after it there must be nothing left.
+/// The comparison restores the clone's symbols and alpha-renames module-local
+/// metadata IDs only after verifying their complete graph and distinct
+/// identities. After those namespace changes there must be nothing left.
 #[test]
 fn the_sequential_clone_is_the_sequential_lowering() {
-    let sequential = fold_module(false);
-    let overlapped = fold_module(true);
+    let sequential = fold_emission(false);
+    let overlapped = fold_emission(true);
 
     // Ordinary computation retains its complete dependency closure, including
     // helpers with no offers. Upward offer reachability alone omitted these.
@@ -1469,8 +1478,28 @@ fn the_sequential_clone_is_the_sequential_lowering() {
 
     for symbol in &cloned {
         let clone = function_body(&overlapped, symbol);
-        let restored = clone.replace("@wf__par_seq_", "@wf_");
-        let reference = function_body(&sequential, &symbol.replace("@wf__par_seq_", "@wf_"));
+        let original = symbol.replace("@wf__par_seq_", "@wf_");
+        let actual_entity = overlapped
+            .model
+            .entities
+            .iter()
+            .find(|entity| entity.name == symbol.trim_start_matches('@'))
+            .unwrap();
+        let expected_entity = sequential
+            .model
+            .entities
+            .iter()
+            .find(|entity| entity.name == original.trim_start_matches('@'))
+            .unwrap();
+        let restored = super::canonical_compute::restore_metadata(
+            &overlapped.model,
+            &sequential.model,
+            actual_entity,
+            expected_entity,
+            clone,
+        )
+        .replace("@wf__par_seq_", "@wf_");
+        let reference = function_body(&sequential, &original);
         assert_eq!(
             restored, reference,
             "{symbol} is not the sequential lowering of its function"
@@ -2104,26 +2133,36 @@ fn budget_symbols(module: &str) -> Vec<String> {
 /// overlapped world and everything the two worlds share.
 fn without_clones(module: &str) -> String {
     let mut kept = String::with_capacity(module.len());
-    let mut rest = module;
-    while let Some(offset) = rest.find("\ndefine ") {
-        let (before, definition) = rest.split_at(offset + 1);
-        kept.push_str(before);
-        let end = definition
-            .find("\n}\n")
-            .map(|at| at + 3)
-            .expect("a definition must close");
-        let (definition, remainder) = definition.split_at(end);
-        if !definition
-            .lines()
-            .next()
-            .is_some_and(|header| header.contains(" @wf__par_seq_"))
-        {
-            kept.push_str(definition);
+    let mut skipping = false;
+    for line in module.split_inclusive('\n') {
+        if line.starts_with("define ") {
+            skipping = line.contains(" @wf__par_seq_");
         }
-        rest = remainder;
+        if !skipping {
+            kept.push_str(line);
+        }
+        if line.trim_end() == "}" {
+            skipping = false;
+        }
     }
-    kept.push_str(rest);
     kept
+}
+
+#[test]
+fn world_observers_keep_adjacent_function_boundaries() {
+    // Structured import need not add a blank line between definitions. Keep
+    // every parallel definition and stop a selected body before its caller.
+    let ordinary = "define i64 @wf__par_seq_leaf() {\nentry:\n  ret i64 1\n}\n";
+    let parallel = "define i64 @wf_leaf() {\nentry:\n  ret i64 1\n}\n";
+    let caller = "define i64 @wf__par_seq_main() {\nentry:\n  %v0 = call i64 @wf__par_seq_leaf()\n  ret i64 %v0\n}\n";
+    let parallel_caller =
+        "define i64 @wf_main() {\nentry:\n  %v0 = call i64 @wf_leaf()\n  ret i64 %v0\n}\n";
+    let module = format!("{ordinary}{parallel}{caller}{parallel_caller}");
+    assert_eq!(
+        without_clones(&module),
+        format!("{parallel}{parallel_caller}")
+    );
+    assert_eq!(super::emitted_function(&module, "_par_seq_leaf"), ordinary);
 }
 
 /// The definition that carries `symbol`'s emitted body: its own definition,

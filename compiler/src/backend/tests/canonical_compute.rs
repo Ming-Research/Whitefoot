@@ -37,6 +37,158 @@ fn assert_metadata(
     }
 }
 
+/// Only metadata IDs vary: prove an injective graph correspondence, including
+/// distinct/self edges, before substituting tokens in the instruction text.
+pub(super) fn restore_metadata(
+    actual: &crate::backend::emission::Module,
+    expected: &crate::backend::emission::Module,
+    actual_entity: &crate::backend::emission::Entity,
+    expected_entity: &crate::backend::emission::Entity,
+    text: &str,
+) -> String {
+    use std::collections::{BTreeMap, BTreeSet};
+    let roots = |entity: &crate::backend::emission::Entity| {
+        entity
+            .references
+            .metadata
+            .union(&entity.declaration_references.metadata)
+            .copied()
+            .collect::<BTreeSet<_>>()
+    };
+    let actual_roots = roots(actual_entity);
+    let expected_roots = roots(expected_entity);
+    assert_eq!(actual_roots.len(), expected_roots.len());
+    let mut pending = actual_roots
+        .into_iter()
+        .zip(expected_roots)
+        .collect::<Vec<_>>();
+    let mut mapping = BTreeMap::new();
+    let mut targets = BTreeSet::new();
+    while let Some((from, to)) = pending.pop() {
+        if let Some(previous) = mapping.insert(from, to) {
+            assert_eq!(previous, to, "metadata mapping must preserve sharing");
+            continue;
+        }
+        assert!(
+            targets.insert(to),
+            "distinct metadata identities must remain distinct"
+        );
+        let left = actual
+            .metadata
+            .get(&from)
+            .expect("actual metadata is defined");
+        let right = expected
+            .metadata
+            .get(&to)
+            .expect("expected metadata is defined");
+        assert_eq!(left.references.len(), right.references.len());
+        pending.extend(
+            left.references
+                .iter()
+                .copied()
+                .zip(right.references.iter().copied()),
+        );
+    }
+    for (from, to) in &mapping {
+        assert_eq!(
+            metadata_tokens(&actual.metadata[from].body, &mapping),
+            expected.metadata[to].body,
+            "metadata !{from} has the ordinary meaning of !{to}"
+        );
+    }
+    metadata_tokens(text, &mapping)
+}
+
+fn metadata_tokens(text: &str, mapping: &std::collections::BTreeMap<u64, u64>) -> String {
+    let mut result = String::new();
+    let mut characters = text.chars().peekable();
+    let mut quoted = false;
+    let mut comment = false;
+    while let Some(character) = characters.next() {
+        if quoted && character == '\\' {
+            result.push(character);
+            result.push(characters.next().expect("escaped character"));
+            continue;
+        }
+        if !comment && character == '"' {
+            quoted = !quoted;
+        }
+        if !quoted && character == ';' {
+            comment = true;
+        }
+        if character == '\n' {
+            comment = false;
+        }
+        result.push(character);
+        if !quoted
+            && !comment
+            && character == '!'
+            && characters.peek().is_some_and(char::is_ascii_digit)
+        {
+            let mut digits = String::new();
+            while characters.peek().is_some_and(char::is_ascii_digit) {
+                digits.push(characters.next().unwrap());
+            }
+            let id = digits.parse::<u64>().unwrap();
+            result.push_str(
+                &mapping
+                    .get(&id)
+                    .expect("every metadata token has a recorded dependency")
+                    .to_string(),
+            );
+        }
+    }
+    result
+}
+
+#[test]
+fn metadata_identity_comparison_rejects_changed_meaning_or_sharing() {
+    use crate::backend::emission::{FunctionBody, Module, Signature};
+    let mut expected = Module::default();
+    for id in [0, 1] {
+        expected.metadata_node(id, format!("distinct !{{!{id}}}"), [id].into());
+        expected.metadata_node(id + 2, format!("!{{!{id}}}"), [id].into());
+    }
+    let mut body = FunctionBody::default();
+    body.open_block("entry".to_owned());
+    body.instructions("  ret void\n", &[]);
+    body.references.metadata.extend([2, 3]);
+    expected.define(
+        Signature::new("test", "void", Vec::new())
+            .define(body, "")
+            .unwrap(),
+    );
+    let entity = &expected.entities[0];
+    assert_eq!(
+        restore_metadata(&expected, &expected, entity, entity, "!2 !3"),
+        "!2 !3"
+    );
+    for defect in ["distinctness", "collapsed identity", "missing edge"] {
+        let mut actual = expected.clone();
+        match defect {
+            "distinctness" => actual.metadata.get_mut(&0).unwrap().body = "!{!0}".to_owned(),
+            "collapsed identity" => {
+                let node = actual.metadata.get_mut(&3).unwrap();
+                node.body = "!{!0}".to_owned();
+                node.references = [0].into();
+            }
+            "missing edge" => actual.metadata.get_mut(&2).unwrap().references.clear(),
+            _ => unreachable!(),
+        }
+        assert!(
+            std::panic::catch_unwind(|| restore_metadata(
+                &actual,
+                &expected,
+                &actual.entities[0],
+                entity,
+                "!2 !3"
+            ))
+            .is_err(),
+            "{defect}"
+        );
+    }
+}
+
 const SOURCE: &[u8] = br#"const increments: Array<u64, 2> =[7_u64, 9_u64];
 
 fn helper(seed: u64, count: u64) -> result: u64 pure {
@@ -235,7 +387,8 @@ fn main() -> status: std::process::ExitStatus pure {
                 (&clone.body, &reference.body),
             ] {
                 assert_eq!(
-                    actual.replace("@wf__par_seq_", "@wf_"),
+                    restore_metadata(&combined.model, &ordinary.model, clone, reference, actual)
+                        .replace("@wf__par_seq_", "@wf_"),
                     *expected,
                     "complete canonical entity {name}"
                 );
