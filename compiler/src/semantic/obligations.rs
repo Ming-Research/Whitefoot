@@ -202,6 +202,7 @@ mod tests {
             written_before: Vec::new(),
             killed_by: Vec::new(),
             lost_header: None,
+            selected_return: None,
         }
     }
 

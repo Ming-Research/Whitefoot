@@ -76,10 +76,10 @@ use super::super::model::{
     CheckedArrayRoot, CheckedBooleanOperation, CheckedConst, CheckedConstructor,
     CheckedContainerRoot, CheckedConversionMode, CheckedExpression, CheckedFloatOperation,
     CheckedFunction, CheckedIntegerOperation, CheckedLoopId, CheckedLoopInvariant, CheckedMatchArm,
-    CheckedMeasure, CheckedMode, CheckedNominalKind, CheckedNumericType, CheckedPlaceStep,
-    CheckedProofMultiplicity, CheckedProofUseSource, CheckedRangeSource, CheckedSetTarget,
-    CheckedStatement, CheckedType, CheckedValue, FloatType, IntegerType, MeasureCell, MeasuredKind,
-    SubscriptedTerm,
+    CheckedMatchSelection, CheckedMatchType, CheckedMeasure, CheckedMode, CheckedNominalKind,
+    CheckedNumericType, CheckedPlaceStep, CheckedProofMultiplicity, CheckedProofUseSource,
+    CheckedRangeSource, CheckedSetTarget, CheckedStatement, CheckedType, CheckedValue, FloatType,
+    IntegerType, MeasureCell, MeasuredKind, SubscriptedTerm,
 };
 use super::super::permission::{PermissionSeparationProof, PermissionSeparationQuery};
 use super::super::places::{
@@ -100,13 +100,13 @@ use super::affine::{
 use super::polynomial::{CertificatePolynomial, PolynomialError};
 use super::state::{
     AffinePremiseUse, ClosedState, CountedRootAtom, DerivationId, DerivationInventory,
-    DerivationLedger, DerivationNode, DerivationRootKind, FactState, FlowEventId, FlowEventKind,
-    GoalId, GoalNormalization, GoalSign, GoalSupport, GoalTable, IndexCaptureSubstitution,
-    IndexSeparationDetail, JoinParent, KilledCell, PostconditionCallSubstitution,
-    RangeSeparationDetail, RangeSeparationOrdering, Relation, SourceAffineFactRef,
-    SourceLoopInvariantRef, WordHashMap, close, close_excluding_term, closure_is_seeded,
-    contradiction_without_proofs, join_at, materialize_closure_at, materialize_closure_before_kill,
-    materialize_counted_preheader_at,
+    DerivationLedger, DerivationNode, DerivationRootKind, Exclusion, ExclusionConclusion,
+    ExclusionProof, FactState, FlowEventId, FlowEventKind, GoalId, GoalNormalization, GoalSign,
+    GoalSupport, GoalTable, IndexCaptureSubstitution, IndexSeparationDetail, JoinParent,
+    KilledCell, PostconditionCallSubstitution, RangeSeparationDetail, RangeSeparationOrdering,
+    Relation, SourceAffineFactRef, SourceLoopInvariantRef, WordHashMap, close,
+    close_excluding_term, closure_is_seeded, contradiction_without_proofs, join_at,
+    materialize_closure_at, materialize_closure_before_kill, materialize_counted_preheader_at,
 };
 use super::term::{
     CountedCaptureSide, MeasureBound, MeasurePlacement, PlaceRoot, TermId, TermKind, TermTable,
@@ -247,6 +247,7 @@ struct FlowEdge {
 /// context [ENT-5].
 #[derive(Default)]
 struct ArmFacts {
+    integer: Option<(GoalExpression, std::sync::Arc<[i128]>)>,
     node_path: Option<crate::NodePath>,
     comparison: Option<Relation>,
     goals: Vec<GoalId>,
@@ -801,6 +802,14 @@ struct AffineL0Entry {
 struct AffineL0Index {
     entries: Vec<AffineL0Entry>,
     by_terms: WordHashMap<Box<[AffineCoefficient]>, usize>,
+    postings: std::cell::OnceCell<AffineL0Postings>,
+}
+
+/// Target-independent support metadata for one complete, immutable index.
+#[derive(Default)]
+struct AffineL0Postings {
+    by_atom: WordHashMap<AffineTermId, Vec<usize>>,
+    by_support: WordHashMap<Box<[AffineTermId]>, Vec<usize>>,
 }
 
 /// One function-local query memo, including the full ordered value images.
@@ -843,6 +852,9 @@ struct AffineDirectQuery<'a> {
     intervals: WordHashMap<AffineTermId, AffineAtomInterval>,
     measures: Option<WordHashMap<AffineTermId, Vec<TermId>>>,
     residual: AffineResidualScratch,
+    direct_metric: super::work::AffineMetric,
+    /// Entries whose strongest-interval feasibility is false or unknown.
+    final_interval_exceptions: Option<Vec<usize>>,
 }
 
 impl<'a> AffineDirectQuery<'a> {
@@ -858,8 +870,39 @@ impl<'a> AffineDirectQuery<'a> {
             intervals: WordHashMap::default(),
             measures: None,
             residual: AffineResidualScratch::default(),
+            direct_metric: super::work::AffineMetric::DirectOther,
+            final_interval_exceptions: None,
         }
     }
+}
+
+/// One numeric disposition retains AUTO preparation through its bridge targets.
+/// The borrows freeze binding images and premise order for this session. Atoms
+/// are immutable on this call path; it neither rolls back nor replaces them.
+/// Interior-mutable measure images are checked through the prepared index.
+struct AffineAutoQuery<'a> {
+    values: &'a AffineFlowState,
+    assumptions: &'a [ActiveAffineFact],
+    prepared: Option<PreparedAffineAuto>,
+}
+
+impl<'a> AffineAutoQuery<'a> {
+    fn new(values: &'a AffineFlowState, assumptions: &'a [ActiveAffineFact]) -> Self {
+        Self {
+            values,
+            assumptions,
+            prepared: None,
+        }
+    }
+}
+
+struct PreparedAffineAuto {
+    closed: Rc<ClosedState>,
+    l0: Rc<LazyAffineL0Index>,
+    intervals: WordHashMap<AffineTermId, AffineAtomInterval>,
+    measures: Option<WordHashMap<AffineTermId, Vec<TermId>>>,
+    residual: AffineResidualScratch,
+    final_interval_exceptions: Option<Vec<usize>>,
 }
 
 struct AutomaticAffinePremise {
@@ -1186,6 +1229,68 @@ pub(super) fn analyze(
     entailment
 }
 
+/// Diagnostic-only comparison with the already expanded requirements. No
+/// facts are established and no acceptance judgment reads this vocabulary.
+pub(crate) fn matching_requirement(
+    function: &CheckedFunction,
+    context: &EntailmentContext<'_>,
+    outcome: &ObligationOutcome,
+) -> Option<crate::NodePath> {
+    fn normalized(
+        left: &TermKind,
+        right: &TermKind,
+        bound: i128,
+    ) -> Option<(TermKind, TermKind, i128)> {
+        let split = |term: &TermKind| match term {
+            TermKind::Constant(value) => Some((TermKind::Zero, *value)),
+            // Dense term IDs belong to their own vocabulary. These compound
+            // terms cannot be compared across the diagnostic copy by ID.
+            TermKind::Sum(..) | TermKind::TargetMeasure { .. } => None,
+            term => Some((term.clone(), 0)),
+        };
+        let (left, left_constant) = split(left)?;
+        let (right, right_constant) = split(right)?;
+        Some((
+            left,
+            right,
+            bound.checked_sub(left_constant)?.checked_add(right_constant)?,
+        ))
+    }
+
+    let [request] = outcome.components.as_slice() else {
+        return None;
+    };
+    if request.distinct {
+        return None;
+    }
+    let terms = &function.entailment.inventory.terms;
+    let wanted = normalized(
+        terms.get(request.left?.0 as usize)?,
+        terms.get(request.right.0 as usize)?,
+        request.bound,
+    )?;
+    let mut analyzer = Analyzer::new(context, function);
+    analyzer.input.collect_bindings();
+    function.requirements.iter().find_map(|requirement| {
+        // An implicit type invariant is not a clause the writer can move.
+        if requirement.subject.is_some() {
+            return None;
+        }
+        let goal = analyzer.input.body_requirement_goal(requirement)?;
+        let Relation::Bound { left, right, bound } =
+            analyzer.reasoning().goal_projection(&goal)?
+        else {
+            return None;
+        };
+        let candidate = normalized(
+            analyzer.vocabulary.terms.kind(left),
+            analyzer.vocabulary.terms.kind(right),
+            bound,
+        )?;
+        (candidate == wanted).then(|| requirement.clause.clone())
+    })
+}
+
 /// Builds one optimistic per-function FN-9 proof batch without pruning or
 /// remapping its derivation ledger. The checker calls [`finish`] after the
 /// component publication decision.
@@ -1324,6 +1429,9 @@ fn run_analyzer(mut analyzer: Analyzer<'_, '_>) -> AnalysisRun {
     // datum per measure of a parameter any declared relation names, equal to
     // that measure at body entry.
     analyzer.reasoning().establish_entry_datums(&mut state);
+    // [FN-9] and the entry datums each postcondition place's subscripts
+    // are judged over at its selected returns.
+    analyzer.establish_place_entry_datums(&mut state);
     analyzer
         .frames
         .scopes
@@ -2485,6 +2593,7 @@ mod range_argument_kill_tests {
             binding: VIEW,
             element: CheckedElement(0),
             element_type: CheckedType::Integer(IntegerType::U64),
+            proof_base: None,
         })
     }
 

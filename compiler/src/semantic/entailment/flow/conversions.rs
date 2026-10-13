@@ -200,6 +200,7 @@ impl Judging<'_, '_, '_> {
             written_before: state.written_before(discharged),
             killed_by: Vec::new(),
             lost_header: None,
+            selected_return: None,
         });
     }
 }

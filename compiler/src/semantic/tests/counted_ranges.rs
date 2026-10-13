@@ -115,7 +115,7 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         SemanticRule::Type7,
         SemanticIssueKind::MissingDereference {
-            mechanical_fix: "write `holder^`",
+            mechanical_fix: "write `holder^`".to_owned(),
         },
     );
 
@@ -136,7 +136,7 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         SemanticRule::Type7,
         SemanticIssueKind::MissingDereference {
-            mechanical_fix: "write `holder^`",
+            mechanical_fix: "write `holder^`".to_owned(),
         },
     );
 
@@ -154,7 +154,7 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         SemanticRule::Type7,
         SemanticIssueKind::MissingDereference {
-            mechanical_fix: "write `holder^`",
+            mechanical_fix: "write `holder^`".to_owned(),
         },
     );
 

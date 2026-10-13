@@ -1,0 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias Inputs = std::process::Inputs;
+
+public fn take_main(inputs: Inputs) -> status: ExitStatus pure waits doc "Each of CONTEXTS contexts, for MILLISECONDS, runs atomic statements that hold an entry of its own map and then take its own shared object, so every take is admitted at its first look and no claim ever queues.";
+
+public fn own_main(inputs: Inputs) -> status: ExitStatus pure waits doc "Each of CONTEXTS contexts, for MILLISECONDS, runs atomic statements on its own shared object alone, through the ordinary acquisition, which finds the object free and no claim waiting.";

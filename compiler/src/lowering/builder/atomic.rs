@@ -176,7 +176,7 @@ impl IrBuilder<'_> {
                         referent: IrAddressed::Nominal(nominal),
                     },
                 )?;
-                let object = if target.borrowed {
+                let object = if target.kept_by_place {
                     loaded
                 } else {
                     self.define(
@@ -271,7 +271,7 @@ impl IrBuilder<'_> {
                     object,
                     nominal,
                     state: field,
-                    owned: !target.borrowed,
+                    owned: !target.kept_by_place,
                     wrote: !target.reads,
                     lock,
                 });
