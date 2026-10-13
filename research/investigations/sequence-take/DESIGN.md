@@ -1068,6 +1068,9 @@ Lists as above, plus `0` (one driver).
   parts with numbers against parts without, AOF on, at least 75%) stays
   Firn's and follows Q3.
 
+The harness for Q1 and Q2 is `research/experiments/sequence-take/`, run by
+the temporary workflow `tmp-sequence-take.yml`, which is removed after the run.
+
 ## 8. Recommendation
 
 **Adopt (V), the shared atomic value held by an atomic statement without

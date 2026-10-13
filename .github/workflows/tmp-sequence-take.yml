@@ -1,0 +1,307 @@
+# Temporary: runs the registered measurements Q1 and Q2 of
+# research/investigations/sequence-take/DESIGN.md section 7, before any
+# language change. Q1 is a C program (one shared fetch-and-add per operation at
+# 100 to 800 ns of private work); Q2 is a Whitefoot witness (one atomic
+# statement on a map entry and the context's own part, with and without a
+# whole target on one Shared<u64> sequence) built with the compiler revision
+# named by wf_rev, by default the head of the branch that stops counting
+# handles of value handles, so that today's form is measured at its best.
+# Removed after the run, with the results copied into the investigation's
+# record.
+#
+#   gh workflow run tmp-sequence-take.yml --ref <branch> -f mode=smoke
+#   gh workflow run tmp-sequence-take.yml --ref <branch> -f mode=pilot
+#   gh workflow run tmp-sequence-take.yml --ref <branch> -f mode=main
+#
+# smoke builds the compiler and the arms and runs every arm briefly on a
+# GitHub-hosted runner to check the wiring, the check values, that T2 passes
+# the correctness checks N1 to N3 and that Tbad fails N1 and N3; its rates
+# decide nothing. pilot (one block at the 8-P-core list, timed) and main (the
+# registered six blocks at all four lists) run only on the 14900K runner and
+# refuse any other host. If the noise at the 8-P-core list exceeds 0.05, rerun
+# main once with cell_millis=10000.
+#
+# The heavy steps run under .github/run-check.pl, which holds the host-wide
+# lock so that no other heavy command shares the machine. Their labels have
+# no row in .github/time-budgets.txt and no budget record is named here, so
+# the budget comparison is skipped for them; a dispatch-only measurement is
+# not a gate stage.
+#
+# research-boundary: manual-only
+# Explicitly requested measurement; no push or pull-request trigger.
+name: tmp-sequence-take
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: smoke checks the wiring on a GitHub-hosted runner (no verdict); pilot is one block at the 8-P-core list and main the registered blocks, both on the 14900K
+        type: choice
+        options: [smoke, pilot, main]
+        default: smoke
+      blocks:
+        description: Blocks of the main run (registered as 6, DESIGN.md section 7)
+        type: string
+        default: "6"
+      cell_millis:
+        description: Milliseconds of each timed cell (registered as 5000; 10000 for the one allowed rerun)
+        type: string
+        default: "5000"
+      wf_rev:
+        description: The compiler revision the Whitefoot arms are built with (default, the head of claude/skip-handle-count)
+        type: string
+        default: aec381cecc3de3300afa1498ddba3d10698f3d04
+
+defaults:
+  run:
+    shell: bash
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  smoke:
+    if: ${{ inputs.mode == 'smoke' }}
+    name: sequence-take Q1 and Q2 (smoke, GitHub-hosted, no verdict)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      MODE: smoke
+      MILLIS: "300"
+      CHECK_MILLIS: "1000"
+      BLOCKS: "2"
+      W_LIST: "100 400"
+      WF_REV_INPUT: ${{ inputs.wf_rev }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Name the output directory and pick the host's CPU lists
+        run: |
+          echo "OUT=$RUNNER_TEMP/sequence-take" >> "$GITHUB_ENV"
+          cpus=$(nproc)
+          echo "cpus: $cpus"
+          if [ "$cpus" -ge 4 ]; then
+            echo "CPU_LISTS=0,1 0-3" >> "$GITHUB_ENV"
+            echo "CHECK_LIST=0-3" >> "$GITHUB_ENV"
+          else
+            echo "CPU_LISTS=0 0,1" >> "$GITHUB_ENV"
+            echo "CHECK_LIST=0,1" >> "$GITHUB_ENV"
+          fi
+
+      - name: Install the host's tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang lld
+          rustup default stable
+          missing=
+          for tool in /usr/bin/clang ld.lld cargo make taskset perl python3 git awk lscpu timeout sha256sum /usr/bin/time; do
+            command -v "$tool" >/dev/null || missing="$missing $tool"
+          done
+          if [ -n "$missing" ]; then
+            echo "missing:$missing"
+            exit 1
+          fi
+
+      - name: Build the compiler at the named revision
+        run: |
+          rev=$(git rev-parse "$WF_REV_INPUT")
+          echo "WF_RELEASE=$rev" >> "$GITHUB_ENV"
+          echo "WHITEFOOTC=$RUNNER_TEMP/wf/compiler/target/gate/whitefootc" >> "$GITHUB_ENV"
+          git worktree prune
+          rm -rf "$RUNNER_TEMP/wf"
+          git worktree add --detach "$RUNNER_TEMP/wf" "$rev"
+          cargo fetch --locked --manifest-path "$RUNNER_TEMP/wf/compiler/Cargo.toml"
+          perl .github/run-check.pl sequence-take/compiler make -C "$RUNNER_TEMP/wf/compiler" build
+
+      - name: Build the arms
+        run: |
+          perl .github/run-check.pl sequence-take/build \
+            bash research/experiments/sequence-take/run.sh --out "$OUT" --build-only
+
+      - name: Run the cells and the correctness runs
+        run: |
+          perl .github/run-check.pl sequence-take/cells \
+            bash research/experiments/sequence-take/run.sh --out "$OUT" --skip-build
+
+      - name: Summarize
+        if: always()
+        run: |
+          test -s "$OUT/raw.tsv" || { echo "no rows were written"; exit 1; }
+          status=0
+          python3 -I -B research/experiments/sequence-take/summarize.py --smoke "$OUT" > "$OUT/summary.txt" || status=$?
+          cat "$OUT/summary.txt"
+          {
+            echo "## sequence-take Q1 and Q2 (smoke, no verdict)"
+            echo
+            echo '```text'
+            cat "$OUT/host.txt" 2>/dev/null
+            echo
+            cat "$OUT/summary.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sequence-take-smoke-${{ github.run_id }}
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/sequence-take/raw.tsv
+            ${{ runner.temp }}/sequence-take/correct.tsv
+            ${{ runner.temp }}/sequence-take/calib.tsv
+            ${{ runner.temp }}/sequence-take/idle.tsv
+            ${{ runner.temp }}/sequence-take/summary.txt
+            ${{ runner.temp }}/sequence-take/host.txt
+            ${{ runner.temp }}/sequence-take/runs/
+
+  measure:
+    if: ${{ inputs.mode != 'smoke' }}
+    name: sequence-take Q1 and Q2 (${{ inputs.mode }}, 14900K)
+    runs-on: [self-hosted, 14900k]
+    # Main: 31 units x 4 lists x 6 blocks x 5 s is about 62 minutes of cells,
+    # plus calibration, six pairs of 1 s correctness runs and a compiler build.
+    # Bounds a stuck runner only.
+    timeout-minutes: 150
+    # One run at a time on the 14900K, queued rather than cancelled.
+    concurrency:
+      group: tmp-sequence-take-14900k
+      cancel-in-progress: false
+    env:
+      MODE: ${{ inputs.mode }}
+      WF_REV_INPUT: ${{ inputs.wf_rev }}
+      CLANG: /usr/bin/clang
+      CPU_LISTS: "0,2 0,2,4,6 0,2,4,6,8,10,12,14 0-15"
+      CHECK_LIST: "0,2,4,6,8,10,12,14"
+      CHECK_MILLIS: "1000"
+    steps:
+      - name: Refuse any host but the 14900K
+        run: |
+          model=$(awk -F': ' '/^model name/ {print $2; exit}' /proc/cpuinfo)
+          echo "runner: $RUNNER_NAME ($RUNNER_ENVIRONMENT); model: $model; cpus: $(nproc)"
+          if [ "$RUNNER_ENVIRONMENT" != self-hosted ]; then
+            echo "the $MODE mode runs only on the self-hosted 14900K runner; use mode=smoke on a GitHub-hosted runner"
+            exit 1
+          fi
+          case $model in
+            *i9-14900K*) ;;
+            *) echo "this host is not an i9-14900K; the CPU lists name that machine's cores"; exit 1 ;;
+          esac
+          if [ "$(nproc)" != 32 ]; then
+            echo "expected 32 CPUs (8 P-cores with two hyperthreads, 16 E-cores), found $(nproc)"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check the inputs and the host's tools
+        env:
+          BLOCKS_INPUT: ${{ inputs.blocks }}
+          MILLIS_INPUT: ${{ inputs.cell_millis }}
+        run: |
+          [[ "$BLOCKS_INPUT" =~ ^[1-9][0-9]?$ ]] || { echo "blocks must be a number from 1 to 99"; exit 1; }
+          [[ "$MILLIS_INPUT" =~ ^[1-9][0-9]{3,4}$ ]] || { echo "cell_millis must be a number from 1000 to 99999"; exit 1; }
+          echo "BLOCKS=$BLOCKS_INPUT" >> "$GITHUB_ENV"
+          echo "MILLIS=$MILLIS_INPUT" >> "$GITHUB_ENV"
+          echo "OUT=$RUNNER_TEMP/sequence-take" >> "$GITHUB_ENV"
+          if [ -d "$HOME/.cargo/bin" ]; then
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+          missing=
+          for tool in /usr/bin/clang ld.lld cargo make taskset perl python3 git awk lscpu timeout sha256sum /usr/bin/time; do
+            command -v "$tool" >/dev/null || missing="$missing $tool"
+          done
+          if [ -n "$missing" ]; then
+            echo "missing:$missing"
+            exit 1
+          fi
+          /usr/bin/clang --version
+
+      - name: Stop leftovers and check that the host is idle
+        run: |
+          ps -eo pid,args | grep -E '/sequence-take/bin/' | grep -v grep | tee "$RUNNER_TEMP/leftover.txt" || true
+          awk '{print $1}' "$RUNNER_TEMP/leftover.txt" | xargs -r kill 2>/dev/null || true
+          lock=/tmp/whitefoot-check-$(id -u).lock
+          if [ -e "$lock" ]; then
+            owner=$(head -1 "$lock/pid" 2>/dev/null)
+            if [ -z "$owner" ] || ! kill -0 "$owner" 2>/dev/null; then
+              echo "removing stale lock of $owner: $(cat "$lock/command" 2>/dev/null)"
+              rm -rf "$lock"
+            fi
+          fi
+          sleep 2
+          sample() { awk '/^cpu / {idle = $5 + $6; total = 0; for (i = 2; i <= NF; i++) total += $i; print idle, total}' /proc/stat; }
+          read -r idle_before total_before < <(sample)
+          sleep 5
+          read -r idle_after total_after < <(sample)
+          busy=$(awk -v ib="$idle_before" -v tb="$total_before" -v ia="$idle_after" -v ta="$total_after" 'BEGIN { printf "%.4f", 1 - (ia - ib) / (ta - tb) }')
+          echo "load: $(cat /proc/loadavg); busy share over 5 s: $busy"
+          ps -eo pid,pcpu,args --sort=-pcpu | head -n 8
+          awk -v busy="$busy" 'BEGIN { exit !(busy > 0.05) }' && { echo "the host is not idle; stop its other work first"; exit 1; } || true
+
+      - name: Build the compiler at the named revision
+        run: |
+          export PATH="$HOME/.cargo/bin:$PATH"
+          rev=$(git rev-parse "$WF_REV_INPUT")
+          echo "WF_RELEASE=$rev" >> "$GITHUB_ENV"
+          echo "WHITEFOOTC=$RUNNER_TEMP/wf/compiler/target/gate/whitefootc" >> "$GITHUB_ENV"
+          git worktree prune
+          rm -rf "$RUNNER_TEMP/wf"
+          git worktree add --detach "$RUNNER_TEMP/wf" "$rev"
+          cargo fetch --locked --manifest-path "$RUNNER_TEMP/wf/compiler/Cargo.toml"
+          perl .github/run-check.pl sequence-take/compiler make -C "$RUNNER_TEMP/wf/compiler" build
+
+      - name: Build the arms
+        run: |
+          perl .github/run-check.pl sequence-take/build \
+            bash research/experiments/sequence-take/run.sh --out "$OUT" --build-only
+
+      - name: Run the cells and the correctness runs
+        env:
+          WHITEFOOT_CHECK_TIMEOUT: "9000"
+        run: |
+          perl .github/run-check.pl sequence-take/cells \
+            bash research/experiments/sequence-take/run.sh --out "$OUT" --skip-build
+
+      - name: Summarize
+        if: always()
+        run: |
+          test -s "$OUT/raw.tsv" || { echo "no rows were written"; exit 0; }
+          flag=
+          if [ "$MODE" = pilot ]; then flag=--pilot; fi
+          python3 -I -B research/experiments/sequence-take/summarize.py $flag "$OUT" > "$OUT/summary.txt" || true
+          cat "$OUT/summary.txt"
+          {
+            echo "## sequence-take Q1 and Q2 ($MODE)"
+            echo
+            echo '```text'
+            cat "$OUT/host.txt" 2>/dev/null
+            cat "$OUT/pilot.txt" 2>/dev/null
+            echo
+            cat "$OUT/summary.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sequence-take-${{ inputs.mode }}-${{ github.run_id }}
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/sequence-take/raw.tsv
+            ${{ runner.temp }}/sequence-take/correct.tsv
+            ${{ runner.temp }}/sequence-take/calib.tsv
+            ${{ runner.temp }}/sequence-take/idle.tsv
+            ${{ runner.temp }}/sequence-take/pilot.txt
+            ${{ runner.temp }}/sequence-take/summary.txt
+            ${{ runner.temp }}/sequence-take/host.txt
+            ${{ runner.temp }}/sequence-take/runs/

@@ -1,0 +1,9 @@
+pkg: [std::process, std::text, std::time, std::io, std::fs];
+
+entry t0 = pkg::sq_t0_main;
+
+entry t2 = pkg::sq_t2_main;
+
+entry c_t2 = pkg::sq_c2_main;
+
+entry c_tbad = pkg::sq_cbad_main;
