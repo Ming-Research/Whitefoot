@@ -134,7 +134,7 @@ fn assert_chunk_table_selections_read(source: &[u8]) {
 fn split_table_read_fold_runs_repeatedly() {
     let module = emit_with_overlap(TABLE_READ_FOLD);
     let directory = test_directory();
-    let executable = CountedProgram::link(&module, &directory);
+    let executable = CountedProgram::link(&control_range_transport(&module), &directory);
     for run in 0..20 {
         let (grants, output) = executable.run(Some("4"));
         assert_eq!(output.status.code(), Some(0), "run {run}: {output:?}");
@@ -736,8 +736,8 @@ fn borrowed_read_modify_map_source() -> Vec<u8> {
         .into_bytes()
 }
 
-/// A permitted loop is emitted as a chunk, a splitter, and one ordinary
-/// hand-out of the splitter's left half.
+/// A permitted loop is emitted as ordinary subrange chunks and a demand
+/// splitter that hands out its far half and retains its near half.
 ///
 /// The whole design is in this shape: the leaf is the *loop*, never one
 /// iteration, so the body keeps the vectorization and unrolling the loop gave
@@ -756,7 +756,7 @@ fn a_permitted_loop_is_outlined_split_and_joined() {
         module.contains("define i64 @wf__par_split_"),
         "a split loop must synthesize a range splitter:\n{module}"
     );
-    assert!(module.contains("define weak i64 @wf__par_split_budget("));
+    assert!(!module.contains("call i64 @wf__par_split_budget("));
     let splitter_symbol = synthesized(&module, "@wf__par_split_");
     let chunk_symbol = synthesized(&module, "@wf__par_chunk_");
     let splitter = function_body(&module, &splitter_symbol);
@@ -789,16 +789,14 @@ fn a_permitted_loop_is_outlined_split_and_joined() {
         "the chunk is the loop and must reach no runtime entry point:\n{chunk}"
     );
 
-    // Asked once per loop entry, in the enclosing function, and never inside
-    // the chunk or per iteration.
-    assert_eq!(
-        module.matches("call i64 @wf__par_split_budget(").count(),
-        1,
-        "the split allowance must be asked exactly once, at loop entry:\n{module}"
-    );
+    // Range scheduling happens inside the splitter, never at loop entry.
+    assert!(!function_body(&module, "@wf_folded").contains("@wf__par_split_budget("));
+    assert!(splitter.contains("@wf__par_demand_word"), "{splitter}");
+    assert!(splitter.contains("load atomic i64"), "{splitter}");
+    assert!(splitter.contains("udiv i64"), "{splitter}");
     assert!(
-        function_body(&module, "@wf_folded").contains("call i64 @wf__par_split_budget("),
-        "the allowance must be asked where the loop is entered:\n{module}"
+        splitter.contains("150000") && splitter.contains("149999"),
+        "{splitter}"
     );
 }
 
@@ -926,71 +924,125 @@ fn synthesized_symbols(module: &str, prefix: &str) -> Vec<String> {
     found
 }
 
-/// Observe the selected outer call without changing any inner query or worker
-/// protocol. The same image exercises a zero answer and the real runtime's
-/// answer. A zero allowance enters the splitter once and reaches one chunk;
-/// that chunk retains its nested queries and publication opportunities.
-fn observe_outer_loop_budget(module: &str, caller: &str, splitter: &str, chunk: &str) -> String {
-    let body = function_body(module, caller);
-    assert_eq!(body.matches("call i64 @wf__par_split_budget(").count(), 1);
-    let changed = body.replace(
-        "call i64 @wf__par_split_budget(",
-        "call i64 @wf_test_outer_budget(",
+/// Force only the scheduling inputs of transport probes: request at each
+/// source/chunk entry to a driver and raise a cheap price just to the grain.
+/// Production-priced runs above remain the source-result reference. Keeping
+/// the original large price avoids turning large ranges into single iterations.
+fn control_range_transport(module: &str) -> String {
+    let mut controlled = String::new();
+    let mut source_or_chunk = false;
+    let mut protected = Vec::new();
+    let mut ordinal = 0;
+    for line in module.lines() {
+        if line.starts_with("define ") {
+            let symbol = line.split_once('@').unwrap().1.split_once('(').unwrap().0;
+            source_or_chunk = (!symbol.starts_with("wf__par_")
+                || symbol.starts_with("wf__par_chunk_"))
+                && !symbol.starts_with("wf__ctx_thunk_");
+            if !source_or_chunk {
+                protected.push(format!("@{symbol}"));
+            }
+        }
+        if source_or_chunk
+            && line.contains("call ")
+            && line.contains("@wf__par_split_")
+            && !line.contains("@wf__par_split_budget(")
+        {
+            let (_, arguments) = line.split_once("@wf__par_split_").unwrap();
+            let (_, arguments) = arguments.split_once('(').unwrap();
+            let (arguments, _) = arguments.rsplit_once(')').unwrap();
+            let values: Vec<_> = arguments.split(", ").collect();
+            let lower = values[1].strip_prefix("i64 ").unwrap();
+            let upper = values[2].strip_prefix("i64 ").unwrap();
+            let price = values.last().unwrap().strip_prefix("i64 ").unwrap();
+            controlled.push_str(&format!(
+                "  %transport.{ordinal}.ascending = icmp ult i64 {lower}, {upper}\n  %transport.{ordinal}.difference = sub i64 {upper}, {lower}\n  %transport.{ordinal}.span = select i1 %transport.{ordinal}.ascending, i64 %transport.{ordinal}.difference, i64 0\n  %transport.{ordinal}.divisor = call i64 @llvm.umax.i64(i64 %transport.{ordinal}.span, i64 1)\n  %transport.{ordinal}.quotient = udiv i64 149999, %transport.{ordinal}.divisor\n  %transport.{ordinal}.minimum = add i64 %transport.{ordinal}.quotient, 1\n  %transport.{ordinal}.price = call i64 @llvm.umax.i64(i64 {price}, i64 %transport.{ordinal}.minimum)\n  store atomic i64 1, ptr @wf__par_demand_word release, align 8\n"
+            ));
+            let (prefix, _) = line.rsplit_once(", i64 ").unwrap();
+            controlled.push_str(&format!("{prefix}, i64 %transport.{ordinal}.price)\n"));
+            ordinal += 1;
+        } else {
+            controlled.push_str(line);
+            controlled.push('\n');
+        }
+    }
+    assert!(
+        ordinal > 0,
+        "transport probe must retain an actual range driver"
     );
-    let mut observed = module.replacen(body, &changed, 1);
+    // Hand-out callbacks must forward the original price and request state;
+    // refreshing either at every far half would force a different fork tree.
+    for symbol in protected {
+        assert_eq!(
+            function_body(module, &symbol),
+            function_body(&controlled, &symbol),
+            "transport control must preserve callback and recursive-driver body {symbol}"
+        );
+    }
+    controlled
+}
+
+/// Observe the selected outer demand word without changing an inner loop's
+/// requests. With no outer request, ordinary slices must retain inner offers;
+/// the real request arm still proves a nonowner publication and completion.
+fn observe_outer_loop_budget(module: &str, caller: &str, splitter: &str, chunk: &str) -> String {
+    assert!(!function_body(module, caller).contains("call i64 @wf__par_split_budget("));
+    let mut observed = control_range_transport(module);
     for (symbol, observer) in [
         (splitter, "wf_test_outer_splitter"),
         (chunk, "wf_test_outer_chunk"),
     ] {
         let body = function_body(&observed, symbol).to_owned();
         let entry = body.lines().find(|line| line.ends_with(':')).unwrap();
-        let changed = body.replacen(entry, &format!("{entry}\n  call void @{observer}()"), 1);
+        let mut changed = body.replacen(entry, &format!("{entry}\n  call void @{observer}()"), 1);
+        if symbol == splitter {
+            let mut polls = 0;
+            changed = changed
+                .lines()
+                .map(|line| {
+                    if line.contains("load atomic i64") && line.contains("@wf__par_demand_word") {
+                        polls += 1;
+                        let (result, _) = line.split_once(" = ").unwrap();
+                        format!("{result} = call i64 @wf_test_outer_requested()")
+                    } else {
+                        line.to_owned()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert_eq!(polls, 1, "observe exactly the outer request instruction");
+        }
         observed = observed.replacen(&body, &changed, 1);
     }
-    observed.push_str(
-        "\ndeclare i64 @wf_test_outer_budget(i64, i64)\ndeclare void @wf_test_outer_splitter()\ndeclare void @wf_test_outer_chunk()\n",
-    );
+    observed.push_str("\ndeclare i64 @wf_test_outer_requested()\ndeclare void @wf_test_outer_splitter()\ndeclare void @wf_test_outer_chunk()\n");
     super::parallel::observe_worker_schedule(&observed)
 }
 
-// Appended to the existing worker observer, so both ordinary and zero-budget
-// runs share one construction and retain the real publication/join protocol.
-// WF_TEST_NESTED distinguishes a map with no inner offers from the nested
-// reduction, whose zero-budget outer chunk must still publish inner work.
 const OUTER_LOOP_BUDGET_OBSERVER: &str = r#"
-extern uint64_t wf__par_split_budget(uint64_t, uint64_t);
+extern _Thread_local uint64_t wf__par_demand_word;
 extern unsigned long wf__par_grants(void);
-static _Atomic unsigned outer_queries, outer_splitters, outer_chunks;
-static _Atomic uint64_t outer_allowance;
-uint64_t wf_test_outer_budget(uint64_t span, uint64_t weight) {
-    atomic_fetch_add(&outer_queries, 1);
-    uint64_t allowance = getenv("WF_TEST_ZERO_BUDGET") ? 0 : wf__par_split_budget(span, weight);
-    atomic_store(&outer_allowance, allowance);
-    return allowance;
+static _Atomic unsigned outer_requests, outer_splitters, outer_chunks;
+uint64_t wf_test_outer_requested(void) {
+    atomic_fetch_add(&outer_requests, 1);
+    return getenv("WF_TEST_ZERO_BUDGET") ? 0 :
+        atomic_load_explicit((_Atomic uint64_t *)&wf__par_demand_word, memory_order_acquire);
 }
 void wf_test_outer_splitter(void) { atomic_fetch_add(&outer_splitters, 1); }
 void wf_test_outer_chunk(void) { atomic_fetch_add(&outer_chunks, 1); }
 static void report_outer_budget(void) {
-    unsigned queries = atomic_load(&outer_queries);
+    unsigned requests = atomic_load(&outer_requests);
     unsigned splitters = atomic_load(&outer_splitters);
     unsigned chunks = atomic_load(&outer_chunks);
-    uint64_t allowance = atomic_load(&outer_allowance);
     unsigned long grants = wf__par_grants();
     int zero = getenv("WF_TEST_ZERO_BUDGET") != NULL;
-    if (queries != 1 || !chunks ||
-        (!allowance && (splitters != 1 || chunks != 1)) ||
-        (allowance && !splitters) ||
-        (!WF_TEST_NESTED && !zero && !allowance) ||
-        ((WF_TEST_NESTED || !zero) &&
-            (!grants || !atomic_load(&schedule_entered)))) {
-        fprintf(stderr, "outer loop budget: zero=%d queries=%u splitters=%u chunks=%u grants=%lu\n",
-                zero, queries, splitters, chunks, grants);
+    if (!chunks || !requests || (zero && splitters != 1) ||
+        ((!zero || WF_TEST_NESTED) && (!grants || !atomic_load(&schedule_entered)))) {
+        fprintf(stderr, "outer loop demand: zero=%d requests=%u splitters=%u chunks=%u grants=%lu\n",
+                zero, requests, splitters, chunks, grants);
         _Exit(116);
     }
 }
-__attribute__((constructor)) static void register_outer_budget(void) {
-    atexit(report_outer_budget);
-}
+__attribute__((constructor)) static void register_outer_budget(void) { atexit(report_outer_budget); }
 "#;
 
 /// A split that carries captures and folds under a second admitted operation
@@ -1048,7 +1100,7 @@ fn a_split_loop_carries_its_captures_and_a_second_combine() {
         assert_eq!(
             frame.size(),
             88,
-            "seed, bounds, a padded 24-byte record, a 24-byte array, budget and result"
+            "seed, bounds, a padded 24-byte record, a 24-byte array, runtime price and result"
         );
         let chunk = program
             .functions()
@@ -1120,7 +1172,8 @@ fn a_split_loop_carries_its_captures_and_a_second_combine() {
 
     // A selected worker schedule remains observable on a one-core host.
     {
-        let (granted, output) = CountedProgram::link(&split, &directory).run(Some("4"));
+        let (granted, output) =
+            CountedProgram::link(&control_range_transport(&split), &directory).run(Some("4"));
         assert_eq!(output.status.code(), Some(0));
         assert_eq!(output.stdout, runs[0].1);
         assert!(
@@ -1274,7 +1327,8 @@ fn an_aligned_nominal_payload_capture_handles_empty_and_mixed_measure_element_pa
         );
         assert_eq!(output.stdout, reference.stdout, "WF_WORKERS={workers}");
     }
-    let (granted, output) = CountedProgram::link(&split, &directory).run(Some("4"));
+    let (granted, output) =
+        CountedProgram::link(&control_range_transport(&split), &directory).run(Some("4"));
     assert!(
         granted > 0,
         "the nominal-element map must execute a real worker callback"
@@ -1298,7 +1352,8 @@ fn an_aligned_nominal_payload_capture_handles_empty_and_mixed_measure_element_pa
         );
         assert_eq!(output.stdout, reference.stdout, "WF_WORKERS={workers}");
     }
-    let (granted, output) = CountedProgram::link(&measured, &directory).run(Some("4"));
+    let (granted, output) =
+        CountedProgram::link(&control_range_transport(&measured), &directory).run(Some("4"));
     assert!(
         granted > 0,
         "the map reading its length in the body must execute a real worker callback"
@@ -1579,7 +1634,8 @@ fn a_borrowed_read_modify_map_preserves_the_sequential_bytes() {
     }
     identical(&runs).expect("the borrowed read-modify map must preserve every output byte");
 
-    let (granted, output) = CountedProgram::link(&split, &directory).run(Some("4"));
+    let (granted, output) =
+        CountedProgram::link(&control_range_transport(&split), &directory).run(Some("4"));
     assert!(granted > 0, "the map must execute a real worker callback");
     assert_eq!(output.status.code(), Some(0));
     assert_eq!(output.stdout, runs[0].1);
@@ -1736,6 +1792,14 @@ fn a_map_binding_an_ordered_result_list_is_split_and_keeps_its_elements() {
             "WF_WORKERS={workers}: every element must hold its iteration's two results"
         );
     }
+    let (granted, output) =
+        CountedProgram::link(&control_range_transport(&split), &directory).run(Some("4"));
+    assert!(
+        granted > 0,
+        "ordered result-list capture must execute a real worker"
+    );
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert_eq!(output.stdout, reference.stdout);
     std::fs::remove_dir_all(&directory).expect("remove the test directory");
 }
 
@@ -1781,7 +1845,8 @@ fn a_map_and_reduction_preserves_both_results() {
     }
     identical(&runs).expect("the combined map and reduction must preserve every byte");
 
-    let (granted, output) = CountedProgram::link(&split, &directory).run(Some("4"));
+    let (granted, output) =
+        CountedProgram::link(&control_range_transport(&split), &directory).run(Some("4"));
     assert!(granted > 0, "the map must execute a real worker callback");
     assert_eq!(output.status.code(), Some(0));
     assert_eq!(output.stdout, runs[0].1);
@@ -2008,9 +2073,8 @@ const ADMITTED_COMBINES: &[Combine] = &[
     },
 ];
 
-/// Odd, non-power-of-two range for controlled per-row worker executions.
-/// WF_SPLIT_WORK=1 permits small chunks; the ordinary program family separately
-/// covers the shipped work threshold with its substantial representative fold.
+/// Odd range for controlled per-row worker executions. The observer raises
+/// only the emitted price operand; separate tests lock the production grain.
 const COMBINE_SPAN: u64 = 257;
 
 /// The helpers every row's fold shares: the per-iteration mix that gives the
@@ -2199,6 +2263,36 @@ fn every_admitted_combine_splits_and_publishes_the_unsplit_bytes() {
     // Each row's caller brackets a fully joined fold. Interposition delays
     // the owner's join until one actual nonowner callback has entered.
     let mut observed = super::parallel::observe_worker_schedule(&split);
+    let mut controlled = 0;
+    for combine in ADMITTED_COMBINES {
+        let symbol = format!("@wf_fold_{}", combine.name);
+        let body = function_body(&observed, &symbol).to_owned();
+        let mut calls = 0;
+        let changed = body
+            .lines()
+            .map(|line| {
+                if line.contains("call ") && line.contains("@wf__par_split_") {
+                    calls += 1;
+                    let (prefix, _) = line.rsplit_once(", i64 ").expect("driver price operand");
+                    format!("{prefix}, i64 150000)")
+                } else {
+                    line.to_owned()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_eq!(
+            calls, 1,
+            "{} must retain one controlled demand driver",
+            combine.name
+        );
+        controlled += calls;
+        observed = observed.replacen(&body, &changed, 1);
+    }
+    assert_eq!(
+        controlled, 17,
+        "every admitted combine must exercise a granted range"
+    );
     for (index, combine) in ADMITTED_COMBINES.iter().enumerate() {
         let symbol = format!("@wf_value_{}", combine.name);
         let body = function_body(&observed, &symbol).to_owned();
@@ -2209,7 +2303,7 @@ fn every_admitted_combine_splits_and_publishes_the_unsplit_bytes() {
         let replacement = body
             .replacen(
                 entry,
-                &format!("{entry}\n  call void @wf_test_worker_schedule_begin()"),
+                &format!("{entry}\n  call void @wf_test_row_begin()"),
                 1,
             )
             .replace(
@@ -2219,14 +2313,17 @@ fn every_admitted_combine_splits_and_publishes_the_unsplit_bytes() {
         assert!(replacement.contains(&format!("@wf_test_row_end(i32 {index})")));
         observed = observed.replacen(&body, &replacement, 1);
     }
-    observed.push_str(
-        "\ndeclare void @wf_test_worker_schedule_begin()\ndeclare void @wf_test_row_end(i32)\n",
-    );
+    observed.push_str("\ndeclare void @wf_test_row_begin()\ndeclare void @wf_test_row_end(i32)\n");
     let observer = format!(
         "#define WF_TEST_SCHEDULE_MANUAL\n{}\n{}",
         super::parallel::WORKER_SCHEDULE,
         r#"
+extern _Thread_local uint64_t wf__par_demand_word;
 static unsigned completed_rows;
+void wf_test_row_begin(void) {
+    atomic_store_explicit((_Atomic uint64_t *)&wf__par_demand_word, 1, memory_order_release);
+    wf_test_worker_schedule_begin();
+}
 void wf_test_row_end(unsigned row) {
     if (row != completed_rows || !atomic_load(&schedule_entered)) {
         fprintf(stderr, "combine row %u did not execute a real worker\n", row);
@@ -2244,7 +2341,6 @@ __attribute__((constructor)) static void register_rows(void) { atexit(report_row
     let executable = super::build_linked_executable(&observed, Some(&observer), &[], &directory);
     let output = Command::new(executable)
         .env("WF_WORKERS", "4")
-        .env("WF_SPLIT_WORK", "1")
         .bounded_output()
         .expect("run all controlled combine rows");
     assert_eq!(output.status.code(), Some(0), "{output:?}");
@@ -2281,8 +2377,8 @@ fn assert_combine_rows(reference: &[u8], published: &[u8], setting: &str) {
     }
 }
 
-/// Two split loops surround an ordinary call join and precede a loop-header
-/// phi. One image checks both allowance answers and the sequential world;
+/// Two dynamic split loops surround an ordinary call join and precede a
+/// loop-header phi. One image checks requested and unrequested execution and the sequential world;
 /// native construction also verifies every emitted phi predecessor.
 #[test]
 fn multiple_split_loops_and_an_ordinary_join_keep_phi_predecessors() {
@@ -2290,9 +2386,11 @@ fn multiple_split_loops_and_an_ordinary_join_keep_phi_predecessors() {
   return imax(value, value);
 }
 
-fn composed(limit: u64) -> result: u64 pure {
+fn composed(limit: u64) -> result: u64 pure contract {
+  requires limit <= 4_u64;
+} {
   let total = 5_u64;
-  for (i in 0_u64..limit) {
+  for @sum (i in 0_u64..limit) {
     set total = total +wrap i;
   }
   let a = choose(value: total);
@@ -2300,8 +2398,8 @@ fn composed(limit: u64) -> result: u64 pure {
   let c = choose(value: 19_u64);
   let ab = a +wrap b;
   let combined = ab +wrap c;
-  let marks = array_filled::<u64, 2>(value: 0_u64);
-  for (j in 0_u64..2_u64) {
+  let marks = array_filled::<u64, 4>(value: 0_u64);
+  for @marks (j in 0_u64..limit) {
     set marks[j] = j +wrap combined;
   }
   let acc = marks[0_u64] +wrap marks[1_u64];
@@ -2326,7 +2424,8 @@ fn main() -> status: std::process::ExitStatus pure {
 "#;
     let module = emit_with_overlap(source);
     let body = function_body(&module, "@wf_composed");
-    assert_eq!(body.matches("call i64 @wf__par_split_budget(").count(), 2);
+    assert!(!body.contains("call i64 @wf__par_split_budget("));
+    assert_eq!(body.matches("call i64 @wf__par_split_composed.").count(), 2);
     assert!(body.contains("call void @wf__par_publish("));
     assert!(body.contains(" = phi i64 "));
     let sequential = function_body(&module, "@wf__par_seq_composed");
@@ -2335,10 +2434,22 @@ fn main() -> status: std::process::ExitStatus pure {
 
     let splitters = synthesized_symbols(&module, "@wf__par_split_");
     assert_eq!(splitters.len(), 2);
-    let mut observed = module.replace(
-        "call i64 @wf__par_split_budget(",
-        "call i64 @wf_test_cfg_budget(",
-    );
+    let mut observed = module.to_owned();
+    // Force a worthwhile price in the observer, leaving source lowering and
+    // the source-result oracle intact while executing both fork branches.
+    let changed = body
+        .lines()
+        .map(|line| {
+            if line.contains("call i64 @wf__par_split_composed.") {
+                let (prefix, _) = line.rsplit_once(", i64 ").expect("price operand");
+                format!("{prefix}, i64 150000)")
+            } else {
+                line.to_owned()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    observed = observed.replacen(body, &changed, 1);
     for symbol in splitters {
         let body = function_body(&observed, &symbol).to_owned();
         let entry = body.lines().find(|line| line.ends_with(':')).unwrap();
@@ -2349,29 +2460,25 @@ fn main() -> status: std::process::ExitStatus pure {
         );
         observed = observed.replacen(&body, &changed, 1);
     }
-    observed.push_str(
-        "\ndeclare i64 @wf_test_cfg_budget(i64, i64)\ndeclare void @wf_test_cfg_splitter()\n",
-    );
+    observed.push_str("\ndeclare void @wf_test_cfg_splitter()\n");
     let observer = r#"#include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-static _Atomic unsigned queries, splitters;
-uint64_t wf_test_cfg_budget(uint64_t span, uint64_t weight) {
-    (void)weight;
-    if (span != 4 && span != 2) { fputs("wrong composed span\n", stderr); exit(117); }
-    atomic_fetch_add(&queries, 1);
-    return getenv("WF_TEST_POSITIVE_BUDGET") ? 4 : 0;
+extern _Thread_local uint64_t wf__par_demand_word;
+static _Atomic unsigned splitters;
+void wf_test_cfg_splitter(void) {
+    atomic_fetch_add(&splitters, 1);
+    atomic_store_explicit((_Atomic uint64_t *)&wf__par_demand_word,
+        getenv("WF_TEST_POSITIVE_BUDGET") ? 1 : 0, memory_order_release);
 }
-void wf_test_cfg_splitter(void) { atomic_fetch_add(&splitters, 1); }
 static void report(void) {
-    unsigned queried = atomic_load(&queries), entered = atomic_load(&splitters);
+    unsigned entered = atomic_load(&splitters);
     int sequential = strcmp(getenv("WF_WORKERS"), "1") == 0;
     int positive = getenv("WF_TEST_POSITIVE_BUDGET") != NULL;
-    if (queried != (sequential ? 0 : 2) ||
-        (sequential ? entered != 0 : (positive ? entered <= 2 : entered != 2))) {
-        fprintf(stderr, "composed loops: queries=%u splitters=%u\n", queried, entered);
+    if (sequential ? entered != 0 : (positive ? entered <= 2 : entered != 2)) {
+        fprintf(stderr, "composed loops: splitters=%u\n", entered);
         _Exit(118);
     }
 }
@@ -2418,22 +2525,28 @@ fn a_degenerate_range_folds_to_the_accumulator_it_arrived_with() {
         "the fixture's loop must actually split, or this checks nothing:\n{module}"
     );
     let directory = test_directory();
-    let observed = module.replace(
-        "call i64 @wf__par_split_budget(",
-        "call i64 @wf_test_edge_budget(",
-    ) + "\ndeclare i64 @wf_test_edge_budget(i64, i64)\n";
+    let splitter = synthesized(&module, "@wf__par_split_");
+    let body = function_body(&module, &splitter);
+    assert!(!body.contains("@wf__par_split_budget("));
+    let entry = body.lines().find(|line| line.ends_with(':')).unwrap();
+    let changed = body.replacen(
+        entry,
+        &format!("{entry}\n  call void @wf_test_edge_entry()"),
+        1,
+    );
+    let observed = module.replacen(body, &changed, 1) + "\ndeclare void @wf_test_edge_entry()\n";
     let observer = r#"#include <stdint.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
-static unsigned queries;
-uint64_t wf_test_edge_budget(uint64_t span, uint64_t weight) {
-    (void)weight;
-    /* Empty and inverted ranges must not become wrapped positive spans. */
-    if (span > 1) { fputs("wrapped degenerate span\n", stderr); exit(114); }
-    ++queries;
-    return getenv("WF_TEST_POSITIVE_BUDGET") ? 4 : 0;
+extern _Thread_local uint64_t wf__par_demand_word;
+static unsigned entries;
+void wf_test_edge_entry(void) {
+    ++entries;
+    atomic_store_explicit((_Atomic uint64_t *)&wf__par_demand_word,
+        getenv("WF_TEST_POSITIVE_BUDGET") ? 1 : 0, memory_order_release);
 }
-static void report(void) { if (!queries) { fputs("no edge budget query\n", stderr); _Exit(115); } }
+static void report(void) { if (entries != 3) { fputs("degenerate range entered a recursive split\n", stderr); _Exit(115); } }
 __attribute__((constructor)) static void register_report(void) { atexit(report); }
 "#;
     let executable = super::build_linked_executable(&observed, Some(observer), &[], &directory);
@@ -2510,7 +2623,7 @@ fn a_loop_whose_frame_is_too_wide_declines_and_says_so() {
         .replace("    let mixed = mix(seed: i);", "    let first = mix(seed: i);\n    let second = mix(seed: i);\n    let doubled = first +wrap second;\n    let local = box_new::<u64>(value: i);\n    let saved = retained.inner[0_u64];\n    let mixed = doubled +wrap saved;")
         .replace(
             "    let bias0 = mixed +wrap a0;",
-            "    let partial = 0_u64;\n    for @inner (j in 0_u64..2_u64) {\n      set partial = partial +wrap j;\n    }\n    let initial = mixed +wrap a0;\n    let bias0 = initial +wrap partial;",
+            "    let partial = 0_u64;\n    let inner_count = imin(i, 0_u64) +wrap 2_u64;\n    for @inner (j in 0_u64..inner_count) {\n      set partial = partial +wrap j;\n    }\n    let initial = mixed +wrap a0;\n    let bias0 = initial +wrap partial;",
         )
         .replace("  if total == 0_u64 {", &format!("  if total != {expected}_u64 {{"));
     let mapped = nested
@@ -2622,12 +2735,351 @@ fn a_loop_whose_frame_is_too_wide_declines_and_says_so() {
                 "WF_WORKERS={workers}: {output:?}"
             );
         }
-        let (granted, output) = CountedProgram::link(&module, &directory).run(Some("4"));
+        let (granted, output) =
+            CountedProgram::link(&control_range_transport(&module), &directory).run(Some("4"));
         assert_eq!(output.status.code(), Some(0), "{output:?}");
         assert!(
             granted > 0,
             "the retained sibling calls must execute a worker callback"
         );
         std::fs::remove_dir_all(&directory).expect("remove the test directory");
+    }
+}
+
+/// The production splitter executes against a deterministic scheduler oracle.
+/// Its ordinary chunk remains available for the no-request value comparison;
+/// recording chunks make enormous-boundary cases finite without traversing them.
+#[test]
+fn segmented_ranges_poll_at_the_grain_and_publish_only_a_requested_far_half() {
+    let source = br#"fn folded(lo: u64, hi: u64) -> result: u64 pure {
+  let total = 19_u64;
+  for @points (i in lo..hi) {
+    set total = total +wrap i;
+  }
+  return total;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let module = emit_with_overlap(source);
+    let splitter = synthesized(&module, "@wf__par_split_");
+    let chunk = synthesized(&module, "@wf__par_chunk_");
+    let parameter_types = |symbol: &str| {
+        let header = function_body(&module, symbol).lines().next().unwrap();
+        let (_, arguments) = header.split_once(&format!("{symbol}(")).unwrap();
+        let (arguments, _) = arguments.split_once(')').unwrap();
+        arguments
+            .split(", ")
+            .map(|argument| argument.split_whitespace().next().unwrap().to_owned())
+            .collect::<Vec<_>>()
+    };
+    let chunk_types = parameter_types(&chunk);
+    let driver_types = parameter_types(&splitter);
+    assert!(
+        chunk_types.len() >= 3 && chunk_types.iter().all(|ty| ty == "i64"),
+        "the observer's scalar fold must retain a scalar seed, bounds and captures: {chunk_types:?}"
+    );
+    assert_eq!(
+        driver_types.len(),
+        chunk_types.len() + 1,
+        "driver appends exactly its runtime price"
+    );
+    assert_eq!(&driver_types[..chunk_types.len()], &chunk_types);
+    assert_eq!(driver_types.last().map(String::as_str), Some("i64"));
+    let captures = chunk_types.len() - 3;
+    assert!(captures <= 2, "only the two source bounds can be captured");
+    let c_types = |length: usize| vec!["uint64_t"; length].join(", ");
+    let capture_parameters = (0..captures)
+        .map(|index| format!(", uint64_t capture{index}"))
+        .collect::<String>();
+    let capture_arguments = (0..captures)
+        .map(|index| format!(", capture{index}"))
+        .collect::<String>();
+    let source_captures = ["lower", "upper"][..captures]
+        .iter()
+        .map(|value| format!(", {value}"))
+        .collect::<String>();
+    let mut observed = module
+        .replace("@main(", "@wf_segmented_original_main(")
+        .replace("@wf__main_body(", "@wf_segmented_original_body(")
+        .replace(
+            &format!("call i64 {chunk}("),
+            "call i64 @wf_test_segmented_chunk(",
+        )
+        .replace(
+            "call ptr @wf__par_acquire_lane(",
+            "call ptr @wf_test_segmented_acquire(",
+        )
+        .replace(
+            "call void @wf__par_publish(",
+            "call void @wf_test_segmented_publish(",
+        )
+        .replace(
+            "call void @wf__par_join(",
+            "call void @wf_test_segmented_join(",
+        )
+        .replace(
+            "call void @wf__par_release(",
+            "call void @wf_test_segmented_release(",
+        );
+    observed.push_str(&format!("\ndeclare i64 @wf_test_segmented_chunk({})\ndeclare ptr @wf_test_segmented_acquire(i64)\ndeclare void @wf_test_segmented_publish(ptr, ptr)\ndeclare void @wf_test_segmented_join(ptr)\ndeclare void @wf_test_segmented_release(ptr)\n", chunk_types.join(", ")));
+    let observer = SEGMENTED_RANGE_OBSERVER
+        .replace("SPLITTER_SYMBOL", &splitter[1..])
+        .replace("CHUNK_SYMBOL", &chunk[1..])
+        .replace("DRIVER_TYPES", &c_types(driver_types.len()))
+        .replace("CHUNK_TYPES", &c_types(chunk_types.len()))
+        .replace("CAPTURE_PARAMETERS", &capture_parameters)
+        .replace("CAPTURE_ARGUMENTS", &capture_arguments)
+        .replace("SOURCE_CAPTURES", &source_captures);
+    let directory = test_directory();
+    let executable = super::build_linked_executable(&observed, Some(&observer), &[], &directory);
+    for mode in [
+        "slices",
+        "late",
+        "nondiv",
+        "ceil",
+        "ceil_below",
+        "real",
+        "odd",
+        "edge",
+        "single",
+        "empty",
+        "inverted",
+        "threshold",
+        "below",
+        "full",
+    ] {
+        let output = Command::new(&executable)
+            .env("WF_WORKERS", "1")
+            .env("WF_TEST_SEGMENTED", mode)
+            .bounded_output()
+            .expect("run segmented-range oracle");
+        assert_eq!(output.status.code(), Some(0), "{mode}: {output:?}");
+        assert!(
+            output.stdout.is_empty() && output.stderr.is_empty(),
+            "{mode}: {output:?}"
+        );
+    }
+    std::fs::remove_dir_all(directory).expect("remove segmented-range oracle");
+}
+
+const SEGMENTED_RANGE_OBSERVER: &str = r#"
+#include <stdint.h>
+#include <stdatomic.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+extern int wf__floor_run(int, char **);
+extern _Thread_local uint64_t wf__par_demand_word;
+extern uint64_t test_split(DRIVER_TYPES) __asm__("SPLITTER_SYMBOL");
+extern uint64_t actual_chunk(CHUNK_TYPES) __asm__("CHUNK_SYMBOL");
+static uint64_t lower, upper, midpoint, chunk_lo[16], chunk_hi[16];
+static unsigned chunks, acquires, publishes, joins, releases;
+static int real, full, late;
+static void fail(const char *message) { fprintf(stderr, "segmented range: %s\n", message); exit(119); }
+uint64_t wf_test_segmented_chunk(uint64_t seed, uint64_t lo, uint64_t hi CAPTURE_PARAMETERS) {
+    if (lo >= hi || lo < lower || hi > upper) fail("out-of-range or empty chunk");
+    if (full) {
+        if (lo != UINT64_MAX / 2 || hi != lo + 150000 || acquires != 1 || publishes != 1)
+            fail("full-width far-half arithmetic");
+        _Exit(0);
+    }
+    if (chunks == 16) fail("unexpected chunk count");
+    chunk_lo[chunks] = lo; chunk_hi[chunks++] = hi;
+    if (late && chunks == 1) atomic_store_explicit((_Atomic uint64_t *)&wf__par_demand_word, 1, memory_order_release);
+    return real ? actual_chunk(seed, lo, hi CAPTURE_ARGUMENTS) : seed + (hi - lo);
+}
+void *wf_test_segmented_acquire(uint64_t bytes) {
+    ++acquires;
+    if (bytes > 256) fail("unexpected frame width");
+    void *frame = malloc(256);
+    if (!frame) abort();
+    return frame;
+}
+void wf_test_segmented_publish(void *frame, void (*run)(void *)) {
+    ++publishes;
+    atomic_store_explicit((_Atomic uint64_t *)&wf__par_demand_word, 0, memory_order_release);
+    run(frame);
+}
+void wf_test_segmented_join(void *frame) { (void)frame; ++joins; }
+void wf_test_segmented_release(void *frame) { ++releases; free(frame); }
+int wf__main_body(int argc, char **argv) {
+    (void)argc; (void)argv;
+    const char *mode = getenv("WF_TEST_SEGMENTED");
+    uint64_t price = 1, asked = 0;
+    lower = 0; upper = 150005;
+    if (!strcmp(mode, "late")) { upper = 300001; late = 1; }
+    else if (!strcmp(mode, "nondiv")) { upper = 21431; price = 7; }
+    else if (!strcmp(mode, "ceil")) { upper = 21429; price = 7; asked = 1; }
+    else if (!strcmp(mode, "ceil_below")) { upper = 21428; price = 7; asked = 1; }
+    else if (!strcmp(mode, "real")) real = 1;
+    else if (!strcmp(mode, "odd")) { upper = 5; price = 150000; asked = 1; }
+    else if (!strcmp(mode, "edge")) { lower = UINT64_MAX - 5; upper = UINT64_MAX; price = 150000; asked = 1; }
+    else if (!strcmp(mode, "single")) { lower = UINT64_MAX - 1; upper = UINT64_MAX; price = UINT64_MAX; asked = 1; }
+    else if (!strcmp(mode, "empty")) { lower = upper; asked = 1; }
+    else if (!strcmp(mode, "inverted")) { lower = upper + 1; asked = 1; }
+    else if (!strcmp(mode, "threshold")) { upper = 2; price = 75000; asked = 1; }
+    else if (!strcmp(mode, "below")) { upper = 2; price = 74999; asked = 1; }
+    else if (!strcmp(mode, "full")) { upper = UINT64_MAX; asked = 1; full = 1; }
+    else if (strcmp(mode, "slices")) fail("unknown mode");
+    atomic_store_explicit((_Atomic uint64_t *)&wf__par_demand_word, asked, memory_order_release);
+    midpoint = late ? 225000 : lower <= upper ? lower + (upper - lower) / 2 : lower;
+    uint64_t actual = test_split(19, lower, upper SOURCE_CAPTURES, price);
+    if (full) fail("full-width case did not observe a far chunk");
+    uint64_t expected = 19;
+    if (lower < upper) {
+        if (real) for (uint64_t i = lower; i < upper; ++i) expected += i;
+        else expected += upper - lower;
+    }
+    if (actual != expected) fail("lost seed or range contribution");
+    int split = late || (asked && upper > lower && upper - lower > 1 && strcmp(mode, "below") && strcmp(mode, "ceil_below"));
+    if (acquires != (unsigned)split || publishes != acquires || joins != acquires || releases != acquires)
+        fail("request/grain gate or frame accounting");
+    if (lower >= upper) { if (chunks) fail("degenerate range executed"); }
+    else if (split) {
+        uint64_t cursor = midpoint;
+        unsigned near = 0;
+        if (late && (chunks != 3 || chunk_lo[0] != 0 || chunk_hi[0] != 150000)) fail("late request missed its slice boundary");
+        for (unsigned i = late ? 1 : 0; i < chunks; ++i) {
+            if (!near && cursor == upper) { near = 1; cursor = late ? 150000 : lower; }
+            uint64_t end = near ? midpoint : upper;
+            if (chunk_lo[i] != cursor || chunk_hi[i] > end) fail("far-before-near partition");
+            cursor = chunk_hi[i];
+        }
+        if (!near || cursor != midpoint) fail("half split lost a boundary");
+    } else {
+        uint64_t cursor = lower;
+        for (unsigned i = 0; i < chunks; ++i) {
+            if (chunk_lo[i] != cursor) fail("slice overlap or gap");
+            cursor = chunk_hi[i];
+        }
+        if (cursor != upper) fail("slice tail lost");
+        if ((!strcmp(mode, "slices") || real) &&
+            (chunks != 2 || chunk_hi[0] != 150000 || chunk_lo[1] != 150000))
+            fail("150000-unit request interval");
+        if (!strcmp(mode, "nondiv") && (chunks != 2 || chunk_hi[0] != 21428 || chunk_lo[1] != 21428))
+            fail("request interval must round down nondivisible prices");
+    }
+    return 0;
+}
+int main(int argc, char **argv) { return wf__floor_run(argc, argv); }
+"#;
+
+#[test]
+fn compile_time_small_ranges_keep_ordinary_code_without_any_runtime_query() {
+    let source = br#"fn small() -> result: u64 pure {
+  let cells = array_filled::<u64, 3>(value: 0_u64);
+  for @fill (i in 0_u64..3_u64) {
+    set cells[i] = i +wrap 7_u64;
+  }
+  let sum = 19_u64;
+  for @sum (i in 0_u64..3_u64) {
+    set sum = sum +wrap i;
+  }
+  return sum +wrap cells[2_u64];
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let result = small();
+  if result != 31_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let parallel = emit_with_overlap(source);
+    for absent in [
+        "@wf__par_split_",
+        "@wf__par_chunk_",
+        "@wf__par_split_budget",
+        "@wf__par_demand_word",
+        "@wf__par_acquire_lane",
+    ] {
+        assert!(
+            !parallel.contains(absent),
+            "compile-time-small site retained {absent}:\n{parallel}"
+        );
+    }
+    assert_eq!(
+        function_body(&parallel, "@wf_small"),
+        function_body(&emit(source), "@wf_small")
+    );
+}
+
+#[test]
+fn request_word_tls_kind_survives_target_emission_and_cached_fragments() {
+    let source = br#"fn folded(lo: u64, hi: u64) -> result: u64 pure {
+  let total = 19_u64;
+  for @points (i in lo..hi) {
+    set total = total +wrap i;
+  }
+  return total;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let result = folded(lo: 0_u64, hi: 3_u64);
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    for (triple, kind, definition) in [
+        (
+            "x86_64-unknown-linux-gnu",
+            "thread_local(initialexec) global i64",
+            "weak",
+        ),
+        (
+            "x86_64-apple-darwin",
+            "thread_local(initialexec) global i64",
+            "weak",
+        ),
+        (
+            "x86_64-pc-windows-msvc",
+            "thread_local global i64",
+            "external",
+        ),
+    ] {
+        let target = crate::target::TargetLayout::for_triple(triple).expect("qualified target");
+        let whole =
+            super::system::with_ir_layout(source, crate::OverlapLowering::On, target, |program| {
+                let prepared =
+                    crate::backend::emitter::prepare_dispatch_layout(program, target, true)
+                        .expect("partitionable ordinary and split layouts");
+                crate::backend::emitter::emit_prepared_llvm(&prepared, target)
+                    .expect("target demand driver emission")
+            });
+        let expected = format!("@wf__par_demand_word = {definition} {kind}");
+        assert!(whole.as_str().contains(&expected), "{triple}: {whole}");
+        let restored = crate::LlvmModule::decode(&whole.encode()).expect("TLS cache roundtrip");
+        assert_eq!(whole.as_str(), restored.as_str());
+        for granularity in [
+            crate::FragmentGranularity::Function,
+            crate::FragmentGranularity::Module,
+        ] {
+            let original =
+                crate::split_module(&whole, granularity).expect("target demand fragments");
+            let cached = crate::split_module(&restored, granularity)
+                .expect("cached target demand fragments");
+            assert_eq!(original, cached, "{triple}");
+            let mut polling = 0;
+            for fragment in original {
+                if fragment.lines().any(|line| {
+                    line.contains("load atomic i64") && line.contains("@wf__par_demand_word")
+                }) {
+                    polling += 1;
+                    let declaration = fragment
+                        .lines()
+                        .find(|line| line.starts_with("@wf__par_demand_word = "))
+                        .expect("polling fragment must declare its TLS dependency");
+                    assert!(declaration.contains(kind), "{triple}: {declaration}");
+                    assert!(
+                        declaration.ends_with(", align 8"),
+                        "{triple}: {declaration}"
+                    );
+                }
+            }
+            assert!(polling > 0, "{triple}: retained demand driver must poll");
+        }
     }
 }

@@ -180,12 +180,21 @@ fn observed_with(module: &str, names: &[&str]) -> String {
     let mut chunk_entry = None;
     for line in module.lines() {
         if line.starts_with("define ") && line.contains("@wf__par_chunk_") {
-            chunk_entry = Some(
+            let symbol = line.split_once('@').unwrap().1.split_once('(').unwrap().0;
+            let body = super::parallel::function_body(module, &format!("@{symbol}"));
+            // These are scalar demand drivers' chunks, not indexed leaves.
+            // Their variable slice count does not own private storage. Their
+            // complete results remain checked by the independent source oracle.
+            let scalar = symbol.contains("_par_chunk_scalar_saturation.")
+                || (symbol.contains("_par_chunk_owned_rows.")
+                    && body.contains("call ")
+                    && body.contains("@wf__par_split_"));
+            chunk_entry = (!scalar).then(|| {
                 names
                     .iter()
                     .position(|name| line.contains(name))
-                    .unwrap_or(names.len()),
-            );
+                    .unwrap_or(names.len())
+            });
         }
         let line = if line.contains(".allocation = call ptr @wf__heap_take(") {
             line.replace("@wf__heap_take(", "@wf_test_private_allocate(")
@@ -916,19 +925,20 @@ fn indexed_reductions_split_inside_a_split_and_release_every_nested_private_rang
     }
     let directory = test_directory();
     let executable = observed_executable(&source, &["shared_cells", "owned_rows"], &directory);
-    // Each program has four outer leaves under a budget of two. Every outer
-    // iteration runs its own inner split of four leaves with one private
-    // allocation; the shared-cells program adds the outer split's allocation.
+    // The shared-cell outer indexed loop retains four leaves. Every source
+    // outer iteration runs an indexed inner split of four private leaves;
+    // the scalar owned-row outer driver now uses demand slices, which are
+    // excluded from indexed leaf counts and have no private allocation.
     // The observer fails the run unless frees equal allocations.
     let report = run_observed(&executable, false);
     let allocations = (1 + OUTER_SHARED) + OUTER_OWNED;
-    let leaves = (4 + 4 * OUTER_SHARED) + (4 + 4 * OUTER_OWNED);
+    let leaves = (4 + 4 * OUTER_SHARED) + 4 * OUTER_OWNED;
     let expected = format!("indexed allocations={allocations} leaves={leaves}\n");
     assert!(report.contains(&expected), "{expected}{report}");
     let expected = format!(
         "indexed loops={},{},0,0,0,0,0,0\n",
         4 + 4 * OUTER_SHARED,
-        4 + 4 * OUTER_OWNED
+        4 * OUTER_OWNED
     );
     assert!(report.contains(&expected), "{expected}{report}");
     // No allowance: no private range, one chunk call per splitter call, and
@@ -936,7 +946,7 @@ fn indexed_reductions_split_inside_a_split_and_release_every_nested_private_rang
     let report = run_observed(&executable, true);
     let expected = format!(
         "indexed allocations=0 leaves={}\n",
-        (1 + OUTER_SHARED) + (1 + OUTER_OWNED)
+        (1 + OUTER_SHARED) + OUTER_OWNED
     );
     assert!(report.contains(&expected), "{expected}{report}");
     std::fs::remove_dir_all(directory).expect("remove nested artifacts");
@@ -1072,23 +1082,25 @@ fn extended_forms_execute_forced_splits_against_literal_oracles() {
         &directory,
     );
     let report = run_observed(&executable, false);
-    // Budget 2 gives 2^2 leaves per 262144-iteration loop: 4 * 4 = 16; only three use indexed slabs.
+    // Three indexed loops retain four leaves each; the scalar loop has
+    // demand slices and keeps its independent saturating-result assertion.
     assert!(
-        report.contains("indexed allocations=3 leaves=16\n"),
+        report.contains("indexed allocations=3 leaves=12\n"),
         "{report}"
     );
     assert!(
-        report.contains("indexed loops=4,4,4,4,0,0,0,0\n"),
+        report.contains("indexed loops=4,4,4,0,0,0,0,0\n"),
         "{report}"
     );
     let report = run_observed(&executable, true);
-    // Budget 0 gives 4 * 1 = 4 leaves and no slabs; the 8-iteration verification loop has returns and never splits.
+    // Zero indexed budget gives one leaf per indexed loop and no slabs;
+    // scalar demand execution still must satisfy the same literal oracle.
     assert!(
-        report.contains("indexed allocations=0 leaves=4\n"),
+        report.contains("indexed allocations=0 leaves=3\n"),
         "{report}"
     );
     assert!(
-        report.contains("indexed loops=1,1,1,1,0,0,0,0\n"),
+        report.contains("indexed loops=1,1,1,0,0,0,0,0\n"),
         "{report}"
     );
     std::fs::remove_dir_all(directory).expect("remove extended-form artifacts");

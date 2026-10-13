@@ -316,6 +316,28 @@ pub(super) fn parallel_recursion_budget_fallback() -> Result<Module, BackendFail
     Ok(module)
 }
 
+/// The runtime owns this lane-local atomic word. Optional-runtime targets
+/// supply an unrequested weak fallback; Windows requires the native runtime.
+pub(crate) const DEMAND_WORD_SYMBOL: &str = "wf__par_demand_word";
+
+pub(super) fn demand_runtime(windows: bool) -> Module {
+    let mut module = Module::default();
+    if windows {
+        module.declare_global_kind(DEMAND_WORD_SYMBOL, "thread_local global", "i64", 8);
+    } else {
+        // Executable images use the native thread-pointer offset, never a
+        // general-dynamic TLS resolver on the polling path.
+        module.weak_global(
+            DEMAND_WORD_SYMBOL,
+            "thread_local(initialexec) global",
+            "i64",
+            "0",
+            8,
+        );
+    }
+    module
+}
+
 /// The symbol one function's sequential clone is emitted under.
 ///
 /// It lives in the same reserved `wf__par_` namespace as the runtime's own
@@ -478,6 +500,7 @@ pub(crate) struct ParallelThunks {
     /// Whether any emitted function asked the runtime for a split allowance, so
     /// a module that splits no loop names that symbol nowhere.
     queries_split_budget: bool,
+    pub(super) queries_demand: bool,
     /// The thunks of started contexts [WAIT-3], which name the bridge's context
     /// entry points and no compute scheduler symbol.
     context_definitions: Module,
@@ -584,6 +607,26 @@ pub(crate) struct ComputeHandedOut {
 pub(crate) type HandedOut = ComputeHandedOut;
 
 impl FunctionEmitter<'_, '_> {
+    /// Atomic relaxed advice must be re-read at every eligible boundary; a
+    /// plain load could be hoisted out of the segmented execution loop.
+    pub(super) fn emit_demand_requested(
+        &mut self,
+        result: IrValueId,
+        ty: IrType,
+    ) -> Result<(), BackendFailure> {
+        if ty != IrType::Bool {
+            return Err(BackendFailure::InvalidIr);
+        }
+        self.parallel.queries_demand = true;
+        let condition = self.value_name(result);
+        let word = format!("%{}", self.next_temporary()?);
+        self.output.symbol(DEMAND_WORD_SYMBOL);
+        writeln!(
+            self.output,
+            "  {word} = load atomic i64, ptr @{DEMAND_WORD_SYMBOL} monotonic, align 8\n  {condition} = icmp ne i64 {word}, 0"
+        ).map_err(|_| BackendFailure::TextEmission)
+    }
+
     /// A split operand's name: a record slot is loaded in the block that
     /// reads it, every other operand is the value the operation's operands
     /// were materialized to before the splitter's blocks.
@@ -776,10 +819,10 @@ impl FunctionEmitter<'_, '_> {
     ///
     /// The sequential world calls the chunk — the loop itself, seeded with the
     /// accumulator's incoming value — and is therefore the code the loop always
-    /// had, behind one call its only caller inlines back. The overlapped world
-    /// asks the runtime once, at loop entry, how far a split of this span may
-    /// descend, and calls the splitter with that allowance. Nothing is asked
-    /// per iteration, and neither world tests anything the other does.
+    /// had, behind one call its only caller inlines back. A non-indexed range
+    /// enters the segmented driver with its positive runtime extent price.
+    /// Indexed reductions retain their bounded allowance and private leaves.
+    /// The ordinary entrance and call-grain decisions are separate policies.
     pub(super) fn emit_loop_split(
         &mut self,
         result: IrValueId,
@@ -798,7 +841,8 @@ impl FunctionEmitter<'_, '_> {
             .ok_or(BackendFailure::InvalidIr)?;
         let abi = FunctionAbi::build(self.program, function)?;
         let declared = abi.parameters();
-        // The splitter alone takes one trailing allowance. The chunk and
+        // The splitter alone takes one trailing word: the demand driver's
+        // positive price, or the indexed splitter's allowance. The chunk and
         // splitter otherwise share the typed internal parameter/result ABI.
         let expected = declared
             .len()
@@ -857,6 +901,21 @@ impl FunctionEmitter<'_, '_> {
 
         let callee = self.callee_symbol(target, function.name());
         if self.sequential_clones.is_some() {
+            let arguments = self.resolve_split_arguments(arguments)?;
+            return self.emit_split_call(result, abi.result(), &callee, arguments);
+        }
+
+        if split.indexed.is_empty() {
+            let weight = if let Some(work) = split.work {
+                let estimate =
+                    self.emit_work_estimate(work, &mut std::collections::HashMap::new())?;
+                // Runtime extents may be zero. Positive price keeps every
+                // driver's division total, including empty source ranges.
+                self.emit_work_binary("llvm.umax.i64", &estimate, "1")?
+            } else {
+                split.weight.max(1).to_string()
+            };
+            arguments.push(SplitArgument::Prepared(format!("i64 {weight}")));
             let arguments = self.resolve_split_arguments(arguments)?;
             return self.emit_split_call(result, abi.result(), &callee, arguments);
         }

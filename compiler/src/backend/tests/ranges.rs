@@ -327,6 +327,43 @@ fn build_compute_oracle(
     }
 }
 
+/// Observe the actual price operand at each demand-split call. This is test
+/// instrumentation over emitted operands, so it cannot reconstruct pricing
+/// from source or make a static estimate look like a runtime extent.
+fn observe_range_prices(module: &str) -> String {
+    let mut observed = String::new();
+    let mut ordinal = 0;
+    for line in module.lines() {
+        if line.contains("call ")
+            && line.contains("@wf__par_split_")
+            && !line.contains("@wf__par_split_budget(")
+        {
+            let (_, arguments) = line.split_once("@wf__par_split_").unwrap();
+            let (_, arguments) = arguments.split_once('(').unwrap();
+            let (arguments, _) = arguments.rsplit_once(')').unwrap();
+            let values: Vec<_> = arguments.split(", ").collect();
+            let lower = values[1].strip_prefix("i64 ").expect("lower bound");
+            let upper = values[2].strip_prefix("i64 ").expect("upper bound");
+            let price = values
+                .last()
+                .unwrap()
+                .strip_prefix("i64 ")
+                .expect("runtime price");
+            observed.push_str(&format!(
+                "  %price.observe.{ordinal}.valid = icmp ult i64 {lower}, {upper}\n  %price.observe.{ordinal}.difference = sub i64 {upper}, {lower}\n  %price.observe.{ordinal}.span = select i1 %price.observe.{ordinal}.valid, i64 %price.observe.{ordinal}.difference, i64 0\n  %price.observe.{ordinal}.answer = call i64 @wf_work_budget(i64 %price.observe.{ordinal}.span, i64 {price})\n"
+            ));
+            ordinal += 1;
+        }
+        observed.push_str(line);
+        observed.push('\n');
+    }
+    assert!(
+        ordinal > 0,
+        "the runtime-price subject must retain a demand splitter"
+    );
+    observed
+}
+
 #[test]
 fn runtime_work_estimates_are_total_for_empty_and_inverted_ranges() {
     let source = br#"fn count_work(lower: u64, upper: u64) -> result: u64 pure {
@@ -354,13 +391,23 @@ fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
 "#;
+    let emitted = emit_with_overlap(source);
+    let write = super::parallel::function_body(&emitted, "@wf_write_work");
+    assert!(
+        write.contains("call i64 @llvm.umax.i64("),
+        "runtime price must be positive even for zero extents: {write}"
+    );
+    assert!(
+        !write.contains("@wf__par_split_budget("),
+        "runtime price must reach the driver without a query: {write}"
+    );
     // The written run is a frame-resident `Array<u64, 2>` [TYPE-9] and the
     // worker returns the two slots it filled as one scalar, so the probe reads
     // what the loop produced without a hand-written descriptor ABI. The old
     // `{ ptr, i64 }` probe destructured a `buffer<u64>` return by value, and
     // that spelling, its `buffer_new` head and its `release_work` consumer all
     // left with the storage class [TYPE-9, OP-13].
-    let mut llvm = emit_with_overlap(source)
+    let mut llvm = observe_range_prices(&emitted)
         .replace("@main(", "@wf_total_work_main(")
         .replace("@wf__main_body(", "@wf_total_work_body(")
         .replace(
@@ -530,7 +577,7 @@ fn probe_{name}(count: u64, iterations: u64) -> result: u64 pure contract {{
     source.push_str(
         "\nfn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 0_u8);\n}\n",
     );
-    let mut llvm = emit_with_overlap(source.as_bytes())
+    let mut llvm = observe_range_prices(&emit_with_overlap(source.as_bytes()))
         .replace("@main(", "@wf_reference_price_main(")
         .replace("@wf__main_body(", "@wf_reference_price_body(")
         .replace(
@@ -641,7 +688,7 @@ fn write_{extent}_{position}(upper: u64, repeats: u64) -> result: u64 pure {{
 }
 "#,
     );
-    let mut llvm = emit_with_overlap(source.as_bytes())
+    let mut llvm = observe_range_prices(&emit_with_overlap(source.as_bytes()))
         .replace("@main(", "@wf_continuation_main(")
         .replace("@wf__main_body(", "@wf_continuation_body(")
         .replace(
@@ -718,7 +765,7 @@ fn runtime_block_sizes_change_budget_prices_without_changing_scan_results() {
     let source = include_bytes!("../../../../tests/programs/compute/prefix.wf");
     let module = emit_with_overlap(source);
     let adapter = include_str!("../../../../tests/programs/compute/prefix_host.ll");
-    let mut llvm = bind_compute_host_adapter(&module, adapter)
+    let mut llvm = observe_range_prices(&bind_compute_host_adapter(&module, adapter))
         .replace("@main(", "@wf_extent_test_main(")
         .replace("@wf__main_body(", "@wf_extent_test_body(")
         .replace(

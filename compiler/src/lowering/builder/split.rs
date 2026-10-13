@@ -3,31 +3,16 @@
 //!
 //! # What is emitted
 //!
-//! For either a reduction
-//! `let a = INIT; for @l (i in lo..hi) { … set a = a (+) e … }` or an
-//! independently proved map `for @l (i in lo..hi) { set out[i] = e; }`, this
-//! builds two synthesized functions and replaces the loop site with one
-//! instruction:
+//! Non-indexed ranges use the demand driver in `demand`: it executes ordinary
+//! subrange loops, polls the lane's request word at work-priced boundaries,
+//! and publishes the far half while retaining the near half. Runtime extent
+//! prices replace available static factors. A scalar reduction keeps its seed
+//! only in the retained work and combines near before far.
 //!
-//! ```text
-//! chunk(seed, lo, hi, captures…)   the loop itself; reduction seed/result is
-//!                                  the accumulator, map seed/result is Unit
-//! split(seed, lo, hi, captures…, budget)
-//!                                  hi <= lo         -> seed
-//!                                  budget 0 or thin -> chunk(seed, lo, hi, …)
-//!                                  otherwise        -> reduction: split left
-//!                                                      (+) split right
-//!                                                   -> map: split both, join,
-//!                                                      return Unit
-//! ```
-//!
-//! and at the site, one call: `split(seed, lo, hi, captures…, allowance)` in
-//! the overlapped world, `chunk(seed, lo, hi, captures…)` in the sequential
-//! one. A reduction's incoming accumulator folds into the leftmost chunk
-//! rather than being recombined afterwards, so the fold's leaf order is the
-//! source's own. A map's Unit return is ignored; the join makes its captured
-//! stores complete. In both forms the sequential world's call is the loop
-//! exactly.
+//! Indexed reductions retain their bounded splitter and private leaf storage
+//! until their separate demand-storage port. Their trailing word is a split
+//! budget; the demand driver's same-position word is a positive work price.
+//! Both use the existing typed chunk and overlap-group transport.
 //!
 //! # Why the leaf is the loop and never one iteration
 //!
@@ -40,20 +25,14 @@
 //! out in the loop over a subrange keeps the body's own optimization inside
 //! the chunk and measured 3.1x at ten lanes on the same probe.
 //!
-//! # Why the runtime chooses the grain
+//! # Why the range may split
 //!
-//! Every admitted reduction combine is exactly associative on its type's
-//! complete value set, so its value does not depend on the combination tree.
-//! An independent map has no value to combine: its proof says distinct
-//! iterations write disjoint elements, and the `Unit` result exists only to
-//! carry the ordinary worker join. Those are the two reasons the *number* of
-//! chunks may depend on the span, the lane count, and what this lane is already
-//! doing — asked once per loop entry, never per iteration.
-//!
-//! [`assign_weights`] prices the emitted IR of the chunk and the functions it
-//! calls. Available captured extents replace fixed inner-loop factors; unknown
-//! work retains the static estimate. No program name or writer annotation
-//! selects a price.
+//! PAR-2 gives scalar reductions total associative combines and independent
+//! maps disjoint iteration writes, so request-driven splitting preserves the
+//! checked result. The ordinary subrange remains the computation unit.
+//! [`assign_weights`] substitutes available captured runtime extents through
+//! helper arguments; unavailable extents retain the static estimate. No
+//! program name or writer annotation selects a price.
 //!
 //! # What declines, and loudly
 //!
@@ -562,10 +541,31 @@ impl<'program> IrBuilder<'program> {
                 });
             }
         }
+        // Literal endpoints permit a complete cheap-site proof only after
+        // the candidate exposes its ordinary instructions. Delay reservations
+        // so a proven-small site can reuse that CFG without dead helpers.
+        let literal = |value| {
+            self.blocks
+                .iter()
+                .flat_map(|block| &block.instructions)
+                .find_map(|instruction| match instruction {
+                    IrInstruction::Define {
+                        result,
+                        operation: IrOperation::Constant(IrConstant::Integer { ty: U64, bits }),
+                        ..
+                    } if *result == value => Some(*bits),
+                    _ => None,
+                })
+        };
+        let constant_span = indexed
+            .is_empty()
+            .then(|| literal(lower).zip(literal(upper)))
+            .flatten()
+            .map(|(lower, upper)| upper.saturating_sub(lower));
         let prune_captures = self.frame_decline(result_type, &captures)?.is_some();
         // Preserve the established preorder names and complete fitting ABI.
-        // Only a still-undecided wide frame delays its helper reservation.
-        let reserved = if prune_captures {
+        // A wide frame or constant extent delays its helper reservation.
+        let reserved = if prune_captures || constant_span.is_some() {
             None
         } else {
             let mut synthesis = self.synthesis.borrow_mut();
@@ -606,6 +606,22 @@ impl<'program> IrBuilder<'program> {
             .zip(candidate.needed.iter().copied())
             .filter_map(|(capture, needed)| needed.then_some(capture))
             .collect();
+        if constant_span.is_some_and(|span| compile_time_small(&candidate.function, span)) {
+            self.note(
+                node_path,
+                "sequential: constant range is indivisible or below the split grain",
+            );
+            self.splice_chunk(
+                candidate,
+                reduction_seed,
+                lower,
+                upper,
+                accumulator,
+                &captures,
+                &indexed_roots,
+            )?;
+            return Ok(true);
+        }
         if let Some(decline) = self.frame_decline(result_type, &captures)?
             && parallel_lane_frame_layout(
                 self.target,
@@ -1218,6 +1234,15 @@ impl<'program> IrBuilder<'program> {
         capture_types: &[IrType],
         indexed: &[crate::ir::IrIndexedReduction],
     ) -> Result<IrFunction, LoweringFailure> {
+        if indexed.is_empty() {
+            return self.build_demand_driver(
+                (ordinal, name),
+                chunk,
+                actualization,
+                result_type,
+                capture_types,
+            );
+        }
         let mut builder = IrBuilder::new(
             self.context(),
             result_type,
@@ -1454,7 +1479,7 @@ impl<'program> IrBuilder<'program> {
     }
 
     /// Materializes the combine's identity element.
-    fn identity_value(
+    pub(super) fn identity_value(
         &mut self,
         combine: LoopCombine,
         ty: IrType,
@@ -1464,7 +1489,7 @@ impl<'program> IrBuilder<'program> {
     }
 
     /// One application of the admitted combine.
-    fn combine_values(
+    pub(super) fn combine_values(
         &mut self,
         combine: LoopCombine,
         ty: IrType,
@@ -1486,7 +1511,7 @@ impl<'program> IrBuilder<'program> {
     }
 
     /// A two-way branch on a `Bool`, the shape every guard in this module uses.
-    fn branch(
+    pub(super) fn branch(
         &mut self,
         condition: IrValueId,
         when_true: IrBlockId,
@@ -1643,14 +1668,31 @@ fn frame_bytes(ty: IrType) -> u64 {
     raw.div_ceil(FRAME_FIELD_ALIGN) * FRAME_FIELD_ALIGN
 }
 
+/// An empty or singleton range cannot split. Larger complete local work is
+/// known only for call-free, unnested loop bodies.
+/// Reuse assign_weights' exact static price; unknown helper work cannot turn
+/// a short literal range into a cheap site merely because its count is small.
+fn compile_time_small(function: &IrFunction, span: u64) -> bool {
+    if span <= 1 {
+        return true;
+    }
+    let price = cost(function);
+    price.calls.is_empty()
+        && loop_depths(function.blocks())
+            .iter()
+            .all(|depth| *depth <= 1)
+        && span.saturating_mul((price.instructions / LOOP_FACTOR).max(1))
+            < super::call_grain::CALL_OFFER_WORK_UNIT
+}
+
 /// Fills in every [`IrOperation::LoopSplit`]'s static fallback and available
 /// runtime extent estimate, once every function of the program exists.
 ///
 /// The weight is a cost estimate over the emitted IR: the instructions of the
 /// chunk, each charged more the deeper it sits inside a loop, plus the same
 /// estimate for what the chunk calls, to a bounded depth. It reads no name, no
-/// signature, and no source shape, and it feeds nothing but the runtime
-/// allowance. The runtime estimate then substitutes available counted extents
+/// signature, and no source shape, and it feeds only scheduling prices.
+/// The runtime estimate then substitutes available counted extents
 /// through helper arguments, distinguishing a 17-element row from a
 /// 1024-element row without changing either loop body. Unknown extents keep
 /// this static price; no universal grain plateau is established. Each
@@ -1683,7 +1725,7 @@ pub(crate) fn assign_weights(functions: &mut [IrFunction]) -> Vec<u64> {
                     // The chunk's own loop is charged [`LOOP_FACTOR`] like any
                     // other, so dividing it out turns the function's total back
                     // into what one iteration costs — which is the unit the
-                    // runtime allowance multiplies the span by. A loop nested
+                    // scheduling policy multiplies the remaining span by. A loop nested
                     // inside the body keeps its own factor, which is the whole
                     // point: its trip count is unknown and it does more work.
                     let chunk_weight = total.get(*chunk as usize).copied().unwrap_or(0);
@@ -1730,8 +1772,8 @@ fn cost(function: &IrFunction) -> Cost {
             match operation {
                 IrOperation::Call { function, .. } => calls.push((*function, factor)),
                 // A split reaches its chunk in either world, and the splitter's
-                // own descent is bounded by the allowance rather than by the
-                // range, so the site is charged the chunk it will run.
+                // scheduling driver contributes no source computation, so
+                // the site is charged the chunk it will run.
                 IrOperation::LoopSplit { chunk, .. } => calls.push((*chunk, factor)),
                 _ => {}
             }

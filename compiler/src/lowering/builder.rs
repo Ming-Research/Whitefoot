@@ -6,6 +6,7 @@ mod atomic;
 mod buffers;
 mod call_grain;
 mod contexts;
+mod demand;
 mod indexed;
 mod lock_ledger;
 mod loops;

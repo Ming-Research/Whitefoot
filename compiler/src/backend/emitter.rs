@@ -618,6 +618,9 @@ fn emit_module(
         text.text("\n");
         text.append(thunks.take_context_definitions());
     }
+    if thunks.queries_demand {
+        text.append(parallel::demand_runtime(windows));
+    }
     // Emitted only where a permitted overlap group is actually handed out, so
     // a module that overlaps nothing names no runtime symbol at all.
     if thunks.is_used() {
@@ -2685,6 +2688,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             return Err(BackendFailure::InvalidIr);
         }
         match operation {
+            IrOperation::DemandRequested => self.emit_demand_requested(result, ty),
             IrOperation::Constant(constant) => self.emit_constant(result, ty, *constant),
             IrOperation::Call {
                 function,

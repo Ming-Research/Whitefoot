@@ -961,6 +961,9 @@ pub enum IrWakeCode {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum IrOperation {
+    /// Target-private scheduling advice, read only at eligible slice boundaries.
+    /// This observes the current lane's atomic request word and defines Bool.
+    DemandRequested,
     Constant(IrConstant),
     Call {
         function: u32,
@@ -1647,8 +1650,9 @@ pub enum IrOperation {
     ///
     /// The whole loop is one instruction here because it has exactly two
     /// renderings and the choice between them is the world, not the source. The
-    /// overlapped world asks the runtime what a split of this span may afford
-    /// and calls `splitter`; the sequential world calls `chunk`, which *is* the
+    /// overlapped world enters `splitter` with a runtime-extent price for
+    /// segmented non-indexed work or a bounded allowance for indexed work;
+    /// the sequential world calls `chunk`, which *is* the
     /// loop, so that world runs the code the loop always had. A reduction uses
     /// the first argument and result for its accumulator. An independent map
     /// uses `Unit` in both positions as a synchronization token; its observable
@@ -1672,8 +1676,8 @@ pub enum IrOperation {
         /// The values the body reads from the enclosing scope, in the order the
         /// two synthesized functions declare them.
         captures: Vec<IrValueId>,
-        /// The static cost estimate of one iteration, which the runtime
-        /// allowance multiplies by the span. A cost over the emitted IR, never
+        /// The static fallback cost of one iteration, multiplied by the
+        /// remaining span for scheduling. A cost over the emitted IR, never
         /// a name, a signature, or a source shape.
         weight: u64,
         /// An available runtime extent estimate; absence keeps `weight`.

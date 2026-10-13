@@ -86,6 +86,34 @@ ordinary sequential code with no request read, task frame or splitter call.
 A constant trip count alone is insufficient: a three-iteration loop calling
 an expensive helper is not necessarily small.
 
+### Range-site proof and arithmetic
+
+The range-site proof uses literal endpoints. An empty, inverted or singleton
+range cannot satisfy the driver's requirement of two remaining iterations,
+so its ordinary CFG can be retained independently of the body's price. For
+larger literal ranges, the current finite cheapness proof requires a call-free,
+unnested completed chunk and uses the same instruction cost divided by the
+ordinary loop factor as the existing static estimator. A saturated product
+below 150,000 proves that this scheduling estimate cannot admit a split.
+Calls and nested loops retain runtime extent pricing; a short literal count
+does not establish their complete work. The completed ordinary CFG is spliced
+into the caller before reserving that range's outlined helpers, preserving
+captures and cleanup
+without a scheduling call or an experiment-only sentinel weight.
+
+Every driver caller supplies a price of at least one, including when a valid
+runtime extent estimate evaluates to zero. The driver compares the cursor
+with the upper endpoint before subtracting. It computes a segment length as
+`min(upper - cursor, max(1, floor(150000 / price)))`, and adds that length to
+the cursor. A granted split computes `cursor + floor((upper - cursor) / 2)`.
+Both additions are at most the upper endpoint and therefore cannot overflow,
+even when that endpoint is the largest u64. Eligibility is computed as
+`(150000 - 1) / price + 1`, avoiding overflow-prone multiplication or ceiling
+addition. Completed segments contribute only to the retained seed; the far
+half begins with the reduction identity and is combined after the near result.
+
+### Entry selection and ordinary computation
+
 For a function whose complete reachable split decisions can be expressed
 from entry-available values, one all-cheap predicate selects the complete
 ordinary sequential body. This is at most one choice per function entry,
@@ -107,6 +135,8 @@ may enter that closure. The closure does not reenter split computation.
 Its resource-record writer remains the shared worker-safe latched writer.
 Actual linked computation identity, including the two three-element loop
 workloads, is checked separately from IR identity and entry-dispatch cost.
+
+### Lane requests
 
 Each lane publishes a TLS request-word address and posts one request to
 itself at registration. Idle thieves request victims through a protected

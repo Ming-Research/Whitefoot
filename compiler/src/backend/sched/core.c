@@ -202,7 +202,10 @@
 #ifndef WF_PAR_YIELD_ROUNDS
 #define WF_PAR_YIELD_ROUNDS 16
 #endif
-/* How many chunks an independent map may be split into, as a multiple of the
+/* Legacy private-leaf budget retained for indexed reductions. Non-indexed
+ * ranges now use the compiler's request-driven segmented driver. The historical
+ * non-indexed measurements below describe the preceding common policy.
+ * How many chunks an independent map may be split into, as a multiple of the
  * lane count. `wf__par_split_budget` below combines this with the work term --
  * span / ceil(work unit / weight), the floor on chunk size entry.c owns -- by
  * a MINIMUM, so this is a ceiling on chunk count and never a floor on chunk

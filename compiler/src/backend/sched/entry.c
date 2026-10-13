@@ -50,7 +50,9 @@ __attribute__((weak)) size_t wf__floor_stack_bytes(void) { return 1024u * 1024u;
 __attribute__((weak)) unsigned long wf__sched_helper_ceiling(void) { return 0; }
 static unsigned initialized;
 static int lanes;
-/* How much work one chunk must be worth before the splitter can afford
+/* Legacy indexed private-leaf budget configuration; non-indexed range slices
+ * use the compiler's fixed request interval and extent-price grain.
+ * How much work one chunk must be worth before the splitter can afford
  * another, in the same unit the emitted weight operand counts: estimated IR
  * instructions of one iteration of the chunk body. `wf__par_split_budget` in
  * core.c applies it as span / ceil(work unit / weight), so this is a floor on

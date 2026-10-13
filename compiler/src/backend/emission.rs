@@ -612,6 +612,39 @@ impl Module {
             },
         );
     }
+    /// A typed external variable declaration, including target TLS storage.
+    pub(crate) fn declare_global_kind(&mut self, name: &str, kind: &str, ty: &str, align: u64) {
+        self.register_declaration(
+            name.to_owned(),
+            Declaration {
+                text: format!("@{name} = external {kind} {ty}, align {align}"),
+                references: References::default(),
+            },
+        );
+    }
+    /// A replaceable runtime variable with its matching fragment declaration.
+    pub(crate) fn weak_global(
+        &mut self,
+        name: &str,
+        kind: &str,
+        ty: &str,
+        value: &str,
+        align: u64,
+    ) {
+        let header = format!("@{name} = weak {kind} {ty} {value}, align {align}");
+        self.define(Entity {
+            name: name.to_owned(),
+            header: header.clone(),
+            hidden_header: header,
+            declaration: format!("@{name} = external {kind} {ty}, align {align}"),
+            declaration_references: References::default(),
+            body: String::new(),
+            linkage: Linkage::Weak,
+            global: true,
+            fragment_local: false,
+            references: References::default(),
+        });
+    }
     pub(crate) fn declare_named(&mut self, signature: Signature) {
         let parameters = signature
             .parameters
