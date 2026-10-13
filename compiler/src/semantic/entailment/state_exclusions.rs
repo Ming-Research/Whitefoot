@@ -72,10 +72,6 @@ impl Exclusion {
         }
     }
 
-    fn numeric_view(&self) -> Option<&ExclusionView> {
-        self.views.iter().find(|view| view.projection.is_some())
-    }
-
     fn numeric_consequence(
         &self,
         view: &ExclusionView,
@@ -233,6 +229,8 @@ pub(super) fn close_with_exclusions(
     let mut working = state.clone();
     working.forget_closed_view();
     loop {
+        #[cfg(test)]
+        tests::CLOSURE_ROUNDS.with(|rounds| rounds.set(rounds.get() + 1));
         let mut closed =
             close_with_row_pruning::<true, false>(&working, terms, goals, ledger, excluded);
         closed.exclusions = state
@@ -251,67 +249,66 @@ pub(super) fn close_with_exclusions(
             return closed;
         }
         let mut changed = false;
-        for fact in &closed.exclusions {
-            let Some(view) = fact.numeric_view() else {
+        let projected_terms = closed
+            .exclusions
+            .iter()
+            .flat_map(|fact| {
+                fact.views
+                    .iter()
+                    .filter_map(|view| view.projection.map(|(term, _)| term))
+            })
+            .collect::<std::collections::BTreeSet<_>>();
+        for term in projected_terms {
+            if term == ZERO {
+                if let Some((fact, view)) = closed.exclusion_membership(ZERO, ZERO, 0) {
+                    closed.contradiction = Some(fact.numeric_consequence(
+                        view,
+                        ExclusionConclusion::Contradiction,
+                        ledger,
+                    ));
+                    closed.all_derivable = true;
+                    return closed;
+                }
                 continue;
-            };
-            let (term, offset) = view.projection.expect("numeric view has a projection");
-            if term == ZERO && fact.contains(offset) {
-                closed.contradiction = Some(fact.numeric_consequence(
-                    view,
-                    ExclusionConclusion::Contradiction,
-                    ledger,
-                ));
-                closed.all_derivable = true;
-                return closed;
             }
-            for (left, right, upward) in [(term, ZERO, true), (ZERO, term, false)] {
-                let Some((bound, weak)) = closed.cell(left, right, ledger) else {
+            for (left, right) in [(term, ZERO), (ZERO, term)] {
+                let Some((initial_bound, initial_proof)) = closed.cell(left, right, ledger) else {
                     continue;
                 };
-                let value = if upward {
-                    Some(bound)
-                } else {
-                    bound.checked_neg()
-                }
-                .and_then(|value| value.checked_add(offset));
-                if !value.is_some_and(|value| fact.contains(value)) {
-                    continue;
-                }
-                let Some(stronger) = bound.checked_sub(1) else {
-                    continue;
-                };
-                let difference = if upward {
-                    bound
-                } else {
-                    bound.saturating_neg()
-                };
-                let distinct = fact.numeric_consequence(
-                    view,
-                    ExclusionConclusion::Relation(Relation::Distinct {
-                        left: term,
-                        right: ZERO,
-                        difference,
-                    }),
-                    ledger,
-                );
-                let proof = ledger.intern(DerivationNode::StrengthenedBound {
-                    left,
-                    right,
-                    bound: stronger,
-                    weak,
-                    distinct,
-                });
-                working.establish_from_proof(
-                    &Relation::Bound {
+                let (mut bound, mut proof) = (initial_bound, initial_proof);
+                // Follow the whole consecutive run, including membership
+                // supplied by different sets, before reclosing the matrix.
+                // Each step retains ENT-4's ordinary strengthening proof.
+                while let Some((fact, view)) = closed.exclusion_membership(left, right, bound) {
+                    let Some(stronger) = bound.checked_sub(1) else {
+                        break;
+                    };
+                    let distinct = fact.numeric_consequence(
+                        view,
+                        ExclusionConclusion::Relation(Relation::Distinct {
+                            left,
+                            right,
+                            difference: bound,
+                        }),
+                        ledger,
+                    );
+                    proof = ledger.intern(DerivationNode::StrengthenedBound {
                         left,
                         right,
                         bound: stronger,
-                    },
-                    proof,
-                    ledger,
-                );
-                changed = true;
+                        weak: proof,
+                        distinct,
+                    });
+                    bound = stronger;
+                }
+                if bound < initial_bound {
+                    working.establish_from_proof(
+                        &Relation::Bound { left, right, bound },
+                        proof,
+                        ledger,
+                    );
+                    changed = true;
+                }
             }
         }
         if changed {
@@ -439,8 +436,26 @@ mod tests {
     use crate::semantic::model::CheckedType;
     use crate::semantic::places::{PlaceRoot, ResolvedPlace};
 
+    thread_local! {
+        pub(super) static CLOSURE_ROUNDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
     fn fixture(
         values: &[i128],
+    ) -> (
+        FactState,
+        TermTable,
+        GoalTable,
+        DerivationLedger,
+        TermId,
+        GoalId,
+    ) {
+        typed_fixture(values, IntegerType::U64)
+    }
+
+    fn typed_fixture(
+        values: &[i128],
+        ty: IntegerType,
     ) -> (
         FactState,
         TermTable,
@@ -456,14 +471,14 @@ mod tests {
                 root: PlaceRoot::Binding(BindingId(0)),
                 path: Vec::new(),
             },
-            IntegerType::U64,
+            ty,
         ));
         let mut goals = GoalTable::default();
         let expression = goals.intern(
             GoalExpression::Datum(GoalDatum::Place {
                 root: BindingId(0),
                 projections: Vec::new(),
-                ty: CheckedType::Integer(IntegerType::U64),
+                ty: CheckedType::Integer(ty),
                 admission: GoalAdmission::default(),
             }),
             None,
@@ -496,6 +511,178 @@ mod tests {
             &goals,
         ));
         (state, terms, goals, ledger, term, expression)
+    }
+
+    fn source_exclusion(
+        state: &mut FactState,
+        goals: &GoalTable,
+        ledger: &mut DerivationLedger,
+        term: TermId,
+        expression: GoalId,
+        values: &[i128],
+    ) {
+        let values: Arc<[i128]> = values.into();
+        let event = ledger.event(FlowEventKind::S17, None);
+        let proof = ledger.intern(DerivationNode::IntegerExclusion {
+            detail: Box::new(ExclusionProof {
+                projection: Some((term, 0)),
+                expression,
+                values: Arc::clone(&values),
+                conclusion: ExclusionConclusion::Set,
+                event: Some(event),
+                parents: Vec::new(),
+            }),
+        });
+        state.establish_exclusion(Exclusion::from_view(
+            expression,
+            values,
+            Some((term, 0)),
+            proof,
+            goals,
+        ));
+    }
+
+    #[test]
+    fn signed_join_keeps_common_zero_disequality_from_different_exclusion_sets() {
+        let (first, mut terms, goals, mut ledger, term, expression) =
+            typed_fixture(&[0, 10], IntegerType::I8);
+        let mut second = FactState::new();
+        source_exclusion(&mut second, &goals, &mut ledger, term, expression, &[0, 20]);
+        let relation = Relation::Distinct {
+            left: term,
+            right: ZERO,
+            difference: 0,
+        };
+        for state in [&first, &second] {
+            let closed = close(state, &terms, &goals, &mut ledger);
+            assert!(closed.derives(&relation));
+            assert_eq!(closed.tight_bound(term, ZERO), Some(127));
+            assert_eq!(closed.tight_bound(ZERO, term), Some(128));
+        }
+        let event = ledger.event(FlowEventKind::Join, None);
+        let joined = join_at(&[first, second], &terms, &goals, &mut ledger, event);
+        assert!(joined.exclusions.is_empty());
+        assert_eq!(joined.distinct.len(), 1);
+        let closed = close(&joined, &terms, &goals, &mut ledger);
+        assert!(closed.derives(&relation));
+        assert!(closed.relation_proof(&relation, &mut ledger).is_some());
+
+        // ENT-4 supplies membership at Z, not disequality substitution
+        // through an arbitrary second term whose value happens to be fixed.
+        let other = terms.intern(TermKind::Place(
+            ResolvedPlace {
+                atomic_aliases: Vec::new(),
+                root: PlaceRoot::Binding(BindingId(1)),
+                path: Vec::new(),
+            },
+            IntegerType::I8,
+        ));
+        let mut input = FactState::new();
+        source_exclusion(&mut input, &goals, &mut ledger, term, expression, &[10]);
+        let source = ledger.event(FlowEventKind::S1, None);
+        input.establish(
+            &Relation::Equal {
+                left: other,
+                right: ZERO,
+                difference: 10,
+            },
+            &mut ledger,
+            source,
+        );
+        assert!(
+            !close(&input, &terms, &goals, &mut ledger).derives(&Relation::Distinct {
+                left: term,
+                right: other,
+                difference: 0,
+            })
+        );
+    }
+
+    #[test]
+    fn killing_an_exclusion_or_its_view_discards_cached_endpoint_strengthening() {
+        for view_only in [false, true] {
+            let (mut state, terms, mut goals, mut ledger, term, expression) =
+                typed_fixture(&[255], IntegerType::U8);
+            let killed = if view_only {
+                let mut spelling = goals.expression(expression).clone();
+                let GoalExpression::Datum(GoalDatum::Place { admission, .. }) = &mut spelling
+                else {
+                    unreachable!()
+                };
+                *admission = GoalAdmission::plain(CheckedType::Integer(IntegerType::U8));
+                let view = goals.intern(spelling, None, None, goals.support(expression).to_vec());
+                assert_ne!(expression, view);
+                assert_eq!(goals.canonical(view), expression);
+                state = FactState::new();
+                source_exclusion(&mut state, &goals, &mut ledger, term, view, &[255]);
+                view
+            } else {
+                expression
+            };
+            assert_eq!(
+                close(&state, &terms, &goals, &mut ledger).tight_bound(term, ZERO),
+                Some(254)
+            );
+            assert!(state.closed_view.borrow().is_some());
+            state.kill_goals(|goal| goal == killed);
+            assert!(state.closed_view.borrow().is_none());
+            assert!(state.view_seed.is_none());
+            assert_eq!(state.exclusions.len(), usize::from(view_only));
+            assert_eq!(
+                close(&state, &terms, &goals, &mut ledger).tight_bound(term, ZERO),
+                Some(255)
+            );
+        }
+    }
+
+    #[test]
+    fn consecutive_excluded_endpoints_close_once_after_the_complete_run() {
+        for upper in [false, true] {
+            let values = if upper {
+                (200..=255).collect::<Vec<i128>>()
+            } else {
+                (0..=55).collect()
+            };
+            let (_, terms, goals, mut ledger, term, expression) =
+                typed_fixture(&[], IntegerType::U8);
+            // Alternate the members between sets: the complete run must be
+            // followed even when its adjacent steps come from different sets.
+            let mut state = FactState::new();
+            for parity in [0, 1] {
+                let subset = values
+                    .iter()
+                    .copied()
+                    .filter(|value| value % 2 == parity)
+                    .collect::<Vec<_>>();
+                source_exclusion(&mut state, &goals, &mut ledger, term, expression, &subset);
+            }
+            let before = CLOSURE_ROUNDS.with(std::cell::Cell::get);
+            let closed = close(&state, &terms, &goals, &mut ledger);
+            assert_eq!(
+                CLOSURE_ROUNDS.with(std::cell::Cell::get) - before,
+                2,
+                "one initial closure and one after all 56 endpoint steps"
+            );
+            let (left, right, bound) = if upper {
+                (term, ZERO, 199)
+            } else {
+                (ZERO, term, -56)
+            };
+            assert_eq!(closed.tight_bound(left, right), Some(bound));
+            assert!(!closed.contradictory());
+            assert_eq!(state.exclusions.len(), 2);
+            assert!(state.distinct.is_empty());
+            assert_eq!(
+                ledger
+                    .nodes
+                    .iter()
+                    .filter(|node| matches!(node,
+                DerivationNode::StrengthenedBound { left: a, right: b, .. }
+                if *a == left && *b == right))
+                    .count(),
+                56
+            );
+        }
     }
 
     #[test]

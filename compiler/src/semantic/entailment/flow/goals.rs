@@ -716,13 +716,7 @@ impl Input<'_, '_> {
 
     pub(super) fn goal_integer_constant(&self, expression: &GoalExpression) -> Option<i128> {
         match expression {
-            GoalExpression::Datum(GoalDatum::Literal(CheckedValue::NumericIdentity {
-                one,
-                ..
-            })) => Some(i128::from(*one)),
-            GoalExpression::Datum(GoalDatum::Literal(CheckedValue::Integer { ty, bits })) => {
-                Some(integer_value(*ty, *bits))
-            }
+            GoalExpression::Datum(GoalDatum::Literal(value)) => literal_integer_constant(value),
             GoalExpression::Datum(GoalDatum::NamedConst {
                 declaration,
                 projections,
@@ -2073,4 +2067,42 @@ pub(super) fn element_type(input: CheckedType, elements: &[CheckedType]) -> Opti
 pub(super) fn element_write_place(mut base: ResolvedPlace, offset: CapturedValue) -> ResolvedPlace {
     base.path.push(PlaceStep::Index(offset));
     base
+}
+
+/// Numeric identities are integer constants only in an Int-constrained body.
+fn literal_integer_constant(value: &CheckedValue) -> Option<i128> {
+    match value {
+        CheckedValue::NumericIdentity {
+            ty: CheckedType::GenericInt(_),
+            one,
+        } => Some(i128::from(*one)),
+        CheckedValue::Integer { ty, bits } => Some(integer_value(*ty, *bits)),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod integer_constant_tests {
+    use super::*;
+    use crate::DeclarationId;
+
+    #[test]
+    fn numeric_identity_constants_require_an_int_constraint() {
+        for one in [false, true] {
+            assert_eq!(
+                literal_integer_constant(&CheckedValue::NumericIdentity {
+                    ty: CheckedType::GenericInt(DeclarationId::from_index(0).unwrap()),
+                    one,
+                }),
+                Some(i128::from(one))
+            );
+            assert_eq!(
+                literal_integer_constant(&CheckedValue::NumericIdentity {
+                    ty: CheckedType::GenericFloat(DeclarationId::from_index(0).unwrap()),
+                    one,
+                }),
+                None
+            );
+        }
+    }
 }

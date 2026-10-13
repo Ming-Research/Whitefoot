@@ -364,20 +364,14 @@ fn main() -> status: std::process::ExitStatus pure {
                 "each arm adds one selection; else never adds one disequality per label"
             );
         }
-        let exclusions = walker
-            .world
-            .atoms
+        let exclusions = branches
             .iter()
-            .filter_map(|atom| match &atom.def {
-                super::super::world::AtomDef::IntegerExclusion { value, values } => {
-                    Some((value, values))
-                }
-                _ => None,
-            })
+            .flat_map(|branch| &branch.conds)
+            .filter(|literal| literal.relation == Relation::Excluded)
             .collect::<Vec<_>>();
-        assert_eq!(exclusions.len(), 1, "one whole-set predicate is captured");
-        assert_eq!(exclusions[0].0, &before);
-        assert_eq!(exclusions[0].1.as_ref(), &[0, 1, 2]);
+        assert_eq!(exclusions.len(), 1, "one whole-set condition is captured");
+        assert_eq!(exclusions[0].left, before);
+        assert_eq!(exclusions[0].members(), &[0, 1, 2]);
         let mut otherwise = walker
             .block(branches.last().unwrap().clone(), &arms.last().unwrap().body)
             .expect("the actual else body continues after its write");

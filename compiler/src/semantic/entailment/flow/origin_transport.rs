@@ -295,22 +295,12 @@ impl Reasoning<'_, '_, '_> {
             }
             collect(expression, &mut expressions, &mut seen);
         }
-        for fact in &context.facts.exclusions {
-            if fact.views.is_empty() {
-                // Common canonical truth does not recover an admission view
-                // that was absent on a reaching path.
-                collect(
-                    self.vocabulary.goals.expression(fact.expression).clone(),
-                    &mut expressions,
-                    &mut seen,
-                );
-            } else {
-                for view in &fact.views {
-                    let expression = self.vocabulary.goals.expression(view.expression).clone();
-                    collect(expression.clone(), &mut Vec::new(), &mut numeric_views);
-                    collect(expression, &mut expressions, &mut seen);
-                }
+        for (goal, numeric) in entering_exclusion_expressions(&context.facts.exclusions) {
+            let expression = self.vocabulary.goals.expression(goal).clone();
+            if numeric {
+                collect(expression.clone(), &mut Vec::new(), &mut numeric_views);
             }
+            collect(expression, &mut expressions, &mut seen);
         }
         if let Some(submitted) = submitted {
             collect(submitted.clone(), &mut Vec::new(), &mut numeric_views);
@@ -557,5 +547,72 @@ impl Reasoning<'_, '_, '_> {
                 }
             }
         }
+    }
+}
+
+/// Goal identities are allocated in source order. A join's first input
+/// chooses storage order, which must not choose an OT representative.
+fn entering_exclusion_expressions(exclusions: &[Exclusion]) -> Vec<(GoalId, bool)> {
+    let mut expressions = Vec::new();
+    for fact in exclusions {
+        if fact.views.is_empty() {
+            // Common canonical truth supplies no lost numeric admission.
+            expressions.push((fact.expression, false));
+        } else {
+            expressions.extend(fact.views.iter().map(|view| (view.expression, true)));
+        }
+    }
+    expressions.sort_by_key(|(goal, _)| goal.0);
+    expressions
+}
+
+#[cfg(test)]
+mod exclusion_order_tests {
+    use super::*;
+
+    #[test]
+    fn entering_exclusions_follow_source_allocation_not_first_predecessor_order() {
+        let mut goals = GoalTable::default();
+        for bits in 0..10 {
+            goals.intern(
+                GoalExpression::Datum(GoalDatum::Literal(CheckedValue::Integer {
+                    ty: IntegerType::U8,
+                    bits,
+                })),
+                None,
+                None,
+                Vec::new(),
+            );
+        }
+        let fact = |expression, views: &[u32]| {
+            let make_view = |id| {
+                Exclusion::from_view(
+                    GoalId(id),
+                    std::sync::Arc::from([0_i128]),
+                    None,
+                    DerivationId(0),
+                    &goals,
+                )
+            };
+            let mut fact = make_view(expression);
+            fact.views = views.iter().flat_map(|id| make_view(*id).views).collect();
+            fact
+        };
+        let facts = [fact(8, &[9, 8]), fact(4, &[]), fact(1, &[2, 1])];
+        assert_eq!(
+            entering_exclusion_expressions(&facts),
+            vec![
+                (GoalId(1), true),
+                (GoalId(2), true),
+                (GoalId(4), false),
+                (GoalId(8), true),
+                (GoalId(9), true),
+            ]
+        );
+        let reversed = facts.iter().cloned().rev().collect::<Vec<_>>();
+        assert_eq!(
+            entering_exclusion_expressions(&reversed),
+            entering_exclusion_expressions(&facts)
+        );
     }
 }

@@ -1197,16 +1197,194 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
       run_command(input: input, args: args, client: client);
       return unit;
     }
+    code_hset => {
+      let handled = hash_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+      if handled {
+        return unit;
+      }
+    }
+    code_hmset => {
+      let handled = hash_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+      if handled {
+        return unit;
+      }
+    }
+    code_hsetnx => {
+      let handled = hash_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+      if handled {
+        return unit;
+      }
+    }
+    code_hget => {
+      let handled = hash_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+      if handled {
+        return unit;
+      }
+    }
+    code_hmget => {
+      let handled = hash_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+      if handled {
+        return unit;
+      }
+    }
+    code_hdel => {
+      let handled = hash_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+      if handled {
+        return unit;
+      }
+    }
+    code_hexists => {
+      let handled = hash_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+      if handled {
+        return unit;
+      }
+    }
+    code_hstrlen => {
+      let handled = hash_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+      if handled {
+        return unit;
+      }
+    }
+    code_hlen => {
+      let handled = hash_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+      if handled {
+        return unit;
+      }
+    }
+    code_hgetall => {
+      let handled = hash_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+      if handled {
+        return unit;
+      }
+    }
+    code_hkeys => {
+      let handled = hash_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+      if handled {
+        return unit;
+      }
+    }
+    code_hvals => {
+      let handled = hash_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+      if handled {
+        return unit;
+      }
+    }
+    code_hincrby => {
+      let handled = hash_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+      if handled {
+        return unit;
+      }
+    }
+    code_hincrbyfloat => {
+      let handled = hash_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+      if handled {
+        return unit;
+      }
+    }
+    code_hrandfield => {
+      let handled = hash_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+      if handled {
+        return unit;
+      }
+    }
+    code_zadd => {
+      let handled = sorted_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+      if handled {
+        return unit;
+      }
+    }
+    code_zincrby => {
+      let handled = sorted_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+      if handled {
+        return unit;
+      }
+    }
+    code_zcard => {
+      let handled = sorted_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+      if handled {
+        return unit;
+      }
+    }
+    code_zscore => {
+      let handled = sorted_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+      if handled {
+        return unit;
+      }
+    }
+    code_zmscore => {
+      let handled = sorted_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+      if handled {
+        return unit;
+      }
+    }
+    code_zpopmin => {
+      let handled = sorted_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+      if handled {
+        return unit;
+      }
+    }
+    code_zpopmax => {
+      let handled = sorted_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+      if handled {
+        return unit;
+      }
+    }
+    code_zrem => {
+      let handled = sorted_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+      if handled {
+        return unit;
+      }
+    }
+    code_zrank => {
+      let handled = sorted_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+      if handled {
+        return unit;
+      }
+    }
+    code_zrevrank => {
+      let handled = sorted_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+      if handled {
+        return unit;
+      }
+    }
+    code_zcount => {
+      let handled = sorted_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+      if handled {
+        return unit;
+      }
+    }
+    code_zrange => {
+      let handled = sorted_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+      if handled {
+        return unit;
+      }
+    }
+    code_zrevrang => {
+      let handled = sorted_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+      if handled {
+        return unit;
+      }
+    }
+    code_zrangeby => {
+      let handled = sorted_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+      if handled {
+        return unit;
+      }
+    }
+    code_zremrang => {
+      let handled = sorted_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+      if handled {
+        return unit;
+      }
+    }
+    code_zlexcount => {
+      let handled = sorted_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+      if handled {
+        return unit;
+      }
+    }
     else => {
     }
-  }
-  let hashed = hash_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
-  if hashed {
-    return unit;
-  }
-  let ranked = sorted_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
-  if ranked {
-    return unit;
   }
   reply_unknown(client: client, input: input, args: args);
   return unit;

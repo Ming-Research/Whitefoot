@@ -1069,10 +1069,7 @@ impl<'program> Walker<'program> {
                 let exclusion = arms
                     .iter()
                     .any(|arm| arm.selection == CheckedMatchSelection::Else)
-                    .then(|| {
-                        self.world
-                            .integer_exclusion(selected.clone(), values.clone())
-                    });
+                    .then(|| Literal::exclusion(selected.clone(), values.clone()));
                 for arm in arms {
                     let reachable = !selected.is_constant()
                         || match arm.selection {

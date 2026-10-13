@@ -3869,18 +3869,25 @@ impl FactState {
         }
     }
 
-    /// Removes signed facts and ordinary-let origin expansions whose exact
-    /// goal support is invalidated by one ENT-5 event. The L0 matrix and its
-    /// closure record are unchanged: goal contradictions are recomputed by
-    /// every closure.
+    /// Removes signed facts, exclusions and ordinary-let origin expansions
+    /// whose exact goal support is invalidated by one ENT-5 event. Removing
+    /// an exclusion or an admission view also discards cached L0 closure:
+    /// that view may have strengthened an endpoint using the removed set.
     pub(crate) fn kill_goals(&mut self, mut killed: impl FnMut(GoalId) -> bool) {
         if self.all_derivable {
             return;
         }
         self.keep_view_as_seed(None);
+        let previous_exclusions = self.exclusions.len();
         self.exclusions.retain(|fact| !killed(fact.expression));
+        let mut removed_exclusion = self.exclusions.len() != previous_exclusions;
         for fact in &mut self.exclusions {
+            let previous_views = fact.views.len();
             fact.views.retain(|view| !killed(view.expression));
+            removed_exclusion |= fact.views.len() != previous_views;
+        }
+        if removed_exclusion {
+            self.forget_closed_view();
         }
         self.opaque.retain(|(goal, _)| !killed(*goal));
         self.opaque_proofs.retain(|(goal, _), _| !killed(*goal));
@@ -7813,6 +7820,20 @@ fn join_at_once(
                 .filter(move |key| key.2 == 0 || states[*index].distinct.contains(key))
         })
         .collect::<Vec<_>>();
+    // One membership query per retained numeric view supplies the zero
+    // offset candidate; unrelated members of the set are never enumerated.
+    for &index in &contributing {
+        for fact in &closed[index].exclusions {
+            for view in &fact.views {
+                if let Some((term, offset)) = view.projection
+                    && zero_distinct_candidate(terms, term, ZERO)
+                    && fact.values.binary_search(&offset).is_ok()
+                {
+                    distinct_keys.push(distinct_key(term, ZERO, 0));
+                }
+            }
+        }
+    }
     distinct_keys.sort_unstable();
     distinct_keys.dedup();
     distinct_keys.retain(|pair| {
