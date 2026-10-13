@@ -40,7 +40,7 @@ jobs:
           (cd ../base && perl .github/run-check.pl tmp-ir-build-base cargo build --release --locked --manifest-path compiler/Cargo.toml)
       - name: Emit and compare
         run: |
-          set -uo pipefail
+          set +e -u
           head=compiler/target/release/whitefootc
           base=../base/compiler/target/release/whitefootc
           same=0; differ_env=0; differ_plain=0; failed=0
