@@ -9,14 +9,14 @@ fn need_one(digit: u8) -> result: unit pure contract {
   return unit;
 }
 
-fn establish(decimal: &Decimal) -> result: unit writes(decimal.digits), reads(decimal.count) contract {
+fn establish(decimal: &Decimal) -> result: unit writes(decimal.digits) contract {
   ensures forall leading(k in 0_u64..1_u64) when 0_u64 < decimal^.count: 1_u8 <= decimal^.digits[k];
 } {
   set decimal^.digits[0_u64] = 1_u8;
   return unit;
 }
 
-fn inspect(decimal: &Decimal) -> result: unit writes(decimal.digits), reads(decimal.count) contract {
+fn inspect(decimal: &Decimal) -> result: unit writes(decimal.digits) contract {
   requires 0_u64 < decimal^.count;
 } {
   doc "The digit write preserves the count field and its positive requirement activates the imported leading-digit fact.";

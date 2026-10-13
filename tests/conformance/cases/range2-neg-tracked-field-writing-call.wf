@@ -15,7 +15,7 @@ fn need_one(digit: u8) -> result: unit pure contract {
   return unit;
 }
 
-fn inspect(counter: &Counter, digits: &Array<u8, 1>) -> result: unit writes(counter.count), reads(digits) contract {
+fn inspect(counter: &Counter, digits: &Array<u8, 1>) -> result: unit reads(digits), writes(counter.count) contract {
   requires forall leading(k in 0_u64..1_u64) when 0_u64 < counter^.count: 1_u8 <= digits^[k];
 } {
   doc "The call replaces the count image and proves its new value is one; that new value cannot activate the old range guard over untouched digits.";

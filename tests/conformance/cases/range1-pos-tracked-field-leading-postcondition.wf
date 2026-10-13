@@ -3,7 +3,7 @@ struct Decimal {
   digits: Array<u8, 1>;
 }
 
-fn establish(decimal: &Decimal) -> result: unit writes(decimal.digits), reads(decimal.count) contract {
+fn establish(decimal: &Decimal) -> result: unit writes(decimal.digits) contract {
   ensures forall leading(k in 0_u64..1_u64) when 0_u64 < decimal^.count: 1_u8 <= decimal^.digits[k];
 } {
   doc "The postcondition guard reads the current tracked count field, and the written digit establishes its conclusion.";
