@@ -670,6 +670,16 @@ impl FlowGraph {
                             .collect(),
                         Vec::new(),
                     ),
+                    IrTerminator::IntegerMatch {
+                        targets, default, ..
+                    } => (
+                        targets
+                            .iter()
+                            .map(|target| target.block().index())
+                            .chain(default.iter().map(|target| target.index()))
+                            .collect(),
+                        Vec::new(),
+                    ),
                     IrTerminator::Return { .. } | IrTerminator::Unreachable => {
                         (Vec::new(), Vec::new())
                     }

@@ -1854,12 +1854,19 @@ impl<'unit> Checker<'_, 'unit> {
                     }
                     if let GenericBound::Class(required) = bound {
                         let spelling = self.types.declarations.declaration_spelling(declaration)?;
+                        let bound_site = if self.types.declarations.tree.production(node)?
+                            == Production::Call
+                        {
+                            node
+                        } else {
+                            source
+                        };
                         self.types.check_linearity_bound(
                             check_context,
                             &spelling,
                             required,
                             ty,
-                            source,
+                            bound_site,
                         )?;
                     }
                 }

@@ -841,18 +841,7 @@ fn finish(
 /// build generates for it; a checked module without one is a library, which
 /// this compiler links into no executable.
 fn require_runner(module: &str) -> Result<(), Stop> {
-    if module.contains("\ndefine i32 @wf__main_body(") {
-        return Ok(());
-    }
-    let refused = module
-        .lines()
-        .find_map(|line| line.strip_prefix("; Executable caller was not admitted: "))
-        .map_or_else(String::new, |reason| {
-            format!(": its generated caller was not admitted: {reason}")
-        });
-    Err(Stop::invocation(format!(
-        "the selected function has no executable runner{refused}; this build runs a function that takes no parameter or one Inputs and returns ExitStatus or unit, and --emit-llvm writes any checked program as a library"
-    )))
+    whitefoot::require_executable_runner(module).map_err(Stop::invocation)
 }
 
 /// Compiles the module once more, to assembly, purely to read the two things
@@ -964,6 +953,7 @@ fn compile_executable(
     full_lto: bool,
     report: &mut BuildReport,
 ) -> Result<(), String> {
+    whitefoot::require_executable_runner(llvm)?;
     // The ordinary prelude implementation library links its private engine.
     // Each build stages in its own directory, so two builds of one process
     // never share or remove each other's inputs.
@@ -1913,12 +1903,18 @@ mod tests {
             "fn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 0_u8);\n}\n",
         ))
         .expect("an ExitStatus entry has a runner");
+        let unit = checked("fn main() -> result: unit pure {\n  return unit;\n}\n");
+        require_runner(&unit).expect("a unit entry has a runner");
         let integer = require_runner(&checked(
-            "fn main() -> result: u64 pure {\n  return 7_u64;\n}\n",
+            "fn main() -> result: u8 pure {\n  return 7_u8;\n}\n",
         ))
-        .expect_err("a u64 result has no runner")
+        .expect_err("a u8 result has no runner")
         .render(DiagnosticFormat::Text);
         assert!(integer.contains("no executable runner;"), "{integer}");
+        assert!(
+            integer.contains("repair: select a function taking no parameters or one std::process::Inputs and returning std::process::ExitStatus or unit"),
+            "{integer}"
+        );
         let unproved = require_runner(&checked(
             "fn main() -> result: unit pure contract {\n  requires 1_u64 <= 0_u64;\n} {\n  return unit;\n}\n",
         ))
@@ -1928,6 +1924,44 @@ mod tests {
             unproved.contains("its generated caller was not admitted"),
             "{unproved}"
         );
+        assert!(
+            unproved.contains("returning std::process::ExitStatus or unit; satisfy the generated caller refusal reported above"),
+            "{unproved}"
+        );
+        require_runner(&checked(
+            "fn main() -> result: unit pure contract {\n  requires 0_u64 <= 1_u64;\n} {\n  return unit;\n}\n",
+        ))
+        .expect("the generated caller proves the repaired requirement");
+    }
+
+    #[test]
+    fn native_construction_without_a_runner_stops_before_output() {
+        let module = whitefoot::compile(
+            &[whitefoot::SourceInput::new(
+                "entry.wf",
+                b"fn main() -> result: u8 pure {\n  return 7_u8;\n}\n",
+            )],
+            whitefoot::CompilerLimits::default(),
+        )
+        .expect("a u8 entry is valid library source");
+        let output = std::env::temp_dir().join(format!(
+            "whitefootc-entry-stop-{}",
+            std::process::id()
+        ));
+        let failure = super::compile_executable(
+            &module,
+            &output,
+            None,
+            None,
+            false,
+            &mut super::BuildReport::default(),
+        )
+        .expect_err("runner check happens before native construction");
+        assert_eq!(
+            failure,
+            whitefoot::require_executable_runner(&module).expect_err("no executable runner")
+        );
+        assert!(!output.exists());
     }
 
     fn parse(arguments: &[&str]) -> Result<Options, String> {

@@ -4,6 +4,7 @@ use super::{
 };
 use crate::{OverlapLowering, RecursionBudget, SourceInput};
 
+mod call_result_repairs;
 mod recursive_postconditions;
 #[cfg(unix)]
 mod spellings;
