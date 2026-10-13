@@ -11,13 +11,21 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
-## 2026-10-13 v0.151: a call forgets only the paths its effect row writes
+## 2026-10-13 v0.152: a call forgets only the paths its effect row writes
 
 Rules: changed RANGE-2
 
-Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the one-sentence specification change and the two range-judgment design decisions in #466 (head 2f5f1d0)?" (translated), after choosing option A the same day on the direction card "when a callee's effect row writes only one field of an argument (such as `writes(row.g)`), does the call forget the per-element facts on that field, or on the whole argument element?" (translated): forget only the written path. The amendment was written as v0.150 and renumbered to v0.151 because main reached v0.150 first.
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the one-sentence specification change and the two range-judgment design decisions in #466 (head 2f5f1d0)?" (translated), after choosing option A the same day on the direction card "when a callee's effect row writes only one field of an argument (such as `writes(row.g)`), does the call forget the per-element facts on that field, or on the whole argument element?" (translated): forget only the written path. The amendment was written as v0.150 and renumbered to v0.151 because main reached v0.150 first, and to v0.152 because main reached v0.151 first.
 
 Summary: RANGE-2's call sentence said a call forgets every location the callee's row writes through a reference argument, one element where the argument names one element; "location" was read as a whole versioned storage, so a call writing `row.g` forgot the range facts on `row.f` of the same element. It now forgets each path the callee's row writes after substituting the reference argument's path [EFF-5], and every path below it, within that element where the argument names one element. Selection ground: effect rows, ordinary facts killed by calls and the range judgment's direct assignments already distinguish paths, so the call was the one coarser place; the written path is still forgotten, so no fact survives a write that could change it.
+
+## 2026-10-13 v0.151: key sets and concurrent hash maps have nonempty release, and the executable release graph is defined apart from the type ownership closure
+
+Rules: changed PROV-6, STOR-3, SHARE-1
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve Ming-Research/Whitefoot#437 (head 47003fdd5)'s specification revision and design-tree change: key sets and concurrent hash maps count as types whose release does work?" (translated), adding the comment that the root cause is that the checker does not know which values hold runtime resources and that adding exceptions one by one is a stopgap (translated); that broader question is recorded as its own board item. This amendment was written as v0.149 and renumbered to v0.151 because main reached v0.150 first.
+
+Summary: PROV-6 adds ConcurrentHashMap and KeySet to the types whose release performs an action, separates the type ownership closure (read by linearity, which keeps a constant-zero Array's element type) from the executable release graph (read by release and guaranteed tail calls, in which a constant-zero Array or window contributes no element edge), and judges a type parameter by its capability bounds. STOR-3 states that a KeySet returns its runtime-held storage on release and that a ConcurrentHashMap releases each held value before returning its storage, and routes every opaque type to these per-type actions; SHARE-1 points to STOR-3 instead of stating the map's value release itself. The rules that read these definitions, such as FN-10 and DIAG-2, keep their text and now resolve to the executable release graph. Selection ground: a guaranteed tail call holding a KeySet with a live reference to it was accepted on main although the backend returns the set's storage before the jump, leaving the reference dangling; the checker followed a release list that omitted the type.
 
 ## 2026-10-13 v0.150: `match` branches on integer constant values
 
