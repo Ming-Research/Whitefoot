@@ -29,5 +29,6 @@ fn main() -> status: std::process::ExitStatus pure {
   let first = cell.digits[0_u64] - 1_u8;
   establish(cell: &cell, index: 1_u64);
   let second = cell.digits[1_u64] - 1_u8;
-  return std::process::exit_status(code: first +wrap second);
+  let code = first +wrap second;
+  return std::process::exit_status(code: code);
 }

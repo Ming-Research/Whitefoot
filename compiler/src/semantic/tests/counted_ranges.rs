@@ -186,14 +186,26 @@ fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
 "#;
+    assert_checks(subscript);
+    let nested_offset =
+        br#"fn probe(bounds: Array<u64, 2>, slots: Array<u64, 1>) -> result: unit pure {
+  for @items (i in bounds[slots[0_u64]]..0_u64) {
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
     assert_rule(
-        subscript,
+        nested_offset,
         SemanticRule::Ent2,
         SemanticIssueKind::InvalidCountedEndpoint {
             mechanical_fix: ENDPOINT_TERM_FIX,
         },
     );
-    super::assert_rule_at(subscript, SemanticRule::Ent2, "bounds[0_u64]");
+    super::assert_rule_at(nested_offset, SemanticRule::Ent2, "bounds[slots[0_u64]]");
 
     // [EFF-1] a by-value parameter has no effect entry at all, so the row
     // names only the reference endpoint. The v0.59 spelling declared
@@ -236,26 +248,13 @@ fn check_records_client(main: &[u8]) -> Result<(), crate::CompilationFailure> {
     )
 }
 
-fn assert_unsupported_composite(result: Result<(), crate::CompilationFailure>) {
-    let failure = result.expect_err("an unrepresented offset stops the check");
-    assert_eq!(
-        failure.kind(),
-        crate::CompilationFailureKind::Unsupported,
-        "{failure}"
-    );
-    assert!(failure.to_string().contains("CompositeValues"), "{failure}");
-}
-
 /// [ENT-2] clause (b): a readonly field below a subscript is an endpoint term
 /// exactly when every offset in its place is itself a clause (a) or clause
 /// (c) term.
 ///
-/// A bare binding offset is represented and admitted. An array-element offset
-/// is no term, so the place is no term and the endpoint is ENT-2's rejection.
-/// A tracked field place is an admitted offset that this compiler captures no
-/// value for, so the place is the compiler capability it is and never a
-/// source verdict [DIAG-1]; the conformance corpus cannot pin that, because a
-/// case declares the specification's verdict, which is acceptance.
+/// A bare binding or tracked field offset is admitted. An array-element
+/// offset is no clause (a) or (c) selector, so the selected place is no term
+/// and the endpoint is ENT-2's rejection.
 #[test]
 fn a_readonly_field_endpoint_follows_its_offset_forms() {
     let program = |offset: &str| {
@@ -291,15 +290,14 @@ fn main() -> status: std::process::ExitStatus pure {{
         failure.to_string().contains("InvalidCountedEndpoint"),
         "{failure}"
     );
-    assert_unsupported_composite(check_records_client(program("cursor.at").as_bytes()));
+    check_records_client(program("cursor.at").as_bytes())
+        .expect("a tracked field offset is admitted");
 }
 
-/// [ENT-2, DIAG-1] an admitted offset the compiler cannot capture stops the
-/// read itself, in a body and in a contract clause alike, so no missing fact
-/// can later surface as a source rejection. A measure over such a place is
-/// the same capability.
+/// [ENT-2] a tracked field offset retains its selected value and support in
+/// ordinary reads, requirement places, and measured places alike.
 #[test]
-fn an_unrepresented_offset_is_unsupported_wherever_the_place_is_read() {
+fn a_tracked_field_offset_is_admitted_wherever_the_place_is_read() {
     let body = br#"alias Entry = pkg::records::Entry;
 
 struct Cursor {
@@ -317,7 +315,7 @@ fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
 "#;
-    assert_unsupported_composite(check_records_client(body));
+    check_records_client(body).expect("a body read retains the tracked field offset");
     let clause = br#"alias Node = pkg::records::Node;
 
 struct Cursor {
@@ -335,7 +333,7 @@ fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
 "#;
-    assert_unsupported_composite(check_records_client(clause));
+    check_records_client(clause).expect("a clause read retains the tracked field offset");
     let measure = br#"struct Cursor {
   at: u64;
 }
@@ -351,7 +349,7 @@ fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
 "#;
-    super::assert_unsupported(measure, crate::UnsupportedSemanticFeature::CompositeValues);
+    assert_checks(measure);
 }
 
 /// [OWN-11] a counted binder may be copied and may have a reference formed to

@@ -39,9 +39,11 @@ use super::super::goal::{
 };
 use super::super::model::{
     BindingId, CheckedCallSeparationPositions, CheckedConversionMode, CheckedExpression,
-    CheckedFunction, CheckedIntegerOperation, CheckedStatement, FunctionId, expression_children,
+    CheckedFunction, CheckedIntegerOperation, CheckedStatement, CheckedType, FunctionId,
+    expression_children,
 };
 use super::super::permission::visit_read_bindings;
+use super::super::places::{CapturedTerm, CapturedValue, PlaceRoot, PlaceStep, ProjectedSelector};
 use crate::NodePath;
 
 /// [OP-16] name the first excluded part, without suggesting that copy alone
@@ -123,6 +125,8 @@ pub(super) struct GoalReads {
     /// Some read is of a value a user call returned, which that callee's
     /// `ensures` can bound [FN-9].
     pub(super) called: bool,
+    /// The goal's direct integer reads can be named by an INV-1 certificate.
+    pub(super) certificate: bool,
 }
 
 impl GoalTerms {
@@ -142,7 +146,7 @@ impl GoalTerms {
 
     /// Classifies the terms one obligation's normalized relations read.
     pub(super) fn of_terms(
-        terms: &[TermRead],
+        terms: &[TermRead<'_>],
         function: &CheckedFunction,
         written: &[BindingId],
         editable: &HashSet<FunctionId>,
@@ -151,9 +155,12 @@ impl GoalTerms {
         for term in terms {
             match term {
                 TermRead::Constant => {}
-                TermRead::Binding(binding) => reads.binding(*binding),
-                TermRead::Unnamed => reads.unnamed = true,
+                TermRead::Place { place, integer } => {
+                    reads.certificate &= !*integer || !indexed_steps(&place.path);
+                    reads.place(place);
+                }
                 TermRead::Computed => reads.computed = true,
+                TermRead::Unnamed => reads.unnamed = true,
             }
         }
         reads.finish()
@@ -175,6 +182,8 @@ struct Reads<'a> {
     referenced: bool,
     /// Every binding a read is rooted at.
     bindings: Vec<BindingId>,
+    certificate: bool,
+    selectors: HashSet<ProjectedSelector>,
 }
 
 impl<'a> Reads<'a> {
@@ -194,6 +203,8 @@ impl<'a> Reads<'a> {
             argument: None,
             referenced: false,
             bindings: Vec::new(),
+            certificate: true,
+            selectors: HashSet::new(),
         }
     }
 
@@ -222,9 +233,11 @@ impl<'a> Reads<'a> {
                     | GoalOperation::BufferIndex { .. }
                     | GoalOperation::RunIndex { .. },
                 arguments,
+                result,
                 ..
             } => {
                 self.computed = true;
+                self.certificate &= !matches!(result, CheckedType::Integer(_));
                 for argument in arguments {
                     self.goal(argument);
                 }
@@ -253,12 +266,30 @@ impl<'a> Reads<'a> {
     }
 
     fn datum(&mut self, datum: &GoalDatum) {
+        if let GoalDatum::Place {
+            projections, ty, ..
+        }
+        | GoalDatum::NamedConst {
+            projections, ty, ..
+        } = datum
+        {
+            self.certificate &= !matches!(ty, CheckedType::Integer(_))
+                || matches!(projections.last(), Some(GoalProjection::Measure(_)))
+                || !projections.iter().any(|projection| {
+                    matches!(
+                        projection,
+                        GoalProjection::Subscript(_) | GoalProjection::Page(_)
+                    )
+                });
+            self.projection_reads(projections);
+        }
+        if let GoalDatum::Place { root, .. } = datum {
+            self.binding(*root);
+        }
         match datum {
             GoalDatum::Literal(_) => {}
             GoalDatum::NamedConst { projections, .. } if spelled(projections) => {}
-            GoalDatum::Place {
-                root, projections, ..
-            } if spelled(projections) => self.binding(*root),
+            GoalDatum::Place { projections, .. } if spelled(projections) => {}
             GoalDatum::EvaluatedValue {
                 occurrence: EvaluatedValueOccurrence::CallArgument { argument, .. },
                 ..
@@ -282,12 +313,20 @@ impl<'a> Reads<'a> {
     /// [MSR-1], but its offset is captured where the place is formed and no
     /// clause can name that capture, so it counts as computed.
     fn measured(&mut self, place: &GoalExpression) {
+        if let GoalExpression::Datum(
+            GoalDatum::Place { projections, .. } | GoalDatum::NamedConst { projections, .. },
+        ) = place
+        {
+            self.projection_reads(projections);
+        }
+        if let GoalExpression::Datum(GoalDatum::Place { root, .. }) = place {
+            self.binding(*root);
+        }
         match place {
             GoalExpression::Datum(GoalDatum::NamedConst { projections, .. })
                 if spelled(projections) => {}
-            GoalExpression::Datum(GoalDatum::Place {
-                root, projections, ..
-            }) if spelled(projections) => self.binding(*root),
+            GoalExpression::Datum(GoalDatum::Place { projections, .. }) if spelled(projections) => {
+            }
             GoalExpression::Datum(
                 datum @ GoalDatum::EvaluatedValue {
                     occurrence: EvaluatedValueOccurrence::CallArgument { .. },
@@ -300,6 +339,60 @@ impl<'a> Reads<'a> {
                 self.range_length = true;
             }
             _ => self.computed = true,
+        }
+    }
+
+    fn projection_reads(&mut self, projections: &[GoalProjection]) {
+        for projection in projections {
+            match projection {
+                GoalProjection::Subscript(offset) | GoalProjection::Page(offset) => {
+                    self.selector(offset);
+                }
+                GoalProjection::Range(range) => {
+                    self.selector(&range.start);
+                    self.selector(&range.end);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn selector(&mut self, offset: &CapturedValue) {
+        match &offset.term {
+            CapturedTerm::Binding(binding) => self.binding(*binding),
+            CapturedTerm::Place(selector) | CapturedTerm::SupersededPlace(selector) => {
+                if self.selectors.insert(selector.clone()) {
+                    self.place(selector.place());
+                }
+            }
+            CapturedTerm::Superseded(binding) => {
+                self.binding(*binding);
+                self.computed = true;
+            }
+            CapturedTerm::Literal(_) | CapturedTerm::Const(_) => {}
+            CapturedTerm::Opaque => self.computed = true,
+        }
+        if !offset.is_current_spelling() {
+            self.computed = true;
+        }
+    }
+
+    fn place(&mut self, place: &super::super::places::ResolvedPlace) {
+        if let PlaceRoot::Binding(binding) = place.root {
+            self.binding(binding);
+        }
+        for step in &place.path {
+            match step {
+                PlaceStep::Index(offset) | PlaceStep::Page(offset) => self.selector(offset),
+                PlaceStep::Range(range) => {
+                    self.selector(&range.start);
+                    self.selector(&range.end);
+                }
+                _ => {}
+            }
+        }
+        if !place.path.iter().all(spelled_step) {
+            self.computed = true;
         }
     }
 
@@ -328,6 +421,7 @@ impl<'a> Reads<'a> {
                 .bindings
                 .iter()
                 .any(|binding| results.contains(binding)),
+            certificate: self.certificate,
         }
     }
 }
@@ -519,11 +613,44 @@ fn returned_value<'a>(
     })
 }
 
-/// Field and Box-content selections are steps a clause can spell as written.
+/// Clause (a)/(c) selectors retain source-spellable current offsets.
 fn spelled(projections: &[GoalProjection]) -> bool {
-    projections
+    projections.iter().all(|projection| match projection {
+        GoalProjection::Deref | GoalProjection::Field(_) | GoalProjection::Payload { .. } => true,
+        GoalProjection::Subscript(offset) | GoalProjection::Page(offset) => {
+            spelled_selector(offset)
+        }
+        _ => false,
+    })
+}
+
+fn spelled_selector(offset: &CapturedValue) -> bool {
+    offset.is_current_spelling()
+        && match &offset.term {
+            CapturedTerm::Literal(_) | CapturedTerm::Const(_) | CapturedTerm::Binding(_) => true,
+            CapturedTerm::Place(selector) => selector.place().path.iter().all(|step| {
+                matches!(step, PlaceStep::Deref | PlaceStep::Field(_) | PlaceStep::Payload { .. })
+                    || matches!(step, PlaceStep::Measure(measure) if *measure != super::super::model::CheckedMeasure::Pages)
+            }),
+            CapturedTerm::Superseded(_) | CapturedTerm::SupersededPlace(_) | CapturedTerm::Opaque => false,
+        }
+}
+
+fn spelled_step(step: &PlaceStep) -> bool {
+    match step {
+        PlaceStep::Deref
+        | PlaceStep::Field(_)
+        | PlaceStep::Payload { .. }
+        | PlaceStep::Measure(_) => true,
+        PlaceStep::Index(offset) | PlaceStep::Page(offset) => spelled_selector(offset),
+        _ => false,
+    }
+}
+
+fn indexed_steps(steps: &[PlaceStep]) -> bool {
+    steps
         .iter()
-        .all(|projection| matches!(projection, GoalProjection::Deref | GoalProjection::Field(_)))
+        .any(|step| matches!(step, PlaceStep::Index(_) | PlaceStep::Page(_)))
 }
 
 /// A range step, which a goal carries only for a range formed at its use.
@@ -664,6 +791,7 @@ pub(super) struct GoalCase<'a> {
     pub(super) referenced: bool,
     /// The goal reads a value a user call returned [FN-9].
     pub(super) called: bool,
+    pub(super) certificate: bool,
     /// The goal as the payload renders it.
     pub(super) text: &'a str,
     /// Whether `text` is the source of one condition over atoms.
@@ -727,6 +855,15 @@ impl GoalCase<'_> {
     /// written certificate or a callee relation the program does not have yet.
     fn computed_routes(&self, construct: &str, intent: &str) -> String {
         let guard = self.guard(construct, intent);
+        if !self.certificate {
+            return if self.called {
+                format!(
+                    "when the callee whose result it reads can prove the bound, state it in that callee's `ensures`; or {guard}"
+                )
+            } else {
+                guard
+            };
+        }
         // A callee's `ensures` bounds only a value that callee returned.
         let callee = if self.called {
             "; when the callee whose result it reads can prove the bound, state it in that callee's `ensures`"

@@ -388,17 +388,10 @@ fn main() -> status: std::process::ExitStatus pure {{
         )
     };
     // [ENT-2, MSR-3] the constructor's `.cell` step precedes the carried
-    // `.value` suffix. Only the unsubscripted written destination admits it,
-    // even though both reference reads resolve to the same indexed storage.
-    let indexed = source(
-        "set cells^[0_u64] = Envelope(cell: cell);\n  let ref = &cells^[0_u64];",
-    );
-    assert_rule_kind(indexed.as_bytes(), SemanticRule::Op2, |kind| {
-        matches!(
-            kind,
-            SemanticIssueKind::UndischargedIntegerDomainObligation { .. }
-        )
-    });
+    // `.value` suffix. Both complete destinations select an admitted integer
+    // place, and both reference reads name the same indexed storage.
+    let indexed = source("set cells^[0_u64] = Envelope(cell: cell);\n  let ref = &cells^[0_u64];");
+    assert_complete(indexed.as_bytes());
     let reference = source("let ref = &cells^[0_u64];\n  set ref^ = Envelope(cell: cell);");
     assert_complete(reference.as_bytes());
 }

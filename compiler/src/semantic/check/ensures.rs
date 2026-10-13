@@ -786,7 +786,10 @@ impl<'unit> Checker<'_, 'unit> {
                     bindings,
                 )?;
                 let expanded = self.types.build_clause_expression(
-                    check_context,
+                    FunctionContext {
+                        check_context,
+                        function,
+                    },
                     expression,
                     value,
                     bindings,
@@ -802,9 +805,9 @@ impl<'unit> Checker<'_, 'unit> {
                 let mut places = Vec::new();
                 collect_clause_places(value, &mut places);
                 for place in &mut places {
-                    expand_definition_offsets(place, &definition_offsets, &self.types)?;
+                    expand_definition_offsets(place, &definition_offsets, self.types)?;
                 }
-                let offset = definition_offset(value, &definition_offsets, &self.types)?;
+                let offset = definition_offset(value, &definition_offsets, self.types)?;
                 definition_offsets.insert(*binding, offset);
                 let mut uses = Vec::new();
                 collect_clause_reads(value, &mut uses);
@@ -857,7 +860,10 @@ impl<'unit> Checker<'_, 'unit> {
                 );
             }
             let expanded = self.types.build_clause_expression(
-                check_context,
+                FunctionContext {
+                    check_context,
+                    function,
+                },
                 expression,
                 &condition.expression,
                 bindings,
@@ -884,7 +890,7 @@ impl<'unit> Checker<'_, 'unit> {
             let own = places.len();
             collect_clause_places(&condition.expression, &mut places);
             for place in &mut places[own..] {
-                expand_definition_offsets(place, &definition_offsets, &self.types)?;
+                expand_definition_offsets(place, &definition_offsets, self.types)?;
             }
             // Integer entry images stay available only while their support
             // remains live. A measure, however, follows [MSR-3]: a written
@@ -1506,24 +1512,6 @@ impl<'unit> DeclarationInventory<'unit> {
             if nested {
                 continue;
             }
-            // entry names only a declaration-boundary place: projection
-            // reads are checked by the ordinary FN-9 fragment judgment, and
-            // indexed selections are not part of its projection language.
-            for suffix in self.tree.children_with(base, Production::Psuffix)? {
-                if matches!(
-                    self.tree.place_suffix(suffix)?,
-                    crate::syntax::views::PlaceSuffix::Index { .. }
-                        | crate::syntax::views::PlaceSuffix::Range { .. }
-                ) {
-                    return self.issue_node(
-                        SemanticRule::Msr3,
-                        base,
-                        SemanticIssueKind::InvalidEntryFormer {
-                            mechanical_fix: "select a fragment integer or measure of a written reference parameter by fields and dereferences",
-                        },
-                    );
-                }
-            }
             // Clause uses remain provisional until selector admission. This
             // whole-function position check runs outside an active clause.
             let path = self.tree.path(base)?;
@@ -1545,7 +1533,11 @@ impl<'unit> DeclarationInventory<'unit> {
             });
             let mut ancestor = self.tree.parent(base)?;
             let mut in_ensures = false;
+            let mut in_range_clause = false;
             while let Some(node) = ancestor {
+                if self.tree.production(node)? == Production::RangeClause {
+                    in_range_clause = true;
+                }
                 if self.tree.production(node)? == Production::EnsuresClause {
                     in_ensures = true;
                     break;
@@ -1563,6 +1555,33 @@ impl<'unit> DeclarationInventory<'unit> {
                         mechanical_fix: "use entry only on an exclusive parameter in ensures",
                     },
                 );
+            }
+            // [MSR-3] the ordinary former's projection comprises the steps
+            // inside it followed by those outside it. ENT-2(b)'s ordinary
+            // element terms do not widen this explicit entry boundary.
+            // Range postconditions retain their separate RANGE-1 places.
+            let mut suffixes = self.tree.children_with(base, Production::Psuffix)?;
+            if !in_range_clause {
+                let place = self
+                    .tree
+                    .parent(base)?
+                    .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
+                suffixes.extend(self.tree.children_with(place, Production::Psuffix)?);
+            }
+            for suffix in suffixes {
+                if matches!(
+                    self.tree.place_suffix(suffix)?,
+                    crate::syntax::views::PlaceSuffix::Index { .. }
+                        | crate::syntax::views::PlaceSuffix::Range { .. }
+                ) {
+                    return self.issue_node(
+                        SemanticRule::Msr3,
+                        base,
+                        SemanticIssueKind::InvalidEntryFormer {
+                            mechanical_fix: "select a fragment integer or measure of a written reference parameter by fields and dereferences",
+                        },
+                    );
+                }
             }
         }
         Ok(())
@@ -2168,6 +2187,35 @@ impl<'unit> TypeContext<'unit> {
         statement: &crate::NodePath,
         binding_info: &HashMap<BindingId, PostconditionBindingInfo>,
     ) -> Result<Option<PostconditionReturnPlace>, CheckStop> {
+        // [FN-9, ENT-2(b)] a returned integer element supplies its ordinary
+        // term, including an integer field below an element. Use the same
+        // admitted proof path as an operand read; CALL-4 still determines
+        // which projections a declaration's symbolic result may expose.
+        if let Some(place) = value.integer_element_proof_place() {
+            let root = match place.root {
+                crate::semantic::places::PlaceRoot::Binding(binding) => {
+                    PostconditionReturnPlaceRoot::Binding(binding)
+                }
+                crate::semantic::places::PlaceRoot::Constant(constant) => {
+                    PostconditionReturnPlaceRoot::NamedConst(self.constant(constant)?.declaration)
+                }
+            };
+            let Some(projections) = place
+                .path
+                .iter()
+                .map(GoalProjection::from_place_step)
+                .collect::<Option<Vec<_>>>()
+            else {
+                return Ok(None);
+            };
+            return Ok(Some(PostconditionReturnPlace {
+                root,
+                projections,
+                ty: value.ty(),
+                range_referent: false,
+                source: value.carrier().unwrap_or(statement).clone(),
+            }));
+        }
         let place = match value {
             CheckedExpression::Binding {
                 carrier,

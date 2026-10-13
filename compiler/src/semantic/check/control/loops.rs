@@ -1501,9 +1501,8 @@ impl<'unit> DeclarationInventory<'unit> {
 impl<'unit> TypeContext<'unit> {
     /// After TYPE-5, the only atom shapes still capable of producing `own
     /// u64` are a literal or a place. ENT-2 admits the literal, a measure
-    /// [MSR-1] or other readonly field whose subscripts, if any, all carry an
-    /// offset that is itself a tracked place or a constant, and a tracked
-    /// place with field or reference suffixes but no subscript.
+    /// [MSR-1] or integer place whose subscripts, if any, all carry an offset
+    /// that is itself a clause (a) tracked place or clause (c) constant.
     fn counted_endpoint_is_term_or_constant(
         &self,
         node: NodeId,
@@ -1516,9 +1515,7 @@ impl<'unit> TypeContext<'unit> {
             CheckedExpression::BufferMeasure { root, .. } => root.subscripted_term(),
             CheckedExpression::ContainerMeasure { root, .. } => root.subscripted_term(),
             CheckedExpression::RangeElementMeasure { place, .. } => place.subscripted_term(),
-            CheckedExpression::ReadStorage { root, .. } => root.integer_element_term(),
-            CheckedExpression::RangeIndex { place, .. } => place.integer_element_term(),
-            _ => None,
+            _ => endpoint.integer_element_term(),
         };
         match term {
             Some(SubscriptedTerm::Represented) => return Ok(true),

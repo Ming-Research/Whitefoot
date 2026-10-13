@@ -1346,3 +1346,24 @@ silently minting snapshots. No performance prediction is made, and no
 measurement has selected between A and B. All complete programs in this
 section are unrun source witnesses; only the library CI failure above is
 reported as observed.
+
+
+### Observed next refusal after ordinary element admission
+
+Gate [38390826799](https://github.com/Ming-Research/Whitefoot/actions/runs/38390826799)
+on revision `df95c235ed84c98091acccc941dd61855e9dfabb` reached a later
+refusal in both float-text program tests: FN-9 `InvalidPostconditionReturn`
+at `decimal_round_integer`'s `return value + 1_u64;`
+([decimal.wf](../../../lib/std/float_text/decimal.wf), line 370).
+The earlier element requirements no longer supplied these tests' first refusal.
+This is observed compiler evidence, not a passing result for the module.
+
+The remaining boundary is distinct from parameter-element admission:
+[FN-9](../../../spec/kernel-spec.md) requires the returned datum to evaluate
+to an ENT-2 term or constant through the selected-return rules. A computed
+arithmetic expression is neither a returned place nor a selected construction
+operand. Its OP-2 domain proof does not supply an FN-9 result datum. The loop's
+bound on `value` therefore does not admit this return shape. The element
+amendment leaves that boundary unchanged. The module spelling and its expected
+program results remain unchanged; widening the returned-datum judgment needs
+a separate language decision.

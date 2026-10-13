@@ -15,8 +15,10 @@ use crate::SourceInput;
 mod call_separations;
 mod collisions_and_killed_facts;
 mod content_moves;
+mod element_terms;
 mod floats;
 mod interface_applications;
+mod postcondition_bounds;
 mod prelude_opaque;
 mod recursive_effects;
 mod selector_scope;
@@ -537,10 +539,10 @@ fn main() -> status: std::process::ExitStatus pure {
         ],
     },
     RepairPair {
-        // A field of an element read through a range reference is no admitted
-        // value [ENT-3], so the goal keeps the argument's occurrence-local
-        // value, which DIAG-1 spells for the payload.
-        name: "call-requirement-over-an-argument-evaluated-in-the-call.wf",
+        // The integer field inside an element is a tracked place [ENT-2(b)].
+        // Its requirement names that place and its repair can prove or guard
+        // the same read without copying it into another binding.
+        name: "call-requirement-over-an-admitted-element-field.wf",
         rejected: br#"struct Stats {
   count: u64;
 }
@@ -564,10 +566,33 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         rule: "FN-8",
         sentences: &[
-            "\n  instantiated_goal: argument #0 pre-transfer value < 10_u64\n",
-            "\n  mechanical_fix: argument #0 is evaluated inside the call, where no fact names its value: bind it with one preceding `let`, establish the requirement over that binding, and pass the binding, borrowing it when the parameter is a reference\n",
+            "\n  instantiated_goal: view^[0_u64].count < 10_u64\n",
+            "\n  mechanical_fix: add `requires view^[0_u64].count < 10_u64;` to the `contract` of `first`, which each caller then establishes; or guard the call with `if view^[0_u64].count < 10_u64` where skipping it is the intended behavior, adding to the effect row any read that condition makes which the row does not yet declare\n",
         ],
-        repaired: &[br#"struct Stats {
+        repaired: &[
+            br#"struct Stats {
+  count: u64;
+}
+
+fn small(x: u64) -> result: u64 pure contract {
+  requires x < 10_u64;
+} {
+  return x;
+}
+
+fn first(view: &[Stats]) -> result: u64 reads(view) contract {
+  requires 1_u64 <= view^.len;
+  requires view^[0_u64].count < 10_u64;
+} {
+  let r = small(x: view^[0_u64].count);
+  return r;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+            br#"struct Stats {
   count: u64;
 }
 
@@ -580,9 +605,8 @@ fn small(x: u64) -> result: u64 pure contract {
 fn first(view: &[Stats]) -> result: u64 reads(view) contract {
   requires 1_u64 <= view^.len;
 } {
-  let c = view^[0_u64].count;
-  if c < 10_u64 {
-    let r = small(x: c);
+  if view^[0_u64].count < 10_u64 {
+    let r = small(x: view^[0_u64].count);
     return r;
   }
   return 0_u64;
@@ -591,7 +615,8 @@ fn first(view: &[Stats]) -> result: u64 reads(view) contract {
 fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
-"#],
+"#,
+        ],
     },
     RepairPair {
         name: "call-requirement-over-a-range-formed-at-the-call.wf",
@@ -1285,9 +1310,8 @@ fn main() -> status: std::process::ExitStatus pure {
         ],
     },
     RepairPair {
-        // An element read is no term [ENT-2], but it is part of the goal's
-        // identity, which a condition naming the same expression establishes
-        // [ENT-3].
+        // The integer element is a term [ENT-2(b)] rooted at an unwritten
+        // reference parameter. Requirements and guards may name it.
         name: "integer-domain-over-an-element.wf",
         rejected: br#"fn bump(values: &Array<u8, 2>) -> result: u8 reads(values) {
   let y = values^[0_u64] + 1_u8;
@@ -1301,14 +1325,55 @@ fn main() -> status: std::process::ExitStatus pure {
         rule: "OP-2",
         sentences: &[
             "\n  disposition: Unproved\n",
-            "\n  mechanical_fix: `values^[0_u64] +defined 1_u8` is not proved here: when facts that reach the operation imply it, prove it with an `invariant` whose `use` steps name them (a loop's header `invariant` for a value the loop computes); or guard the operation with `if values^[0_u64] +defined 1_u8` where skipping it is the intended behavior, adding to the effect row any read that condition makes which the row does not yet declare; or write the `+wrap`, `+checked` or `+sat` form\n",
+            "\n  mechanical_fix: add `requires values^[0_u64] +defined 1_u8;` to the `contract` of `bump`, which each caller then establishes; or guard the operation with `if values^[0_u64] +defined 1_u8` where skipping it is the intended behavior, adding to the effect row any read that condition makes which the row does not yet declare; or write the `+wrap`, `+checked` or `+sat` form\n",
         ],
-        repaired: &[br#"fn bump(values: &Array<u8, 2>) -> result: u8 reads(values) {
+        repaired: &[br#"fn bump(values: &Array<u8, 2>) -> result: u8 reads(values) contract {
+  requires values^[0_u64] +defined 1_u8;
+} {
+  let y = values^[0_u64] + 1_u8;
+  return y;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#, br#"fn bump(values: &Array<u8, 2>) -> result: u8 reads(values) {
   if values^[0_u64] +defined 1_u8 {
     let y = values^[0_u64] + 1_u8;
     return y;
   }
   return 0_u8;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#, br#"fn bump(values: &Array<u8, 2>) -> result: u8 reads(values) {
+  let y = values^[0_u64] +wrap 1_u8;
+  return y;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#, br#"fn bump(values: &Array<u8, 2>) -> result: u8 reads(values) {
+  let outcome = values^[0_u64] +checked 1_u8;
+  match outcome {
+    Ok(value: y) => {
+      return y;
+    }
+    Err(error: e) => {
+      return 0_u8;
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#, br#"fn bump(values: &Array<u8, 2>) -> result: u8 reads(values) {
+  let y = values^[0_u64] +sat 1_u8;
+  return y;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -1675,8 +1740,8 @@ fn main() -> status: std::process::ExitStatus pure {
 "#],
     },
     RepairPair {
-        // An offset that is itself an element is no term [ENT-2], and a
-        // bound names terms alone, so no condition over it establishes one.
+        // An integer element is an ENT-2(b) term. Its own selector and
+        // both roots must be unwritten parameters for a requirement route.
         name: "bounds-over-an-element-offset.wf",
         rejected: br#"fn pick(order: &[u64], lens: &[u8], j: u64) -> result: u8 reads(order), reads(lens) contract {
   requires j < order^.len;
@@ -1691,14 +1756,23 @@ fn main() -> status: std::process::ExitStatus pure {
         rule: "OP-4",
         sentences: &[
             "\n  disposition: Unproved\n",
-            "\n  mechanical_fix: `order^[j] < lens^.len` reads a value no fact can name until a `let` binds it: bind that value with one preceding `let`, use the binding in the access, and establish the relation over the binding\n",
+            "\n  mechanical_fix: add `requires order^[j] < lens^.len;` to the `contract` of `pick`, which each caller then establishes; or guard the access with `if order^[j] < lens^.len` where skipping it is the intended behavior, adding to the effect row any read that condition makes which the row does not yet declare\n",
         ],
         repaired: &[br#"fn pick(order: &[u64], lens: &[u8], j: u64) -> result: u8 reads(order), reads(lens) contract {
   requires j < order^.len;
+  requires order^[j] < lens^.len;
 } {
-  let k = order^[j];
-  if k < lens^.len {
-    return lens^[k];
+  return lens^[order^[j]];
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#, br#"fn pick(order: &[u64], lens: &[u8], j: u64) -> result: u8 reads(order), reads(lens) contract {
+  requires j < order^.len;
+} {
+  if order^[j] < lens^.len {
+    return lens^[order^[j]];
   }
   return 0_u8;
 }
@@ -3831,7 +3905,9 @@ fn each_pinned_repair_is_carried_out_by_its_programs() {
         .iter()
         .chain(call_separations::CALL_SEPARATIONS)
         .chain(content_moves::CONTENT_MOVES)
+        .chain(element_terms::ELEMENT_TERMS)
         .chain(prelude_opaque::PRELUDE_OPAQUE)
+        .chain(postcondition_bounds::POSTCONDITION_BOUNDS)
         .chain(recursive_effects::RECURSIVE_EFFECTS)
         .chain(storage_destructuring::STORAGE_DESTRUCTURING)
         .chain(shared_maps::SHARED_MAPS)

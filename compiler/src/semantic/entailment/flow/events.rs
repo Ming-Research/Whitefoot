@@ -1232,6 +1232,7 @@ impl Reasoning<'_, '_, '_> {
         events: &[KillEvent],
     ) -> LiveBounds {
         let mut written_parts = HashSet::new();
+        let mut indexed_writes = Vec::new();
         for event in events {
             let (KillEvent::Write { place, .. } | KillEvent::EntryImageHolderWrite { place, .. }) =
                 event
@@ -1239,6 +1240,13 @@ impl Reasoning<'_, '_, '_> {
                 continue;
             };
             for written in self.input.places.resolve(place.root, &place.path) {
+                if written
+                    .path
+                    .iter()
+                    .any(|step| matches!(step, PlaceStep::Index(_) | PlaceStep::Page(_)))
+                {
+                    indexed_writes.push(written.clone());
+                }
                 for (depth, step) in written.path.iter().enumerate() {
                     // [WIN-2] every position overlaps `last` whatever its
                     // bound, so a write of it asks for none.
@@ -1249,7 +1257,7 @@ impl Reasoning<'_, '_, '_> {
             }
         }
         let mut live = LiveBounds::default();
-        if written_parts.is_empty() {
+        if written_parts.is_empty() && indexed_writes.is_empty() {
             return live;
         }
         let mut places = Vec::new();
@@ -1278,6 +1286,69 @@ impl Reasoning<'_, '_, '_> {
             .iter()
             .flat_map(ResolvedPlace::support_places)
             .collect();
+        // ENT-5 uses the facts at this event, not only separations previously
+        // demanded by a call. Current-place selectors need their complete
+        // identities: their shared SpellingDetermined capture is no key.
+        let mut asked_pairs = HashSet::new();
+        for place in &places {
+            for support in self.input.places.resolve(place.root, &place.path) {
+                for written in &indexed_writes {
+                    if !support.roots_overlap(written) {
+                        continue;
+                    }
+                    for (left, right) in support.path.iter().zip(&written.path) {
+                        let (left, right) = match (left, right) {
+                            (PlaceStep::Index(left), PlaceStep::Index(right))
+                            | (PlaceStep::Page(left), PlaceStep::Page(right)) => (left, right),
+                            _ => continue,
+                        };
+                        if left == right
+                            || left.literals_distinct(right.clone())
+                            || !asked_pairs.insert((left.clone(), right.clone()))
+                        {
+                            continue;
+                        }
+                        // A summarized batch may change an index before a later
+                        // write. Its entering comparison cannot protect that
+                        // later write when either selecting place changes.
+                        let selector_changes = [left, right].into_iter().any(|offset| {
+                            let selected = match &offset.term {
+                                CapturedTerm::Binding(binding) => ResolvedPlace::binding(*binding),
+                                CapturedTerm::Place(selector) => selector.place().clone(),
+                                _ => return false,
+                            };
+                            events.iter().any(|event| {
+                                self.input.event_kills_selected_place(
+                                    &states.separations,
+                                    &selected,
+                                    event,
+                                )
+                            })
+                        });
+                        if selector_changes {
+                            continue;
+                        }
+                        let Some(proof) =
+                            self.prove_index_separation(left.clone(), right.clone(), states)
+                        else {
+                            continue;
+                        };
+                        let root = proof
+                            .derivation
+                            .expect("a proved separation retains its exact pair");
+                        let occurrence = self.vocabulary.fact_preservation_roots;
+                        self.vocabulary.fact_preservation_roots = occurrence
+                            .checked_add(1)
+                            .expect("fact-preservation roots exceed u32");
+                        self.vocabulary
+                            .derivations
+                            .add_root(DerivationRootKind::FactPreservation { occurrence }, root);
+                        live.distinct_indices.insert((left.clone(), right.clone()));
+                        live.distinct_indices.insert((right.clone(), left.clone()));
+                    }
+                }
+            }
+        }
         let mut asked = HashSet::new();
         for place in &places {
             for (depth, step) in place.path.iter().enumerate() {

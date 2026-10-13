@@ -23,5 +23,6 @@ fn main() -> status: std::process::ExitStatus pure {
   set cursor.index = 1_u64;
   establish(cell: &cell, cursor: &cursor);
   let second = cell.digits[cursor.index] - 1_u8;
-  return std::process::exit_status(code: first +wrap second);
+  let code = first +wrap second;
+  return std::process::exit_status(code: code);
 }

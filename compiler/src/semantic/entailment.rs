@@ -1520,17 +1520,20 @@ impl<'judgment, Key: Eq + std::hash::Hash> Judgments<'judgment, Key> {
 /// What one term of a rejected obligation reads, which is what selects the
 /// routes its repair names [DIAG-1].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum TermRead {
+pub(crate) enum TermRead<'a> {
     /// A constant, a const-generic parameter, the zero term, or a measure of
     /// a named constant.
     Constant,
-    /// A place, or a measure of one, rooted at this binding and reached by
-    /// field and Box-content selections alone, so a clause can spell it.
-    Binding(BindingId),
-    /// An operand that is no term at all [ENT-2], such as an element read:
-    /// no fact names its value until a `let` binds it.
+    /// A place or measure with its complete selector support. An integer
+    /// element may be named in a requirement but not an INV-1 certificate.
+    Place {
+        place: &'a super::places::ResolvedPlace,
+        integer: bool,
+    },
+    /// An operand that is no term at all [ENT-2], such as an element whose
+    /// selector is itself an element read: a `let` must bind its value.
     Unnamed,
-    /// A captured, computed, subscripted or compiler-owned value.
+    /// A captured, computed or compiler-owned value without a source place.
     Computed,
 }
 
@@ -1538,7 +1541,7 @@ impl FunctionEntailment {
     /// What each term of one obligation's normalized relations reads, in
     /// component order. A component without a left term relates an operand
     /// that is no term [ENT-2], which reads as [`TermRead::Unnamed`].
-    pub(crate) fn obligation_term_reads(&self, outcome: &ObligationOutcome) -> Vec<TermRead> {
+    pub(crate) fn obligation_term_reads(&self, outcome: &ObligationOutcome) -> Vec<TermRead<'_>> {
         outcome
             .components
             .iter()
@@ -1553,29 +1556,43 @@ impl FunctionEntailment {
             .collect()
     }
 
-    fn term_read(&self, term: TermId) -> TermRead {
-        let spelled = |place: &super::places::ResolvedPlace| {
-            let steps = place.path.iter().all(|step| {
-                matches!(
-                    step,
-                    super::places::PlaceStep::Field(_) | super::places::PlaceStep::Deref
-                )
-            });
-            match place.root {
-                term::PlaceRoot::Binding(binding) if steps => TermRead::Binding(binding),
-                term::PlaceRoot::Constant(_) if steps => TermRead::Constant,
-                _ => TermRead::Computed,
-            }
-        };
+    fn term_read(&self, term: TermId) -> TermRead<'_> {
         match self.inventory.terms.get(term.0 as usize) {
             Some(
                 term::TermKind::Zero
                 | term::TermKind::Constant(_)
                 | term::TermKind::ConstParameter(..),
             ) => TermRead::Constant,
-            Some(term::TermKind::Place(place, _) | term::TermKind::Measure(_, place)) => {
-                spelled(place)
+            Some(term::TermKind::Place(place, _))
+                if matches!(place.root, term::PlaceRoot::Constant(_))
+                    && place.path.iter().all(|step| {
+                        matches!(
+                            step,
+                            super::places::PlaceStep::Field(_) | super::places::PlaceStep::Deref
+                        )
+                    }) =>
+            {
+                TermRead::Constant
             }
+            Some(term::TermKind::Place(place, _)) => TermRead::Place {
+                place,
+                integer: true,
+            },
+            Some(term::TermKind::Measure(_, place))
+                if matches!(place.root, term::PlaceRoot::Constant(_))
+                    && place.path.iter().all(|step| {
+                        matches!(
+                            step,
+                            super::places::PlaceStep::Field(_) | super::places::PlaceStep::Deref
+                        )
+                    }) =>
+            {
+                TermRead::Constant
+            }
+            Some(term::TermKind::Measure(_, place)) => TermRead::Place {
+                place,
+                integer: false,
+            },
             _ => TermRead::Computed,
         }
     }

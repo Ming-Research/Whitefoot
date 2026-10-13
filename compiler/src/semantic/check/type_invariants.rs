@@ -295,7 +295,10 @@ impl<'unit> Checker<'_, 'unit> {
             }),
         )]);
         let expanded = self.types.build_clause_expression(
-            check_context,
+            FunctionContext {
+                check_context,
+                function: &signature,
+            },
             expression,
             &condition.expression,
             &bindings,

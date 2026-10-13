@@ -828,3 +828,23 @@ Outside the requested change, each with its disposition:
 - Probe outcomes that depend on running a program were observed for
   `op2-refuted-local-branch` (exit 0), `fn8-refuted-branch` (exit 0) and
   `op6-refuted-checked` (exit 1); the other acceptances were compiled only.
+
+
+## Follow-up boundary found during element-term repair review
+
+Static review of the ordinary-element repair update found a separate,
+pre-existing limitation: the generic computed-value repair can offer an affine
+`invariant` for a direct integer read through Box content or an enum payload,
+although [INV-1](../../../spec/kernel-spec.md) admits neither as a tracked-field
+factor. This matters when a local or written parameter prevents the requirement
+route and the computed-value route is selected. It is a diagnostic limitation,
+not evidence of incorrect proof acceptance; no CI witness has yet confirmed its
+rendered sentence.
+
+The element-term repair update excludes direct integer elements from that
+certificate alternative and retains subscripted measures. The broader
+Box/payload classification is deferred: a follow-up should classify certificate
+operands using INV-1's written-place admission and add rejected/repaired pairs
+for local Box and selected-payload reads, checking every offered alternative
+without contradictory-state acceptance. Reopen when repairing those diagnostic
+routes.

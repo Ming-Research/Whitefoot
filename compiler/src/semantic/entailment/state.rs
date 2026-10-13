@@ -1070,6 +1070,10 @@ pub(crate) enum DerivationRootKind {
         query: u32,
         occurrence: u32,
     },
+    /// An optional ENT-5 support-preservation query at a write event.
+    FactPreservation {
+        occurrence: u32,
+    },
     UnsignedDivisionProduct(u32),
     RequirementAffineImage {
         requirement: u32,

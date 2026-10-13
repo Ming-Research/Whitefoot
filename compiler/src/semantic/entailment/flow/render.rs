@@ -265,7 +265,7 @@ impl Input<'_, '_> {
         selectors: &mut SelectorRendering,
     ) -> String {
         match offset.term {
-            CapturedTerm::Literal(value) => value.to_string(),
+            CapturedTerm::Literal(value) => format!("{value}_u64"),
             CapturedTerm::Binding(binding) => self.render_header_binding(binding, counted),
             CapturedTerm::Place(selector) => {
                 if !SelectorRendering::needs_label(&selector) {

@@ -17,7 +17,9 @@ fn produce(cell: &Cell, index: u64, fail: Bool) -> outcome: Result<u8, u8> write
 fn main() -> status: std::process::ExitStatus pure {
   let digits = array_filled::<u8, 2>(value: 0_u8);
   let cell = Cell(digits: digits);
-  let failed = produce(cell: &cell, index: 0_u64, fail: true);
-  let succeeded = produce(cell: &cell, index: 1_u64, fail: false);
+  let fail = True();
+  let succeed = False();
+  let failed = produce(cell: &cell, index: 0_u64, fail: fail);
+  let succeeded = produce(cell: &cell, index: 1_u64, fail: succeed);
   return std::process::exit_status(code: 0_u8);
 }

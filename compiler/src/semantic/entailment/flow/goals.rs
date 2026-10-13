@@ -755,11 +755,21 @@ impl Input<'_, '_> {
                 projections,
                 ty,
                 ..
-            }) if projections.is_empty() => {
+            }) => {
+                let mut value = &self.context.constant(*declaration)?.value;
+                for projection in projections {
+                    let GoalProjection::Field(field) = projection else {
+                        return None;
+                    };
+                    let CheckedValue::Struct { fields, .. } = value else {
+                        return None;
+                    };
+                    value = fields.get(*field as usize)?;
+                }
                 let CheckedValue::Integer {
                     ty: value_type,
                     bits,
-                } = &self.context.constant(*declaration)?.value
+                } = value
                 else {
                     return None;
                 };
@@ -1491,36 +1501,17 @@ impl Reasoning<'_, '_, '_> {
     }
 
     pub(super) fn goal_operand(&mut self, expression: &GoalExpression) -> Option<TermId> {
+        // Match CONST-2 field-only substitution used by ordinary reads.
+        // Indexed constant storage still needs its ordinary element facts.
+        if let Some(value) = self.input.goal_integer_constant(expression) {
+            return Some(self.vocabulary.terms.intern(TermKind::Constant(value)));
+        }
         match expression {
             // [MSR-6] a const generic operand is the symbolic constant term.
             GoalExpression::Datum(GoalDatum::Literal(CheckedValue::ConstGeneric {
                 declaration,
                 ..
             })) => Some(self.const_parameter_term(*declaration)),
-            GoalExpression::Datum(GoalDatum::Literal(CheckedValue::Integer { ty, bits })) => Some(
-                self.vocabulary
-                    .terms
-                    .intern(TermKind::Constant(integer_value(*ty, *bits))),
-            ),
-            GoalExpression::Datum(GoalDatum::NamedConst {
-                declaration,
-                projections,
-                ty,
-                ..
-            }) if projections.is_empty() => {
-                let CheckedValue::Integer {
-                    ty: value_type,
-                    bits,
-                } = &self.input.context.constant(*declaration)?.value
-                else {
-                    return None;
-                };
-                (*ty == CheckedType::Integer(*value_type)).then(|| {
-                    self.vocabulary
-                        .terms
-                        .intern(TermKind::Constant(integer_value(*value_type, *bits)))
-                })
-            }
             GoalExpression::Datum(datum) => {
                 let fragment = fragment_type(datum.ty())?;
                 // [ENT-2] opaque value identity does not admit its integer

@@ -359,14 +359,16 @@ impl Input<'_, '_> {
                     endpoint.run = false;
                 }
                 PlaceStep::Deref => {
-                    if let Some(next) = self.owned_path_type(endpoint.ty, &[step.clone()]) {
+                    if let Some(next) =
+                        self.owned_path_type(endpoint.ty, std::slice::from_ref(step))
+                    {
                         endpoint.ty = next;
                         endpoint.run = false;
                     }
                     // Borrow images already carry their referent type.
                 }
                 PlaceStep::Payload { .. } => {
-                    endpoint.ty = self.owned_path_type(endpoint.ty, &[step.clone()])?;
+                    endpoint.ty = self.owned_path_type(endpoint.ty, std::slice::from_ref(step))?;
                     endpoint.run = false;
                 }
                 // [OP-15, MSR-1] a measure is a readonly u64 field of the
@@ -1310,7 +1312,7 @@ impl Judging<'_, '_, '_> {
                     states
                         .iter()
                         .skip(1)
-                        .all(|state| state.affine.ranges.get(id) == Some(range.clone()))
+                        .all(|state| state.affine.ranges.get(id) == Some(*range))
                 })
                 .map(|(id, range)| (*id, range.clone()))
                 .collect(),

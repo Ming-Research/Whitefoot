@@ -173,9 +173,9 @@ impl GoalExpression {
             Self::Datum(GoalDatum::NamedConst {
                 declaration,
                 projections,
-                ty,
+                ty: CheckedType::Integer(_),
                 ..
-            }) if matches!(ty, CheckedType::Integer(_)) => {
+            }) => {
                 let constant = *constant_ids.get(declaration)?;
                 if projections.is_empty() {
                     let CheckedValue::Integer { bits, .. } =
@@ -207,9 +207,9 @@ impl GoalExpression {
             Self::Datum(GoalDatum::Place {
                 root,
                 projections,
-                ty,
+                ty: CheckedType::Integer(_),
                 ..
-            }) if matches!(ty, CheckedType::Integer(_)) => {
+            }) => {
                 if projections.iter().any(|projection| {
                     matches!(
                         projection,
@@ -222,12 +222,9 @@ impl GoalExpression {
                     CapturedTerm::Binding(*root)
                 } else {
                     let mut place = ResolvedPlace::binding(*root);
-                    place.path.extend(
-                        projections
-                            .iter()
-                            .cloned()
-                            .map(|projection| projection.place_step()),
-                    );
+                    place
+                        .path
+                        .extend(projections.iter().map(|projection| projection.place_step()));
                     CapturedTerm::Place(super::places::ProjectedSelector::new(
                         place.term_identity(),
                     ))

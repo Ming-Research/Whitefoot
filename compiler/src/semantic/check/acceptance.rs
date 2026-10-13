@@ -610,6 +610,7 @@ impl<'unit> TypeContext<'unit> {
             terms: reads.terms,
             referenced: reads.referenced,
             called: reads.called,
+            certificate: reads.certificate,
             text: &residual,
             condition,
             function: &function.name,
@@ -783,6 +784,7 @@ impl<'unit> TypeContext<'unit> {
             terms: reads.terms,
             referenced: reads.referenced,
             called: reads.called,
+            certificate: reads.certificate,
             text: &outcome.rendered_goal,
             condition: !SelectorRendering::is_diagnostic(&outcome.rendered_goal)
                 && repairs::is_source_relation(&outcome.goal.root),

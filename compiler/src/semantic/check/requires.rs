@@ -754,7 +754,7 @@ impl<'unit> Checker<'_, 'unit> {
                 bindings,
             )?;
             let expanded = self.types.build_clause_expression(
-                check_context,
+                context,
                 expression,
                 value,
                 bindings,
@@ -764,9 +764,9 @@ impl<'unit> Checker<'_, 'unit> {
             let mut places = Vec::new();
             collect_clause_places(value, &mut places);
             for place in &mut places {
-                expand_definition_offsets(place, &definition_offsets, &self.types)?;
+                expand_definition_offsets(place, &definition_offsets, self.types)?;
             }
-            let offset = definition_offset(value, &definition_offsets, &self.types)?;
+            let offset = definition_offset(value, &definition_offsets, self.types)?;
             definition_offsets.insert(*binding, offset);
             let mut uses = Vec::new();
             collect_clause_reads(value, &mut uses);
@@ -841,7 +841,7 @@ impl<'unit> Checker<'_, 'unit> {
             let root = self
                 .types
                 .build_clause_expression(
-                    check_context,
+                    context,
                     expression,
                     &condition.expression,
                     bindings,
@@ -877,7 +877,7 @@ impl<'unit> Checker<'_, 'unit> {
             let own = places.len();
             collect_clause_places(&condition.expression, &mut places);
             for place in &mut places[own..] {
-                expand_definition_offsets(place, &definition_offsets, &self.types)?;
+                expand_definition_offsets(place, &definition_offsets, self.types)?;
             }
             requirement_places.push(places);
         }
@@ -1253,11 +1253,25 @@ impl<'unit> DeclarationInventory<'unit> {
         }
         // Typed admission decides whether a selected place is an ENT-2
         // term. A terminal subscript is an ordinary place suffix.
-        if self
-            .tree
-            .first_child_with(atom, Production::Place)?
-            .is_some()
-        {
+        if let Some(place) = self.tree.first_child_with(atom, Production::Place)? {
+            // [ENT-2(b), FN-8] an element is an ordinary clause datum, but
+            // an offset selecting it must still be a clause (a) place or a
+            // clause (c) constant. Diagnose a written nested element before
+            // the template builder attempts to represent its selector.
+            for suffix in self.tree.children_with(place, Production::Psuffix)? {
+                let Some(offset) = self.tree.subscript_offset(suffix)? else {
+                    continue;
+                };
+                let Some(offset_place) = self.tree.first_child_with(offset, Production::Place)?
+                else {
+                    continue;
+                };
+                for step in self.tree.children_with(offset_place, Production::Psuffix)? {
+                    if self.tree.subscript_offset(step)?.is_some() {
+                        return self.invalid_clause(clause, entry);
+                    }
+                }
+            }
             return Ok(());
         }
         if self
@@ -1347,7 +1361,7 @@ impl<'unit> TypeContext<'unit> {
     /// supplies the uniquely selected row and types.
     pub(super) fn build_clause_expression(
         &mut self,
-        check_context: &CheckContext<'_>,
+        context: FunctionContext<'_, '_>,
         source: NodeId,
         checked: &CheckedExpression,
         bindings: &HashMap<DeclarationId, LocalBinding>,
@@ -1359,7 +1373,7 @@ impl<'unit> TypeContext<'unit> {
         match self.declarations.tree.production(source)? {
             Production::ClauseExpr => {
                 return self.build_clause_root(
-                    check_context,
+                    context,
                     source,
                     checked,
                     bindings,
@@ -1368,7 +1382,7 @@ impl<'unit> TypeContext<'unit> {
             }
             Production::AffineExpr | Production::AffineTerm | Production::AffineFactor => {
                 return self.build_clause_affine(
-                    check_context,
+                    context,
                     source,
                     None,
                     checked,
@@ -1400,7 +1414,7 @@ impl<'unit> TypeContext<'unit> {
                 .first_child_with(source, Production::Atom)?
         {
             return self.build_clause_atom(
-                check_context,
+                context,
                 atom,
                 Some(checked),
                 bindings,
@@ -1517,7 +1531,7 @@ impl<'unit> TypeContext<'unit> {
                 .zip(checked_arguments)
                 .map(|(atom, argument)| {
                     self.build_clause_operand(
-                        check_context,
+                        context,
                         atom,
                         Some(argument),
                         bindings,
@@ -1544,7 +1558,7 @@ impl<'unit> TypeContext<'unit> {
                 return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
             }
             let argument =
-                self.build_clause_atom(check_context, atoms[0], None, bindings, expanded_bindings)?;
+                self.build_clause_atom(context, atoms[0], None, bindings, expanded_bindings)?;
             let row = match (checked, argument.ty()) {
                 (
                     CheckedExpression::ArrayMeasure {
@@ -1597,7 +1611,7 @@ impl<'unit> TypeContext<'unit> {
             return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
         }
         self.build_clause_operand(
-            check_context,
+            context,
             atoms[0],
             Some(checked),
             bindings,
@@ -1608,7 +1622,7 @@ impl<'unit> TypeContext<'unit> {
     /// `clause_op` whose row the typer has already selected.
     fn build_clause_root(
         &mut self,
-        check_context: &CheckContext<'_>,
+        context: FunctionContext<'_, '_>,
         source: NodeId,
         checked: &CheckedExpression,
         bindings: &HashMap<DeclarationId, LocalBinding>,
@@ -1617,14 +1631,7 @@ impl<'unit> TypeContext<'unit> {
         match self.declarations.tree.children(source)? {
             [side] => {
                 let side = *side;
-                self.build_clause_affine(
-                    check_context,
-                    side,
-                    None,
-                    checked,
-                    bindings,
-                    expanded_bindings,
-                )
+                self.build_clause_affine(context, side, None, checked, bindings, expanded_bindings)
             }
             [left, _operator, right] => {
                 let (left, right) = (*left, *right);
@@ -1668,7 +1675,7 @@ impl<'unit> TypeContext<'unit> {
                     result,
                     arguments: vec![
                         self.build_clause_affine(
-                            check_context,
+                            context,
                             left,
                             None,
                             checked_left,
@@ -1676,7 +1683,7 @@ impl<'unit> TypeContext<'unit> {
                             expanded_bindings,
                         )?,
                         self.build_clause_affine(
-                            check_context,
+                            context,
                             right,
                             None,
                             checked_right,
@@ -1698,7 +1705,7 @@ impl<'unit> TypeContext<'unit> {
     /// walk uses, so the two walks stay in step over `a + b - c`.
     fn build_clause_affine(
         &mut self,
-        check_context: &CheckContext<'_>,
+        context: FunctionContext<'_, '_>,
         source: NodeId,
         terms: Option<usize>,
         checked: &CheckedExpression,
@@ -1716,7 +1723,7 @@ impl<'unit> TypeContext<'unit> {
                     .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
                 if count == 1 {
                     return self.build_clause_affine(
-                        check_context,
+                        context,
                         last,
                         None,
                         checked,
@@ -1725,7 +1732,7 @@ impl<'unit> TypeContext<'unit> {
                     );
                 }
                 self.build_clause_affine_operation(
-                    check_context,
+                    context,
                     (source, Some(count - 1)),
                     last,
                     checked,
@@ -1740,7 +1747,7 @@ impl<'unit> TypeContext<'unit> {
                     .children_with(source, Production::AffineFactor)?;
                 match factors.as_slice() {
                     [factor] => self.build_clause_affine(
-                        check_context,
+                        context,
                         *factor,
                         None,
                         checked,
@@ -1748,7 +1755,7 @@ impl<'unit> TypeContext<'unit> {
                         expanded_bindings,
                     ),
                     [left, right] => self.build_clause_affine_operation(
-                        check_context,
+                        context,
                         (*left, None),
                         *right,
                         checked,
@@ -1760,17 +1767,10 @@ impl<'unit> TypeContext<'unit> {
             }
             Production::AffineFactor => {
                 let child = self.declarations.tree.only_child(source)?;
-                self.build_clause_affine(
-                    check_context,
-                    child,
-                    None,
-                    checked,
-                    bindings,
-                    expanded_bindings,
-                )
+                self.build_clause_affine(context, child, None, checked, bindings, expanded_bindings)
             }
             _ => self.build_clause_operand(
-                check_context,
+                context,
                 source,
                 Some(checked),
                 bindings,
@@ -1781,7 +1781,7 @@ impl<'unit> TypeContext<'unit> {
     /// One binary node of a clause side's affine fold [MSR-5].
     fn build_clause_affine_operation(
         &mut self,
-        check_context: &CheckContext<'_>,
+        context: FunctionContext<'_, '_>,
         (left, left_terms): (NodeId, Option<usize>),
         right: NodeId,
         checked: &CheckedExpression,
@@ -1811,7 +1811,7 @@ impl<'unit> TypeContext<'unit> {
             result: *result,
             arguments: vec![
                 self.build_clause_affine(
-                    check_context,
+                    context,
                     left,
                     left_terms,
                     checked_left,
@@ -1819,7 +1819,7 @@ impl<'unit> TypeContext<'unit> {
                     expanded_bindings,
                 )?,
                 self.build_clause_affine(
-                    check_context,
+                    context,
                     right,
                     None,
                     checked_right,
@@ -1835,32 +1835,27 @@ impl<'unit> TypeContext<'unit> {
     /// against the row the typer already selected for it.
     fn build_clause_operand(
         &mut self,
-        check_context: &CheckContext<'_>,
+        context: FunctionContext<'_, '_>,
         node: NodeId,
         checked: Option<&CheckedExpression>,
         bindings: &HashMap<DeclarationId, LocalBinding>,
         expanded_bindings: &HashMap<BindingId, ExpandedClauseExpression>,
     ) -> Result<ExpandedClauseExpression, CheckStop> {
         if self.declarations.tree.production(node)? == Production::Atom {
-            return self.build_clause_atom(
-                check_context,
-                node,
-                checked,
-                bindings,
-                expanded_bindings,
-            );
+            return self.build_clause_atom(context, node, checked, bindings, expanded_bindings);
         }
         let checked = checked.ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-        self.build_clause_expression(check_context, node, checked, bindings, expanded_bindings)
+        self.build_clause_expression(context, node, checked, bindings, expanded_bindings)
     }
     fn build_clause_atom(
         &mut self,
-        check_context: &CheckContext<'_>,
+        context: FunctionContext<'_, '_>,
         atom: NodeId,
         checked: Option<&CheckedExpression>,
         bindings: &HashMap<DeclarationId, LocalBinding>,
         expanded_bindings: &HashMap<BindingId, ExpandedClauseExpression>,
     ) -> Result<ExpandedClauseExpression, CheckStop> {
+        let check_context = context.check_context;
         if self
             .declarations
             .postcondition_selector_use_inside(check_context, atom)?
@@ -1870,7 +1865,7 @@ impl<'unit> TypeContext<'unit> {
                 .ok_or(SemanticCompilerFailure::InvalidResolution)?
                 .result_type;
             if let Some(expanded) =
-                self.build_clause_result_place(check_context, atom, bindings, expanded_bindings)?
+                self.build_clause_result_place(context, atom, bindings, expanded_bindings)?
             {
                 return Ok(expanded);
             }
@@ -1938,7 +1933,7 @@ impl<'unit> TypeContext<'unit> {
             .tree
             .first_child_with(atom, Production::Place)?
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-        let result = self.build_clause_place(check_context, place, bindings, expanded_bindings)?;
+        let result = self.build_clause_place(context, place, bindings, expanded_bindings)?;
         if checked.is_some_and(|expression| expression.ty() != result.ty()) {
             return Err(SemanticCompilerFailure::InvalidResolution.into());
         }
@@ -1961,11 +1956,12 @@ impl<'unit> TypeContext<'unit> {
     /// invalid selector use.
     fn build_clause_result_place(
         &mut self,
-        check_context: &CheckContext<'_>,
+        context: FunctionContext<'_, '_>,
         atom: NodeId,
         bindings: &HashMap<DeclarationId, LocalBinding>,
         expanded_bindings: &HashMap<BindingId, ExpandedClauseExpression>,
     ) -> Result<Option<ExpandedClauseExpression>, CheckStop> {
+        let check_context = context.check_context;
         let Some(place) = self
             .declarations
             .tree
@@ -1993,7 +1989,7 @@ impl<'unit> TypeContext<'unit> {
             )));
         }
         let Some(measure) = self.clause_trailing_measure(
-            check_context,
+            context,
             &suffixes,
             datum_type,
             false,
@@ -2004,7 +2000,7 @@ impl<'unit> TypeContext<'unit> {
             // [CALL-4] a fragment-integer place reached through struct-field
             // and `Box` content steps is a datum as its own value.
             let (projections, reached, _) = self.clause_member_projections(
-                check_context,
+                context,
                 &suffixes,
                 datum_type,
                 false,
@@ -2028,7 +2024,7 @@ impl<'unit> TypeContext<'unit> {
             )));
         };
         let (projections, measured_type, measured_range) = self.clause_member_projections(
-            check_context,
+            context,
             &suffixes[..suffixes.len()
                 - if measure == CheckedMeasure::Pages {
                     2
@@ -2063,7 +2059,7 @@ impl<'unit> TypeContext<'unit> {
     /// of that name, as it is in an expression.
     fn clause_trailing_measure(
         &mut self,
-        check_context: &CheckContext<'_>,
+        context: FunctionContext<'_, '_>,
         suffixes: &[NodeId],
         base: CheckedType,
         range_referent: bool,
@@ -2085,7 +2081,7 @@ impl<'unit> TypeContext<'unit> {
                 == ".pages"
         {
             let (_, reached, reached_range) = self.clause_member_projections(
-                check_context,
+                context,
                 &prefix[..prefix.len() - 1],
                 base,
                 range_referent,
@@ -2108,7 +2104,7 @@ impl<'unit> TypeContext<'unit> {
             (base, range_referent)
         } else {
             let (_, reached, reached_range) = self.clause_member_projections(
-                check_context,
+                context,
                 prefix,
                 base,
                 range_referent,
@@ -2138,13 +2134,14 @@ impl<'unit> TypeContext<'unit> {
     /// an element of that type rather than indexing a value of it.
     fn clause_member_projections(
         &mut self,
-        check_context: &CheckContext<'_>,
+        context: FunctionContext<'_, '_>,
         suffixes: &[NodeId],
         mut ty: CheckedType,
         mut range_referent: bool,
         bindings: &HashMap<DeclarationId, LocalBinding>,
         expanded_bindings: &HashMap<BindingId, ExpandedClauseExpression>,
     ) -> Result<(Vec<GoalProjection>, CheckedType, bool), CheckStop> {
+        let check_context = context.check_context;
         let mut projections = Vec::with_capacity(suffixes.len());
         let mut pages = false;
         for suffix in suffixes {
@@ -2156,7 +2153,7 @@ impl<'unit> TypeContext<'unit> {
             // a composite value this version cannot represent.
             if self.declarations.tree.subscript_offset(*suffix)?.is_some() {
                 let (projection, element) = self.clause_subscript_projection(
-                    check_context,
+                    context,
                     *suffix,
                     ty,
                     range_step,
@@ -2235,13 +2232,14 @@ impl<'unit> TypeContext<'unit> {
     /// A written element read or computation cannot be a selector.
     fn clause_subscript_projection(
         &mut self,
-        check_context: &CheckContext<'_>,
+        context: FunctionContext<'_, '_>,
         suffix: NodeId,
         base: CheckedType,
         range_referent: bool,
         bindings: &HashMap<DeclarationId, LocalBinding>,
         expanded_bindings: &HashMap<BindingId, ExpandedClauseExpression>,
     ) -> Result<(GoalProjection, CheckedType), CheckStop> {
+        let check_context = context.check_context;
         let element = match base {
             // [REF-4] a range reference's referent is the run of its element
             // type, which is the type its checked datum carries.
@@ -2287,12 +2285,15 @@ impl<'unit> TypeContext<'unit> {
             .declarations
             .clause_const_generic_base(check_context, offset)?
         {
-            return Ok((
-                GoalProjection::Subscript(value(crate::semantic::places::CapturedTerm::Const(
-                    declaration,
-                ))),
-                element,
-            ));
+            // [FN-2, MSR-6] the selector is this concrete instance's
+            // constant, exactly as an ordinary checked offset is. A
+            // forwarded symbolic argument keeps the supplying declaration.
+            let term = match context.function.substitution.const_argument(declaration) {
+                Some(CheckedConst::Value(value)) => CapturedTerm::Literal(value),
+                Some(CheckedConst::Parameter(supplied)) => CapturedTerm::Const(supplied),
+                _ => CapturedTerm::Const(declaration),
+            };
+            return Ok((GoalProjection::Subscript(value(term)), element));
         }
         let Some(place) = self
             .declarations
@@ -2316,8 +2317,7 @@ impl<'unit> TypeContext<'unit> {
                     .unsupported(crate::UnsupportedSemanticFeature::CompositeValues, suffix);
             }
         }
-        let selected =
-            self.build_clause_place(check_context, place, bindings, expanded_bindings)?;
+        let selected = self.build_clause_place(context, place, bindings, expanded_bindings)?;
         let selected = match selected {
             ExpandedClauseExpression::Operation {
                 row, mut arguments, ..
@@ -2347,6 +2347,20 @@ impl<'unit> TypeContext<'unit> {
             other => other,
         };
         match selected {
+            ExpandedClauseExpression::Datum(ExpandedClauseDatum::Literal {
+                value: CheckedValue::Integer { bits, .. },
+                ..
+            }) => Ok((
+                GoalProjection::Subscript(value(CapturedTerm::Literal(bits))),
+                element,
+            )),
+            ExpandedClauseExpression::Datum(ExpandedClauseDatum::Literal {
+                value: CheckedValue::ConstGeneric { declaration, .. },
+                ..
+            }) => Ok((
+                GoalProjection::Subscript(value(CapturedTerm::Const(declaration))),
+                element,
+            )),
             ExpandedClauseExpression::Datum(ExpandedClauseDatum::Parameter {
                 ordinal,
                 projections,
@@ -2432,13 +2446,13 @@ impl<'unit> TypeContext<'unit> {
 
     fn build_clause_place(
         &mut self,
-        check_context: &CheckContext<'_>,
+        context: FunctionContext<'_, '_>,
         place: NodeId,
         bindings: &HashMap<DeclarationId, LocalBinding>,
         expanded_bindings: &HashMap<BindingId, ExpandedClauseExpression>,
     ) -> Result<ExpandedClauseExpression, CheckStop> {
         let (expression, holder_pending, _) =
-            self.build_clause_place_inner(check_context, place, bindings, expanded_bindings)?;
+            self.build_clause_place_inner(context, place, bindings, expanded_bindings)?;
         if holder_pending {
             return Err(SemanticCompilerFailure::InvalidResolution.into());
         }
@@ -2456,11 +2470,12 @@ impl<'unit> TypeContext<'unit> {
     /// parameter name the path itself, drops it instead.
     fn build_clause_place_inner(
         &mut self,
-        check_context: &CheckContext<'_>,
+        context: FunctionContext<'_, '_>,
         place: NodeId,
         bindings: &HashMap<DeclarationId, LocalBinding>,
         expanded_bindings: &HashMap<BindingId, ExpandedClauseExpression>,
     ) -> Result<(ExpandedClauseExpression, bool, bool), CheckStop> {
+        let check_context = context.check_context;
         let pbase = self
             .declarations
             .tree
@@ -2547,7 +2562,7 @@ impl<'unit> TypeContext<'unit> {
         // [MSR-1] gives it no storage below itself, so it is the last written
         // suffix and everything before it is the ordinary field path.
         let measure = self.clause_trailing_measure(
-            check_context,
+            context,
             suffixes,
             expression.ty(),
             range_referent,
@@ -2569,7 +2584,7 @@ impl<'unit> TypeContext<'unit> {
         }
         if !fields_only.is_empty() {
             let (projections, final_ty, selected_range) = self.clause_member_projections(
-                check_context,
+                context,
                 fields_only,
                 expression.ty(),
                 range_referent,
@@ -2638,6 +2653,23 @@ impl<'unit> TypeContext<'unit> {
         } = expression
             && !source.converts_totally_to(*destination)
         {
+            return self.declarations.invalid_clause(clause, entry);
+        }
+        // A measure's selected value is not an integer element, but its
+        // place has the same selector admission. This judgment also runs
+        // after definition expansion, before template construction, so an
+        // element hidden behind an alias cannot become an offset here.
+        // Flat ArrayMeasure roots contain fields only; indexed aliases are
+        // normalized to ContainerMeasure by expand_definition_offsets.
+        let invalid_measure_selector = match expression {
+            CheckedExpression::ContainerMeasure { root, .. } => root.subscripted_term().is_none(),
+            CheckedExpression::BufferMeasure { root, .. } => root.subscripted_term().is_none(),
+            CheckedExpression::RangeElementMeasure { place, .. } => {
+                place.subscripted_term().is_none()
+            }
+            _ => false,
+        };
+        if invalid_measure_selector {
             return self.declarations.invalid_clause(clause, entry);
         }
         let subscripted = match expression {

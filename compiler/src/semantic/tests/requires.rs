@@ -12,6 +12,100 @@ use super::{
 };
 
 #[test]
+fn a_definition_selector_keeps_its_literal_or_instantiated_const_value() {
+    for (parameters, selected, argument) in [("", "1_u64", ""), ("<const k: u64>", "k", "::<1>")] {
+        let source = format!(
+            "fn read{parameters}(xs: &Array<u8, 2>) -> result: u8 reads(xs) contract {{
+  define at = {selected};
+  requires {selected} < 2_u64;
+  requires xs^[at] > 0_u8;
+}} {{
+  return xs^[{selected}] - 1_u8;
+}}
+
+fn forward(xs: &Array<u8, 2>) -> result: u8 reads(xs) contract {{
+  requires xs^[1_u64] > 0_u8;
+}} {{
+  return read{argument}(xs: xs);
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
+}}
+"
+        );
+        with_semantics(source.as_bytes(), |outcome| {
+            let SemanticOutcome::Complete(checked) = outcome else {
+                panic!("expanded constant selector must retain its value: {outcome:?}");
+            };
+            let forward = checked
+                .data
+                .functions
+                .iter()
+                .find(|function| function.name == "forward")
+                .expect("the concrete caller");
+            let CheckedStatement::Return {
+                value:
+                    CheckedExpression::UserCall {
+                        function,
+                        requirements,
+                        ..
+                    },
+                ..
+            } = &forward.body.as_deref().expect("caller body")[0]
+            else {
+                panic!("the caller must retain its selected instance");
+            };
+            let callee = checked
+                .data
+                .functions
+                .iter()
+                .find(|callee| callee.id == *function)
+                .expect("the instance selected by the call");
+            assert_eq!(callee.requirements.len(), 2);
+            let GoalExpression::Operation { arguments, .. } = &callee.requirements[1].template.root
+            else {
+                panic!("the concrete element requirement must remain a comparison");
+            };
+            assert!(matches!(
+                &arguments[0],
+                GoalExpression::Datum(GoalDatum::Parameter {
+                    ordinal: 0,
+                    projections,
+                    ty: CheckedType::Integer(IntegerType::U8),
+                }) if matches!(projections.as_slice(),
+                    [GoalProjection::Deref, GoalProjection::Subscript(index)]
+                        if index.term == super::super::places::CapturedTerm::Literal(1))
+            ));
+            assert_eq!(requirements.len(), 2);
+            let GoalExpression::Operation { arguments, .. } = &requirements[1].goal.root else {
+                panic!("the substituted caller requirement must remain a comparison");
+            };
+            assert!(matches!(
+                &arguments[0],
+                GoalExpression::Datum(GoalDatum::Place {
+                    root,
+                    projections,
+                    ty: CheckedType::Integer(IntegerType::U8),
+                    ..
+                }) if *root == forward.parameters[0].binding
+                    && matches!(projections.as_slice(), [GoalProjection::Subscript(index)]
+                        if index.term == super::super::places::CapturedTerm::Literal(1))
+            ));
+            assert_eq!(forward.entailment.call_goals.len(), 2);
+            assert_eq!(forward.entailment.call_goals[1].goal, requirements[1].goal);
+            assert!(
+                forward
+                    .entailment
+                    .call_goals
+                    .iter()
+                    .all(|goal| goal.disposition == CallGoalDisposition::Discharged)
+            );
+        });
+    }
+}
+
+#[test]
 fn wrapping_conversion_goal_identity_retains_its_operand_support() {
     for (replacement, actual, accepted) in [
         ("", "value", true),
@@ -287,8 +381,8 @@ fn main() -> status: std::process::ExitStatus pure {
 /// The infix shape is the one that hides operands: an `expr`'s own atom is the
 /// left operand and the tail carries the operator and the right, so a pass
 /// that stops at the first `atom` child validates a third of the expression
-/// and admits a proof-required row, a `move`, a borrow, or a subscript in the
-/// rest.
+/// and admits a proof-required row, a `move`, a borrow, or an inadmissible
+/// subscript offset in the rest.
 #[test]
 fn requires_holds_an_infix_row_to_the_same_subset_as_its_named_spelling() {
     with_semantics(
@@ -334,9 +428,10 @@ fn requires_holds_an_infix_row_to_the_same_subset_as_its_named_spelling() {
         SemanticIssueKind::InvalidRequires,
     );
     // Reached only through the infix tail's own atom, never the expr's.
+    // The element itself is admitted, but using one as an offset is not.
     assert_rule(
-        b"fn f(xs: Slots<u64, 4>, a: u64) -> result: u64 pure contract {\n  \
-          define sum = a +wrap xs[1_u64];\n  \
+        b"fn f(xs: Array<u64, 4>, slots: Array<u64, 1>, a: u64) -> result: u64 pure contract {\n  \
+          define sum = a +wrap xs[slots[0_u64]];\n  \
           requires sum <= 8_u64;\n} {\n  \
           return a;\n}\n\n\
           fn main() -> status: std::process::ExitStatus pure {\n  \
@@ -344,6 +439,31 @@ fn requires_holds_an_infix_row_to_the_same_subset_as_its_named_spelling() {
         SemanticRule::Fn8,
         SemanticIssueKind::InvalidRequires,
     );
+    // A measured place must diagnose the same inadmissible offset after
+    // alpha-expansion as it does when that element read is written directly.
+    // The first requirement independently bounds the definition's own read.
+    for table_type in ["&Array<Array<u64, 4>, 4>", "&[Array<u64, 4>]"] {
+        for (definition, offset) in [("", "idx^[0_u64]"), ("  define at = idx^[0_u64];\n", "at")] {
+            let source = format!(
+                "fn probe(table: {table_type}, idx: &Array<u64, 2>, k: u64) -> result: u64 reads(table), reads(idx) contract {{
+{definition}  requires 0_u64 < idx^.len;
+  requires k < table^[{offset}].len;
+}} {{
+  return 0_u64;
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
+}}
+"
+            );
+            assert_rule(
+                source.as_bytes(),
+                SemanticRule::Fn8,
+                SemanticIssueKind::InvalidRequires,
+            );
+        }
+    }
     // A non-consuming datum is itself an admitted definition expression;
     // alpha-expansion substitutes the parameter datum into the requirement.
     with_semantics(
@@ -1491,7 +1611,7 @@ fn below(value: u64) -> result: u64 pure contract {
 }
 
 #[test]
-fn call_front_end_captures_a_subscript_until_entailment_admits_its_identity() {
+fn call_front_end_retains_an_element_term_without_assuming_its_value() {
     let source = br#"const values: Array<u8, 2> =[3_u8, 3_u8];
 
 fn positive(value: u8) -> result: unit pure contract {
@@ -1523,7 +1643,6 @@ fn main() -> status: std::process::ExitStatus pure {
             panic!("main must retain the call expression");
         };
         let CheckedExpression::UserCall {
-            call: call_path,
             argument_nodes,
             arguments,
             goal_arguments,
@@ -1544,23 +1663,28 @@ fn main() -> status: std::process::ExitStatus pure {
                         if !index.obligation.components().is_empty())
         ));
         assert_eq!(argument_nodes.len(), 1);
-        let GoalExpression::Datum(GoalDatum::EvaluatedValue {
-            function: caller,
-            occurrence:
-                super::super::goal::EvaluatedValueOccurrence::CallArgument { call, argument },
-            captured_type,
+        let constant = checked
+            .data
+            .constants
+            .iter()
+            .find(|constant| constant.name == "values")
+            .expect("the selected named constant");
+        let GoalExpression::Datum(GoalDatum::NamedConst {
+            declaration,
             projections,
             ty,
+            ..
         }) = &goal_arguments[0]
         else {
-            panic!("the front end must retain an occurrence-local pre-admission capture");
+            panic!("an admitted integer element must retain its place identity");
         };
-        assert_eq!(*caller, main.id);
-        assert_eq!(call, call_path);
-        assert_eq!(*argument, 0);
-        assert_eq!(*captured_type, CheckedType::Integer(IntegerType::U8));
-        assert_eq!(*ty, *captured_type);
-        assert!(projections.is_empty());
+        assert_eq!(*declaration, constant.declaration);
+        assert_eq!(*ty, CheckedType::Integer(IntegerType::U8));
+        assert!(matches!(
+            projections.as_slice(),
+            [GoalProjection::Subscript(index)]
+                if index.term == super::super::places::CapturedTerm::Literal(0)
+        ));
         let GoalExpression::Operation { arguments, .. } = &requirement.goal.root else {
             panic!("positive requirement must remain a comparison");
         };
@@ -1574,13 +1698,7 @@ fn main() -> status: std::process::ExitStatus pure {
         else {
             panic!("the entailment goal must retain its comparison root");
         };
-        assert!(matches!(
-            &arguments[0],
-            GoalExpression::Operation {
-                row: GoalOperation::ArrayIndex { .. },
-                ..
-            }
-        ));
+        assert_eq!(&arguments[0], &goal_arguments[0]);
         assert!(main.entailment.call_goals[0].evidence.is_empty());
     });
 }
@@ -1619,12 +1737,22 @@ fn main() -> status: std::process::ExitStatus pure {
         let GoalExpression::Operation { arguments, .. } = &call.goal.root else {
             panic!("the requirement must retain its comparison root");
         };
+        let constant = checked
+            .data
+            .constants
+            .iter()
+            .find(|constant| constant.name == "values")
+            .expect("the selected named constant");
         assert!(matches!(
             &arguments[0],
-            GoalExpression::Operation {
-                row: GoalOperation::ArrayIndex { .. },
+            GoalExpression::Datum(GoalDatum::NamedConst {
+                declaration,
+                projections,
+                ty: CheckedType::Integer(IntegerType::U8),
                 ..
-            }
+            }) if *declaration == constant.declaration
+                && matches!(projections.as_slice(), [GoalProjection::Subscript(index)]
+                    if index.term == super::super::places::CapturedTerm::Literal(0))
         ));
     });
 }

@@ -941,8 +941,8 @@ impl<'unit> Checker<'_, 'unit> {
                 let named = separable.as_ref().and_then(|(positions, window)| {
                     let positions = positions
                         .iter()
-                        .cloned()
                         .filter(|candidate| candidate.names_its_values())
+                        .cloned()
                         .collect::<Vec<_>>();
                     // The window is read only by a position beside its part.
                     let window = window.clone().filter(|_| {

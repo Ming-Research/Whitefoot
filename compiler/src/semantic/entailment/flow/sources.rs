@@ -688,6 +688,34 @@ impl Input<'_, '_> {
         value: &CheckedExpression,
     ) -> Option<ResolvedPlace> {
         let source = match value {
+            CheckedExpression::ReadStorage { root, .. }
+                if root.subscripted_term() == Some(SubscriptedTerm::Represented) =>
+            {
+                Some(root.proof_place())
+            }
+            CheckedExpression::RangeIndex { place, .. }
+                if place.subscripted_term() == Some(SubscriptedTerm::Represented) =>
+            {
+                Some(place.proof_place())
+            }
+            CheckedExpression::ArrayIndex { root, offset, .. } => {
+                let mut place = root.proof_place();
+                place.path.push(PlaceStep::Index(
+                    CapturedValue::new(CapturedValue::unknown().capture, offset.tracked_offset()?)
+                        .goal_identity(),
+                ));
+                Some(place)
+            }
+            CheckedExpression::BufferIndex { root, offset, .. }
+                if root.subscripted_term() == Some(SubscriptedTerm::Represented) =>
+            {
+                let mut place = root.proof_place();
+                place.path.push(PlaceStep::Index(
+                    CapturedValue::new(CapturedValue::unknown().capture, offset.tracked_offset()?)
+                        .goal_identity(),
+                ));
+                Some(place)
+            }
             CheckedExpression::Project {
                 binding, fields, ..
             } => Some(ResolvedPlace {

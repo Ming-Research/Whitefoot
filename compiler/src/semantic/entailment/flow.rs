@@ -1409,6 +1409,7 @@ impl<'check, 'unit> Analyzer<'check, 'unit> {
                 power_atoms: HashMap::new(),
                 encountered_counted: 0,
                 completed_counted_roots: 0,
+                fact_preservation_roots: 0,
                 s12_roots: 0,
                 contract_call_roots: 0,
                 delivery_give_roots: HashSet::new(),
@@ -1716,6 +1717,7 @@ impl SeparationOracle for SeparationLedger {
 /// it proves live, and the ranges it proves to end at or below `r.len`.
 #[derive(Clone, Debug, Default)]
 struct LiveBounds {
+    distinct_indices: HashSet<(CapturedValue, CapturedValue)>,
     indices: HashSet<(ResolvedPlace, CapturedValue)>,
     ranges: HashSet<(ResolvedPlace, CapturedRange)>,
 }
@@ -1738,7 +1740,10 @@ struct EventSeparations<'event> {
 
 impl SeparationOracle for EventSeparations<'_> {
     fn indices_distinct(&self, left: CapturedValue, right: CapturedValue) -> bool {
-        self.ledger.indices_distinct(left, right)
+        self.live
+            .distinct_indices
+            .contains(&(left.clone(), right.clone()))
+            || self.ledger.indices_distinct(left, right)
     }
 
     fn ranges_disjoint(&self, left: CapturedRange, right: CapturedRange) -> bool {
@@ -1839,6 +1844,7 @@ struct Vocabulary {
     power_atoms: HashMap<(AffineForm, IntegerType), AffineForm>,
     encountered_counted: u32,
     completed_counted_roots: u32,
+    fact_preservation_roots: u32,
     s12_roots: u32,
     contract_call_roots: u32,
     delivery_give_roots: HashSet<DerivationId>,

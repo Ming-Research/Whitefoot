@@ -14,6 +14,9 @@ type CallDatumOperand = (
     bool,
 );
 
+/// Instantiated storage projections and their live entry-selector terms.
+type CallPostconditionProjections = (Vec<GoalProjection>, Vec<(u32, TermId)>);
+
 impl Input<'_, '_> {
     pub(super) fn postcondition_affine_target(
         &self,
@@ -2045,7 +2048,7 @@ impl Reasoning<'_, '_, '_> {
         projections: &[GoalProjection],
         arguments: &[GoalExpression],
         modes: &[CheckedMode],
-    ) -> Option<(Vec<GoalProjection>, Vec<(u32, TermId)>)> {
+    ) -> Option<CallPostconditionProjections> {
         let mut instantiated = Vec::with_capacity(projections.len());
         let mut selectors = Vec::new();
         for projection in projections {

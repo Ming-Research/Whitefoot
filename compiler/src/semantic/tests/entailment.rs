@@ -2436,6 +2436,7 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
     let mut seen_delivery_joins = 0u32;
     let mut seen_header_relations = 0u32;
     let mut seen_loop_inductions = 0u32;
+    let mut seen_fact_preservations = 0u32;
     let mut seen_delivery_nodes = vec![false; summary.derivations.nodes.len()];
     let mut counted_root_order = Vec::new();
     let mut class_counts = [0u32; 4];
@@ -2773,6 +2774,22 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                     DerivationNode::RequirementAffineImage { .. }
                 ));
                 assert_eq!(conclusion, &DerivationConclusion::RequirementAffineImage);
+            }
+            DerivationRootKind::FactPreservation { occurrence } => {
+                assert_eq!(occurrence, seen_fact_preservations);
+                seen_fact_preservations += 1;
+                let DerivationNode::IndexSeparation { detail } =
+                    &summary.derivations.nodes[root.node.0 as usize]
+                else {
+                    panic!("fact preservation must retain its exact index-separation query");
+                };
+                assert_eq!(
+                    conclusion,
+                    &DerivationConclusion::IndexSeparation {
+                        left: detail.left.clone(),
+                        right: detail.right.clone(),
+                    }
+                );
             }
             DerivationRootKind::UnsignedDivisionProduct(ordinal) => {
                 let obligation = &summary.obligations[ordinal as usize];
@@ -9763,14 +9780,8 @@ fn indexed_guards_discharge_structurally_identical_signature_ranges() {
     assert!(matches!(
         first.as_slice(),
         [
-            GoalExpression::Operation {
-                row: GoalOperation::ArrayIndex { .. },
-                ..
-            },
-            GoalExpression::Operation {
-                row: GoalOperation::ArrayIndex { .. },
-                ..
-            }
+            GoalExpression::Datum(GoalDatum::Place { .. }),
+            GoalExpression::Datum(GoalDatum::Place { .. })
         ]
     ));
     assert_eq!(
@@ -12516,7 +12527,7 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 #[test]
-fn indexed_writable_defined_guard_proves_exact_domain_without_integer_place() {
+fn indexed_writable_defined_guard_proves_exact_domain_with_integer_place() {
     let source = br#"struct Cell {
   len: u8;
 }
@@ -12565,8 +12576,71 @@ fn main() -> status: std::process::ExitStatus pure {
             ..
         }
     ));
-    assert!(!summary.inventory.terms.iter().any(|term| matches!(term,
+    assert!(summary.inventory.terms.iter().any(|term| matches!(term,
         TermKind::Place(place, IntegerType::U8)
             if place.path.iter().any(|step| matches!(step, PlaceStep::Index(_)))
                 && matches!(place.path.last(), Some(PlaceStep::Field(_))))));
+}
+
+#[test]
+fn ordinary_element_fact_survival_retains_the_events_exact_index_separation() {
+    let source = br#"fn probe(values: &Array<u8, 3>, index: u64, other: u64) -> result: u8 writes(values) contract {
+  requires index < values^.len;
+  requires other < values^.len;
+  requires index != other;
+  requires 1_u8 <= values^[index];
+} {
+  set values^[other] = 0_u8;
+  return values^[index] - 1_u8;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let summary = accepted_entailment(source, "probe");
+    validate_derivations(&summary);
+    assert!(
+        summary
+            .derivations
+            .roots
+            .iter()
+            .any(|root| matches!(root.kind, DerivationRootKind::FactPreservation { .. }))
+    );
+}
+
+#[test]
+fn an_event_local_index_separation_does_not_protect_another_write() {
+    let template = r#"fn probe(values: &Array<u8, 3>, index: u64, other: u64, third: u64) -> result: u8 writes(values) contract {
+  requires index < values^.len;
+  requires other < values^.len;
+  requires third < values^.len;
+  requires index != other;
+  requires 1_u8 <= values^[index];
+} {
+  set values^[other] = 0_u8;
+  NEXT
+  return values^[index] - 1_u8;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    for next in [
+        "set values^[third] = 0_u8;",
+        "set other = index;\n  set values^[other] = 0_u8;",
+    ] {
+        let source = template.replace("NEXT", next);
+        with_semantics(source.as_bytes(), |outcome| {
+            let SemanticOutcome::SourceIssue { issue, .. } = outcome else {
+                panic!("the later overlapping write must kill the element fact: {outcome:?}");
+            };
+            assert_eq!(issue.rule(), SemanticRule::Op2);
+            assert!(matches!(
+                issue.kind(),
+                SemanticIssueKind::UndischargedIntegerDomainObligation { .. }
+            ));
+        });
+    }
 }
