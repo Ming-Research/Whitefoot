@@ -1,10 +1,13 @@
 # Temporary phase-3 call-frame comparison. Remove before this branch is ready.
 # research-boundary: manual-only
+# Runs on a push to this branch only when the commit message contains [14900k].
 # Both generators use this branch's compiler. No timing threshold selects a
 # verdict: the owner judges the paired gain against the old image's twin.
 name: v2h-call-frame
 
 on:
+  push:
+    branches: [claude/v2h-call-frame]
   workflow_dispatch:
     inputs:
       baseline_ref:
@@ -21,13 +24,14 @@ concurrency:
 
 jobs:
   compare:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[14900k]')
     runs-on: [self-hosted, 14900k]
     timeout-minutes: 60
     defaults:
       run:
         shell: bash
     env:
-      BASELINE_REF: ${{ inputs.baseline_ref }}
+      BASELINE_REF: ${{ inputs.baseline_ref || 'main' }}
       LC_ALL: C
       V2H_CPUS: "2"
     steps:
