@@ -3397,3 +3397,173 @@ fn the_storage_plan_names_the_slots_a_split_s_transfers_carry() {
     let output = compile_and_run(&module);
     assert!(output.status.success(), "{output:?}");
 }
+
+#[test]
+fn integer_match_keeps_exact_constants_and_emits_one_width_correct_switch() {
+    for (ty, low, high, width) in [
+        ("i8", "-128_i8", "127_i8", 8),
+        ("u8", "0_u8", "255_u8", 8),
+        ("i16", "-32768_i16", "32767_i16", 16),
+        ("u16", "0_u16", "65535_u16", 16),
+        ("i32", "-2147483648_i32", "2147483647_i32", 32),
+        ("u32", "0_u32", "4294967295_u32", 32),
+        (
+            "i64",
+            "-9223372036854775808_i64",
+            "9223372036854775807_i64",
+            64,
+        ),
+        ("u64", "0_u64", "18446744073709551615_u64", 64),
+    ] {
+        let source = format!(
+            r#"const high: {ty} = {high};
+
+fn identity(code: {ty}) -> result: {ty} pure {{
+  return code;
+}}
+
+fn choose(code: {ty}) -> result: u8 pure {{
+  let answer = match identity(code: code) {{
+    {low} => {{
+      give 1_u8;
+    }}
+    high => {{
+      give 2_u8;
+    }}
+    else => {{
+      give 3_u8;
+    }}
+  }}
+  return answer;
+}}
+"#
+        );
+        super::system::with_ir(source.as_bytes(), |program| {
+            let choose = program
+                .functions()
+                .iter()
+                .find(|function| function.name() == "choose")
+                .unwrap();
+            let switches: Vec<_> = choose
+                .blocks()
+                .iter()
+                .filter_map(|block| {
+                    if let crate::IrTerminator::IntegerMatch {
+                        targets, default, ..
+                    } = block.terminator()
+                    {
+                        Some((targets, default))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            assert_eq!(switches.len(), 1);
+            assert_eq!(switches[0].0.len(), 2);
+            assert!(switches[0].1.is_some());
+            let expected_low = low.split('_').next().unwrap().parse::<i128>().unwrap();
+            let expected_high = high.split('_').next().unwrap().parse::<i128>().unwrap();
+            assert_eq!(switches[0].0[0].value(), expected_low);
+            assert_eq!(switches[0].0[1].value(), expected_high);
+        });
+        let module = emit(source.as_bytes());
+        let body = emitted_body(&module, "choose");
+        assert_eq!(
+            body.matches(&format!("switch i{width} ")).count(),
+            1,
+            "{body}"
+        );
+        assert_eq!(
+            body.matches("@wf_identity(").count(),
+            1,
+            "scrutinee evaluated once: {body}"
+        );
+        assert!(
+            !body.contains("unreachable"),
+            "else is the real default: {body}"
+        );
+    }
+}
+
+#[test]
+fn exhaustive_u8_integer_match_has_an_unreachable_default() {
+    let mut source = String::from("fn choose(code: u8) -> result: u8 pure {\n  match code {\n");
+    for value in 0..=255 {
+        source.push_str(&format!(
+            "    {value}_u8 => {{\n      return {value}_u8;\n    }}\n"
+        ));
+    }
+    source.push_str("  }\n}\n");
+    super::system::with_ir(source.as_bytes(), |program| {
+        let choose = program
+            .functions()
+            .iter()
+            .find(|function| function.name() == "choose")
+            .unwrap();
+        let switch = choose
+            .blocks()
+            .iter()
+            .find_map(|block| {
+                if let crate::IrTerminator::IntegerMatch {
+                    targets, default, ..
+                } = block.terminator()
+                {
+                    Some((targets, default))
+                } else {
+                    None
+                }
+            })
+            .unwrap();
+        assert_eq!(switch.0.len(), 256);
+        assert_eq!(*switch.1, None);
+    });
+    let module = emit(source.as_bytes());
+    let body = emitted_body(&module, "choose");
+    assert_eq!(body.matches("switch i8 ").count(), 1, "{body}");
+    assert!(body.contains("unreachable"), "{body}");
+}
+
+#[test]
+fn sparse_integer_dispatch_loop_keeps_ordinary_switch_and_continuation_semantics() {
+    let source = br#"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn run(start: u64) -> result: u8 pure {
+  let code = start;
+  loop {
+    match code {
+      1196312912_u64 => {
+        set code = 1330135877_u64;
+        continue;
+      }
+      1330135877_u64 => {
+        return 7_u8;
+      }
+      else => {
+        return 9_u8;
+      }
+    }
+  }
+}
+
+fn main() -> status: ExitStatus pure {
+  let selected = run(start: 1196312912_u64);
+  let fallback = run(start: 0_u64);
+  if selected == 7_u8 {
+    if fallback == 9_u8 {
+      return exit_status(code: 0_u8);
+    }
+  }
+  return exit_status(code: 1_u8);
+}
+"#;
+    let module = emit(source);
+    let body = emitted_body(&module, "run");
+    assert!(body.contains("switch i64 "), "{body}");
+    assert!(
+        !module.contains("@wf_run.dispatch("),
+        "integer loop is emitted whole: {module}"
+    );
+    let output = compile_and_run(&module);
+    assert!(output.status.success(), "{output:?}");
+}

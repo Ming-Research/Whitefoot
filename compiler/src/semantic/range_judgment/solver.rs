@@ -24,8 +24,9 @@
 //! 3. **Split.** When saturation leaves a choice undecided, each consistent
 //!    alternative is tried in written order; then each unsettled pair of
 //!    reads is tried equal and apart at each differing position; then each
-//!    disequality the units hold is tried as `<` and as `>`. The problem has
-//!    no model when every branch is contradictory. Because the theory only
+//!    disequality the units hold is tried as `<` and as `>`, and a whole
+//!    exclusion is tried over its nonempty integer complement gaps. The
+//!    problem has no model when every branch is contradictory. Because the theory only
 //!    grows with the literals and every split covers all of its item's
 //!    cases, this verdict does not depend on the order of the splits.
 //! 4. **Backjumping.** Each unit records the splits it rests on, and each
@@ -42,6 +43,7 @@
 
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 /// One atom of a problem, chosen by the caller.
 pub(crate) type AtomId = u32;
@@ -148,14 +150,20 @@ pub(crate) enum Relation {
     LessEqual,
     Greater,
     GreaterEqual,
+    /// The left expression is outside the literal's sorted member set.
+    Excluded,
+    /// The one-literal opposite of an exclusion when a path is negated.
+    Included,
 }
 
-/// `left relation right`.
+/// `left relation right`, or whole-set membership of `left`.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) struct Literal {
     pub(crate) left: Linear,
     pub(crate) relation: Relation,
     pub(crate) right: Linear,
+    /// Absent for comparisons; sorted distinct mathematical values for sets.
+    members: Option<Arc<[i128]>>,
 }
 
 impl Literal {
@@ -164,7 +172,29 @@ impl Literal {
             left,
             relation,
             right,
+            members: None,
         }
+    }
+
+    pub(super) fn exclusion(value: Linear, members: Arc<[i128]>) -> Self {
+        let members = if members.windows(2).all(|pair| pair[0] < pair[1]) {
+            members
+        } else {
+            let mut members = members.to_vec();
+            members.sort_unstable();
+            members.dedup();
+            members.into()
+        };
+        Self {
+            left: value,
+            relation: Relation::Excluded,
+            right: Linear::constant(0),
+            members: Some(members),
+        }
+    }
+
+    pub(super) fn members(&self) -> &[i128] {
+        self.members.as_deref().unwrap_or_default()
     }
 
     /// The negation, as alternatives one of which holds when this does not.
@@ -177,6 +207,22 @@ impl Literal {
             Relation::LessEqual => vec![flip(Relation::Greater)],
             Relation::Greater => vec![flip(Relation::LessEqual)],
             Relation::GreaterEqual => vec![flip(Relation::Less)],
+            Relation::Excluded => self
+                .members()
+                .iter()
+                .map(|member| {
+                    Literal::new(
+                        self.left.clone(),
+                        Relation::Equal,
+                        Linear::constant(*member),
+                    )
+                })
+                .collect(),
+            Relation::Included => {
+                let mut negated = self.clone();
+                negated.relation = Relation::Excluded;
+                vec![negated]
+            }
         }
     }
 }
@@ -467,9 +513,43 @@ impl Problem {
             }
             ReadPair::Settled => {}
         }
-        // Then on the first disequality the theory left open.
+        // Then on the first disequality or whole set the theory left open.
         for (position, unit) in units.iter().enumerate() {
             let literal = &unit.literal;
+            if matches!(literal.relation, Relation::Excluded | Relation::Included) {
+                let (value, _) =
+                    substituted(&literal.left, &solved.solution).ok_or(Capacity::Arithmetic)?;
+                if value.is_constant() {
+                    continue;
+                }
+                let mut tags = unit.tags.clone();
+                tags.insert(depth);
+                let cases = if literal.relation == Relation::Excluded {
+                    exclusion_cases(literal.left.clone(), literal.members())
+                } else {
+                    literal
+                        .members()
+                        .iter()
+                        .map(|member| {
+                            vec![Literal::new(
+                                literal.left.clone(),
+                                Relation::Equal,
+                                Linear::constant(*member),
+                            )]
+                        })
+                        .collect()
+                };
+                let branches = cases
+                    .into_iter()
+                    .map(|case| {
+                        let mut with = units.clone();
+                        with.remove(position);
+                        with.extend(Unit::resting_on(&case, &tags));
+                        with
+                    })
+                    .collect();
+                return self.split(branches, &decided, &fired, depth, run);
+            }
             if literal.relation != Relation::NotEqual {
                 continue;
             }
@@ -777,6 +857,16 @@ impl Problem {
             why.union(&right_used);
             let inequality = match literal.relation {
                 Relation::Equal => continue,
+                Relation::Excluded | Relation::Included => {
+                    if (literal.members().is_empty() && literal.relation == Relation::Included)
+                        || (left.is_constant()
+                            && (literal.members().binary_search(&left.constant).is_ok()
+                                == (literal.relation == Relation::Excluded)))
+                    {
+                        return Ok(Some(why));
+                    }
+                    continue;
+                }
                 Relation::NotEqual => {
                     let difference = left.minus(&right).ok_or(Capacity::Arithmetic)?;
                     if difference.is_constant() && difference.constant == 0 {
@@ -793,6 +883,34 @@ impl Problem {
         }
         eliminate(inequalities)
     }
+}
+
+/// The exact integer complement, without a predicate or inactive case.
+/// Consecutive members have no intervening integer gap. Strict comparisons
+/// avoid endpoint arithmetic even at the mathematical representation limits.
+pub(super) fn exclusion_cases(value: Linear, values: &[i128]) -> Vec<Vec<Literal>> {
+    let Some(first) = values.first() else {
+        return vec![Vec::new()];
+    };
+    let mut cases = vec![vec![Literal::new(
+        value.clone(),
+        Relation::Less,
+        Linear::constant(*first),
+    )]];
+    for pair in values.windows(2) {
+        if pair[0].checked_add(1).is_some_and(|next| next < pair[1]) {
+            cases.push(vec![
+                Literal::new(value.clone(), Relation::Greater, Linear::constant(pair[0])),
+                Literal::new(value.clone(), Relation::Less, Linear::constant(pair[1])),
+            ]);
+        }
+    }
+    cases.push(vec![Literal::new(
+        value,
+        Relation::Greater,
+        Linear::constant(*values.last().unwrap()),
+    )]);
+    cases
 }
 
 /// The splits one unit, solution or contradiction rests on: the depths of

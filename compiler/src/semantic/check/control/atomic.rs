@@ -539,6 +539,7 @@ impl Checker<'_, '_> {
                 compiler_updated: false,
                 read_only_state: false,
                 reference: Some(reference),
+                commit_target: None,
                 refinement_witnesses: Vec::new(),
                 handle_watch: None,
                 call_value: false,
