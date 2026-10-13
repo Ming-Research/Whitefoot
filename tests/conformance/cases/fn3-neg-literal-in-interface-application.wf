@@ -1,0 +1,15 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+interface Sized<const n: u8> {
+}
+
+fn inner<interface Sized<j>>() -> r: u64 pure {
+  return 0_u64;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "Sized<100> forwards no declared binder: concrete arguments for an interface are supplied by naming a binding.";
+  let v = inner::<Sized<100>>();
+  return exit_status(code: 0_u8);
+}

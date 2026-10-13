@@ -1,0 +1,17 @@
+struct Reading {
+  value: i64;
+}
+
+fn shift(first: Reading, d: u8, wild: i64) -> result: i64 pure contract {
+  requires -1000_i64 <= first.value;
+} {
+  doc "Replacing the whole by-value parameter writes a prefix of its field and kills the field's entry image; the field now holds wild, so the subtraction of a widened byte may overflow.";
+  set first = Reading(value: wild);
+  let w = cvt::<u8, i64>(d);
+  let r = first.value - w;
+  return r;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

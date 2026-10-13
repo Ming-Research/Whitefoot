@@ -1,0 +1,31 @@
+const key: Array<u8, 1> =[107_u8];
+
+struct Stamp {
+  wall: std::time::WallClock;
+}
+
+fn stamped(table: &ConcurrentHashMap<Stamp>) -> result: Bool reads(table) {
+  doc "Reports whether the table holds a stamp.";
+  let count = map_count::<Stamp>(map: table);
+  let held = count > 0_u64;
+  return held;
+}
+
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
+  doc "A guard whose call reads a map whose entry values hold a wall clock reads that clock through the map's entries.";
+  let std::process::Inputs(cwd: directory, handles: factory, wall_clock: wall, ..) = move inputs;
+  let std::fs::Directory(read: directory_read, write: directory_write) = move directory;
+  std::fs::close_directory_write(factory: &factory, directory: move directory_write);
+  std::fs::close_directory(factory: &factory, directory: move directory_read);
+  let stamp = Stamp(wall: move wall);
+  let store = shared_map_new::<Stamp>(capacity: 1_u64);
+  atomic e = &store[&key[0_u64..1_u64]] {
+    set e^ = Some<Stamp>(value: move stamp);
+  }
+  let count = 0_u64;
+  atomic t = &store when stamped(table: t) {
+    set count = map_count::<Stamp>(map: t);
+  }
+  let code = cvt.wrap::<u64, u8>(count);
+  return std::process::exit_status(code: code);
+}

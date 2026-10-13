@@ -398,7 +398,17 @@ $(COMPLETION_TMP)/cpu-affinity-probe: $(SCHED_PROBE_OBJECT_DIR)/entry.o $(SCHED_
 	$(CC) $(COMPLETION_BASE_CFLAGS) $^ -o "$@"
 .PHONY: cpu-affinity-test
 cpu-affinity-test: $(COMPLETION_TMP)/cpu-affinity-probe $(SCHED_PROBE_OBJECT_DIR)/prim_host.o
-	nm -u "$(SCHED_PROBE_OBJECT_DIR)/prim_host.o" > "$(COMPLETION_TMP)/cpu-affinity-symbols.txt"
+	@# readelf, not nm: a fresh hosted runner's first nm call measured 0.5 to
+	@# 7.9 s, readelf's 0.04 to 0.09 s. The control object proves the listing
+	@# reports an imported allocator.
+	printf '%s\n' '#include <stdlib.h>' 'void *wf_import_control(void) { return malloc(1); }' > "$(COMPLETION_TMP)/cpu-affinity-import-control.c"
+	$(CC) $(COMPLETION_BASE_CFLAGS) -c "$(COMPLETION_TMP)/cpu-affinity-import-control.c" -o "$(COMPLETION_TMP)/cpu-affinity-import-control.o"
+	for object in "$(COMPLETION_TMP)/cpu-affinity-import-control.o" "$(SCHED_PROBE_OBJECT_DIR)/prim_host.o"; do \
+		readelf -sW "$$object" > "$$object.symbols" || exit 1; \
+		awk '$$7 == "UND" && $$8 != "" { print " U " $$8 }' "$$object.symbols" > "$$object.undefined" || exit 1; \
+	done
+	grep -Eq '^ U malloc$$' "$(COMPLETION_TMP)/cpu-affinity-import-control.o.undefined"
+	cp "$(SCHED_PROBE_OBJECT_DIR)/prim_host.o.undefined" "$(COMPLETION_TMP)/cpu-affinity-symbols.txt"
 	@pattern='[[:space:]](malloc|free|calloc|realloc|aligned_alloc|posix_memalign|__sched_cpualloc|__sched_cpufree)(@.*)?$$'; \
 		for symbol in malloc free calloc realloc aligned_alloc posix_memalign __sched_cpualloc __sched_cpufree 'malloc@GLIBC_2.2.5'; do \
 			printf '%s\n' " U $$symbol" > "$(COMPLETION_TMP)/cpu-affinity-symbol-control.txt"; \

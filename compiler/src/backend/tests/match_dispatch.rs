@@ -273,8 +273,8 @@ fn a_header_match_loop_is_split_into_one_function_per_arm() {
     if !convention.is_empty() {
         // Seven parameters: pc, acc, count, the hoisted code length and
         // box referent (the run), the cell's address and the frame. Jnz's
-        // joined next index is not a known step,
-        // so its edge needs the run to form the next cell's address.
+        // absolute predecessor still needs the run to form its address;
+        // the fall-through predecessor now advances the received cursor.
         assert!(
             verdict.starts_with(
                 "split: the loop over Op into 4 arms, taking 7 integer and 0 floating"
@@ -312,6 +312,10 @@ fn a_header_match_loop_is_split_into_one_function_per_arm() {
     } else {
         assert!(!module.contains("@wf_run.dispatch"), "{module}");
     }
+    // Main rebases Jnz's scalar phi, so the pointer phi and received-cursor
+    // advance asserted here fail on main. Runtime takes 999 absolute jumps,
+    // then the mixed join's fall-through, checking both pointer paths.
+    assert_mixed_cursor_join(&module);
     let output = compile_and_run(&module);
     assert!(output.status.success(), "{output:?}");
 }
@@ -396,6 +400,265 @@ fn a_result_returned_through_its_destination_threads_the_destination_through_eve
         );
     } else {
         assert!(!module.contains(&format!("@{base}.dispatch")), "{module}");
+    }
+    let output = compile_and_run(&module);
+    assert!(output.status.success(), "{output:?}");
+}
+
+/// Read one emitted LLVM block, excluding its following block.
+fn cursor_block<'body>(body: &'body str, label: &str) -> &'body str {
+    let start = body
+        .find(&format!("\n{label}:\n"))
+        .expect("the cursor predecessor exists")
+        + 1;
+    let rest = &body[start..];
+    let mut end = rest.len();
+    let mut offset = rest.lines().next().expect("the block has a label").len() + 1;
+    for line in rest[offset..].lines() {
+        if !line.starts_with(' ') && line.ends_with(':') {
+            end = offset;
+            break;
+        }
+        offset += line.len() + 1;
+    }
+    &rest[..end]
+}
+
+fn assert_transported_joins(module: &str, count: usize) {
+    let entry = format!(
+        "{}wf_run: transports the matched element's address through {count} mixed joins",
+        crate::DISPATCH_LEDGER_PREFIX
+    );
+    assert!(
+        module.lines().any(|line| line == entry),
+        "the ledger reports {count} transported joins: {module}"
+    );
+}
+
+/// The scalar join's bounds test is distributed once per reached path,
+/// before either pointer is formed. The qualified predecessors then join
+/// their pointers; the original scalar guard block contains no second test.
+fn assert_mixed_cursor_join(module: &str) {
+    let (convention, _) = host_convention();
+    let split = verdict(module, "wf_run").starts_with("split");
+    assert!(convention.is_empty() || split, "{module}");
+    if !split {
+        return;
+    }
+    let arm = definition(module, "wf_run.arm.2");
+    let phis = arm
+        .lines()
+        // Ordinary pointer phis also name cursor predecessor labels on
+        // their right-hand side. Count only cursor definitions.
+        .filter(|line| {
+            line.trim_start().starts_with("%wf.cursor.v") && line.contains(" = phi ptr ")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(phis.len(), 1, "one mixed join transports an address: {arm}");
+    assert_transported_joins(module, 1);
+    let (pointer, inputs) = phis[0]
+        .trim()
+        .split_once(" = phi ptr ")
+        .expect("the cursor phi");
+    let run = cursor_run(module);
+    let mut advancing = 0;
+    let mut rebasing = 0;
+    for input in inputs.split("],") {
+        let (_, predecessor) = input.split_once(", %").expect("the phi predecessor");
+        let label = predecessor.trim().trim_end_matches(']').trim();
+        assert!(
+            label.ends_with(".valid"),
+            "every pointer is formed after the bound: {arm}"
+        );
+        let qualified = cursor_block(arm, label);
+        let source = label
+            .rsplit_once(".from.b")
+            .expect("the source block")
+            .1
+            .trim_end_matches(".valid");
+        let predecessor = cursor_block(arm, &format!("bb{source}"));
+        assert!(
+            predecessor.contains(" = icmp ult i64 ")
+                && predecessor.contains(&format!("label %{label}")),
+            "the original bounds test qualifies this predecessor: {arm}"
+        );
+        assert!(
+            !predecessor.contains(".nonnegative =")
+                && !predecessor.contains(&format!(", ptr {run},")),
+            "no loaded target is addressed or assumed in-domain before its guard: {arm}"
+        );
+        if let Some(step) = qualified
+            .lines()
+            .find(|line| line.contains(" = getelementptr %") && line.ends_with(", i64 1"))
+        {
+            advancing += 1;
+            let (_, operands) = step
+                .split_once(", ptr ")
+                .expect("the step's pointer operand");
+            let (received, _) = operands.split_once(',').expect("the step's offset");
+            assert!(
+                received != run
+                    && arm
+                        .lines()
+                        .next()
+                        .expect("the arm's signature")
+                        .contains(&format!("ptr {received}")),
+                "the fall-through advances the received cursor: {qualified}"
+            );
+            assert!(
+                !qualified.contains(&format!(", ptr {run},")),
+                "fall-through never rebases: {qualified}"
+            );
+        } else {
+            rebasing += 1;
+            assert!(
+                qualified
+                    .lines()
+                    .any(|line| line.contains(" = getelementptr inbounds {")
+                        && line.contains(&format!(", ptr {run},"))),
+                "the qualified absolute target rebases: {qualified}"
+            );
+        }
+    }
+    assert_eq!((advancing, rebasing), (1, 1), "{arm}");
+    assert!(
+        arm.lines().any(|line| {
+            line.contains("musttail call ") && line.contains(&format!("ptr {pointer}"))
+        }),
+        "the continuing edge uses the joined pointer: {arm}"
+    );
+    let join_label = arm[..arm.find(phis[0]).expect("the phi is in the arm")]
+        .lines()
+        .rev()
+        .find(|line| line.ends_with(':'))
+        .expect("the join's label")
+        .trim_end_matches(':');
+    assert!(
+        !cursor_block(arm, join_label).contains("icmp ult"),
+        "the guard is moved, never duplicated dynamically: {arm}"
+    );
+}
+
+/// Nested branches forward the unchanged pc through distinct SSA parameters.
+/// The failure continuation reads that pc, so recognizing only literally
+/// identical incoming values would discard this mixed join.
+fn nested_mixed_interpreter() -> String {
+    scalar_interpreter()
+        .replace(
+            "          set next = tv^;",
+            "          if count < 1001_u64 {\n            set next = tv^;\n          }",
+        )
+        .replace("return 0_u64;", "return pc;")
+}
+
+#[test]
+fn nested_forwarding_joins_keep_the_failure_value_and_transport_the_cursor() {
+    let module = emit(nested_mixed_interpreter().as_bytes());
+    assert_mixed_cursor_join(&module);
+    let output = compile_and_run(&module);
+    assert!(output.status.success(), "{output:?}");
+}
+
+#[test]
+fn a_guard_written_bound_above_index_transports_the_cursor() {
+    // `n > next` is `next < n` with its operands swapped: the same test, so
+    // the same join carries the address.
+    let source = scalar_interpreter().replace(
+        "        }\n        if next < n {",
+        "        }\n        if n > next {",
+    );
+    assert!(source.contains("if n > next {"));
+    let module = emit(source.as_bytes());
+    assert_mixed_cursor_join(&module);
+    let output = compile_and_run(&module);
+    assert!(output.status.success(), "{output:?}");
+}
+
+#[test]
+fn an_out_of_bounds_mixed_target_reaches_the_original_failure_without_addressing_it() {
+    // A full-width target would poison an inbounds GEP or its nonnegative
+    // assumption before the guard. Keep it on the original safe failure path.
+    for source in [scalar_interpreter(), nested_mixed_interpreter()] {
+        let source = source
+            .replace("Op::Jnz(t: 0_u64)", "Op::Jnz(t: 18446744073709551615_u64)")
+            .replace("return 0_u64;", "return pc;")
+            .replace("r == 3000_u64", "r == 2_u64");
+        assert!(
+            source.contains("Op::Jnz(t: 18446744073709551615_u64)")
+                && source.contains("r == 2_u64")
+        );
+        let module = emit(source.as_bytes());
+        assert_mixed_cursor_join(&module);
+        let output = compile_and_run(&module);
+        assert!(
+            output.status.success(),
+            "the invalid target returns its original pc through the failure aliases: {output:?}"
+        );
+    }
+}
+
+#[test]
+fn two_absolute_join_predecessors_keep_run_based_cursor_formation() {
+    // This control already passes main. Neither incoming value is a known
+    // step, so B1 must not revive the arbitrary index-delta optimization.
+    let source = scalar_interpreter().replace(
+        "let next = pc + 1_u64;\n        if count != 0_u64 {\n          set next = tv^;",
+        "let next = tv^;\n        if count != 0_u64 {\n          set next = 0_u64;",
+    );
+    let module = emit(source.as_bytes());
+    let (convention, _) = host_convention();
+    let split = verdict(&module, "wf_run").starts_with("split");
+    assert!(convention.is_empty() || split, "{module}");
+    if split {
+        let arm = definition(&module, "wf_run.arm.2");
+        let run = cursor_run(&module);
+        assert_transported_joins(&module, 0);
+        assert!(
+            !arm.contains("%wf.cursor.v"),
+            "all-absolute joins have no cursor phi: {arm}"
+        );
+        assert!(
+            arm.lines()
+                .any(|line| line.contains(" = getelementptr inbounds {")
+                    && line.contains(&format!(", ptr {run},"))),
+            "the continuing edge still rebases: {arm}"
+        );
+        assert!(!arm.contains("sub i64"), "no arbitrary index delta: {arm}");
+    }
+}
+
+#[test]
+fn equal_nonzero_steps_through_a_join_advance_without_a_pointer_phi() {
+    // Distinct additions in the two predecessors carry the same step.
+    // Main only propagates step zero through joins, then rebases this pc+1.
+    // Jnz now falls through to Halt, so the run returns the first Add's 3.
+    let source = scalar_interpreter()
+        .replace(
+            "set next = tv^;",
+            "let same_next = pc + 1_u64;\n          set next = same_next;",
+        )
+        .replace("r == 3000_u64", "r == 3_u64");
+    assert!(source.contains("set next = same_next;") && source.contains("r == 3_u64"));
+    let module = emit(source.as_bytes());
+    let (convention, _) = host_convention();
+    let split = verdict(&module, "wf_run").starts_with("split");
+    assert!(convention.is_empty() || split, "{module}");
+    if split {
+        let arm = definition(&module, "wf_run.arm.2");
+        let run = cursor_run(&module);
+        assert!(
+            !arm.contains("%wf.cursor.v"),
+            "an equal step needs no pointer phi: {arm}"
+        );
+        assert!(
+            arm.lines()
+                .any(|line| line.contains(" = getelementptr %") && line.ends_with(", i64 1")),
+            "the common nonzero step advances the received address: {arm}"
+        );
+        assert!(
+            !arm.contains(&format!(", ptr {run},")),
+            "equal steps never rebase: {arm}"
+        );
     }
     let output = compile_and_run(&module);
     assert!(output.status.success(), "{output:?}");
@@ -779,6 +1042,10 @@ fn a_two_variant_tag_indexes_the_handler_table_unsigned() {
 
     let module = emit(PARITY_TABLE.as_bytes());
     assert_split(&module, "wf_run", 2);
+    assert!(
+        !module.contains("transports the matched element's address"),
+        "a loop that carries no address reports no mixed joins: {module}"
+    );
     let dispatch = definition(&module, "wf_run.dispatch");
     assert!(
         dispatch.contains("zext i1 "),
@@ -2612,6 +2879,520 @@ fn main() -> status: std::process::ExitStatus pure waits {
             "{module}"
         );
     }
+    let output = compile_and_run(&module);
+    assert!(output.status.success(), "{output:?}");
+}
+
+/// The pointer every call of `callee` in `part` passes first.
+fn first_pointer_arguments<'part>(part: &'part str, callee: &str) -> Vec<&'part str> {
+    let call = format!("@{callee}(ptr ");
+    part.lines()
+        .filter_map(|line| line.split_once(call.as_str()))
+        .map(|(_, arguments)| {
+            arguments
+                .split([',', ')'])
+                .next()
+                .expect("a pointer operand")
+        })
+        .collect()
+}
+
+/// Whether `part` reaches the frame slot `pointer` through the shared frame,
+/// deriving it from `%wf.frame`, rather than allocating it itself.
+fn reached_through_frame(part: &str, pointer: &str) -> bool {
+    let defined = format!("{pointer} = ");
+    let definition = part
+        .lines()
+        .map(str::trim_start)
+        .find_map(|line| line.strip_prefix(defined.as_str()))
+        .unwrap_or_else(|| panic!("{pointer} is defined in the part: {part}"));
+    if definition.starts_with("alloca ") {
+        return false;
+    }
+    assert!(
+        definition.starts_with("getelementptr inbounds {")
+            && definition.contains(", ptr %wf.frame, i32 0, i32 "),
+        "{pointer} is the part's own or the shared frame's: {part}"
+    );
+    true
+}
+
+/// An interpreter whose looping arms fall through to one join after the
+/// `match`, the shape of Halo's `run`: the join calls `checked_step`, whose
+/// `Result` of a four-word `Cursor` comes back through a destination, and
+/// continues from the `Ok` cursor. `Inc 3; Skip; Inc 10; Halt` from 5
+/// counts three steps and returns 18 + 3 = 21.
+const JOIN_INTERPRETER: &[u8] = br#"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+enum Op {
+  Inc(k: u64);
+  Skip();
+  Halt();
+}
+
+struct Cursor {
+  pc: u64;
+  acc: u64;
+  steps: u64;
+  spare: u64;
+}
+
+fn checked_step(next: u64, acc: u64, steps: u64, n: u64) -> result: Result<Cursor, u64> pure {
+  if next < n {
+    let cursor = Cursor(pc: next, acc: acc, steps: steps, spare: 0_u64);
+    return Ok<Cursor, u64>(value: cursor);
+  }
+  return Err<Cursor, u64>(error: acc);
+}
+
+fn run(code: &Box<Slots<Op>>, start: u64, seed: u64) -> r: u64 reads(code) contract {
+  requires start < code^.inner.len;
+} {
+  let n = code^.inner.len;
+  let pc = start;
+  let acc = seed;
+  let steps = 0_u64;
+  loop (
+    invariant code_bound: pc < n
+  ) {
+    let next = pc + 1_u64;
+    let updated = acc;
+    match code^.inner[pc] {
+      Inc(k: kv) => {
+        set updated = acc +wrap kv^;
+      }
+      Skip() => {
+      }
+      Halt() => {
+        let tally = acc +wrap steps;
+        return tally;
+      }
+    }
+    let counted = steps +wrap 1_u64;
+    match checked_step(next: next, acc: updated, steps: counted, n: n) {
+      Ok(value: cursor) => {
+        let target = cursor.pc;
+        if target < n {
+          set pc = target;
+          set acc = cursor.acc;
+          set steps = cursor.steps;
+          continue;
+        }
+        return 1_u64;
+      }
+      Err(error: last) => {
+        return last;
+      }
+    }
+  }
+}
+
+fn push(code: &Box<Slots<Op>>, op: Op) -> ok: Bool writes(code) {
+  if code^.inner.len < code^.inner.cap {
+    place_back(window: &code^.inner, value: op);
+    return True();
+  }
+  return False();
+}
+
+fn main() -> status: ExitStatus pure {
+  let code = box_slots_new::<Op>(capacity: 4_u64);
+  let c0 = Op::Inc(k: 3_u64);
+  let p0 = push(code: &code, op: c0);
+  let c1 = Op::Skip();
+  let p1 = push(code: &code, op: c1);
+  let c2 = Op::Inc(k: 10_u64);
+  let p2 = push(code: &code, op: c2);
+  let c3 = Op::Halt();
+  let p3 = push(code: &code, op: c3);
+  if code.inner.len > 0_u64 {
+    let r = run(code: &code, start: 0_u64, seed: 5_u64);
+    if r == 21_u64 {
+      return exit_status(code: 0_u8);
+    }
+    return exit_status(code: 1_u8);
+  }
+  return exit_status(code: 2_u8);
+}
+"#;
+
+#[test]
+fn a_join_s_temporaries_are_each_arm_s_own_allocation() {
+    // The join's `Result` is written and read within each arm that holds a
+    // copy of the join, so no transfer carries it. Counting the parts that
+    // use it, both looping arms, kept it in the shared frame, which fails
+    // the arms' assertion below.
+    let module = emit(JOIN_INTERPRETER);
+    let (convention, _) = host_convention();
+    let verdict = verdict(&module, "wf_run");
+    assert!(
+        convention.is_empty() || verdict.starts_with("split"),
+        "{verdict}"
+    );
+    if verdict.starts_with("split") {
+        assert_split(&module, "wf_run", 3);
+        let mut joins = 0;
+        for arm in 0..3 {
+            let part = definition(&module, &format!("wf_run.arm.{arm}"));
+            for result in first_pointer_arguments(part, "wf_checked_step") {
+                joins += 1;
+                assert!(
+                    !reached_through_frame(part, result),
+                    "the join's Result is the arm's own allocation: {part}"
+                );
+            }
+        }
+        assert_eq!(joins, 2, "both looping arms hold the join: {module}");
+    }
+    let output = compile_and_run(&module);
+    assert!(output.status.success(), "{output:?}");
+}
+
+/// A loop whose values cross transfers in both directions a split has: the
+/// header builds `snapshot` in the dispatch function and the arms read it
+/// after the tail call into them, and `Shift` writes `carried` before its
+/// tail call of the dispatch function while `Mix` and `Halt` read it in a
+/// later part. With `weigh(make_quad(a, b))` equal to 2a + 3b + 1,
+/// `Shift 1; Shift 2; Mix; Halt` from 5 returns 447 + 181 = 628.
+const CARRIED_QUADS: &[u8] = br#"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+enum Op {
+  Shift(k: u64);
+  Mix();
+  Halt();
+}
+
+struct Quad {
+  a: u64;
+  b: u64;
+  c: u64;
+  d: u64;
+}
+
+fn make_quad(a: u64, b: u64) -> result: Quad pure {
+  let c = a +wrap b;
+  let d = b +wrap 1_u64;
+  return Quad(a: a, b: b, c: c, d: d);
+}
+
+fn weigh(quad: Quad) -> result: u64 pure {
+  let ab = quad.a +wrap quad.b;
+  let cd = quad.c +wrap quad.d;
+  return ab +wrap cd;
+}
+
+fn run(code: &Box<Slots<Op>>, start: u64, seed: u64) -> r: u64 reads(code) contract {
+  requires start < code^.inner.len;
+} {
+  let n = code^.inner.len;
+  let pc = start;
+  let acc = seed;
+  let carried = make_quad(a: seed, b: 1_u64);
+  loop (
+    invariant code_bound: pc < n
+  ) {
+    let next = pc + 1_u64;
+    let snapshot = make_quad(a: pc, b: acc);
+    match code^.inner[pc] {
+      Shift(k: kv) => {
+        let weight = weigh(quad: snapshot);
+        let total = acc +wrap weight;
+        let shift = kv^;
+        let fresh = make_quad(a: total, b: shift);
+        if next < n {
+          set pc = next;
+          set acc = total;
+          set carried = fresh;
+          continue;
+        }
+        return 0_u64;
+      }
+      Mix() => {
+        let weight = weigh(quad: snapshot);
+        let kept = weigh(quad: carried);
+        let total = weight +wrap kept;
+        if next < n {
+          set pc = next;
+          set acc = total;
+          continue;
+        }
+        return 0_u64;
+      }
+      Halt() => {
+        let kept = weigh(quad: carried);
+        let total = acc +wrap kept;
+        return total;
+      }
+    }
+  }
+}
+
+fn push(code: &Box<Slots<Op>>, op: Op) -> ok: Bool writes(code) {
+  if code^.inner.len < code^.inner.cap {
+    place_back(window: &code^.inner, value: op);
+    return True();
+  }
+  return False();
+}
+
+fn main() -> status: ExitStatus pure {
+  let code = box_slots_new::<Op>(capacity: 4_u64);
+  let c0 = Op::Shift(k: 1_u64);
+  let p0 = push(code: &code, op: c0);
+  let c1 = Op::Shift(k: 2_u64);
+  let p1 = push(code: &code, op: c1);
+  let c2 = Op::Mix();
+  let p2 = push(code: &code, op: c2);
+  let c3 = Op::Halt();
+  let p3 = push(code: &code, op: c3);
+  if code.inner.len > 0_u64 {
+    let r = run(code: &code, start: 0_u64, seed: 5_u64);
+    if r == 628_u64 {
+      return exit_status(code: 0_u8);
+    }
+    return exit_status(code: 1_u8);
+  }
+  return exit_status(code: 2_u8);
+}
+"#;
+
+#[test]
+fn a_slot_read_after_a_transfer_stays_in_the_shared_frame() {
+    // `snapshot` is written by the dispatch function and read by the arm it
+    // tail-calls, and only the storage plan's analysis keeps its slot
+    // shared: made part-local, the slot is an allocation of the dispatch
+    // function's own, which fails the assertion on that function below.
+    // `carried` is written by one arm and read by a later one, but the
+    // enclosing function writes its slot before the loop, which keeps it in
+    // the shared frame whatever the analysis decides, so its reads guard
+    // only that; `the_storage_plan_names_the_slots_a_split_s_transfers_carry`
+    // reads the analysis's answer for a header parameter directly.
+    let module = emit(CARRIED_QUADS);
+    let (convention, _) = host_convention();
+    let verdict = verdict(&module, "wf_run");
+    assert!(
+        convention.is_empty() || verdict.starts_with("split"),
+        "{verdict}"
+    );
+    if verdict.starts_with("split") {
+        assert_split(&module, "wf_run", 3);
+        let dispatch = definition(&module, "wf_run.dispatch");
+        let built = first_pointer_arguments(dispatch, "wf_make_quad");
+        assert_eq!(
+            built.len(),
+            1,
+            "the header builds the snapshot once per dispatch: {dispatch}"
+        );
+        assert!(
+            reached_through_frame(dispatch, built[0]),
+            "the snapshot the arms read is in the shared frame: {dispatch}"
+        );
+        let mut reads = 0;
+        for arm in 0..3 {
+            let part = definition(&module, &format!("wf_run.arm.{arm}"));
+            for read in first_pointer_arguments(part, "wf_weigh") {
+                reads += 1;
+                assert!(
+                    reached_through_frame(part, read),
+                    "a value written before a transfer is read through the frame: {part}"
+                );
+            }
+        }
+        assert_eq!(reads, 4, "four Quads are weighed: {module}");
+    }
+    let output = compile_and_run(&module);
+    assert!(output.status.success(), "{output:?}");
+}
+
+/// A loop whose `Quad`s each meet one kind of transfer, or none: `state`, a
+/// header parameter only the header reads, is written by each looping arm
+/// before its tail call of the dispatch function; `snapshot` is built by the
+/// header and read by `Mix` after the tail call into it; `probe` is built
+/// and read within `Mix`. With `weigh(make_quad(a, b))` equal to
+/// 2a + 3b + 1, `Shift 4; Mix; Halt` from 5 returns 120 + 364 = 484.
+const CROSSINGS: &[u8] = br#"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+enum Op {
+  Shift(k: u64);
+  Mix();
+  Halt();
+}
+
+struct Quad {
+  a: u64;
+  b: u64;
+  c: u64;
+  d: u64;
+}
+
+fn make_quad(a: u64, b: u64) -> result: Quad pure {
+  let c = a +wrap b;
+  let d = b +wrap 1_u64;
+  return Quad(a: a, b: b, c: c, d: d);
+}
+
+fn probe_quad(a: u64, b: u64) -> result: Quad pure {
+  let c = a +wrap 2_u64;
+  return Quad(a: a, b: b, c: c, d: b);
+}
+
+fn weigh(quad: Quad) -> result: u64 pure {
+  let ab = quad.a +wrap quad.b;
+  let cd = quad.c +wrap quad.d;
+  return ab +wrap cd;
+}
+
+fn run(code: &Box<Slots<Op>>, start: u64, seed: u64) -> r: u64 reads(code) contract {
+  requires start < code^.inner.len;
+} {
+  let n = code^.inner.len;
+  let pc = start;
+  let acc = seed;
+  let state = make_quad(a: seed, b: 1_u64);
+  loop (
+    invariant code_bound: pc < n
+  ) {
+    let next = pc + 1_u64;
+    let base = weigh(quad: state);
+    let snapshot = make_quad(a: pc, b: acc);
+    match code^.inner[pc] {
+      Shift(k: kv) => {
+        let shift = kv^;
+        let fresh = make_quad(a: base, b: shift);
+        if next < n {
+          set pc = next;
+          set state = fresh;
+          continue;
+        }
+        return 0_u64;
+      }
+      Mix() => {
+        let weight = weigh(quad: snapshot);
+        let probe = probe_quad(a: weight, b: base);
+        let mixed = weigh(quad: probe);
+        let renewed = make_quad(a: mixed, b: base);
+        if next < n {
+          set pc = next;
+          set acc = mixed;
+          set state = renewed;
+          continue;
+        }
+        return 0_u64;
+      }
+      Halt() => {
+        let total = acc +wrap base;
+        return total;
+      }
+    }
+  }
+}
+
+fn push(code: &Box<Slots<Op>>, op: Op) -> ok: Bool writes(code) {
+  if code^.inner.len < code^.inner.cap {
+    place_back(window: &code^.inner, value: op);
+    return True();
+  }
+  return False();
+}
+
+fn main() -> status: ExitStatus pure {
+  let code = box_slots_new::<Op>(capacity: 3_u64);
+  let c0 = Op::Shift(k: 4_u64);
+  let p0 = push(code: &code, op: c0);
+  let c1 = Op::Mix();
+  let p1 = push(code: &code, op: c1);
+  let c2 = Op::Halt();
+  let p2 = push(code: &code, op: c2);
+  if code.inner.len > 0_u64 {
+    let r = run(code: &code, start: 0_u64, seed: 5_u64);
+    if r == 484_u64 {
+      return exit_status(code: 0_u8);
+    }
+    return exit_status(code: 1_u8);
+  }
+  return exit_status(code: 2_u8);
+}
+"#;
+
+#[test]
+fn the_storage_plan_names_the_slots_a_split_s_transfers_carry() {
+    // Read from the storage plan itself: in the emitted split the enclosing
+    // function's write of `state` before the loop keeps its slot shared
+    // whatever the analysis decides, so only this reading fails when the
+    // analysis leaves a header parameter out.
+    super::system::with_ir(CROSSINGS, |program| {
+        let run = program
+            .functions()
+            .iter()
+            .find(|function| function.name() == "run")
+            .expect("the fixture's run");
+        let header = crate::backend::emitter::dispatch::storage_parts(run)
+            .expect("run's storage parts")
+            .iter()
+            .position(Option::is_none)
+            .expect("run's loop is a dispatch loop");
+        let plan = crate::backend::storage::FunctionStoragePlan::build(program, run)
+            .expect("run's storage plan");
+        let across = plan
+            .allocations_across(program, run, header, false)
+            .expect("the allocations run's transfers carry");
+        let allocation = |value: crate::IrValueId| {
+            plan.allocation_root(plan.slot(value).expect("a Quad is held in a slot"))
+        };
+        let calls = |callee: &str| {
+            let mut found = Vec::new();
+            for (index, block) in run.blocks().iter().enumerate() {
+                for instruction in block.instructions() {
+                    if let crate::IrInstruction::Define {
+                        result,
+                        operation: crate::IrOperation::Call { function, .. },
+                        ..
+                    } = instruction
+                        && program
+                            .functions()
+                            .get(*function as usize)
+                            .is_some_and(|called| called.name() == callee)
+                    {
+                        found.push((index, *result));
+                    }
+                }
+            }
+            found
+        };
+        let held: Vec<crate::IrValueId> = run.blocks()[header]
+            .parameters()
+            .iter()
+            .map(|(value, _)| *value)
+            .filter(|value| plan.slot(*value).is_some())
+            .collect();
+        let [state] = held.as_slice() else {
+            panic!("`state` is the header's one parameter held in a slot");
+        };
+        let snapshot = calls("make_quad")
+            .into_iter()
+            .find_map(|(block, result)| (block == header).then_some(result))
+            .expect("the header builds `snapshot`");
+        let probes = calls("probe_quad");
+        let [(_, probe)] = probes.as_slice() else {
+            panic!("`Mix` builds one `probe`");
+        };
+        assert!(
+            across.contains(&allocation(*state)),
+            "a header parameter crosses into the header: {across:?}"
+        );
+        assert!(
+            across.contains(&allocation(snapshot)),
+            "a value the header builds crosses into the arm reading it: {across:?}"
+        );
+        assert!(
+            !across.contains(&allocation(*probe)),
+            "a value written and read within one arm stays in it: {across:?}"
+        );
+    });
+    let module = emit(CROSSINGS);
     let output = compile_and_run(&module);
     assert!(output.status.success(), "{output:?}");
 }

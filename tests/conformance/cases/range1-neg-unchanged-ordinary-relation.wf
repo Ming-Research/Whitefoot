@@ -1,0 +1,10 @@
+fn invalid(cell: &Array<u64, 1>) -> result: unit writes(cell) contract {
+  ensures cell^[0_u64] unchanged;
+} {
+  set cell^[0_u64] = 9_u64;
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

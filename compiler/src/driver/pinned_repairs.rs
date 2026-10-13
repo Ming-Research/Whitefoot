@@ -16,6 +16,7 @@ mod call_separations;
 mod collisions_and_killed_facts;
 mod content_moves;
 mod floats;
+mod interface_applications;
 mod prelude_opaque;
 mod recursive_effects;
 mod selector_scope;
@@ -1542,6 +1543,62 @@ fn main() -> status: std::process::ExitStatus pure {
 "#],
     },
     RepairPair {
+        // [OP-4, FORM-2] a bound over a window inside an enum payload names the variant and its payload field, and the window's own measure follows by name.
+        name: "bounds-below-an-enum-payload-and-field.wf",
+        rejected: br#"struct Holder {
+  items: Slots<u64, 4>;
+  tag: u64;
+}
+
+fn get(h: &Option<Holder>, i: u64) -> result: u64 reads(h) {
+  match &h^ {
+    Some(value: v) => {
+      let x = v^.items[i];
+      return x;
+    }
+    None() => {
+      return 0_u64;
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "OP-4",
+        sentences: &[
+            "\n  residual: i < h^.Some.value.items.len\n",
+            "\n  mechanical_fix: `i < h^.Some.value.items.len` is not proved here: when facts that reach the access imply it, prove it with an `invariant` whose `use` steps name them (a loop's header `invariant` for a value the loop computes); or guard the access with `if i < h^.Some.value.items.len` where skipping it is the intended behavior\n",
+        ],
+        repaired: &[
+            br#"struct Holder {
+  items: Slots<u64, 4>;
+  tag: u64;
+}
+
+fn get(h: &Option<Holder>, i: u64) -> result: u64 reads(h) {
+  match &h^ {
+    Some(value: v) => {
+      if i < v^.items.len {
+        let x = v^.items[i];
+        return x;
+      }
+      return 0_u64;
+    }
+    None() => {
+      return 0_u64;
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        ],
+    },
+    RepairPair {
         name: "bounds-over-parameters.wf",
         rejected: br#"fn get(b: &[u8], i: u64) -> result: u8 reads(b) {
   return b^[i];
@@ -1914,26 +1971,26 @@ fn main() -> status: std::process::ExitStatus pure {
 "#],
     },
     RepairPair {
-        name: "cap-field-in-reference-factor.wf",
-        rejected: include_bytes!("../../../tests/conformance/cases/inv1-neg-cap-field-factor.wf"),
+        name: "count-field-through-box-content-factor.wf",
+        rejected: include_bytes!(
+            "../../../tests/conformance/cases/inv1-neg-box-content-field-factor.wf"
+        ),
         rule: "INV-1",
         sentences: &[
             "\n  reason: an affine factor selects a field or an element of a place\n",
             "\n  mechanical_fix: bind the integer value with a `let` and use that binding\n",
         ],
-        repaired: &[br#"struct Bounds {
-  cap: u32;
+        repaired: &[br#"struct Counter {
+  count: u32;
 }
 
-fn inspect(limits: &Bounds) -> result: u32 reads(limits.cap) {
-  let capacity = limits^.cap;
-  invariant bounded: 0_u32 <= capacity;
-  return limits^.cap;
+fn inspect(made: Box<Counter>) -> result: u32 pure {
+  let count = made.inner.count;
+  invariant bounded: 0_u32 <= count;
+  return count;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
-  let limits = Bounds(cap: 4_u32);
-  let capacity = inspect(limits: &limits);
   return std::process::exit_status(code: 0_u8);
 }
 "#],
@@ -1960,8 +2017,10 @@ fn main() -> status: std::process::ExitStatus pure {
 "#],
     },
     RepairPair {
-        name: "measure-named-field-in-proof-source.wf",
-        rejected: include_bytes!("../../../tests/conformance/cases/prf1-neg-measure-named-field-factor.wf"),
+        name: "measure-named-field-through-box-content-in-proof-source.wf",
+        rejected: include_bytes!(
+            "../../../tests/conformance/cases/prf1-neg-box-content-field-factor.wf"
+        ),
         rule: "PRF-1",
         sentences: &[
             "\n  reason: an affine factor selects a field or an element of a place\n",
@@ -1971,14 +2030,14 @@ fn main() -> status: std::process::ExitStatus pure {
   len: u64;
 }
 
-fn combine(first: u64, second: u64, third: u64, limits: Bounds, second_limit: u64, third_limit: u64) -> result: u8 pure contract {
-  requires first <= limits.len;
+fn combine(first: u64, second: u64, third: u64, limits: Box<Bounds>, first_limit: u64, second_limit: u64, third_limit: u64) -> result: u8 pure contract {
+  requires first <= first_limit;
   requires second <= second_limit;
   requires third <= third_limit;
 } {
-  let length = limits.len;
-  invariant combined: first + second + third <= length + second_limit + third_limit {
-    use (first <= length);
+  let length = limits.inner.len;
+  invariant combined: length + first + second + third <= length + first_limit + second_limit + third_limit {
+    use (first <= first_limit);
     use (second <= second_limit);
     use (third <= third_limit);
   }
@@ -1986,8 +2045,9 @@ fn combine(first: u64, second: u64, third: u64, limits: Bounds, second_limit: u6
 }
 
 fn main() -> status: std::process::ExitStatus pure {
-  let limits = Bounds(len: 4_u64);
-  let answer = combine(first: 1_u64, second: 2_u64, third: 3_u64, limits: limits, second_limit: 5_u64, third_limit: 6_u64);
+  let bounds = Bounds(len: 4_u64);
+  let limits = box_new::<Bounds>(value: bounds);
+  let answer = combine(first: 1_u64, second: 2_u64, third: 3_u64, limits: move limits, first_limit: 4_u64, second_limit: 5_u64, third_limit: 6_u64);
   return std::process::exit_status(code: answer);
 }
 "#],
@@ -3776,6 +3836,7 @@ fn each_pinned_repair_is_carried_out_by_its_programs() {
         .chain(storage_destructuring::STORAGE_DESTRUCTURING)
         .chain(shared_maps::SHARED_MAPS)
         .chain(floats::FLOATS)
+        .chain(interface_applications::INTERFACE_APPLICATIONS)
         .chain(selector_scope::SELECTOR_SCOPE)
         .chain(collisions_and_killed_facts::COLLISIONS_AND_KILLED_FACTS)
     {

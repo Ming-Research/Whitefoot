@@ -1,0 +1,18 @@
+struct Frame {
+  items: Array<u64, 1>;
+}
+
+fn helper(frame: &Frame, target: &Frame, i: u64) -> result: unit writes(target.items) contract {
+  define snapshot = frame^.items;
+  requires i < 1_u64;
+  requires forall observed(k in 0_u64..1_u64): snapshot.len == 1_u64;
+} {
+  set target^.items[i] = 1_u64;
+  return unit;
+}
+
+fn caller(f: &Frame) -> result: unit writes(f.items) {
+  doc "EFF-5: snapshot.len expands to f.items.len, which meets the other argument's whole f.items write at this complete call.";
+  helper(frame: f, target: f, i: 0_u64);
+  return unit;
+}

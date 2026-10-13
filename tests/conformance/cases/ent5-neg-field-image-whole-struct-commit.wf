@@ -1,0 +1,22 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Counter {
+  doc "One count.";
+  count: u64;
+}
+
+fn advance(counter: &Counter, delta: u64, wild: u64) -> result: unit writes(counter) contract {
+  requires counter^.count + delta <= 800_u64;
+} {
+  doc "Replacing the whole struct writes a prefix of the count and kills its entry image; the count now holds wild, so the sum may overflow.";
+  set counter^ = Counter(count: wild);
+  let count = counter^.count;
+  let total = count + delta;
+  set counter^.count = total;
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}
