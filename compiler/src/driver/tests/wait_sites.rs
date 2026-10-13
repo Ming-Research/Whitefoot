@@ -7,9 +7,30 @@ use crate::{CompilerLimits, OverlapLowering, SourceInput, driver};
 fn reordering_graph_rows_preserves_a_waiting_entrys_source_bindings() {
     let directory = CacheDirectory::new("wait-site-graph-order");
     let cache = directory.open();
-    let original = b"pkg::lib: [];\npkg: [pkg::lib, std::process];\n\nentry app = pkg::main;\n";
-    let reordered = b"pkg: [std::process, pkg::lib];\npkg::lib: [];\n\nentry app = pkg::main;\n";
-    let records: [(&str, &[u8]); 4] = [
+    let original =
+        b"pkg::lib: [];\npkg: [pkg::lib, std::process];\npkg::peer: [];\n\nentry app = pkg::main;\n";
+    let reordered =
+        b"pkg::peer: [];\npkg::lib: [];\npkg: [std::process, pkg::lib];\n\nentry app = pkg::main;\n";
+    let module_ids = |graph_bytes: &[u8]| {
+        let graph = crate::form_module_graph(
+            SourceInput::new("modules.wfg", graph_bytes),
+            CompilerLimits::default(),
+        )
+        .expect("both dependency-first graph orders form");
+        ["pkg::lib", "pkg"].map(|name| {
+            graph
+                .modules()
+                .iter()
+                .position(|module| module.qualified_name() == name)
+                .and_then(crate::ModuleId::from_index)
+                .expect("each graph registers the waiting library and entry")
+        })
+    };
+    let original_ids = module_ids(original);
+    let reordered_ids = module_ids(reordered);
+    assert_ne!(original_ids[0], reordered_ids[0], "the waiting module moves");
+    assert_ne!(original_ids[1], reordered_ids[1], "the entry module moves");
+    let records: [(&str, &[u8]); 6] = [
         (
             "lib/module.wfm",
             b"public fn wait_value(cell: Shared<u64>) -> result: unit pure waits doc \"Waits on its value.\";\n",
@@ -25,6 +46,14 @@ fn reordering_graph_rows_preserves_a_waiting_entrys_source_bindings() {
         (
             "main.wf",
             b"fn main() -> status: std::process::ExitStatus pure waits {\n  let cell = shared_new::<u64>(value: 0_u64);\n  pkg::lib::wait_value(cell: move cell);\n  return std::process::exit_status(code: 0_u8);\n}\n",
+        ),
+        (
+            "peer/module.wfm",
+            b"public fn spare() -> result: u8 pure doc \"Returns an independent value.\";\n",
+        ),
+        (
+            "peer/spare.wf",
+            b"fn spare() -> result: u8 pure {\n  return 0_u8;\n}\n",
         ),
     ];
     let build = |graph_bytes: &[u8], cached| {
