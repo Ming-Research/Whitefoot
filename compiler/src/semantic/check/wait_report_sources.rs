@@ -62,13 +62,8 @@ impl DeclarationInventory<'_> {
                             let Some(spawn) = self.wait_site(node_path) else {
                                 continue;
                             };
-                            // The current lowering awaits an unplaced join at
-                            // the next sibling, if any. Describe that emitted
-                            // site without changing its existing schedule.
-                            let next_statement = plan.before.is_none() && index + 1 < block.len();
-                            let emitted_before = plan.before.or(next_statement.then_some(1));
                             let Some((site, loop_body)) =
-                                self.bound_join_site(node_path, emitted_before)
+                                self.bound_join_site(node_path, plan.before)
                             else {
                                 continue;
                             };
@@ -80,7 +75,6 @@ impl DeclarationInventory<'_> {
                             let kind = match plan.before {
                                 Some(_) if uses_binding => "explicit use of the binding",
                                 Some(_) => "implicit join before leaving this block",
-                                None if next_statement => "implicit join before the next statement",
                                 None if loop_body => {
                                     "implicit join at the end of this loop iteration"
                                 }

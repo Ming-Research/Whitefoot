@@ -467,22 +467,23 @@ deadlock assertions use the shared predicate; teardown checks remain separate.
 
 ## Existing join-placement discrepancy found during implementation
 
-Code inspection found a pre-existing mismatch, not confirmed by running a
-compiler here: the checked plan uses `before: None` for a block-end join, but
-lowering's `await_contexts_before` considers that plan due before any next
-statement in the block. In a loop body with an unused named spawn followed
-by an unrelated statement, the emitted join therefore precedes that
-statement rather than the closing brace [WAIT-3]. The diagnostic metadata
-reports the emitted wait position and says "implicit join before the next
-statement" on this path; it does not change the plan or the emitted schedule.
-When the spawn is the body's last statement, as in the capacity-eight queue
-regression, the actual join is at the iteration's closing brace.
+Code inspection found a pre-existing mismatch: the checked plan used
+`before: None` for a block-end join, but lowering's `await_contexts_before`
+considered that plan due before any next statement in the block. In a loop
+body with an unused named spawn followed by an unrelated statement, that
+lowering placed the join before the statement rather than at the closing
+brace [WAIT-3]. The diagnostic metadata described that earlier position as
+"implicit join before the next statement". This inspection did not run a
+compiler to confirm the earlier behavior.
 
-The owner reports that [the block-end join correction](https://github.com/Ming-Research/Whitefoot/pull/451)
-has merged into main. This worktree has not merged that correction, and these
-notes describe its pre-merge lowering. The owner will merge and resolve the
-overlap in `lowering/builder/contexts.rs`; this runtime repair makes no
-lowering change or language amendment.
+[The block-end join correction](https://github.com/Ming-Research/Whitefoot/pull/451)
+has merged into main and is present in this worktree. A `before: None` plan
+now joins at the owning block's closing brace even when an unrelated sibling
+follows the spawn. Diagnostic metadata follows the plan directly and names
+the end of the loop iteration or ordinary block. The lowering regression
+requires the unrelated sibling to finish before the await and checks the
+exact closing-brace description. This description repair changes no join
+schedule or language rule.
 
 ## Cache and fixture corrections from CI
 

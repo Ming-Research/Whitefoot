@@ -6,9 +6,8 @@
 use super::*;
 use crate::{IrConstant, IrPlaceStep, IrWakeCode, IrWakeComparison, IrWakeOperand, IrWakeTest};
 
-/// Describe the join where lowering actually emitted it. This does not
-/// select a schedule: an unplaced join before a nonusing sibling is a known
-/// lowering defect, and a later block-end repair must still describe its site.
+/// A join without a planned statement follows nonusing siblings and its
+/// description names the owning block's end.
 #[test]
 fn an_unplaced_join_description_matches_the_emitted_instruction_order() {
     let source = br#"fn delayed() -> result: unit pure waits {
@@ -82,19 +81,13 @@ fn main() -> status: std::process::ExitStatus pure waits {
                 Some((await_index, site, marker_index))
             })
             .expect("the join and its sibling share one IR block");
-        let (position, kind) = if await_index < marker_index {
-            ("test.wf:12:5", "implicit join before the next statement")
-        } else {
-            (
-                "test.wf:13:3",
-                "implicit join at the end of this loop iteration",
-            )
-        };
+        assert!(
+            marker_index < await_index,
+            "the nonusing sibling must finish before the block-end await"
+        );
         assert_eq!(
             site.to_string(),
-            format!(
-                "waits at {position} to join the context spawned at test.wf:11:5 ({kind})"
-            )
+            "waits at test.wf:13:3 to join the context spawned at test.wf:11:5 (implicit join at the end of this loop iteration)"
         );
     });
 }
