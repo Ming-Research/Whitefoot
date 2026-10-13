@@ -499,9 +499,9 @@ fn full_helper_guard_callbacks_admit_relevant_writes_on_one_driver_and_on_two() 
 /// guard-turn threshold before the first write. With an absent filter, every
 /// unrelated write therefore reserves the object for the waiter: the writer's
 /// next acquisition must wait until the waiter has retried false and parked.
-/// Main's helper call has no derived filter, so it is expected to report eight
-/// false re-parks and nine wakes; the inline filter and callback-filtered helper
-/// should report zero and one. No sleep, elapsed host time, callback-specific
+/// Before helper-guard callbacks, the helper call had no derived filter and
+/// reported eight false re-parks and nine wakes; with the callback, the helper
+/// reports zero and one, as the inline filter does. No sleep, elapsed host time, callback-specific
 /// API or synthetic counter selects this result. Checking one wake also rejects
 /// a run that never registered the waiter before the final write made it ready.
 /// Argument count includes argv[0]. Distinct successful statuses (4 for inline,
