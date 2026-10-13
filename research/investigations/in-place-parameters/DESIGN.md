@@ -3031,189 +3031,10 @@ falls from 60 to 33. A control links the unchanged emission with
 imported and inlined at 190, 220 and 195. This confirms that the import
 gate is what excludes them.
 
-**The contract.**
-
-*Callee side.* A WF-defined, non-waiting function whose result uses a
-destination gets an internal entry `<symbol>.origin`. It takes the same
-parameters and returns the address that holds the result. A path returns a
-source address exactly when it returns a by-value Load snapshot of a place
-under one of the function's reference parameters, a place its row names
-by EFF-2. The snapshot analysis's checked effects and IR place facts must
-also prove that place unchanged and valid from the read to the function's
-exit, cleanup included; this is the existing read-through stability
-judgment with the return as the use. Every other path builds the value in
-the destination and returns the destination. Paths join as an address
-`phi`. A return of another origin call returns that call's address when
-its origin set lies within the caller's own reference rows and the address
-is stable to exit, as for `item_at` → `read_item`. Origins are never
-callee-owned storage: locals, own by-value parameters and anything released
-at return stay excluded.
-
-*Caller side.* A direct call to an origin entry is a Load-snapshot producer
-for `select_read_through`. Its source address is the returned pointer and
-its containing storage is the origin set: every place the callee's
-substituted row names, read or written, plus the call's destination. That
-set derives from the callee's signature alone, so a caller acquires no
-dependency on the callee's body and its fragment stays valid across body
-edits. A use reads through the address where every place in the set is
-proved unchanged and valid up to it, using the same EFF-5 path overlap,
-REF-2 invalidation, STOR-3 release and OP-10 window events as Load
-snapshots. Before the first potentially invalidating event that precedes a
-use, the caller captures into private backing with an all-source-before-store
-granule transfer. When the caller's row only reads every root of the set,
-OWN-9 makes the whole activation stable.
-
-*ABI and fallback.* The public symbol keeps today's destination ABI. Its
-body calls `<symbol>.origin` and transfers from the returned address into
-its destination unless the two are equal; the existing permitted
-result/input overlap keeps that transfer capture-first. Direct calls with
-at least one read-through use call the origin entry. Every other direct
-call, every indirect, linked or parallel-lane call, and every waiting or
-split-part function keeps the public symbol, so uncovered callers execute
-today's code. Both symbols belong to the function's fragment.
-
-*Backend facts.* An origin entry's reference parameter keeps
-`captures(none)` when every origin reachable from it lies behind an owner
-pointer loaded from its referent, such as a Box payload or a window
-element; all seven accessors are of this kind. The returned pointer's
-provenance is then the loaded pointer, not the parameter. A parameter whose
-own referent may be returned gets `captures(ret: address, provenance)`, and
-the attribute is omitted where the probed host spelling has no return-only
-form. The returned address is `nonnull`, `dereferenceable` to the result's
-size and aligned to it, and never `noalias`. The witnesses use the weaker
-`captures(ret: ...)` on every origin parameter.
-
-Alternatives, with the evidence that decides them:
-
-- Raising the ThinLTO import limit. The control above shows it restores the
-  three styles accessors at today's emission. It is not recommended as the
-  repair: it is a global knob over every import decision with unmeasured
-  compile time and text growth, `font_of` clears 225 by 5 units, and an
-  out-of-line call still copies. It stays a comparison arm.
-- One symbol whose every caller reads through and captures its own copy.
-  The shape-buffer variant measures the cost: `next_glyphs` grows from 29 to
-  80 summary instructions and `shift_forward` from 49 to 100, at the import
-  limit, because the copy moves into each uncovered caller.
-- Demand specialization that returns only the scalar a caller needs. It
-  needs demanded-result summaries and a body-dependent symbol per demand,
-  and inlining after the contract gives the same field reads at the covered
-  sites.
-- The cost-only LLVM patch (e). As specified it changes `InlineCost` and not
-  the summary instruction count, so it cannot reach the import gate that
-  excludes the three styles accessors.
-
-Design-tree changes, proposed only; `design/` is not edited:
-
-- **compiler/storage-placement**, new decision: "Return a destination-form
-  result through the address of its origin when the callee returns a
-  by-value Load snapshot of a place under one of its reference parameters
-  that stays unchanged and valid to the callee's exit, building every other
-  result in the destination, and treat such a call as a Load-snapshot
-  producer whose containing storage is every place the callee's substituted
-  row names plus the destination, reading uses through the returned address
-  where that storage is proved unchanged and valid and capturing before the
-  first invalidation otherwise, because Snowghost's `computed_of`, `font_of`
-  and `box_of` miss ThinLTO import solely through their result copies while
-  every caller reads a few fields of storage its row only reads, instead of
-  a toolchain-wide import limit, a cost-only LLVM change that leaves the
-  copies, or borrows in the language." The Load-snapshot decision's
-  exclusions (waiting, overlap, split parts, exposed storage) apply
-  unchanged.
-- **compiler/result-registers**, qualifying the destination rule: "A
-  WF-defined, non-waiting definition whose result uses a destination also
-  has an internal `<symbol>.origin` entry with the same parameters returning
-  the result's address under compiler/storage-placement; its public symbol
-  keeps the destination ABI by calling that entry and transferring from the
-  returned address unless it is the destination, so linked, indirect and
-  parallel boundaries keep one callable ABI, instead of changing every
-  destination-form signature or moving every capture into callers."
-- **compiler/backend-facts**: "Keep `captures(none)` on an origin entry's
-  reference parameter whose origins all lie behind owner pointers loaded
-  from its referent, give `captures(ret: address, provenance)` to one whose
-  own referent may be returned, omitting it where the host spelling lacks a
-  return-only form, and mark the returned address `nonnull`, dereferenceable
-  and aligned to the result but never `noalias`, because the address
-  outlives the call while its provenance is the source's, instead of copying
-  the ordinary noncapture claim or a fresh-allocation promise."
-- **compiler/incremental-compilation** needs no change. The origin set comes
-  from the signature, and the import loss above is the kind of
-  modularity-induced runtime loss its ThinLTO decision already requires
-  correcting by measurement.
-
-**How much of the regression this covers.** Self instructions per call on
-the fragment path are about 26 for `computed_of`, 29 for `font_of` and 29
-for `box_of`. Read from the attributed self instructions, that is roughly
-24,000 `computed_of` calls, 9,300 `font_of` calls and 1,900 `box_of` calls.
-The saved instructions per call are about 27 for `font_of`, which includes
-its `computed_of` call, 34 for `box_of` (`positioned`'s element path falls
-from 68 to 34), and 10 for each of the remaining 12,700 `computed_of` calls.
-That totals about 440,000 instructions, 35% of the +1,260,787 cell
-regression. The estimate rests on static
-path lengths and an assumed element-path mix (the pseudo path is shorter),
-so the range is about 25–45%. The upper end would also need `read_item`'s
-unreproduced out-of-line sites to be covered field-reading sites; its
-origin cost of −15 would inline it anywhere.
-
-Direction (b) therefore covers the three styles accessors fully and well
-under half of the cost. The rest sits in `write_item`, `next_glyphs`,
-`text_of` and the uncovered `read_item` sites, where a copy must stay or the
-size lies elsewhere. A better direction for that remainder, which goes back
-to the owner, is a revised LLVM-side candidate (e′). It would count a
-recognized transfer group as one unit in both `InlineCost` and the ThinLTO
-summary's instruction count. The evidence: every remaining miss is a gate
-charging each granule as an instruction, at 290, 330 and 465 against 225,
-and 109 against 100. On the Whitefoot side, `text_of`'s doubled rebuild transfers
-are a placement gap: `found` is coalesced into the result that the rebuild
-overwrites. Direction (b) remains sound and worth implementing for its
-share, and it also removes copies at out-of-line calls, which (e′) would
-not.
-
-**Comparison fixed before measurement.** Workloads: Snowghost's apollo11
-single-thread word edit (the callgrind cell of run 38183553516, first four
-edits, collection on `wf_layout.text_changed` and `wf_layout.update`), the
-html5 and apollo11 sentence edits, apollo11 font-size and root-font, and
-full layout. These are the slower cells. The improved block insert/delete
-and four-thread full layout guard against regression. All arms build the
-same Snowghost source with `--cache --fragments function`:
-
-1. base: the current main compiler;
-2. twin: a second release of base with identical emission, the noise control;
-3. candidate: base plus the result-origin contract;
-4. mechanism control: base linked with `-Wl,-mllvm,-import-instr-limit=200`
-   (experiment branch only, never proposed);
-5. reference: `wf-78223721f77d`, the level being restored.
-
-Instruction counts come first, on hosted CI: callgrind total Ir of the cell,
-self Ir of the seven accessors, and direct call sites of `computed_of`,
-`font_of`, `box_of` and `text_of` counted with `objdump` in each executable.
-Timing on the 14900K follows (`time-14900k.yml`, interleaved pairs with the
-twin), only if the counts pass.
-
-Predictions, stated before the run: the candidate leaves at most 5% of
-today's direct call sites of `computed_of`, `font_of` and `box_of`; their
-combined self Ir falls by at least 80%; and the cell's total Ir falls by
-at least 250,000, which is 20% of the regression. The twin differs from
-base by less than 0.5% of Ir.
-
-Rejection:
-
-- If those call sites remain, the import-gate mechanism is wrong and the
-  contract's premise fails.
-- If they disappear but total Ir falls by less than 125,000 (10% of the
-  regression), direction (b) is too small to pursue as the next step. That
-  goes back to the owner with (e′). A fall between 125,000 and 250,000
-  fails the prediction without rejecting (b); the coverage estimate is
-  then revised from the measured per-function counts before any decision.
-- The mechanism control isolates the import gate. A candidate that recovers
-  about what the control recovers acts through restored inlining; one that
-  recovers less misses covered sites, found by a site-by-site comparison;
-  one that recovers more also saves copies at out-of-line calls.
-- If at least two thirds of the regression remains after the candidate, as
-  predicted, then (b) alone cannot meet the Snowghost acceptance. Whether
-  to add (e′) is the owner's decision; (b) is not grown to cover copies
-  that must stay.
-- Timing that does not move beyond the twin range while Ir falls is
-  reported as no timing effect.
+**The contract, its coverage and the comparison** first drafted here
+moved, before any measurement of the contract, to the
+[result-source investigation](../result-source/DESIGN.md), which revises
+them and lists the changes; the evidence above stays here.
 
 Found along the way, each with its disposition:
 
@@ -3243,9 +3064,10 @@ build mode of run 38183553516 was not re-read. The match between its
 ### Fragment-link import limit: question, comparison and rejection criterion
 
 The owner chose to try the import-limit arm first (status board card
-lm-accessor-import-gate, option A), keeping the result-origin contract above
-as a design to revisit with whatever gap remains. This section is written
-before any measurement of it.
+lm-accessor-import-gate, option A), keeping the result-origin contract (now
+the [result-source investigation](../result-source/DESIGN.md)) as a design
+to revisit with whatever gap remains. This section is written before any
+measurement of it.
 
 **Question.** Does a ThinLTO import limit of 200 summary instructions in
 `whitefootc`'s fragment link, in place of LLVM's default 100, return

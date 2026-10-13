@@ -200,6 +200,13 @@ lookup behavior, inliner stage and execution counts remain unverified.
 In particular, the favorable direct-copy control prevents attributing
 every 48-byte record return's failure to granules alone.
 
+Next step: after the
+[import-limit timing](#fragment-link-import-limit-timing-on-the-14900k)
+failed its criterion, the owner chose the read-through result. Its design,
+soundness conditions, alternatives, coverage estimate and the comparison
+fixed before measurement are in the
+[result-source investigation](../../investigations/result-source/DESIGN.md).
+
 ## Snowghost extracted witnesses
 
 `snowghost/` holds Snowghost's real accessor bodies with real callers, for
@@ -314,3 +321,19 @@ font-size edits on the three pages in both builds. The root-font and block
 edits (an input away), html5 style matching and the four-thread full layout
 stages are not timed. One machine, one Snowghost and one Halo revision, one
 compiler build.
+
+**Result (run 38322491672, 2026-10-13; rejected).** clang 22.1.8, base, twin
+and candidate interleaved, 7 rounds of 20 edits per cell. The six word-edit
+cells' median candidate/base ratios were 0.967 to 1.000, about 2.1% faster at
+the median; only the four-thread apollo11 cell (0.969) fell below its twin
+range, so the falsifier holds for five of six cells. apollo11's sequential
+font-size edit was 0.913 (114 µs against 125 µs), beyond noise, about half of
+its regression. No other Snowghost cell was slower than its twin range plus
+1%; the slowest was four-thread apollo11 font-size at 1.032. Halo's kernels
+stayed within ±1% in both builds, like the twin. Text grew 1.3% (Snowghost)
+and 0.03% (Halo), inside the 10% bound; the fragment link took 3.8% longer for
+Snowghost and 45.1% longer for Halo (720 ms to 1044 ms), above the 25% bound.
+The hottest accessor still was not imported at 150 (direct call sites 88 to
+135). The colour-edit cells read 0 µs, so they were not measured. The owner
+declined the raised limit and chose reading results at their source; see
+[result source](../../investigations/result-source/DESIGN.md).
