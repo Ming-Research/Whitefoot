@@ -824,7 +824,8 @@ impl<'unit> Checker<'_, 'unit> {
                 SemanticIssueKind::MissingDereference {
                     mechanical_fix:
                         "a Box's content is its field inner [TYPE-9]; an owned place is named \
-                         as itself",
+                         as itself"
+                            .to_owned(),
                 },
             );
         }
