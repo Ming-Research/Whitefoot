@@ -660,3 +660,76 @@ fn indexed_histogram_and_extrema_preserve_sequential_results() {
 fn map_payload_updates_preserve_absence_on_one_driver_and_on_four() {
     run_on_one_driver_and_on_four("map_payload_updates.wf", 2);
 }
+
+/// A call whose work grows with its range is offered by its price over the
+/// call's arguments under the shipped `--par` policy, and both sizes publish
+/// the same bytes at one and at four workers. `mix_both` calls `mix_words`
+/// over two disjoint ranges; with no argument the ranges hold three words,
+/// with one they hold a million. The callee's static work, which charges its
+/// loop sixteen trips, is far below the work unit, so before pricing by
+/// arguments the offer was omitted at every size; now the ledger prices it,
+/// and `mix_both` compares its range length once at entry and runs its
+/// sequential version when the offer would be below the unit. The reference
+/// is independent Rust arithmetic.
+#[test]
+fn a_call_priced_by_its_range_publishes_the_same_bytes_at_each_size_and_width() {
+    use whitefoot::{CompilerLimits, OverlapLowering, SourceInput, compile_with_permission_ledger};
+
+    fn mix(seed: u64) -> u64 {
+        (0..24).fold(seed, |state, _| {
+            (state.rotate_left(27) ^ state.wrapping_mul(6364136223846793005))
+                .wrapping_add(1442695040888963407)
+        })
+    }
+    fn mix_words(fill: u64, count: u64) -> u64 {
+        (0..count).fold(0, |state, _| mix(state ^ fill))
+    }
+    let name = "parallel/call_grain_pair.wf";
+    let source = super::support::read_program(name);
+    let (module, ledger) = compile_with_permission_ledger(
+        &[SourceInput::new(name, &source)],
+        CompilerLimits::default(),
+        OverlapLowering::OnWithCallGrain,
+    )
+    .expect("the priced pair compiles under the shipped --par policy");
+    assert!(
+        ledger.iter().any(|line| line
+            .starts_with("PAR actualization  mix_both  call grain: priced offer of mix_words (")),
+        "the size-dependent offer is priced by its arguments: {ledger:?}"
+    );
+    assert!(
+        !ledger
+            .iter()
+            .any(|line| line.contains("mix_both  call grain: omitted offer")),
+        "the size-dependent offer is not omitted: {ledger:?}"
+    );
+    assert!(
+        module.contains("call i64 @wf__par_seq_mix_both("),
+        "mix_both selects its sequential version at entry"
+    );
+    let program = build_program(&module);
+    for (arguments, count) in [(&[][..], 3_u64), (&[b"large".as_slice()][..], 1_000_000)] {
+        let expected = mix_words(1, count)
+            .wrapping_add(mix_words(2, count))
+            .to_le_bytes();
+        for workers in ["1", "4"] {
+            let output = program.run_with_workers_and_arguments(Some(workers), arguments);
+            assert_eq!(
+                output.status.code(),
+                Some(0),
+                "count={count}, workers={workers}: {output:?}"
+            );
+            assert_eq!(output.stdout, expected, "count={count}, workers={workers}");
+            assert!(
+                output.stderr.is_empty(),
+                "count={count}, workers={workers}: {output:?}"
+            );
+        }
+    }
+    // Three words price the offer below the unit, so the four-worker run
+    // enters the sequential version and nothing is ever stolen.
+    let small = program.run_with_settings(Some("4"), &[("WF_SCHED_REPORT", "2")]);
+    assert!(small.status.success(), "{small:?}");
+    let report = String::from_utf8_lossy(&small.stderr);
+    assert!(report.contains(" steals=0 "), "{report}");
+}

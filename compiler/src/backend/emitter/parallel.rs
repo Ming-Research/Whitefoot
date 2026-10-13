@@ -40,8 +40,11 @@
 //! that actualizes nothing — the sequential lowering, byte for byte, so that
 //! every transform the default build gets fires on it. The bootstrap asks the
 //! runtime once whether this run was asked for a pool, and enters one world or
-//! the other. In the default policy neither calls into the other, so nothing
-//! below that branch tests anything again. The experimental refusal policy
+//! the other. In the default policy the sequential world never calls into the
+//! overlapped one. The overlapped one enters a sequential clone only from a
+//! function's entry selection, once per call, when every offer the function
+//! can reach is priced by its arguments and all are below the work unit
+//! (`emit_size_entry`). The experimental refusal policy
 //! also permits the already-required null branch to enter a sequential clone.
 //! [`sequential_clone_set`] explains the second copy, the default selection, and
 //! why the set is exactly that closure.
@@ -63,8 +66,8 @@ use super::union_enums::FrameOperand;
 use super::{BackendFailure, FunctionEmitter, IntrinsicDeclaration, value_name};
 use crate::backend::abi::{FunctionAbi, ResultAbi};
 use crate::{
-    IrAddressed, IrFunction, IrInstruction, IrNominalKind, IrOperation, IrProgram, IrSynthesis,
-    IrType, IrValueId, IrWorkEstimate,
+    IrAddressed, IrFunction, IrInstruction, IrNominalKind, IrOfferPrice, IrOperation, IrProgram,
+    IrSynthesis, IrType, IrValueId, IrWorkEstimate,
 };
 
 /// The counted loop's index type [FN-1], which fixes every width question the
@@ -478,6 +481,9 @@ pub(crate) struct ParallelThunks {
     /// The same for the recursion budget: a module with no budgeted component
     /// names that symbol nowhere either.
     pub(super) queries_recursion_budget: bool,
+    /// Whether any function's entry selection names its sequential clone, so
+    /// the module must carry the clone world even if no thunk was registered.
+    selects_sequential_entry: bool,
 }
 
 impl ParallelThunks {
@@ -527,6 +533,11 @@ impl ParallelThunks {
 
     pub(crate) const fn queries_recursion_budget(&self) -> bool {
         self.queries_recursion_budget
+    }
+
+    /// Whether some function's entry selection enters its sequential clone.
+    pub(crate) const fn selects_sequential_entry(&self) -> bool {
+        self.selects_sequential_entry
     }
 
     /// Records one thunk body of `parent`'s emission and returns the symbol
@@ -676,7 +687,19 @@ impl FunctionEmitter<'_, '_> {
         let granted = format!("%{}", self.next_temporary()?);
         let offer = par_offer_label(result);
         let offered = par_offered_label(result);
-        {
+        // A member priced by its arguments asks for a lane only when its
+        // price reaches the work unit; below it the frame is null, and the
+        // join runs the ordinary call exactly as after a refused acquisition.
+        let caller = self.function;
+        if let Some(price) = caller.offer_price(result) {
+            self.emit_priced_acquisition(result, price, &frame, frame_layout.size())?;
+            write!(
+                self.output,
+                "  {granted} = icmp ne ptr {frame}, null\n  br i1 {granted}, label %{offer}, label %{offered}\n"
+            )
+            .map_err(|_| BackendFailure::TextEmission)?;
+            self.output.open_block(offer.to_string());
+        } else {
             let emission_argument_0 = frame_layout.size();
 
             {
@@ -687,7 +710,7 @@ impl FunctionEmitter<'_, '_> {
                 )
             }?;
             self.output.open_block(offer.to_string());
-        };
+        }
         for (index, operand) in operands.iter().enumerate() {
             let field = format!("%{}", self.next_temporary()?);
             writeln!(
@@ -735,6 +758,113 @@ impl FunctionEmitter<'_, '_> {
             },
             arguments: call_arguments.join(", "),
         });
+        Ok(())
+    }
+
+    /// Defines `frame` as an acquired lane when `price` reaches the work unit
+    /// and null otherwise, and leaves the output in the block that defines it.
+    ///
+    /// The comparison is `work < at_least`, one compare of an argument
+    /// value, descriptor length or header length, with at most one arithmetic
+    /// operation before it (lowering omits a price that needs more), and it
+    /// branches around the acquisition, so a call below the unit touches no
+    /// runtime state.
+    fn emit_priced_acquisition(
+        &mut self,
+        result: IrValueId,
+        price: &IrOfferPrice,
+        frame: &str,
+        bytes: u64,
+    ) -> Result<(), BackendFailure> {
+        let work = self.emit_work_estimate(&price.work, &mut std::collections::HashMap::new())?;
+        let below = format!("%{}", self.next_temporary()?);
+        let acquired = format!("%{}", self.next_temporary()?);
+        let ordinal = result.ordinal();
+        let acquire = format!("par.price.v{ordinal}");
+        let cheap = format!("par.cheap.v{ordinal}");
+        let lane = format!("par.lane.v{ordinal}");
+        let at_least = price.at_least;
+        write!(
+            self.output,
+            "  {below} = icmp ult i64 {work}, {at_least}\n  br i1 {below}, label %{cheap}, label %{acquire}\n"
+        )
+        .map_err(|_| BackendFailure::TextEmission)?;
+        self.output.open_block(acquire.clone());
+        self.output.symbol("wf__par_acquire_lane");
+        write!(
+            self.output,
+            "  {acquired} = call ptr @wf__par_acquire_lane(i64 {bytes})\n  br label %{lane}\n"
+        )
+        .map_err(|_| BackendFailure::TextEmission)?;
+        self.output.open_block(cheap.clone());
+        writeln!(self.output, "  br label %{lane}").map_err(|_| BackendFailure::TextEmission)?;
+        self.output.open_block(lane);
+        writeln!(
+            self.output,
+            "  {frame} = phi ptr [ {acquired}, %{acquire} ], [ null, %{cheap} ]"
+        )
+        .map_err(|_| BackendFailure::TextEmission)?;
+        Ok(())
+    }
+
+    /// The overlapped world's entry selection: when every price the function
+    /// lists for it is below the work unit at entry, run the function's
+    /// sequential clone, the sequential lowering byte for byte, and return
+    /// its result; otherwise enter the overlapped body.
+    ///
+    /// Lowering lists the prices only where they are every hand-out the
+    /// function can reach and read only entry values, so a call that enters
+    /// the clone declines nothing a priced call would not have declined. The
+    /// cost is the prices' evaluation and one branch per call of the function,
+    /// outside every loop of its body. Nothing is emitted where the body could
+    /// not be entered from one more place or where this emission hands
+    /// nothing out.
+    pub(super) fn emit_size_entry(&mut self, public: &FunctionAbi) -> Result<(), BackendFailure> {
+        let function = self.function;
+        if function.entry_selection().is_empty()
+            || self.sequential_clones.is_some()
+            || self.grain.is_some()
+            || self.dispatch.is_some()
+            || function.waits()
+            || self.overlap_handed_out.is_empty()
+            || self.incoming.first().is_some_and(|edges| !edges.is_empty())
+        {
+            return Ok(());
+        }
+        let body =
+            super::block_label(crate::IrBlockId::from_index(0).ok_or(BackendFailure::InvalidIr)?);
+        self.output.open_block(SIZE_ENTRY_LABEL.to_owned());
+        let mut memo = std::collections::HashMap::new();
+        let mut all_below: Option<String> = None;
+        for price in function.entry_selection() {
+            let work = self.emit_work_estimate(&price.work, &mut memo)?;
+            let below = format!("%{}", self.next_temporary()?);
+            writeln!(
+                self.output,
+                "  {below} = icmp ult i64 {work}, {}",
+                price.at_least
+            )
+            .map_err(|_| BackendFailure::TextEmission)?;
+            all_below = Some(match all_below {
+                None => below,
+                Some(earlier) => {
+                    let both = format!("%{}", self.next_temporary()?);
+                    writeln!(self.output, "  {both} = and i1 {earlier}, {below}")
+                        .map_err(|_| BackendFailure::TextEmission)?;
+                    both
+                }
+            });
+        }
+        let all_below = all_below.ok_or(BackendFailure::InvalidIr)?;
+        writeln!(
+            self.output,
+            "  br i1 {all_below}, label %{SIZE_SMALL_LABEL}, label %{body}"
+        )
+        .map_err(|_| BackendFailure::TextEmission)?;
+        self.output.open_block(SIZE_SMALL_LABEL.to_owned());
+        let clone = sequential_clone_symbol(function.name());
+        self.emit_clone_transfer(public, &clone, "%wf.small")?;
+        self.parallel.selects_sequential_entry = true;
         Ok(())
     }
 
@@ -1285,6 +1415,11 @@ fn par_offer_label(value: IrValueId) -> String {
 fn par_offered_label(value: IrValueId) -> String {
     format!("par.offered.v{}", value.ordinal())
 }
+
+/// The block the overlapped world's entry selection compares prices in, and
+/// the block it leaves for the sequential clone from.
+const SIZE_ENTRY_LABEL: &str = "par.size";
+const SIZE_SMALL_LABEL: &str = "par.size.small";
 
 /// The label a refused lane runs the call in.
 fn par_inline_label(value: IrValueId) -> String {

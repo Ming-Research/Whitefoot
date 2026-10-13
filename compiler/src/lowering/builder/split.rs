@@ -1654,8 +1654,11 @@ fn frame_bytes(ty: IrType) -> u64 {
 /// through helper arguments, distinguishing a 17-element row from a
 /// 1024-element row without changing either loop body. Unknown extents keep
 /// this static price; no universal grain plateau is established. Each
-/// function's whole static weight is returned for call-offer grain.
-pub(crate) fn assign_weights(functions: &mut [IrFunction]) -> Vec<u64> {
+/// function's whole static weight is returned for call-offer grain, with the
+/// argument-bound price of every handed-out call member.
+pub(super) fn assign_weights(
+    functions: &mut [IrFunction],
+) -> (Vec<u64>, super::work::MemberPrices) {
     let costs: Vec<Cost> = functions.iter().map(cost).collect();
     let mut total: Vec<u64> = costs.iter().map(|cost| cost.instructions).collect();
     // Three rounds of substitution, so a chunk's weight sees its callees, their
@@ -1692,8 +1695,8 @@ pub(crate) fn assign_weights(functions: &mut [IrFunction]) -> Vec<u64> {
             }
         }
     }
-    super::work::assign(functions, &total);
-    total
+    let prices = super::work::assign(functions, &total);
+    (total, prices)
 }
 
 /// How much an instruction inside a loop is charged over one outside it.
@@ -1855,6 +1858,8 @@ mod tests {
             values: types.clone(),
             counted_ranges: Vec::new(),
             overlaps: Vec::new(),
+            priced_offers: Vec::new(),
+            entry_selection: Vec::new(),
             synthesis: Some(IrSynthesis::Chunk),
             waits: false,
             blocks: vec![
