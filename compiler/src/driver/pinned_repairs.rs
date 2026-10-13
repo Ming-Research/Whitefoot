@@ -16,6 +16,7 @@ mod call_separations;
 mod collisions_and_killed_facts;
 mod common_syntax;
 mod content_moves;
+mod enum_routed_ensures;
 mod floats;
 mod interface_applications;
 mod lexical_syntax;
@@ -3843,6 +3844,7 @@ fn each_pinned_repair_is_carried_out_by_its_programs() {
         .chain(lexical_syntax::LEXICAL_SYNTAX)
         .chain(qualified_names::QUALIFIED_NAMES)
         .chain(selector_scope::SELECTOR_SCOPE)
+        .chain(enum_routed_ensures::ENUM_ROUTED_ENSURES)
         .chain(collisions_and_killed_facts::COLLISIONS_AND_KILLED_FACTS)
         .chain(common_syntax::COMMON_SYNTAX)
     {

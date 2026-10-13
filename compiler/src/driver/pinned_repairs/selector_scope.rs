@@ -5,81 +5,10 @@ use super::RepairPair;
 
 const SELECTOR: &[&str] = &[
     "]: InvalidPostconditionSelector\n",
-    "\n  mechanical_fix: remove this ensures clause, and remove its contract block if no requires or ensures clauses remain; an unrouted clause can name only result data admitted by [CALL-4]; a routed clause selects `when b is Ok(value: r):` for an own Result<T, E> or `when b is Some(value: r):` for an own Option<T>, where b names that result, r is fresh and payload T supplies admitted data [FN-9]; omit `b is` only when exactly one declared result has the route's enum type [CALL-4]; Err, None and user-enum variants are not postcondition routes\n",
+    "\n  mechanical_fix: remove this ensures clause, and remove its contract block if no requires or ensures clauses remain; an unrouted clause can name only result data admitted by [CALL-4]; a routed clause selects `when b is V(f: r):` for an own enum result, where b names that result, V is its variant, f is one declared field whose type supplies admitted data, and r is fresh [FN-9]; omit `b is` only when exactly one declared result has the route's enum type [CALL-4]; use a separate clause for each field\n",
 ];
 
 pub(super) const SELECTOR_SCOPE: &[RepairPair] = &[
-    RepairPair {
-        name: "none-postcondition-remove-empty-contract.wf",
-        rejected: include_bytes!("../../../../tests/conformance/cases/fn9-neg-none-route.wf"),
-        rule: "FN-9",
-        sentences: SELECTOR,
-        repaired: &[br#"fn nothing(limit: u64) -> result: Option<u64> pure {
-  return None<u64>();
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  return std::process::exit_status(code: 0_u8);
-}
-"#],
-    },
-    RepairPair {
-        name: "err-postcondition-retain-requires.wf",
-        rejected: br#"fn fail(code: u64) -> result: Result<u64, u64> pure contract {
-  requires code <= 10_u64;
-  ensures when Err(error: e): e == code;
-} {
-  return Err<u64, u64>(error: code);
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  return std::process::exit_status(code: 0_u8);
-}
-"#,
-        rule: "FN-9",
-        sentences: SELECTOR,
-        repaired: &[br#"fn fail(code: u64) -> result: Result<u64, u64> pure contract {
-  requires code <= 10_u64;
-} {
-  return Err<u64, u64>(error: code);
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  return std::process::exit_status(code: 0_u8);
-}
-"#],
-    },
-    RepairPair {
-        name: "user-enum-postcondition-retain-result-type.wf",
-        rejected: br#"enum Foreign {
-  ForeignCase(value: i32);
-}
-
-fn selected(value: i32) -> result: Foreign pure contract {
-  ensures when ForeignCase(value: payload): payload == value;
-} {
-  return Foreign::ForeignCase(value: value);
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  return std::process::exit_status(code: 0_u8);
-}
-"#,
-        rule: "FN-9",
-        sentences: SELECTOR,
-        repaired: &[br#"enum Foreign {
-  ForeignCase(value: i32);
-}
-
-fn selected(value: i32) -> result: Foreign pure {
-  return Foreign::ForeignCase(value: value);
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  return std::process::exit_status(code: 0_u8);
-}
-"#],
-    },
     RepairPair {
         name: "unit-postcondition-remove-define-only-contract.wf",
         rejected: br#"fn invalid() -> result: unit pure contract {
