@@ -509,17 +509,8 @@ impl<'unit> Checker<'_, 'unit> {
                 return Err(CheckStop::ReferenceSummaryChanged);
             }
         }
-        // A joined holder's identity denotes its current target. Rebinding
-        // it cannot retarget an earlier arm's selection to the new storage.
-        for local in bindings.values_mut() {
-            for witness in &mut local.refinement_witnesses {
-                if witness.selection.root
-                    == super::super::super::places::PlaceRoot::Binding(binding)
-                {
-                    witness.valid = false;
-                }
-            }
-        }
+        // [REF-1] rebinding replaces this reference value, not the selected
+        // target retained by an earlier alias or match witness.
         self.body
             .record_reference_origins(binding, &reference.paths);
         let local = bindings

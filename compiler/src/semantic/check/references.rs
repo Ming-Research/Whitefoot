@@ -231,6 +231,63 @@ pub(super) enum ReferenceValidity {
     Invalid(InvalidationEvent),
 }
 
+/// [REF-1] the selected target of a reference value, separately from its
+/// possible storage supports. Aliases copy this identity; equal candidate
+/// sets do not establish equal choices. Captured selectors identify their
+/// original evaluations; this identity supplies no numeric or effect facts.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum ReferenceSelection {
+    Exact(ResolvedPlace),
+    Choice {
+        origin: ReferenceSelectionOrigin,
+        suffix: Vec<PlaceStep>,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum ReferenceSelectionOrigin {
+    Occurrence(crate::NodePath, BindingId),
+    Loop(LoopReferenceToken),
+}
+
+impl ReferenceSelection {
+    pub(super) fn extend(&mut self, step: PlaceStep) {
+        match self {
+            Self::Exact(place) => place.path.push(step),
+            Self::Choice { suffix, .. } => suffix.push(step),
+        }
+    }
+
+    /// Reuse the path comparison on relative suffixes of one choice. Its
+    /// origin holder need not remain in scope and is never a display path.
+    fn comparison_place(&self) -> ResolvedPlace {
+        match self {
+            Self::Exact(place) => place.clone(),
+            Self::Choice { origin, suffix } => {
+                let owner = match origin {
+                    ReferenceSelectionOrigin::Occurrence(_, owner) => *owner,
+                    ReferenceSelectionOrigin::Loop(token) => token.owner,
+                };
+                let mut place = ResolvedPlace::binding(owner);
+                place.path.clone_from(suffix);
+                place
+            }
+        }
+    }
+
+    pub(super) fn same_target(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Exact(_), Self::Exact(_)) => {}
+            (Self::Choice { origin: left, .. }, Self::Choice { origin: right, .. })
+                if left == right => {}
+            _ => return false,
+        }
+        let left = self.comparison_place();
+        let right = other.comparison_place();
+        left.root == right.root && left.contains(&right) && right.contains(&left)
+    }
+}
+
 /// What one reference binding names [REF-1].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct ReferenceInfo {
@@ -239,6 +296,9 @@ pub(super) struct ReferenceInfo {
     /// join, where [REF-1] takes the union of the incoming edges' sets and
     /// every check must hold for every member.
     pub(super) paths: Vec<ResolvedPlace>,
+    /// Formations and receiving joins establish this before a source
+    /// reference is used. Address-validity-only guards do not consume it.
+    pub(super) selection: Option<ReferenceSelection>,
     /// Places a write or move of which invalidates the reference as one of
     /// its paths would, though the reference names nothing of them: the key
     /// set an entry binder's entries follow [SHARE-2], whose elements a write
@@ -272,13 +332,29 @@ impl ReferenceInfo {
     /// select at run time [REF-1]. No member is representative: validity,
     /// overlap and effect judgments must retain the complete union.
     pub(super) fn formed_paths(kind: ReferenceKind, paths: Vec<ResolvedPlace>) -> Self {
+        let selection = match paths.as_slice() {
+            [place] => Some(ReferenceSelection::Exact(place.clone())),
+            _ => None,
+        };
         Self {
             kind,
             paths,
+            selection,
             anchors: Vec::new(),
             validity: ReferenceValidity::Valid,
             loop_dependencies: Vec::new(),
             preservations: Vec::new(),
+        }
+    }
+
+    /// Give a newly joined choice a stable identity for this occurrence.
+    /// Existing selections, including an alias's snapshot, keep theirs.
+    pub(super) fn anchor_selection(&mut self, node: &crate::NodePath, binding: BindingId) {
+        if self.selection.is_none() {
+            self.selection = Some(ReferenceSelection::Choice {
+                origin: ReferenceSelectionOrigin::Occurrence(node.clone(), binding),
+                suffix: Vec::new(),
+            });
         }
     }
 
@@ -293,6 +369,9 @@ impl ReferenceInfo {
     /// The selection is checked under the current refinement [ENT-3.S15];
     /// its existing place does not depend on that fact's lexical extent.
     pub(super) fn extend(&mut self, step: PlaceStep) {
+        if let Some(selection) = &mut self.selection {
+            selection.extend(step);
+        }
         for path in &mut self.paths {
             path.path.push(step);
         }
@@ -314,6 +393,14 @@ impl ReferenceInfo {
     /// An index one edge superseded is superseded after the join too, so the
     /// same capture on both edges stays one member rather than two.
     pub(super) fn join(&mut self, other: &Self) {
+        if !self
+            .selection
+            .as_ref()
+            .zip(other.selection.as_ref())
+            .is_some_and(|(left, right)| left.same_target(right))
+        {
+            self.selection = None;
+        }
         for path in &other.paths {
             if !self.paths.contains(path) {
                 self.paths.push(path.clone());
@@ -370,6 +457,10 @@ impl ReferenceInfo {
         if !widen_captures {
             return Ok(None);
         }
+        self.selection = Some(ReferenceSelection::Choice {
+            origin: ReferenceSelectionOrigin::Loop(token),
+            suffix: Vec::new(),
+        });
         let mut widened = Vec::with_capacity(self.paths.len());
         for (ordinal, path) in self.paths.iter().enumerate() {
             widened.push(path.loop_carried(
@@ -1360,10 +1451,13 @@ impl<'unit> Checker<'_, 'unit> {
                 place,
                 selected: true,
             }));
+            let mut reference = ReferenceInfo::formed_paths(ReferenceKind::Single, places.clone());
+            reference.selection =
+                Some(self.payload_selection_identity(&expression, &places, carrier, bindings)?);
             return Ok(TypedExpression {
                 expression,
                 mode: CheckedMode::Reference,
-                reference: Some(ReferenceInfo::formed_paths(ReferenceKind::Single, places)),
+                reference: Some(reference),
                 reference_value: true,
                 effects,
                 accesses,
@@ -1457,6 +1551,8 @@ impl<'unit> Checker<'_, 'unit> {
             writable,
             write_places: places.clone(),
         };
+        reference.selection =
+            Some(self.payload_selection_identity(&expression, &places, carrier, bindings)?);
         let mut accesses = carried
             .accesses
             .into_iter()
@@ -1738,10 +1834,13 @@ impl<'unit> Checker<'_, 'unit> {
             place,
             selected: true,
         }));
+        let mut reference = ReferenceInfo::formed_paths(ReferenceKind::Range, places.clone());
+        reference.selection =
+            Some(self.payload_selection_identity(&expression, &places, carrier, bindings)?);
         Ok(TypedExpression {
             expression,
             mode: CheckedMode::Range,
-            reference: Some(ReferenceInfo::formed_paths(ReferenceKind::Range, places)),
+            reference: Some(reference),
             reference_value: true,
             effects: carried.effects,
             accesses,
@@ -2112,6 +2211,9 @@ impl<'unit> Checker<'_, 'unit> {
             place,
             selected: true,
         }));
+        let mut reference = ReferenceInfo::formed_paths(ReferenceKind::Range, places.clone());
+        reference.selection =
+            Some(self.payload_selection_identity(&expression, &places, carrier, bindings)?);
         Ok(TypedExpression {
             expression,
             mode: if run {
@@ -2119,7 +2221,7 @@ impl<'unit> Checker<'_, 'unit> {
             } else {
                 CheckedMode::Range
             },
-            reference: Some(ReferenceInfo::formed_paths(ReferenceKind::Range, places)),
+            reference: Some(reference),
             reference_value: true,
             effects: carried.effects,
             accesses,

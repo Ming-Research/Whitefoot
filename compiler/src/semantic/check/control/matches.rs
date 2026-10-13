@@ -136,6 +136,12 @@ impl<'unit> Checker<'_, 'unit> {
                     place,
                 ));
             }
+            reference.selection = Some(self.payload_selection_identity(
+                &scrutinee.expression,
+                &reference.paths,
+                expression_node,
+                bindings,
+            )?);
             scrutinee.mode = CheckedMode::Reference;
             scrutinee.reference = Some(reference);
         }
@@ -250,6 +256,7 @@ impl<'unit> Checker<'_, 'unit> {
                     &scrutinee.expression,
                     &places,
                     expression_node,
+                    bindings,
                 )?)
             };
             for place in places {
@@ -1117,6 +1124,9 @@ impl<'unit> DeclarationInventory<'unit> {
                     live_predecessor.clone_from(label);
                 }
                 joined.join_from(candidate);
+            }
+            if let Some(reference) = &mut joined.reference {
+                reference.anchor_selection(self.tree.path(node)?, joined.binding);
             }
             *bindings
                 .get_mut(key)

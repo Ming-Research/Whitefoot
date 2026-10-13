@@ -594,7 +594,7 @@ impl<'unit> Checker<'_, 'unit> {
             // [REF-1] a binder every arm of which delivers a reference is
             // itself a reference variable, naming the union of the path sets
             // its delivering arms name, rather than taking a type [TYPE-5].
-            let reference = if mode.is_reference() {
+            let mut reference = if mode.is_reference() {
                 Some(
                     matched
                         .delivered_reference
@@ -604,6 +604,9 @@ impl<'unit> Checker<'_, 'unit> {
             } else {
                 None
             };
+            if let Some(reference) = &mut reference {
+                reference.anchor_selection(self.types.declarations.tree.path(node)?, binding);
+            }
             if matched.can_continue
                 && let Some(reference) = &reference
             {
@@ -701,7 +704,10 @@ impl<'unit> Checker<'_, 'unit> {
         // that reads a reference variable, is itself a reference variable
         // naming the same path — an alias, not a copy of the referent. The
         // binder takes that reference kind rather than a type [TYPE-5].
-        let reference = value.reference.clone();
+        let mut reference = value.reference.clone();
+        if let Some(reference) = &mut reference {
+            reference.anchor_selection(self.types.declarations.tree.path(node)?, binding);
+        }
         if mode.is_reference() && reference.is_none() {
             return Err(SemanticCompilerFailure::InvalidResolution.into());
         }

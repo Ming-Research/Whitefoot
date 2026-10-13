@@ -23,7 +23,7 @@ use super::super::super::model::{
 use super::super::super::places::{
     CapturedTerm, CapturedValue, PlaceRoot, PlaceStep, ResolvedPlace, WindowPart,
 };
-use super::super::references::{OWN1_ROOTED_CONSUME, WIN3_NO_TAKE};
+use super::super::references::{OWN1_ROOTED_CONSUME, ReferenceSelection, WIN3_NO_TAKE};
 
 use super::super::{CheckStop, Checker, EffectSet, LocalBinding, PlaceAccess, TypedExpression};
 use super::{PlaceUseContext, PlaceUseOptions, ResolvedPlaceSet};
@@ -307,6 +307,37 @@ impl<'unit> Checker<'_, 'unit> {
                             mechanical_fix: OWN1_ROOTED_CONSUME,
                         },
                     );
+                }
+                // [OWN-1, WIN-3] an own-root payload consume requires the
+                // active variant's residual release judgment. The owned-take
+                // path and cleanup currently cover structs and Box shells
+                // only, so this judgment is incomplete for enum payloads.
+                // Keep element takes outside this compiler capability stop.
+                if place
+                    .resolved
+                    .identity
+                    .path
+                    .iter()
+                    .any(|step| matches!(step, PlaceStep::Payload { .. }))
+                    && place.resolved.identity.path.iter().all(|step| {
+                        matches!(
+                            step,
+                            PlaceStep::Field(_) | PlaceStep::Deref | PlaceStep::Payload { .. }
+                        )
+                    })
+                {
+                    self.types.reject_runtime_content_move(
+                        check_context,
+                        use_node,
+                        place.declaration,
+                        place.ty,
+                        &place.resolved.identity.path,
+                        bindings,
+                    )?;
+                    return self
+                        .types
+                        .declarations
+                        .unsupported(UnsupportedSemanticFeature::CompositeValues, use_node);
                 }
                 // [TYPE-9, WIN-3] an owned path through Box content consumes
                 // its complete root. Keep the selected value separate from
@@ -819,6 +850,7 @@ impl<'unit> Checker<'_, 'unit> {
                     self.require_payload_variant(
                         suffix,
                         variant,
+                        &place.expression,
                         &place.resolved.identity,
                         &place.resolved.members,
                         bindings,
@@ -866,28 +898,54 @@ impl<'unit> Checker<'_, 'unit> {
         expression: &CheckedExpression,
         places: &[ResolvedPlace],
         node: NodeId,
-    ) -> Result<ResolvedPlace, CheckStop> {
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+    ) -> Result<ReferenceSelection, CheckStop> {
+        // A singleton already carries its exact selected-target identity,
+        // including any loop descendant token and captured selectors.
         if let [place] = places {
-            return Ok(place.clone());
+            return Ok(ReferenceSelection::Exact(place.clone()));
         }
-        if let Some(named) = super::super::super::places::named_place(expression) {
+        let written = if let CheckedExpression::RangeIndex { place, .. } = expression {
+            ResolvedPlace {
+                root: PlaceRoot::Binding(place.root.binding),
+                path: place.place_path(),
+                atomic_aliases: Vec::new(),
+            }
+        } else if let Some(named) = super::super::super::places::named_place(expression) {
             let mut path = named.steps;
             path.extend(named.suffix);
-            return Ok(ResolvedPlace {
+            ResolvedPlace {
                 root: named.root,
                 path,
                 atomic_aliases: Vec::new(),
-            });
+            }
+        } else {
+            let (binding, path, _) = self
+                .types
+                .declarations
+                .explicit_container_path(expression, node)?;
+            ResolvedPlace {
+                root: PlaceRoot::Binding(binding),
+                path: path.iter().map(CheckedPlaceStep::place_step).collect(),
+                atomic_aliases: Vec::new(),
+            }
+        };
+        if let PlaceRoot::Binding(binding) = written.root
+            && let Some(reference) = bindings
+                .values()
+                .find(|local| local.binding == binding)
+                .and_then(|local| local.reference.as_ref())
+        {
+            let mut selection = reference
+                .selection
+                .clone()
+                .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+            for step in written.path {
+                selection.extend(step);
+            }
+            return Ok(selection);
         }
-        let (binding, path, _) = self
-            .types
-            .declarations
-            .explicit_container_path(expression, node)?;
-        Ok(ResolvedPlace {
-            root: PlaceRoot::Binding(binding),
-            path: path.iter().map(CheckedPlaceStep::place_step).collect(),
-            atomic_aliases: Vec::new(),
-        })
+        Err(SemanticCompilerFailure::InvalidResolution.into())
     }
 
     /// [REF-1, ENT-3.S15] a new payload selection needs a current arm
@@ -896,10 +954,12 @@ impl<'unit> Checker<'_, 'unit> {
         &self,
         suffix: NodeId,
         variant: u32,
-        selection: &ResolvedPlace,
+        expression: &CheckedExpression,
+        written: &ResolvedPlace,
         places: &[ResolvedPlace],
         bindings: &HashMap<DeclarationId, LocalBinding>,
     ) -> Result<(), CheckStop> {
+        let selection = self.payload_selection_identity(expression, places, suffix, bindings)?;
         let witnesses = bindings
             .values()
             .flat_map(|local| &local.refinement_witnesses)
@@ -907,9 +967,7 @@ impl<'unit> Checker<'_, 'unit> {
         let established = witnesses.iter().any(|witness| {
             witness.valid
                 && witness.variant == variant
-                && witness.selection.root == selection.root
-                && witness.selection.contains(selection)
-                && selection.contains(&witness.selection)
+                && witness.selection.same_target(&selection)
                 && places.iter().all(|place| {
                     witnesses.iter().any(|support| {
                         support.valid
@@ -927,7 +985,7 @@ impl<'unit> Checker<'_, 'unit> {
                 SemanticRule::Ref1,
                 suffix,
                 SemanticIssueKind::UnestablishedPayloadVariant {
-                    place: self.types.render_resolved_place(selection, bindings)?,
+                    place: self.types.render_resolved_place(written, bindings)?,
                     variant: self.types.declarations
                         .deferred_use_at(suffix, DeferredUseRole::PayloadVariant)?
                         .spelling().to_owned(),
@@ -1401,6 +1459,56 @@ impl<'unit> TypeContext<'unit> {
         }
         Ok((!range).then_some(ty))
     }
+    /// [TYPE-9] runtime-capacity content cannot leave the Box that owns its
+    /// allocation. Keep this selected-type judgment before any owned-take
+    /// capability stop, using the same repair for every typed owner path.
+    fn reject_runtime_content_move(
+        &self,
+        check_context: &CheckContext<'_>,
+        use_node: NodeId,
+        declaration: DeclarationId,
+        referent: CheckedType,
+        resolved_path: &[PlaceStep],
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+    ) -> Result<(), CheckStop> {
+        if matches!(
+            referent,
+            CheckedType::Buffer { .. }
+                | CheckedType::Segments { .. }
+                | CheckedType::Window { capacity: None, .. }
+        ) {
+            // The last content step selects the runtime-capacity value;
+            // its prefix is the Box that can move or be released [TYPE-9].
+            let (PlaceStep::Deref, cell_path) = resolved_path
+                .split_last()
+                .ok_or(SemanticCompilerFailure::InvalidResolution)?
+            else {
+                return Err(SemanticCompilerFailure::InvalidResolution.into());
+            };
+            let local = bindings
+                .get(&declaration)
+                .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+            let mut cell = ResolvedPlace::binding(local.binding);
+            cell.path = cell_path.to_vec();
+            let cell = self.render_resolved_place(&cell, bindings)?;
+            let window = matches!(referent, CheckedType::Window { .. });
+            let droppable = self
+                .linear_release_obligation(check_context, referent)?
+                .is_none();
+            return self.declarations.issue_node(
+                SemanticRule::Type9,
+                use_node,
+                SemanticIssueKind::InvalidRestrictedTypePlacement {
+                    spelling: self.checked_type_name(referent)?,
+                    mechanical_fix: super::super::repairs::runtime_content_move(
+                        &cell, window, droppable,
+                    ),
+                },
+            );
+        }
+        Ok(())
+    }
+
     /// [TYPE-9, WIN-3] `let n = move b.inner;`.
     ///
     /// [TYPE-9]: "`let n = move b.inner;` consumes the `Box`, yields its
@@ -1427,38 +1535,14 @@ impl<'unit> TypeContext<'unit> {
             .get(&declaration)
             .cloned()
             .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-        if matches!(
+        self.reject_runtime_content_move(
+            check_context,
+            use_node,
+            declaration,
             referent,
-            CheckedType::Buffer { .. }
-                | CheckedType::Segments { .. }
-                | CheckedType::Window { capacity: None, .. }
-        ) {
-            // The last content step selects the runtime-capacity value;
-            // its prefix is the Box that can move or be released [TYPE-9].
-            let (PlaceStep::Deref, cell_path) = resolved_path
-                .split_last()
-                .ok_or(SemanticCompilerFailure::InvalidResolution)?
-            else {
-                return Err(SemanticCompilerFailure::InvalidResolution.into());
-            };
-            let mut cell = ResolvedPlace::binding(local.binding);
-            cell.path = cell_path.to_vec();
-            let cell = self.render_resolved_place(&cell, bindings)?;
-            let window = matches!(referent, CheckedType::Window { .. });
-            let droppable = self
-                .linear_release_obligation(check_context, referent)?
-                .is_none();
-            return self.declarations.issue_node(
-                SemanticRule::Type9,
-                use_node,
-                SemanticIssueKind::InvalidRestrictedTypePlacement {
-                    spelling: self.checked_type_name(referent)?,
-                    mechanical_fix: super::super::repairs::runtime_content_move(
-                        &cell, window, droppable,
-                    ),
-                },
-            );
-        }
+            resolved_path,
+            bindings,
+        )?;
         let path = self.checked_owned_take_path(local.ty, resolved_path)?;
         let mut cleanup = Vec::new();
         for action in self.owned_take_cleanup(check_context, local.ty, &path)? {

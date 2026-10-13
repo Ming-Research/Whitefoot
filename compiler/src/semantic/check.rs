@@ -69,7 +69,7 @@ use super::{CheckStop, CheckedProgram};
 use control::{ControlCounters, ControlScope};
 use generics::{GenericParameter, GenericSubstitution};
 use inventory::InventoryView;
-use references::ReferenceInfo;
+use references::{ReferenceInfo, ReferenceSelection};
 
 /// The syntax tree, as the permission ledger's citations reach it.
 struct PermissionLedgerSource<'view, 'unit> {
@@ -306,7 +306,7 @@ struct LocalBinding {
 struct RefinementWitness {
     origin: NodePath,
     /// The selected target, distinct from the possible storage supports.
-    selection: ResolvedPlace,
+    selection: ReferenceSelection,
     place: ResolvedPlace,
     variant: u32,
     valid: bool,

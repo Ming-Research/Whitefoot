@@ -1700,15 +1700,19 @@ impl<'unit> Checker<'_, 'unit> {
                         .reference
                         .as_ref()
                         .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                    let selection = self.payload_selection_identity(
-                        &prefix.expression,
-                        &reference.paths,
-                        place,
-                    )?;
+                    let named = super::super::super::places::named_place(&prefix.expression)
+                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                    let mut written = ResolvedPlace {
+                        root: named.root,
+                        path: named.steps,
+                        atomic_aliases: Vec::new(),
+                    };
+                    written.path.extend(named.suffix);
                     self.require_payload_variant(
                         suffix,
                         variant,
-                        &selection,
+                        &prefix.expression,
+                        &written,
                         &reference.paths,
                         bindings,
                     )?;
