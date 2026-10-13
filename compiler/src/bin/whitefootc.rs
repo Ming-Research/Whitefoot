@@ -2419,7 +2419,7 @@ mod tests {
             let source_bytes = b"fn value() -> result: u64 pure {\n    return 7_u64;\n}\n";
             let source = directory.write("value.wf", source_bytes);
             let permissions = std::fs::metadata(&source).unwrap().permissions();
-            std::fs::set_permissions(&source, std::fs::Permissions::from_mode(0))
+            std::fs::set_permissions(&source, std::fs::Permissions::from_mode(0o000))
                 .expect("remove the implementation's read permission");
             let checked = super::run(&[
                 "--graph".to_owned(),
