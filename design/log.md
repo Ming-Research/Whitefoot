@@ -12,6 +12,13 @@ Nodes: compiler/waiting-contexts/state-locks
 Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve this decision" (translated), on the card "approve the design-tree change of Whitefoot#421 (head commit 0d2e4f75b)? It adds one decision: the compiler gains a `--lock-ledger` flag reporting when each atomic statement takes each lock group" (translated).
 
 Summary: One decision is added. `whitefootc --lock-ledger` reports, for each atomic statement, its ordered target groups with their bindings and state type, whether each is taken before the guard, on every body path, on some body paths or never, and the first use or later group that takes it, because a writer could not otherwise see that an early read or a preceding type group extends a hold, as Firn's write commands did. Lowering records the acquisition requests it emits and classifies them on its control-flow graph, instead of a warning on early use, which is often intended, or a separate source analysis that could disagree with the acquired groups; the report changes neither acceptance nor acquisition placement.
+## 2026-10-13 A tracked integer field place has a current image, and a quotient's upper bound follows from its dividend and divisor
+
+Nodes: language/checks-and-proofs/automatic-facts
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the specification and design-tree changes of Whitefoot#406: every tracked integer field place has a current image, a quotient's upper bound follows from its dividend and divisor, and `ishl(1, s)` has its own name? (head commit f722d963a)". The revision merged here differs from f722d963a only by the removal of a temporary measurement workflow and the merge of main.
+
+Summary: One decision is added: every tracked integer field place, whether its root holds the value or is a reference, carries a current affine image that only a commit to the field replaces and every event invalidating its supporting facts removes, instead of limiting images to fields reached through reference parameters, which the owner widened on an earlier card. The same change states the quotient upper bound as dividend below (k+1) divisors with the divisor proved at least one, and treats a variable right shift as division by the named power `ishl(1, s)`, instead of product terms or a writer-supplied proof step.
 
 ## 2026-10-13 A fact some arms hold survives their join, and a joined value is free where its join was bypassed
 

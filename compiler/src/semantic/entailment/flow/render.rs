@@ -102,6 +102,12 @@ impl Input<'_, '_> {
                 CheckedAffineExpressionKind::Measure(measure) => self
                     .render_affine_measure(measure, counted)
                     .unwrap_or_else(|| "?".to_owned()),
+                // [INV-1, ENT-6] a tracked field place factor renders as the
+                // writer wrote it, through a reference root's `^`.
+                CheckedAffineExpressionKind::Field(field) => match self.read_place_path(field) {
+                    Some(place) => self.render_header_place(&place, counted),
+                    None => "?".to_owned(),
+                },
                 CheckedAffineExpressionKind::ConstGeneric { name, .. } => name.clone(),
                 CheckedAffineExpressionKind::Add(_, _)
                 | CheckedAffineExpressionKind::Subtract(_, _) => {
