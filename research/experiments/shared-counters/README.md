@@ -119,6 +119,42 @@ the overflow bucket, and its exact observed maximum. Missing or malformed histog
 reported as unavailable; percentile estimates do not replace the maximum-read
 criterion.
 
+With `DIAG_READS=1`, W4rd uses a scratch copy of the native runtime with
+observers for individual reads exceeding 50,000 ns. The compiler's emitted
+LLVM is unchanged and retained as `bin/w_sharded_reader.ll`; W4 and W4t
+continue to use the ordinary compiler path. The observer identifies W4rd's
+single sleeping reader and brackets its whole statement using the original
+exported clock values. It records each slow read on standard error, after
+the ending timestamp, rather than changing the measured interval or lock
+policy. Instrumentation still has a cost, so traced W4rd cells are descriptive
+and cannot decide reader throughput or maximum-read acceptance. An ordinary
+`DIAG_READS=0` run retains the registered 0.95 retention and 50 µs maximum
+criteria.
+
+`raw.tsv` keeps one row per cell. `read_trace_enabled=1` confirms the observer
+ran; `read_slow_count=0` means it observed no read above 50,000 ns. The
+`read_slow_*` columns are comma-separated lists in the same read order:
+
+| Columns | Observation for each paired slow read |
+| --- | --- |
+| `read_slow_ns` | Exact duration from W4rd's original clock values |
+| `read_slow_wait_shards`, `read_slow_spins`, `read_slow_yields`, `read_slow_wait_max_ns`, `read_slow_wait_max_shard` | Contended shard acquisitions, spin hints, OS-yield calls, and the longest individual ticket wait with its shard; shard `-1` means no contended acquisition |
+| `read_slow_context_switches`, `read_slow_driver_switches` | The reader's own native unwinds, and native resumptions (reader included) on its starting logical driver, including a spare taking over that role |
+| `read_slow_executor_changed`, `read_slow_executor_before`, `read_slow_executor_after` | Physical-executor change and the endpoint executor identities |
+| `read_slow_nvcsw`, `read_slow_nivcsw`, `read_slow_rusage_valid`, `read_slow_minflt`, `read_slow_majflt` | Voluntary/involuntary OS switches and minor/major page faults, summed over same-thread native invocation segments slightly enclosing the read; validity `0` means counters are unavailable, not evidence of no preemption |
+| `read_slow_service_yields`, `read_slow_quiescence_ns`, `read_slow_collects` | OS yields while returning service authority, time acquiring the cold quiescence lock, and executor-sequence collections during the measured read |
+
+The reducer prints every event with all its paired fields. These observations
+can separate a ticket wait from coroutine suspension, role takeover, cold
+quiescence work, or an OS scheduling event; they do not identify the precise
+OS descheduling instant or prove that a stalled holder was preempted. A
+kernel scheduling trace would settle that remaining attribution. Cells with
+no observer and older result files have blank or absent trace fields,
+reported as “trace not recorded”; they never become zero-switch evidence.
+The parser rejects missing markers, missing/duplicate event fields, malformed
+values and misaligned lists, and verifies that the longest event agrees with
+the cell's maximum.
+
 M1–M4 take `v = state % 1048576_u64` from the local LCG. M3
 updates its cache to the observed shared maximum inside its exclusive statement.
 These maximum arms are descriptive, without a performance rejection threshold.
@@ -255,7 +291,11 @@ before a long run. Only CI builds and runs these programs.
 
 Inputs are `PILOT` (default `1`), `BLOCKS` (default `12`, main only) and
 `ARMS` (the original ten arms plus W4, W4t, W4r, W4rd, M1–M4 and A1,
-and the optional W4n256/W4nmax diagnostic arms).
+and the optional W4n256/W4nmax diagnostic arms), plus `DIAG_READS` (`auto`,
+the default, follows `PILOT`; `1` enables W4rd tracing; `0` uses its ordinary
+image). Build and run steps receive the same setting. An explicit traced main
+run is allowed when a pilot misses rare tails; its reader results remain
+diagnostic.
 A pilot runs one 5 s cell per selected arm at the 8-P-core list and decides
 nothing; inspect it before dispatching the main run. A main uses all four
 CPU lists above and twelve alternating blocks. The default 19-arm main has
@@ -267,6 +307,8 @@ arm or twin is absent.
 ```
 gh workflow run tmp-shared-counters.yml --ref <branch> -f PILOT=1
 gh workflow run tmp-shared-counters.yml --ref <branch> -f PILOT=0 -f BLOCKS=12
+# Same pilot with the unobserved reader, to measure observer cost.
+gh workflow run tmp-shared-counters.yml --ref <branch> -f PILOT=1 -f DIAG_READS=0
 ```
 
 The procedure and decision rule are registered in DESIGN.md section 8.7.
@@ -300,6 +342,19 @@ Reader p50/p99/max are reported per cell, without new acceptance thresholds.
 ```
 gh workflow run tmp-shared-counters.yml --ref <branch> -f PILOT=0 -f BLOCKS=6 -f ARMS="W4 W4t W4n256 W4nmax W4rd W5p"
 ```
+
+The default pilot observes W4rd automatically. A focused pilot can select
+`ARMS="W4 W4t W4rd W3 W5p"`; repeat it with `DIAG_READS=0` as an observer-cost
+control. Main attribution runs default to tracing off. `run.sh` retains the
+observed runtime under `read-trace/native/`, the guarded patch record in
+`read-trace/patches.txt`, and its native build under `read-trace/build/`.
+The patcher checks every expected anchor and its missing/duplicate sensitivity
+controls in CI before copying sources. Use a fresh output directory for an
+observed build: an existing copied runtime is rejected rather than reused.
+`--skip-build` checks the saved W4rd trace mode against the requested mode.
+The workflow also executes the reducer's controls for paired-field transport,
+missing/empty diagnostics, malformed evidence, and traced acceptance
+suppression. No builds, controls or measurements run on a workstation.
 
 ## Repeating the earlier counter run
 

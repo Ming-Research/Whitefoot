@@ -1681,6 +1681,83 @@ snapshot and liveness arguments require review in addition to those tests.
 No build, test or measurement was run locally for this implementation; CI
 results and the renewed performance comparison remain outstanding.
 
+### 8.10 Whole-read tail attribution (before the diagnostic pilot)
+
+**Question.** Does the remaining whole-read maximum come from a ticket
+holder being off CPU, the reader yielding while holding earlier tickets,
+reader preemption or cooperative suspension, scheduler bookkeeping, or a
+fault? The owner's reported re-measurement of the local-accounting revision
+keeps the throughput, scaling, read-cadence and retention criteria but misses
+the 50 us maximum: at eight P-cores every block's p99 bucket bound is at most
+1,024 ns while the longest read is 2,960 us. The supplied run's artifacts
+have not been independently inspected for this attribution. Typical read
+cost cannot explain the cause of those rare samples.
+
+**Comparison and rejection conditions.** Dispatch the existing workflow with
+`PILOT=1`, `ARMS="W4 W4t W4rd W5p"`, and `DIAG_READS=auto` (the default).
+Only W4rd gets a diagnostic runtime copy; W4 and its separately built twin
+use the ordinary compiler/runtime. Repeat with `DIAG_READS=0` to assess
+observer disturbance. A pilot with no slow sample is inconclusive, not proof
+that the tail disappeared. Explicit `DIAG_READS=1` may collect more blocks
+if needed, but traced reader cells never decide performance acceptance.
+The 0.95 retention and 50 us maximum thresholds remain unchanged for ordinary
+cells. The diagnostic adds no proposed runtime fix or approval record.
+
+Before dispatch, the code ranking is reader/holder OS descheduling with
+ticket-yield amplification first, exceptional role displacement or reader
+suspension next, and ordinary quiescence bookkeeping and faults less likely.
+The read's first timestamp follows sleep, so initial sleep/wake queue delay
+is outside it. An actually suspended sleep resets the reader's pass budget;
+an already-expired sleep does not, so a rare fairness suspension is still
+possible. A whole reader keeps earlier tickets while the next ticket's
+64-pause/host-yield loop runs. Two drivers on two CPUs still have four
+physical executors plus a periodically waking monitor sharing that CPU mask;
+spares normally park. The C model's reader runs on an E-core outside its
+writers' mask and has no Whitefoot monitor/context rotation, so identical
+lock layout alone does not control these scheduling differences.
+
+**Observer and evidence.** `read-trace.py` copies the native runtime to the
+output directory, checks every patch anchor, and appends `read-trace.c`.
+`read-trace.mk` uses the maintained native inventory with full LTO and the
+original compiler-emitted LLVM. The observer identifies W4rd's sole sleeping
+context and sole shards object. Exactly the first two exported clock readings
+after its sleep are the read's endpoints; internal scheduler clocks cannot
+advance this phase. The patcher also checks this source-clock protocol and
+the complete original ticket-wait body, refusing a changed policy rather than
+observing an earlier copy of it.
+
+For each read above 50,000 ns, stderr records one complete event. `run.sh`
+transports events into paired comma-list columns in the cell's `raw.tsv`
+row; the reducer prints them individually. Missing observers or malformed
+events reject a diagnostic cell. An enabled observer with zero events is
+distinct from absent instrumentation. Original stderr and the copied runtime
+remain in the artifact.
+
+Waited-shard count, pause count, OS-yield count and longest single ticket
+wait/index distinguish acquisition delay from a long read with no contended
+ticket. Reader unwind count distinguishes cooperative suspension; the starting
+logical driver's native-resumption count also catches execution on a
+replacement while the old reader continues. Service-return yields,
+quiescence-lock acquisition time and invocation-collector count identify
+those runtime paths. Minor/major faults and voluntary/involuntary thread
+switches are differences of `getrusage(RUSAGE_THREAD)` snapshots. A sample
+baseline is necessary on every diagnostic read; only slow events are saved.
+Endpoint syscalls lie outside the original timestamp interval. Suspended
+reads sum separate native-invocation segments so peer contexts or a different
+physical thread do not contaminate the thread counters. Those counters
+slightly enclose the timed work and cannot precisely locate an OS event.
+
+A slow sample with no ticket wait rejects lock-wait attribution for that
+sample. A slow sample with no reader suspension rejects run-queue rotation
+attribution for it. Zero collector calls and zero quiescence acquisition time
+reject those paths inside the reader's native segments. A single ticket wait
+dominating the duration supports a stalled acquisition; it does not by itself
+prove the holder was preempted. Reader thread switches identify its own
+off-CPU events, but separating holder preemption from yield-induced convoys
+may still require scheduler tracing correlated with the reported shard's
+physical executor. No runtime policy changes until these observations select
+the cause, and a later fix is re-measured with tracing disabled.
+
 ## 9. Results: the arms that need no language change
 
 The owner chose, on the board card that asked what Whitefoot should offer for

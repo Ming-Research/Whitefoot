@@ -19,6 +19,11 @@ on:
         description: Arms in rotation order (W4n256/W4nmax supported; empty uses run.sh defaults)
         type: string
         default: ""
+      DIAG_READS:
+        description: "auto: observe W4rd in pilot; 1: descriptive read traces; 0: ordinary acceptance/control image"
+        type: choice
+        options: ["auto", "1", "0"]
+        default: "auto"
 
 defaults:
   run:
@@ -44,7 +49,7 @@ jobs:
             echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
             export PATH="$HOME/.cargo/bin:$PATH"
           fi
-          for tool in /usr/bin/clang cargo taskset perl python3 git awk sed timeout lscpu sha256sum tar cmp mktemp; do
+          for tool in /usr/bin/clang cargo taskset perl python3 git awk sed timeout lscpu sha256sum tar cmp mktemp make ld.lld ar; do
             command -v "$tool"
           done
           awk -F ': ' '/^model name/ { print $2; exit }' /proc/cpuinfo | grep -F i9-14900K
@@ -75,6 +80,7 @@ jobs:
         env:
           ARMS: ${{ inputs.ARMS }}
           PILOT: ${{ inputs.PILOT }}
+          DIAG_READS: ${{ inputs.DIAG_READS }}
           BLOCKS: ${{ inputs.BLOCKS }}
           ORDER: alternate
         run: |
@@ -87,6 +93,7 @@ jobs:
         env:
           ARMS: ${{ inputs.ARMS }}
           PILOT: ${{ inputs.PILOT }}
+          DIAG_READS: ${{ inputs.DIAG_READS }}
           BLOCKS: ${{ inputs.BLOCKS }}
           ORDER: alternate
           WHITEFOOT_CHECK_TIMEOUT: "7200"

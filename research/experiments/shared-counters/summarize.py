@@ -5,6 +5,7 @@ shared-counters/DESIGN.md, section 8).
 
     python3 summarize.py [--smoke | --pilot] RAW.tsv
     python3 summarize.py --self-test
+    python3 summarize.py --read-trace STDERR
 
 It prints, per arm and CPU list, the median and the range of the rate over
 blocks; the noise e from the twin pair W2t and W2; the descriptive ratios; and
@@ -25,7 +26,8 @@ With sharded-state arms present, it also reports section 8.5's implementation
 criteria and the registered scaling checks using paired-block bootstrap
 intervals and W4t/W4 twins. Reader acceptance uses the longest observed read; W4rd p50/p99/max are also
 reported per cell. Threshold variants are diagnostics under section 8.8, never
-accepted behavior. --self-test runs pure-Python reducer controls only.
+accepted behavior. Optional per-read traces are diagnostic evidence, not
+performance acceptance. --self-test runs pure-Python reducer controls only.
 --pilot reports an initial run on the 14900K without any acceptance verdict.
 """
 import csv
@@ -88,6 +90,118 @@ P2_LIST = "0,2"
 P4_LIST = "0,2,4,6"
 P8_LIST = "0,2,4,6,8,10,12,14"
 SHARDED_LISTS = {**MODEL_LISTS, "0-15": "16 hyperthreads"}
+READ_TRACE_LIMIT_NS = 50000
+READ_TRACE_FIELDS = (
+    "read_ns", "wait_shards", "spins", "yields", "wait_max_ns", "wait_max_shard",
+    "context_switches", "executor_changed", "nvcsw", "nivcsw", "rusage_valid",
+    "minflt", "majflt", "quiescence_ns", "collects", "executor_before",
+    "executor_after", "service_yields", "driver_switches",
+)
+READ_TRACE_COLUMNS = (
+    "read_trace_enabled", "read_slow_count",
+    *("read_slow_ns" if field == "read_ns" else f"read_slow_{field}"
+      for field in READ_TRACE_FIELDS),
+)
+
+
+def trace_integer(value, field):
+    """Observer values are u64, except the no-contended-shard sentinel -1."""
+    if field == "wait_max_shard" and value == "-1":
+        return -1
+    if not value or any(character not in "0123456789" for character in value):
+        raise ValueError(f"invalid read trace {field}: {value!r}")
+    result = int(value)
+    if result >= 2**64:
+        raise ValueError(f"read trace {field} exceeds u64")
+    return result
+
+
+def validate_read_tail(event):
+    if set(event) != set(READ_TRACE_FIELDS):
+        missing = sorted(set(READ_TRACE_FIELDS) - set(event))
+        extra = sorted(set(event) - set(READ_TRACE_FIELDS))
+        raise ValueError(f"read trace fields differ: missing={missing}, extra={extra}")
+    if event["read_ns"] <= READ_TRACE_LIMIT_NS:
+        raise ValueError(f"read trace duration must exceed {READ_TRACE_LIMIT_NS} ns")
+    for field in ("executor_changed", "rusage_valid"):
+        if event[field] not in (0, 1):
+            raise ValueError(f"read trace {field} must be 0 or 1")
+    if (event["wait_shards"] == 0) != (event["wait_max_shard"] == -1):
+        raise ValueError("read trace maximum shard disagrees with contended-shard count")
+    if not event["rusage_valid"] and any(
+            event[field] for field in ("nvcsw", "nivcsw", "minflt", "majflt")):
+        raise ValueError("unavailable read trace rusage counters must be zero")
+
+
+def parse_read_trace(text):
+    """Read one observer marker and complete, ordered slow events from stderr."""
+    markers = 0
+    events = []
+    for line_number, line in enumerate(text.splitlines(), 1):
+        if not line.startswith(("WF_READ_TRACE", "WF_READ_TAIL")):
+            continue
+        words = line.split()
+        if words[0] == "WF_READ_TRACE":
+            if words != ["WF_READ_TRACE", "enabled=1"]:
+                raise ValueError(f"invalid read trace marker at stderr line {line_number}")
+            markers += 1
+            if markers != 1:
+                raise ValueError("duplicate read trace marker")
+            continue
+        if words[0] != "WF_READ_TAIL" or markers != 1:
+            raise ValueError(f"read tail without observer marker at stderr line {line_number}")
+        event = {}
+        for word in words[1:]:
+            field, separator, value = word.partition("=")
+            if not separator or field in event:
+                raise ValueError(f"invalid or duplicate read trace field at stderr line {line_number}")
+            event[field] = trace_integer(value, field)
+        validate_read_tail(event)
+        events.append(event)
+    if markers != 1:
+        raise ValueError("missing read trace enabled marker")
+    return events
+
+
+def read_trace_columns(events):
+    """One TSV fragment; each comma list keeps the same per-read ordering."""
+    return ["1", str(len(events)), *(
+        ",".join(str(event[field]) for event in events) for field in READ_TRACE_FIELDS)]
+
+
+def read_trace_from_row(row):
+    """Absent diagnostics remain absent; malformed paired lists are no evidence."""
+    values = [row.get(column) for column in READ_TRACE_COLUMNS]
+    if all(value in (None, "") for value in values):
+        return None, None, None
+    try:
+        if row.get("read_trace_enabled") != "1":
+            raise ValueError("missing or invalid read_trace_enabled")
+        count = trace_integer(row.get("read_slow_count"), "read_slow_count")
+        reads = int(row["reads"])
+        if count > reads:
+            raise ValueError("read_slow_count exceeds reader reads")
+        lists = {}
+        for field, column in zip(READ_TRACE_FIELDS, READ_TRACE_COLUMNS[2:]):
+            value = row.get(column)
+            if value is None:
+                raise ValueError(f"missing {column}")
+            parts = value.split(",") if value else []
+            if len(parts) != count:
+                raise ValueError(f"{column} length {len(parts)} differs from read_slow_count {count}")
+            lists[field] = [trace_integer(part, field) for part in parts]
+        events = [{field: lists[field][index] for field in READ_TRACE_FIELDS}
+                  for index in range(count)]
+        for event in events:
+            validate_read_tail(event)
+        maximum = int(row["read_max_ns"])
+        if maximum > READ_TRACE_LIMIT_NS and not events:
+            raise ValueError("slow maximum has no read trace event")
+        if events and max(event["read_ns"] for event in events) != maximum:
+            raise ValueError("read trace longest event differs from read_max_ns")
+        return True, events, None
+    except (TypeError, ValueError) as error:
+        return row.get("read_trace_enabled") == "1", None, str(error)
 
 
 def number(row, name):
@@ -144,6 +258,7 @@ def read(path):
             key = (row["arm"], row["cpus"])
             percentile, histogram_error = histogram_percentiles(
                 row.get("read_hist_ns"), int(row["reads"]), int(row["read_max_ns"]))
+            trace_enabled, trace_events, trace_error = read_trace_from_row(row)
             cells[key].append({
                 "block": int(row["block"]),
                 "drivers": int(row["drivers"]),
@@ -157,7 +272,10 @@ def read(path):
                 "read_med_ns": percentile[0] if percentile else None if row["arm"] == "W4rd" else optional_number(row, "read_med_ns"),
                 "read_p99_ns": percentile[1] if percentile else None if row["arm"] == "W4rd" else optional_number(row, "read_p99_ns"),
                 "read_hist_error": histogram_error,
-
+                "read_trace_enabled": trace_enabled,
+                "read_slow_count": len(trace_events) if trace_events is not None else None,
+                "read_slow_events": trace_events,
+                "read_trace_error": trace_error,
             })
     return cells
 
@@ -367,6 +485,12 @@ def sharded_section(cells, lists, smoke, pilot=False):
             read_error = "a W4rd cell has no reads or invalid reader timing"
         if len(valid_reads) < MIN_BLOCKS:
             read_error = read_error or f"only {len(valid_reads)} reader blocks; need {MIN_BLOCKS}"
+        trace_error = next((r.get("read_trace_error") for r in rows
+                            if r.get("read_trace_error")), None)
+        if trace_error:
+            read_error = f"invalid W4rd diagnostic trace: {trace_error}"
+        elif any(r.get("read_trace_enabled") for r in rows):
+            read_error = "W4rd trace instrumentation enabled; diagnostic cells cannot decide performance acceptance"
         compare("W4rd", "W4", 0.95 if c == P8_LIST else None, evidence_error=read_error)
         if c == P8_LIST:
             error = read_error or twin_error
@@ -512,8 +636,34 @@ def reader_distribution_section(cells, lists):
     print()
 
 
+def reader_trace_section(cells, lists):
+    if not any(("W4rd", cpus) in cells for cpus in lists):
+        return
+    print("W4rd slow-read traces per cell (diagnostic only; instrumented cells do not decide performance acceptance)")
+    print(f"Each event exceeds {READ_TRACE_LIMIT_NS} ns; all fields on one line refer to that same read.")
+    print("OS counters sum same-thread invocation segments slightly enclosing the read; rusage_valid=0 means unavailable, not no preemption.")
+    print("context_switches counts reader unwinds; driver_switches counts native resumptions (reader included) on its starting logical driver, including role takeover. Shard waits, executor changes, service-return yields, quiescence time and executor collects are separate observations.")
+    for cpus in lists:
+        for row in sorted(cells.get(("W4rd", cpus), []), key=lambda row: row["block"]):
+            prefix = f"  {cpus} block {row['block']}"
+            error = row.get("read_trace_error")
+            if error:
+                print(f"{prefix}: trace unavailable ({error})")
+                continue
+            if not row.get("read_trace_enabled"):
+                print(f"{prefix}: trace not recorded")
+                continue
+            events = row["read_slow_events"]
+            print(f"{prefix}: trace enabled; slow reads={len(events)}")
+            for index, event in enumerate(events, 1):
+                fields = " ".join(f"{field}={event[field]}" for field in READ_TRACE_FIELDS)
+                suffix = "; OS counters unavailable" if not event["rusage_valid"] else ""
+                print(f"{prefix} read {index}: {fields}{suffix}")
+    print()
+
+
 def reducer_controls():
-    """Pure-Python controls for section 8.8 and histogram interpretation."""
+    """Pure-Python controls for yield attribution, histograms and paired traces."""
     import contextlib
     import io
     import tempfile
@@ -648,7 +798,135 @@ def reducer_controls():
         with contextlib.redirect_stdout(output):
             reader_distribution_section(parsed_cells, [P2_LIST])
         assert "p50<=n/a ns p99<=n/a ns" in output.getvalue()
-    print("Yield attribution reducer controls passed: passing/failing predictions and falsifiers; same-block pairing; pilot suppression; histogram ranks/bounds/overflow/missing/malformed counts; TSV transport; positive/zero/negative yield cost; recovery; complete paired cells; twin validity; no measured-switch verdict.")
+    first_tail = dict(zip(READ_TRACE_FIELDS, (
+        60000, 1, 3, 0, 1000, 2, 1, 0, 2, 0, 1, 0, 0, 2000, 2, 1, 1, 0, 4)))
+    second_tail = dict(zip(READ_TRACE_FIELDS, (
+        150000, 0, 0, 0, 0, -1, 2, 1, 3, 1, 1, 5, 0, 3000, 1, 1, 3, 2, 10)))
+
+    def tail_line(event):
+        return "WF_READ_TAIL " + " ".join(f"{field}={value}" for field, value in event.items())
+
+    marker = "WF_READ_TRACE enabled=1\n"
+    trace_text = marker + tail_line(first_tail) + "\nother runtime report\n" + tail_line(second_tail)
+    events = parse_read_trace(trace_text)
+    assert events == [first_tail, second_tail]
+    assert parse_read_trace(marker) == []
+
+    def trace_rejected(text):
+        try:
+            parse_read_trace(text)
+        except ValueError:
+            return
+        raise AssertionError("read trace parser accepted damaged evidence")
+
+    trace_rejected("")
+    trace_rejected("WF_READ_TRACE enabled=0")
+    trace_rejected(marker + marker)
+    trace_rejected(tail_line(first_tail) + "\n" + marker)
+    missing_field = first_tail.copy()
+    del missing_field["spins"]
+    trace_rejected(marker + tail_line(missing_field))
+    trace_rejected(marker + tail_line(first_tail) + " spins=4")
+    trace_rejected(marker + tail_line(first_tail) + " unrelated=1")
+    for field, value in (("read_ns", 50000), ("read_ns", 0), ("read_ns", 2**64),
+                         ("spins", -1), ("executor_changed", 2), ("rusage_valid", 0),
+                         ("wait_max_shard", -1), ("spins", "not-a-number")):
+        wrong = first_tail.copy()
+        wrong[field] = value
+        trace_rejected(marker + tail_line(wrong))
+    wrong = second_tail.copy()
+    wrong["wait_max_shard"] = 0
+    trace_rejected(marker + tail_line(wrong))
+
+    # Transport preserves all fields of both events, not independent maxima.
+    trace_row = dict(zip(READ_TRACE_COLUMNS, read_trace_columns(events)))
+    trace_row.update(reads="3", read_max_ns="150000")
+    enabled, transported, error = read_trace_from_row(trace_row)
+    assert enabled and transported == [first_tail, second_tail] and error is None
+    absent, transported, error = read_trace_from_row(dict(reads="3", read_max_ns="150000"))
+    assert absent is None and transported is None and error is None
+    empty = dict(zip(READ_TRACE_COLUMNS, read_trace_columns([])))
+    empty.update(reads="3", read_max_ns="40000")
+    assert read_trace_from_row(empty) == (True, [], None)
+    for field, value in (("read_slow_count", "1"), ("read_slow_count", "4"),
+                         ("read_trace_enabled", ""), ("read_slow_ns", "50000,150000"),
+                         ("read_slow_spins", "3"), ("read_slow_yields", ""),
+                         ("read_max_ns", "140000")):
+        wrong = trace_row.copy()
+        wrong[field] = value
+        assert read_trace_from_row(wrong)[2] is not None
+    wrong = trace_row.copy()
+    del wrong["read_slow_service_yields"]
+    assert read_trace_from_row(wrong)[2] is not None
+    empty["read_max_ns"] = "60000"
+    assert read_trace_from_row(empty)[2] is not None
+
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "trace.tsv"
+        fields = ["arm", "cpus", "block", "drivers", "ops_per_s", "user_frac", "sys_frac",
+                  "reads", "read_ns", "read_max_ns", *READ_TRACE_COLUMNS]
+        with path.open("w", newline="") as stream:
+            writer = csv.DictWriter(stream, fields, delimiter="\t")
+            writer.writeheader()
+            writer.writerow(dict(arm="W4rd", cpus=P8_LIST, block=0, drivers=8,
+                                 ops_per_s=100, user_frac=1, sys_frac=0,
+                                 read_ns=220000, **trace_row))
+            writer.writerow(dict(arm="W4rd", cpus=P8_LIST, block=1, drivers=8,
+                                 ops_per_s=100, user_frac=1, sys_frac=0,
+                                 reads=3, read_ns=220000, read_max_ns=150000))
+        trace_cells = read(path)
+        parsed = trace_cells["W4rd", P8_LIST][0]
+        assert parsed["read_slow_count"] == 2 and parsed["read_slow_events"] == events
+        assert parsed["read_trace_error"] is None
+        assert trace_cells["W4rd", P8_LIST][1]["read_slow_count"] is None
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            reader_trace_section(trace_cells, [P8_LIST])
+        text = output.getvalue()
+        assert "slow reads=2" in text and "block 1: trace not recorded" in text
+        assert "read 1: read_ns=60000 wait_shards=1 spins=3 yields=0" in text
+        assert "read 2: read_ns=150000 wait_shards=0 spins=0 yields=0" in text
+        assert "nvcsw=3 nivcsw=1 rusage_valid=1 minflt=5 majflt=0" in text
+        assert "executor_before=1 executor_after=3 service_yields=2 driver_switches=10" in text
+        unavailable = second_tail.copy()
+        unavailable.update(rusage_valid=0, nvcsw=0, nivcsw=0, minflt=0, majflt=0)
+        validate_read_tail(unavailable)
+        parsed["read_slow_events"] = [first_tail, unavailable]
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            reader_trace_section(trace_cells, [P8_LIST])
+        assert "; OS counters unavailable" in output.getvalue()
+        parsed["read_trace_error"] = "damaged paired lists"
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            reader_trace_section(trace_cells, [P8_LIST])
+        assert "trace unavailable (damaged paired lists)" in output.getvalue()
+
+    # A complete green unobserved reader must become inconclusive when traced,
+    # with the same registered 0.95 and 50 us thresholds still displayed.
+    acceptance_cells = defaultdict(list)
+    for block in range(6):
+        for arm, rate in (("W4", 100), ("W4t", 100), ("W4rd", 98)):
+            acceptance_cells[arm, P8_LIST].append(dict(
+                block=block, drivers=8, rate=rate, reads=3,
+                read_ns=90000, read_max_ns=40000))
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        sharded_section(acceptance_cells, [P8_LIST], False)
+    ordinary = output.getvalue()
+    assert "W4rd/W4 >= 0.95: 0.980 [0.980-0.980] n=6 -> PASS" in ordinary
+    assert "W4rd longest whole read <= 50 us: 40.00 us -> PASS" in ordinary
+    for row in acceptance_cells["W4rd", P8_LIST]:
+        row.update(read_trace_enabled=True, read_trace_error=None,
+                   read_slow_count=0, read_slow_events=[])
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        sharded_section(acceptance_cells, [P8_LIST], False)
+    traced = output.getvalue()
+    lines = [line for line in traced.splitlines()
+             if line.startswith(("  W4rd/W4 >= 0.95", "  W4rd longest whole read <= 50 us"))]
+    assert len(lines) == 2 and all("INCONCLUSIVE" in line and "instrumentation enabled" in line for line in lines)
+    print("Yield and read reducer controls passed: passing/failing predictions and falsifiers; same-block pairing; pilot suppression; histogram ranks/bounds/overflow/missing/malformed counts; TSV transport; positive/zero/negative yield cost; recovery; complete paired cells; twin validity; no measured-switch verdict; trace marker/schema/numeric/boundary sensitivity; paired per-read transport; missing/empty distinction; rusage availability; traced acceptance suppression.")
 
 
 def model_section(cells, lists, drivers, smoke, pilot=False):
@@ -822,6 +1100,7 @@ def main(path, smoke=False, pilot=False):
 
     yield_section(cells, lists, smoke, pilot)
     reader_distribution_section(cells, lists)
+    reader_trace_section(cells, lists)
     model_section(cells, lists, drivers, smoke, pilot)
     sharded_section(cells, lists, smoke, pilot)
 
@@ -867,6 +1146,18 @@ def main(path, smoke=False, pilot=False):
 
 if __name__ == "__main__":
     arguments = sys.argv[1:]
+    if arguments[:1] == ["--read-trace"]:
+        if len(arguments) != 2:
+            print(__doc__, file=sys.stderr)
+            sys.exit(2)
+        try:
+            with open(arguments[1]) as stream:
+                events = parse_read_trace(stream.read())
+            print("\t".join(read_trace_columns(events)))
+        except (OSError, ValueError) as error:
+            print(f"read trace: {error}", file=sys.stderr)
+            sys.exit(1)
+        sys.exit(0)
     if arguments == ["--self-test"]:
         reducer_controls()
         sys.exit(0)

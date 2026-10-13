@@ -12,6 +12,9 @@
 #   W4 and its twin keep the unpatched threshold 64.
 #   PILOT       1 runs one block at the 8-P-core list only; otherwise the main
 #               run (default: main)
+#   DIAG_READS  auto or unset follows PILOT; 1 observes W4rd slow reads with
+#               a scratch native runtime, 0 builds its ordinary full-LTO image.
+#               Traced W4rd cells are diagnostic, never performance acceptance.
 #   BLOCKS      blocks of the main run (default 12, registered)
 #   CONTEXTS    contexts or threads each arm starts (default 64)
 #   MILLIS      milliseconds each cell lasts (default 5000)
@@ -34,12 +37,14 @@
 # The build writes DIR/bin/ and DIR/host.txt. The run appends one row per cell
 # to DIR/raw.tsv:
 #   block pos arm cpus drivers contexts ops ns ops_per_s check reads read_ns
-#   read_max_ns user_frac sys_frac read_med_ns read_p99_ns read_hist_ns
+#   read_max_ns user_frac sys_frac read_med_ns read_p99_ns read_hist_ns,
+#   read_trace_enabled read_slow_count and aligned read_slow_* comma lists.
 # where user_frac and sys_frac are the shares of the listed CPUs' time that
 # /proc/stat counts as user (user and nice) and system (system, irq and
 # softirq) between just before and just after the cell, and a field an arm
 # does not print is 0, except an absent histogram is blank and W4rd's absent
 # scalar percentiles are blank (its histogram supplies them in the reducer).
+# Unobserved traces are blank; enabled traces without slow reads have count 0.
 # Each cell's standard output and error are kept in
 # DIR/runs/. A cell that fails, or reports a driver count other than the
 # list's, is reported on standard error, leaves no row, and makes the script
@@ -63,6 +68,12 @@ done
 [ -n "$out" ] || { echo "usage: run.sh --out DIR [--build-only | --skip-build]" >&2; exit 2; }
 
 PILOT=${PILOT:-0}
+DIAG_READS=${DIAG_READS:-$PILOT}
+if [ "$DIAG_READS" = auto ]; then DIAG_READS=$PILOT; fi
+case $DIAG_READS in
+    0 | 1) ;;
+    *) echo "DIAG_READS must be auto, 0 or 1" >&2; exit 2 ;;
+esac
 BLOCKS=${BLOCKS:-12}
 CONTEXTS=${CONTEXTS:-64}
 MILLIS=${MILLIS:-5000}
@@ -172,11 +183,11 @@ compiler_of() {
 
 if [ "$build" = 1 ]; then
     clang=${CLANG:-/usr/bin/clang}
+    checkout=$(git -C "$here" rev-parse --show-toplevel)
     variant_record="$out/yield-variants.txt"
     : > "$variant_record"
     if has_arm W4n256 || has_arm W4nmax; then
         : "${WHITEFOOTC:?WHITEFOOTC names the unpatched compiler}"
-        checkout=$(git -C "$here" rev-parse --show-toplevel)
         # WHITEFOOTC was built from this checkout; fail rather than comparing
         # it against variant copies from a different tracked source revision.
         git -C "$checkout" diff --quiet HEAD -- compiler lib spec tests || {
@@ -263,6 +274,23 @@ PY
             W5p | W5pN) "$clang" -O2 -pthread -DPADDED=1 -o "$out/bin/$bin" "$here/w5.c" ;;
             # W7t is W7's source built a second time into its own binary.
             W7 | W7t | W7rd) "$clang" -O2 -pthread -o "$out/bin/$bin" "$here/w7.c" ;;
+            W4rd)
+                : "${WHITEFOOTC:?WHITEFOOTC names the compiler to build W4rd with}"
+                if [ "$DIAG_READS" = 1 ]; then
+                    # Keep the compiler's original LLVM. Observers live only in
+                    # this cell arm's copied native runtime, never W4 or its twin.
+                    python3 -B "$here/read-trace.py" --self-test "$checkout/compiler/src/backend"
+                    python3 -B "$here/read-trace.py" "$checkout/compiler/src/backend" "$out/read-trace/native"
+                    "$WHITEFOOTC" --emit-llvm --graph "$here/modules.wfg" --entry "$(entry_of "$arm")" \
+                        -o "$out/bin/$bin.ll"
+                    make -f "$here/read-trace.mk" ROOT="$checkout" \
+                        NATIVE_ROOT="$out/read-trace/native" BUILD="$out/read-trace/build" \
+                        LLVM="$out/bin/$bin.ll" IMAGE="$out/bin/$bin" CLANG="$clang"
+                else
+                    "$WHITEFOOTC" --full-lto --graph "$here/modules.wfg" --entry "$(entry_of "$arm")" -o "$out/bin/$bin"
+                fi
+                printf '%s\n' "$DIAG_READS" > "$out/w4rd-trace-mode.txt"
+                ;;
             *)
                 : "${WHITEFOOTC:?WHITEFOOTC names the compiler to build the Whitefoot arms with}"
                 "$(compiler_of "$arm")" --full-lto --graph "$here/modules.wfg" --entry "$(entry_of "$arm")" -o "$out/bin/$bin" ;;
@@ -298,7 +326,9 @@ PY
     for arm in $ARMS; do
         is_whitefoot "$arm" || continue
         bin=$(binary_of "$arm")
-        "$(compiler_of "$arm")" --emit-llvm --graph "$here/modules.wfg" --entry "$(entry_of "$arm")" -o "$out/bin/$bin.ll"
+        if [ "$arm" != W4rd ] || [ "$DIAG_READS" != 1 ]; then
+            "$(compiler_of "$arm")" --emit-llvm --graph "$here/modules.wfg" --entry "$(entry_of "$arm")" -o "$out/bin/$bin.ll"
+        fi
         awk -v arm="$arm" -v llvm="bin/$bin.ll" '
             /^define / {
                 name = $0; sub(/^.*@/, "", name); sub(/\(.*/, "", name)
@@ -347,6 +377,11 @@ PY
         echo "clang: $("$clang" --version | head -n 1)"
         cat "$counts"
         cat "$variant_record"
+        echo "W4rd read trace mode: $DIAG_READS (only selected W4rd is observed; instrumented cells are diagnostic)"
+        if has_arm W4rd && [ "$DIAG_READS" = 1 ]; then
+            cat "$out/read-trace/patches.txt"
+            echo "W4rd observed binary SHA-256: $(sha256sum "$out/bin/w_sharded_reader" | awk '{print $1}')"
+        fi
         echo "$twin_record"
         echo "$model_twin_record"
         echo "$shard_twin_record"
@@ -362,6 +397,17 @@ PY
 fi
 
 [ "$run" = 1 ] || exit 0
+
+if has_arm W4rd; then
+    if ! built_trace=$(cat "$out/w4rd-trace-mode.txt"); then
+        echo "W4rd has no saved trace mode; rebuild into a fresh output directory" >&2
+        exit 1
+    fi
+    [ "$built_trace" = "$DIAG_READS" ] || {
+        echo "W4rd was built with DIAG_READS=$built_trace, requested $DIAG_READS; rebuild into a fresh output directory" >&2
+        exit 1
+    }
+fi
 
 # The CPU numbers a taskset list names, one per line: "0-3,8" gives 0 1 2 3 8.
 expand_list() {
@@ -382,7 +428,7 @@ cpu_times() {
 }
 
 raw="$out/raw.tsv"
-printf 'block\tpos\tarm\tcpus\tdrivers\tcontexts\tops\tns\tops_per_s\tcheck\treads\tread_ns\tread_max_ns\tuser_frac\tsys_frac\tread_med_ns\tread_p99_ns\tread_hist_ns\n' > "$raw"
+printf 'block\tpos\tarm\tcpus\tdrivers\tcontexts\tops\tns\tops_per_s\tcheck\treads\tread_ns\tread_max_ns\tuser_frac\tsys_frac\tread_med_ns\tread_p99_ns\tread_hist_ns\tread_trace_enabled\tread_slow_count\tread_slow_ns\tread_slow_wait_shards\tread_slow_spins\tread_slow_yields\tread_slow_wait_max_ns\tread_slow_wait_max_shard\tread_slow_context_switches\tread_slow_executor_changed\tread_slow_nvcsw\tread_slow_nivcsw\tread_slow_rusage_valid\tread_slow_minflt\tread_slow_majflt\tread_slow_quiescence_ns\tread_slow_collects\tread_slow_executor_before\tread_slow_executor_after\tread_slow_service_yields\tread_slow_driver_switches\n' > "$raw"
 failed=0
 read -r -a arms <<< "$ARMS"
 count=${#arms[@]}
@@ -411,7 +457,7 @@ for block in $(seq 0 $((BLOCKS - 1))); do
             status=0
             # $extra is empty or one number, so it is left unquoted.
             # shellcheck disable=SC2086
-            WF_DRIVERS=$drivers WF_SCHED_REPORT=2 timeout $((MILLIS / 1000 + 120)) \
+            DIAG_READS=$DIAG_READS WF_DRIVERS=$drivers WF_SCHED_REPORT=2 timeout $((MILLIS / 1000 + 120)) \
                 taskset -c "$list" "$out/bin/$bin" "$threads" "$MILLIS" $extra \
                 > "$out/runs/$name.out" 2> "$out/runs/$name.err" || status=$?
             after=$(cpu_times "$list")
@@ -423,9 +469,27 @@ for block in $(seq 0 $((BLOCKS - 1))); do
                 failed=1
                 continue
             fi
+            # Only an explicitly observed W4rd parses the observer protocol.
+            # Missing/partial fields reject the cell instead of inventing zeros.
+            trace_file=
+            if [ "$arm" = W4rd ] && [ "$DIAG_READS" = 1 ]; then
+                trace_file="$out/runs/$name.trace.tsv"
+                if ! python3 -B "$here/summarize.py" --read-trace "$out/runs/$name.err" > "$trace_file"; then
+                    echo "$name: invalid or missing read trace; no raw row" >&2
+                    failed=1
+                    continue
+                fi
+            fi
             echo "$line" | awk -v block="$block" -v pos="$pos" -v arm="$arm" -v list="$list" \
-                -v drivers="$drivers" -v before="$before" -v after="$after" '
+                -v drivers="$drivers" -v before="$before" -v after="$after" -v trace_file="$trace_file" '
                 {
+                    if (trace_file != "") {
+                        if ((getline trace < trace_file) != 1) {
+                            print "missing parsed read trace" > "/dev/stderr"
+                            exit 1
+                        }
+                        close(trace_file)
+                    }
                     for (i = 1; i <= NF; i++) { split($i, kv, "="); v[kv[1]] = kv[2] }
                     if (!("read_med_ns" in v)) v["read_med_ns"] = arm == "W4rd" ? "" : 0
                     if (!("read_p99_ns" in v)) v["read_p99_ns"] = arm == "W4rd" ? "" : 0
@@ -435,9 +499,12 @@ for block in $(seq 0 $((BLOCKS - 1))); do
                     if (rate == "?") rate = sprintf("%.0f", v["ops"] / (v["ns"] / 1e9))
                     user = 0; sys = 0
                     if (total > 0) { user = (a[1] - b[1]) / total; sys = (a[2] - b[2]) / total }
-                    printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%.4f\t%.4f\t%s\t%s\t%s\n", block, pos, arm, list,
+                    printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%.4f\t%.4f\t%s\t%s\t%s", block, pos, arm, list,
                         drivers, v["contexts"], v["ops"], v["ns"], rate, v["check"], v["reads"],
                         v["read_ns"], v["read_max_ns"], user, sys, v["read_med_ns"], v["read_p99_ns"], v["read_hist_ns"]
+                    if (trace != "") printf "\t%s", trace
+                    else for (column = 0; column < 21; column++) printf "\t"
+                    printf "\n"
                 }' >> "$raw"
         done
     done
