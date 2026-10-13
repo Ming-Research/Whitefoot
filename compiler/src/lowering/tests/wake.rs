@@ -360,23 +360,54 @@ fn a_helper_with_local_statements_registers_the_full_guard_callback() {
             let test = tests[0].as_ref().expect("a full guard filter");
             let callback = test.callback.expect("statements use a callback");
             assert!(test.atoms.is_empty() && test.program.is_empty(), "{test:?}");
-            assert_eq!(test.values.len(), 2, "state and target: {test:?}");
+            assert_eq!(
+                test.values.len(),
+                1,
+                "only the live state is captured: {test:?}"
+            );
             assert!(matches!(
                 function(program, "main").value_type(test.values[0]),
                 Some(IrType::Address(_))
             ));
-            assert!(matches!(
-                definition(program, test.values[1]),
-                IrOperation::Constant(IrConstant::Integer { bits: 7, .. })
-            ));
             let thunk = &program.functions()[callback as usize];
+            let parameters = thunk.parameters();
+            assert_eq!(
+                parameters.len(),
+                1,
+                "the literal needs no capture: {thunk:?}"
+            );
+            assert!(matches!(parameters[0].1, IrType::Address(_)));
+            let arguments = thunk
+                .blocks()
+                .iter()
+                .flat_map(IrBlock::instructions)
+                .find_map(|instruction| match instruction {
+                    IrInstruction::Define {
+                        operation:
+                            IrOperation::Call {
+                                function: callee,
+                                arguments,
+                                ..
+                            },
+                        ..
+                    } if program.functions()[*callee as usize].name() == "several_statements" => {
+                        Some(arguments)
+                    }
+                    _ => None,
+                })
+                .expect("the callback computes the source guard");
+            assert_eq!(arguments.len(), 2, "state and literal target: {thunk:?}");
+            assert_eq!(arguments[0], parameters[0].0);
             assert!(
                 thunk.blocks().iter().flat_map(IrBlock::instructions).any(
                     |instruction| matches!(instruction,
-                        IrInstruction::Define { operation: IrOperation::Call { function: callee, .. }, .. }
-                            if program.functions()[*callee as usize].name() == "several_statements")
+                        IrInstruction::Define {
+                            result,
+                            operation: IrOperation::Constant(IrConstant::Integer { bits: 7, .. }),
+                            ..
+                        } if *result == arguments[1])
                 ),
-                "the callback computes the source guard: {thunk:?}"
+                "the callback defines its literal target directly: {thunk:?}"
             );
         },
     );
@@ -395,8 +426,12 @@ fn reply_ready(progress: &Progress, sequence: u64) -> ready: Bool reads(progress
     return True();
   }
   match progress^.failure {
-    None() => { return False(); }
-    Some(..) => { return True(); }
+    None() => {
+      return False();
+    }
+    Some(..) => {
+      return True();
+    }
   }
 }
 

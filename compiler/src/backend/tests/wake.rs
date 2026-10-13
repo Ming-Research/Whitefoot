@@ -136,8 +136,12 @@ fn reply_ready(progress: &Progress, sequence: u64) -> ready: Bool reads(progress
     return True();
   }
   match progress^.failure {
-    None() => { return False(); }
-    Some(..) => { return True(); }
+    None() => {
+      return False();
+    }
+    Some(..) => {
+      return True();
+    }
   }
 }
 
