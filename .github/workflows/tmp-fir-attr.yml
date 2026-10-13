@@ -1,0 +1,249 @@
+# Temporary FIR attribution probe; remove before this PR is ready.
+# This is an experiment, not a gate or a performance verdict.
+name: tmp-fir-attr
+on:
+  workflow_dispatch:
+defaults:
+  run:
+    shell: bash
+concurrency:
+  group: tmp-fir-attr-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+  CARGO_BUILD_JOBS: 2
+jobs:
+  attribute:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Identify revisions, shared inputs and native toolchain
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin '+refs/heads/main:refs/remotes/origin/main'
+          git worktree add --detach "$RUNNER_TEMP/fir-main" origin/main
+          mkdir -p "$RUNNER_TEMP/fir-attr"
+          rustup default stable
+          test -x /usr/bin/clang
+          command -v objdump
+          command -v nm
+          for input in fir.wf fir_host.ll fir_oracle.c oracle.h host-adapter.awk; do
+            cmp "tests/programs/compute/$input" "$RUNNER_TEMP/fir-main/tests/programs/compute/$input"
+          done
+          candidate_flags=$(sed -n 's/^NATIVE_OPTIMIZATION_FLAGS := //p' compiler/runtime.mk)
+          baseline_flags=$(sed -n 's/^NATIVE_OPTIMIZATION_FLAGS := //p' "$RUNNER_TEMP/fir-main/compiler/runtime.mk")
+          test "$candidate_flags" = '-O2 -falign-functions=64'
+          test "$candidate_flags" = "$baseline_flags"
+          {
+            printf 'candidate=%s\nbaseline=%s\n' "$(git rev-parse HEAD)" "$(git rev-parse origin/main)"
+            printf 'baseline_ref=origin/main (not merge-base)\nworkers=1\npairs=10\n'
+            printf 'native_optimization_flags=%s\n' "$candidate_flags"
+            printf 'native_toolchain=/usr/bin/clang; no extra target, fast-math, LTO or instrumentation flags\n'
+            printf 'image_builder=candidate tests/performance/Makefile for both arms; ROOT selects each revision runtime\n'
+            printf 'instrument=candidate tests/performance/runner.c for both arms\n'
+            rustc -vV
+            cargo --version
+            /usr/bin/clang --version
+            objdump --version
+            uname -a
+            lscpu
+            sha256sum tests/programs/compute/fir.wf tests/programs/compute/fir_host.ll \
+              tests/programs/compute/fir_oracle.c tests/programs/compute/oracle.h \
+              tests/programs/compute/host-adapter.awk tests/performance/Makefile \
+              tests/performance/runner.c compiler/runtime.mk \
+              "$RUNNER_TEMP/fir-main/compiler/runtime.mk"
+          } > "$RUNNER_TEMP/fir-attr/identity.txt"
+          git diff origin/main HEAD -- compiler/src/lowering/builder/demand.rs \
+            compiler/src/backend/emission/canonical.rs compiler/src/backend/sched/core.c \
+            > "$RUNNER_TEMP/fir-attr/source-diff.txt"
+          cat > "$RUNNER_TEMP/fir-attr/README.txt" <<'EOF'
+          FIR attribution, one worker, candidate versus fetched origin/main.
+          This hosted experiment reports observations, not a regression verdict.
+          Both timed images use --par, the same formal source/adapter/oracle and
+          timing instrument, each revision's compiler and ordinary native runtime,
+          and /usr/bin/clang -O2 -falign-functions=64. identity.txt identifies all
+          inputs and the CPU/toolchain. Native object configuration.txt is retained.
+
+          Prior evidence: the frozen prototype's FIR diagnostic priced the legacy
+          ordered four-tap loop about 5% faster than the canonical computation on
+          the 14900K in its noinline diagnostic construction. That supports checking
+          unrolling here; it does not attribute the current hosted 11% observation
+          or its absolute time to that cause on this host.
+          https://github.com/Ming-Research/Whitefoot/blob/73aaab85a92479ada6bf57fa996e17b163e019ed/research/investigations/par-demand/DESIGN.md#fir-diagnostic-results
+
+          Files for each arm:
+          fir.ll: actual bound --par IR consumed by the image builder, including
+          all metadata definitions. fir.optimized.ll: that IR after clang -O2.
+          fir.ordinary-unbound.ll / fir.ordinary.ll: the same compiler's non --par
+          output, before / after the identical host adapter binding. No ordinary
+          image is timed. fir.ordinary.optimized.ll is the untimed Off IR control.
+          *.remarks.txt: loop-vectorize, slp-vectorizer and loop-unroll remarks.
+          fir.object.disassembly.txt: actual program object instructions/relocations.
+          fir.disassembly.txt / fir.symbols.txt: actual linked image and addresses,
+          including runtime and host adapter. *.ir-index.txt locates functions,
+          request-word and pool operations, vector types, attributes and metadata.
+
+          Begin with wf_bench_fir in each actual image/optimized IR and follow the
+          WF_WORKERS=1 edge to wf__par_seq_filter and its callees. Do not charge
+          wf_filter's parallel driver to W=1 unless this call path reaches it.
+          (a) Look for request-word TLS loads, calls and chunk-boundary branches in
+          this executed path, then count them per output or tap iteration.
+          (b) Compare its vector instructions, unroll factor, inner-loop induction
+          and remainder branches; remarks report transformations and refusals.
+          Strict multiply/add can forbid reduction reassociation independently of
+          demand slicing; preserve that distinction when comparing vectorization.
+          Check ordered scalar multiplies/adds, including four-tap unrolling in
+          main's old outlined chunk, and verify no FMA/contraction replaces them.
+          Inspect the inlined copy in wf_bench_fir as well as standalone filter:
+          identical standalone bodies need not imply identical inlined hot loops.
+          (c) Compare candidate canonical sequential definitions with candidate Off
+          definitions before optimization, modulo names and metadata IDs; follow
+          noalias/alias.scope/TBAA attachments to their full definitions, and compare
+          parameter/function attributes. Then compare optimized Off and imported
+          versions and main's older sequential clone to distinguish import defects
+          from the changed outlining/optimization context. Missing, merged or lost
+          scope relationships matter; a different numeric metadata ID alone does not.
+          (d) Inspect the parallel driver's division of 150000 by runtime price,
+          max-one chunk length and remainder threshold. It affects W=1 only if the
+          traced executed path reaches this driver; no-workers and no-grants alone
+          do not prove that a chunk loop runs.
+          (e) Inspect allocation/zeroing, calls, retained abort checks, inlining,
+          spills, wf__par_pool_active's inactive branch and loop-header placement.
+          Actual object and linked disassembly distinguish program code from
+          runtime or linking changes, including symbol and loop offsets.
+
+          raw.tsv preserves runner output: kernel, arm, width, pass, sample,
+          kernel wall_ns, kernel cpu_ns, compared_count. Pair is in the log filename;
+          pass is pair modulo 5 because the existing runner admits only 0..4.
+          Each of ten pairs alternates baseline/candidate order; each process has
+          sample 0 warmup and samples 1..5 measured. Thus there are 50 measured
+          kernel calls and 10 warmups per arm. Full output verification is outside
+          the measured kernel interval and must succeed in every process.
+          process-wall.tsv includes subprocess startup, preparation, verification
+          and release; use raw.tsv's kernel wall_ns for the regression attribution.
+          The script prints every observation and keeps process stderr in logs/.
+          EOF
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            compiler/target
+            ${{ runner.temp }}/fir-main-target
+          key: ${{ runner.os }}-fir-attr-${{ hashFiles('compiler/Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-fir-attr-${{ hashFiles('compiler/Cargo.lock') }}-
+      - name: Build candidate compiler
+        run: |
+          WHITEFOOT_CHECK_TIMEOUT=300 perl .github/run-check.pl performance-candidate-compiler \
+            cargo build --manifest-path compiler/Cargo.toml --locked --profile gate --bin whitefootc
+      - name: Build origin/main compiler
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/fir-main-target
+        run: |
+          WHITEFOOT_CHECK_TIMEOUT=300 perl .github/run-check.pl performance-baseline-compiler \
+            cargo build --manifest-path "$RUNNER_TEMP/fir-main/compiler/Cargo.toml" \
+              --locked --profile gate --bin whitefootc
+      - name: Build only the two formal --par FIR images
+        run: |
+          WHITEFOOT_CHECK_TIMEOUT=180 perl .github/run-check.pl performance-candidate-images \
+            make -j2 -C tests/performance "$RUNNER_TEMP/fir-attr/candidate/fir" \
+              BUILD="$RUNNER_TEMP/fir-attr/candidate"
+          WHITEFOOT_CHECK_TIMEOUT=180 perl .github/run-check.pl performance-baseline-images \
+            make -j2 -C tests/performance "$RUNNER_TEMP/fir-attr/baseline/fir" \
+              BUILD="$RUNNER_TEMP/fir-attr/baseline" ROOT="$RUNNER_TEMP/fir-main" \
+              WFC="$RUNNER_TEMP/fir-main-target/gate/whitefootc" \
+              FIXTURES="$RUNNER_TEMP/fir-main/tests/programs/compute"
+      - name: Emit attribution controls, optimized IR, remarks and actual disassembly
+        run: |
+          cat > "$RUNNER_TEMP/fir-attr/inspect.sh" <<'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          arm=$1
+          root=$2
+          wfc=$3
+          output="$RUNNER_TEMP/fir-attr/$arm"
+          "$wfc" --emit-llvm "$root/tests/programs/compute/fir.wf" \
+            -o "$output/fir.ordinary-unbound.ll"
+          awk -f "$root/tests/programs/compute/host-adapter.awk" \
+            "$output/fir.ordinary-unbound.ll" "$root/tests/programs/compute/fir_host.ll" \
+            > "$output/fir.ordinary-bound.ll"
+          sed -e 's/@main(/@wf_fixture_main(/g' \
+            -e 's/@wf__main_body(/@wf_fixture_body(/g' \
+            "$output/fir.ordinary-bound.ll" > "$output/fir.ordinary.ll"
+          for stem in fir fir.ordinary; do
+            /usr/bin/clang -O2 -falign-functions=64 -Wno-override-module \
+              '-Rpass=(loop-vectorize|slp-vectorizer|loop-unroll)' \
+              '-Rpass-missed=(loop-vectorize|slp-vectorizer|loop-unroll)' \
+              '-Rpass-analysis=(loop-vectorize|slp-vectorizer|loop-unroll)' \
+              -S -emit-llvm -x ir "$output/$stem.ll" \
+              -o "$output/$stem.optimized.ll" 2> "$output/$stem.remarks.txt"
+            for form in "$stem" "$stem.optimized"; do
+              grep -nE '^(define|declare|attributes|![0-9]+ =)|wf_bench_fir|wf__par_seq_filter|wf_filter|wf__par_demand_word|wf__par_pool_active|alias.scope|noalias|tbaa|<[0-9]+ x ' \
+                "$output/$form.ll" > "$output/$form.ir-index.txt" || test "$?" -eq 1
+            done
+          done
+          objdump -drwC "$output/fir.o" > "$output/fir.object.disassembly.txt"
+          objdump -drwC "$output/fir" > "$output/fir.disassembly.txt"
+          nm -nC "$output/fir.o" > "$output/fir.object.symbols.txt"
+          nm -nC "$output/fir" > "$output/fir.symbols.txt"
+          sha256sum "$output/fir" "$output/fir.o" "$output/fir.ll" \
+            "$output/fir.ordinary-unbound.ll" > "$output/emission-identity.txt"
+          EOF
+          WHITEFOOT_CHECK_TIMEOUT=180 perl .github/run-check.pl performance-candidate-images \
+            bash "$RUNNER_TEMP/fir-attr/inspect.sh" candidate "$GITHUB_WORKSPACE" \
+              "$GITHUB_WORKSPACE/compiler/target/gate/whitefootc"
+          WHITEFOOT_CHECK_TIMEOUT=180 perl .github/run-check.pl performance-baseline-images \
+            bash "$RUNNER_TEMP/fir-attr/inspect.sh" baseline "$RUNNER_TEMP/fir-main" \
+              "$RUNNER_TEMP/fir-main-target/gate/whitefootc"
+      - name: Verify and run ten interleaved one-worker pairs
+        run: |
+          cat > "$RUNNER_TEMP/fir-attr/measure.py" <<'PY'
+          import os
+          from pathlib import Path
+          import subprocess
+          import time
+
+          root = Path(os.environ["RUNNER_TEMP"]) / "fir-attr"
+          logs = root / "logs"
+          logs.mkdir()
+          environment = dict(os.environ, WF_WORKERS="1")
+          environment.pop("WF_SPLIT_WORK", None)
+          for arm in ("baseline", "candidate"):
+              with (logs / f"verify-{arm}.txt").open("w") as stream:
+                  subprocess.run([str(root / arm / "fir"), "verify"], env=environment,
+                                 stdout=stream, stderr=subprocess.STDOUT,
+                                 check=True, timeout=60)
+          with (root / "raw.tsv").open("w") as raw, (root / "process-wall.tsv").open("w") as walls:
+              walls.write("pair\tarm\tprocess_wall_ns\n")
+              for pair in range(10):
+                  arms = ("baseline", "candidate") if pair % 2 == 0 else ("candidate", "baseline")
+                  for arm in arms:
+                      key = f"pair-{pair:02d}-{arm}"
+                      print(f"measure {key}: WF_WORKERS=1", flush=True)
+                      with (logs / f"{key}.tsv").open("w") as output, (logs / f"{key}.log").open("w") as error:
+                          started = time.perf_counter_ns()
+                          subprocess.run([str(root / arm / "fir"), "measure", arm, "1", str(pair % 5)],
+                                         env=environment, stdout=output, stderr=error,
+                                         check=True, timeout=60)
+                          elapsed = time.perf_counter_ns() - started
+                      rows = (logs / f"{key}.tsv").read_text()
+                      print(rows, end="", flush=True)
+                      print(f"process-wall\tpair={pair}\tarm={arm}\twall_ns={elapsed}", flush=True)
+                      raw.write(rows)
+                      raw.flush()
+                      walls.write(f"{pair}\t{arm}\t{elapsed}\n")
+                      walls.flush()
+          PY
+          WHITEFOOT_CHECK_TIMEOUT=300 perl .github/run-check.pl performance-comparison \
+            python3 -B "$RUNNER_TEMP/fir-attr/measure.py"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fir-attribution-${{ github.sha }}
+          if-no-files-found: warn
+          path: ${{ runner.temp }}/fir-attr/
