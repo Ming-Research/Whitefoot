@@ -4,10 +4,11 @@
 
 A design study, written 2026-10-13 before any implementation. Nothing in it
 was compiled or run. It reads the active specification `spec/kernel-spec.md`
-(title v0.138) and the design tree at Whitefoot `93e97efdc` (main); line
-numbers cite that revision. Each claim is marked **deduction** (argued from
-cited rules), **source-read**, **measured** (with its run, measured elsewhere
-and cited) or **estimate** (unmeasured judgment).
+(title v0.138) and the design tree at Whitefoot `93e97efdc` (main); specification
+rules are cited by rule ID, without line numbers. Measured results (with their
+run, measured elsewhere and cited) and estimates (unmeasured judgment) are
+marked as such; every other claim is a deduction from cited rules or a reading
+of cited sources unless marked.
 
 It answers the owner's direction on the Firn card that asked for a
 conditional target (2026-10-13, quoted on the board item "the atomic statement has one designed way to write which objects it holds" (translated)):
@@ -25,7 +26,9 @@ The pending additions it must fit, and the records they live in:
 - the sharded state `Shards<T>` with the `any_shard()` selector and a whole
   target (owner-approved specification draft on Whitefoot PR #385, branch
   `claude/shared-counter-study`, `research/investigations/shared-counters/DESIGN.md`
-  there; its draft is written against v0.136 and needs rebasing on v0.138);
+  there; at the time of writing (main `93e97efdc`, v0.138) its draft is written
+  against v0.136 and needs rebasing; the shards specification has since been
+  approved and is on its pull request at a later version);
 - the atomic value (owner chose option A on 2026-10-13, card "should there be an 'atomic value' type?" (translated)):
   a shared 64-bit unsigned value used only as a target, at most one operation
   per statement per path, performed at the statement's point without a lock
@@ -107,20 +110,19 @@ preferring the proof of use to come from facts rather than from scope
 with Firn's shape, and two measurements on the 14900K's 8 P-cores: first,
 before any language change, Firn's SET rewritten as one statement under
 today's compiler, which already takes a later-ordered target at its first
-use (Q0); then, after implementation, Firn's 40 sites as one statement each
+use (Q0, since measured: section 8.2); then, after implementation, Firn's 40 sites as one statement each
 with AOF off, within twin noise of 21.4 M/s.
 
 ## 1. The current target forms and their rules
 
-**Source-read** from [SHARE-1] (`spec/kernel-spec.md:2279`), [SHARE-2]
-(`:2310-2334`), [SHARE-3] (`:2336-2342`), [OP-4] (`:1065`) and the grammar
-(`:281`): `atomic_stmt := "atomic" IDENT "=" "&" place ("," IDENT "=" "&" place)* ("when" expr)? "{" stmt* "}"`.
+**Source-read** from [SHARE-1], [SHARE-2], [SHARE-3], [OP-4] and the
+`atomic_stmt` grammar production: `atomic_stmt := "atomic" IDENT "=" "&" place ("," IDENT "=" "&" place)* ("when" expr)? "{" stmt* "}"`.
 
 | target place | index atom | binding | what the statement holds |
 |---|---|---|---|
 | handle place of type `Shared<T>` | none | `&T`, the state | the object, exclusively |
 | handle place of type `SharedRead<T>` | none | `&T`, every path through it read-only | the object; the read-only authority follows aliases and call rows |
-| `Shared<ConcurrentHashMap<V>>` or `SharedRead<…>` | an atom of type `&[u8]` | `&Option<V>`, the entry under those bytes | that entry; shared with other non-writing statements when the block writes nothing through it (keyed-tables, decision 11; lowering, not source) |
+| `Shared<ConcurrentHashMap<V>>` or `SharedRead<…>` | an atom of type `&[u8]` | `&Option<V>`, the entry under those bytes | that entry; shared with other non-writing statements when the block writes nothing through it (keyed-tables, decision 6; lowering, not source) |
 | the same | a place of type `KeySet`, not moved | `&Entries<V>`, element at each index the entry under the set's key at that index, `len` the set's | those entries, locked together in one order |
 | the same | none | `&ConcurrentHashMap<V>`, indexable in the block by bytes and by key set | the whole map |
 
@@ -128,30 +130,30 @@ Rules that hold across the table, each cited where the design below keeps or
 changes it:
 
 - **R-names.** Each target is `IDENT = &place`; the guard and block together
-  name every binding, or the statement is refused (`:2332`; shared-objects,
-  "unnamed target refused").
+  name every binding, or the statement is refused ([SHARE-2]: "the guard and the block together name every
+  binding"; shared-objects, "unnamed target refused").
 - **R-read-at-begin.** Handle places and index atoms are read when the
   statement begins, before it holds anything, and form no path through a
-  binding of the statement (`:2325`).
+  binding of the statement ([SHARE-2]).
 - **R-overlap.** Two targets with overlapping handle places each have an
   index step, so several entry or key-set targets may name one handle place
-  while a whole target stands alone on it (`:2323`). Two handles may name one
+  while a whole target stands alone on it ([SHARE-2]). Two handles may name one
   object; the statement holds it once; the checker compares the states of
-  targets whose types unify as paths from one root (`:2325`).
+  targets whose types unify as paths from one root ([SHARE-2]).
 - **R-live.** Each object stays live until the statement completes whatever
-  the block does with the handle place (`:2328`); with PR #409 the handle is
+  the block does with the handle place ([SHARE-2]); with PR #409 the handle is
   counted only when the block may lose the place.
 - **R-scope.** Bindings are in scope in the guard and the block and leave
-  scope when the block ends by any edge (`:2329`).
+  scope when the block ends by any edge ([SHARE-2]).
 - **R-waits.** The statement counts as a waiting call; its guard and block
-  contain no waiting call and no atomic statement (`:2330-2331`).
+  contain no waiting call and no atomic statement ([SHARE-2]).
 - **R-guard.** The guard has an `if` condition's judgment, writes no path
-  (`:2331`), and its goals are established at the block's entry
-  ([ENT-3.S1], `:3484`).
+  ([SHARE-2]), and its goals are established at the block's entry
+  ([ENT-3.S1]).
 - **R-point.** The statement takes effect at one point after it begins and
   before it completes, with exclusive access to its targets' states, in one
   order with every other statement; an implementation may hold less wherever
-  outcomes are unchanged (`:2336-2342`).
+  outcomes are unchanged ([SHARE-3]).
 - **R-order** (design tree, state-locks second decision): every lock follows
   one order, types by a static total order and objects of one type by
   identity at run time; a type's group is taken at the first use of any of
@@ -159,8 +161,7 @@ changes it:
   entry groups and every group the guard reads are taken before the guard;
   everything is released when the block ends.
 - **R-invariants.** A target of a struct with type invariants establishes
-  them at the block's entry and owes them at every leaving edge ([TYPE-11],
-  `:428`).
+  them at the block's entry and owes them at every leaving edge ([TYPE-11]).
 
 Pending rows, as their records draft them, and what they add to the rules:
 
@@ -189,7 +190,7 @@ another. The design below replaces those sentences with one rule each for
 ### 2.1 Firn's conditional hold (the witness)
 
 **Source-read** from the board item and Firn-wf branch `claude/write-meta-free`
-(`firn/commands/strings.wf:466-492`). Firn's SET must hold the global write
+(`firn/commands/strings.wf`, Firn's SET). Firn's SET must hold the global write
 state `meta` only when the append-only file is on or the command carries an
 expiry option; otherwise only the key's entry. Today each of 40 commands is
 two statements around one body:
@@ -294,7 +295,7 @@ Requirements, each a check the design must pass:
 - **H1.** Read-only authority comes from the handle type `SharedRead<T>` and
   follows aliases and call rows; nothing in the statement marks it.
 - **H2.** Whether an entry is held shared comes from the block's write
-  footprint; nothing in the source marks it (keyed-tables, decision 11).
+  footprint; nothing in the source marks it (keyed-tables, decision 6).
 - **H3.** The handle count is paid only when the block may lose the handle
   place (PR #409). A target not held on this execution counts nothing.
 
@@ -565,8 +566,8 @@ the order or progress changes.
 - **A1, the condition.** `c` is an IDENT naming an ordinary `let` binding of
   the enclosing function body, of exact mode `own Bool`, in scope at the
   statement, that no `set_stmt` in the function body rebinds, reachable or
-  not. (The same "no `set` rebinds it" condition that makes a path exact,
-  `:3129`; it makes `c`'s value the same at the statement's beginning and at
+  not. (The same "no `set` rebinds it" condition that makes a path exact
+  ([ENT-2]); it makes `c`'s value the same at the statement's beginning and at
   every `if c` inside the block.) Any other condition expression is a hard
   error citing SHARE-2 at that IDENT, with a repair naming the `let` to
   introduce.
@@ -615,9 +616,9 @@ the order or progress changes.
 the condition with `if held` already (section 2.1), so A-lex serves them
 verbatim. The semantic alternative, **A-fact**, admits a use wherever the
 fact state proves `c` true, so that `if band(held, stored) { ... m ... }`
-would pass by signed decomposition ([ENT-3], `:3474`). It needs a Bool datum
+would pass by signed decomposition ([ENT-3]). It needs a Bool datum
 to be a goal, which today it is only when its initializer is an operation row
-(`:3461`): `logged = store^.logging` is a field read and would establish
+([ENT-3], the goal-origin definitions): `logged = store^.logging` is a field read and would establish
 nothing, so Firn's `if logged { ... m ... }` with `m = &meta if logged` would
 be refused under A-fact unless a new "Bool datum truth" fact is added. A-lex
 is the smaller, deterministic rule; A-fact can replace it later without
@@ -835,7 +836,7 @@ operation sits inside the `Some` arm, which keeps V2's count.
 kind `&Option<T>` whose payload is a shared object's state has no cell to
 point at: the state is stored as a `T`, not as an `Option<T>`, so the binding
 needs a representation of its own (a tag and a pointer, as `Entries<V>` has
-its own 24-byte representation, `:1171`), and payload selection through it
+its own 24-byte representation, [OP-9]), and payload selection through it
 must yield the state's address. Such a binding cannot be passed to a callee
 expecting an ordinary `&Option<T>`, so it needs either a prelude opaque type
 (`Held<T>` with the one operation "select") or a rule refusing its passing.
@@ -1086,7 +1087,7 @@ sense of one function, two call sites, which is the shell Firn wanted gone.
 
 **Under option C** `set_key` is the A form with `m = &store^.meta`
 unconditional. It compiles today; whether it runs at the "before" form's
-speed is Q0 of section 8.
+speed was Q0 of section 8, measured in 8.2 as within the twin's spread.
 
 ### 6.2 The sequence take: a number at the statement's point, nothing when logging is off
 
@@ -1497,8 +1498,11 @@ branch. And it reads as Firn's own sketch, which the owner saw.
 
 **Confidence 3/5.** The order argument is a deduction from R-order and
 two-phase locking (strong). The cost claim rests on today's lazy taking and
-PR #409, both implemented but, for this shape, unmeasured; Q0 measures it
-before any language change. What could overturn the recommendation: a
+PR #409. Lazy taking is implemented; PR #409 is an open pull request not
+on main and not in the measured compiler. Q0 measured the one-statement
+form without PR #409: per-round ratio median 0.9965 against the
+two-statement form, within the twin's spread, with a cost below 1% not
+excluded (section 8.2). What could overturn the recommendation: a
 program that needs to hold an object it finds inside held state (then B is
 wanted, and A and B compose: B's `hold` could be added later under A's
 header without conflict); the owner preferring proof by facts over proof by
@@ -1652,11 +1656,14 @@ benchmark with AOF off, 8 cores, as the board item measured 21.4 M/s.
   or the condition must be two atoms. Disposition: the example in this
   record is written in the accepted grammar; the board item's example should
   be corrected when that item is worked.
-- **Firn's single-statement form may already run at speed today.** Today's
+- **Firn's single-statement form runs at speed today.** Today's
   lowering takes `Meta` at its first use; Firn's measured collapse to 1.23
   M/s had `aof_refuse(meta: m)` at the top of the block, an unconditional
-  first use. Disposition: Q0, before any language change; Firn's item should
-  not wait for A to try it.
+  first use. Q0 measured the one-statement form with every use of `m` under
+  `if held`: per-round ratio median 0.9965 against the two-statement form
+  (range 0.984-1.001; twin 1.001), within the twin's spread, compiler
+  without PR #409, a cost below 1% not excluded (section 8.2). Disposition:
+  measured; Firn needs no language change for speed.
 - **`u64` beside an entry is held on every execution today** (section 6.2),
   because primitives precede prelude nominals in the order and a group is
   taken with every earlier untaken group. This is correct and invisible, but
@@ -1664,9 +1671,11 @@ benchmark with AOF off, 8 cores, as the board item measured 21.4 M/s.
   (state-locks, second decision) holds only for later-ordered types.
   Disposition: stated here; A removes the dependence for conditional
   targets.
-- **The Shards draft is against v0.136** while main is at v0.138 (two
-  amendments landed since); its rebase must re-archive. Disposition: for the
-  PR #385 branch.
+- **The Shards draft was against v0.136** while main was at v0.138 at the
+  time of writing (main `93e97efdc`; two amendments landed since); its
+  rebase must re-archive. The shards specification has since been approved
+  and is on its pull request at a later version. Disposition: for the PR #385
+  branch.
 - **The object lock has no read flag** (point 7 above). Disposition: backlog
   for the compiler, with the counter study's measurement as its witness.
 - **No case today checks that a target named only on an untaken path costs
