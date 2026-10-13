@@ -1,0 +1,14 @@
+enum Step {
+  Next();
+  Stop();
+}
+
+fn inspect(steps: &Slots<Step, 4>) -> result: unit reads(steps) contract {
+  requires forall ends(j in 0_u64..steps^.len): steps^[j] is Halt;
+} {
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
