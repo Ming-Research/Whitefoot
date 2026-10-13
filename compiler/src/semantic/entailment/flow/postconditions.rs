@@ -151,7 +151,7 @@ impl Input<'_, '_> {
             return component
                 .generated
                 .iter()
-                .map(|(postcondition, summary)| available(*postcondition, summary.clone()))
+                .map(|(postcondition, summary)| available(postcondition, summary.clone()))
                 .collect();
         }
         self.context
