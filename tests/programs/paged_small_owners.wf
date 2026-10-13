@@ -1,9 +1,9 @@
 alias MemoryMeter = std::process::MemoryMeter;
 
 fn counted(meter: &MemoryMeter, before: u64, expected: u64) -> result: Bool writes(meter) {
-  let held = std::process::heap_in_use(meter: meter);
-  if held >= before {
-    let bytes = held - before;
+  let observed = std::process::heap_in_use(meter: meter);
+  if observed >= before {
+    let bytes = observed - before;
     if bytes == expected {
       return True();
     } else {

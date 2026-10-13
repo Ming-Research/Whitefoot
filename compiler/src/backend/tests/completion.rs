@@ -298,6 +298,16 @@ fn the_compiler_owned_c_units_compile_in_the_default_dialect() {
         ),
         ("completion/bridge.h", crate::COMPLETION_BRIDGE_HEADER),
         (
+            "completion/snapshot_export.h",
+            crate::SNAPSHOT_EXPORT_HEADER,
+        ),
+        ("completion/fork_capsule.h", crate::FORK_CAPSULE_HEADER),
+        (
+            "completion/snapshot_export.c",
+            crate::SNAPSHOT_EXPORT_SOURCE,
+        ),
+        ("completion/fork_capsule.c", crate::FORK_CAPSULE_SOURCE),
+        (
             "completion/linux_io_uring.h",
             crate::COMPLETION_LINUX_IO_URING_HEADER,
         ),
@@ -315,7 +325,10 @@ fn the_compiler_owned_c_units_compile_in_the_default_dialect() {
             crate::COMPLETION_FILE_POSIX_SOURCE,
         ),
         ("completion/bridge.c", crate::COMPLETION_BRIDGE_SOURCE),
-        ("completion/stop_signals.c", crate::COMPLETION_STOP_SIGNALS_SOURCE),
+        (
+            "completion/stop_signals.c",
+            crate::COMPLETION_STOP_SIGNALS_SOURCE,
+        ),
         (
             "completion/linux_io_uring.c",
             crate::COMPLETION_LINUX_IO_URING_SOURCE,
@@ -325,6 +338,7 @@ fn the_compiler_owned_c_units_compile_in_the_default_dialect() {
         ("sched/entry.c", crate::SCHED_ENTRY_SOURCE),
         ("completion/floor.c", crate::FLOOR_RUNTIME_SOURCE),
         ("concurrent_map.h", crate::CONCURRENT_MAP_HEADER),
+        ("concurrent_map_layout.h", crate::CONCURRENT_MAP_LAYOUT_HEADER),
         ("concurrent_map.c", crate::CONCURRENT_MAP_SOURCE),
         ("keyed_table.c", crate::KEYED_TABLE_SOURCE),
     ];
@@ -816,10 +830,15 @@ fn linked_c_units_avoid_identifiers_the_host_compiler_predefines() {
     for (name, source) in [
         ("heap.c", crate::HEAP_SOURCE),
         ("bridge.c", crate::COMPLETION_BRIDGE_SOURCE),
+        ("snapshot_export.c", crate::SNAPSHOT_EXPORT_SOURCE),
+        ("snapshot_export.h", crate::SNAPSHOT_EXPORT_HEADER),
+        ("fork_capsule.c", crate::FORK_CAPSULE_SOURCE),
+        ("fork_capsule.h", crate::FORK_CAPSULE_HEADER),
         ("stop_signals.c", crate::COMPLETION_STOP_SIGNALS_SOURCE),
         ("concurrent_map.c", crate::CONCURRENT_MAP_SOURCE),
         ("keyed_table.c", crate::KEYED_TABLE_SOURCE),
         ("concurrent_map.h", crate::CONCURRENT_MAP_HEADER),
+        ("concurrent_map_layout.h", crate::CONCURRENT_MAP_LAYOUT_HEADER),
         ("runtime.c", crate::COMPLETION_RUNTIME_SOURCE),
         ("wait_host.c", crate::COMPLETION_WAIT_HOST_SOURCE),
         ("wait_windows.c", crate::COMPLETION_WAIT_WINDOWS_SOURCE),

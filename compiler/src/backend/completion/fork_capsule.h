@@ -6,12 +6,14 @@
 #endif
 
 #if defined(__linux__) && defined(__x86_64__) && defined(__LP64__) && defined(__GLIBC__)
-/* Native witness surface only; this is not a Whitefoot callback ABI. Every
+/* Restricted native capsule; this is not a Whitefoot callback ABI. Every
  * encoder and its transitive calls must be audited: private COW read-only
  * captured data, stack/scratch writes, raw syscalls on designated outputs,
  * no inherited allocators, TLS, locks, runtime helpers or cleanup. Outputs
  * must be fresh unpublished descriptors, with no parent offset/flag mutation.
- * One calling thread owns prepare/start/finish and outlives the child. The
+ * In the native witness workflow one thread owns prepare/start/finish and
+ * outlives the child. Source reserves/jobs may move; the physical executor
+ * that performs their fork still outlives the child. The
  * parent must leave children waitable and have no competing child reaper.
  * Capture runs glibc's fork, so the process must register no pthread_atfork
  * handler: a handler runs in the child before the capsule resets anything,
@@ -33,6 +35,11 @@ typedef int (*wf_fork_capsule_encoder)(
     size_t output_count
 );
 
+/* Runtime-supplied source encoder, never a Whitefoot callback. It emits its
+ * own status protocol, including setup failure, and returns an exit code. */
+typedef int (*wf_fork_capsule_source_encoder)(const void *, void *, size_t,
+                                             int, int, int);
+
 typedef struct wf_fork_capsule {
     void *scratch;
     size_t scratch_size;
@@ -47,6 +54,9 @@ typedef struct wf_fork_capsule {
     uint64_t parent_signal_mask;
     unsigned armed;
     pid_t capture_pid;
+    void *source_stack;
+    size_t source_stack_size;
+    wf_fork_capsule_source_encoder source_encoder;
 } wf_fork_capsule;
 
 typedef struct wf_fork_capsule_job {
@@ -75,6 +85,11 @@ int wf_fork_capsule_prepare(
     size_t output_count,
     size_t scratch_size
 );
+int wf_fork_capsule_prepare_source(wf_fork_capsule *, int, size_t, void *,
+                                   size_t, wf_fork_capsule_source_encoder);
+/* Bookkeeping only: the ordinary atomic entry has already blocked signals
+ * and owns their restoration, independently of the supplied reserve. */
+int wf_fork_capsule_adopt_blocked(wf_fork_capsule *, uint64_t);
 /* Held-capture route: arm outside the dataset hold, acquire the hold, call
  * capture_held, release the hold immediately on return, then parent_start.
  * Arm blocks this calling thread's signals, excluding inherited handlers at
@@ -90,6 +105,11 @@ pid_t wf_fork_capsule_capture_held(
     wf_fork_capsule_encoder encoder
 );
 int wf_fork_capsule_parent_start(wf_fork_capsule *capsule, wf_fork_capsule_job *job);
+/* Outside holds; no pidfd and no mask restoration. */
+int wf_fork_capsule_parent_start_owned(wf_fork_capsule *, wf_fork_capsule_job *);
+/* Termination only, leaving source status collection and descriptors owned.
+ * On error the child remains owned; success clears its pid exactly once. */
+int wf_fork_capsule_reap_owned(wf_fork_capsule_job *, wf_fork_capsule_result *);
 /* Convenience composition of those three steps, OUTSIDE dataset holds.
  * Returns an errno only when no child exists; otherwise returns zero and a
  * job with pid/pidfd. No ring/driver/pool state is consulted. */

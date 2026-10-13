@@ -1,0 +1,21 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn claim(rows: &Slots<Slots<Slots<u8, 8>, 4>, 4>, i: u64, j: u64) -> r: u64 writes(rows.next), writes(rows.len) contract {
+  requires i < rows^.len;
+  requires 0_u64 < rows^.len;
+  requires rows^.len < rows^.cap;
+  requires j < rows^[0_u64].len;
+  ensures r <= rows^[i][j].len;
+} {
+  doc "The inner subscript indexes the exit state's element at i's entry value, which no term names once i is rebound; element zero's bound does not reach it.";
+  let fresh = slots_new::<Slots<u8, 8>, 4>();
+  place_back(window: rows, value: move fresh);
+  set i = 0_u64;
+  return 0_u64;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "The declaration alone is judged.";
+  return exit_status(code: 0_u8);
+}

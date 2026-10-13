@@ -20,8 +20,8 @@ fn walk(first: Holder) -> code: u8 pure {
   place_back(window: &run, value: move first);
   let second = hold(value: 5_u8);
   place_back(window: &run, value: move second);
-  let held = run.len;
-  if held == 2_u64 {
+  let observed = run.len;
+  if observed == 2_u64 {
   } else {
     return 1_u8;
   }

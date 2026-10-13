@@ -10,6 +10,7 @@ pub(in crate::semantic::check) mod expressions;
 pub(in crate::semantic) mod floats;
 mod frozen;
 mod generics;
+mod held;
 mod inventory;
 mod linearity;
 mod lock_ledger_sources;
@@ -59,7 +60,7 @@ use super::model::{
 use super::permission::{PermissionSignature, analyze_permission, plan_permission_separations};
 use super::permission_ledger::{LedgerSource, prepare_storage_ledger, render_ledger};
 use super::places::ResolvedPlace;
-use super::postcondition::CheckedPostconditionSelector;
+use super::postcondition::{CheckedPostcondition, CheckedPostconditionSelector};
 use super::tree::TreeView;
 use super::{CheckStop, CheckedProgram};
 use control::{ControlCounters, ControlScope};
@@ -150,6 +151,8 @@ struct FunctionSignature {
     /// [WAIT-1] whether the declaration writes `waits`: a waiting function,
     /// whose calls are admitted only in the body of another waiting function.
     waits: bool,
+    /// Normalized reference parameter ordinals of the ordinary held contract.
+    held_parameters: Vec<usize>,
     /// A callable hypothesis used only while checking generic source spelling.
     /// Concrete calls always select a verified source function instead.
     formal_parameter: Option<generics::GenericParameterKey>,
@@ -280,6 +283,10 @@ struct LocalBinding {
     /// reference binding is rebound; only its flow-sensitive validity meets
     /// at joins.
     refinement_witnesses: Vec<RefinementWitness>,
+    /// [SHARE-2] on an atomic statement's binding, the places its handle was
+    /// read from, which every write and move checked in the statement marks
+    /// when it may overlap one of them. Every copy of this state shares it.
+    handle_watch: Option<std::rc::Rc<references::HandleWatch>>,
     /// [EFF-1] whether this binding is a parameter holding the value its call
     /// passed on every path to here. An index names a row's index parameter
     /// only while it does, since a row evaluates that parameter once at the
@@ -666,6 +673,13 @@ struct BodyChecker {
     /// checked: inside one, a waiting call or another atomic statement is
     /// refused.
     atomic_depth: u32,
+    /// Current atomic target origins and protection obligations before framing.
+    held_atomic_roots: Vec<BindingId>,
+    held_calls: Vec<(NodeId, Vec<ResolvedPlace>)>,
+    held_writes: Vec<(NodeId, ResolvedPlace)>,
+    checked_held_calls: Vec<super::model::CheckedHeldCall>,
+    held_atomic_node: Option<crate::NodePath>,
+    held_guard: bool,
     table_set_borrow: Option<NodeId>,
     /// [RANGE-1] the range clauses of the function being checked, published
     /// with its finished body. Every retry starts empty.
@@ -680,6 +694,10 @@ struct BodyChecker {
     /// [ENT-2] the rebound reference parameters and `atomic` binders, whose
     /// own binding roots the path they name; no exact path starts at one.
     rebound_anchors: HashSet<BindingId>,
+    /// [ENT-2] each range alias, `let q = r;` with neither variable rebound,
+    /// to the variable its places are identified through: the source's own
+    /// entry when the source is itself a range alias, else the source.
+    range_alias_sources: HashMap<BindingId, BindingId>,
 }
 
 /// Program-wide judgments and reuse records, published after checking succeeds.
@@ -1978,9 +1996,10 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             .declarations
             .relation_postcondition_selectors(postcondition_selectors)?;
         let mut postcondition_relations = Vec::with_capacity(postcondition_selectors.len());
+        let mut postcondition_places = Vec::with_capacity(postcondition_selectors.len());
         for selector in &postcondition_selectors {
             let mut postcondition_bindings = parameter_bindings.clone();
-            postcondition_relations.push(self.check_postcondition_clause(
+            let (relation, places) = self.check_postcondition_clause(
                 FunctionContext {
                     check_context,
                     function: signature,
@@ -1988,7 +2007,9 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 selector,
                 &mut postcondition_bindings,
                 &mut counters,
-            )?);
+            )?;
+            postcondition_relations.push(relation);
+            postcondition_places.push(places);
         }
         self.types
             .declarations
@@ -2168,8 +2189,9 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             let mut postconditions = postcondition_selectors
                 .into_iter()
                 .zip(postcondition_relations)
-                .map(|(selector, relation)| {
-                    self.types.build_checked_postcondition(
+                .zip(postcondition_places)
+                .map(|((selector, relation), places)| {
+                    let mut postcondition = self.types.build_checked_postcondition(
                         FunctionContext {
                             check_context,
                             function: signature,
@@ -2178,7 +2200,9 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                         selector,
                         relation,
                         &checked.statements,
-                    )
+                    )?;
+                    postcondition.places = places;
+                    Ok::<_, CheckStop>(postcondition)
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             postconditions.extend(self.type_invariant_postconditions(
@@ -2196,9 +2220,10 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 .cloned();
             let mut admitted = Vec::new();
             let mut postconditions = Vec::new();
-            for (position, (selector, relation)) in postcondition_selectors
+            for (position, ((selector, relation), places)) in postcondition_selectors
                 .into_iter()
                 .zip(postcondition_relations)
+                .zip(postcondition_places)
                 .enumerate()
             {
                 if source_admitted
@@ -2218,7 +2243,10 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                     &checked.statements,
                 )? {
                     admitted.push(position);
-                    postconditions.push(postcondition);
+                    postconditions.push(CheckedPostcondition {
+                        places,
+                        ..postcondition
+                    });
                 }
             }
             if self
@@ -2282,6 +2310,8 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             // its own allocation here.
             allocates: exhibited.allocates,
             requirements,
+            held_parameters: signature.checked_held_parameters()?,
+            held_calls: std::mem::take(&mut self.body.checked_held_calls),
             requirement_places,
             routed_requirements,
             postconditions,
@@ -2364,6 +2394,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 )
             }),
             refinement_witnesses: Vec::new(),
+            handle_watch: None,
             call_value: true,
         })
     }
@@ -2710,10 +2741,10 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                     // over is the value that argument names here.
                     let projection = match projection {
                         GoalProjection::FormalSubscript { ordinal } => GoalProjection::Subscript(
-                            Checker::goal_argument_offset(arguments.get(*ordinal as usize))?,
+                            self.goal_argument_offset(arguments.get(*ordinal as usize))?,
                         ),
                         GoalProjection::FormalPage { ordinal } => GoalProjection::Page(
-                            Checker::goal_argument_offset(arguments.get(*ordinal as usize))?,
+                            self.goal_argument_offset(arguments.get(*ordinal as usize))?,
                         ),
                         other => *other,
                     };
@@ -2781,33 +2812,26 @@ impl<'check, 'unit> Checker<'check, 'unit> {
     /// The offset one actual supplies to a formal-valued subscript [MSR-1].
     ///
     /// [ENT-2] decides a place's identity by its canonical spelling, so an
-    /// argument that names a literal, a named or generic const, or a live
-    /// binding supplies exactly that, and an argument that names none of
-    /// them supplies the unknown offset, which no admitted family separates
-    /// -- the conservative reading in both directions [OWN-7].
+    /// argument [`super::goal::actual_offset`] names supplies exactly that,
+    /// and an argument it names no offset for supplies the unknown offset,
+    /// which no admitted family separates -- the conservative reading in
+    /// both directions [OWN-7].
     fn goal_argument_offset(
+        &self,
         argument: Option<&GoalExpression>,
     ) -> Result<super::places::CapturedValue, CheckStop> {
-        use super::places::{CapturedTerm, CapturedValue};
-        let unknown = CapturedValue::unknown();
-        let Some(GoalExpression::Datum(datum)) = argument else {
-            return Ok(unknown);
+        let named = |declaration| {
+            let constant = self
+                .types
+                .constant(*self.types.constants.get(&declaration)?);
+            match constant.ok()?.value {
+                CheckedValue::Integer { bits, .. } => Some(bits),
+                _ => None,
+            }
         };
-        Ok(match datum {
-            GoalDatum::Literal(CheckedValue::Integer { bits, .. }) => {
-                CapturedValue::new(unknown.capture, CapturedTerm::Literal(*bits))
-            }
-            GoalDatum::Literal(CheckedValue::ConstGeneric { declaration, .. }) => {
-                CapturedValue::new(unknown.capture, CapturedTerm::Const(*declaration))
-            }
-            GoalDatum::Place {
-                root, projections, ..
-            } if projections.is_empty() => {
-                CapturedValue::new(unknown.capture, CapturedTerm::Binding(*root))
-            }
-            _ => return Ok(unknown),
-        }
-        .goal_identity())
+        Ok(argument
+            .and_then(|argument| super::goal::actual_offset(argument, &named))
+            .unwrap_or_else(super::places::CapturedValue::unknown))
     }
 
     fn instantiate_goal_operation(

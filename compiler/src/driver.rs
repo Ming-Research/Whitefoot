@@ -2937,14 +2937,14 @@ fn lower_selected(
             let mut ledger = ledger;
             ledger.extend(module.take_actualization_ledger());
             if launcher_contract_ready {
-                module.append(launcher::render(ir, selected)?);
+                module.append(launcher::render(ir, selected)?)?;
             }
             if let Some(failure) = caller_failure {
                 let mut comment = crate::backend::emission::Module::default();
                 comment.text(format!(
                     "\n; Executable caller was not admitted: {failure}\n"
                 ));
-                module.append(comment);
+                module.append(comment)?;
             }
             Ok(Reported { module, ledger })
         })
@@ -2953,6 +2953,13 @@ fn lower_selected(
                 return CompilationFailure::toolchain(
                     crate::toolchain::prepare_toolchain()
                         .expect_err("Toolchain failure records the settled resolution/probe error"),
+                );
+            }
+            if failure == BackendFailure::SnapshotTargetUnsupported {
+                return CompilationFailure::new(
+                    CompilationStage::Backend,
+                    CompilationFailureKind::Unsupported,
+                    "snapshot export requires Linux x86-64 with glibc; source checking succeeded",
                 );
             }
             let (stage, kind) = match failure {

@@ -223,6 +223,7 @@ impl<'unit> Checker<'_, 'unit> {
             declared_effects: EffectSet::default(),
             contract_reads: None,
             waits: false,
+            held_parameters: Vec::new(),
             formal_parameter: None,
             substitution: GenericSubstitution::default(),
         };

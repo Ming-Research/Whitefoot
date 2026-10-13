@@ -715,8 +715,8 @@ fn run_zrange(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
   set client^.state = state_absent;
   atomic slot = &store^.keys[key] {
     match slot^ {
-      Some(value: held) => {
-        let found = range_ranked(env: client, value: held, walk: &walk);
+      Some(value: observed) => {
+        let found = range_ranked(env: client, value: observed, walk: &walk);
       }
       None() => {
       }
@@ -794,8 +794,8 @@ fn run_zcount(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
   set client^.number = 0_u64;
   atomic slot = &store^.keys[key] {
     match slot^ {
-      Some(value: held) => {
-        let found = count_ranked(env: client, value: held, walk: &walk);
+      Some(value: observed) => {
+        let found = count_ranked(env: client, value: observed, walk: &walk);
       }
       None() => {
       }
@@ -945,8 +945,8 @@ fn run_zremrange(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client
   set client^.number = 0_u64;
   atomic slot = &store^.keys[key], m = &store^.meta {
     match slot^ {
-      Some(value: held) => {
-        let edited = remove_walked(env: client, value: held, walk: &walk);
+      Some(value: observed) => {
+        let edited = remove_walked(env: client, value: observed, walk: &walk);
       }
       None() => {
       }

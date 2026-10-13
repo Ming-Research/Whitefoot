@@ -129,11 +129,11 @@ impl TargetLayout {
         {
             return Self::for_triple("x86_64-apple-darwin");
         }
-        #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
+        #[cfg(all(target_arch = "aarch64", target_os = "linux", target_env = "gnu"))]
         {
             return Self::for_triple("aarch64-unknown-linux-gnu");
         }
-        #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+        #[cfg(all(target_arch = "x86_64", target_os = "linux", target_env = "gnu"))]
         {
             return Self::for_triple("x86_64-unknown-linux-gnu");
         }
@@ -1032,6 +1032,65 @@ impl TargetAggregateLayout {
     pub(super) const fn align(self) -> u64 {
         self.align
     }
+}
+
+/// Native value extent used by immutable supplied-definition metadata.
+pub(crate) fn representation_layout(
+    target: TargetLayout,
+    program: &IrProgram,
+    ty: IrType,
+) -> Result<TargetAggregateLayout, TargetLayoutFailure> {
+    let layout = LayoutComputer::new(target, program.nominals(), program.elements()).layout(ty)?;
+    Ok(TargetAggregateLayout {
+        size: layout.size,
+        align: layout.align,
+    })
+}
+
+/// Declared field offsets, using the same layout walk as value emission.
+pub(crate) fn representation_fields(
+    target: TargetLayout,
+    program: &IrProgram,
+    fields: &[IrType],
+) -> Result<Vec<(IrType, u64)>, TargetLayoutFailure> {
+    LayoutComputer::new(target, program.nominals(), program.elements()).field_offsets(fields)
+}
+
+/// Payload offsets for either enum representation. Tags always begin at zero.
+pub(crate) fn representation_variant(
+    target: TargetLayout,
+    program: &IrProgram,
+    nominal: IrNominalId,
+    tag: u32,
+) -> Result<Vec<(IrType, u64)>, TargetLayoutFailure> {
+    let data = program
+        .nominal(nominal)
+        .ok_or(TargetLayoutFailure::InvalidIr)?;
+    let IrNominalKind::Enum { variants } = data.kind() else {
+        return Err(TargetLayoutFailure::InvalidIr);
+    };
+    let selected = variants
+        .iter()
+        .position(|v| v.tag() == tag)
+        .ok_or(TargetLayoutFailure::InvalidIr)?;
+    let mut fields = vec![IrType::Integer {
+        width: 32,
+        signed: false,
+    }];
+    let union = is_union_enum(program.nominals(), program.elements(), nominal)?;
+    let start = if union {
+        1
+    } else {
+        for variant in &variants[..selected] {
+            fields.extend(variant.fields().iter().map(|f| f.ty()));
+        }
+        fields.len()
+    };
+    fields.extend(variants[selected].fields().iter().map(|f| f.ty()));
+    Ok(representation_fields(target, program, &fields)?
+        .into_iter()
+        .skip(start)
+        .collect())
 }
 
 /// Alignment the compiler-owned parallel runtime guarantees for the byte

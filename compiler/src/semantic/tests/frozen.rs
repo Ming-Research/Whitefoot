@@ -215,7 +215,7 @@ fn frozen_new_owes_its_argument_type_invariants() {
 
 #[test]
 fn frozen_new_checks_its_written_content_argument_at_the_call() {
-    let source = "fn denied(value: Shared<u8>) -> result: unit pure {\n  let held = frozen_new::<Shared<u8>>(value: move value);\n  return unit;\n}\n";
+    let source = "fn denied(value: Shared<u8>) -> result: unit pure {\n  let observed = frozen_new::<Shared<u8>>(value: move value);\n  return unit;\n}\n";
     with_semantics(source.as_bytes(), |outcome| {
         let SemanticOutcome::SourceIssue { issue } = outcome else {
             panic!("{outcome:?}");
@@ -245,7 +245,7 @@ fn frozen_type_mismatches_use_source_names_including_nested_boxes() {
     ] {
         let operand = if setup.is_empty() { "value" } else { "nested" };
         let source = format!(
-            "struct Holder {{\n  held: Box<u8>;\n}}\n\nfn denied(value: {actual}) -> result: Holder pure {{\n{setup}  let object = Holder(held: move {operand});\n  return move object;\n}}\n"
+            "struct Holder {{\n  observed: Box<u8>;\n}}\n\nfn denied(value: {actual}) -> result: Holder pure {{\n{setup}  let object = Holder(observed: move {operand});\n  return move object;\n}}\n"
         );
         with_semantics(source.as_bytes(), |outcome| {
             let SemanticOutcome::SourceIssue { issue } = outcome else {

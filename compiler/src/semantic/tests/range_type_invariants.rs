@@ -154,7 +154,7 @@ fn need(rows: &[Row]) -> result: unit pure contract {{
 }}
 
 fn forward(rows: &[Row]) -> result: unit {effect} contract {{
-  requires forall held(b in 0_u64..rows^.len, k in 0_u64..rows^[b].payloads.len): rows^[b].payloads[k] == 0_u64;
+  requires forall observed(b in 0_u64..rows^.len, k in 0_u64..rows^[b].payloads.len): rows^[b].payloads[k] == 0_u64;
 }} {{
 {before}  need(rows: rows);
   return unit;
@@ -259,7 +259,7 @@ fn deeper_subscripts_keep_all_selection_positions() {
 }
 
 fn deep(xs: &[Slots<Slots<u64, 2>, 2>]) -> result: unit pure contract {
-  requires forall held(b in 0_u64..xs^.len, k in 0_u64..xs^[b].len) when 0_u64 < xs^[b][k].len: xs^[b][k][0_u64] == 0_u64;
+  requires forall observed(b in 0_u64..xs^.len, k in 0_u64..xs^[b].len) when 0_u64 < xs^[b][k].len: xs^[b][k][0_u64] == 0_u64;
 } {
   need(xs: xs);
   return unit;
@@ -270,8 +270,8 @@ fn deep(xs: &[Slots<Slots<u64, 2>, 2>]) -> result: unit pure contract {
 fn atomic(body: &str) -> String {
     format!(
         "{CONTEXT}fn update(state: Shared<Context>) -> result: unit pure waits {{
-  atomic held = &state {{
-    if 0_u64 < held^.blocks.len {{
+  atomic observed = &state {{
+    if 0_u64 < observed^.blocks.len {{
 {body}    }}
   }}
   return unit;
@@ -283,7 +283,7 @@ fn atomic(body: &str) -> String {
 #[test]
 fn atomic_sibling_write_keeps_the_entry_fact() {
     check(
-        &atomic("      set held^.blocks[0_u64].normal_y = 9_i64;\n"),
+        &atomic("      set observed^.blocks[0_u64].normal_y = 9_i64;\n"),
         None,
     );
 }
@@ -291,7 +291,7 @@ fn atomic_sibling_write_keeps_the_entry_fact() {
 #[test]
 fn atomic_end_owes_type11() {
     check(
-        &atomic("      set held^.blocks[0_u64].entry_slot = 9_u64;\n"),
+        &atomic("      set observed^.blocks[0_u64].entry_slot = 9_u64;\n"),
         Some((SemanticRule::Type11, "an atomic leaving edge")),
     );
 }
@@ -299,7 +299,7 @@ fn atomic_end_owes_type11() {
 #[test]
 fn atomic_early_return_owes_type11() {
     check(
-        &atomic("      set held^.blocks[0_u64].entry_slot = 9_u64;\n      return unit;\n"),
+        &atomic("      set observed^.blocks[0_u64].entry_slot = 9_u64;\n      return unit;\n"),
         Some((SemanticRule::Type11, "an atomic leaving edge")),
     );
 }
@@ -439,7 +439,7 @@ fn need(xs: &Array<u64, 1>) -> result: unit pure contract {{
 }}
 
 fn forward(rows: &[Row]) -> result: unit {effect} contract {{
-  requires forall held(b in 0_u64..rows^.len, k in 0_u64..rows^[b].payloads.len): rows^[b].payloads[k] == 0_u64;
+  requires forall observed(b in 0_u64..rows^.len, k in 0_u64..rows^[b].payloads.len): rows^[b].payloads[k] == 0_u64;
 }} {{
   if 0_u64 < rows^.len {{
 {before}    let saved = rows^[0_u64];
@@ -498,8 +498,8 @@ fn an_atomic_guard_is_a_premise_at_its_leaving_edge() {
     check(
         &format!(
             "{ZEROES}fn update(state: Shared<Zeroes>, proposed: u64) -> result: unit pure waits {{
-  atomic held = &state when proposed == 0_u64 {{
-    set held^.cells[0_u64] = proposed;
+  atomic observed = &state when proposed == 0_u64 {{
+    set observed^.cells[0_u64] = proposed;
   }}
   return unit;
 }}
@@ -645,7 +645,7 @@ fn need(xs: &Array<u64, 1>) -> result: unit pure contract {
 }
 
 fn forward(rows: &[Row], flag: Bool) -> result: unit reads(rows) contract {
-  requires forall held(b in 0_u64..rows^.len, k in 0_u64..rows^[b].payloads.len): rows^[b].payloads[k] == 0_u64;
+  requires forall observed(b in 0_u64..rows^.len, k in 0_u64..rows^[b].payloads.len): rows^[b].payloads[k] == 0_u64;
 } {
   if 0_u64 < rows^.len {
     let saved = rows^[0_u64];

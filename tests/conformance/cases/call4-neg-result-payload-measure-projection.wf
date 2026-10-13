@@ -6,11 +6,11 @@ enum Held {
   Empty();
 }
 
-fn pass_held(held: Held) -> result: Held pure contract {
+fn pass_held(observed: Held) -> result: Held pure contract {
   ensures result.Full.bytes.cap == 4_u64;
 } {
   doc "An enum-payload step admits no measure member of a result place: no route selects a variant of an unrouted result, so `result.Full.bytes.cap` is no relation datum.";
-  return move held;
+  return move observed;
 }
 
 fn main() -> status: ExitStatus pure {
