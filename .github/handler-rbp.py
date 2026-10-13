@@ -204,8 +204,8 @@ def crc(out):
     # Single correctness sample, with the module and four CRCs established by
     # the match-dispatch investigation. No score or timing is a verdict.
     result = subprocess.run(
-        [str(out / "v2h"), str(out / "coremark.wasm"), "0x0", "0x0", "0x66", "2000"],
-        capture_output=True, text=True, check=False)
+        [str(out / "v2h"), "coremark.wasm", "0x0", "0x0", "0x66", "2000"],
+        cwd=out, capture_output=True, text=True, check=False)
     (out / "coremark.stdout.txt").write_text(result.stdout)
     (out / "coremark.stderr.txt").write_text(result.stderr)
     print(result.stdout, end="")
