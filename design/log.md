@@ -13,6 +13,13 @@ Owner-approved: On the shared status board on 2026-10-13, written in Chinese, th
 
 Summary: A new node records two decisions that let a sampling profiler's DWARF unwinder walk Whitefoot call stacks. Every emitted function carries `uwtable`, so a leaf that cannot unwind by exception still has a frame-description entry; and the Linux LTO link passes `-z separate-code` to LLD, so the code segment's virtual address equals its file offset, because perf 6.17 looked up unwind rules 0x1000 off under LLD's default layout and recovered no caller. In the witness, `uwtable` gave the hot leaf its frame-description entry and raised the samples recovering the resume function from 83 to 85 percent to 88 to 89 percent at 208 bytes of `.eh_frame`; `-z separate-code` then raised the samples reaching resume and the thread entry from none above resume to 100 percent, at 992 bytes (1.2 percent) of executable. Keeping frame pointers and documenting the limitation instead were rejected.
 
+## 2026-10-13 The range walk checks every object partition of possibly aliased atomic targets
+
+Nodes: compiler/range-judgment
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the design-tree change: for several atomic targets that may be the same object, the range judgment checks every possible object partition? (Ming-Research/Whitefoot#441, head cb26294b1)" (translated).
+
+Summary: At an atomic statement the range walk checks each partition of the possibly aliased whole-object targets that their pairwise relations allow, giving targets placed in one object one storage location and the others separate ones, so the existing write, call, branch and exit judgments keep a same-or-different relation throughout the block; it replaces the unsupported report for multi-target blocks with range type invariants. Refused were treating possible aliases as always equal or always distinct (each misjudges one case) and conditional alias handling at every mutation. The invariants to restore at exit are keyed by the original entry targets, and loop proof records merge only after every partition proves them. The provisional cost grows with the Bell number of the targets, without a work bound; it is reassessed when real multi-target atomic blocks slow development.
 ## 2026-10-13 Conformance rejections pin their byte range, and an out-of-order requirement is moved rather than restated
 
 Nodes: compiler/verification, compiler/diagnostic-repairs

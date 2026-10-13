@@ -1,0 +1,25 @@
+struct ZeroesAliasRefIntermediate {
+  cells: Array<u64, 1>;
+  invariant(c): forall zero(k in 0_u64..c^.cells.len): c^.cells[k] == 0_u64;
+}
+
+fn need_aliasrefintermediate(z: &ZeroesAliasRefIntermediate) -> result: unit pure {
+  return unit;
+}
+
+fn update_aliasrefintermediate(first: &Shared<ZeroesAliasRefIntermediate>, second: &Shared<ZeroesAliasRefIntermediate>) -> result: unit reads(first), reads(second) waits {
+  atomic a = &first^, b = &second^ {
+    set a^.cells[0_u64] = 1_u64;
+    need_aliasrefintermediate(z: b);
+    set a^.cells[0_u64] = 0_u64;
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let cells = array_filled::<u64, 1>(value: 0_u64);
+  let initial = ZeroesAliasRefIntermediate(cells: cells);
+  let shared = shared_new::<ZeroesAliasRefIntermediate>(value: initial);
+  update_aliasrefintermediate(first: &shared, second: &shared);
+  return std::process::exit_status(code: 0_u8);
+}
