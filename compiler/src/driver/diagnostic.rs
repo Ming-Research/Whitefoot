@@ -841,10 +841,12 @@ impl Report for SemanticIssueKind {
             InaccessibleVariant { variant, reason };
             ConstantCycle { cycle };
             ConstEvalOverflow { operation };
+            ConstArgumentOutOfRange { parameter_type, value };
             ConstRuntimeArithmeticMode { mechanical_fix };
             TypeMismatch { expected, found };
             UnadmittedOperandShape { expected, mechanical_fix };
             BehaviorArgumentMismatch { expected, mechanical_fix };
+            UnforwardedGroupApplication { mechanical_fix };
             ImmutableSetTarget;
             InvalidSetTarget { root_class, required_classes };
             ImmutableWrittenArgument { binding, mechanical_fix };

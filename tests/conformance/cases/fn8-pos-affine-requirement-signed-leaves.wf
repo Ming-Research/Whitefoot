@@ -10,7 +10,7 @@ fn headroom(a: u64, b: u64, limit: u64) -> result: u64 pure contract {
   requires a <= 16_u64;
   requires b <= 16_u64;
 } {
-  doc "Body-entry signed decomposition establishes both negative disjuncts, and the affine image of not(sum > limit) supplies sum <= limit. The binder is no longer spelled `room`, which is reserved from every declaration role [FORM-3, TYPE-10].";
+  doc "Body-entry signed decomposition establishes both negative disjuncts, and the affine image of not(sum > limit) supplies sum <= limit.";
   let total = a + b;
   let remaining = limit - total;
   return remaining;

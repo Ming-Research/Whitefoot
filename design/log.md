@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 the owner's agent instructions own the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-13 A const argument is judged where it is written; a symbolic integer constant keeps its exact type
+
+Nodes: language/generics, compiler/checker-facts
+
+Owner-approved: On the shared status board on 2026-10-12, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the specification revision and design-tree change of Whitefoot#390 at commit c80159911?" (translated), whose background listed the added generics decision (a const argument is admitted when each name in it has exactly the parameter's integer type and its value lies in that type's range, judged at the argument when it names no const generic and at each concrete instance when it does, with six refused alternatives) and the changed reason of the checker-facts decision that a symbolic integer constant keeps its declaration's identity and exact type.
+
+Summary: A u8 const parameter given 300 was truncated to 44 in code generation while the checker reasoned from the written type's range facts, which allowed an out-of-bounds read. A const argument is therefore admitted only when its names have exactly the parameter's integer type and its value lies in the parameter's range, judged where the argument is written or, for an operation over a const generic, at each instance, where the unsigned 64-bit domain is already judged. The refused alternatives are checking only at instantiation, requiring literals to carry the exact type, restricting const parameters to u64, admitting narrower names, and two ways of admitting operations over names of other types. The checker-facts decision keeps its choice and now gives the sharper reason: a use taking its consumer's type would read a const generic with bounds its own instances never checked.
+
 ## 2026-10-12 A guard reaches no self-changing host handle; an IoError's class description; what concurrency promises about progress
 
 Nodes: language/parallelism, language/system-interface, language/waiting/shared-objects
