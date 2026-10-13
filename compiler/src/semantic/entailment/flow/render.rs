@@ -226,10 +226,7 @@ impl Input<'_, '_> {
                         )
                 })
         };
-        std::iter::once(stem.to_owned())
-            .chain((1_u32..).map(|suffix| format!("{stem}{suffix}")))
-            .find(|name| !taken(name))
-            .expect("an unbounded candidate sequence has a free name")
+        crate::semantic::check::repairs::fresh_repair_name(stem, taken)
     }
 
     /// The source spelling of one declaration, such as a generic parameter.

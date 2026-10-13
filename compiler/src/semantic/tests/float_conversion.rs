@@ -163,7 +163,7 @@ fn float_conversion_operand_failures_keep_their_rule_owners() {
     assert_rule(
         b"fn main() -> status: std::process::ExitStatus pure {\n  let value = cvt::<f32, Bool>(1.0_f32);\n  return std::process::exit_status(code: 0_u8);\n}\n",
         SemanticRule::Op1,
-        SemanticIssueKind::InvalidOperation,
+        SemanticIssueKind::invalid_operation(),
     );
     assert_rule_kind(
         b"fn main() -> status: std::process::ExitStatus pure {\n  let value = cvt::<u32, f64>(1_u16);\n  return std::process::exit_status(code: 0_u8);\n}\n",
@@ -281,7 +281,10 @@ fn rounding_conversion_admits_exactly_the_float_destination_pairs() {
                         );
                     };
                     assert_eq!(issue.rule(), SemanticRule::Op1);
-                    assert!(matches!(issue.kind(), SemanticIssueKind::InvalidOperation));
+                    assert!(matches!(
+                        issue.kind(),
+                        SemanticIssueKind::InvalidOperation { .. }
+                    ));
                 }
             });
         }
