@@ -4,8 +4,8 @@ alias exit_status = std::process::exit_status;
 const maximum: u64 = 18446744073709551615_u64;
 
 fn main() -> status: ExitStatus pure {
-  let held = maximum;
-  if held == 18446744073709551615_u64 {
+  let observed = maximum;
+  if observed == 18446744073709551615_u64 {
   } else {
     return exit_status(code: 1_u8);
   }

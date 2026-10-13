@@ -837,8 +837,8 @@ fn peek(holder: &Holder) -> result: u64 reads(holder) {
   }
 }
 
-fn fill(held: Shared<Holder>, seed: u64) -> result: unit pure waits {
-  atomic state = &held {
+fn fill(observed_state: Shared<Holder>, seed: u64) -> result: unit pure waits {
+  atomic state = &observed_state {
     let cell = box_new::<u64>(value: seed);
     let next = Holder::Boxed(cell: move cell, stamp: 100_u64);
     set state^ = move next;
@@ -846,10 +846,10 @@ fn fill(held: Shared<Holder>, seed: u64) -> result: unit pure waits {
   return unit;
 }
 
-fn fill_all(held: &Shared<Holder>) -> result: unit reads(held) waits {
+fn fill_all(observed_state: &Shared<Holder>) -> result: unit reads(observed_state) waits {
   for @start (index in 0_u64..4_u64) {
-    let handle = shared_share::<Holder>(shared: held);
-    spawn fill(held: move handle, seed: index);
+    let handle = shared_share::<Holder>(shared: observed_state);
+    spawn fill(observed_state: move handle, seed: index);
   }
   return unit;
 }
@@ -858,17 +858,17 @@ fn main() -> status: std::process::ExitStatus pure waits {
   let values = box_slots_new::<u64>(capacity: 2_u64);
   place_back(window: &values.inner, value: 1_u64);
   let start = Holder::Many(values: move values);
-  let held = shared_new::<Holder>(value: move start);
+  let observed_state = shared_new::<Holder>(value: move start);
   let seen = 0_u64;
-  atomic state = &held {
+  atomic state = &observed_state {
     set seen = peek(holder: state);
   }
   if seen != 1001_u64 {
     return std::process::exit_status(code: 1_u8);
   }
-  fill_all(held: &held);
+  fill_all(observed_state: &observed_state);
   let last = 0_u64;
-  atomic state = &held {
+  atomic state = &observed_state {
     set last = peek(holder: state);
   }
   if last < 100_u64 {

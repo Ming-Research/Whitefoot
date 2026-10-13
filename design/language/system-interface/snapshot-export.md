@@ -1,0 +1,24 @@
+Decision: Source requests a restricted snapshot through the ordinary generic host function std::snapshot::capture_export with one value-type argument, a prepared linear reserve, a whole-map reference and a sequence cut, because the owner's choice of a fixed typed export gives the consumer a dataset image without giving child code access to inherited runtime state, instead of a user callback or a new statement or function kind ([draft and open grounds](../../../research/investigations/consistent-snapshots/capture-export.md)).
+
+Decision: The exporter takes its cut by reference and declares the general held-observation contract over its map and cut, because the same ordinary contract can protect and forward source helpers and linked functions without implementation-origin privileges, instead of a direct-call admission rule or scalar-history provenance ([held observations](../contracts/held-observations.md)).
+
+Decision: The map and cut remain unchanged throughout their caller's atomic statement and the exporter retains their image at its single effect point, because an intermediate map followed by further writes need not be a dataset in the atomic history, instead of creating another visible capture point; unrelated state may change under the ordinary held-observation rule.
+
+Decision: Exportability follows every owned field, variant payload, storage element and Box content through a finite type graph, admitting recursive owned trees and excluding shared, frozen and host handles, because source ownership then identifies the complete private-memory image the encoder may traverse, instead of accepting only shallow fields or using a runtime refusal after a resource has entered the child.
+
+Decision: The fixed format encodes typed logical values and uses the concrete value type as its external schema, with logical pair encodings for the standard HashMap and OrderedMap, because buckets, deleted slots, tree nodes, object addresses and padding are not a consumer's dataset, instead of copying native layouts or serializing the standard collections' backing representation; ordinary user structs retain declared field order and enums their declared variant ordinals.
+
+Decision: Floating-point export preserves every stored IEEE bit, including signed zero, infinities and NaN payloads, because exporting a snapshot is an observation of its stored value rather than an arithmetic conversion, instead of decimal formatting or canonicalizing NaNs.
+
+Decision: Records stream through bounded segments with separate record and stream completion markers, and successful export additionally requires a confirmed successful child outcome, because a pipe ending after a partial record is distinguishable from a complete dataset only with explicit completion evidence, instead of buffering a whole record or interpreting EOF as success.
+
+Decision: A linear job owns collection and exactly one confirmed reap, with separate child, collection and abort-request observations, because child success can coexist with discarded bytes or a parent collection failure and an abort can race with normal completion, instead of one success flag that hides which obligation completed.
+
+Decision: The qualified fork route is research-only, promising bounded encoder workspace and a cumulative output quota with failure on exhaustion while treating copy-on-write retention and elapsed cleanup as measurements, because the available reserve cannot enforce the owner's production service-first footprint and cleanup promise, instead of making fork a source abstraction or presenting sampled memory and poll-and-kill as a hard bound; production eligibility needs an independently qualified policy ([memory options](../../../research/investigations/consistent-snapshots/capture-export.md#memory-promise-card)).
+
+Rejected:
+- A privileged direct capture call: rejected because ordinary wrappers and function formals cannot carry its held-origin relation, whereas the general held-observation contract supplies it without changing the constitution.
+- Option B, a restricted source callback: rejected because its transitive call and release closure would need a new child-safe callable contract, while the selected fixed encoder invokes no user code and meets the export consumer's requirement.
+- Option C, a dedicated capture statement: rejected because the selected operation fits an ordinary function call inside the existing atomic statement, and a second statement form would duplicate its holding and ownership boundary without supplying another required behavior.
+- General fork returning into both source continuations: rejected because copied parent contexts, host handles and runtime queues have no valid child continuation contract.
+- A silent scan, eager copy or other-platform substitute: rejected because it changes the route's resource and capture behavior and would prevent the requested comparison from identifying the mechanism actually used.

@@ -171,15 +171,15 @@ fn main() -> status: ExitStatus pure {
   } else {
     return exit_status(code: 1_u8);
   }
-  let held = bs_new();
-  let second_start_length = held.inner.len;
+  let observed = bs_new();
+  let second_start_length = observed.inner.len;
   if 8_u64 >= second_start_length {
   } else {
     return exit_status(code: 1_u8);
   }
-  bs_reserve(s: &held, total: 8_u64);
-  let second_opening = held.inner.len;
-  let second_spare = held.inner.cap - held.inner.len;
+  bs_reserve(s: &observed, total: 8_u64);
+  let second_opening = observed.inner.len;
+  let second_spare = observed.inner.cap - observed.inner.len;
   if second_opening == 0_u64 {
   } else {
     return exit_status(code: 1_u8);
@@ -188,29 +188,29 @@ fn main() -> status: ExitStatus pure {
   } else {
     return exit_status(code: 1_u8);
   }
-  place_back(window: &held.inner, value: 65_u8);
+  place_back(window: &observed.inner, value: 65_u8);
   let source = &appended_bytes[0_u64..5_u64];
   for @append (
     at in 0_u64..5_u64,
-    invariant held_lo: held.inner.len >= at + 1_u64,
-    invariant held_hi: held.inner.len <= at + 1_u64,
-    invariant spare_left: held.inner.cap - held.inner.len + at + 1_u64 >= 8_u64
+    invariant held_lo: observed.inner.len >= at + 1_u64,
+    invariant held_hi: observed.inner.len <= at + 1_u64,
+    invariant spare_left: observed.inner.cap - observed.inner.len + at + 1_u64 >= 8_u64
   ) {
     let byte = source^[at];
-    place_back(window: &held.inner, value: byte);
+    place_back(window: &observed.inner, value: byte);
   }
-  let stored = held.inner.len;
+  let stored = observed.inner.len;
   if stored == 6_u64 {
   } else {
     return exit_status(code: 1_u8);
   }
   if 5_u64 < stored {
-    let last = held.inner[5_u64];
+    let last = observed.inner[5_u64];
     if last == 33_u8 {
     } else {
       return exit_status(code: 1_u8);
     }
-    let front = held.inner[0_u64];
+    let front = observed.inner[0_u64];
     if front == 65_u8 {
     } else {
       return exit_status(code: 1_u8);

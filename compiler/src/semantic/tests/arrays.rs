@@ -993,9 +993,9 @@ fn main() -> status: std::process::ExitStatus pure {
   let values = slots_from_array::<u8, 2>(values: base);
   let inner = Inner(values: move values);
   let outer = Outer(inner: move inner, marker: 7_u8);
-  let held = &outer;
+  let observed = &outer;
   set outer.inner.values[1_u64] = 9_u8;
-  let seen = observe(value: held);
+  let seen = observe(value: observed);
   return std::process::exit_status(code: 0_u8);
 }
 "#,
