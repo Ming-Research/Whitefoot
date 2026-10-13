@@ -6,7 +6,7 @@ name: float-text-check
 
 on:
   push:
-    branches: [claude/float-text-module]
+    branches: [claude/float-text]
     paths:
       - .github/workflows/float-text-check.yml
       - .github/time-budgets.txt
