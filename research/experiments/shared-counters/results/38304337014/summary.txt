@@ -1,4 +1,4 @@
-source: /home/runner/actions-runner/_work/_temp/shared-counters/raw.tsv; blocks 6; CPU lists 0,2 (2 drivers), 0,2,4,6 (4 drivers), 0,2,4,6,8,10,12,14 (8 drivers), 0-15 (16 drivers)
+source: raw.tsv; blocks 6; CPU lists 0,2 (2 drivers), 0,2,4,6 (4 drivers), 0,2,4,6,8,10,12,14 (8 drivers), 0-15 (16 drivers)
 Every threshold below is provisional (DESIGN.md, section 8.4).
 
 Table 1. Rate, millions of operations per second summed over all contexts: median over blocks [min-max] (n = blocks)

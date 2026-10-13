@@ -1,11 +1,11 @@
 struct Part {
   log: Box<Slots<u8>>;
-  writes: u64;
+  write_count: u64;
 }
 
 fn part_new() -> made: Part pure {
   let log = box_slots_new::<u8>(capacity: 16_u64);
-  return Part(log: move log, writes: 0_u64);
+  return Part(log: move log, write_count: 0_u64);
 }
 
 fn append(parts: Shared<Shards<Part>>, byte: u8) -> result: unit pure waits {
@@ -15,7 +15,7 @@ fn append(parts: Shared<Shards<Part>>, byte: u8) -> result: unit pure waits {
       if part^.log.inner.len < part^.log.inner.cap {
         place_back(window: &part^.log.inner, value: byte);
       }
-      set part^.writes = part^.writes +wrap 1_u64;
+      set part^.write_count = part^.write_count +wrap 1_u64;
     }
   }
   return unit;
@@ -49,7 +49,7 @@ fn writes_total(parts: &Shared<Shards<Part>>) -> count: u64 reads(parts) waits {
   let total = 0_u64;
   atomic all = &parts^ {
     for @shard (i in 0_u64..all^.len) {
-      set total = total +wrap all^[i].writes;
+      set total = total +wrap all^[i].write_count;
     }
   }
   return total;
@@ -63,8 +63,8 @@ fn main() -> status: std::process::ExitStatus pure waits {
   append(parts: move again, byte: 5_u8);
   let second = drain(parts: &parts);
   let third = drain(parts: &parts);
-  let writes = writes_total(parts: &parts);
-  let counted = cvt.wrap::<u64, u8>(writes);
+  let write_count = writes_total(parts: &parts);
+  let counted = cvt.wrap::<u64, u8>(write_count);
   let drained = first +wrap second;
   let all_drained = drained +wrap third;
   let code = all_drained +wrap counted;
