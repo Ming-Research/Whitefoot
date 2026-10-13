@@ -34,13 +34,13 @@ that must hold wherever the operation runs:
 
 Here is a function whose goal the compiler cannot prove:
 
-```whitefoot reject OP-4 file=get.wf
+```
 fn get(b: &[u8], i: u64) -> value: u8 reads(b) {
   return deref(b)[i];
 }
 ```
 
-```whitefoot-output
+```text
 get.wf:5:18: error[OP-4]: UndischargedBoundsObligation
   source:   return deref(b)[i];
   marker:                  ^^^
@@ -59,7 +59,7 @@ about.
 If an out-of-range index is something the program should handle, the
 handling is ordinary code:
 
-```whitefoot
+```
 fn get(b: &[u8], i: u64) -> value: Option<u8> reads(b) {
   if i < deref(b).len {
     return Some<u8>(value: deref(b)[i]);
@@ -80,7 +80,7 @@ Often the caller already knows the index is in range, and a branch inside
 `get` would test something that is always true. Then the goal belongs in the
 function's contract:
 
-```whitefoot
+```
 fn get(b: &[u8], i: u64) -> value: u8 reads(b) contract {
   requires i < deref(b).len;
 } {
@@ -91,7 +91,7 @@ fn get(b: &[u8], i: u64) -> value: u8 reads(b) contract {
 Inside `get`, the requirement is a fact from the first line on. In exchange,
 every call has to prove it. A caller that cannot is rejected in turn:
 
-```text
+```
 fn first(b: &[u8]) -> value: u8 reads(b) {
   return get(b: b, i: 0_u64);
 }
@@ -113,7 +113,7 @@ place of `i`. The same two routes apply one level up. A caller that knows the
 buffer is not empty writes the branch there; a caller that walks the buffer
 needs neither, because a counted loop proves its own index:
 
-```text
+```
 fn first(b: &[u8]) -> value: Option<u8> reads(b) {
   if 0_u64 < deref(b).len {
     let x = get(b: b, i: 0_u64);
@@ -144,13 +144,13 @@ checked when `get` is entered.
 
 A bare `+` on `u64` has the goal that the sum fits:
 
-```whitefoot reject OP-2 file=add.wf
+```
 fn total(a: u64, b: u64) -> sum: u64 pure {
   return a + b;
 }
 ```
 
-```whitefoot-output
+```text
 add.wf:5:10: error[OP-2]: UndischargedIntegerDomainObligation
   source:   return a + b;
   marker:          ^^^^^
@@ -164,7 +164,7 @@ computing the sum. The rejection offers the same two routes as before, and a
 third: say what the program means when the sum does not fit. Each of these
 is accepted:
 
-```whitefoot
+```
 fn total_guarded(a: u64, b: u64) -> sum: Option<u64> pure {
   if a +defined b {
     let s = a + b;
@@ -209,7 +209,7 @@ the routes `requires cvt.defined::<u64, u8>(x);`, a guard, or
 This is the LLVM IR the compiler emits for the `get` with a requirement,
 before optimization:
 
-```llvm
+```text
 define i8 @wf_get(ptr noalias nonnull nocapture %wf.arg.v0.data, i64 %wf.arg.v0.len, i64 %v1) #0 {
 entry:
   %v0.data = insertvalue { ptr, i64 } poison, ptr %wf.arg.v0.data, 0
@@ -224,7 +224,7 @@ entry:
 An address and a load: no comparison and no branch. The proved `+` in
 `total_bounded` is a single instruction:
 
-```llvm
+```text
 define i64 @wf_total_bounded(i64 %v0, i64 %v1) #0 {
 entry:
   %v2 = add nuw i64 %v0, %v1

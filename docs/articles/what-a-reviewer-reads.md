@@ -34,7 +34,7 @@ path starts at a reference parameter and continues through fields, as in
 `from.balance`, and through positions such as an index the caller passes. A
 function that reads and writes no state has the row `pure`.
 
-```whitefoot
+```
 struct Account {
   owner: u32;
   balance: u64;
@@ -62,7 +62,7 @@ call can observe or change.
 I/O works the same way. The standard library's functions that read or write
 files, sockets and streams take a handle by reference and write it:
 
-```text
+```
 public fn write_once(factory: &HandleFactory, output: &OutputStream, source: &[u8], start: u64, end: u64) -> result: Result<u64, IoError> reads(source), writes(factory), writes(output) contract {
   requires start <= end;
   requires end <= deref(source).len;
@@ -86,7 +86,7 @@ Every access the body makes must lie under an entry of the row, and every
 entry must cover at least one access. A function that reads a balance and
 says it is `pure` is rejected:
 
-```text
+```
 fn balance_of(a: &Account) -> value: u64 pure {
   return deref(a).balance;
 }
@@ -105,7 +105,7 @@ row.wf:22:42: error[EFF-2]: EffectMismatch
 
 So is an entry that nothing in the body uses:
 
-```text
+```
 fn balance_of(a: &Account, b: &Account) -> value: u64 reads(a.balance), reads(b.balance) {
   return deref(a).balance;
 }
@@ -141,7 +141,7 @@ The body of `transfer` reads both balances before it writes either. If
 first, and the account would end up `amount` richer. The call that would do
 that is rejected:
 
-```text
+```
 fn main() -> status: ExitStatus pure {
   let a = Account(owner: 1_u32, balance: 100_u64);
   let ok = transfer(from: &a, to: &a, amount: 30_u64);
@@ -163,7 +163,7 @@ and compares the entries that different arguments supply. Two that overlap,
 where at least one is a write, must be proved apart. For two elements of one
 array, that means proving their indices differ:
 
-```text
+```
 fn pay(accounts: &[Account], i: u64, j: u64, amount: u64) -> moved: Bool writes(accounts) contract {
   requires i < deref(accounts).len;
   requires j < deref(accounts).len;
@@ -194,7 +194,7 @@ is a fact inside the function
 goes the other way: it is proved at every `return` of the function, and each
 caller receives it as a fact.
 
-```whitefoot
+```
 fn clamp(x: u64, hi: u64) -> r: u64 pure contract {
   ensures r <= hi;
 } {
@@ -259,7 +259,7 @@ a function computes beyond such bounds is still read from its body.
 In a program built from modules, each module has an interface record,
 `module.wfm`, that declares its public functions without their bodies:
 
-```text
+```
 public struct Account {
   public owner: u32;
   public balance: u64;

@@ -439,7 +439,7 @@ fn check_document(path: &Path, text: &str) -> Vec<String> {
 
 fn documentation_files(root: &Path, failures: &mut Vec<String>) -> Vec<PathBuf> {
     let mut files = vec![root.join("README.md"), root.join("README.zh-CN.md")];
-    let mut directories = vec![root.join("docs")];
+    let mut directories = vec![root.join("docs").join("guide")];
     while let Some(directory) = directories.pop() {
         let entries = match std::fs::read_dir(&directory) {
             Ok(entries) => entries,

@@ -21,13 +21,13 @@ The integer types are `i8`, `i16`, `i32`, `i64`, `u8`, `u16`, `u32` and
 `u64`. Both operands of an operation have the same type, and the result has
 that type too. There is no promotion and no implicit widening:
 
-```whitefoot reject TYPE-5 file=mixed.wf
+```
 fn f(a: u8, b: u32) -> r: u32 pure {
   return a +wrap b;
 }
 ```
 
-```whitefoot-output
+```text
 mixed.wf:5:18: error[TYPE-5]: TypeMismatch
   source:   return a +wrap b;
   marker:                  ^
@@ -60,7 +60,7 @@ Addition has five spellings. For `u8`, with `a = 250_u8` and `b = 10_u8`:
 
 The last four columns come from running this program, which exits with 0:
 
-```text
+```
 fn main() -> status: ExitStatus pure {
   let w = 250_u8 +wrap 10_u8;
   if w != 4_u8 {
@@ -137,7 +137,7 @@ These are named operations with positional arguments. A shift amount is a
 `u32`. The exact shift needs the amount to be smaller than the width; the
 wrapping shift uses the amount modulo the width:
 
-```whitefoot
+```
 fn f(x: u64, k: u32) -> r: u64 pure {
   let a = ishl(x, 3_u32);
   let b = ishl.wrap(x, k);

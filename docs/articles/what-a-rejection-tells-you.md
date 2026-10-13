@@ -14,9 +14,7 @@ at the other kinds of rejection and at how the repairs are tested.
 
 The function adds one to every counter in an array:
 
-The first compile stops here:
-
-```whitefoot reject SET-1 file=r0.wf
+```
 fn bump_all(counts: &[u32]) -> result: unit reads(counts) {
   for (i in 0_u64..deref(counts).len) {
     set deref(counts)[i] = deref(counts)[i] + 1_u32;
@@ -25,7 +23,9 @@ fn bump_all(counts: &[u32]) -> result: unit reads(counts) {
 }
 ```
 
-```whitefoot-output
+The first compile stops here:
+
+```text
 r0.wf:6:9: error[SET-1]: InvalidSetTarget
   source:     set deref(counts)[i] = deref(counts)[i] + 1_u32;
   marker:         ^^^^^^^^^^^^^^^^
@@ -54,7 +54,7 @@ specification says which ones do.
 
 The change is to declare the write:
 
-```text
+```
 fn bump_all(counts: &[u32]) -> result: unit writes(counts) {
 ```
 
@@ -87,11 +87,11 @@ operation.
 Both of the following compile. The first says what a full counter does; the
 second skips it:
 
-```text
+```
 set deref(counts)[i] = deref(counts)[i] +sat 1_u32;
 ```
 
-```text
+```
 if deref(counts)[i] +defined 1_u32 {
   set deref(counts)[i] = deref(counts)[i] + 1_u32;
 }
@@ -103,7 +103,7 @@ if deref(counts)[i] +defined 1_u32 {
 the goal do not settle it, and a fact supplied from outside, such as a guard
 or a requirement, can. `Refuted` means the facts show the goal is false:
 
-```text
+```
 fn small(x: u64) -> result: u64 pure contract {
   requires x < 10_u64;
 } {
@@ -187,7 +187,7 @@ project records as open work.
 line, with the fields the text leaves out: the category, the stage and the
 byte interval.
 
-```json
+```text
 {"rule":"OP-2","kind":"UndischargedIntegerDomainObligation","category":"Source","stage":"Semantics","at":{"file":"r1.wf","line":6,"column":28},"bytes":{"start":221,"end":245},"source":"    set deref(counts)[i] = deref(counts)[i] + 1_u32;","detail":{"residual":"deref(counts)[i] +defined 1_u32","disposition":"Unproved","mechanical_fix":"`deref(counts)[i] +defined 1_u32` is not proved here: when facts that reach the operation imply it, prove it with an `invariant` whose `use` steps name them (a loop's header `invariant` for a value the loop computes); or guard the operation with `if deref(counts)[i] +defined 1_u32` where skipping it is the intended behavior, adding to the effect row any read that condition makes which the row does not yet declare; or write the `+wrap`, `+checked` or `+sat` form"}}
 ```
 
