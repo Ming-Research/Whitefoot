@@ -335,3 +335,127 @@ constraints addresses kind (a) only.
 - No handler word for Halo's `Cell`: the ledger prints the table dispatch,
   and every arm loads its next handler from the tag-indexed table. Why the
   composition-wide plan did not select `Cell` was not examined here.
+
+## The join's slots in each arm
+
+The compiler change that follows R1, on the branch `claude/join-slot-local`
+(Whitefoot PR #405): a frame slot whose contents never cross a transfer
+between the split's parts is the own allocation of each part that uses it,
+where before a slot was a part's own only when exactly one part used it
+([compiler/match-dispatch-lowering](../../../design/compiler/match-dispatch-lowering.md),
+the decision on the frame).
+
+### Question, comparison and rejection criterion
+
+**Written after the run they judge.** The method above asks for these before
+the change is measured. They were written after run 38317117641 had
+reported, so the criterion below checks a result already seen and predicts
+nothing. The one prediction made before that run is R1's: the change would
+remove 14 executed instructions per Lua call.
+
+- **Question.** Does keeping the join's slots in each arm remove R1's 14
+  frame stores per Lua call, and does Halo's call path then execute fewer
+  instructions?
+- **Comparison.** fib(32) on Halo-wf `c900a68b2f06`, executed instructions
+  per Lua call from callgrind, from this record's workflow at two revisions:
+  the base, [run 38311876567](https://github.com/Ming-Research/Whitefoot/actions/runs/38311876567)
+  (`f49d0d19c367`, main `abc27fbd3` plus the workflow), and the change,
+  [run 38317117641](https://github.com/Ming-Research/Whitefoot/actions/runs/38317117641)
+  on the experiment branch `claude/halo-call-path` at `71d9ba663d22`, which
+  merges the change at `e0f8615df` into that workflow. The
+  change's base, main `1741f1262`, differs from `abc27fbd3` in tests,
+  research and CI budgets only, not in compiler source. Both runs used clang
+  and LLD 22.1.8 and valgrind 3.22.0; callgrind counts instructions, so the
+  hosted runner's speed does not enter.
+- **Rejection criterion.** The change is rejected if the `Call` or the
+  `Return` arm still executes a store through the frame pointer, where R1
+  found the join's `Result` and `Cursor` stores, or if the program executes
+  no fewer instructions per Lua call than the base's 862.53.
+
+### Which slots cross a transfer
+
+The transfers are the enclosing function's call of the dispatch function,
+which holds the header; a part's guaranteed tail call of the dispatch
+function or of an arm; and a part's return, after which nothing reads the
+frame, since the loop's blocks leave only by returning and the enclosing
+function returns the dispatch function's result. A slot stays in the shared
+frame when:
+
+- the enclosing function uses it. It defines the values the loop reads
+  from before it, writes every header parameter on its edge into the loop,
+  and also
+  runs the header instructions hoisted out of the loop and the pinned
+  projections, which the loop's value liveness does not place there;
+- it holds a header parameter, which every edge into the header writes
+  before its transfer and the header or an arm reads after one;
+- it holds a value live on entry to an arm, which the dispatch function
+  holds before its tail call of the arm. A value live on entry to the header
+  needs no rule of its own: the loop's own values reach the header only as
+  its parameters, so such a value is defined before the loop and is live on
+  entry to every arm that jumps back to the header;
+- it is reached through an address: a binding whose address is taken, and
+  an indexed family's copied root and block directory. An address derived
+  from it, such as a field's address or a range view, is a register value a
+  part may pass to the next, and the analysis follows values held in slots,
+  not addresses. A range view is always formed from such an address, so no
+  view points into a slot the analysis decides;
+- it holds a value the enclosing function stores before the loop for the
+  parts to read, because no argument register was left for it.
+
+A slot written and read within one edge or one instruction (an edge's
+snapshot, the transfer scratch, an array fill's index) is always the part's
+own. A waiting call's or a context's result occurs only in a function that
+waits, which is emitted whole. The liveness comes from the storage plan's
+control-flow graph (`allocations_across` in
+`compiler/src/backend/storage.rs`); the per-kind choice is `confined` in
+`compiler/src/backend/emitter/dispatch.rs`.
+
+### Result (run 38317117641)
+
+Every number is from `callgrind/summary.txt`, which both runs print in their
+logs, divided by fib(32)'s 7,049,155 Lua calls.
+
+| function | executed instructions per Lua call, base (run 38311876567; lower is better) | executed instructions per Lua call, change (run 38317117641; lower is better) | change minus base, instructions per Lua call (R1 predicted -14 in total) |
+|---|---:|---:|---:|
+| whole program | 862.53 | 841.53 | -21.00 |
+| `Call` arm (63) | 113 | 101 | -12 |
+| `Return` arm (65) | 122 | 112 | -10 |
+| `SubRK` arm (25) | 53 | 60 | +7 |
+| `LtJmpRK` arm (54) | 56 | 53 | -3 |
+| `GetUpval` arm (5) | 62 | 61 | -1 |
+| `enter_lua`, `finish`, `prepare`, `push_frame`, `ensure_stack` and `native_binding` together | 428 | 428 | 0 |
+| everything the workflow does not count by function | 28.53 | 26.53 | -2.00 |
+
+- **The criterion is not met, so the change stands.** The `Call` arm's 7.00
+  stores per Lua call through `rbx`, which held the frame pointer, and the
+  `Return` arm's 7.00 through `rbp` are gone; each arm's remaining stores
+  are through the stack pointer or are ones the base also executed (`Call`:
+  `rsp` 8.00 against 7.00, `r15` 1.00 in both; `Return`: `rsp` 18.00 and
+  `rax` 1.00 in both). The program executes 21.00 fewer instructions per Lua
+  call, 2.4% fewer than the base.
+- **14 of the 21 are the predicted stores; the other 7 are not
+  attributed.** By kind of instruction: `Call` executes 6 fewer stores (7
+  through the frame pointer fewer, 1 on the stack more), 1 more load and 7
+  fewer other instructions; `Return` 7 fewer stores, as many loads (43.00)
+  and 3 fewer other instructions. In each of the two arms four loads
+  through registers other than the stack pointer are gone and the stack
+  pointer's loads rose by about as many (`Call`: `rbx` 3.00 and `r14` 1.00
+  gone, `rsp` 12.00 to 17.00; `Return`: `rbp` 3.00 and `rbx` 1.00 gone,
+  `rsp` 12.00 to 16.00). R2's table puts four loads of the `Step`
+  destination, the loop's `step` slot in the frame, in each of these arms,
+  so the counts suggest that this slot, too, has become each arm's own
+  allocation, which the rule allows when no arm reads the header's
+  `Step::Error()`; the disassembly in the run's artifact would confirm it.
+  `SubRK` executes 3 more stores, 2 more loads and 2 more other
+  instructions; `LtJmpRK` 1 store and 2 other instructions fewer;
+  `GetUpval` 1 load fewer. These three arms executed no frame store in the
+  base (R1), and counts per base register do not show what moved their
+  register and stack assignment in the change. Which instructions
+  make up the 7 would be read from the per-instruction counts in the run's
+  artifact (`callgrind/counts-*.txt`), which this record did not read; until
+  then they are unexplained.
+- **The arms' sizes as linked** fell for every hot arm (instructions in
+  `disasm/sizes.txt`, base to change: `Call` 194 to 149, `Return` 206 to
+  172, `SubRK` 350 to 338, `LtJmpRK` 338 to 290, `GetUpval` 206 to 136).
+  These count every path of the arm, most of which fib(32) does not
+  execute.

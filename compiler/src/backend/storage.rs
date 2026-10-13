@@ -208,18 +208,33 @@ impl FunctionStoragePlan {
             .map_or(slot, |field| field.parent_slot)
     }
 
-    /// The allocations whose contents a split dispatch loop's transfers
-    /// carry (compiler/match-dispatch-lowering). Its header runs in the
-    /// dispatch function, entered from the enclosing function or an arm and
-    /// left by a tail call of an arm, so the allocation of every value
-    /// handed into the header (live on entry to it, or one of its
-    /// parameters, which each edge into it writes) or handed from it to an
-    /// arm (live on entry to one of its successors) is carried, and so is
-    /// the allocation of every run a range view is taken of, since the
-    /// view points into it and the run's liveness bounds no read through
-    /// the view. An address taken of a value points into its binding's own
-    /// slot, not into this plan's allocation. A value held anywhere else is
-    /// written and read within one execution of one part.
+    /// The allocations whose contents cross a transfer between the parts of
+    /// a split dispatch loop (compiler/match-dispatch-lowering): the
+    /// enclosing function's call of the dispatch function, which holds the
+    /// header, a part's guaranteed tail call of the dispatch function or of
+    /// an arm, and a part's return, after which nothing reads the frame.
+    /// A header parameter's allocation crosses, since every edge into the
+    /// header writes it before its transfer and the header or an arm reads
+    /// it after one, and so does the allocation of a value live on entry to
+    /// an arm, which the dispatch function holds before its tail call of
+    /// the arm. A value live on entry to the header needs no term of its
+    /// own: the loop's own values reach the header only as its parameters,
+    /// so such a value is defined before the loop and is therefore also
+    /// live on entry to every arm that jumps back to the header, which a
+    /// split loop has. Any other value is written and read within one
+    /// execution of one part.
+    ///
+    /// The emitter first keeps in the shared frame every slot the enclosing
+    /// function uses, which covers the slots of values defined before the
+    /// loop and of every header parameter, whose slot the edge into the
+    /// loop writes. In an emitted split only a value the header defines and
+    /// an arm reads therefore rests on this analysis alone; the header
+    /// parameters' term is checked on this function's result directly.
+    ///
+    /// The analysis follows values, not addresses. No address points into
+    /// an allocation it decides: an address taken of a value points into
+    /// the slot of the binding holding it, which the split keeps shared, and
+    /// a range view is formed from such an address.
     pub(super) fn allocations_across(
         &self,
         program: &IrProgram,
@@ -230,25 +245,12 @@ impl FunctionStoragePlan {
         let graph = FlowGraph::from_function(program, function, sequential)?;
         let entering = graph.live_in();
         let block = graph.blocks.get(header).ok_or(BackendFailure::InvalidIr)?;
-        let mut handed = entering[header].clone();
-        handed.extend(block.parameters.iter().copied());
+        let mut handed: BTreeSet<usize> = block.parameters.iter().copied().collect();
         for successor in &block.successors {
             handed.extend(entering[*successor].iter().copied());
         }
-        let viewed = function
-            .blocks()
-            .iter()
-            .flat_map(|block| block.instructions())
-            .filter_map(|instruction| match instruction {
-                IrInstruction::Define {
-                    operation: IrOperation::SliceFromRun { run },
-                    ..
-                } => Some(index(*run)),
-                _ => None,
-            });
         Ok(handed
             .into_iter()
-            .chain(viewed)
             .filter_map(|value| self.values.get(value).copied().flatten())
             .map(|slot| self.allocation_root(slot))
             .collect())

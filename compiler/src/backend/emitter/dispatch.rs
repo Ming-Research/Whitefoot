@@ -2646,28 +2646,40 @@ impl FunctionEmitter<'_, '_> {
     }
 }
 
-/// Whether every part that uses the frame slot `key` writes it before it
-/// reads it and nothing reads it after the part transfers: the enclosing
-/// function's call of the dispatch function, a part's tail call of it or
-/// of an arm, and a part's return are the transfers
-/// (compiler/match-dispatch-lowering). A planned value's allocation is
-/// confined unless it is in `across`, the allocations the storage plan
-/// finds carried across the header; an edge's snapshot, the transfer
-/// scratch and an array fill's index serve one edge or one instruction;
-/// any other slot is kept in the shared frame.
+/// Whether the contents of the frame slot `key`, which the enclosing
+/// function does not use, never cross a transfer between the parts: the
+/// enclosing function's call of the dispatch function, a part's guaranteed
+/// tail call of it or of an arm, and a part's return
+/// (compiler/match-dispatch-lowering). Such a slot is the own allocation of
+/// each part that uses it.
 fn confined(key: FunctionSlot, across: &BTreeSet<usize>) -> bool {
     match key {
+        // A planned value's allocation crosses when a value it holds does;
+        // `across` holds the allocations the storage plan finds.
         FunctionSlot::OwnedValue(slot) => !across.contains(&slot),
+        // Written and read within one edge or one instruction, which one
+        // part emits.
         FunctionSlot::EdgeSnapshot(_)
         | FunctionSlot::TransferScratch
         | FunctionSlot::ArrayFillIndex(_) => true,
+        // Reached through the address, reference or range its instruction
+        // forms. An address derived from that one, such as a field's
+        // address or a range view, is a register value a part may pass to
+        // the next in its tail call, and the storage plan follows values,
+        // not addresses, so the slot counts as crossing.
         FunctionSlot::Address(_)
         | FunctionSlot::IndexedDirectory(_)
-        | FunctionSlot::IndexedReference(..)
-        | FunctionSlot::Result
-        | FunctionSlot::WaitingResult(_)
+        | FunctionSlot::IndexedReference(..) => false,
+        // Written by the enclosing function before the loop and read by the
+        // parts.
+        FunctionSlot::Spill(_) => false,
+        // Never in a split frame: a waiting call's or a context's result
+        // occurs only in a function that waits [WAIT-1, WAIT-3], which is
+        // emitted whole, and the result slot only in a register-returned
+        // definition's public entry, which holds no loop.
+        FunctionSlot::WaitingResult(_)
         | FunctionSlot::ContextResult(_)
-        | FunctionSlot::Spill(_) => false,
+        | FunctionSlot::Result => false,
     }
 }
 

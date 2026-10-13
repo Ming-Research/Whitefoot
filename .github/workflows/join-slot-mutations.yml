@@ -1,0 +1,131 @@
+# Temporary claude/join-slot-local workflow; remove before the pull request is
+# ready. Shows once that each check the join-slot change adds fails for the
+# condition it protects: each job applies one mutation to its own checkout,
+# builds the unit tests, and passes only when every test that mutation must
+# break fails with that test's own message; the control job runs the same
+# tests unmutated and passes only when they pass.
+name: join-slot-mutations
+
+on:
+  push:
+    branches: [claude/join-slot-local]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  mutation:
+    name: ${{ matrix.mutation }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        mutation: [control, everything-local, owned-values-shared, no-header-parameters, no-arm-entries]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set the scratch root
+        run: echo "WHITEFOOT_SCRATCH_ROOT=$RUNNER_TEMP/whitefoot" >> "$GITHUB_ENV"
+
+      # gate.yml's Linux toolchain: the LLVM major .github/llvm-major pins,
+      # from apt.llvm.org, whose clang has the parts' preserve_none convention.
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          ld.lld --version
+          /usr/bin/clang --version
+          rustup default stable
+          cargo --version
+
+      - name: Fetch locked compiler dependencies
+        run: cargo fetch --locked --manifest-path compiler/Cargo.toml
+
+      - name: Apply the mutation
+        env:
+          MUTATION: ${{ matrix.mutation }}
+        run: |
+          set -eu
+          storage=compiler/src/backend/storage.rs
+          dispatch=compiler/src/backend/emitter/dispatch.rs
+          case "$MUTATION" in
+            control) ;;
+            # The storage plan finds no allocation crossing a transfer, so
+            # every slot the enclosing function does not use is each part's.
+            everything-local)
+              perl -0pi -e 's/Ok\(handed\s*\.into_iter\(\)/Ok(handed.into_iter().filter(|_| false)/ or die "not applied\n"' "$storage" ;;
+            # Every planned value's slot is shared, as the rule before this
+            # change shared every slot more than one part uses.
+            owned-values-shared)
+              perl -0pi -e 's/(FunctionSlot::OwnedValue\(slot\) => !across\.contains\(&slot\)),/$1 && false,/ or die "not applied\n"' "$dispatch" ;;
+            # The storage plan leaves out the header's parameters.
+            no-header-parameters)
+              perl -0pi -e 's/block\.parameters\.iter\(\)\.copied\(\)\.collect\(\)/block.parameters.iter().copied().filter(|_| false).collect()/ or die "not applied\n"' "$storage" ;;
+            # The storage plan leaves out the values live on entry to an arm.
+            no-arm-entries)
+              perl -0pi -e 's/handed\.extend\(entering\[\*successor\]\.iter\(\)\.copied\(\)\)/handed.extend(entering[*successor].iter().copied().filter(|_| false))/ or die "not applied\n"' "$storage" ;;
+            *) echo "unknown mutation: $MUTATION"; exit 1 ;;
+          esac
+          git diff
+
+      - name: Build the unit tests
+        run: >-
+          perl .github/run-check.pl join-slot/test-build
+          cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib --no-run
+
+      - name: Run the tests the mutation must break
+        env:
+          MUTATION: ${{ matrix.mutation }}
+        run: |
+          set -u
+          status=0
+          module=backend::tests::match_dispatch
+          join=$module::a_join_s_temporaries_are_each_arm_s_own_allocation
+          carried=$module::a_slot_read_after_a_transfer_stays_in_the_shared_frame
+          plan=$module::the_storage_plan_names_the_slots_a_split_s_transfers_carry
+          out="$RUNNER_TEMP/test.txt"
+          run_test() {
+            perl .github/run-check.pl "join-slot/$MUTATION" cargo test --manifest-path compiler/Cargo.toml \
+              --profile gate --locked --offline --lib "$1" -- --exact > "$out" 2>&1
+            code=$?
+            grep -E '^test |panicked|test result' "$out" | tail -20
+            return $code
+          }
+          expect_pass() {
+            if run_test "$1"; then echo "PASS control: $1"; else echo "FAIL control: $1 did not pass"; status=1; fi
+          }
+          expect_fail() {
+            name=$1 message=$2
+            if run_test "$name"; then
+              echo "FAIL $MUTATION: $name passed"; status=1
+            elif grep -qF "$message" "$out"; then
+              echo "PASS $MUTATION: $name failed with: $message"
+            else
+              echo "FAIL $MUTATION: $name failed for another reason"; status=1
+            fi
+          }
+          case "$MUTATION" in
+            control)
+              expect_pass "$join"
+              expect_pass "$carried"
+              expect_pass "$plan" ;;
+            everything-local)
+              expect_fail "$carried" "the snapshot the arms read is in the shared frame"
+              expect_fail "$plan" "a header parameter crosses into the header" ;;
+            owned-values-shared)
+              expect_fail "$join" "the join's Result is the arm's own allocation" ;;
+            no-header-parameters)
+              expect_fail "$plan" "a header parameter crosses into the header" ;;
+            no-arm-entries)
+              expect_fail "$carried" "the snapshot the arms read is in the shared frame"
+              expect_fail "$plan" "a value the header builds crosses into the arm reading it" ;;
+          esac
+          exit $status

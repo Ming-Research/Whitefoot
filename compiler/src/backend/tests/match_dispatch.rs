@@ -3161,10 +3161,14 @@ fn main() -> status: ExitStatus pure {
 #[test]
 fn a_slot_read_after_a_transfer_stays_in_the_shared_frame() {
     // `snapshot` is written by the dispatch function and read by the arm it
-    // tail-calls; `carried` is written by one arm and read by a later one.
-    // Either slot made part-local would leave the reading part an
-    // uninitialised allocation of its own: the frame assertions fail and
-    // the program returns another value.
+    // tail-calls, and only the storage plan's analysis keeps its slot
+    // shared: made part-local, the slot is an allocation of the dispatch
+    // function's own, which fails the assertion on that function below.
+    // `carried` is written by one arm and read by a later one, but the
+    // enclosing function writes its slot before the loop, which keeps it in
+    // the shared frame whatever the analysis decides, so its reads guard
+    // only that; `the_storage_plan_names_the_slots_a_split_s_transfers_carry`
+    // reads the analysis's answer for a header parameter directly.
     let module = emit(CARRIED_QUADS);
     let (convention, _) = host_convention();
     let verdict = verdict(&module, "wf_run");
@@ -3198,6 +3202,197 @@ fn a_slot_read_after_a_transfer_stays_in_the_shared_frame() {
         }
         assert_eq!(reads, 4, "four Quads are weighed: {module}");
     }
+    let output = compile_and_run(&module);
+    assert!(output.status.success(), "{output:?}");
+}
+
+/// A loop whose `Quad`s each meet one kind of transfer, or none: `state`, a
+/// header parameter only the header reads, is written by each looping arm
+/// before its tail call of the dispatch function; `snapshot` is built by the
+/// header and read by `Mix` after the tail call into it; `probe` is built
+/// and read within `Mix`. With `weigh(make_quad(a, b))` equal to
+/// 2a + 3b + 1, `Shift 4; Mix; Halt` from 5 returns 120 + 364 = 484.
+const CROSSINGS: &[u8] = br#"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+enum Op {
+  Shift(k: u64);
+  Mix();
+  Halt();
+}
+
+struct Quad {
+  a: u64;
+  b: u64;
+  c: u64;
+  d: u64;
+}
+
+fn make_quad(a: u64, b: u64) -> result: Quad pure {
+  let c = a +wrap b;
+  let d = b +wrap 1_u64;
+  return Quad(a: a, b: b, c: c, d: d);
+}
+
+fn probe_quad(a: u64, b: u64) -> result: Quad pure {
+  let c = a +wrap 2_u64;
+  return Quad(a: a, b: b, c: c, d: b);
+}
+
+fn weigh(quad: Quad) -> result: u64 pure {
+  let ab = quad.a +wrap quad.b;
+  let cd = quad.c +wrap quad.d;
+  return ab +wrap cd;
+}
+
+fn run(code: &Box<Slots<Op>>, start: u64, seed: u64) -> r: u64 reads(code) contract {
+  requires start < code^.inner.len;
+} {
+  let n = code^.inner.len;
+  let pc = start;
+  let acc = seed;
+  let state = make_quad(a: seed, b: 1_u64);
+  loop (
+    invariant code_bound: pc < n
+  ) {
+    let next = pc + 1_u64;
+    let base = weigh(quad: state);
+    let snapshot = make_quad(a: pc, b: acc);
+    match code^.inner[pc] {
+      Shift(k: kv) => {
+        let shift = kv^;
+        let fresh = make_quad(a: base, b: shift);
+        if next < n {
+          set pc = next;
+          set state = fresh;
+          continue;
+        }
+        return 0_u64;
+      }
+      Mix() => {
+        let weight = weigh(quad: snapshot);
+        let probe = probe_quad(a: weight, b: base);
+        let mixed = weigh(quad: probe);
+        let renewed = make_quad(a: mixed, b: base);
+        if next < n {
+          set pc = next;
+          set acc = mixed;
+          set state = renewed;
+          continue;
+        }
+        return 0_u64;
+      }
+      Halt() => {
+        let total = acc +wrap base;
+        return total;
+      }
+    }
+  }
+}
+
+fn push(code: &Box<Slots<Op>>, op: Op) -> ok: Bool writes(code) {
+  if code^.inner.len < code^.inner.cap {
+    place_back(window: &code^.inner, value: op);
+    return True();
+  }
+  return False();
+}
+
+fn main() -> status: ExitStatus pure {
+  let code = box_slots_new::<Op>(capacity: 3_u64);
+  let c0 = Op::Shift(k: 4_u64);
+  let p0 = push(code: &code, op: c0);
+  let c1 = Op::Mix();
+  let p1 = push(code: &code, op: c1);
+  let c2 = Op::Halt();
+  let p2 = push(code: &code, op: c2);
+  if code.inner.len > 0_u64 {
+    let r = run(code: &code, start: 0_u64, seed: 5_u64);
+    if r == 484_u64 {
+      return exit_status(code: 0_u8);
+    }
+    return exit_status(code: 1_u8);
+  }
+  return exit_status(code: 2_u8);
+}
+"#;
+
+#[test]
+fn the_storage_plan_names_the_slots_a_split_s_transfers_carry() {
+    // Read from the storage plan itself: in the emitted split the enclosing
+    // function's write of `state` before the loop keeps its slot shared
+    // whatever the analysis decides, so only this reading fails when the
+    // analysis leaves a header parameter out.
+    super::system::with_ir(CROSSINGS, |program| {
+        let run = program
+            .functions()
+            .iter()
+            .find(|function| function.name() == "run")
+            .expect("the fixture's run");
+        let header = crate::backend::emitter::dispatch::storage_parts(run)
+            .expect("run's storage parts")
+            .iter()
+            .position(Option::is_none)
+            .expect("run's loop is a dispatch loop");
+        let plan = crate::backend::storage::FunctionStoragePlan::build(program, run)
+            .expect("run's storage plan");
+        let across = plan
+            .allocations_across(program, run, header, false)
+            .expect("the allocations run's transfers carry");
+        let allocation = |value: crate::IrValueId| {
+            plan.allocation_root(plan.slot(value).expect("a Quad is held in a slot"))
+        };
+        let calls = |callee: &str| {
+            let mut found = Vec::new();
+            for (index, block) in run.blocks().iter().enumerate() {
+                for instruction in block.instructions() {
+                    if let crate::IrInstruction::Define {
+                        result,
+                        operation: crate::IrOperation::Call { function, .. },
+                        ..
+                    } = instruction
+                        && program
+                            .functions()
+                            .get(*function as usize)
+                            .is_some_and(|called| called.name() == callee)
+                    {
+                        found.push((index, *result));
+                    }
+                }
+            }
+            found
+        };
+        let held: Vec<crate::IrValueId> = run.blocks()[header]
+            .parameters()
+            .iter()
+            .map(|(value, _)| *value)
+            .filter(|value| plan.slot(*value).is_some())
+            .collect();
+        let [state] = held.as_slice() else {
+            panic!("`state` is the header's one parameter held in a slot");
+        };
+        let snapshot = calls("make_quad")
+            .into_iter()
+            .find_map(|(block, result)| (block == header).then_some(result))
+            .expect("the header builds `snapshot`");
+        let probes = calls("probe_quad");
+        let [(_, probe)] = probes.as_slice() else {
+            panic!("`Mix` builds one `probe`");
+        };
+        assert!(
+            across.contains(&allocation(*state)),
+            "a header parameter crosses into the header: {across:?}"
+        );
+        assert!(
+            across.contains(&allocation(snapshot)),
+            "a value the header builds crosses into the arm reading it: {across:?}"
+        );
+        assert!(
+            !across.contains(&allocation(*probe)),
+            "a value written and read within one arm stays in it: {across:?}"
+        );
+    });
+    let module = emit(CROSSINGS);
     let output = compile_and_run(&module);
     assert!(output.status.success(), "{output:?}");
 }
