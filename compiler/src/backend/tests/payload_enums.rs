@@ -1244,16 +1244,27 @@ fn rec_rebind(r: Rec, c: Bool) -> s: u64 pure {
 /// variants force union layout; Jump's tag and three words occupy 32 bytes.
 pub(super) const SELECT_STEP: &str = include_str!("select_step.wf");
 
+/// The producers' symbols, and those of the call entries through which a
+/// split dispatch loop's part calls them (compiler/match-dispatch-lowering).
+const STEP_PRODUCERS: [&str; 4] = [
+    "wf_prepare",
+    "wf_unwind",
+    "wf__most_prepare",
+    "wf__most_unwind",
+];
+
 /// Keep producer calls visible through host optimization, without changing the
-/// split dispatcher's alwaysinline contract or any source semantics.
+/// split dispatcher's alwaysinline contract or any source semantics. A call
+/// entry inlines its producer whatever the producer's attributes, so it is
+/// kept out of line too.
 pub(super) fn retain_step_producers(module: &str) -> String {
     module
         .lines()
         .map(|line| {
             if line.starts_with("define ")
-                && ["prepare", "unwind"]
+                && STEP_PRODUCERS
                     .iter()
-                    .any(|name| line.contains(&format!(" @wf_{name}(")))
+                    .any(|symbol| line.contains(&format!(" @{symbol}(")))
             {
                 format!("{} noinline {{\n", line.strip_suffix(" {").expect("header"))
             } else {
@@ -1264,7 +1275,8 @@ pub(super) fn retain_step_producers(module: &str) -> String {
 }
 
 /// Both the raw and optimized definition must pass its actual result pointer
-/// to each producer. The fixture has no other copy, so forbidding all memory
+/// to each producer, or to the producer's call entry from a split dispatch
+/// loop's part. The fixture has no other copy, so forbidding all memory
 /// copies is stronger than matching a target-dependent spelling of size 32.
 pub(super) fn assert_step_destination(body: &str) {
     // LLVM may infer pointer attributes containing commas inside parentheses.
@@ -1303,7 +1315,10 @@ pub(super) fn assert_step_destination(body: &str) {
     for producer in ["prepare", "unwind"] {
         let calls = body
             .lines()
-            .filter_map(|line| line.split_once(&format!("@wf_{producer}(")))
+            .filter_map(|line| {
+                line.split_once(&format!("@wf_{producer}("))
+                    .or_else(|| line.split_once(&format!("@wf__most_{producer}(")))
+            })
             .collect::<Vec<_>>();
         assert_eq!(calls.len(), 1, "one retained {producer} call: {body}");
         let destination = first_argument(calls[0].1);

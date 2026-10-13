@@ -154,6 +154,19 @@ fn host_convention() -> (&'static str, usize) {
     }
 }
 
+/// The symbol a part of a split dispatch loop names for an ordinary call to
+/// the source function `name`, whose result is a value or goes through the
+/// caller's destination: its call entry where the host generates the
+/// entry's convention, and the function itself otherwise
+/// (compiler/match-dispatch-lowering).
+pub(super) fn part_callee(name: &str) -> String {
+    if crate::toolchain::facts().preserve_most {
+        format!("wf__most_{name}")
+    } else {
+        format!("wf_{name}")
+    }
+}
+
 fn assert_split(module: &str, base: &str, arms: usize) {
     assert_split_with_table_slots(module, base, arms, arms);
 }
@@ -1535,12 +1548,10 @@ fn a_reference_handed_to_a_content_writer_keeps_its_box() {
         !some_part_reloads_a_box(&module, "wf_content", 4),
         "no part reloads a box a content writer cannot replace: {module}"
     );
+    let call = format!("@{}(ptr %wf.pin.", part_callee("touch_content"));
     let handed = (0..4).any(|arm| {
         let part = definition(&module, &format!("wf_content.arm.{arm}"));
-        part.contains("= alloca ptr")
-            && part
-                .lines()
-                .any(|line| line.contains("@wf_touch_content(ptr %wf.pin."))
+        part.contains("= alloca ptr") && part.lines().any(|line| line.contains(&call))
     });
     assert!(handed, "a part hands the callee its pin slot: {module}");
     let output = compile_and_run(&module);
@@ -1669,10 +1680,11 @@ fn a_read_only_reference_handed_to_a_reader_keeps_its_box() {
         !some_part_reloads_a_box(&module, "wf_reader", 4),
         "no part reloads a box a reader cannot replace: {module}"
     );
+    let call = format!("@{}(ptr %wf.pin.", part_callee("peek"));
     let handed = (0..4).any(|arm| {
         definition(&module, &format!("wf_reader.arm.{arm}"))
             .lines()
-            .any(|line| line.contains("@wf_peek(ptr %wf.pin."))
+            .any(|line| line.contains(&call))
     });
     assert!(handed, "the arm hands the reader its pin slot: {module}");
     let output = compile_and_run(&module);
@@ -2980,9 +2992,16 @@ fn run_arms(module: &str) -> String {
 
 /// compiler/match-dispatch-lowering: an ordinary call made from a part goes
 /// to the callee's `preserve_most` entry, one per callee however many calls
-/// name it, which calls the callee's body inline where the host can; the
-/// callee keeps the C convention, a call outside the parts is unchanged, and
-/// where the host lacks the convention every call keeps the C convention.
+/// name it, which calls the callee inline where the host can; the callee
+/// keeps the C convention, a call outside the parts is unchanged, a call of
+/// a register-returned callee keeps the C convention, and where the host
+/// lacks the entries' convention every call keeps the C convention.
+///
+/// Deciding the rule for every call puts an entry in `main` and in `run`'s
+/// enclosing body; one entry per call site defines `wf__most_scale` twice;
+/// an entry that only forwards fails the `alwaysinline` check; covering
+/// register-returned callees gives `three` an entry; ignoring the probe's
+/// answer leaves entries in the fallback.
 #[test]
 fn calls_from_parts_go_through_one_preserve_most_entry_per_callee() {
     super::system::with_ir(PART_CALLS, |program| {
@@ -2991,18 +3010,20 @@ fn calls_from_parts_go_through_one_preserve_most_entry_per_callee() {
             .into_string();
         assert_split(&module, "wf_run", 3);
         let arms = run_arms(&module);
-        for (entry, original) in [
-            ("wf__most_scale", "wf_scale"),
-            ("wf__most_three", "wf_three"),
-            ("wf__most_four", "wf_four"),
+        for (entry, result, original, count) in [
+            ("wf__most_scale", "i64", "wf_scale", 2),
+            ("wf__most_four", "void", "wf_four", 1),
         ] {
-            let calls = arms
-                .lines()
-                .filter(|line| line.contains(&format!("@{entry}(")))
-                .collect::<Vec<_>>();
-            assert!(
-                !calls.is_empty() && calls.iter().all(|l| l.contains("call preserve_mostcc ")),
+            assert_eq!(
+                arms.matches(&format!("call preserve_mostcc {result} @{entry}("))
+                    .count(),
+                count,
                 "the arms call {original} through its entry: {arms}"
+            );
+            assert_eq!(
+                arms.matches(&format!("@{entry}(")).count(),
+                count,
+                "every call of {entry} is in its convention: {arms}"
             );
             assert!(
                 !arms.contains(&format!("@{original}(")),
@@ -3021,28 +3042,22 @@ fn calls_from_parts_go_through_one_preserve_most_entry_per_callee() {
                 "the callee keeps the C convention: {callee}"
             );
         }
-        assert_eq!(
-            arms.matches("@wf__most_scale(").count(),
-            2,
-            "both looping arms call scale through the one entry: {arms}"
+        assert!(
+            arms.contains("@wf_three(") && !module.contains("wf__most_three"),
+            "a register-returned callee is called directly: {module}"
         );
         let scale = definition(&module, "wf__most_scale");
         assert!(
-            scale.contains(" = call i64 @wf_scale(i64 %v") && scale.contains(") alwaysinline\n"),
+            scale.contains("%wf.entry = call i64 @wf_scale(i64 %v")
+                && scale.contains(") alwaysinline\n"),
             "the scalar entry calls the callee inline: {scale}"
-        );
-        let three = definition(&module, "wf__most_three");
-        assert!(
-            three.contains("call void @wf_three.body(ptr %wf.result, ")
-                && three.contains(") alwaysinline\n")
-                && three.contains(", ptr %wf.result\n"),
-            "the register-returned entry calls the internal body and loads its result: {three}"
         );
         let four = definition(&module, "wf__most_four");
         let header = four.lines().next().unwrap_or_default();
         assert!(
             header.contains("(ptr %wf.result, ")
-                && four.contains("call void @wf_four(ptr %wf.result, "),
+                && four.contains("call void @wf_four(ptr %wf.result, ")
+                && four.contains(") alwaysinline\n"),
             "the destination entry passes its destination on: {four}"
         );
         for outside in ["main", "run"] {
@@ -3087,7 +3102,8 @@ fn the_host_probe_selects_part_call_entries_and_the_program_runs() {
 
 /// A fragment build defines each entry once, hidden, in the fragment of the
 /// callee whose body it inlines, and the split function's fragment declares
-/// it with its convention.
+/// it with its convention. Placing the entry by its callers alone defines
+/// it privately in `run`'s fragment, away from the body it inlines.
 #[test]
 fn a_fragment_build_defines_each_part_call_entry_beside_its_callee() {
     let inputs = [crate::SourceInput::new("part-calls.wf", PART_CALLS)];
@@ -3110,7 +3126,6 @@ fn a_fragment_build_defines_each_part_call_entry_beside_its_callee() {
     }
     for (entry, callee) in [
         ("wf__most_scale", "\ndefine i64 @wf_scale("),
-        ("wf__most_three", "\ndefine internal void @wf_three.body("),
         ("wf__most_four", "\ndefine void @wf_four("),
     ] {
         let defines = |line: &str| {
@@ -3136,4 +3151,144 @@ fn a_fragment_build_defines_each_part_call_entry_beside_its_callee() {
         run.contains("\ndeclare hidden preserve_mostcc i64 @wf__most_scale(i64) #0\n"),
         "{run}"
     );
+}
+
+/// Rounds of `mix`'s squaring chain: each adds a multiplication and an
+/// addition, which with 96 rounds puts the callee far past the host's
+/// inlining threshold for a function with two call sites.
+const MIX_ROUNDS: u64 = 96;
+
+/// A loop over `Step` whose two looping arms each call `mix`, a chain of
+/// [`MIX_ROUNDS`] squarings returning a four-word record through the
+/// caller's destination, with its arguments in opposite orders. `main`
+/// checks `run`'s result against the same arithmetic computed here.
+fn mixing_calls() -> String {
+    let mut chain = String::new();
+    let mut last = "x".to_owned();
+    for round in 0..MIX_ROUNDS {
+        chain.push_str(&format!(
+            "  let p{round} = {last} *wrap {last};\n  let s{round} = p{round} +wrap {}_u64;\n",
+            2 * round + 1
+        ));
+        last = format!("s{round}");
+    }
+    let mix = |x: u64, y: u64| {
+        let mut square = x;
+        for round in 0..MIX_ROUNDS {
+            square = square.wrapping_mul(square).wrapping_add(2 * round + 1);
+        }
+        (square, y, y.wrapping_add(1))
+    };
+    let (mut again, mut left, mut acc) = (true, 3_u64, 7_u64);
+    let expected = loop {
+        if again {
+            if left == 0 {
+                break acc;
+            }
+            let (a, c, _) = mix(acc, left);
+            acc = a.wrapping_add(c);
+            left -= 1;
+        } else {
+            let (a, _, d) = mix(left, acc);
+            acc = a.wrapping_add(d);
+        }
+        again = !again;
+    };
+    format!(
+        r#"struct Four {{
+  a: u64;
+  b: u64;
+  c: u64;
+  d: u64;
+}}
+
+enum Step {{
+  Again(left: u64);
+  Other(left: u64);
+  Done();
+}}
+
+fn mix(x: u64, y: u64) -> result: Four pure {{
+{chain}  let d = y +wrap 1_u64;
+  return Four(a: {last}, b: x, c: y, d: d);
+}}
+
+fn run(first: Step, seed: u64) -> result: u64 pure {{
+  let step = first;
+  let acc = seed;
+  loop @steps {{
+    match step {{
+      Again(left: n) => {{
+        let left = n;
+        if left == 0_u64 {{
+          return acc;
+        }}
+        let next = left -wrap 1_u64;
+        let mixed = mix(x: acc, y: left);
+        let a = mixed.a;
+        let c = mixed.c;
+        set acc = a +wrap c;
+        set step = Step::Other(left: next);
+        continue;
+      }}
+      Other(left: n) => {{
+        let left = n;
+        let mixed = mix(x: left, y: acc);
+        let a = mixed.a;
+        let d = mixed.d;
+        set acc = a +wrap d;
+        set step = Step::Again(left: left);
+        continue;
+      }}
+      Done() => {{
+        break @steps;
+      }}
+    }}
+  }}
+  return acc;
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  let first = Step::Again(left: 3_u64);
+  let result = run(first: first, seed: 7_u64);
+  if result == {expected}_u64 {{
+    return std::process::exit_status(code: 0_u8);
+  }}
+  return std::process::exit_status(code: 1_u8);
+}}
+"#
+    )
+}
+
+/// A callee too large for the host to inline stays an out-of-line call in
+/// the entry's convention from both arms, the entry holds the callee's body
+/// rather than a call to it, and the record it returns through the
+/// caller's destination arrives intact.
+///
+/// An entry that only forwarded would be inlined into each arm, leaving a
+/// C-convention call of `wf_mix` there; one without `alwaysinline` would
+/// still call `wf_mix`; a destination lost or misplaced across the
+/// convention changes `run`'s result and `main` exits 1.
+#[test]
+fn a_call_the_host_keeps_out_of_line_crosses_in_the_entry_convention() {
+    let module = emit(mixing_calls().as_bytes());
+    assert_split(&module, "wf_run", 3);
+    if crate::toolchain::facts().preserve_most {
+        let optimized = super::host_optimized_module(&module);
+        for arm in 0..2 {
+            let body = definition(&optimized, &format!("wf_run.arm.{arm}"));
+            assert!(
+                body.contains("call preserve_mostcc void @wf__most_mix(")
+                    && !body.contains("@wf_mix("),
+                "the large callee stays out of line, in the entry's convention: {body}"
+            );
+        }
+        let entry = definition(&optimized, "wf__most_mix");
+        assert!(
+            entry.starts_with("define internal preserve_mostcc ") && !entry.contains("@wf_mix("),
+            "the entry holds the callee's body in its own convention: {entry}"
+        );
+    }
+    let output = compile_and_run(&module);
+    assert!(output.status.success(), "{output:?}");
 }

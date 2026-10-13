@@ -31,7 +31,9 @@
 //! of them are written in name order. A fragment's text is therefore a
 //! function of its own definitions and of the signatures they name. With
 //! stable symbols and type names, an unchanged function keeps the bytes of
-//! its fragment across an edit elsewhere, and with them its cached object.
+//! its fragment across an edit elsewhere, and with them its cached object,
+//! except that an edit which adds or removes the only call to it from a
+//! split dispatch loop's parts adds or removes its anchored call entry.
 //! A missing symbol, type or attribute definition fails the split.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -987,8 +989,8 @@ mod tests {
     #[test]
     fn an_anchored_entry_is_defined_beside_its_anchor_and_named_from_its_callers() {
         for granularity in [FragmentGranularity::Function, FragmentGranularity::Module] {
-            let fragments = split_emission(&module_with_entry(true), granularity)
-                .expect("the module splits");
+            let fragments =
+                split_emission(&module_with_entry(true), granularity).expect("the module splits");
             let entry = defining(&fragments, "define hidden preserve_mostcc i32 @wf__most_b.g(");
             assert_eq!(entry.len(), 1, "{granularity:?}: {fragments:#?}");
             assert!(
@@ -1002,8 +1004,8 @@ mod tests {
                 "{granularity:?}: {f}"
             );
             assert!(!f.contains("define i32 @wf_b.g("), "{f}");
-            let unanchored = split_emission(&module_with_entry(false), granularity)
-                .expect("the module splits");
+            let unanchored =
+                split_emission(&module_with_entry(false), granularity).expect("the module splits");
             let f = defining(&unanchored, "define i64 @wf_a.f(")[0];
             assert!(
                 f.contains("define internal preserve_mostcc i32 @wf__most_b.g("),

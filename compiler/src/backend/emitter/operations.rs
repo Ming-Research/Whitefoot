@@ -206,7 +206,8 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             rendered.push(format!("i64 {budget}"));
         }
         // Inside a split dispatch loop's part, the callee's call entry.
-        let (callee, convention) = self.ordinary_call_target(function, callee, budgeted);
+        let (callee, convention) =
+            self.ordinary_call_target(function, callee, budgeted, abi.result());
         if stored_result {
             return {
                 self.output.symbol(callee.to_string());

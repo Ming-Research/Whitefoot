@@ -426,13 +426,8 @@ fn emit_module(
         }
     }
     // Each function a split dispatch loop's part calls gets one entry.
-    for ordinal in entries {
-        functions.append(part_calls::emit_call_entry(
-            program,
-            target,
-            ordinal,
-            &frontiers,
-        )?);
+    for callee in entries {
+        functions.append(part_calls::emit_call_entry(program, callee)?);
     }
     let has_matches = program.functions().iter().any(|function| {
         function
