@@ -832,6 +832,72 @@ static void tcp_probe(wf_inputs *inputs) {
     assert(WF_PROBE_INPUT_BUDGET + other_factory.words[0] == before);
 }
 
+/* [PRE-2] An address reads back as the constructor call that built it, every
+ * component and both bytes of every group and port differing so that a
+ * misplaced or byte-swapped read differs. A connection then reports both its
+ * ends: the accepted peer is 127.0.0.1 at the port the host's own
+ * `getsockname` gives the connecting socket, the connecting side's
+ * `local_address` is that same peer, and the accepted connection's
+ * `local_address` is the listened address after its sending half has closed.
+ * No query spends or returns a credit. */
+static void address_probe(wf_inputs *inputs) {
+    static const uint16_t groups[8] = {
+        0x2001u, 0x0db8u, 0x1234u, 0x5678u, 0x9abcu, 0xdef0u, 0x0102u, 0xfffeu
+    };
+    wf_value address;
+    wf_ip_address ip;
+    wf_open_result listener, local;
+    wf_connect_result client;
+    wf_accept_result server;
+    wf_close_result closed;
+    uint64_t before = WF_PROBE_INPUT_BUDGET;
+    unsigned index;
+
+    wf__body_socket_address_v4(&address, 192, 168, 1, 200, 0x8001u);
+    wf__body_socket_address_ip(&ip, &address);
+    assert(ip.tag == WF_IP_ADDRESS_V4);
+    assert(ip.v4.octets[0] == 192 && ip.v4.octets[1] == 168);
+    assert(ip.v4.octets[2] == 1 && ip.v4.octets[3] == 200);
+    assert((unsigned)wf__body_socket_address_port(&address) == 0x8001u);
+    wf__body_socket_address_v6(&address, groups[0], groups[1], groups[2], groups[3],
+                               groups[4], groups[5], groups[6], groups[7], 0xbeefu);
+    wf__body_socket_address_ip(&ip, &address);
+    assert(ip.tag == WF_IP_ADDRESS_V6);
+    for (index = 0; index < 8u; index++) assert(ip.v6.groups[index] == groups[index]);
+    assert((unsigned)wf__body_socket_address_port(&address) == 0xbeefu);
+
+    wf__body_socket_address_v4(&address, 127, 0, 0, 1, 0);
+    wf__body_tcp_listen(&listener, &inputs->handles, &address);
+    assert(listener.tag == 0);
+    wf__body_socket_address_v4(&address, 127, 0, 0, 1, listener_port(&listener.ok.value));
+    wf__body_tcp_connect(&client, &inputs->handles, &address, NULL, &wf_probe_never);
+    assert(client.tag == 0);
+    wf__body_tcp_accept(&server, &inputs->handles, &listener.ok.value, NULL, &wf_probe_never);
+    assert(server.tag == 0 && WF_PROBE_INPUT_BUDGET == before - 3);
+
+    wf__body_socket_address_ip(&ip, &server.ok.value.peer);
+    assert(ip.tag == WF_IP_ADDRESS_V4);
+    assert(ip.v4.octets[0] == 127 && ip.v4.octets[1] == 0);
+    assert(ip.v4.octets[2] == 0 && ip.v4.octets[3] == 1);
+    assert((unsigned)wf__body_socket_address_port(&server.ok.value.peer) != 0u);
+    assert((unsigned)wf__body_socket_address_port(&server.ok.value.peer)
+           == wf_test_socket_port((int)client.ok.value.receive.words[0]));
+    wf__body_local_address(&local, &client.ok.value.receive);
+    assert(local.tag == 0 && WF_PROBE_INPUT_BUDGET == before - 3);
+    assert(memcmp(local.ok.value.words, server.ok.value.peer.words, 3 * sizeof(uint64_t)) == 0);
+
+    wf__body_close_send(&closed, &inputs->handles, &server.ok.value.connection.send); check_close(&closed);
+    wf__body_local_address(&local, &server.ok.value.connection.receive);
+    assert(local.tag == 0 && WF_PROBE_INPUT_BUDGET == before - 3);
+    assert(memcmp(local.ok.value.words, address.words, 3 * sizeof(uint64_t)) == 0);
+
+    wf__body_close_receive(&closed, &inputs->handles, &server.ok.value.connection.receive); check_close(&closed);
+    wf__body_close_send(&closed, &inputs->handles, &client.ok.value.send); check_close(&closed);
+    wf__body_close_receive(&closed, &inputs->handles, &client.ok.value.receive); check_close(&closed);
+    wf__body_close_listener(&closed, &inputs->handles, &listener.ok.value); check_close(&closed);
+    assert(WF_PROBE_INPUT_BUDGET == before);
+}
+
 static void concurrent_half_close_probe(wf_inputs *inputs, int send_first) {
     wf_value address;
     wf_open_result listener;
@@ -1423,15 +1489,16 @@ int wf_ordinary_values_tests(const char *scratch, const char *group) {
     }
 #endif
     if (tcp) {
-        wf_test_guard_phase("ordinary TCP crossed halves/concurrent close/credits");
+        wf_test_guard_phase("ordinary TCP crossed halves/addresses/concurrent close/credits");
         assert(wf_prim_wait_init(&half_close.wait) == 0);
         atomic_store(&half_close_initialized, 1);
         tcp_probe(&inputs);
+        address_probe(&inputs);
         concurrent_half_close_probe(&inputs, 1);
         concurrent_half_close_probe(&inputs, 0);
         atomic_store(&half_close_initialized, 0);
         wf_prim_wait_destroy(&half_close.wait);
-        puts("ordinary TCP crossed halves/concurrent close/credits: PASS");
+        puts("ordinary TCP crossed halves/addresses/concurrent close/credits: PASS");
     }
     wf__body_close_directory_write(&closed, &inputs.handles, &inputs.cwd_write);
     check_close(&closed);
