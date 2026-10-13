@@ -147,7 +147,7 @@ impl Walker<'_> {
             let written = writes.iter().any(|path| path.root == parameter.declaration);
             let Some(Value::Ref(view)) = values.get(position).cloned() else {
                 if written {
-                    targets.push(effects::Write::View(View::Unknown));
+                    targets.push(effects::Write::view(View::Unknown));
                 }
                 continue;
             };

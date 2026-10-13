@@ -708,7 +708,7 @@ pub(super) enum Slot {
     Read(ReadSource),
     Unknown,
     Int(Linear),
-    Ref(View),
+    Ref(Box<View>),
 }
 
 /// A fact active where every one of its guards holds: each guard says one

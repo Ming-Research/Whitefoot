@@ -5,7 +5,7 @@ use crate::semantic::model::CheckedEffectStep;
 use crate::semantic::places::WindowPart;
 
 pub(super) enum Write {
-    View(View),
+    View(Box<View>),
     Descriptor(ContainerId, CheckedMeasure),
     Elements {
         container: ContainerId,
@@ -13,6 +13,12 @@ pub(super) enum Write {
         projection: Vec<CheckedRangeProjection>,
         loss: Option<CallFootprintLoss>,
     },
+}
+
+impl Write {
+    pub(super) fn view(view: View) -> Self {
+        Self::View(Box::new(view))
+    }
 }
 
 impl Walker<'_> {
@@ -27,7 +33,7 @@ impl Walker<'_> {
     ) -> Write {
         let parameter = &callee.parameters[ordinal];
         let Some(Value::Ref(mut view)) = values.get(ordinal).cloned() else {
-            return Write::View(View::Unknown);
+            return Write::view(View::Unknown);
         };
         let mut ty = parameter.ty;
         match &view {
@@ -62,15 +68,18 @@ impl Walker<'_> {
                 let unresolved = self.imprecise_call.take().is_some();
                 self.imprecise_call = saved_imprecise;
                 let loss = match precise {
-                    Write::View(View::Element {
-                        indices,
-                        projection: Some(projection),
-                        ..
-                    }) => Some(CallFootprintLoss {
-                        frames: barrier.frames.clone(),
-                        indices: indices.into_iter().map(WriteIndex::Point).collect(),
-                        projection,
-                    }),
+                    Write::View(view) => match *view {
+                        View::Element {
+                            indices,
+                            projection: Some(projection),
+                            ..
+                        } => Some(CallFootprintLoss {
+                            frames: barrier.frames.clone(),
+                            indices: indices.into_iter().map(WriteIndex::Point).collect(),
+                            projection,
+                        }),
+                        _ => None,
+                    },
                     Write::Elements {
                         indices,
                         projection,
@@ -138,7 +147,7 @@ impl Walker<'_> {
                         };
                         match state.container(&mut self.world, location, arity) {
                             Some(container) => Write::Descriptor(container, *measure),
-                            None => Write::View(View::Unknown),
+                            None => Write::view(View::Unknown),
                         }
                     }
                     View::Element {
@@ -148,14 +157,14 @@ impl Walker<'_> {
                         barrier,
                     } => {
                         projection.push(CheckedRangeProjection::Measure(*measure));
-                        Write::View(View::Element {
+                        Write::view(View::Element {
                             container,
                             indices,
                             projection: Some(projection),
                             barrier,
                         })
                     }
-                    other => Write::View(other),
+                    other => Write::view(other),
                 };
             }
             if let CheckedEffectStep::Index(declaration) = step {
@@ -165,7 +174,7 @@ impl Walker<'_> {
                     .unwrap_or_else(|| self.world.opaque(Some(IntegerType::U64)));
                 let selected = self.goal_subscript(state, Value::Ref(view.clone()), ty, index);
                 let Some(Value::Ref(selected)) = selected else {
-                    return Write::View(view);
+                    return Write::view(view);
                 };
                 view = selected;
                 ty = if range {
@@ -176,7 +185,7 @@ impl Walker<'_> {
                 } else if let Some(element) = ty.storage_element() {
                     self.elements[element.0 as usize]
                 } else {
-                    return Write::View(view);
+                    return Write::view(view);
                 };
                 continue;
             }
@@ -240,7 +249,7 @@ impl Walker<'_> {
                 _ => None,
             };
             let Some((step, selected_type)) = selected else {
-                return Write::View(view);
+                return Write::view(view);
             };
             ty = selected_type;
             view = match view {
@@ -260,14 +269,14 @@ impl Walker<'_> {
                     }
                 }
                 other => {
-                    return Write::View(other);
+                    return Write::view(other);
                 }
             };
         }
         if matches!(view, View::Run { .. } | View::Unindexed { .. }) {
             return self.call_region(state, view, ty, WriteIndex::Any);
         }
-        Write::View(view)
+        Write::view(view)
     }
 
     fn call_region(
@@ -294,7 +303,7 @@ impl Walker<'_> {
                     1
                 };
                 let Some(container) = state.container(&mut self.world, location, arity) else {
-                    return Write::View(View::Unknown);
+                    return Write::view(View::Unknown);
                 };
                 (container, Vec::new(), Vec::new(), selected)
             }
@@ -318,7 +327,7 @@ impl Walker<'_> {
                     WriteIndex::Point(index) => offset.plus(&index).map(WriteIndex::Point),
                 };
                 let Some(shifted) = shifted else {
-                    return Write::View(View::Unknown);
+                    return Write::view(View::Unknown);
                 };
                 (container, prefix, projection, shifted)
             }
@@ -328,7 +337,7 @@ impl Walker<'_> {
                 projection,
                 ..
             } => (container, indices, projection, WriteIndex::Any),
-            other => return Write::View(other),
+            other => return Write::view(other),
         };
         let mut indices: Vec<_> = indices.drain(..).map(WriteIndex::Point).collect();
         indices.push(selected);
@@ -357,38 +366,40 @@ impl Walker<'_> {
                     self.world.call_footprint_losses.insert(version, loss);
                 }
             }
-            Write::View(View::Unindexed {
-                container,
-                indices,
-                projection,
-                ..
-            }) => {
-                state.havoc_elements(
-                    &mut self.world,
-                    container,
-                    indices.into_iter().map(WriteIndex::Point).collect(),
-                    projection,
-                );
-            }
-            Write::View(View::Run { container, .. }) => {
-                state.havoc_container(&mut self.world, container, false);
-            }
-            Write::View(View::Element {
-                container,
-                indices,
-                projection,
-                ..
-            }) => {
-                state.write_element(
-                    &mut self.world,
+            Write::View(view) => match *view {
+                View::Unindexed {
                     container,
                     indices,
-                    projection.unwrap_or_default(),
-                    BTreeMap::new(),
-                );
-            }
-            Write::View(View::Place(location)) => state.havoc_location(&mut self.world, &location),
-            Write::View(View::Scalar(_) | View::Unknown) => state.havoc_everything(&mut self.world),
+                    projection,
+                    ..
+                } => {
+                    state.havoc_elements(
+                        &mut self.world,
+                        container,
+                        indices.into_iter().map(WriteIndex::Point).collect(),
+                        projection,
+                    );
+                }
+                View::Run { container, .. } => {
+                    state.havoc_container(&mut self.world, container, false);
+                }
+                View::Element {
+                    container,
+                    indices,
+                    projection,
+                    ..
+                } => {
+                    state.write_element(
+                        &mut self.world,
+                        container,
+                        indices,
+                        projection.unwrap_or_default(),
+                        BTreeMap::new(),
+                    );
+                }
+                View::Place(location) => state.havoc_location(&mut self.world, &location),
+                View::Scalar(_) | View::Unknown => state.havoc_everything(&mut self.world),
+            },
         }
     }
 }

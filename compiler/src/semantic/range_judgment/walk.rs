@@ -55,6 +55,13 @@ use super::world::{
 };
 use super::{ApartFailure, CertifiedLoop, JudgmentScope, RangeIssue};
 
+type RangeElement = (
+    ContainerId,
+    Vec<Linear>,
+    Option<Vec<CheckedRangeProjection>>,
+    Option<RangeBarrier>,
+);
+
 /// One element access recorded while a certificate's iteration runs.
 #[derive(Clone, Debug)]
 pub(super) struct Access {
@@ -437,80 +444,88 @@ impl<'program> Walker<'program> {
     ) -> PlaceView {
         enum Reached {
             Location(Location),
-            Run(View),
+            Run(Box<View>),
         }
         let mut reached = match roots(place.root) {
             Some(Value::Owned(location)) => Reached::Location(location),
-            Some(Value::Ref(view)) => Reached::Run(view),
+            Some(Value::Ref(view)) => Reached::Run(Box::new(view)),
             _ => return PlaceView::Unknown,
         };
         for step in &place.path {
-            reached = match (reached, step) {
-                (Reached::Run(View::Place(location)), CheckedRangeStep::Referent) => {
-                    Reached::Location(location)
-                }
-                (
-                    Reached::Run(view @ (View::Run { .. } | View::Element { .. })),
-                    CheckedRangeStep::Referent,
-                ) => Reached::Run(view),
-                (Reached::Location(location), CheckedRangeStep::Field(field)) => {
-                    Reached::Location(location.child(Step::Field(*field)))
-                }
-                (Reached::Location(location), CheckedRangeStep::BoxContent) => {
-                    Reached::Location(location.child(Step::BoxContent))
-                }
-                (
-                    Reached::Run(View::Element {
-                        container,
-                        indices,
-                        projection: Some(mut path),
-                        barrier,
-                    }),
-                    step,
-                ) => {
-                    path.push(match step {
-                        CheckedRangeStep::Field(field) => CheckedRangeProjection::Field(*field),
-                        CheckedRangeStep::BoxContent => CheckedRangeProjection::BoxContent,
-                        CheckedRangeStep::Referent => return PlaceView::Unknown,
-                    });
-                    Reached::Run(View::Element {
-                        container,
-                        indices,
-                        projection: Some(path),
-                        barrier,
-                    })
-                }
-                _ => return PlaceView::Unknown,
+            reached = match reached {
+                Reached::Location(location) => match step {
+                    CheckedRangeStep::Field(field) => {
+                        Reached::Location(location.child(Step::Field(*field)))
+                    }
+                    CheckedRangeStep::BoxContent => {
+                        Reached::Location(location.child(Step::BoxContent))
+                    }
+                    _ => return PlaceView::Unknown,
+                },
+                Reached::Run(view) => match (*view, step) {
+                    (View::Place(location), CheckedRangeStep::Referent) => {
+                        Reached::Location(location)
+                    }
+                    (
+                        view @ (View::Run { .. } | View::Element { .. }),
+                        CheckedRangeStep::Referent,
+                    ) => Reached::Run(Box::new(view)),
+                    (
+                        View::Element {
+                            container,
+                            indices,
+                            projection: Some(mut path),
+                            barrier,
+                        },
+                        step,
+                    ) => {
+                        path.push(match step {
+                            CheckedRangeStep::Field(field) => CheckedRangeProjection::Field(*field),
+                            CheckedRangeStep::BoxContent => CheckedRangeProjection::BoxContent,
+                            CheckedRangeStep::Referent => return PlaceView::Unknown,
+                        });
+                        Reached::Run(Box::new(View::Element {
+                            container,
+                            indices,
+                            projection: Some(path),
+                            barrier,
+                        }))
+                    }
+                    _ => return PlaceView::Unknown,
+                },
             };
         }
         match reached {
-            Reached::Run(View::Element {
-                container,
-                indices,
-                projection: Some(projection),
-                barrier,
-            }) => PlaceView::Element {
-                version: state.version(&mut self.world, container),
-                indices,
-                projection,
-                barrier,
-            },
-            Reached::Run(View::Run {
-                container,
-                prefix,
-                offset,
-                length,
-                projection,
-                barrier,
-            }) => PlaceView::Run {
-                container,
-                version: state.version(&mut self.world, container),
-                generation: state.generation(container),
-                prefix,
-                offset,
-                length,
-                projection,
-                barrier,
+            Reached::Run(view) => match *view {
+                View::Element {
+                    container,
+                    indices,
+                    projection: Some(projection),
+                    barrier,
+                } => PlaceView::Element {
+                    version: state.version(&mut self.world, container),
+                    indices,
+                    projection,
+                    barrier,
+                },
+                View::Run {
+                    container,
+                    prefix,
+                    offset,
+                    length,
+                    projection,
+                    barrier,
+                } => PlaceView::Run {
+                    container,
+                    version: state.version(&mut self.world, container),
+                    generation: state.generation(container),
+                    prefix,
+                    offset,
+                    length,
+                    projection,
+                    barrier,
+                },
+                _ => PlaceView::Unknown,
             },
             Reached::Location(location) => {
                 let location = state.resolve(&location);
@@ -544,7 +559,6 @@ impl<'program> Walker<'program> {
                     }
                 }
             }
-            Reached::Run(_) => PlaceView::Unknown,
         }
     }
 
@@ -1392,7 +1406,9 @@ impl<'program> Walker<'program> {
                     let source = state.resolve(source);
                     state.set_slot(&mut self.world, at, Slot::Alias(source));
                 }
-                Value::Ref(view) => state.set_slot(&mut self.world, at, Slot::Ref(view.clone())),
+                Value::Ref(view) => {
+                    state.set_slot(&mut self.world, at, Slot::Ref(Box::new(view.clone())))
+                }
                 Value::Struct(inner) => {
                     let inner = inner.clone();
                     self.place_fields(state, &at, &inner, None);
@@ -1421,7 +1437,7 @@ impl<'program> Walker<'program> {
         let location = state.resolve(location);
         match state.slots.get(&location) {
             Some(Slot::Int(value)) => return Value::Int(value.clone()),
-            Some(Slot::Ref(view)) => return Value::Ref(view.clone()),
+            Some(Slot::Ref(view)) => return Value::Ref(view.as_ref().clone()),
             _ => {}
         }
         if let Some(source) = state.read_source(&location)
@@ -1555,7 +1571,9 @@ impl<'program> Walker<'program> {
         self.unplaced_location(state, &location, node);
         match value {
             Value::Int(value) => state.set_slot(&mut self.world, location, Slot::Int(value)),
-            Value::Ref(view) => state.set_slot(&mut self.world, location, Slot::Ref(view)),
+            Value::Ref(view) => {
+                state.set_slot(&mut self.world, location, Slot::Ref(Box::new(view)))
+            }
             Value::Owned(source) => {
                 let source = state.resolve(&source);
                 state.set_slot(&mut self.world, location, Slot::Alias(source));
@@ -1768,12 +1786,7 @@ impl<'program> Walker<'program> {
         &mut self,
         state: &mut State,
         place: &CheckedRangeElementPlace,
-    ) -> Option<(
-        ContainerId,
-        Vec<Linear>,
-        Option<Vec<CheckedRangeProjection>>,
-        Option<RangeBarrier>,
-    )> {
+    ) -> Option<RangeElement> {
         let root = match place.root.formation.as_deref() {
             Some(formation) => Some(self.eval(state, formation)),
             None => state.values.get(&place.root.binding).cloned(),
@@ -1817,12 +1830,7 @@ impl<'program> Walker<'program> {
         place: &CheckedRangeElementPlace,
         root: Option<Value>,
         index: Linear,
-    ) -> Option<(
-        ContainerId,
-        Vec<Linear>,
-        Option<Vec<CheckedRangeProjection>>,
-        Option<RangeBarrier>,
-    )> {
+    ) -> Option<RangeElement> {
         let Some(Value::Ref(View::Run {
             container,
             prefix,
