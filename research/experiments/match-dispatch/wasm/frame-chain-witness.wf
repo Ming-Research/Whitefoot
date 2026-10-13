@@ -4,11 +4,17 @@ alias exit_status = std::process::exit_status;
 fn valid_chain(words: &Array<u64, 16>, top: u64) -> ok: Bool reads(words) {
   let end = top;
   loop {
-    if end == 0_u64 { return True(); }
-    if end > words^.len { return False(); }
+    if end == 0_u64 {
+      return True();
+    }
+    if end > words^.len {
+      return False();
+    }
     let at = end - 1_u64;
     let previous = words^[at];
-    if previous >= end { return False(); }
+    if previous >= end {
+      return False();
+    }
     set end = previous;
   }
 }
