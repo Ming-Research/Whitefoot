@@ -75,6 +75,9 @@ fn obligation_records(
                 target.clone(),
                 ObligationFamily::AtomicTargetSeparation(query),
             ),
+            (None, CheckedSeparationOccasion::WindowBound) => {
+                unreachable!("window bounds always belong to a reference use")
+            }
             (None, CheckedSeparationOccasion::Call) => (
                 SemanticRule::Eff5,
                 separation.site.clone(),

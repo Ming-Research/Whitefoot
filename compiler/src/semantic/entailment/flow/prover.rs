@@ -2055,6 +2055,31 @@ impl Reasoning<'_, '_, '_> {
         )
     }
 
+    /// [OP-10] the captured formation endpoint still lies within the
+    /// window after a call. Even an empty range owes its original endpoint
+    /// bound; emptiness proves separation, not reference preservation.
+    pub(super) fn range_bound_proof(
+        &mut self,
+        window: &ResolvedPlace,
+        range: CapturedRange,
+        state: &ProofFlowState,
+    ) -> Option<ProofResult> {
+        let end = self.captured_value_image(range.end, &state.affine)?;
+        let length = self
+            .vocabulary
+            .terms
+            .interned(&TermKind::Measure(CheckedMeasure::Length, window.clone()))?;
+        let length = self.vocabulary.measure_atom(length, &state.affine);
+        self.prove_first_affine(
+            [AffineInequality::from_forms(
+                &end,
+                &length,
+                &mut AffineCheckState::new(),
+            )],
+            state,
+        )
+    }
+
     /// [WIN-2] the proof `state` gives that a range of `window` ends at or
     /// below the window's length, `end <= len(window)`, or is empty.
     pub(super) fn range_within_length_proof(
