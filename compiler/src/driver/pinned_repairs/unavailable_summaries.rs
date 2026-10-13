@@ -172,6 +172,133 @@ fn every_recorded_consumer_names_the_failed_callee_in_the_other_file() {
     }
 }
 
+#[test]
+fn recorded_consumers_do_not_blame_an_insufficient_summary() {
+    let cases: &[(&str, &[u8], &str, &str)] = &[
+        (
+            "a-insufficient-loop-summary.wf",
+            replay_source!(
+                " contract {\n  requires budget^.end < budget^.popped;\n}",
+                "  loop (\n    invariant strict: budget^.end < budget^.popped\n  ) {\n    batch(budget: budget);\n  }\n"
+            ),
+            "INV-1",
+            "\n  name: strict\n",
+        ),
+        (
+            "a-insufficient-bounds-summary.wf",
+            replay_source!(
+                " contract {\n  requires budget^.popped <= 8_u64;\n}",
+                "  batch(budget: budget);\n  let window = array_filled::<u64, 8>(value: 0_u64);\n  set window[budget^.end] = 1_u64;\n"
+            ),
+            "OP-4",
+            "\n  residual: budget^.end < window.len\n",
+        ),
+        (
+            "a-insufficient-postcondition-summary.wf",
+            replay_source!(
+                " contract {\n  ensures budget^.end < budget^.popped;\n}",
+                "  batch(budget: budget);\n"
+            ),
+            "FN-9",
+            "\n  concrete_function: caller\n",
+        ),
+    ];
+    for (name, caller, rule, target) in cases {
+        for callee in [
+            scanner_source!("  loop {\n"),
+            scanner_source!("  loop (\n    invariant bounded: end <= budget^.popped\n  ) {\n"),
+        ] {
+            let failure = super::compile(
+                &[
+                    super::SourceInput::new(name, caller),
+                    super::SourceInput::new("z-scanner.wf", callee),
+                ],
+                super::CompilerLimits::default(),
+            )
+            .expect_err("even the proved non-strict summary cannot establish this target");
+            assert_eq!(failure.rule_id(), Some(*rule), "{name}: {failure}");
+            assert_eq!(failure.location().expect("caller location").path(), *name);
+            let rendered = failure.to_string();
+            assert!(rendered.contains(target), "{name}: {rendered}");
+            assert!(!rendered.contains("cannot supply its summary"), "{name}: {rendered}");
+        }
+    }
+}
+
+macro_rules! recursive_budget_source {
+    ($goal:literal, $progress:literal) => {
+        concat!(
+            "fn caller(budget: &Budget) -> result: unit reads(budget.popped), writes(budget.end) {\n",
+            "  batch(budget: budget);\n",
+            "  invariant available: budget^.end ",
+            $goal,
+            " budget^.popped;\n",
+            "  return unit;\n",
+            "}\n\n",
+            "struct Budget {\n  end: u64;\n  popped: u64;\n}\n\n",
+            "fn batch(budget: &Budget) -> result: unit reads(budget.popped), writes(budget.end) contract {\n",
+            "  ensures budget^.end <= budget^.popped;\n",
+            "} {\n",
+            "  let progress = ",
+            $progress,
+            ";\n",
+            "  loop (\n    invariant bounded: 1_u64 <= progress\n  ) {\n    break;\n  }\n",
+            "  caller(budget: budget);\n",
+            "  set budget^.end = budget^.popped;\n",
+            "  return unit;\n",
+            "}\n\n",
+            "fn main() -> status: std::process::ExitStatus pure {\n",
+            "  let budget = Budget(end: 0_u64, popped: 4_u64);\n",
+            "  caller(budget: &budget);\n",
+            "  return std::process::exit_status(code: 0_u8);\n",
+            "}\n",
+        )
+        .as_bytes()
+    };
+}
+
+#[test]
+fn recursive_component_does_not_blame_its_induction_hypothesis() {
+    let name = "same-component-summary.wf";
+    for source in [
+        recursive_budget_source!("<", "0_u64"),
+        recursive_budget_source!("<", "1_u64"),
+    ] {
+        let failure = super::compile(
+            &[super::SourceInput::new(name, source)],
+            super::CompilerLimits::default(),
+        )
+        .expect_err("the recursive hypothesis is already present and does not prove a strict bound");
+        assert_eq!(failure.rule_id(), Some("INV-1"), "{failure}");
+        let rendered = failure.to_string();
+        assert!(rendered.contains("\n  name: available\n"), "{rendered}");
+        assert!(!rendered.contains("cannot supply its summary"), "{rendered}");
+    }
+    let accepted = recursive_budget_source!("<=", "1_u64");
+    super::super::with_checked_program(
+        &[super::SourceInput::new(name, accepted)],
+        None,
+        super::CompilerLimits::default(),
+        |program, _| {
+            let schedule = &program.data.postcondition_schedule;
+            let components = program
+                .data
+                .functions
+                .iter()
+                .filter(|function| matches!(function.name.as_str(), "caller" | "batch"))
+                .map(|function| schedule.function_components[function.id.0 as usize])
+                .collect::<Vec<_>>();
+            assert_eq!(components.len(), 2, "both recursive functions are present");
+            assert_eq!(components[0], components[1], "the calls form one component");
+            let contradictions =
+                program.contradictory_successes(&super::declared_functions(accepted));
+            assert!(contradictions.is_empty(), "{contradictions:?}");
+            Ok(())
+        },
+    )
+    .expect("the component hypothesis establishes the non-strict control target");
+}
+
 macro_rules! budget_source {
     ($summary:literal, $header:literal, $after:literal, $requirement:literal) => {
         concat!(
