@@ -1,0 +1,173 @@
+# TEMPORARY evidence for the time-budget card on PR #470 (runtime probe checks
+# in compiler/src/backend/ordinary_values_probe.c). It measures what the PR adds
+# to the gate's `check/runtime` stage (`make _check-runtime`) on ONE machine, by
+# running BASE, BASE_TWIN (the same base tree again, the noise control) and HEAD
+# in rotated order. Removed before the PR is marked ready.
+#
+# What is timed. Each arm has its own checkout and its own scratch root. Round 0
+# (the warm-up, reported separately) is a cold run: it builds every completion
+# test image and runs the cases, as the gate's stage does. Every round first
+# removes the arm's scratch root, where the images are built, so every round is
+# cold like the gate stage and times the image build plus the cases, identically
+# for all three arms. Each stage runs under run-check.pl with a
+# label that has no row in .github/time-budgets.txt and with no budget record
+# set, so no budget verdict is produced and no step fails on a budget.
+name: tmp-runtime-probe-cost
+
+on:
+  workflow_dispatch:
+    inputs:
+      rounds:
+        description: Rounds in the main sample (after 1 warm-up round and 2 small-sample rounds)
+        default: '10'
+  push:
+    paths:
+      - .github/workflows/tmp-runtime-probe-cost.yml
+
+permissions:
+  contents: read
+
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      ROUNDS: ${{ inputs.rounds || '10' }}
+      WHITEFOOT_CHECK_TIMEOUT: 900
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Record the host
+        run: |
+          mkdir -p "$RUNNER_TEMP/out"
+          {
+            uname -a
+            echo "cpu model: $(lscpu | sed -n 's/^Model name:[[:space:]]*//p' | head -1)"
+            echo "cores: $(nproc)"
+            echo "head: $(git rev-parse HEAD)"
+          } | tee "$RUNNER_TEMP/out/host.txt"
+          test -x /usr/bin/time
+
+      # The same toolchain the gate's runtime job installs (gate.yml, "Install
+      # the host toolchain"), minus Rust: the runtime stage runs no cargo.
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          ld.lld --version
+          /usr/bin/clang --version
+          python3 --version
+
+      - name: Decline core dumps
+        run: |
+          sudo sysctl -w kernel.core_pattern=core
+          cat /proc/sys/kernel/core_pattern
+
+      - name: Check out BASE, BASE_TWIN and HEAD
+        run: |
+          set -eu
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          base=$(git merge-base origin/main HEAD)
+          echo "base: $base" | tee -a "$RUNNER_TEMP/out/host.txt"
+          git worktree add --detach "$RUNNER_TEMP/BASE" "$base"
+          git worktree add --detach "$RUNNER_TEMP/BASE_TWIN" "$base"
+          git worktree add --detach "$RUNNER_TEMP/HEAD" "$(git rev-parse HEAD)"
+          git diff --stat "$base" HEAD | tail -5
+
+      - name: Measure
+        run: |
+          set -u
+          out="$RUNNER_TEMP/out"
+          arms="BASE BASE_TWIN HEAD"
+          printf 'round\tposition\tarm\twall\tuser\tsys\tphase\n' > "$out/times.tsv"
+          run_arm() { # round position arm phase
+            r=$1; pos=$2; arm=$3; phase=$4
+            status=0
+            rm -rf "$RUNNER_TEMP/scratch-$arm"
+            ( cd "$RUNNER_TEMP/$arm" &&
+              export WHITEFOOT_SCRATCH_ROOT="$RUNNER_TEMP/scratch-$arm" &&
+              unset WHITEFOOT_TIME_BUDGET_RECORD &&
+              /usr/bin/time -f '%e %U %S' -o "$out/t.$arm" \
+                perl .github/run-check.pl "probe-cost/$arm" make --no-print-directory _check-runtime ) \
+              > "$out/log.r$r.$arm.txt" 2>&1 || status=$?
+            if [ $status -ne 0 ]; then
+              tail -40 "$out/log.r$r.$arm.txt"
+              echo "::error::round $r $arm exited $status"
+              exit 1
+            fi
+            read -r wall user sys < "$out/t.$arm"
+            printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$r" "$pos" "$arm" "$wall" "$user" "$sys" "$phase" >> "$out/times.tsv"
+            echo "round $r pos $pos $arm: wall $wall user $user sys $sys ($phase)"
+          }
+          total=$((ROUNDS + 2))
+          r=0
+          while [ $r -le $total ]; do
+            if [ $r -eq 0 ]; then phase=warmup; elif [ $r -le 2 ]; then phase=small; else phase=main; fi
+            set -- $arms
+            start=$((r % 3)); pos=0
+            while [ $pos -lt 3 ]; do
+              idx=$(( (start + pos) % 3 ))
+              eval "arm=\${$((idx + 1))}"
+              run_arm "$r" "$pos" "$arm" "$phase"
+              pos=$((pos + 1))
+            done
+            r=$((r + 1))
+          done
+
+      - name: Summarize
+        if: always()
+        run: |
+          python3 -I - "$RUNNER_TEMP/out/times.tsv" > "$RUNNER_TEMP/out/summary.txt" <<'PY'
+          import csv, statistics as st, sys
+          rows = list(csv.DictReader(open(sys.argv[1]), delimiter="\t"))
+          for r in rows:
+              r["round"] = int(r["round"])
+              for k in ("wall", "user", "sys"):
+                  r[k] = float(r[k])
+          arms = ["BASE", "BASE_TWIN", "HEAD"]
+          def by(phases):
+              d = {a: {} for a in arms}
+              for r in rows:
+                  if r["phase"] in phases:
+                      d[r["arm"]][r["round"]] = r
+              return d
+          def mm(xs): return f"{min(xs):.2f}-{max(xs):.2f}"
+          out = []
+          w = by({"warmup"})
+          out.append("Warm-up (round 0, cold: builds the images, then runs the cases), wall s:")
+          for a in arms:
+              if w[a]: out.append(f"  {a:10s} {w[a][0]['wall']:.2f}  (user {w[a][0]['user']:.2f}, sys {w[a][0]['sys']:.2f})")
+          for label, phases in (("Main sample (warm, cases only)", {"main"}),
+                                ("Small + main samples", {"small", "main"})):
+              d = by(phases)
+              rounds = sorted(set(d["BASE"]) & set(d["BASE_TWIN"]) & set(d["HEAD"]))
+              if not rounds: continue
+              out.append("")
+              out.append(f"{label}: {len(rounds)} rounds ({rounds[0]}..{rounds[-1]})")
+              for a in arms:
+                  ws = [d[a][r]["wall"] for r in rounds]
+                  us = [d[a][r]["user"] + d[a][r]["sys"] for r in rounds]
+                  out.append(f"  {a:10s} median wall {st.median(ws):.2f} s  (min-max {mm(ws)}); median user+sys {st.median(us):.2f} s")
+              def ratios(a):
+                  return [d[a][r]["wall"] / d["BASE"][r]["wall"] for r in rounds]
+              for a in ("HEAD", "BASE_TWIN"):
+                  q = ratios(a)
+                  out.append(f"  {a}/BASE wall ratio: median {st.median(q):.3f}  (min-max {min(q):.3f}-{max(q):.3f} over rounds)")
+              dh = [d["HEAD"][r]["wall"] - d["BASE"][r]["wall"] for r in rounds]
+              dt = [d["BASE_TWIN"][r]["wall"] - d["BASE"][r]["wall"] for r in rounds]
+              out.append(f"  median HEAD-BASE      {st.median(dh):+.2f} s  (min-max {min(dh):+.2f}..{max(dh):+.2f})")
+              out.append(f"  median BASE_TWIN-BASE {st.median(dt):+.2f} s  (min-max {min(dt):+.2f}..{max(dt):+.2f})  <- noise control")
+          print("\n".join(out))
+          PY
+          { echo '```text'; cat "$RUNNER_TEMP/out/host.txt"; echo; cat "$RUNNER_TEMP/out/summary.txt"; echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: runtime-probe-cost
+          path: ${{ runner.temp }}/out
