@@ -34,6 +34,10 @@ print('Archive SHA-256:', sha.hexdigest())
 PYHASH
 uname -a
 tar -xzf "$archive" -C "$package"
+# The witness, tests/package-fixtures/waiting.wf, is reduced from the
+# backend test WAITING_PROGRAM: an owned enum crosses a direct waiting call
+# and a bound spawn whose result is used, so the build must lower coroutines.
+# It exits 0; 1 or 2 identifies a wrong observed result.
 cp "$witness" "$work/waiting.wf"
 witness="$work/waiting.wf"
 
