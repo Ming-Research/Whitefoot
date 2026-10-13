@@ -100,10 +100,11 @@ jobs:
             compiler/target/gate/whitefootc --emit-llvm research/experiments/unwind-resume/witness.wf -o "$UNWIND_EVIDENCE/raw.ll"
             /usr/bin/clang -O2 -g0 research/experiments/unwind-resume/control.c -o "$UNWIND_EVIDENCE/control"
             /usr/bin/clang -O2 -g0 -fuse-ld=lld research/experiments/unwind-resume/control.c -o "$UNWIND_EVIDENCE/control-lld"
+            /usr/bin/clang -O2 -g0 -fuse-ld=lld -Wl,-z,separate-code research/experiments/unwind-resume/control.c -o "$UNWIND_EVIDENCE/control-lld-sep"
           ' > "$UNWIND_EVIDENCE/compile.log" 2>&1
           cat "$UNWIND_EVIDENCE/compile.log"
           cp research/experiments/unwind-resume/control.c "$UNWIND_EVIDENCE/"
-          sha256sum "$UNWIND_EVIDENCE/witness" "$UNWIND_EVIDENCE/raw.ll" "$UNWIND_EVIDENCE/control" "$UNWIND_EVIDENCE/control-lld" "$UNWIND_EVIDENCE/control.c" >> "$UNWIND_EVIDENCE/inputs.sha256"
+          sha256sum "$UNWIND_EVIDENCE/witness" "$UNWIND_EVIDENCE/raw.ll" "$UNWIND_EVIDENCE/control" "$UNWIND_EVIDENCE/control-lld" "$UNWIND_EVIDENCE/control-lld-sep" "$UNWIND_EVIDENCE/control.c" >> "$UNWIND_EVIDENCE/inputs.sha256"
 
       - name: Inspect frames, calibrate a small sample, and compare call graphs
         shell: bash
@@ -170,6 +171,7 @@ jobs:
           nm, frames, disassembly = inspect_elf(binary)
           inspect_elf(str(root / 'control'), 'control-')
           inspect_elf(str(root / 'control-lld'), 'control-lld-')
+          inspect_elf(str(root / 'control-lld-sep'), 'control-lld-sep-')
           raw_ir = (root / 'raw.ll').read_text()
           (root / 'ir-attributes.txt').write_text('\n'.join(
               line for line in raw_ir.splitlines()
@@ -467,7 +469,8 @@ jobs:
 
           control_tables = []
           for prefix, description in [('control', 'C control (clang -O2 -g0, default linker)'),
-                                      ('control-lld', 'C control (same source, clang -O2 -g0 -fuse-ld=lld)')]:
+                                      ('control-lld', 'C control (same source, clang -O2 -g0 -fuse-ld=lld)'),
+                                      ('control-lld-sep', 'C control (same source, -fuse-ld=lld -Wl,-z,separate-code)')]:
               control_argv = control_invocation(str(root / prefix), prefix)
               control_rows = []
               for mode, graph in profiles:
