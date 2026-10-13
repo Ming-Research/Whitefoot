@@ -428,17 +428,22 @@ fn shared_objects_keep_every_update_on_one_driver_and_on_four() {
 }
 
 /// Count actual false re-parks, including the lowering and emitted guard.
+/// The helper has an early return and an Option match; its notice stays None,
+/// so it equals the inline comparison for every state this witness reaches.
 /// On one driver, the FIFO launch queue runs the waiter before the writer;
 /// neither child has enough immediate waits to reach the cooperative yield
 /// threshold first. The existing test clock makes the waiter older than the
 /// guard-turn threshold before the first write. With an absent filter, every
 /// unrelated write therefore reserves the object for the waiter: the writer's
 /// next acquisition must wait until the waiter has retried false and parked.
-/// Main's helper lowering is expected to report eight false re-parks and nine
-/// wakes; the inline filter and the fixed helper should report zero and one.
-/// No sleep, elapsed host time, callback-specific API or synthetic counter
-/// selects this result. Checking one wake also rejects a vacuous run that never
-/// registered the waiter before the final write made its guard true.
+/// Main's helper call has no derived filter, so it is expected to report eight
+/// false re-parks and nine wakes; the inline filter and callback-filtered helper
+/// should report zero and one. No sleep, elapsed host time, callback-specific
+/// API or synthetic counter selects this result. Checking one wake also rejects
+/// a run that never registered the waiter before the final write made it ready.
+/// Argument count includes argv[0]. Distinct successful statuses (4 for inline,
+/// 0 for helper) verify mode selection independently of the counters; selecting
+/// inline in both runs must fail even when both counter reports would pass.
 #[test]
 fn helper_and_inline_guards_avoid_false_reparks_after_unrelated_writes() {
     let llvm = compile_program("helper_guard_false_wakes.wf");
@@ -452,11 +457,15 @@ uint64_t wf__guard_clock_ns(void) {
 }
 "#;
     let program = build_program_with_guard_counters(&llvm, clock);
-    let modes: [(&str, &[&[u8]]); 2] = [("inline", &[b"inline"]), ("helper", &[])];
-    for (mode, arguments) in modes {
+    let modes: [(&str, &[&[u8]], i32); 2] = [("inline", &[b"inline"], 4), ("helper", &[], 0)];
+    for (mode, arguments, expected_status) in modes {
         let output =
             program.run_with_settings_and_arguments(None, &[("WF_DRIVERS", "1")], arguments);
-        assert_eq!(output.status.code(), Some(0), "{mode}: {output:?}");
+        assert_eq!(
+            output.status.code(),
+            Some(expected_status),
+            "{mode}: selected guard and completed writes: {output:?}"
+        );
         assert!(output.stdout.is_empty(), "{mode}: {output:?}");
         let stderr = std::str::from_utf8(&output.stderr).expect("guard diagnostics are UTF-8");
         let reports = stderr

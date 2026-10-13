@@ -1,11 +1,22 @@
 struct CountedProgress {
   written: u64;
   unrelated: u64;
+  notice: Option<u64>;
 }
 
-fn counted_ready(progress: &CountedProgress, sequence: u64) -> ready: Bool reads(progress.written) {
+fn counted_ready(progress: &CountedProgress, sequence: u64) -> ready: Bool reads(progress.written), reads(progress.notice) {
   let reached = progress^.written >= sequence;
-  return reached;
+  if reached {
+    return True();
+  }
+  match progress^.notice {
+    None() => {
+      return False();
+    }
+    Some(..) => {
+      return True();
+    }
+  }
 }
 
 fn counted_waiter(state: Shared<CountedProgress>, direct: Bool, sequence: u64) -> result: u8 pure waits {
@@ -43,11 +54,12 @@ fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure w
   let std::fs::Directory(read: directory_read, write: directory_write) = move directory;
   std::fs::close_directory_write(factory: &factory, directory: move directory_write);
   std::fs::close_directory(factory: &factory, directory: move directory_read);
-  let initial = CountedProgress(written: 0_u64, unrelated: 0_u64);
+  let clear = None<u64>();
+  let initial = CountedProgress(written: 0_u64, unrelated: 0_u64, notice: clear);
   let state = shared_new::<CountedProgress>(value: initial);
   let waiting = shared_share::<CountedProgress>(shared: &state);
   let writing = shared_share::<CountedProgress>(shared: &state);
-  let direct = argument_count != 0_u64;
+  let direct = argument_count > 1_u64;
   let sequence = 1_u64;
   let waiter = spawn counted_waiter(state: move waiting, direct: direct, sequence: sequence);
   spawn counted_writer(state: move writing);
@@ -66,6 +78,9 @@ fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure w
   }
   if final_unrelated != 8_u64 {
     return std::process::exit_status(code: 3_u8);
+  }
+  if direct {
+    return std::process::exit_status(code: 4_u8);
   }
   return std::process::exit_status(code: 0_u8);
 }
