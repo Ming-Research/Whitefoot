@@ -290,10 +290,12 @@ mod tests {
 
     #[test]
     fn a_coefficient_whose_partial_sum_passes_i128_normalizes_exactly() {
-        // 2^126 * x + 2^126 * x - 2^126 * x - 2^126 * x + x: the partial
-        // coefficient 2^127 is outside i128, and the term's final weight is 1.
+        // -2^126 * x - 2^126 * x + x + 2^126 * x + 2^126 * x: the term's
+        // final weight is 1. The saturating sum this replaced popped its
+        // terms last first, so its partial weight 2^126 + 2^126 clamped to
+        // 2^127 - 1, and the side came out as -x.
         let mut side = ExactSum::default();
-        for weight in [1_i128 << 126, 1 << 126, -(1 << 126), -(1 << 126), 1] {
+        for weight in [-(1_i128 << 126), -(1 << 126), 1, 1 << 126, 1 << 126] {
             side.add(&Exact::from(weight), ExactSum::of(value(0)));
         }
         assert_eq!(side.narrowed(), Some(value(0)));

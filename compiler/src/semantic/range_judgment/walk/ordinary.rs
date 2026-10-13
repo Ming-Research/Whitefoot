@@ -249,7 +249,7 @@ impl Walker<'_> {
                 offset,
                 ..
             }) => {
-                prefix.push(offset.plus(&index)?);
+                prefix.push(self.checked(offset.plus(&index))?);
                 Value::Ref(View::Element {
                     container,
                     indices: prefix,

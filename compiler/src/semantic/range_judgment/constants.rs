@@ -99,8 +99,15 @@ pub(crate) fn judge(
         };
         frame.places.insert(place, view);
     }
-    if facts::vacuous(&mut world, clause, &frame) {
-        return None;
+    match facts::vacuous(&mut world, clause, &frame) {
+        Ok(true) => return None,
+        Ok(false) => {}
+        Err(_) => {
+            return Some(RangeIssue::Unsupported {
+                node: node.clone(),
+                feature: super::super::UnsupportedSemanticFeature::RangeArithmetic,
+            });
+        }
     }
     let binders: Vec<_> = clause.binders.iter().map(|_| world.opaque(None)).collect();
     let failure = |relation, capacity| RangeIssue::Undischarged {

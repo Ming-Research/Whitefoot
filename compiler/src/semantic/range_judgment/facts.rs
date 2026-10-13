@@ -471,9 +471,14 @@ pub(super) const fn comparison(comparison: RangeComparison) -> Relation {
 /// An empty range contributes no tuple and no projected reads to a problem.
 /// Compare affine endpoints before forming the clause's guards/conclusions;
 /// fresh binders preserve dependencies between two written ranges. An
-/// endpoint that does not form leaves the clause to [`form`], which reports
-/// why.
-pub(super) fn vacuous(world: &mut World, clause: &CheckedRangeClause, frame: &Frame) -> bool {
+/// endpoint the frame cannot view leaves the clause to [`form`], which
+/// reports why. A range no other range empties whose endpoints or width
+/// leave `i128` is the arithmetic limit, not a nonempty range.
+pub(super) fn vacuous(
+    world: &mut World,
+    clause: &CheckedRangeClause,
+    frame: &Frame,
+) -> Result<bool, Capacity> {
     let binders: Vec<_> = clause.binders.iter().map(|_| world.opaque(None)).collect();
     let mut former = Former {
         world,
@@ -485,16 +490,21 @@ pub(super) fn vacuous(world: &mut World, clause: &CheckedRangeClause, frame: &Fr
         fixed_lengths: BTreeSet::new(),
         arithmetic: false,
     };
-    clause.binders.iter().any(|binder| {
+    let empty = clause.binders.iter().any(|binder| {
         let Some(start) = former.term(&binder.start) else {
             return false;
         };
         let Some(end) = former.term(&binder.end) else {
             return false;
         };
-        end.minus(&start)
+        former
+            .checked(end.minus(&start))
             .is_some_and(|width| width.is_constant() && width.constant <= 0)
-    })
+    });
+    if !empty && former.arithmetic {
+        return Err(Capacity::Arithmetic);
+    }
+    Ok(empty)
 }
 
 /// Forms `clause` in `frame` at the tuple `binders`, or says why it does not
@@ -852,7 +862,7 @@ pub(super) fn judge(
         for (fact_id, _) in &entries {
             let fact = &facts[*fact_id as usize];
             let mut triggers = Vec::new();
-            if vacuous(world, &fact.clause, &fact.frame) {
+            if vacuous(world, &fact.clause, &fact.frame)? {
                 continue;
             }
             let mut projections = BTreeMap::new();
@@ -922,7 +932,7 @@ pub(super) fn judge(
                         expected == *projection
                     };
                     if matches {
-                        match_trigger(view, trigger, *version, indices, &mut candidates);
+                        match_trigger(view, trigger, *version, indices, &mut candidates)?;
                     }
                 }
             }
@@ -972,7 +982,7 @@ pub(super) fn judge(
     // do not seed additional automatic rounds.
     for (fact_id, binders, iterations) in written {
         let fact = &facts[*fact_id as usize];
-        if !vacuous(world, &fact.clause, &fact.frame)
+        if !vacuous(world, &fact.clause, &fact.frame)?
             && seen.insert((*fact_id, binders.clone(), iterations.clone()))
         {
             count_instance(&mut counts, *fact_id)?;
@@ -1016,7 +1026,7 @@ fn match_trigger(
     version: VersionId,
     indices: &[Linear],
     candidates: &mut [BTreeSet<Linear>],
-) {
+) -> Result<(), Capacity> {
     let (view_version, prefix, offset) = match view {
         PlaceView::Run {
             version,
@@ -1028,17 +1038,17 @@ fn match_trigger(
         PlaceView::Element {
             version, indices, ..
         } => (*version, indices.as_slice(), None),
-        PlaceView::Unknown => return,
+        PlaceView::Unknown => return Ok(()),
     };
     let expected = prefix.len() + trigger.positions.len();
     if view_version != version
         || indices.len() < expected
         || (!trigger.descendants && indices.len() != expected)
     {
-        return;
+        return Ok(());
     }
     if indices[..prefix.len()] != *prefix {
-        return;
+        return Ok(());
     }
     for (position, binder) in trigger.positions.iter().enumerate() {
         let Some(binder) = binder else {
@@ -1046,14 +1056,17 @@ fn match_trigger(
         };
         let index = &indices[prefix.len() + position];
         let value = match offset {
-            // The last position of a run view is relative to its offset.
-            Some(offset) if position == 0 => index.minus(offset),
-            _ => Some(index.clone()),
+            // The last position of a run view is relative to its offset. A
+            // relative index outside `i128` is a candidate this checker
+            // cannot hold, the arithmetic limit rather than a dropped tuple.
+            Some(offset) if position == 0 => index.minus(offset).ok_or(Capacity::Arithmetic)?,
+            _ => index.clone(),
         };
-        if let (Some(value), Some(set)) = (value, candidates.get_mut(*binder as usize)) {
+        if let Some(set) = candidates.get_mut(*binder as usize) {
             set.insert(value);
         }
     }
+    Ok(())
 }
 
 fn collect_literal(literal: &Literal, atoms: &mut BTreeSet<AtomId>) {
@@ -1761,7 +1774,7 @@ mod aggregate_tests {
                 shape: CheckedRangeShape::Run,
             },
         });
-        assert!(vacuous(&mut world, &fact.clause, &fact.frame));
+        assert_eq!(vacuous(&mut world, &fact.clause, &fact.frame), Ok(true));
         assert!(
             world
                 .atoms
