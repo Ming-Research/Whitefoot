@@ -1989,3 +1989,30 @@ fn clause_formation_rejects_at_the_clause_outside_i128() {
         );
     });
 }
+
+/// `x <= 0_i64 + ... + 0_i64` with `terms` literals schedules `2 * terms`
+/// expression nodes: the atom `x`, each literal and each `+`.
+fn long_sum_relation(terms: usize) -> String {
+    let sum = vec!["0_i64"; terms].join(" + ");
+    format!("x <= {sum}")
+}
+
+/// [MSR-5] counts the 4096 scheduled expression nodes over the whole clause,
+/// so 2049 summed literals (4098 nodes) is rejected at the clause and 2000
+/// (4000 nodes) is formed and proves the body.
+#[test]
+fn clause_formation_counts_the_node_ceiling_over_the_whole_clause() {
+    let over = long_sum_relation(2100);
+    assert_behavior_site(
+        &BOUND_PROGRAM.replace("RELATION", &over),
+        SemanticRule::Msr5,
+        &over,
+    );
+    let under = BOUND_PROGRAM.replace("RELATION", &long_sum_relation(2000));
+    with_semantics(under.as_bytes(), |outcome| {
+        assert!(
+            matches!(outcome, SemanticOutcome::Complete(_)),
+            "{outcome:?}"
+        );
+    });
+}

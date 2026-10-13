@@ -1,7 +1,7 @@
 fn keep(x: i64) -> result: i64 pure contract {
   requires x > -9223372036854775808_i64 * 9223372036854775807_i64 + -9223372036854775808_i64 * 9223372036854775807_i64 + -9223372036854775808_i64 + -9223372036854775808_i64;
 } {
-  doc "x > -2^127 normalizes to -x <= 2^127 - 1, which fits i128, although negating the folded side alone would not.";
+  doc "x > -2^127 normalizes to -x <= 2^127 - 1, which fits i128, although negating the folded side alone would not. It guards against over-rejecting a strict bound one step inside the i128 boundary and had the same verdict before.";
   return x;
 }
 

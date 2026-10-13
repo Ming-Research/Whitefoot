@@ -1,7 +1,7 @@
 fn bump(x: i64) -> result: i64 pure contract {
   requires x <= -9223372036854775808_i64 * 9223372036854775807_i64 + -9223372036854775808_i64 * 9223372036854775807_i64 + -9223372036854775808_i64 + -9223372036854775808_i64;
 } {
-  doc "Every formation value fits i128: the side folds to -2^127 and the normalized bound is x <= -2^127. No i64 satisfies it, so the requirement contradicts x's type and the body's addition is proved.";
+  doc "Every formation value fits i128: the side folds to -2^127 and the normalized bound is x <= -2^127. No i64 satisfies it, so the requirement contradicts x's type and the body's addition is proved. It guards against over-rejecting a bound exactly at the i128 minimum and had the same verdict before.";
   let y = x + 1_i64;
   return y;
 }

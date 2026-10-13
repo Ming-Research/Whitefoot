@@ -2363,7 +2363,7 @@ impl<'unit> TypeContext<'unit> {
 }
 
 /// The running state of one [MSR-5] clause formation: the atoms interned so
-/// far, the scheduled-node count of the relation being formed, and the
+/// far, the scheduled-node count of the whole clause, and the
 /// [INV-1] arithmetic state.
 #[derive(Default)]
 struct ClauseFormation<'expression> {
@@ -2422,11 +2422,11 @@ impl TypeContext<'_> {
             Ok(_) => return Ok(()),
             Err(AffineCheckError::ArithmeticOverflow) => (
                 "a folded constant or coefficient of a clause side, or a coefficient or the right-hand constant of a comparison's normalized bound, lies outside i128",
-                "fold the constants into a bound that fits i128; every integer value lies within the range of its type, so a bound at the operand type's limit states the same relation",
+                "rewrite the clause so every folded constant and coefficient fits i128: divide out a common factor, or replace a bound beyond the operand type's range with the type's limit",
             ),
             Err(AffineCheckError::LimitExceeded(_)) => (
                 "the clause exceeds the fixed formation capacity of 4096 scheduled expression nodes, input terms or result terms",
-                "split the clause into smaller clauses",
+                "state the relation with fewer terms, or state a conjunction as separate clauses",
             ),
             Err(_) => return Err(SemanticCompilerFailure::InvalidCanonicalTree.into()),
         };
@@ -2505,10 +2505,8 @@ impl TypeContext<'_> {
                 },
                 [left, right],
             ) => {
-                let outer = std::mem::take(&mut formation.nodes);
                 let left_form = self.clause_formation_value(left, formation)?;
                 let right_form = self.clause_formation_value(right, formation)?;
-                formation.nodes = outer;
                 // [INV-1] `a <= b` is `a-b <= 0`, `a < b` is `a-b <= -1`,
                 // `a >= b` is `b-a <= 0`, `a > b` is `b-a <= -1`, `a == b`
                 // is the pair, and [MSR-5] `a != b` is `a-b != k`, whose
@@ -2541,9 +2539,7 @@ impl TypeContext<'_> {
             }
             _ => {
                 for argument in arguments {
-                    let outer = std::mem::take(&mut formation.nodes);
                     self.clause_formation_value(argument, formation)?;
-                    formation.nodes = outer;
                 }
                 if expression.ty() == CheckedType::Bool {
                     // A Bool value is no affine operand.
