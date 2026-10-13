@@ -204,9 +204,9 @@ and resume are ordered and point to their correct FDEs. This is a hypothesis
 about address translation during unwinding, not identification of a proven
 bug in a particular perf or unwind-library component.
 
-## Current follow-up and rejection criterion
+## Follow-up diagnostics and rejection criterion
 
-The current workflow keeps the baseline modes, event, frequency and Whitefoot
+The follow-up workflow keeps the baseline modes, event, frequency and Whitefoot
 invocation protocol. It additionally retains ELF headers, load segments and
 `.eh_frame_hdr` bytes for Whitefoot and both C controls; perf build options
 and linked libraries; and, for each DWARF recording, explicit PID, TID, time,
@@ -249,3 +249,37 @@ retain argv, elapsed time and exit status; an unavailable field, unsupported
 option or timeout is recorded explicitly and does not replace a successful
 baseline comparison. All commands remain under the temporary workflow's
 existing operational ceilings.
+
+## Linker-layout result
+
+CI run `38424605911` confirmed the address-bias hypothesis with the same C
+source: the default-linker build recovered `caller_loop` and `main` in every
+DWARF hot-leaf sample, while the `-fuse-ld=lld` build, whose executable load
+segment has a `0x1000` difference between virtual address and file offset,
+recovered neither in any sample. The failure therefore follows LLD's default
+segment layout under this perf (6.17) and its DWARF unwinder, not Whitefoot
+code generation.
+
+CI run `38426537112` measured revision
+`4f03db37578935aa60f5761d96760d36594d6d0b`, which keeps `uwtable` and adds
+`-Wl,-z,separate-code` to the Linux LTO link. The witness's executable load
+segment now starts at virtual address and file offset `0x4000`.
+
+| Build | Mode | Hot-leaf samples | Resume recovered | `wf__main_body` | `wf__floor_entry` |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Whitefoot witness | DWARF, 16,384 | 1,661 | 1,661 (100%) | 1,661 (100%) | 1,661 (100%) |
+| Whitefoot witness | DWARF, 65,528 | 1,667 | 1,667 (100%) | 1,667 (100%) | 1,667 (100%) |
+| Whitefoot witness | Frame pointer | 1,656 | 0 | 0 | 0 |
+
+In the same run the C controls recovered `caller_loop` and `main` in 100% of
+DWARF samples with the default linker, 0% with plain LLD and 100% with LLD and
+`-z separate-code`. The logical waiting caller `main`'s resume is absent, as
+expected for continuation tail transfer; the physical chain reaches the thread
+entry. The witness executable is 81,040 bytes, against 80,048 bytes for the
+same source built with `uwtable` and without `-z separate-code` in run
+`38424605911`: 992 bytes, 1.2% larger. `uwtable` itself added 208 bytes of
+`.eh_frame` in run `38422018983`.
+
+These results cover one small program, x86-64 Linux, perf 6.17 on a hosted
+runner and LLVM 22's LLD. They do not establish the behavior of other
+profilers, or of frame-pointer unwinding, which Whitefoot does not retain.
