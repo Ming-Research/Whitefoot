@@ -553,31 +553,62 @@ fn update(first: Shared<u64>, second: Shared<u64>) -> result: unit pure waits {{
     });
 }
 
-#[test]
-fn possibly_aliased_atomic_targets_are_explicitly_unsupported() {
-    let source = format!(
+fn atomic_aliases(body: &str) -> String {
+    format!(
         "{ZEROES}fn need(z: &Zeroes) -> result: unit pure {{
   return unit;
 }}
 
 fn update(first: Shared<Zeroes>, second: Shared<Zeroes>) -> result: unit pure waits {{
   atomic a = &first, b = &second {{
-    set a^.cells[0_u64] = 1_u64;
+{body}  }}
+  return unit;
+}}
+"
+    )
+}
+
+#[test]
+fn a_call_cannot_observe_a_broken_type_invariant_through_an_atomic_alias() {
+    check(
+        &atomic_aliases(
+            "    set a^.cells[0_u64] = 1_u64;
     need(z: b);
     set a^.cells[0_u64] = 0_u64;
+",
+        ),
+        Some((SemanticRule::Range3, "a call")),
+    );
+}
+
+#[test]
+fn atomic_alias_cases_retain_one_loop_certificate_with_all_covered_sites() {
+    let source = format!(
+        "fn update(first: Shared<Array<u64, 2>>, second: Shared<Array<u64, 2>>) -> result: unit pure waits {{
+  atomic a = &first, b = &second {{
+    for (k in 0_u64..2_u64, apart(i, j) {{ }}) {{
+      let value = b^[k];
+      set a^[k] = value;
+    }}
   }}
   return unit;
 }}
 {MAIN}"
     );
     with_semantics(source.as_bytes(), |outcome| {
-        let SemanticOutcome::Unsupported { unsupported, .. } = outcome else {
-            panic!("expected unsupported alias tracking, got {outcome:?}");
+        let SemanticOutcome::Complete(program) = outcome else {
+            panic!("{outcome:?}");
         };
-        assert_eq!(
-            unsupported.feature(),
-            crate::UnsupportedSemanticFeature::RangeAtomicAliases
-        );
+        let update = program
+            .data
+            .executable_functions()
+            .find(|function| function.name == "update")
+            .unwrap();
+        let [certificate] = update.range_facts.certified.as_slice() else {
+            panic!("expected one certificate shared by the alias cases");
+        };
+        assert_eq!(certificate.writes.len(), 1);
+        assert_eq!(certificate.reads.len(), 1);
     });
 }
 
