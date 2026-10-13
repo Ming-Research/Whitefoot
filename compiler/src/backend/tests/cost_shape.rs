@@ -562,7 +562,8 @@ fn the_reused_buffers_are_initialized_once_at_allocation() {
     assert_eq!(
         expanded + out_of_line,
         11,
-        "eleven source runs, eleven store takes"
+        "eleven source runs, eleven store takes; optimized LLVM for allocation diagnosis:\n{}",
+        optimized()
     );
     assert_eq!(
         prefix_sized, 2,

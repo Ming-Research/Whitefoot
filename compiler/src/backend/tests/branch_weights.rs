@@ -2,7 +2,7 @@
 //! These tests deliberately use C1/C2 directly, without changing process-wide
 //! environment variables while the rest of the suite emits other programs.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use super::system::{with_ir, with_mutated_ir};
 use super::{compile_and_run, emitted_body};
@@ -37,6 +37,37 @@ fn block_text(body: &str, label: &str) -> String {
         .take_while(|line| line.starts_with(char::is_whitespace) || !line.ends_with(':'))
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// An if's empty false arm can forward to a separate continuation holding
+/// the return. Follow the emitted edges; a cycle, conditional or transfer
+/// cannot stand in for this fixture's unconditional zero-return path.
+fn assert_returns_zero(body: &str, start: &str) {
+    let mut label = start.to_owned();
+    let mut seen = HashSet::new();
+    let mut path = String::new();
+    let returned = loop {
+        assert!(seen.insert(label.clone()), "failure path cycles at {label}");
+        let block = block_text(body, &label);
+        path.push_str(&block);
+        path.push('\n');
+        if let Some(value) = block
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("ret i64 "))
+        {
+            break value.to_owned();
+        }
+        label = block
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("br label %"))
+            .unwrap_or_else(|| panic!("failure must return or forward unconditionally: {block}"))
+            .to_owned();
+    };
+    let zero = format!("{returned} = select i1 true, i64 0, i64 0");
+    assert!(
+        path.lines().any(|line| line.trim() == zero),
+        "the failure path must return its zero SSA value: {path}"
+    );
 }
 
 fn weights(text: &str) -> Option<Vec<u32>> {
@@ -98,6 +129,49 @@ fn switch_weights(
 
 fn bool_match(function: &IrFunction, parameter: usize) -> (usize, &[IrMatchTarget]) {
     let value = function.parameters()[parameter].0;
+    // Loops and continuing matches forward bindings into fresh block
+    // parameters. These fixtures never assign their Bool inputs; trace the
+    // forwarding edges instead of assuming the formal SSA name survives.
+    let mut aliases = HashSet::from([value]);
+    loop {
+        let before = aliases.len();
+        for block in function.blocks() {
+            if let IrTerminator::Jump {
+                target, arguments, ..
+            } = block.terminator()
+            {
+                for ((parameter, _), argument) in function.blocks()[target.index()]
+                    .parameters()
+                    .iter()
+                    .zip(arguments)
+                {
+                    if aliases.contains(argument) {
+                        aliases.insert(*parameter);
+                    }
+                }
+            }
+        }
+        if aliases.len() == before {
+            break;
+        }
+    }
+    for block in function.blocks() {
+        if let IrTerminator::Jump {
+            target, arguments, ..
+        } = block.terminator()
+        {
+            for ((parameter, _), argument) in function.blocks()[target.index()]
+                .parameters()
+                .iter()
+                .zip(arguments)
+            {
+                assert!(
+                    !aliases.contains(parameter) || aliases.contains(argument),
+                    "a fixture changed the Bool input instead of forwarding it"
+                );
+            }
+        }
+    }
     function
         .blocks()
         .iter()
@@ -107,7 +181,7 @@ fn bool_match(function: &IrFunction, parameter: usize) -> (usize, &[IrMatchTarge
                 scrutinee,
                 enum_type: IrEnumType::Bool,
                 targets,
-            } if *scrutinee == value => Some((block, targets.as_slice())),
+            } if aliases.contains(scrutinee) => Some((block, targets.as_slice())),
             _ => None,
         })
         .expect("the requested Bool parameter controls a branch")
@@ -322,16 +396,7 @@ fn restored_exit_weights_follow_the_bounds_guard_moved_onto_cursor_predecessors(
                 valid.contains("getelementptr"),
                 "success forms the cursor: {valid}"
             );
-            let failed = block_text(body, failure);
-            let returned = failed
-                .lines()
-                .find_map(|line| line.trim().strip_prefix("ret i64 "))
-                .expect("the failure target returns from the split loop");
-            let zero = format!("{returned} = select i1 true, i64 0, i64 0");
-            assert!(
-                failed.lines().any(|line| line.trim() == zero),
-                "the actual returned SSA value must be zero: {failed}"
-            );
+            assert_returns_zero(body, failure);
         }
     });
 }
@@ -456,11 +521,13 @@ fn main() -> status: std::process::ExitStatus pure {{
   if failure != 17_u64 {{
     return std::process::exit_status(code: 2_u8);
   }}
-  let called = call_or_identity(flag: True(), seed: 3_u64);
+  let enabled = True();
+  let called = call_or_identity(flag: enabled, seed: 3_u64);
   if called != {expected}_u64 {{
     return std::process::exit_status(code: 3_u8);
   }}
-  let identity = call_or_identity(flag: False(), seed: 3_u64);
+  let disabled = False();
+  let identity = call_or_identity(flag: disabled, seed: 3_u64);
   if identity != 3_u64 {{
     return std::process::exit_status(code: 4_u8);
   }}
