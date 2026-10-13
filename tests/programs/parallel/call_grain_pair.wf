@@ -71,14 +71,14 @@ fn mix_both(left: &[u64], right: &[u64]) -> result: u64 writes(left), writes(rig
 }
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  doc "Mixes two ranges of three words each, or of a million words each when given any argument, and writes the combined result.";
+  doc "Mixes two ranges of three words each, or of a million words each when given any argument after the program name, which Args counts, and writes the combined result.";
   let Inputs(args: arguments, cwd: directory, stdout: out, handles: factory, ..) = move inputs;
   let std::fs::Directory(read: directory_read, write: directory_write) = move directory;
   std::fs::close_directory_write(factory: &factory, directory: move directory_write);
   std::fs::close_directory(factory: &factory, directory: move directory_read);
   let given = std::text::args_count(args: &arguments);
   let count = 3_u64;
-  if given > 0_u64 {
+  if given > 1_u64 {
     set count = 1000000_u64;
   }
   let left = box_array_filled::<u64>(count: count, value: 1_u64);
