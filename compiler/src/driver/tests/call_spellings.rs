@@ -54,7 +54,7 @@ fn main() -> status: std::process::ExitStatus pure {
         let inputs = module_inputs(&graph, &records);
         let failure = crate::check_module_program(&graph, &inputs, CompilerLimits::default())
             .expect_err("twelve exceeds the called function's requirement");
-        assert_eq!(failure.rule_id(), Some("FN-8"));
+        assert_eq!(failure.rule_id(), Some("FN-8"), "{failure}");
         let detail = failure.to_string();
         assert!(
             detail.contains(&format!("\n  concrete_callee: {path}\n")),
@@ -106,7 +106,7 @@ fn main() -> status: std::process::ExitStatus pure {
     let inputs = module_inputs(&graph, &records);
     let failure = crate::check_module_program(&graph, &inputs, CompilerLimits::default())
         .expect_err("twelve exceeds the concrete instance's bound");
-    assert_eq!(failure.rule_id(), Some("FN-8"));
+    assert_eq!(failure.rule_id(), Some("FN-8"), "{failure}");
     let detail = failure.to_string();
     assert!(
         detail.contains("\n  concrete_callee: stats::take::<2>\n"),
@@ -130,7 +130,7 @@ fn main() -> status: std::process::ExitStatus pure {
         CompilerLimits::default(),
     )
     .expect_err("a function declaration is no assignable storage");
-    assert_eq!(failure.rule_id(), Some("SET-1"));
+    assert_eq!(failure.rule_id(), Some("SET-1"), "{failure}");
     let detail = failure.to_string();
     assert!(detail.contains(": UndeclaredSetTarget\n"), "{detail}");
     assert!(detail.contains("\n  spelling: target\n"), "{detail}");
@@ -153,7 +153,7 @@ fn main() -> status: std::process::ExitStatus pure {
         CompilerLimits::default(),
     )
     .expect_err("a const parameter resolves as a place base but is not writable");
-    assert_eq!(failure.rule_id(), Some("SET-1"));
+    assert_eq!(failure.rule_id(), Some("SET-1"), "{failure}");
     let detail = failure.to_string();
     assert!(detail.contains(": InvalidSetTarget\n"), "{detail}");
     assert!(detail.contains("\n  root_class: a const parameter\n"), "{detail}");
@@ -161,7 +161,7 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 #[test]
-fn postcondition_clauses_keep_qualified_constant_spellings() {
+fn postcondition_clauses_keep_imported_constant_alias_spellings() {
     let graph = crate::form_module_graph(
         SourceInput::new(
             "modules.wfg",
@@ -175,10 +175,10 @@ fn postcondition_clauses_keep_qualified_constant_spellings() {
         ("module.wfm", super::ROOT_INTERFACE),
         (
             "main.wf",
-            br#"alias bounds = pkg::limits;
+            br#"alias bounds = pkg::limits::upper;
 
 fn small() -> result: u64 pure contract {
-  ensures result < bounds::upper;
+  ensures result < bounds;
 } {
   return 20_u64;
 }
@@ -192,14 +192,14 @@ fn main() -> status: std::process::ExitStatus pure {
     let inputs = module_inputs(&graph, &records);
     let failure = crate::check_module_program(&graph, &inputs, CompilerLimits::default())
         .expect_err("the returned value exceeds the constant bound");
-    assert_eq!(failure.rule_id(), Some("FN-9"));
+    assert_eq!(failure.rule_id(), Some("FN-9"), "{failure}");
     assert!(
-        failure.to_string().contains("\n  clause: 20_u64 < bounds::upper\n"),
+        failure.to_string().contains("\n  clause: 20_u64 < bounds\n"),
         "{failure}"
     );
     let json = failure.render(crate::DiagnosticFormat::Json);
     assert!(
-        json.contains(r#""clause":"20_u64 < bounds::upper""#),
+        json.contains(r#""clause":"20_u64 < bounds""#),
         "{json}"
     );
 }

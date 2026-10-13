@@ -570,7 +570,7 @@ fn invalid_float_literals_render_the_repair_in_text_and_json() {
             "fn value() -> result: f64 pure {{\n  return {literal};\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n",
         );
         let failure = stop("float.wf", source.as_bytes());
-        assert_eq!(failure.rule_id(), Some("FORM-7"));
+        assert_eq!(failure.rule_id(), Some("FORM-7"), "{failure}");
         let text = failure.render(DiagnosticFormat::Text);
         assert!(
             text.contains(&format!("\n  mechanical_fix: {repair}")),
@@ -602,8 +602,8 @@ fn normalized_postcondition_relations_keep_legal_literal_suffixes() {
         };
         let source = format!("struct Word {{\n  value: {ty};\n}}\n\nfn below(w: Word{parameter}) -> result: {ty} pure contract {{\n  ensures result < {bound};\n}} {{\n  return w.value;\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n");
         let failure = stop("typed-relation.wf", source.as_bytes());
-        assert_eq!(failure.rule_id(), Some("FN-9"));
         let rendered = failure.to_string();
+        assert_eq!(failure.rule_id(), Some("FN-9"), "{rendered}");
         assert!(
             rendered.contains(&format!("\n  relation: w.value - {bound} <= -1_i64\n")),
             "{rendered}"
@@ -612,7 +612,7 @@ fn normalized_postcondition_relations_keep_legal_literal_suffixes() {
 }
 
 #[test]
-fn unproved_goal_spells_enum_payload_and_literal_index_as_source() {
+fn unproved_goal_names_the_written_match_payload_alias() {
     let source = br#"enum Shape {
   Circle(radius: u64);
 }
@@ -627,7 +627,7 @@ fn need(radius: &u64, limit: u64) -> result: unit reads(radius) contract {
 fn probe(shapes: &Array<Shape, 1>, limit: u64) -> result: unit reads(shapes) {
   match &shapes^[0_u64] {
     Circle(radius: chosen) => {
-      need(radius: &shapes^[0_u64].Circle.radius, limit: limit);
+      need(radius: chosen, limit: limit);
     }
   }
   return unit;
@@ -638,17 +638,17 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "#;
     let failure = stop("proof-place-spelling.wf", source);
-    assert_eq!(failure.rule_id(), Some("FN-8"));
     let rendered = failure.to_string();
+    assert_eq!(failure.rule_id(), Some("FN-8"), "{rendered}");
     assert!(
-        rendered.contains("\n  instantiated_goal: shapes^[0_u64].Circle.radius < limit\n"),
+        rendered.contains("\n  instantiated_goal: chosen^ < limit\n"),
         "{rendered}"
     );
     assert!(rendered.contains("\n  disposition: Unproved\n"), "{rendered}");
 }
 
 #[test]
-fn call_goals_keep_written_alias_and_indexed_atomic_paths() {
+fn indexed_atomic_call_goal_names_the_written_payload_alias() {
     let source = br#"const key: Array<u8, 2> =[107_u8, 49_u8];
 
 struct Word {
@@ -680,21 +680,13 @@ fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
 "#;
-    for (argument, goal) in [
-        ("&word^.value", "word^.value < limit"),
-        ("&slot^.Some.value.value", "slot^.Some.value.value < limit"),
-    ] {
-        let source = std::str::from_utf8(source)
-            .expect("the fixture is UTF-8")
-            .replace("&word^.value", argument);
-        let failure = stop("atomic-place-spelling.wf", source.as_bytes());
-        assert_eq!(failure.rule_id(), Some("FN-8"));
-        let rendered = failure.to_string();
-        assert!(
-            rendered.contains(&format!("\n  instantiated_goal: {goal}\n")),
-            "{rendered}"
-        );
-        assert!(rendered.contains("\n  disposition: Unproved\n"), "{rendered}");
-        assert!(!rendered.contains("slot^[?]"), "{rendered}");
-    }
+    let failure = stop("atomic-place-spelling.wf", source);
+    let rendered = failure.to_string();
+    assert_eq!(failure.rule_id(), Some("FN-8"), "{rendered}");
+    assert!(
+        rendered.contains("\n  instantiated_goal: word^.value < limit\n"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("\n  disposition: Unproved\n"), "{rendered}");
+    assert!(!rendered.contains("slot^[?]"), "{rendered}");
 }

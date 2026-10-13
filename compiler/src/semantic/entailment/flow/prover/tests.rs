@@ -183,6 +183,75 @@ fn aggregate_goal_values_use_const_source_constructors_and_lists() {
 }
 
 #[test]
+fn proof_goal_projections_spell_literal_indices_and_enum_payload_names() {
+    use crate::semantic::model::{
+        CheckedElement, CheckedField, CheckedNominal, CheckedVariant, NominalId,
+    };
+
+    with_analyzer(|outer| {
+        let nominal = CheckedType::Nominal(NominalId(0));
+        let array = CheckedType::Array {
+            element: CheckedElement(0),
+            length: CheckedConst::Value(4),
+        };
+        let nominals = [CheckedNominal {
+            id: NominalId(0),
+            name: "Shape".to_owned(),
+            kind: CheckedNominalKind::Enum {
+                variants: vec![CheckedVariant {
+                    name: "Circle".to_owned(),
+                    constructor: CheckedConstructor::Source(
+                        crate::DeclarationId::from_index(0).unwrap(),
+                    ),
+                    tag: 0,
+                    fields: vec![CheckedField {
+                        name: "radius".to_owned(),
+                        ty: CheckedType::Integer(IntegerType::U64),
+                        readonly: false,
+                    }],
+                }],
+            },
+            linear: false,
+            nocopy: false,
+            type_invariant: false,
+        }];
+        let elements = [nominal];
+        let context = EntailmentContext {
+            nominals: &nominals,
+            elements: &elements,
+            ..*outer.input.context
+        };
+        with_render_context(&context, &[], |analyzer| {
+            let projections = [
+                GoalProjection::Subscript(CapturedValue::new(
+                    CaptureId::ValueDetermined,
+                    CapturedTerm::Literal(3),
+                )),
+                GoalProjection::Payload { variant: 0, field: 0 },
+            ];
+            assert_eq!(
+                analyzer.input.render_goal_projections(
+                    "shapes^".to_owned(),
+                    Some(array),
+                    &projections,
+                ),
+                "shapes^[3_u64].Circle.radius"
+            );
+            assert_eq!(
+                analyzer.input.render_goal_projections_at(
+                    "slot^".to_owned(),
+                    Some(nominal),
+                    false,
+                    1,
+                    &projections,
+                ),
+                "slot^.Circle.radius"
+            );
+        });
+    });
+}
+
+#[test]
 fn joined_opaque_views_keep_origin_sign_transport_without_numeric_sources() {
     use crate::semantic::entailment::state::{GoalOrigin, join};
     use crate::semantic::goal::GoalAdmission;
