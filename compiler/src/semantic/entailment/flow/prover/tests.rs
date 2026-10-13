@@ -1394,6 +1394,506 @@ fn affine_refuting_point_ends_only_searches_the_traversal_fails() {
     });
 }
 
+/// An explicit affine premise as the source records it.
+fn affine_premise(inequality: AffineInequality, ordinal: u32) -> ActiveAffineFact {
+    ActiveAffineFact {
+        inequality,
+        evidence: AffineFactEvidence::Source(SourceAffineFactRef::LoopInvariant(
+            SourceLoopInvariantRef {
+                loop_id: CheckedLoopId(0),
+                source_ordinal: ordinal,
+            },
+        )),
+    }
+}
+
+fn affine_target(terms: &[(AffineTermId, i128)], upper: i128) -> AffineInequality {
+    AffineInequality::from_terms(terms, upper, &mut AffineCheckState::new()).unwrap()
+}
+
+/// What one target does with a fresh cache, with the refutation enabled and
+/// as the exhaustive traversal.
+struct RefutationObserved {
+    /// The refutation-enabled search found a proof.
+    found: bool,
+    /// Its proof, or its absence, equals the exhaustive traversal's.
+    same_as_traversal: bool,
+    /// A point falsifying exactly this target is recorded in the view.
+    refuted: bool,
+    /// The search entered the final family, which promotes the index.
+    promoted: bool,
+}
+
+fn observe_refutation(
+    analyzer: &mut Analyzer<'_, '_>,
+    target: &AffineInequality,
+    assumptions: &[ActiveAffineFact],
+    context: ProofContext<'_>,
+) -> RefutationObserved {
+    analyzer.vocabulary.affine_l0_cache = None;
+    analyzer.vocabulary.affine_models.clear();
+    let (_, lazy) = analyzer.reasoning().affine_query_view(context);
+    let refuting = analyzer
+        .reasoning()
+        .affine_target_proof(target, assumptions, context)
+        .map(|proof| (proof.premises, proof.parents));
+    let refuted = analyzer
+        .vocabulary
+        .affine_models
+        .iter()
+        .any(|cache| cache.refuted_target() == Some(target));
+    let promoted = lazy.complete.borrow().is_some();
+    analyzer.vocabulary.affine_l0_cache = None;
+    let exhaustive = analyzer
+        .reasoning()
+        .affine_target_search(target, assumptions, context, false)
+        .map(|proof| (proof.premises, proof.parents));
+    RefutationObserved {
+        found: refuting.is_some(),
+        same_as_traversal: refuting == exhaustive,
+        refuted,
+        promoted,
+    }
+}
+
+/// Guard: `ModelView::new` reads the explicit affine premises into `facts`,
+/// and every point it searches satisfies them.
+///
+/// Without the premise `a <= 5` the point `a = i32::MAX` falsifies
+/// `a <= 5`; a model that ignored `facts` would keep that point and report
+/// the provable target refuted, so the search would skip the traversal that
+/// finds the proof. The test fails then at the first assertion, and the
+/// premise-free control shows the model does refute the same target when no
+/// premise forbids the point.
+#[test]
+fn affine_refutation_respects_explicit_premises() {
+    with_integer_parameters(&[IntegerType::I32; 2], |analyzer| {
+        let mut affine = AffineFlowState::default();
+        let a = analyzer.vocabulary.new_affine_atom(IntegerType::I32);
+        let b = analyzer.vocabulary.new_affine_atom(IntegerType::I32);
+        affine.values.insert(BindingId(0), a.clone());
+        affine.values.insert(BindingId(1), b);
+        let facts = FactState::new();
+        let context = ProofContext::new(&facts, &affine);
+        let (closed, index) = analyzer.reasoning().affine_query_view(context);
+        let a_term = a.unit_term().unwrap();
+        let at_most_five = affine_target(&[(a_term, 1)], 5);
+        let at_most_four = affine_target(&[(a_term, 1)], 4);
+        let premise = vec![affine_premise(at_most_five.clone(), 0)];
+
+        // a <= 5 under the premise a <= 5: no point falsifies it.
+        analyzer.vocabulary.affine_models.clear();
+        assert!(
+            !analyzer
+                .reasoning()
+                .affine_model_refutes(&at_most_five, &premise, &closed, &index),
+            "a point violating the premise a <= 5 must not refute a <= 5"
+        );
+        assert!(
+            !analyzer
+                .vocabulary
+                .affine_models
+                .iter()
+                .any(|cache| cache.refuted_target().is_some())
+        );
+        let observed = observe_refutation(analyzer, &at_most_five, &premise, context);
+        assert!(observed.found, "the premise proves its own bound");
+        assert!(!observed.refuted);
+        assert!(observed.same_as_traversal);
+
+        // a <= 4 under the same premise: a = 5 falsifies it.
+        assert!(
+            analyzer
+                .reasoning()
+                .affine_model_refutes(&at_most_four, &premise, &closed, &index)
+        );
+        assert!(
+            analyzer
+                .vocabulary
+                .affine_models
+                .iter()
+                .any(|cache| cache.refuted_target() == Some(&at_most_four))
+        );
+        let observed = observe_refutation(analyzer, &at_most_four, &premise, context);
+        assert!(!observed.found);
+        assert!(observed.refuted);
+
+        // Control: with no premise, a = i32::MAX falsifies a <= 5.
+        assert!(
+            analyzer
+                .reasoning()
+                .affine_model_refutes(&at_most_five, &[], &closed, &index)
+        );
+    });
+}
+
+/// Guard: step 6 skips its bridge loop only when `bridges_hold` finds the
+/// refuting point satisfying every bridge image `candidate - right <= bound`.
+///
+/// `R` is a term with an affine image `r` that no L0 candidate has, so the
+/// view's pair images say nothing of `R`; the L0 fact `a - R <= 0` and the
+/// affine premise `r <= 3` prove `a <= 3` only through step 6 (residual
+/// `r <= 3`). The recorded point has `a = i32::MAX` and `r = 3`, which
+/// violates the bridge image `a - r <= 0`, so `bridges_hold` is `None` and
+/// step 6 must run. If the guard were dropped, so that any recorded
+/// refutation skipped the loop, `numeric_affine_proof` would return no proof
+/// and the last assertion fails. The two direct calls pin the guard from
+/// both sides: the same refutation also satisfies every bridge image to
+/// the zero term, so a guard that never held would fail the second.
+#[test]
+fn affine_refutation_does_not_skip_step_six_when_a_bridge_image_fails() {
+    with_integer_parameters(&[IntegerType::I32; 2], |analyzer| {
+        let mut affine = AffineFlowState::default();
+        let a = analyzer.vocabulary.new_affine_atom(IntegerType::I32);
+        let b = analyzer.vocabulary.new_affine_atom(IntegerType::I32);
+        let r = analyzer.vocabulary.new_affine_atom(IntegerType::I32);
+        affine.values.insert(BindingId(0), a.clone());
+        affine.values.insert(BindingId(1), b);
+        // The function has two parameters, so binding 2 has no integer type
+        // and is neither an L0 candidate nor a step-6 candidate, while its
+        // image is still the value of the place term `right`.
+        affine.values.insert(BindingId(2), r.clone());
+        let candidates = analyzer.reasoning().affine_l0_candidates(&affine);
+        assert_eq!(candidates.len(), 3, "Z and the two parameters only");
+        let right = analyzer.vocabulary.terms.intern(TermKind::Place(
+            ResolvedPlace::spelled(PlaceRoot::Binding(BindingId(2)), false, Vec::new()),
+            IntegerType::I32,
+        ));
+        let mut facts = FactState::new();
+        cache_bound(analyzer, &mut facts, candidates[1].term, right, 0);
+        let mut check = AffineCheckState::new();
+        let zero = AffineForm::constant(0);
+        let r_at_most_three =
+            AffineInequality::from_bounded_forms(&r, &zero, 3, &mut check).unwrap();
+        affine.facts.push(affine_premise(r_at_most_three, 0));
+        let target = AffineInequality::from_bounded_forms(&a, &zero, 3, &mut check).unwrap();
+        let assumptions = affine_facts(&affine);
+        let context = ProofContext::new(&facts, &affine);
+
+        analyzer.vocabulary.affine_l0_cache = None;
+        analyzer.vocabulary.affine_models.clear();
+        assert!(
+            analyzer
+                .reasoning()
+                .affine_target_proof(&target, &assumptions, context)
+                .is_none(),
+            "only step 6 proves a <= 3"
+        );
+        assert!(
+            analyzer
+                .vocabulary
+                .affine_models
+                .iter()
+                .any(|cache| cache.refuted_target() == Some(&target)),
+            "a point (a = i32::MAX, r = 3) falsifies the step-1 target"
+        );
+        let (closed, _) = analyzer.reasoning().affine_query_view(context);
+        let bridges = analyzer.reasoning().affine_right_bridge_candidates(&affine);
+        assert_eq!(bridges.len(), 2);
+        let right_value = analyzer
+            .vocabulary
+            .affine_term_value(right, &affine)
+            .unwrap();
+        assert!(
+            !analyzer.reasoning().affine_bridges_refuted(
+                &target,
+                &assumptions,
+                &closed,
+                right,
+                &right_value,
+                &bridges
+            ),
+            "the point violates the bridge image a - r <= 0"
+        );
+        assert!(
+            analyzer.reasoning().affine_bridges_refuted(
+                &target,
+                &assumptions,
+                &closed,
+                ZERO,
+                &zero,
+                &bridges
+            ),
+            "the same point satisfies every bridge image to Z"
+        );
+        assert!(
+            analyzer
+                .reasoning()
+                .numeric_affine_proof(&target, Some(right), context)
+                .is_some(),
+            "step 6 submits the residual r <= 3 and proves it"
+        );
+    });
+}
+
+/// Guard: `refute` gives a target atom outside the view the endpoint of its
+/// own range that makes the target's left side largest (the `extension`),
+/// and counts that value in the least sum the view's atoms must reach.
+///
+/// `c` has the range [0, 4] and is read by no candidate or premise. Using its
+/// minimum instead of the maximum for a positive factor fails
+/// `c <= 3` and `a + c <= i32::MAX + 3`, which only `c = 4` falsifies; treating
+/// it as unbounded fails `c <= 4` and `a + c <= i32::MAX + 4`, which hold for
+/// every value in its range. A negative factor takes the minimum.
+#[test]
+fn affine_refutation_values_target_atoms_outside_the_view_at_their_range() {
+    with_integer_parameters(&[IntegerType::I32; 2], |analyzer| {
+        let mut affine = AffineFlowState::default();
+        let a = analyzer.vocabulary.new_affine_atom(IntegerType::I32);
+        let b = analyzer.vocabulary.new_affine_atom(IntegerType::I32);
+        let c = analyzer
+            .vocabulary
+            .new_affine_atom_with_interval(IntegerType::I32, 0, 4, false);
+        affine.values.insert(BindingId(0), a.clone());
+        affine.values.insert(BindingId(1), b);
+        let facts = FactState::new();
+        let context = ProofContext::new(&facts, &affine);
+        let (closed, index) = analyzer.reasoning().affine_query_view(context);
+        let (a_term, c_term) = (a.unit_term().unwrap(), c.unit_term().unwrap());
+        let max = i128::from(i32::MAX);
+        let cases = [
+            (affine_target(&[(c_term, 1)], 3), true),
+            (affine_target(&[(c_term, 1)], 4), false),
+            (affine_target(&[(c_term, -1)], -1), true),
+            (affine_target(&[(c_term, -1)], 0), false),
+            (affine_target(&[(a_term, 1), (c_term, 1)], 10), true),
+            (affine_target(&[(a_term, 1), (c_term, 1)], max + 3), true),
+            (affine_target(&[(a_term, 1), (c_term, 1)], max + 4), false),
+        ];
+        for (target, refuted) in cases {
+            assert_eq!(
+                analyzer
+                    .reasoning()
+                    .affine_model_refutes(&target, &[], &closed, &index),
+                refuted,
+                "{target:?}"
+            );
+            assert_eq!(
+                analyzer
+                    .vocabulary
+                    .affine_models
+                    .iter()
+                    .any(|cache| cache.refuted_target() == Some(&target)),
+                refuted,
+                "{target:?}"
+            );
+        }
+        // The search agrees: c <= 4 is proved by the range, c <= 3 is not.
+        let provable = affine_target(&[(c_term, 1)], 4);
+        let observed = observe_refutation(analyzer, &provable, &[], context);
+        assert!(observed.found);
+        assert!(observed.same_as_traversal);
+        let unprovable = affine_target(&[(c_term, 1)], 3);
+        let observed = observe_refutation(analyzer, &unprovable, &[], context);
+        assert!(!observed.found);
+        assert!(observed.refuted);
+        assert!(observed.same_as_traversal);
+    });
+}
+
+/// Guard: every arithmetic step of the model is checked `i128`; an overflow
+/// finds no point, so the exhaustive traversal decides.
+///
+/// A coefficient of 2^100 (or 2^64 on a `u64` atom) overflows the target's
+/// value at an `i64`/`u64` endpoint, for an atom the view reads and for one it
+/// does not. If any of those products wrapped or saturated, the model would
+/// report a falsifying point for the unprovable targets and the first
+/// assertion of each case fails; the traversal-equality and final-family
+/// assertions show the traversal ran. The controls at the ranges' last
+/// values show the extreme ranges alone do not disable the model.
+#[test]
+fn affine_refutation_finds_no_point_when_arithmetic_overflows() {
+    with_integer_parameters(&[IntegerType::I64; 2], |analyzer| {
+        let mut affine = AffineFlowState::default();
+        let a = analyzer.vocabulary.new_affine_atom(IntegerType::I64);
+        let b = analyzer.vocabulary.new_affine_atom(IntegerType::I64);
+        let c = analyzer.vocabulary.new_affine_atom(IntegerType::U64);
+        affine.values.insert(BindingId(0), a.clone());
+        affine.values.insert(BindingId(1), b);
+        let facts = FactState::new();
+        let context = ProofContext::new(&facts, &affine);
+        let (closed, index) = analyzer.reasoning().affine_query_view(context);
+        let (a_term, c_term) = (a.unit_term().unwrap(), c.unit_term().unwrap());
+        let big = 1_i128 << 100;
+        let overflowing = [
+            affine_target(&[(c_term, 1 << 64)], 0),
+            affine_target(&[(a_term, big)], 0),
+            affine_target(&[(a_term, -big)], 0),
+        ];
+        for target in overflowing {
+            assert!(
+                !analyzer
+                    .reasoning()
+                    .affine_model_refutes(&target, &[], &closed, &index),
+                "{target:?}"
+            );
+            let observed = observe_refutation(analyzer, &target, &[], context);
+            assert!(!observed.refuted, "{target:?}");
+            assert!(!observed.found, "{target:?}");
+            assert!(observed.same_as_traversal, "{target:?}");
+            assert!(observed.promoted, "the full traversal ran: {target:?}");
+        }
+        let (i64_max, u64_max) = (i128::from(i64::MAX), i128::from(u64::MAX));
+        let controls = [
+            (affine_target(&[(a_term, 1)], i64_max - 1), true),
+            (affine_target(&[(a_term, 1)], i64_max), false),
+            (affine_target(&[(c_term, 1)], u64_max - 1), true),
+            (affine_target(&[(c_term, 1)], u64_max), false),
+        ];
+        for (target, refuted) in controls {
+            assert_eq!(
+                analyzer
+                    .reasoning()
+                    .affine_model_refutes(&target, &[], &closed, &index),
+                refuted,
+                "{target:?}"
+            );
+        }
+    });
+}
+
+/// Guard: `ModelView::new` returns `None`, and no query in the view is
+/// refuted, when the atoms' ranges are empty or the premises have no
+/// integer point.
+///
+/// With the empty range [5, 3] of the first case (minimum above maximum),
+/// the search would start from the "minimum" 5 and `a <= 0` would be
+/// falsified at it: a point outside the atom's range. Without the range
+/// check the model reports the target refuted. In the second case the premises
+/// `a <= 0` and `a >= 1` have no point; the upward search from the minimums
+/// fails, and the view must record no refutation.
+#[test]
+fn affine_refutation_needs_a_view_with_a_point() {
+    with_integer_parameters(&[IntegerType::I32; 2], |analyzer| {
+        let mut affine = AffineFlowState::default();
+        let empty = analyzer
+            .vocabulary
+            .new_affine_atom_with_interval(IntegerType::I32, 5, 3, false);
+        let b = analyzer.vocabulary.new_affine_atom(IntegerType::I32);
+        affine.values.insert(BindingId(0), empty.clone());
+        affine.values.insert(BindingId(1), b);
+        let facts = FactState::new();
+        let context = ProofContext::new(&facts, &affine);
+        let (closed, index) = analyzer.reasoning().affine_query_view(context);
+        let empty_term = empty.unit_term().unwrap();
+        let target = affine_target(&[(empty_term, 1)], 0);
+        assert!(
+            !analyzer
+                .reasoning()
+                .affine_model_refutes(&target, &[], &closed, &index)
+        );
+        assert!(
+            analyzer
+                .vocabulary
+                .affine_models
+                .iter()
+                .all(|cache| cache.refuted_target().is_none())
+        );
+        let observed = observe_refutation(analyzer, &target, &[], context);
+        assert!(!observed.refuted);
+        assert!(observed.same_as_traversal);
+    });
+
+    with_integer_parameters(&[IntegerType::I32; 2], |analyzer| {
+        let mut affine = AffineFlowState::default();
+        let a = analyzer.vocabulary.new_affine_atom(IntegerType::I32);
+        let b = analyzer.vocabulary.new_affine_atom(IntegerType::I32);
+        affine.values.insert(BindingId(0), a.clone());
+        affine.values.insert(BindingId(1), b);
+        let facts = FactState::new();
+        let context = ProofContext::new(&facts, &affine);
+        let (closed, index) = analyzer.reasoning().affine_query_view(context);
+        let a_term = a.unit_term().unwrap();
+        let contradictory = vec![
+            affine_premise(affine_target(&[(a_term, 1)], 0), 0),
+            affine_premise(affine_target(&[(a_term, -1)], -1), 1),
+        ];
+        let target = affine_target(&[(a_term, 1)], -5);
+        assert!(!analyzer.reasoning().affine_model_refutes(
+            &target,
+            &contradictory,
+            &closed,
+            &index
+        ));
+        assert!(
+            analyzer
+                .vocabulary
+                .affine_models
+                .iter()
+                .all(|cache| cache.refuted_target().is_none())
+        );
+        let observed = observe_refutation(analyzer, &target, &contradictory, context);
+        assert!(!observed.refuted);
+        assert!(observed.same_as_traversal);
+    });
+}
+
+/// Guard: `MODEL_ROUNDS` bounds the repair, and a search that does not settle
+/// within it finds no point.
+///
+/// The premises `x0 <= x1 <= ... <= x(n-1)` are listed from the last link to
+/// the first, followed by `x0 >= 1`; the repair raises one atom per round, so
+/// it settles after `n + 1` rounds. For `n = 3` that is within the limit and
+/// the target `x2 <= 100`, which the greatest point falsifies, is refuted.
+/// For `n = 12` the upward search from the minimums runs out of rounds, the
+/// view has no point, and the search falls back to the exhaustive traversal.
+/// If the round limit were removed or raised past 13, the second case would
+/// be refuted and its first assertion fails.
+#[test]
+fn affine_refutation_gives_up_when_the_repair_needs_too_many_rounds() {
+    with_integer_parameters(&[IntegerType::I32; 2], |analyzer| {
+        let mut affine = AffineFlowState::default();
+        let a = analyzer.vocabulary.new_affine_atom(IntegerType::I32);
+        let b = analyzer.vocabulary.new_affine_atom(IntegerType::I32);
+        affine.values.insert(BindingId(0), a);
+        affine.values.insert(BindingId(1), b);
+        let facts = FactState::new();
+        let context = ProofContext::new(&facts, &affine);
+        let (closed, index) = analyzer.reasoning().affine_query_view(context);
+        for (length, refuted) in [(3_usize, true), (12, false)] {
+            let terms = (0..length)
+                .map(|_| {
+                    analyzer
+                        .vocabulary
+                        .new_affine_atom(IntegerType::I32)
+                        .unit_term()
+                        .unwrap()
+                })
+                .collect::<Vec<_>>();
+            let mut inequalities = (0..length - 1)
+                .rev()
+                .map(|at| affine_target(&[(terms[at], 1), (terms[at + 1], -1)], 0))
+                .collect::<Vec<_>>();
+            inequalities.push(affine_target(&[(terms[0], -1)], -1));
+            let chain = inequalities
+                .into_iter()
+                .enumerate()
+                .map(|(ordinal, inequality)| {
+                    affine_premise(inequality, u32::try_from(ordinal).unwrap())
+                })
+                .collect::<Vec<_>>();
+            let target = affine_target(&[(terms[length - 1], 1)], 100);
+            assert_eq!(
+                analyzer
+                    .reasoning()
+                    .affine_model_refutes(&target, &chain, &closed, &index),
+                refuted,
+                "chain of {length}"
+            );
+            let observed = observe_refutation(analyzer, &target, &chain, context);
+            assert!(!observed.found, "chain of {length}");
+            assert_eq!(observed.refuted, refuted, "chain of {length}");
+            assert!(observed.same_as_traversal, "chain of {length}");
+            if !refuted {
+                assert!(
+                    observed.promoted,
+                    "the full traversal ran: chain of {length}"
+                );
+            }
+        }
+    });
+}
+
 #[test]
 fn finite_arithmetic_components_use_current_images_in_component_order() {
     use CheckedIntegerOperation::{
