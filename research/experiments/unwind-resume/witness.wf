@@ -158,13 +158,17 @@ fn publish_checksum(factory: &HandleFactory, output: &OutputStream, source: &[u8
 }
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let invocation_arguments = args_count(args: &inputs.args);
+  let Inputs(args: invocation, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: monotonic, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
+  std::fs::close_directory_write(factory: &entry_factory, directory: move unused_cwd_write);
+  std::fs::close_directory(factory: &entry_factory, directory: move unused_cwd);
+  let invocation_arguments = args_count(args: &invocation);
   let batch_count = 100_u64;
   if invocation_arguments > 1_u64 {
     set batch_count = invocation_arguments -wrap 1_u64;
   }
   let seed_value = cvt.wrap::<u64, u32>(invocation_arguments);
-  let completed_checksum = awaitable_loop(clock: &inputs.clock, batches: batch_count, seed: seed_value);
+  let completed_checksum = awaitable_loop(clock: &monotonic, batches: batch_count, seed: seed_value);
   let checksum_bytes = array_filled::<u8, 4>(value: 0_u8);
   set checksum_bytes[0_u64] = cvt.wrap::<u32, u8>(completed_checksum);
   let second_byte_word = ishr.wrap(completed_checksum, 8_u32);
@@ -173,6 +177,6 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   set checksum_bytes[2_u64] = cvt.wrap::<u32, u8>(third_byte_word);
   let fourth_byte_word = ishr.wrap(completed_checksum, 24_u32);
   set checksum_bytes[3_u64] = cvt.wrap::<u32, u8>(fourth_byte_word);
-  let output_status = publish_checksum(factory: &inputs.handles, output: &inputs.stdout, source: &checksum_bytes[0_u64..4_u64]);
+  let output_status = publish_checksum(factory: &entry_factory, output: &out, source: &checksum_bytes[0_u64..4_u64]);
   return exit_status(code: output_status);
 }
