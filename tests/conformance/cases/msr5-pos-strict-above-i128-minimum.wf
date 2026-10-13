@@ -1,0 +1,10 @@
+fn keep(x: i64) -> result: i64 pure contract {
+  requires x > -9223372036854775808_i64 * 9223372036854775807_i64 + -9223372036854775808_i64 * 9223372036854775807_i64 + -9223372036854775808_i64 + -9223372036854775808_i64;
+} {
+  doc "x > -2^127 normalizes to -x <= 2^127 - 1, which fits i128, although negating the folded side alone would not.";
+  return x;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

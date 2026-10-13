@@ -1,0 +1,11 @@
+fn bump(x: i64) -> result: i64 pure contract {
+  requires x < -9223372036854775808_i64;
+} {
+  doc "The same relation as the strict-bound case at the i64 minimum: its normalized bound fits i128 and contradicts x's type.";
+  let y = x + 1_i64;
+  return y;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

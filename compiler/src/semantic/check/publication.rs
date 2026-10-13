@@ -21,6 +21,7 @@
 use super::super::postcondition::{
     NormalizedRelation, PostconditionPlaceRoot, RelationDatum, RelationTemplate, RelationTerm,
 };
+use crate::semantic::entailment::affine::ExactSum;
 use crate::semantic::entailment::integer_value;
 use crate::semantic::model::{CheckedMeasure, CheckedValue};
 
@@ -52,10 +53,14 @@ impl DifferenceSystem {
     }
 
     fn bound(&mut self, left: Operand, right: Operand, constant: i128) {
-        // `left.term + left.offset - right.term - right.offset <= constant`.
-        let Some(shifted) = constant
-            .checked_add(right.offset)
-            .and_then(|value| value.checked_sub(left.offset))
+        // `left.term + left.offset - right.term - right.offset <= constant`,
+        // whose right-hand constant is judged once on its exact value
+        // [INV-1]; [MSR-5] has already rejected a written clause whose
+        // normalized bound leaves i128.
+        let Some(shifted) = ExactSum::new(constant)
+            .add(right.offset)
+            .subtract(left.offset)
+            .value()
         else {
             return;
         };
@@ -124,12 +129,15 @@ impl DifferenceSystem {
                 let Some(gap) = right_offset.checked_sub(*left_offset) else {
                     return false;
                 };
+                // `-gap` leaves i128 only at `gap = i128::MIN`, where every
+                // bound lies at or below its value `2^127`.
+                let opposite = gap.checked_neg();
                 closure
                     .bound(*left, *right)
                     .is_some_and(|value| value <= gap)
                     && closure
                         .bound(*right, *left)
-                        .is_some_and(|value| value <= -gap)
+                        .is_some_and(|value| opposite.is_none_or(|bound| value <= bound))
             })
     }
 }

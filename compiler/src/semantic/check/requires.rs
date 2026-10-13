@@ -10,8 +10,13 @@ use crate::{
     ResolvedTarget, SemanticCompilerFailure, SemanticIssueKind, SemanticRule,
 };
 
+use super::super::entailment::affine::{
+    AffineCheckError, AffineCheckLimit, AffineCheckState, AffineForm, AffineInequality,
+    AffineTermId, MAX_EXPRESSION_NODES,
+};
 use super::super::goal::{
     CheckedRequirement, GoalDatum, GoalExpression, GoalOperation, GoalProjection, GoalTemplate,
+    widening_integer_conversion,
 };
 use super::super::model::{
     BindingId, CheckedConst, CheckedConversionMode, CheckedExpression, CheckedFloatOperation,
@@ -589,15 +594,15 @@ impl<'unit> Checker<'_, 'unit> {
                     SemanticIssueKind::InvalidPredicateCondition,
                 );
             }
-            let root = self
-                .types
-                .build_clause_expression(
-                    check_context,
-                    expression,
-                    &condition.expression,
-                    bindings,
-                    &expanded_bindings,
-                )?
+            let expanded = self.types.build_clause_expression(
+                check_context,
+                expression,
+                &condition.expression,
+                bindings,
+                &expanded_bindings,
+            )?;
+            self.types.validate_clause_formation(expression, &expanded)?;
+            let root = expanded
                 .into_goal_expression()
                 .ok_or(SemanticCompilerFailure::InvalidResolution)?;
             requirements.push(CheckedRequirement {
@@ -2354,5 +2359,225 @@ impl<'unit> TypeContext<'unit> {
             return self.declarations.invalid_clause(clause, entry);
         }
         Ok(())
+    }
+}
+
+/// The running state of one [MSR-5] clause formation: the atoms interned so
+/// far, the scheduled-node count of the relation being formed, and the
+/// [INV-1] arithmetic state.
+#[derive(Default)]
+struct ClauseFormation<'expression> {
+    atoms: Vec<&'expression ExpandedClauseExpression>,
+    nodes: usize,
+    check: AffineCheckState,
+}
+
+impl<'expression> ClauseFormation<'expression> {
+    /// One scheduled expression node of the relation being formed.
+    fn schedule(&mut self) -> Result<(), AffineCheckError> {
+        self.nodes += 1;
+        if self.nodes > MAX_EXPRESSION_NODES {
+            return Err(AffineCheckError::LimitExceeded(
+                AffineCheckLimit::ExpressionNodes,
+            ));
+        }
+        Ok(())
+    }
+
+    /// The term one atom denotes, by its expanded identity, so a datum named
+    /// twice in one clause is one term whose coefficients combine.
+    fn atom(
+        &mut self,
+        expression: &'expression ExpandedClauseExpression,
+    ) -> Result<AffineForm, AffineCheckError> {
+        let index = match self.atoms.iter().position(|atom| **atom == *expression) {
+            Some(index) => index,
+            None => {
+                self.atoms.push(expression);
+                self.atoms.len() - 1
+            }
+        };
+        let index = u32::try_from(index)
+            .map_err(|_| AffineCheckError::LimitExceeded(AffineCheckLimit::InputTerms))?;
+        Ok(AffineForm::term(AffineTermId::from_index(index)))
+    }
+}
+
+impl TypeContext<'_> {
+    /// [MSR-5] judges one clause's formation values after definition
+    /// expansion [FN-8], exactly as [INV-1] judges an invariant's: the value
+    /// every `+`, `-` and `*` of a side forms, and every coefficient and the
+    /// right-hand constant of each normalized bound of each integer
+    /// comparison. A value outside i128 rejects here, once, at the
+    /// `clause_expr`, so no relation the clause states is later dropped at a
+    /// use for a constant the checker cannot hold.
+    pub(super) fn validate_clause_formation(
+        &self,
+        clause: NodeId,
+        expanded: &ExpandedClauseExpression,
+    ) -> Result<(), CheckStop> {
+        let mut formation = ClauseFormation::default();
+        let formed = self.clause_formation_value(expanded, &mut formation);
+        let (reason, mechanical_fix) = match formed {
+            Ok(_) => return Ok(()),
+            Err(AffineCheckError::ArithmeticOverflow) => (
+                "a folded constant or coefficient of a clause side, or a coefficient or the right-hand constant of a comparison's normalized bound, lies outside i128",
+                "fold the constants into a bound that fits i128; every integer value lies within the range of its type, so a bound at the operand type's limit states the same relation",
+            ),
+            Err(AffineCheckError::LimitExceeded(_)) => (
+                "the clause exceeds the fixed formation capacity of 4096 scheduled expression nodes, input terms or result terms",
+                "split the clause into smaller clauses",
+            ),
+            Err(_) => return Err(SemanticCompilerFailure::InvalidCanonicalTree.into()),
+        };
+        self.declarations.issue_node(
+            SemanticRule::Msr5,
+            clause,
+            SemanticIssueKind::ClauseFormationOverflow {
+                reason,
+                mechanical_fix,
+            },
+        )
+    }
+
+    /// The exact affine value of one expanded clause node [INV-1, MSR-5].
+    ///
+    /// An integer literal or integer-typed named const is its constant, a
+    /// widening conversion is its operand's value [ENT-2], and every other
+    /// node is one atom whose own children are formed as relations of their
+    /// own. A comparison forms its two sides as one relation and then each
+    /// normalized bound its operator selects.
+    fn clause_formation_value<'expression>(
+        &self,
+        expression: &'expression ExpandedClauseExpression,
+        formation: &mut ClauseFormation<'expression>,
+    ) -> Result<AffineForm, AffineCheckError> {
+        if let Some(value) = self.clause_integer_constant(expression) {
+            formation.schedule()?;
+            return Ok(AffineForm::constant(value));
+        }
+        let ExpandedClauseExpression::Operation { row, arguments, .. } = expression else {
+            formation.schedule()?;
+            return formation.atom(expression);
+        };
+        match (row, arguments.as_slice()) {
+            (
+                GoalOperation::Integer {
+                    operation:
+                        operation @ (CheckedIntegerOperation::AddExact
+                        | CheckedIntegerOperation::SubtractExact
+                        | CheckedIntegerOperation::MultiplyExact),
+                    ..
+                },
+                [left, right],
+            ) => {
+                formation.schedule()?;
+                let left_form = self.clause_formation_value(left, formation)?;
+                let right_form = self.clause_formation_value(right, formation)?;
+                match operation {
+                    CheckedIntegerOperation::AddExact => {
+                        left_form.add(&right_form, &mut formation.check)
+                    }
+                    CheckedIntegerOperation::SubtractExact => {
+                        left_form.subtract(&right_form, &mut formation.check)
+                    }
+                    _ if left_form.terms().is_empty() => {
+                        right_form.scale(left_form.constant_value(), &mut formation.check)
+                    }
+                    _ if right_form.terms().is_empty() => {
+                        left_form.scale(right_form.constant_value(), &mut formation.check)
+                    }
+                    // A product of two nonconstant factors is outside the
+                    // affine fragment; its factors are still formed above.
+                    _ => formation.atom(expression),
+                }
+            }
+            (
+                GoalOperation::Integer {
+                    operation:
+                        operation @ (CheckedIntegerOperation::Less
+                        | CheckedIntegerOperation::LessEqual
+                        | CheckedIntegerOperation::Greater
+                        | CheckedIntegerOperation::GreaterEqual
+                        | CheckedIntegerOperation::Equal
+                        | CheckedIntegerOperation::NotEqual),
+                    ..
+                },
+                [left, right],
+            ) => {
+                let outer = std::mem::take(&mut formation.nodes);
+                let left_form = self.clause_formation_value(left, formation)?;
+                let right_form = self.clause_formation_value(right, formation)?;
+                formation.nodes = outer;
+                // [INV-1] `a <= b` is `a-b <= 0`, `a < b` is `a-b <= -1`,
+                // `a >= b` is `b-a <= 0`, `a > b` is `b-a <= -1`, `a == b`
+                // is the pair, and [MSR-5] `a != b` is `a-b != k`, whose
+                // coefficients and constant are those of `a-b <= 0`.
+                let members: &[(bool, i128)] = match operation {
+                    CheckedIntegerOperation::Less => &[(false, -1)],
+                    CheckedIntegerOperation::Greater => &[(true, -1)],
+                    CheckedIntegerOperation::GreaterEqual => &[(true, 0)],
+                    CheckedIntegerOperation::Equal => &[(false, 0), (true, 0)],
+                    _ => &[(false, 0)],
+                };
+                for &(reverse, bound) in members {
+                    let (first, second) = if reverse {
+                        (&right_form, &left_form)
+                    } else {
+                        (&left_form, &right_form)
+                    };
+                    AffineInequality::from_bounded_forms(
+                        first,
+                        second,
+                        bound,
+                        &mut formation.check,
+                    )?;
+                }
+                // A Bool value is no affine operand.
+                Ok(AffineForm::constant(0))
+            }
+            (row, [argument]) if widening_integer_conversion(row) => {
+                self.clause_formation_value(argument, formation)
+            }
+            _ => {
+                for argument in arguments {
+                    let outer = std::mem::take(&mut formation.nodes);
+                    self.clause_formation_value(argument, formation)?;
+                    formation.nodes = outer;
+                }
+                if expression.ty() == CheckedType::Bool {
+                    // A Bool value is no affine operand.
+                    Ok(AffineForm::constant(0))
+                } else {
+                    formation.schedule()?;
+                    formation.atom(expression)
+                }
+            }
+        }
+    }
+
+    /// The mathematical value of an integer literal or of an integer-typed
+    /// named const, field projections included, folded at formation [INV-1].
+    fn clause_integer_constant(&self, expression: &ExpandedClauseExpression) -> Option<i128> {
+        let ExpandedClauseExpression::Datum(datum) = expression else {
+            return None;
+        };
+        let value = match datum {
+            ExpandedClauseDatum::Literal { value, .. } => value,
+            ExpandedClauseDatum::NamedConst {
+                declaration,
+                projections,
+                ..
+            } => {
+                let id = self.constants.get(declaration)?;
+                let constant = self.checked_constants.get(id.0 as usize)?;
+                super::type_invariants::constant_projection(&constant.value, projections)?
+            }
+            _ => return None,
+        };
+        let CheckedValue::Integer { ty, bits } = value else {
+            return None;
+        };
+        Some(crate::semantic::entailment::integer_value(*ty, *bits))
     }
 }

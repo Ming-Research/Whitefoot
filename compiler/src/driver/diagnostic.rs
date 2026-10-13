@@ -943,6 +943,7 @@ impl Report for SemanticIssueKind {
             UnreachableStatement;
             FunctionFallthrough;
             InvalidRequires;
+            ClauseFormationOverflow { reason, mechanical_fix };
             InvalidHeldContract { reason, mechanical_fix };
             SnapshotResource { owned_path, mechanical_fix };
             InvalidPostconditionSelector { mechanical_fix };

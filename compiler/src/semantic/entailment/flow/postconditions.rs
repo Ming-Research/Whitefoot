@@ -4,6 +4,7 @@
 
 use super::super::super::entailment::SelectedReturnBound;
 use super::super::super::postcondition::{PlaceDenotation, SelectedPostconditionReturn};
+use super::super::affine::ExactSum;
 use super::*;
 
 /// A call datum's operand: the parameter ordinal, the projections below it,
@@ -56,14 +57,7 @@ impl Input<'_, '_> {
         };
         let left = operands.get(left as usize)?;
         let right = operands.get(right as usize)?;
-        let right = if strict {
-            right
-                .subtract(&AffineForm::constant(1), &mut AffineCheckState::new())
-                .ok()?
-        } else {
-            right.clone()
-        };
-        affine_ordering_targets(left, &right, equal)
+        affine_ordering_targets(left, right, -i128::from(strict), equal)
     }
 
     pub(super) fn postcondition_affine_datum(
@@ -682,7 +676,7 @@ impl Vocabulary {
         let right = right
             .add(&AffineForm::constant(difference), &mut check)
             .ok()?;
-        affine_ordering_targets(&left, &right, equal)
+        affine_ordering_targets(&left, &right, 0, equal)
     }
 
     pub(super) fn postcondition_place_term(
@@ -1081,12 +1075,11 @@ impl Reasoning<'_, '_, '_> {
             // while not(left < right) is right <= left.
             GoalSign::Negative => (right, left, !strict),
         };
-        let right = if strict {
-            right.subtract(&AffineForm::constant(1), &mut check).ok()?
-        } else {
-            right
-        };
-        AffineInequality::from_forms(&left, &right, &mut check).ok()
+        // [INV-1] `left < right` is `left - right <= -1`, whose right-hand
+        // constant is judged on its own value rather than after first
+        // displacing `right` by one.
+        let bound = -i128::from(strict);
+        AffineInequality::from_bounded_forms(&left, &right, bound, &mut check).ok()
     }
 
     /// [ENT-4] `a == b`'s bound pair `a-b <= 0` and `b-a <= 0`, each the
@@ -1259,48 +1252,14 @@ impl Reasoning<'_, '_, '_> {
                     term = self.vocabulary.terms.sum(term, extra);
                 }
                 let (term, constant) = self.vocabulary.terms.constant_part(term);
-                Some((term, operand.displacement.checked_add(constant)?))
+                Some(InstantiatedSide {
+                    term,
+                    displacement: operand.displacement,
+                    constant,
+                })
             })
             .collect::<Option<Vec<_>>>()?;
-        let [first, second] = operands.as_slice() else {
-            return None;
-        };
-        // [FN-9] each side's displacement folds into the one constant a
-        // difference bound carries: `l + a <cmp> r + b` is
-        // `l - r <cmp> b - a`.
-        let gap = second.1.checked_sub(first.1)?;
-        match template.normalized {
-            NormalizedRelation::Equal => Some(Relation::Equal {
-                left: first.0,
-                right: second.0,
-                difference: gap,
-            }),
-            NormalizedRelation::NotEqual => {
-                let (left, right, difference) =
-                    super::super::state::distinct_key(first.0, second.0, gap);
-                Some(Relation::Distinct {
-                    left,
-                    right,
-                    difference,
-                })
-            }
-            NormalizedRelation::UpperBound {
-                left,
-                right,
-                strict,
-            } => {
-                let lower = *operands.get(left as usize)?;
-                let upper = *operands.get(right as usize)?;
-                Some(Relation::Bound {
-                    left: lower.0,
-                    right: upper.0,
-                    bound: upper
-                        .1
-                        .checked_sub(lower.1)?
-                        .checked_sub(i128::from(strict))?,
-                })
-            }
-        }
+        instantiated_relation(template.normalized, &operands)
     }
 
     pub(super) fn postcondition_relation_term(
@@ -2179,46 +2138,13 @@ impl Reasoning<'_, '_, '_> {
                 combined = self.vocabulary.terms.sum(combined, term);
             }
             let (term, constant) = self.vocabulary.terms.constant_part(combined);
-            operands.push((term, term_operand.displacement.checked_add(constant)?));
+            operands.push(InstantiatedSide {
+                term,
+                displacement: term_operand.displacement,
+                constant,
+            });
         }
-        let [first, second] = operands.as_slice() else {
-            return None;
-        };
-        // [FN-9] each side's displacement folds into the one constant a
-        // difference bound carries.
-        let gap = second.1.checked_sub(first.1)?;
-        let relation = match template.normalized {
-            NormalizedRelation::Equal => Relation::Equal {
-                left: first.0,
-                right: second.0,
-                difference: gap,
-            },
-            NormalizedRelation::NotEqual => {
-                let (left, right, difference) =
-                    super::super::state::distinct_key(first.0, second.0, gap);
-                Relation::Distinct {
-                    left,
-                    right,
-                    difference,
-                }
-            }
-            NormalizedRelation::UpperBound {
-                left,
-                right,
-                strict,
-            } => {
-                let lower = *operands.get(left as usize)?;
-                let upper = *operands.get(right as usize)?;
-                Relation::Bound {
-                    left: lower.0,
-                    right: upper.0,
-                    bound: upper
-                        .1
-                        .checked_sub(lower.1)?
-                        .checked_sub(i128::from(strict))?,
-                }
-            }
-        };
+        let relation = instantiated_relation(template.normalized, &operands)?;
         Some(InstantiatedPostcondition {
             relation,
             substitutions,
@@ -3391,15 +3317,21 @@ fn selected_return_facts(
 
 /// Equality is the conjunction of its two ordinary affine bounds. Both
 /// are checked by the same deterministic numeric derivation as <=.
+/// `left - right <= bound`, and for an equality also `right - left <= bound`,
+/// each right-hand constant judged on its own exact value [INV-1]; an
+/// equality's `bound` is zero.
 pub(super) fn affine_ordering_targets(
     left: &AffineForm,
     right: &AffineForm,
+    bound: i128,
     equal: bool,
 ) -> Option<Vec<AffineInequality>> {
     let mut check = AffineCheckState::new();
-    let mut targets = vec![AffineInequality::from_forms(left, right, &mut check).ok()?];
+    let forward = AffineInequality::from_bounded_forms(left, right, bound, &mut check).ok()?;
+    let mut targets = vec![forward];
     if equal {
-        targets.push(AffineInequality::from_forms(right, left, &mut check).ok()?);
+        let backward = AffineInequality::from_bounded_forms(right, left, bound, &mut check).ok()?;
+        targets.push(backward);
     }
     Some(targets)
 }
@@ -3552,5 +3484,70 @@ fn body_rebinds(statements: &[CheckedStatement], binding: BindingId) -> bool {
         | CheckedStatement::Give { .. }
         | CheckedStatement::Break { .. }
         | CheckedStatement::Continue { .. } => false,
+    })
+}
+
+/// One instantiated [FN-9] relation side: a term displaced by the clause's
+/// own displacement and by the constant part of the term it instantiates.
+#[derive(Clone, Copy)]
+struct InstantiatedSide {
+    term: TermId,
+    displacement: i128,
+    constant: i128,
+}
+
+/// The one difference relation two instantiated sides state.
+///
+/// `l + a <cmp> r + b` is `l - r <cmp> b - a`, and each bound is the exact
+/// right-hand constant [INV-1] fixes, judged on its own value rather than
+/// through the difference of the two displacements; [MSR-5] rejects a
+/// written clause whose own bound leaves i128, so only a substituted
+/// constant can carry an instance outside it, and such an instance relates
+/// nothing.
+fn instantiated_relation(
+    normalized: NormalizedRelation,
+    operands: &[InstantiatedSide],
+) -> Option<Relation> {
+    let [first, second] = operands else {
+        return None;
+    };
+    // `bound + (upper side) - (lower side)`, judged once on its final value.
+    let exact = |bound: i128, upper: &InstantiatedSide, lower: &InstantiatedSide| {
+        ExactSum::new(bound)
+            .add(upper.displacement)
+            .add(upper.constant)
+            .subtract(lower.displacement)
+            .subtract(lower.constant)
+            .value()
+    };
+    Some(match normalized {
+        NormalizedRelation::Equal => Relation::Equal {
+            left: first.term,
+            right: second.term,
+            difference: exact(0, second, first)?,
+        },
+        NormalizedRelation::NotEqual => {
+            let gap = exact(0, second, first)?;
+            let (left, right, difference) =
+                super::super::state::distinct_key(first.term, second.term, gap);
+            Relation::Distinct {
+                left,
+                right,
+                difference,
+            }
+        }
+        NormalizedRelation::UpperBound {
+            left,
+            right,
+            strict,
+        } => {
+            let lower = operands.get(usize::from(left))?;
+            let upper = operands.get(usize::from(right))?;
+            Relation::Bound {
+                left: lower.term,
+                right: upper.term,
+                bound: exact(-i128::from(strict), upper, lower)?,
+            }
+        }
     })
 }

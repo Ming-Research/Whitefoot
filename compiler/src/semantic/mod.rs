@@ -204,6 +204,8 @@ pub enum SemanticRule {
     Hold1,
     /// Verified narrow normal-return relation.
     Fn9,
+    /// A contract clause's exact formation over the invariant relation.
+    Msr5,
     /// Guaranteed direct self-tail call and activation replacement.
     Fn10,
     /// A waiting call outside the body of a waiting function.
@@ -301,6 +303,7 @@ impl SemanticRule {
             Self::Fn8 => "FN-8",
             Self::Hold1 => "HOLD-1",
             Self::Fn9 => "FN-9",
+            Self::Msr5 => "MSR-5",
             Self::Fn10 => "FN-10",
             Self::Wait1 => "WAIT-1",
             Self::Wait3 => "WAIT-3",
@@ -389,7 +392,8 @@ impl SemanticRule {
             Self::Fn6 => Self::Fn8,
             Self::Fn8 => Self::Hold1,
             Self::Hold1 => Self::Fn9,
-            Self::Fn9 => Self::Call4,
+            Self::Fn9 => Self::Msr5,
+            Self::Msr5 => Self::Call4,
             Self::Call4 => Self::Fn10,
             Self::Fn10 => Self::Wait1,
             Self::Wait1 => Self::Eff1,
@@ -474,29 +478,30 @@ impl SemanticRule {
             Self::Fn8 => 44,
             Self::Hold1 => 45,
             Self::Fn9 => 46,
-            Self::Call4 => 47,
-            Self::Fn10 => 48,
-            Self::Wait1 => 49,
-            Self::Eff1 => 50,
-            Self::Eff2 => 51,
-            Self::Eff5 => 52,
-            Self::Err2 => 53,
-            Self::Err3 => 54,
-            Self::Mod5 => 55,
-            Self::Mod6 => 56,
-            Self::Wait3 => 57,
-            Self::Share1 => 58,
-            Self::Share2 => 59,
-            Self::Snap1 => 60,
-            Self::Ent2 => 61,
-            Self::Msr3 => 62,
-            Self::Call6 => 63,
-            Self::Inv1 => 64,
-            Self::Prf1 => 65,
-            Self::Range1 => 66,
-            Self::Range3 => 67,
-            Self::Range4 => 68,
-            Self::Range5 => 69,
+            Self::Msr5 => 47,
+            Self::Call4 => 48,
+            Self::Fn10 => 49,
+            Self::Wait1 => 50,
+            Self::Eff1 => 51,
+            Self::Eff2 => 52,
+            Self::Eff5 => 53,
+            Self::Err2 => 54,
+            Self::Err3 => 55,
+            Self::Mod5 => 56,
+            Self::Mod6 => 57,
+            Self::Wait3 => 58,
+            Self::Share1 => 59,
+            Self::Share2 => 60,
+            Self::Snap1 => 61,
+            Self::Ent2 => 62,
+            Self::Msr3 => 63,
+            Self::Call6 => 64,
+            Self::Inv1 => 65,
+            Self::Prf1 => 66,
+            Self::Range1 => 67,
+            Self::Range3 => 68,
+            Self::Range4 => 69,
+            Self::Range5 => 70,
         }
     }
 }
@@ -1338,6 +1343,14 @@ pub enum SemanticIssueKind {
     FunctionFallthrough,
     /// A requirement entry uses a construct outside the admitted FN-8 goal subset.
     InvalidRequires,
+    /// [MSR-5] a clause formation value lies outside i128, or the clause
+    /// exceeds a fixed formation ceiling [INV-1].
+    ClauseFormationOverflow {
+        /// Which formation value or ceiling the clause exceeded.
+        reason: &'static str,
+        /// The repair [DIAG-1].
+        mechanical_fix: &'static str,
+    },
     /// Structural callable requirement failed with ordinary repair guidance.
     InvalidHeldContract { reason: String, mechanical_fix: &'static str },
     /// A selected snapshot input closure contains a resource vertex.

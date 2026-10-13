@@ -301,6 +301,7 @@ impl<'unit> Checker<'_, 'unit> {
             &bindings,
             &expanded_bindings,
         )?;
+        self.types.validate_clause_formation(expression, &expanded)?;
         let goal = GoalTemplate::new(
             expanded
                 .clone()
@@ -876,7 +877,7 @@ impl Checker<'_, '_> {
 }
 
 /// The field a projection of struct-field steps reaches in a constant value.
-fn constant_projection<'value>(
+pub(super) fn constant_projection<'value>(
     value: &'value CheckedValue,
     projections: &[GoalProjection],
 ) -> Option<&'value CheckedValue> {
