@@ -1569,6 +1569,23 @@ impl<'program> Walker<'program> {
                 (Target::Location(location), CheckedPlaceStep::Field(field)) => {
                     Target::Location(location.child(Step::Field(*field)))
                 }
+                (
+                    Target::Location(location),
+                    CheckedPlaceStep::Payload {
+                        nominal,
+                        variant,
+                        field,
+                    },
+                ) => match &self.nominals[nominal.0 as usize].kind {
+                    CheckedNominalKind::Enum { variants } => {
+                        Target::Location(location.child(Step::Payload {
+                            variant: *variant,
+                            field: *field,
+                            variants: variants.len() as u32,
+                        }))
+                    }
+                    _ => unreachable!(),
+                },
                 (Target::Location(location), CheckedPlaceStep::BoxReferent(_)) => {
                     Target::Location(location.child(Step::BoxContent))
                 }
@@ -1669,6 +1686,23 @@ impl<'program> Walker<'program> {
             CheckedPlaceStep::Field(field) => {
                 if let Some(path) = projection {
                     path.push(CheckedRangeProjection::Field(*field));
+                }
+            }
+            CheckedPlaceStep::Payload {
+                nominal,
+                variant,
+                field,
+            } => {
+                let CheckedNominalKind::Enum { variants } = &self.nominals[nominal.0 as usize].kind
+                else {
+                    unreachable!();
+                };
+                if let Some(path) = projection {
+                    path.push(CheckedRangeProjection::Payload {
+                        variant: *variant,
+                        field: *field,
+                        variants: variants.len() as u32,
+                    });
                 }
             }
             CheckedPlaceStep::BoxReferent(_) => {

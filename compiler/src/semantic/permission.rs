@@ -608,6 +608,7 @@ fn unconditional_argument(value: &CheckedExpression) -> bool {
             matches!(
                 step,
                 super::model::CheckedPlaceStep::Field(_)
+                    | super::model::CheckedPlaceStep::Payload { .. }
                     | super::model::CheckedPlaceStep::BoxReferent(_)
                     | super::model::CheckedPlaceStep::Measure(_)
             )
