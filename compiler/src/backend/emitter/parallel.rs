@@ -251,9 +251,10 @@ pub fn module_requires_parallel_runtime(module: &str) -> bool {
 /// The optional-runtime path carries this for the same reason it carries the
 /// four entry points: with no runtime linked, no pool can ever start, so the
 /// honest answer is a constant zero and the program is complete on its own.
-/// Windows emits the external declaration above instead. The query is not part
-/// of the lane protocol — it takes no frame, moves no work, and starts nothing
-/// — so it remains separate from the four protocol signatures.
+/// Windows emits the external declaration above instead. The native query
+/// also starts and attaches the selected pool before the first request poll.
+/// It takes no frame and publishes no work, so it remains separate from the
+/// four per-offer protocol signatures.
 pub(super) fn parallel_pool_query_fallback() -> Result<Module, BackendFailure> {
     let mut module = Module::default();
     let mut signature = Signature::new("wf__par_pool_active", "i32", vec![]);

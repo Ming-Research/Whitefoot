@@ -199,6 +199,29 @@ int main(int argc, char **argv) {
         worker_limit = 2;
     }
     wf__runtime_start();
+    if (!hold_startup) {
+        int requested_pool = wf__sched_lanes() >= 2;
+        check(wf__par_pool_active() == requested_pool,
+              "world selection changed the requested-width policy");
+        if (!requested_pool) {
+            check(!wf__par_attached && wf__par_self == NULL
+                      && wf__sched_pool_running() == 0,
+                  "one-worker world selection started or attached a pool");
+        } else if (!owner_allowed || worker_limit == 1) {
+            check(wf__par_self == NULL && wf__sched_pool_running() == 0,
+                  "refused startup registered a compute lane");
+            check(wf__par_pool_active(),
+                  "refused startup changed the selected world");
+        } else {
+            check(wf__par_self == &wf__par_lanes[0],
+                  "world selection did not attach the owner before its first offer");
+            check(__atomic_load_n(&wf__par_lanes[0].request_word, __ATOMIC_ACQUIRE)
+                      == &wf__par_demand_word,
+                  "world selection did not register the owner request word");
+            check(__atomic_load_n(&wf__par_demand_word, __ATOMIC_RELAXED) != 0,
+                  "world selection did not request the owner's first offer");
+        }
+    }
     if (hold_startup) {
         starting_owner = 1;
         void *frame = wf__par_acquire_lane(8);

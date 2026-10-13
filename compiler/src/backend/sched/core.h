@@ -22,6 +22,9 @@ void *wf__par_acquire_lane(uint64_t bytes);
 void wf__par_publish(void *frame, void (*run)(void *));
 void wf__par_join(void *frame);
 void wf__par_release(void *frame);
+/* Select by requested width and, when active, attach/register this thread
+ * before its first request poll. Startup refusal preserves the active answer
+ * but leaves acquisition to refuse. Repeated selection is idempotent. */
 int wf__par_pool_active(void);
 uint64_t wf__par_split_budget(uint64_t span, uint64_t weight);
 uint64_t wf__par_recursion_budget(void);

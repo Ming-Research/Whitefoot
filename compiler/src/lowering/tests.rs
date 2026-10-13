@@ -79,10 +79,12 @@ fn make_inline() -> result: Inline pure {
   return move result;
 }
 
-fn mapped() -> result: Box<Array<u8>> pure {
+fn mapped(limit: u64) -> result: Box<Array<u8>> pure contract {
+  requires limit <= 16_u64;
+} {
   let output = box_array_filled::<u8>(count: 16_u64, value: 0_u8);
   let inline = make_inline();
-  for @fill (i in 0_u64..16_u64) {
+  for @fill (i in 0_u64..limit) {
     set output.inner[i] = 1_u8;
     set inline.values[i] = 2_u8;
   }
@@ -90,7 +92,7 @@ fn mapped() -> result: Box<Array<u8>> pure {
 }
 
 fn main() -> status: std::process::ExitStatus pure {
-  let output = mapped();
+  let output = mapped(limit: 16_u64);
   return std::process::exit_status(code: 0_u8);
 }
 "#;
@@ -357,14 +359,14 @@ fn nested_wide_frame_source(depth: usize) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     let mut source = format!(
-        "fn folded(source: &Box<Array<u64>>, {parameters}) -> result: u64 reads(source) {{\n"
+        "fn folded(source: &Box<Array<u64>>, limit: u64, {parameters}) -> result: u64 reads(source) {{\n"
     );
     for level in 0..depth {
         let indent = "  ".repeat(level + 1);
         writeln!(source, "{indent}let total{level} = 0_u64;").expect("write fixture");
         writeln!(
             source,
-            "{indent}for @level{level} (i{level} in 0_u64..2_u64) {{"
+            "{indent}for @level{level} (i{level} in 0_u64..limit) {{"
         )
         .expect("write fixture");
     }
@@ -403,7 +405,7 @@ fn nested_wide_frame_source(depth: usize) -> String {
         .join(", ");
     writeln!(
         source,
-        "  let observed = folded(source: &input, {arguments});"
+        "  let observed = folded(source: &input, limit: 2_u64, {arguments});"
     )
     .expect("write fixture");
     writeln!(source, "  if observed == {}_u64 {{", 497_u64 << depth).expect("write fixture");
@@ -467,8 +469,10 @@ fn a_fitting_loop_retains_its_interface_and_one_extra_field_triggers_rescue() {
             .map(|index| format!("a{index}: {index}_u64"))
             .collect::<Vec<_>>()
             .join(", ");
+        // Reuse an existing captured formal for a runtime range, preserving
+        // the exact fitting and rescue interfaces this test observes.
         let source = format!(
-            "fn folded({parameters}) -> result: u64 pure {{\n  let total = 0_u64;\n  for @items (i in 0_u64..2_u64) {{\n    set total = total +wrap a0;\n  }}\n  return total;\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  let total = folded({arguments});\n  return std::process::exit_status(code: 0_u8);\n}}\n"
+            "fn folded({parameters}) -> result: u64 pure {{\n  let total = 0_u64;\n  for @items (i in 0_u64..a0) {{\n    set total = total +wrap a0;\n  }}\n  return total;\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  let total = folded({arguments});\n  return std::process::exit_status(code: 0_u8);\n}}\n"
         );
         with_ir_mode(source.as_bytes(), OverlapLowering::On, |program| {
             assert_eq!(program.loop_candidate_constructions, 1);
@@ -527,8 +531,10 @@ fn aggregate_loop_frames_fit_the_selected_target_before_outlining() {
         TargetLayout::for_triple("x86_64-pc-windows-msvc").expect("supported selected target"),
     ] {
         for (length, expected_bytes) in [(1, Some(48)), (216, Some(256)), (217, None)] {
+            // The identity helper preserves both result and frame captures,
+            // while keeping literal cheap-site pruning out of the size oracle.
             let source = format!(
-                "fn folded(values: Array<u8, {length}>) -> result: u64 pure {{\n  let total = 7_u64;\n  for (i in 0_u64..2_u64) {{\n    let copied = values;\n    let byte = copied[0_u64];\n    let word = cvt::<u8, u64>(byte);\n    set total = total +wrap word;\n  }}\n  return total;\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  let values = array_filled::<u8, {length}>(value: 19_u8);\n  let total = folded(values: values);\n  return std::process::exit_status(code: 0_u8);\n}}\n"
+                "fn frame_value(word: u64) -> result: u64 pure {{\n  return word;\n}}\n\nfn folded(values: Array<u8, {length}>) -> result: u64 pure {{\n  let total = 7_u64;\n  for @items (i in 0_u64..2_u64) {{\n    let copied = values;\n    let byte = copied[0_u64];\n    let word = cvt::<u8, u64>(byte);\n    let contribution = frame_value(word: word);\n    set total = total +wrap contribution;\n  }}\n  return total;\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  let values = array_filled::<u8, {length}>(value: 19_u8);\n  let total = folded(values: values);\n  return std::process::exit_status(code: 0_u8);\n}}\n"
             );
             with_checked(source.as_bytes(), |checked| {
                 let program =

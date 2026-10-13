@@ -143,8 +143,15 @@ int main(int argc, char **argv) {
     check(helpers >= 2, "needs WF_WORKERS of at least 3");
 
     wf_test_guard_phase("startup exposure pool start and registration");
-    check(wf__par_attach() != NULL, "the pool did not start");
+    /* Match the emitted bootstrap: no private attachment or acquisition may
+     * prepare the pool before a request-gated computation's first poll. */
+    check(wf__par_pool_active(), "world selection did not select the requested pool");
     check(wf__par_self == &wf__par_lanes[0], "this thread is not the registered owner");
+    check(__atomic_load_n(&wf__par_lanes[0].request_word, __ATOMIC_ACQUIRE)
+              == &wf__par_demand_word, "world selection did not register the owner's TLS word");
+    check(asked(), "world selection did not expose an initial request");
+    check(wf__par_pool_active() && wf__par_self == &wf__par_lanes[0],
+          "repeated world selection changed the registered lane");
     check(wf__sched_pool_running() == helpers, "partial startup; this case needs every helper");
     if (mode == REGISTERED_FIRST || mode == HELPER_REGISTRATION) __atomic_store_n(&helpers_released, 1u, __ATOMIC_RELEASE);
 

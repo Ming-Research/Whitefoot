@@ -2907,13 +2907,20 @@ fn unrepresentable_array_is_a_target_failure_without_a_source_rule() {
 fn a_loop_frame_outside_the_selected_address_domain_stays_a_target_failure() {
     use crate::target::{TargetLayout, TargetLayoutFailure, TargetObject};
 
-    let source = br#"fn folded(values: Array<u8, 216>) -> result: u64 pure {
+    // A helper-bearing loop stays eligible for transport even at two trips:
+    // literal cheap-site pruning must not bypass this target-domain check.
+    let source = br#"fn frame_value(word: u64) -> result: u64 pure {
+  return word;
+}
+
+fn folded(values: Array<u8, 216>) -> result: u64 pure {
   let total = 0_u64;
-  for (i in 0_u64..2_u64) {
+  for @items (i in 0_u64..2_u64) {
     let copied = values;
     let byte = copied[0_u64];
     let word = cvt::<u8, u64>(byte);
-    set total = total +wrap word;
+    let contribution = frame_value(word: word);
+    set total = total +wrap contribution;
   }
   return total;
 }

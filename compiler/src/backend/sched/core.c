@@ -1491,7 +1491,16 @@ void wf__par_release(void *frame) {
 #endif
 }
 
-int wf__par_pool_active(void) { return wf__sched_lanes() >= 2; }
+int wf__par_pool_active(void) {
+    int active = wf__sched_lanes() >= 2;
+    /* Request-gated work can reach its first acquisition only after a request
+     * exists. Start the pool and register this lane at world selection, before
+     * the first direct TLS poll; registration supplies its initial request.
+     * Keep selection based on the requested width even if startup refuses,
+     * so the selected parallel body retains its ordinary-call fallback. */
+    if (active && !wf__par_attached) (void)wf__par_attach();
+    return active;
+}
 
 uint64_t wf__par_split_budget(uint64_t span, uint64_t weight) {
     struct wf__par_lane *lane = wf__par_self;

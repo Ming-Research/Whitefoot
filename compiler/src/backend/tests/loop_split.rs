@@ -98,11 +98,16 @@ fn table_read_fold_with_sibling_writes() -> String {
             "  let sum = 0_u64;",
             "  let sum = 0_u64;\n  let marks = array_filled::<u64, 256>(value: 0_u64);",
         )
-        .replace("0_u64..4000000_u64", "0_u64..256_u64")
+        .replace(
+            "fn main() -> status: std::process::ExitStatus pure waits {",
+            "fn sibling_marks(limit: u64) -> status: std::process::ExitStatus pure waits contract {\n  requires limit <= 256_u64;\n} {",
+        )
+        .replace("for (i in 0_u64..4000000_u64)", "for @entries (i in 0_u64..limit)")
         .replace(
             "      set sum = sum +wrap v;",
             "      set marks[i] = v;\n      set sum = sum +wrap v;",
         )
+        + "\nfn main() -> status: std::process::ExitStatus pure waits {\n  let result = sibling_marks(limit: 256_u64);\n  return move result;\n}\n"
 }
 
 #[test]
@@ -2425,7 +2430,8 @@ fn main() -> status: std::process::ExitStatus pure {
     let module = emit_with_overlap(source);
     let body = function_body(&module, "@wf_composed");
     assert!(!body.contains("call i64 @wf__par_split_budget("));
-    assert_eq!(body.matches("call i64 @wf__par_split_composed.").count(), 2);
+    assert_eq!(body.matches("call i64 @wf__par_split_composed.").count(), 1);
+    assert_eq!(body.matches("call i8 @wf__par_split_composed.").count(), 1);
     assert!(body.contains("call void @wf__par_publish("));
     assert!(body.contains(" = phi i64 "));
     let sequential = function_body(&module, "@wf__par_seq_composed");
@@ -2440,7 +2446,9 @@ fn main() -> status: std::process::ExitStatus pure {
     let changed = body
         .lines()
         .map(|line| {
-            if line.contains("call i64 @wf__par_split_composed.") {
+            if line.contains("call i64 @wf__par_split_composed.")
+                || line.contains("call i8 @wf__par_split_composed.")
+            {
                 let (prefix, _) = line.rsplit_once(", i64 ").expect("price operand");
                 format!("{prefix}, i64 150000)")
             } else {
@@ -2623,7 +2631,7 @@ fn a_loop_whose_frame_is_too_wide_declines_and_says_so() {
         .replace("    let mixed = mix(seed: i);", "    let first = mix(seed: i);\n    let second = mix(seed: i);\n    let doubled = first +wrap second;\n    let local = box_new::<u64>(value: i);\n    let saved = retained.inner[0_u64];\n    let mixed = doubled +wrap saved;")
         .replace(
             "    let bias0 = mixed +wrap a0;",
-            "    let partial = 0_u64;\n    let inner_count = imin(i, 0_u64) +wrap 2_u64;\n    for @inner (j in 0_u64..inner_count) {\n      set partial = partial +wrap j;\n    }\n    let initial = mixed +wrap a0;\n    let bias0 = initial +wrap partial;",
+            "    let partial = 0_u64;\n    let inner_zero = imin(i, 0_u64);\n    let inner_count = inner_zero +wrap 2_u64;\n    for @inner (j in 0_u64..inner_count) {\n      set partial = partial +wrap j;\n    }\n    let initial = mixed +wrap a0;\n    let bias0 = initial +wrap partial;",
         )
         .replace("  if total == 0_u64 {", &format!("  if total != {expected}_u64 {{"));
     let mapped = nested
@@ -3046,8 +3054,15 @@ fn main() -> status: std::process::ExitStatus pure {
                 let prepared =
                     crate::backend::emitter::prepare_dispatch_layout(program, target, true)
                         .expect("partitionable ordinary and split layouts");
-                crate::backend::emitter::emit_prepared_llvm(&prepared, target)
-                    .expect("target demand driver emission")
+                let mut module = crate::backend::emitter::emit_prepared_llvm(&prepared, target)
+                    .expect("target demand driver emission");
+                module
+                    .append(
+                        crate::driver::launcher::render(program, "main")
+                            .expect("ordinary launcher"),
+                    )
+                    .expect("target demand driver launcher dependencies");
+                module
             });
         let expected = format!("@wf__par_demand_word = {definition} {kind}");
         assert!(whole.as_str().contains(&expected), "{triple}: {whole}");

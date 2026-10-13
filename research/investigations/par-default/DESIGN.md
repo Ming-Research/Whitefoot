@@ -138,6 +138,23 @@ workloads, is checked separately from IR identity and entry-dispatch cost.
 
 ### Lane requests
 
+World selection remains based on the requested worker width. Before entering
+request-gated computation, an active selection starts the pool and attaches
+the selecting thread, registering its request word and posting its first
+request. One-worker selection does neither; repeated selection on an attached
+lane is idempotent. Startup refusal retains the requested-world answer and
+the existing refused-acquisition fallback. This startup edge is present in
+[the prototype's fourth change](https://github.com/Ming-Research/Whitefoot/blob/73aaab85a92479ada6bf57fa996e17b163e019ed/research/investigations/par-demand/DESIGN.md#the-fourth-change-fixed-before-it-measures).
+
+A direct poll cannot itself initialize the pool. Without the selection edge,
+the zero TLS word prevents the first acquisition, which prevents attachment
+and registration, so no thief can request this lane. A native bootstrap probe
+must enter through public world selection and assert registration and the
+initial request before any acquisition. Calling private attachment first or
+supplying a synthetic request tests the later protocol but misses this edge.
+The source-result oracles' existing real-worker assertions independently
+protect the complete compiler/runtime connection.
+
 Each lane publishes a TLS request-word address and posts one request to
 itself at registration. Idle thieves request victims through a protected
 address; the owner polls with a relaxed atomic load and clears before
