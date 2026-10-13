@@ -119,8 +119,8 @@ pub(super) struct Fact {
 pub(super) struct Formed {
     /// Descriptor equalities needed by fixed-length substitutions in this instance.
     pub(super) type_facts: BTreeSet<Literal>,
-    /// Each bound variable's range, the clause's guards, and every read's
-    /// selection of an existing element.
+    /// Each bound variable's range, the clause's guards, and the definedness
+    /// of every read the ranges and guards form [RANGE-1].
     pub(super) premises: Vec<Literal>,
     pub(super) conditions: Vec<Rule>,
     pub(super) conclusions: Vec<Rule>,
@@ -512,18 +512,27 @@ pub(super) fn form(
             });
         }
     }
+    // [RANGE-1] the ranges' and guards' reads condition every conclusion;
+    // each conclusion's own reads, element selections and payload variants
+    // alike, condition that conclusion only, so conclusions over payloads of
+    // different variants each hold where their own variant is held.
+    premises.append(&mut former.bounds);
     let mut conclusions = Vec::new();
     for conclusion in &clause.conclusions {
         let literal = former.relation(conclusion)?;
+        let mut guards = std::mem::take(&mut former.bounds);
+        guards.append(&mut former.guards);
+        let mut seen: BTreeSet<Literal> = premises.iter().cloned().collect();
+        guards.retain(|literal| seen.insert(literal.clone()));
         conclusions.push(Rule {
-            guards: std::mem::take(&mut former.guards),
+            guards,
             conclusions: vec![literal],
         });
     }
-    premises.append(&mut former.bounds);
-    // An expanded equality repeats the outer read's bounds in every leaf.
-    // Each conclusion needs the conjunction once; repeated literals otherwise
-    // cause a full theory probe per leaf per conclusion during saturation.
+    // An expanded equality guard repeats the outer read's bounds in every
+    // leaf. Each conclusion needs the conjunction once; repeated literals
+    // otherwise cause a full theory probe per leaf per conclusion during
+    // saturation.
     let mut seen = BTreeSet::new();
     premises.retain(|literal| seen.insert(literal.clone()));
     Some(Formed {
@@ -1834,6 +1843,87 @@ mod aggregate_tests {
             world.boolean(Cond::Unknown),
             "unrelated Bool values are distinct"
         );
+    }
+
+    /// [RANGE-1] two written conclusions over payloads of different variants
+    /// of one element, `code[j].Jump.t < 9, code[j].Branch.t < 9`, each hold
+    /// where their own variant is held: the binder's range and the element's
+    /// selection condition both, while each payload's tag conditions only its
+    /// own conclusion. Shared tags would make every instance vacuous.
+    #[test]
+    fn written_payload_conclusions_are_conditioned_by_their_own_reads() {
+        use crate::semantic::range_facts::CheckedRangeBinder;
+        let mut world = World::default();
+        let mut fact = projected_fact(&mut world, 0);
+        let place = CheckedRangePlace {
+            root: CheckedRangeRoot::Result(1),
+            path: Vec::new(),
+            fixed_length: None,
+        };
+        let length = world.opaque(Some(IntegerType::U64));
+        fact.frame.places.insert(
+            place.clone(),
+            PlaceView::Run {
+                container: 0,
+                version: world.new_version(VersionDef::Initial),
+                generation: 0,
+                prefix: Vec::new(),
+                offset: Linear::constant(0),
+                length: length.clone(),
+            },
+        );
+        fact.clause.binders.push(CheckedRangeBinder {
+            start: CheckedRangeTerm::Constant(0),
+            end: CheckedRangeTerm::Measure {
+                place: place.clone(),
+                measure: CheckedMeasure::Length,
+                shape: CheckedRangeShape::Run,
+            },
+        });
+        fact.clause.conclusions = (0..2)
+            .map(|variant| CheckedRangeRelation {
+                node: fact.clause.node.clone(),
+                left: CheckedRangeTerm::Read {
+                    place: place.clone(),
+                    shape: CheckedRangeShape::Run,
+                    indices: vec![CheckedRangeTerm::Bound(0)],
+                    projection: vec![CheckedRangeProjection::Payload {
+                        variant,
+                        field: 0,
+                        variants: 3,
+                    }],
+                    element: IntegerType::U64,
+                    implicit_indices: Vec::new(),
+                    guarded_from: None,
+                },
+                comparison: RangeComparison::Less,
+                right: CheckedRangeTerm::Constant(9),
+                projected: false,
+            })
+            .collect();
+        let k = world.opaque(None);
+        let formed = form(
+            &mut world,
+            &fact.clause,
+            &fact.frame,
+            std::slice::from_ref(&k),
+            &[],
+        )
+        .unwrap();
+        assert_eq!(
+            formed.premises,
+            vec![
+                Literal::new(k.clone(), Relation::GreaterEqual, Linear::constant(0)),
+                Literal::new(k.clone(), Relation::Less, length),
+            ],
+            "only the binder's range and the shared element selection are premises"
+        );
+        assert_eq!(formed.conclusions.len(), 2);
+        for (variant, rule) in formed.conclusions.iter().enumerate() {
+            assert_eq!(rule.guards.len(), 1, "{:?}", rule.guards);
+            assert_eq!(rule.guards[0].relation, Relation::Equal);
+            assert_eq!(rule.guards[0].right, Linear::constant(variant as i128));
+        }
     }
 
     #[test]

@@ -34,6 +34,7 @@ mod slice;
 mod storage_alias;
 mod union_enums;
 mod value_equality;
+mod wake;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Write;
@@ -658,6 +659,14 @@ fn emit_module(
     text.attribute_group(0, format!("\"probe-stack\"=\"{}\"", target.stack_probe()));
     let mut ledger = frontiers.ledger().to_vec();
     ledger.extend(lane_frame_ledger(program, target, &frontiers)?);
+    // Emit source acquisition decisions once, independently of backend clones
+    // and suspension/resumption plumbing. Like dispatch lines these comments
+    // survive the module path used by both bundle and graph builds.
+    for function in program.functions() {
+        for line in &function.lock_ledger {
+            emit_ledger_comment(&mut text, LOCK_LEDGER_PREFIX, line);
+        }
+    }
     Ok(LlvmModule {
         text: text.render(),
         model: text,
@@ -1059,6 +1068,24 @@ const RESULT_POINTER: &str = "%wf.result";
 /// The comment prefix of a dispatch ledger line in an emitted module, which
 /// `whitefootc --dispatch-ledger` prints (compiler/match-dispatch-lowering).
 pub const DISPATCH_LEDGER_PREFIX: &str = "; dispatch: ";
+
+/// Atomic lowering's developer ledger, printed by `whitefootc --lock-ledger`.
+pub const LOCK_LEDGER_PREFIX: &str = "; lock: ";
+
+/// Keep host display paths inside one LLVM comment and leave escapes
+/// unambiguous for the developer channel that reads the comment back.
+fn emit_ledger_comment(module: &mut Module, prefix: &str, line: &str) {
+    let mut comment = String::from(prefix);
+    for character in line.chars() {
+        if character == '\\' || character.is_control() {
+            comment.extend(character.escape_default());
+        } else {
+            comment.push(character);
+        }
+    }
+    comment.push('\n');
+    module.text(comment);
+}
 
 /// The internal symbol a register-returned definition's destination-form
 /// body is emitted under, beside the public entry that keeps `symbol`.
@@ -2718,6 +2745,12 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 self.emit_box_new(result, ty, *nominal, *value)
             }
             IrOperation::SharedNew { nominal } => self.emit_shared_new(result, ty, *nominal),
+            IrOperation::DecisionCellNew { nominal } => {
+                self.emit_decision_cell_new(result, ty, *nominal)
+            }
+            IrOperation::DecisionCell { object, winner } => {
+                self.emit_decision_cell(result, ty, *object, *winner)
+            }
             IrOperation::SharedState { nominal, object } => {
                 self.emit_shared_state(result, ty, *nominal, *object)
             }
@@ -2725,13 +2758,15 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 self.emit_shared_retain(result, ty, *nominal, *object)
             }
             IrOperation::SharedAcquire { object } => {
-                self.emit_shared_wait(result, *object, "wf__shared_acquire", "acquire")
+                self.emit_shared_wait(result, *object, "wf__shared_acquire", "acquire", "")
             }
             IrOperation::SharedTake { object } => self.emit_shared_take(result, *object),
-            IrOperation::SharedWatch { object } => {
-                self.emit_shared_wait(result, *object, "wf__shared_watch", "watch")
+            IrOperation::SharedWatch { object, test } => {
+                self.emit_shared_watch(result, *object, test.as_ref())
             }
-            IrOperation::SharedUnlock { object } => self.emit_shared_unlock(result, *object),
+            IrOperation::SharedUnlock { object, wrote } => {
+                self.emit_shared_unlock(result, *object, *wrote)
+            }
             IrOperation::ConcurrentHashMapNew { nominal, capacity } => {
                 self.emit_keyed_table_new(result, ty, *nominal, *capacity)
             }
@@ -2740,9 +2775,13 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 index,
                 object,
                 hold,
-            } => self.emit_atomic_group_target(result, *record, *index, *object, *hold),
+                wrote,
+            } => self.emit_atomic_group_target(result, *record, *index, *object, *hold, *wrote),
             IrOperation::AtomicGroupTake { record } => {
                 self.emit_atomic_group_call(result, *record, None, true)
+            }
+            IrOperation::AtomicGroupAcquire { record } => {
+                self.emit_atomic_group_acquire(result, *record)
             }
             IrOperation::AtomicGroupRelease { record, nominal } => {
                 self.emit_atomic_group_call(result, *record, *nominal, false)
@@ -2848,9 +2887,11 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             IrOperation::WatchBegin { record } => {
                 self.emit_watch_call(result, *record, None, "wf__watch_begin")
             }
-            IrOperation::WatchObject { record, object } => {
-                self.emit_watch_call(result, *record, Some(*object), "wf__watch_object")
-            }
+            IrOperation::WatchObject {
+                record,
+                object,
+                test,
+            } => self.emit_watch_object(result, *record, *object, test.as_ref()),
             IrOperation::WatchTable { record, table } => {
                 self.emit_watch_call(result, *record, Some(*table), "wf__watch_table")
             }

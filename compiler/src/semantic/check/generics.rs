@@ -2312,6 +2312,7 @@ impl<'unit> TypeContext<'unit> {
                         PreludeType::DivError => out.push_str("DivError"),
                         PreludeType::NarrowError => out.push_str("NarrowError"),
                         PreludeType::ScanStep => out.push_str("ScanStep"),
+                        PreludeType::DecisionState => out.push_str("DecisionState"),
                     }
                     if ordering {
                         out.push(')');
