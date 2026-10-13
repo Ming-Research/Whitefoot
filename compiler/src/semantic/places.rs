@@ -233,7 +233,7 @@ impl CapturedValue {
     /// The half of [OWN-7]'s index separation this module settles without a
     /// proof: two written literals of different value select two slots.
     /// Every other pair is the fixed [ENT-6] families' question.
-    fn literals_distinct(&self, other: Self) -> bool {
+    pub(crate) fn literals_distinct(&self, other: Self) -> bool {
         matches!(
             (self.term.clone(), other.term),
             (CapturedTerm::Literal(left), CapturedTerm::Literal(right)) if left != right

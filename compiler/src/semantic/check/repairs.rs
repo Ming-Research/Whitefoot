@@ -187,7 +187,7 @@ struct Reads<'a> {
 }
 
 impl<'a> Reads<'a> {
-    const fn new(
+    fn new(
         function: &'a CheckedFunction,
         written: &'a [BindingId],
         editable: &'a HashSet<FunctionId>,
