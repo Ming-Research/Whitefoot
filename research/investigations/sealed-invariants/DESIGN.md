@@ -212,21 +212,30 @@ does not survive the relocation (a capacity word, not the length or filled
 elements) [OP-10]. Anchors at or below w are handled by the rule of the event (T3,
 T6, T10).
 
-T3 **Whole-value store.** A SET-1 commit or OP-12 update at w stores a new
-value, which is sealed (its right-hand side is a hand-off, T5, or a call
-result, T6). Every debt whose anchor is *proved* at or below w — equal steps,
-equal captured offsets — is removed; a debt whose anchor only may overlap w
-(an index not proved equal) stays, because the store may have reached a
-different element. T2 still adds debts for the anchors above w.
+T3 **Whole-value store of a sealed value.** T3 applies to a SET-1 commit or
+an OP-12 update at w exactly when the stored value is sealed: its right-hand
+side is a hand-off (T5: every store whose target is not a complete own local
+binding, and every OP-12 update), a call result (T6) or a construction.
+Every debt whose anchor is *proved* at or below w — equal steps, equal
+captured offsets — is removed; a debt whose anchor only may overlap w (an
+index not proved equal) stays, because the store may have reached a
+different element. T2 still adds debts for the anchors above w. A commit
+into a complete own local binding whose right-hand side is a place read or
+a `move` is not a T3 store; T4 governs it.
 
 T4 **Local move and copy.** `let y = move p;`, `let y = p;` of a copy
 struct, a by-value `match` binder, a destructuring binder [PROV-6], the
-`Ok` continuation of `propagate`, and a SET-1 commit whose target is a
-complete own local binding are not hand-offs. Each debt that may be at or
-below the source p is rebased onto the destination: the part of its anchor
-below p is appended to y. A copy duplicates the debts; a move leaves them
-with y and the source root dead [OWN-1]. A field moved out consumes its
-whole owner [WIN-3], so debts anchored at the owner die with it.
+`Ok` continuation of `propagate`, and a SET-1 commit `set y = p;` or
+`set y = move p;` whose target y is a complete own local binding are not
+hand-offs. In that order: first every debt anchored at or below y is
+dropped, because y's old value is released or overwritten whole [WIN-3];
+then each debt that may be at or below the source p is rebased onto the
+destination, the part of its anchor below p appended to y. A copy
+duplicates the debts; a move leaves them with y and the source root dead
+[OWN-1]. A field moved out consumes its whole owner [WIN-3], so debts
+anchored at the owner die with it. So `set a.value = 31_u64; let b =
+Index(value: 4_u64); set b = move a;` leaves b with a's debt, and a later
+`table[b.value]` is refused.
 
 T5 **Hand-off.** These are the hand-offs, each over the place or value it
 hands on:
@@ -242,6 +251,15 @@ hands on:
 | the argument of an OP-12 update | the old value |
 | each edge leaving an atomic statement | each target's state (the state, the map entry, or each `Entries` element) |
 | a spawn's arguments [WAIT-3] | as call arguments |
+
+Three prelude rows are not hand-offs, because their supplied definitions
+neither read a value's data nor hand a value to code that assumes its
+invariant: `swap` [OP-11], whose two arguments only exchange their values
+(T10 governs it), and the value-discarding rows `release` and `map_clear`
+[PRE-1, SHARE-1], whose values are released, as a scope exit releases
+them, with no user action on release [STOR-3]. Their arguments owe nothing
+here, and the debts at or below a released value die with it. This list is
+closed; every other prelude or host row is an ordinary call.
 
 At a hand-off, every debt that may be at or below the handed place must be
 **restored** (T8) in the state before the hand-off's own events; a debt that
@@ -279,25 +297,47 @@ deterministic:
    reference variable through which the anchor is named — in the same
    pre-kill closure ENT-5 already materializes; a debt not restored there is
    widened (T9);
-3. on every loop backedge and every `continue` [FN-1], for every debt.
+3. on every loop backedge and every `continue` [FN-1], for every debt;
+4. on each incoming edge of a merge, for every debt on that edge, after the
+   edge's own events and before the merge (T11).
 
 T9 **Widening.** When an event of T8 point 2 removes an offset identity of
 an anchor and the debt is not restored, that position becomes `[?]`; when
 the anchor was reached only through a reference whose path set REF-1
 summarizes by a cover, the debt is anchored at that cover. Widening only
 coarsens a debt: the widened anchor overlaps everything the old one did.
+(A finer anchor for linked-structure cursors is proposed under
+[points for the owner](#points-for-the-owner); it is not part of this
+rule.)
 
 T10 **Swap.** `swap` exchanges the debts anchored at or below its two
 targets (rebasing each onto the other target); when the two targets may be
 the same place, both receive the union. T2 adds debts above each target.
 
-T11 **Join.** At a merge of control inputs, D is the union of the incoming
-sets, events united per key. Before the merge intersects the fact states
-[ENT-5, ENT-6], each incoming edge on which a key of the union is absent
-receives the sealed instance of that key (T13) when its anchor's terms are
-formable on that edge: the key was sealed there, so its invariant held, and
-the intersection must not lose that knowledge only because it was not yet
-materialized.
+T11 **Join.** At a merge of control inputs, in this order:
+
+1. On each incoming edge separately, every debt on that edge is offered for
+   restoration (T8) in that edge's own fact state; a restored debt leaves
+   that edge's set.
+2. D after the merge is the union of the incoming sets that remain, events
+   united per key.
+3. For each key that is on no incoming set after step 1 — sealed on every
+   edge — and on each incoming edge where that key's anchor satisfies T13's
+   premises (its root live, every payload step in it carrying a current
+   [ENT-3.S15] refinement on that edge, every position in it proved live
+   [OP-4], its data formable as terms), the instance of the key is
+   established on that edge before the merge intersects the fact states
+   [ENT-5, ENT-6]. An edge where the premises fail receives nothing.
+
+A key broken on one edge is never given an instance on another edge to make
+the intersection keep a fact the broken edge lacks: it is either restored on
+its own edge (step 1) or stays a debt (step 2). The premises of step 3 make
+every added instance true of a place that exists on that edge at run time,
+so no added fact can make a reachable edge contradictory. Without them, an
+edge on which an enum holds another variant could receive an invariant of a
+payload that does not exist, and an unsatisfiable invariant would make that
+edge contradictory and let the merge discard it
+(`type11-neg-join-unrefined-payload` below).
 
 T12 **Loop header.** D at a header is the least set containing the
 entering edge's debts and every backedge's and `continue`'s debts. It is
@@ -306,9 +346,10 @@ computed by monotone iteration (see [result 3](#result-3-the-added-work-is-polyn
 T13 **Assumption at a sealed place.** A new ENT-3 fact source: when a
 statement reads a fragment-integer place q that is a binder datum of an
 invariant I at an anchor a (q = a.d), and `(a, I)` has no debt that may
-denote it, and every payload step in a carries a current [ENT-3.S15]
-refinement, and every position in a is proved live [OP-4] (it is, since the
-read itself owes that), the instance of I over a is established after the
+denote it, and a's root is live, and every payload step in a carries a
+current [ENT-3.S15] refinement, and every position in a is proved live
+[OP-4] (it is, since the read itself owes that), the instance of I over a
+is established after the
 read, with the ordinary support of its terms [ENT-5]. For a range invariant
 the instance becomes an active fact of the range walk [RANGE-2]. When the
 anchor's other data are not terms — a place under a subscript that is no
@@ -347,11 +388,14 @@ program, every activation's abstract state paired with its runtime state.
   rebinding it, or letting it go out of scope cannot remove a debt: only T3,
   T4, T8 or the death of the root removes one, and each removal is justified
   below.
-- *Branch joins.* T11 takes the union, so a key broken on any incoming edge
-  is broken after the join. A key absent from every edge was sealed on every
-  edge, so SI holds for it on each, hence after the merge. The instances T11
-  adds on edges where a key was sealed are true there by SI, so the fact
-  intersection stays sound.
+- *Branch joins.* T11 removes a debt from an edge only by a restoration
+  proved in that edge's own state, then takes the union, so a key broken and
+  unrestored on any incoming edge is broken after the join. A key on no
+  remaining set was sealed or restored on every edge, so SI holds for it on
+  each, hence after the merge. T11 adds an instance only for such a key and
+  only on an edge where the anchor exists there (T13's premises); by SI it
+  is true there, so it cannot make a reachable edge contradictory, and the
+  fact intersection stays sound.
 - *Calls through write references.* Before the call T5 proves every argument
   referent sealed. The callee starts with D empty over that referent (T1)
   and must restore every debt at or below it at every exit (T7), so the
@@ -366,7 +410,11 @@ program, every activation's abstract state paired with its runtime state.
 - *Removals.* T8 removes a debt only when the instance is proved in the
   current state, so I holds at that moment, which is exactly what SI asks.
   T3 removes a debt only when the store is proved to have replaced that very
-  anchor's value with a sealed one. T4 moves a debt with the value. A root
+  anchor's value with a value already sealed: a hand-off, a call result or a
+  construction, never a place read or move, whose debts T4 carries instead.
+  T4 drops the destination's old debts only because its old value is gone,
+  and then moves the source's debts with the value. A released value (scope
+  exit, `release`, `map_clear`) takes its debts with it. A root
   that dies takes its anchors with it; a consumed value continues as the
   destination's (T4) or reaches a hand-off (T5).
 - *Widening.* T9 replaces a debt by one that overlaps at least the same
@@ -408,6 +456,7 @@ atomic target (SI of the state), a parameter (T1).
 | read `holder.index.value` and index the table | T13 withholds the instance; the S5 image `== 31` refutes the bound (OP-4) |
 | `let r = &holder.index; let s = r;` then `load(index: s, ...)` | T5 at the call: the resolved referent `holder.index` has the debt (FN-8) |
 | `let c = holder.index;` (copy) then use `c.value` | T4 copies the debt to `c`; as the first row |
+| `let b = Index(value: 4_u64); set b = move holder.index;` then use `b.value` | T4 drops b's old debts, then rebases the source's onto b; as the first row (the move also consumes `holder` [WIN-3]) |
 | `Some<Index>(value: holder.index)` | T5 at the construction (TYPE-11) |
 | `place_back(window: &indexes, value: holder.index)` | T5 at the call (FN-8) |
 | `give holder.index;` | T5 at the give (TYPE-11) |
@@ -443,10 +492,10 @@ change in place only through writes that leave debts:
 | a call taking `&c[i]` with `writes` | the callee restores the element (T7); T6 adds debts only above it |
 | iteration (`for k in 0..n`) reading `c[k]` | T13 gives each read element's instance, as long as no debt names `c[?]` or `c[k]` |
 | a loop writing `c[k].f` | restoration is attempted at the backedge (T8.3); a debt left there loses k's identity at the counted update and widens to `c[?]` (T9), which no later point can restore |
-| `swap(first: &c[i], second: &c[j])` | T10: the elements' debts exchange; sealed elements stay sealed; ancestors' relations get debts |
+| `swap(first: &c[i], second: &c[j])` | not a hand-off (T5's closed list); T10: the elements' debts exchange; sealed elements stay sealed; ancestors' relations get debts |
 | `take_back`, `take_front`, `remove_at`, `split_off`, `slots_into_array` | the call's reference argument is a hand-off, so the container is sealed when the call begins; the returned value or container is sealed by parametricity (below) |
 | `append`, `grow`, `grow_paged` | values move without change: no debt at or below the window; `grow` applies the relocation table (T2) |
-| `map_clear`, release at scope exit | values are released, not handed off; their debts die with them |
+| `map_clear`, `release`, release at scope exit | values are released, not handed off (T5's closed list); their debts die with them |
 | atomic statement on a map entry or `Entries` | entry sealed at block entry (SI of the state); every leaving edge restores (T5) |
 
 So "every element satisfies its type's invariant" needs no record: it is
@@ -482,23 +531,49 @@ with n the number of statements and places written in the body, d the
 longest written path, K the largest number of invariants of one struct and
 r the largest read set:
 
-- the number of debt keys is at most A = n·d·K + (number of REF-1 covers),
-  since every key comes from one write site's path prefix, its
-  `[?]`-widening, or a cover;
+- the number of debt keys is at most A = R·n·d·K + C, with R the number of
+  roots in the body (bindings, parameters and atomic targets' states) and C
+  the number of REF-1 covers: a key is a root followed by a relative suffix
+  of some write site's path (at most n·d of them, each possibly with
+  `[?]`-widened positions), and T4 and T10 rebasing only move a suffix onto
+  another root, so they create no other suffixes;
 - the debt state at a point is a subset of those keys; the breaking-event
   sets are diagnostic only and take no part in the fixed point;
 - a write event costs at most d·K·r overlap judgments, each an existing
   [OWN-7] judgment;
 - a join is a set union, O(A); T11's added instances are at most A per edge;
-- restoration attempts are at most A per hand-off, per backedge and per
+- restoration attempts are at most A per hand-off, per backedge, per merge
+  edge and per
   kill batch, each one existing ENT query (or one RANGE-3 problem under its
   existing structural ceilings).
 
+**Monotonicity.** Order abstract states by debts (more debts is higher) and
+facts (fewer facts is higher). Every rule is monotone in this order:
+
+- the only fact sources that depend on debts are T13 and T11 step 3, and
+  each requires a key to be absent from the debts, so more debts give fewer
+  of their instances; ENT-5's closure, kills and the merge intersection are
+  monotone in their input facts, so fewer facts in give fewer facts out;
+- every rule that removes a debt does so on a proof — T8 restoration, T3's
+  proved-equal anchor — so fewer facts give fewer removals and more debts;
+  T11 step 1 is T8 applied per edge, before any union;
+- T2, T4, T9, T10, T11 step 2 and the debt-dropping events (death of a root,
+  a release) map each debt set elementwise or by union, so a larger set in
+  gives a larger set out.
+
+Hence, with all other inputs fixed, the map from debts entering a program
+point to debts leaving it is monotone. The earlier form of T11, which gave
+an instance to an edge where a key was absent while another edge still held
+it as a debt, broke this: adding a key at a header could make the key
+absent from a clean edge only, give that edge an instance, let the merge
+keep a fact that restored a second key, and so lower the output. That form
+is gone: step 3 now fires only for a key absent from every edge, so adding a
+key can only remove instances.
+
 **Loop fixed point.** Fix every other input; the header's debt set D_h maps
-to F(D_h) = entering debts ∪ the debts on the backedges after one walk of
-the body starting from D_h. F is monotone: more debts at the header remove
-T13 instances, which can only make restorations fail and so leave more
-debts. The key lattice is finite (A keys), so Kleene iteration from the
+to F(D_h) = entering debts ∪ the debts on the backedges and `continue`s after
+one walk of the body starting from D_h. By the monotonicity above F is
+monotone. The key lattice is finite (A keys), so Kleene iteration from the
 entering set reaches the least fixed point in at most A + 1 walks. The least
 fixed point is sound by induction over iterations: the entering edge
 satisfies SI for every key outside it, and if an iteration starts with SI
@@ -707,10 +782,10 @@ Rules to change, with the intended behavior (not final text):
 | ENT-5 | Debt state: T2 on exactly the write events this rule kills on, including the relocation table; restoration attempts in the pre-kill closure (T8.2); widening (T9); join union and edge instances before intersection (T11); loop headers as least fixed points (T12). |
 | ENT-2 | Optional: an S5 post-write image for a subscripted target with captured offsets, so `set c[i].f = x;` can restore without a reference. |
 | SET-1 | The right-hand side of a store into anything but a complete own local binding is a hand-off; the commit applies T2 and T3. |
-| OP-11 | `swap` exchanges the targets' debts (T10) and applies T2 above both. |
+| OP-11 | `swap`'s arguments are not hand-offs; it exchanges the targets' debts (T10) and applies T2 above both. |
 | OP-12 | The updated value's argument is a hand-off; the result is sealed. |
 | GIVE-1 | A `give` of a value is a hand-off. |
-| PRE-1, SCOPE-3 | Replace "a supplied definition promises no generated postcondition" with the parametricity obligation; supplied results are sealed. |
+| PRE-1, SCOPE-3 | Replace "a supplied definition promises no generated postcondition" with the parametricity obligation; supplied results are sealed; `release` and `map_clear` arguments are not hand-offs (T5's closed list). |
 | SHARE-2 | Every target kind (whole state, map entry, `Entries`) is sealed at block entry and restored on every leaving edge; today only a whole `Shared<S>` or `SharedRead<S>` target of a struct is. |
 | RANGE-2, RANGE-3 | A fifth activation source: a range type invariant's instance at a sealed anchor (T13); range debts restored by RANGE-3 at hand-offs. |
 | CALL-4, CALL-6 | Generated invariant relations no longer flow as published result relations; sealedness of results replaces them, and the routed generated clauses are removed. |
@@ -769,6 +844,11 @@ other verdicts accept.
 | `type11-pos-move-carries-debt` | `set a.value = 99_u64; let b = move a; set b.value = 3_u64;` then the hand-off of `b` | accept |
 | `type11-neg-loop-reference-cover` | a reference rebound along a chain inside a loop writes through each target and is rebound before restoring; hand-off after the loop | reject FN-8 |
 | `type11-pos-public-unread-field` | the study's module program writing `state.count` from another module | accept (with the field rule) |
+| `type11-neg-local-set-move-carries-debt` | `set a.value = 31_u64; let b = Index(value: 4_u64); set b = move a;` then `table[b.value]` (T3/T4 order) | reject OP-4 |
+| `type11-neg-join-unrefined-payload` | `struct Never { v: u64; invariant impossible(n): n.v < 0_u64; }`, `enum E { A(n: Never), B() }`, e always `B`; `match &e { A(n: n) => { set n^.v = 5_u64; set x = 1_u64; } B() => { set x = 9_u64; } }`, then `table[x]` with a 2-element table (no edge may receive the payload's instance) | reject OP-4 |
+| `type11-pos-swap-broken-then-restore` | break `indexes[0]` through a reference, `swap` it with `indexes[1]`, restore through a reference to `indexes[1]`, then hand off `&indexes` | accept |
+| `type11-pos-release-broken` | break a local `Index`, then `release(value: move idx)` | accept |
+| `type11-neg-fallible-call-straddles-update` | `set t^.next = 99_u64; let v = propagate step(); set t^.next = 0_u64;` in a function writing `t`; the propagated exit hands off a broken referent | reject FN-9 |
 
 Existing cases whose verdict or rule changes with the specification:
 
@@ -802,4 +882,38 @@ Existing cases whose verdict or rule changes with the specification:
    cross an ordinary call by `&S`, and container elements broken across loop
    iterations cannot be restored later. Each reopens only with a real
    program that needs it.
-4. Nothing found makes the ruled rule unsound or requires narrowing it.
+4. **Linked-structure cursors (proposal, recommended in scope now).** A
+   loop that walks a structure with a reference rebound each iteration
+   (`set cursor = &cursor^.next.inner;`) has a target REF-1 summarizes by a
+   cover. As T2, T8 and T9 stand, a write through that cursor creates a debt
+   on the cover, which T8 can never restore, even when the same iteration
+   restores the relation before rebinding. Proposed refinement: anchor such
+   a debt at the cursor's *current target identity* plus the finite suffix
+   below it, both of which REF-1 already retains for a summarized
+   description; restore it through the cursor's terms (`cursor^.f`); attempt
+   restoration before the cursor is rebound or leaves scope (T8 point 2);
+   widen to the cover only if that fails. It is sound because one target
+   identity denotes one place for as long as it is current, which is the
+   same fact REF-2 uses to keep the cursor valid. It costs one more key form
+   per cursor, so the bound of result 3 holds with C counting identities as
+   well as covers. Recommendation: in scope, because Snowghost's tree and
+   arena walks use this shape and the data already exists; it adds one
+   positive case (restored before rebinding) and one negative case (rebound
+   before restoring, today's `type11-neg-loop-reference-cover`).
+5. **Stepwise updates around calls and releases.** Two consequences of the
+   hand-off list, stated as accepted costs:
+   - a stepwise multi-field update cannot straddle a call that takes the
+     struct, nor any fallible call: a propagated error exit hands off the
+     written referent (T7), so the referent must be restored before the
+     fallible call, or the update reordered after it
+     (`type11-neg-fallible-call-straddles-update`). Both are required for
+     soundness, since the callee or the caller on the error path relies on a
+     valid value; the remedy is the writer's order, not a rule change.
+   - releasing a broken value would be refused if `release(value:)` were an
+     ordinary call. This note proposes, and T5 includes, a closed exemption:
+     `release`, `map_clear` and `swap` are not hand-offs, because their
+     supplied definitions only discard or exchange values and no user code
+     runs on release [STOR-3]. This is a choice the owner may refuse; refusing
+     it costs only those three uses, and T10 then becomes dead (a `swap`
+     operand would have to be sealed).
+6. Nothing found makes the ruled rule unsound or requires narrowing it.
