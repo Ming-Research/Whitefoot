@@ -163,8 +163,9 @@ read.
   `spec/log.md` holds its approvals.
 - Whitefoot-kit's [writing guide](https://github.com/Ming-Research/Whitefoot-kit/blob/main/docs/writing.md): writer
   problems, usable forms, examples, applicability and costs, for agents;
-  a specification change that alters a usable form
-  is filed to Whitefoot-kit on the status board.
+  the line that merges a specification change into `main` files a request
+  to Whitefoot-kit on the status board naming the specification version,
+  the rules it changed and what writers must now watch for.
 - `docs/ideas.md` and `docs/why-whitefoot.md`: candidate mechanisms and
   explanatory essays; not a work queue or invented measurements.
 - `docs/articles/`: one idea each for readers outside the project, every
