@@ -5,6 +5,8 @@ name: deadlock-sites-cost
 # Triggered by editing the request file on this branch: a workflow that is
 # not on main cannot be dispatched. Each push that changes the file is one
 # requested run; its KEY=VALUE lines replace the former dispatch inputs.
+# The site-only attribution arm gets its recorded compile-time prefix in a
+# detached scratch tree; the checked-out candidate and request stay unchanged.
 on:
   push:
     branches: [claude/diag-deadlock-sites]

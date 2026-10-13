@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Temporary dispatch-only cost protocol; removed with its calling workflow.
+"""Temporary request-file cost protocol; removed with its calling workflow.
 
 Python owns matched process timing, TCP lifetime and retained partial results;
 the native client keeps the existing independent byte oracle. No native tool
-combines these observations or rebinds the same inputs across three revisions.
+combines these observations across independently built production and attribution arms.
 """
 
 import csv
@@ -24,8 +24,11 @@ import time
 import traceback
 
 
-ARMS = ("base", "twin", "branch")
-ORDERS = (ARMS, ("twin", "branch", "base"), ("branch", "base", "twin"))
+PRODUCTION_ARMS = ("base", "twin", "branch")
+ARMS = (*PRODUCTION_ARMS, "site-only")
+ORDERS = tuple(ARMS[index:] + ARMS[:index] for index in range(len(ARMS)))
+ATTRIBUTION_PREFIX = b"#define WF_DEADLOCK_SITES_ATTRIBUTION_NO_ROSTER 1\n"
+BRIDGE_SOURCE = "compiler/src/backend/completion/bridge.c"
 DRIVERS = (1, 4, 8, 16)
 SPAWN_FIXTURES = {"spawn": "context_starts", "spawn-concurrent": "context_starts_concurrent"}
 FIELDS = ("workload", "drivers", "cpus", "connections", "round", "order", "arm",
@@ -214,11 +217,9 @@ class Protocol:
         self.mode = os.environ.get("DEADLOCK_MODE", "pilot")
         if self.mode not in ("pilot", "full"):
             raise ValueError("DEADLOCK_MODE must be pilot or full")
-        rounds = integer("DEADLOCK_ROUNDS", 9, 3, 99)
-        if rounds % 3:
-            raise ValueError("full rounds must be a multiple of three")
+        rounds = integer("DEADLOCK_ROUNDS", 9, 4, 99)
         work = integer("DEADLOCK_WORK", 10, 1, 1000)
-        self.rounds, self.work = (3, 1) if self.mode == "pilot" else (rounds, work)
+        self.rounds, self.work = (4, 1) if self.mode == "pilot" else (rounds, work)
         self.manifest["topology"] = {}
         self.masks = topology_masks(os.environ.get("DEADLOCK_P_CORE_CPUS", "auto"),
                                     model, self.manifest["topology"])
@@ -249,8 +250,17 @@ class Protocol:
         candidate = self.git("rev-parse", "--verify", os.environ["DEADLOCK_CANDIDATE"] + "^{commit}")
         main = self.git("rev-parse", "origin/main")
         base = self.git("merge-base", main, candidate)
+        position_counts = {arm: [0] * len(ARMS) for arm in ARMS}
+        for round_index in range(self.rounds):
+            for position, arm in enumerate(ORDERS[round_index % len(ORDERS)]):
+                position_counts[arm][position] += 1
         self.manifest.update({"mode": self.mode, "rounds": self.rounds, "work": self.work,
                               "requested_rounds": rounds, "requested_work": work,
+                              "arms": ARMS, "production_criterion_arms": PRODUCTION_ARMS,
+                              "orders": ORDERS, "planned_position_counts_per_panel": position_counts,
+                              "planned_order_remainder": self.rounds % len(ORDERS),
+                              "order_note": "Four cyclic orders; multiples of four fully balance positions. Other full round counts retain their explicit remainder.",
+                              "attribution_note": "site-only is independently built at candidate HEAD with only the recorded runtime prefix. It retains site ABI/layout/store costs and is never an arm of the production rejection criterion.",
                               "panel_cpus": self.masks, "drivers": list(DRIVERS), "client_threads": self.threads,
                               "tcp_bytes": self.payload, "tcp_exchanges": self.exchanges,
                               "tcp_churn_exchanges": 1, "connections": self.connections,
@@ -277,11 +287,38 @@ class Protocol:
         self.scratch = Path(tempfile.mkdtemp(prefix="deadlock-sites-", dir=os.environ["RUNNER_TEMP"]))
         self.executables = {}
         self.manifest["images"] = {}
+        candidate_bridge = subprocess.check_output(["git", "show", f"{candidate}:{BRIDGE_SOURCE}"])
+        (bundle / "candidate-bridge.c").write_bytes(candidate_bridge)
         for arm in ARMS:
-            revision = candidate if arm == "branch" else base
+            revision = candidate if arm in ("branch", "site-only") else base
             tree = self.scratch / arm
             self.command(["git", "worktree", "add", "--detach", str(tree), revision], f"checkout-{arm}")
             self.worktrees.append(tree)
+            bridge = tree / BRIDGE_SOURCE
+            original_bridge = bridge.read_bytes()
+            if arm in ("branch", "site-only") and original_bridge != candidate_bridge:
+                raise RuntimeError(f"{arm}: runtime source differs from recorded candidate HEAD")
+            self.manifest["images"][arm] = {
+                "revision": revision, "attribution_only": arm == "site-only",
+                "original_bridge_sha256": hashlib.sha256(original_bridge).hexdigest(),
+            }
+            if arm == "site-only":
+                derived_bridge = ATTRIBUTION_PREFIX + original_bridge
+                bridge.write_bytes(derived_bridge)
+                changed = self.git("-C", str(tree), "diff", "--name-only")
+                if changed != BRIDGE_SOURCE or bridge.read_bytes() != derived_bridge:
+                    raise RuntimeError("site-only derivation must change only the exact runtime prefix")
+                patch = subprocess.check_output(["git", "-C", str(tree), "diff", "--", BRIDGE_SOURCE])
+                (bundle / "site-only-bridge.c").write_bytes(derived_bridge)
+                (bundle / "site-only-prefix.txt").write_bytes(ATTRIBUTION_PREFIX)
+                (bundle / "site-only.patch").write_bytes(patch)
+                self.manifest["images"][arm].update({
+                    "derivation": "prepend the exact recorded prefix before compiling the embedded runtime",
+                    "prefix": ATTRIBUTION_PREFIX.decode(),
+                    "patch_sha256": hashlib.sha256(patch).hexdigest(),
+                })
+            self.manifest["images"][arm]["compiled_bridge_sha256"] = hashlib.sha256(bridge.read_bytes()).hexdigest()
+            self.save()
             build_env = os.environ.copy()
             build_env.update({"CARGO_TARGET_DIR": str(self.scratch / f"target-{arm}"),
                               "CARGO_INCREMENTAL": "0", "RUSTFLAGS": "",
@@ -295,8 +332,7 @@ class Protocol:
                           "--bin", "whitefootc", "--locked", "--offline"],
                          f"compiler-{arm}", env=build_env, arm=arm, stage="compiler")
             compiler = Path(build_env["CARGO_TARGET_DIR"]) / "gate/whitefootc"
-            self.manifest["images"][arm] = {"revision": revision,
-                                                   "compiler_sha256": hashlib.sha256(compiler.read_bytes()).hexdigest()}
+            self.manifest["images"][arm]["compiler_sha256"] = hashlib.sha256(compiler.read_bytes()).hexdigest()
             self.executables[arm] = {}
             for fixture in (*SPAWN_FIXTURES.values(), "tcp_contexts", "driver_count"):
                 image = self.scratch / f"{arm}-{fixture}"
@@ -319,7 +355,7 @@ class Protocol:
                 expected = (f"{drivers:02d}\n" * 2).encode()
                 if result.stdout != expected or result.stderr:
                     raise RuntimeError(f"{arm}/{drivers}: actual runtime driver-count preflight failed")
-        self.manifest["preflight"] = "all three images published exactly 1, 4, 8 and 16 drivers before and after spawn"
+        self.manifest["preflight"] = "all four images published exactly 1, 4, 8 and 16 drivers before and after spawn"
         self.save()
 
     def listening(self, port, server):
@@ -452,7 +488,7 @@ class Protocol:
         for workload, connections, exchanges in panels:
             for drivers in DRIVERS:
                 for round_index in range(self.rounds):
-                    order = ORDERS[round_index % 3]
+                    order = ORDERS[round_index % len(ORDERS)]
                     for position, arm in enumerate(order):
                         self.sample(workload, arm, drivers, connections, exchanges, round_index, position)
 
@@ -467,6 +503,14 @@ class Protocol:
             for drivers in DRIVERS:
                 lines.append(f"| {drivers} | {min(drivers, 8)} | {2 if drivers == 16 else 1} | {self.masks[drivers]} |")
             lines.append("")
+        if "planned_position_counts_per_panel" in self.manifest:
+            lines.extend(["Planned four-arm cyclic orders; full rounds divisible by four balance every position. Actual completed positions are retained per raw row.",
+                          f"Planned unmatched order remainder: {self.manifest['planned_order_remainder']}.", "",
+                          "| Arm | First | Second | Third | Fourth |",
+                          "|---|---:|---:|---:|---:|"])
+            for arm, counts in self.manifest["planned_position_counts_per_panel"].items():
+                lines.append(f"| {arm} | " + " | ".join(map(str, counts)) + " |")
+            lines.append("")
         lines.extend(["Build/dependency/native compilation times are separate in build-times.tsv.",
                       f"Elapsed protocol: {time.perf_counter() - self.started:.3f}s; recorded build stages: {sum(row['seconds'] for row in self.builds):.3f}s; measured native runtime: {sum(row['seconds'] for row in self.rows):.3f}s.",
                       "All source bytes, toolchain facts, commands, exits and TCP client metrics are retained.",
@@ -474,22 +518,42 @@ class Protocol:
                       "TCP client threads share the server mask, so the two processes oversubscribe it; every arm uses identical placement.",
                       "Pilot observations select later full work; pilot never gives a cost verdict. No warmups are discarded.",
                       "Both spawn fixtures use every driver panel. Spawn rejection: median(branch/base − 1) > 0.01 + max(abs(twin/base − 1)).",
+                      "Only base, twin and branch enter that criterion. Site-only is attribution-only candidate HEAD with roster work disabled; its remaining ABI, layout and site-store costs are not a parameter-only control.",
                       "Finite within-bound evidence requires median(overhead) + twin spread ≤ 0.01; other nonrejected full panels are inconclusive.", "",
                       "| Panel | Drivers | Min sample s | Median branch/base − 1 | Twin spread | Rejection threshold | Result |",
                       "|---|---:|---:|---:|---:|---:|---|"])
         ratios = []
+        attribution_ratios = []
+        attribution_panels = []
         rejected = False
         keys = sorted({(row["workload"], row["drivers"], row["connections"]) for row in self.rows})
         for key in keys:
             rows = [row for row in self.rows if (row["workload"], row["drivers"], row["connections"]) == key]
-            overheads, twins = [], []
+            overheads, twins, site_base, branch_site = [], [], [], []
             for round_index in range(self.rounds):
                 matched = [row for row in rows if row["round"] == round_index]
-                if len(matched) != 3 or any(row["status"] != "valid" for row in matched):
+                valid = {}
+                for arm in ARMS:
+                    samples = [row for row in matched if row["arm"] == arm]
+                    if len(samples) == 1 and samples[0]["status"] == "valid":
+                        valid[arm] = samples[0]["seconds"]
+                attribution = {"workload": key[0], "drivers": key[1], "connections": key[2],
+                               "round": round_index, "site_only_base_ratio": None,
+                               "branch_site_only_ratio": None, "wall_seconds": valid,
+                               "attribution_only": True}
+                if "site-only" in valid and "base" in valid:
+                    value = valid["site-only"] / valid["base"]
+                    site_base.append(value)
+                    attribution["site_only_base_ratio"] = value
+                if "branch" in valid and "site-only" in valid:
+                    value = valid["branch"] / valid["site-only"]
+                    branch_site.append(value)
+                    attribution["branch_site_only_ratio"] = value
+                if attribution["site_only_base_ratio"] is not None or attribution["branch_site_only_ratio"] is not None:
+                    attribution_ratios.append(attribution)
+                if not set(PRODUCTION_ARMS) <= valid.keys():
                     continue
-                timed = {row["arm"]: row["seconds"] for row in matched}
-                if set(timed) != set(ARMS):
-                    continue
+                timed = {arm: valid[arm] for arm in PRODUCTION_ARMS}
                 overhead = timed["branch"] / timed["base"] - 1
                 twin = timed["twin"] / timed["base"] - 1
                 overheads.append(overhead)
@@ -501,9 +565,16 @@ class Protocol:
                                "wall_seconds": timed,
                                "wall_roundtrips_per_second": {
                                    arm: self.work * key[2] * rows[0]["exchanges"] / timed[arm]
-                                   for arm in ARMS
+                                   for arm in PRODUCTION_ARMS
                                } if key[2] else None})
-            if len(rows) != self.rounds * 3 or len(overheads) != self.rounds:
+            attribution_panels.append({
+                "workload": key[0], "drivers": key[1], "connections": key[2],
+                "requested_rounds": self.rounds, "attribution_only": True,
+                "site_only_base_rounds": len(site_base), "branch_site_only_rounds": len(branch_site),
+                "median_site_only_base_ratio": statistics.median(site_base) if site_base else None,
+                "median_branch_site_only_ratio": statistics.median(branch_site) if branch_site else None,
+            })
+            if len(overheads) != self.rounds:
                 lines.append(f"| {key[0]} {key[2]} | {key[1]} | — | — | — | — | incomplete |")
                 continue
             median, spread = statistics.median(overheads), max(map(abs, twins))
@@ -519,15 +590,35 @@ class Protocol:
             else:
                 result = "inconclusive"
             threshold = f"{0.01 + spread:.6%}" if key[0] in SPAWN_FIXTURES else "outside veto"
-            lines.append(f"| {key[0]} {key[2]} | {key[1]} | {min(row['seconds'] for row in rows):.6f} | {median:.6%} | {spread:.6%} | {threshold} | {result} |")
+            minimum = min(row["seconds"] for row in rows if row["arm"] in PRODUCTION_ARMS)
+            lines.append(f"| {key[0]} {key[2]} | {key[1]} | {minimum:.6f} | {median:.6%} | {spread:.6%} | {threshold} | {result} |")
         lines.extend(["", "Matched rounds (wall ratios; TCP rates include startup and shutdown, unlike the client exchange-only metrics):", "",
                       "| Panel | Drivers | Round | Branch/base | Twin/base | Base rt/s | Twin rt/s | Branch rt/s |",
                       "|---|---:|---:|---:|---:|---:|---:|---:|"])
         for ratio in ratios:
             rates = ratio["wall_roundtrips_per_second"]
-            rate_cells = " | ".join(f"{rates[arm]:.3f}" if rates else "—" for arm in ARMS)
+            rate_cells = " | ".join(f"{rates[arm]:.3f}" if rates else "—" for arm in PRODUCTION_ARMS)
             lines.append(f"| {ratio['workload']} {ratio['connections']} | {ratio['drivers']} | {ratio['round']} | {ratio['branch_base_ratio']:.9f} | {ratio['twin_base_ratio']:.9f} | {rate_cells} |")
+        lines.extend(["", "Attribution-only panel medians (available matched pairs; incomplete counts are not complete panels):", "",
+                      "| Panel | Drivers | Site-only/base rounds | Median site-only/base | Branch/site-only rounds | Median branch/site-only |",
+                      "|---|---:|---:|---:|---:|---:|"])
+        for panel in attribution_panels:
+            first = panel["median_site_only_base_ratio"]
+            second = panel["median_branch_site_only_ratio"]
+            first_text = f"{first:.9f}" if first is not None else "—"
+            second_text = f"{second:.9f}" if second is not None else "—"
+            lines.append(f"| {panel['workload']} {panel['connections']} | {panel['drivers']} | {panel['site_only_base_rounds']}/{self.rounds} | {first_text} | {panel['branch_site_only_rounds']}/{self.rounds} | {second_text} |")
+        lines.extend(["", "Attribution-only matched rounds, retained independently of production triples:", "",
+                      "| Panel | Drivers | Round | Site-only/base | Branch/site-only |",
+                      "|---|---:|---:|---:|---:|"])
+        for ratio in attribution_ratios:
+            first, second = ratio["site_only_base_ratio"], ratio["branch_site_only_ratio"]
+            first_text = f"{first:.9f}" if first is not None else "—"
+            second_text = f"{second:.9f}" if second is not None else "—"
+            lines.append(f"| {ratio['workload']} {ratio['connections']} | {ratio['drivers']} | {ratio['round']} | {first_text} | {second_text} |")
         self.write("ratios.json", json.dumps(ratios, indent=2) + "\n")
+        self.write("attribution-ratios.json", json.dumps(attribution_ratios, indent=2) + "\n")
+        self.write("attribution-panels.json", json.dumps(attribution_panels, indent=2) + "\n")
         self.write("summary.md", "\n".join(lines) + "\n")
         return rejected
 

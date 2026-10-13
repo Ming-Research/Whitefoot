@@ -9,6 +9,62 @@
 
 use super::support::{build_program, compile_program, compile_sources};
 
+/// Identities are assigned on the first actual guard/join park, so child
+/// numbering can follow either driver's schedule. Source descriptions remain
+/// exact, every identity is distinct, and the root retains identity zero.
+fn assert_report_waits(report: &str, expected: &[(Option<u64>, &str)]) {
+    let waits: Vec<_> = report
+        .lines()
+        .filter_map(|line| line.strip_prefix("  context "))
+        .map(|line| {
+            let (identity, site) = line.split_once(' ').expect("identity and wait site");
+            (
+                identity.parse::<u64>().expect("numeric context identity"),
+                site,
+            )
+        })
+        .collect();
+    assert_eq!(waits.len(), expected.len(), "{report}");
+    let identities: std::collections::BTreeSet<_> =
+        waits.iter().map(|(identity, _)| *identity).collect();
+    assert_eq!(identities.len(), waits.len(), "duplicate identity: {report}");
+    for (identity, site) in expected {
+        assert!(
+            waits.iter().any(|(actual_identity, actual_site)| {
+                actual_site == site
+                    && identity.map_or(*actual_identity != 0, |id| id == *actual_identity)
+            }),
+            "missing context {identity:?} at {site:?}: {report}"
+        );
+    }
+}
+
+#[test]
+fn wait_report_checks_accept_child_order_and_detect_wrong_reports() {
+    let expected = [
+        (Some(0), "waits at the root"),
+        (None, "waits at A"),
+        (None, "waits at B"),
+    ];
+    for report in [
+        "  context 0 waits at the root\n  context 1 waits at A\n  context 2 waits at B\n",
+        "  context 2 waits at A\n  context 0 waits at the root\n  context 1 waits at B\n",
+    ] {
+        assert_report_waits(report, &expected);
+    }
+    for report in [
+        "  context 0 waits at the root\n  context 1 waits at A\n",
+        "  context 0 waits at the root\n  context 1 waits at A\n  context 1 waits at B\n",
+        "  context 0 waits at the root\n  context 1 waits at A\n  context 2 waits at C\n",
+        "  context 3 waits at the root\n  context 1 waits at A\n  context 2 waits at B\n",
+    ] {
+        assert!(
+            std::panic::catch_unwind(|| assert_report_waits(report, &expected)).is_err(),
+            "accepted an incorrect report: {report}"
+        );
+    }
+}
+
 /// The routes and driver counts a program runs under: the kernel ring on
 /// one driver and on four, and the shared file adapter, where one driver
 /// runs. A host with no ring runs every one of them on the adapter.
@@ -147,30 +203,17 @@ fn a_program_that_can_take_no_step_stops_with_a_report_on_every_driver_count() {
             );
             let expected = if name == "guard_cycle.wf" {
                 &[
-                    "  context 1 waits for the guard of the atomic statement at guard_cycle.wf:7:3",
-                    "  context 2 waits for the guard of the atomic statement at guard_cycle.wf:14:3",
-                    "  context 0 waits at guard_cycle.wf:27:3 to join contexts (implicit join before leaving this activation; spawn sites in this activation: context spawned at guard_cycle.wf:25:3, context spawned at guard_cycle.wf:26:3)",
+                    (None, "waits for the guard of the atomic statement at guard_cycle.wf:7:3"),
+                    (None, "waits for the guard of the atomic statement at guard_cycle.wf:14:3"),
+                    (Some(0), "waits at guard_cycle.wf:27:3 to join contexts (implicit join before leaving this activation; spawn sites in this activation: context spawned at guard_cycle.wf:25:3, context spawned at guard_cycle.wf:26:3)"),
                 ][..]
             } else {
                 &[
-                    "  context 1 waits for the guard of the atomic statement at own_guard.wf:2:3",
-                    "  context 0 waits at own_guard.wf:15:3 to join contexts (implicit join before leaving this activation; spawn sites in this activation: context spawned at own_guard.wf:14:3)",
+                    (None, "waits for the guard of the atomic statement at own_guard.wf:2:3"),
+                    (Some(0), "waits at own_guard.wf:15:3 to join contexts (implicit join before leaving this activation; spawn sites in this activation: context spawned at own_guard.wf:14:3)"),
                 ][..]
             };
-            for line in expected {
-                assert!(
-                    report.lines().any(|actual| actual == *line),
-                    "{name}, drivers {drivers}: missing {line:?}: {report}"
-                );
-            }
-            assert_eq!(
-                report
-                    .lines()
-                    .filter(|line| line.starts_with("  context "))
-                    .count(),
-                expected.len(),
-                "{name}, drivers {drivers}: {report}"
-            );
+            assert_report_waits(&report, expected);
         }
     }
 }
@@ -189,23 +232,16 @@ fn a_deadlock_report_names_the_guard_and_the_implicit_loop_join() {
             "drivers {drivers}: {output:?}"
         );
         let report = String::from_utf8_lossy(&output.stderr);
-        for line in [
-            "whitefoot completion: every context waits for a guard or for another context, and no host operation is outstanding",
-            "  context 1 waits for the guard of the atomic statement at deadlock_loop_join.wf:3:5",
-            "  context 0 waits at deadlock_loop_join.wf:25:3 to join the context spawned at deadlock_loop_join.wf:24:5 (implicit join at the end of this loop iteration)",
-        ] {
-            assert!(
-                report.lines().any(|actual| actual == line),
-                "drivers {drivers}: missing {line:?}: {report}"
-            );
-        }
-        assert_eq!(
-            report
-                .lines()
-                .filter(|line| line.starts_with("  context "))
-                .count(),
-            2,
-            "the consumer must not start: drivers {drivers}: {report}"
+        assert!(
+            report.lines().any(|line| line == "whitefoot completion: every context waits for a guard or for another context, and no host operation is outstanding"),
+            "drivers {drivers}: {report}"
+        );
+        assert_report_waits(
+            &report,
+            &[
+                (None, "waits for the guard of the atomic statement at deadlock_loop_join.wf:3:5"),
+                (Some(0), "waits at deadlock_loop_join.wf:25:3 to join the context spawned at deadlock_loop_join.wf:24:5 (implicit join at the end of this loop iteration)"),
+            ],
         );
     }
 }
@@ -234,7 +270,7 @@ fn a_deadlock_report_distinguishes_binding_use_from_ordinary_block_end() {
   return std::process::exit_status(code: code);
 }
 ",
-            "  context 0 waits at deadlock_binding_use.wf:12:3 to join the context spawned at deadlock_binding_use.wf:11:3 (explicit use of the binding)",
+            "waits at deadlock_binding_use.wf:12:3 to join the context spawned at deadlock_binding_use.wf:11:3 (explicit use of the binding)",
         ),
         (
             "deadlock_block_end.wf",
@@ -247,7 +283,7 @@ fn a_deadlock_report_distinguishes_binding_use_from_ordinary_block_end() {
   return std::process::exit_status(code: 0_u8);
 }
 ",
-            "  context 0 waits at deadlock_block_end.wf:13:3 to join the context spawned at deadlock_block_end.wf:12:5 (implicit join at the end of this block)",
+            "waits at deadlock_block_end.wf:13:3 to join the context spawned at deadlock_block_end.wf:12:5 (implicit join at the end of this block)",
         ),
     ];
     for (name, main, expected_join) in cases {
@@ -261,22 +297,11 @@ fn a_deadlock_report_distinguishes_binding_use_from_ordinary_block_end() {
                 "{name}, drivers {drivers}: {output:?}"
             );
             let report = String::from_utf8_lossy(&output.stderr);
-            let expected_guard = format!(
-                "  context 1 waits for the guard of the atomic statement at {name}:2:3"
-            );
-            for line in [expected_guard.as_str(), expected_join] {
-                assert!(
-                    report.lines().any(|actual| actual == line),
-                    "{name}, drivers {drivers}: missing {line:?}: {report}"
-                );
-            }
-            assert_eq!(
-                report
-                    .lines()
-                    .filter(|line| line.starts_with("  context "))
-                    .count(),
-                2,
-                "{name}, drivers {drivers}: {report}"
+            let expected_guard =
+                format!("waits for the guard of the atomic statement at {name}:2:3");
+            assert_report_waits(
+                &report,
+                &[(None, expected_guard.as_str()), (Some(0), expected_join)],
             );
         }
     }

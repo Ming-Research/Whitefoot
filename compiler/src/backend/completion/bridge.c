@@ -68,6 +68,12 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* Temporary same-source cost attribution only. The experiment keeps context
+ * layout and site arguments but cannot supply a positioned deadlock report. */
+#ifndef WF_DEADLOCK_SITES_ATTRIBUTION_NO_ROSTER
+#define WF_DEADLOCK_SITES_ATTRIBUTION_NO_ROSTER 0
+#endif
+
 #define WF_BRIDGE_MAX_HELPERS 8u
 /* The policy's ceiling and the adapter's storage are two names for one number,
  * and the adapter's is the one that decides: it carries an entry record per
@@ -125,8 +131,9 @@ static _Thread_local uint64_t wf_bridge_next_deadline;
 /* The bridge's ordinary fail-stop. The stuck-context report also lists
  * each wait before ending the process.
  *
- * Every `abort` in this unit is a trusted-computing-base defect rather than an
- * operation outcome, and each one is reached from a different place, so the
+ * An `abort` reports an internal defect, exhausted runtime resources or a
+ * stuck execution permitted by [WAIT-2], never an operation outcome. Each
+ * report is reached from a different place, so the
  * only thing that tells a reader of a crash log which one fired is the line it
  * wrote on the way out.  A bare `abort` writes nothing, and on Windows the
  * release UCRT ends such a process through the fast-fail path, which a shell
@@ -1380,13 +1387,6 @@ static wf_cancel wf_never_state = {
 #define WF_CANCEL_ONLY SIZE_MAX
 
 struct wf_context {
-    /* The roster owns these links and identity until removal before reclaim.
-     * A wait stores only a module-owned static string, never frame storage. */
-    wf_context_roster *roster;
-    wf_context *roster_next;
-    wf_context **roster_previous;
-    uint64_t identity;
-    _Atomic(const char *) wait_site;
     /* The frame the driver resumes when the context is chosen. */
     void *resume;
     /* The context's outermost frame, done when the context has finished. */
@@ -1521,6 +1521,16 @@ struct wf_context {
         unsigned char bytes[WF_CONTEXT_OPERATION_BYTES];
         uint64_t align[2];
     } operation;
+    /* Cold diagnostic state follows every scheduler field. Only roster is
+     * initialized at allocation; a child's first actual guard/join wait
+     * initializes the rest before publication. Membership lasts until finish,
+     * independent of wakes and driver migration. The root is registered once
+     * at startup with its statically initialized site. */
+    wf_context_roster *roster;
+    wf_context *roster_next;
+    wf_context **roster_previous;
+    uint64_t identity;
+    _Atomic(const char *) wait_site;
 };
 _Static_assert(ATOMIC_POINTER_LOCK_FREE == 2, "a wait-site store must not acquire a lock");
 _Static_assert(
@@ -1725,6 +1735,7 @@ struct wf_driver {
 };
 
 static wf_context wf_context_root;
+#if !WF_DEADLOCK_SITES_ATTRIBUTION_NO_ROSTER
 struct wf_context_roster {
     atomic_flag lock;
     wf_context *head;
@@ -1754,6 +1765,31 @@ static void wf_context_roster_remove(wf_context *context) {
         context->roster_next->roster_previous = context->roster_previous;
     context->roster = NULL;
     wf_spin_unlock(&roster->lock);
+}
+#endif
+
+/* Called only after an actual guard/join park has been selected. No reader
+ * accesses an unregistered child's site: initialize it before publishing the
+ * roster links, then use atomic stores for later waits. Descriptions have
+ * module lifetime, never frame lifetime. A guard calls this under watch_lock;
+ * neither roster traversal nor removal acquires watch_lock. */
+static void wf_context_note_wait(wf_context *context, const char *site) {
+#if WF_DEADLOCK_SITES_ATTRIBUTION_NO_ROSTER
+    /* This experiment has no site readers. Exclusive context execution
+     * permits initialization at every actual park, including the first use
+     * of untouched storage. Volatile retains one site store without a
+     * first-use branch or an allocation-time store; generated-instruction
+     * equality with the ordinary relaxed store remains to be checked. */
+    volatile _Atomic(const char *) *slot = &context->wait_site;
+    atomic_init(slot, site);
+#else
+    if (context->roster == NULL) {
+        atomic_init(&context->wait_site, site);
+        wf_context_roster_add(context);
+    } else {
+        atomic_store_explicit(&context->wait_site, site, memory_order_relaxed);
+    }
+#endif
 }
 /* Stable root role. The original physical executor coordinates teardown;
  * the root context and its role may both change executors. */
@@ -2750,7 +2786,8 @@ void *wf__context_prepare(uint64_t bytes) {
     {
         size_t granted;
         context = (wf_context *)wf_pool_take(sizeof(*context), &granted);
-        memset(context, 0, sizeof(*context));
+        /* Leave cold diagnostic fields untouched until the first real wait. */
+        memset(context, 0, offsetof(wf_context, roster_next));
         context->pool_bytes = granted;
     }
     wf_context_prepared = context;
@@ -2832,7 +2869,6 @@ void wf__context_launch(uint64_t *group, void *arguments, void *(*start)(void *a
     wf__sched_once(&wf_drivers_once, wf_drivers_begin);
     wf__sched_once(&wf_bridge_contexts_once, wf_bridge_hold_for_contexts);
     wf_group_add(group);
-    wf_context_roster_add(context);
     atomic_fetch_add_explicit(&wf_context_live, 1u, memory_order_relaxed);
     wf_context_ready(context);
 }
@@ -2879,7 +2915,7 @@ int wf__context_join_wait(uint64_t *group, void *frame, const char *site) {
         }
         /* The last context took this waiter and wakes it. */
     }
-    atomic_store_explicit(&self->wait_site, site, memory_order_relaxed);
+    wf_context_note_wait(self, site);
     return 1;
 }
 
@@ -2919,7 +2955,9 @@ static void wf_context_finish(wf_context *context) {
     if (context->watching != NULL) {
         wf_bridge_fail("a context finished between registering a guard's watch and parking it");
     }
-    wf_context_roster_remove(context);
+#if !WF_DEADLOCK_SITES_ATTRIBUTION_NO_ROSTER
+    if (context->roster != NULL) wf_context_roster_remove(context);
+#endif
     wf_context_current = context;
     wf__coro_destroy(context->root);
     wf_context_current = previous;
@@ -3677,7 +3715,7 @@ int wf__watch_park(void *watch_frame, void *frame, const char *site) {
     if (self->guard_false_retry) WF_GUARD_COUNT(WF_GUARD_COUNT_SPURIOUS);
     self->guard_false_retry = 0u;
 #endif
-    atomic_store_explicit(&self->wait_site, site, memory_order_relaxed);
+    wf_context_note_wait(self, site);
     watch->state = WF_GUARD_PARKED;
     self->resume = frame;
     wf_context_parked_away = 1;
@@ -4535,11 +4573,14 @@ int wf__shared_watch(void *object, uint32_t write, void *frame, const void *test
     return wf__watch_park(watch, frame, site);
 }
 
-/* [WAIT-2] whether the program can take no further step: every driver has
- * announced that it is idle with nothing ready and no context waiting for a
- * host outcome, so every context that has not finished waits for a false
- * guard or for another context. Called by a driver that has just announced
- * its own idleness. A driver that makes a context ready is running, not idle,
+/* [WAIT-2] Called by a driver that has just announced its own idleness.
+ * A true result supplies a consistent observation of no active invocation,
+ * ready work, ingress, host wait or transfer, and acquires the completed
+ * parks' writes, including their diagnostic sites. The caller checks root
+ * completion separately; unfinished contexts then wait for guards or joins.
+ * This is the report's publication boundary, not a hint for idle polling or
+ * permission to tear down a completed invocation's remaining ingress.
+ * A driver that makes a context ready is running, not idle,
  * and a helper's completion ends a counted host wait only when a running
  * driver harvests it.
  *
@@ -4552,8 +4593,15 @@ int wf__shared_watch(void *object, uint32_t write, void *frame, const void *test
  * and no steal, probe or borrow ended or was under way between the
  * reads of `wf_drivers_changes` around the pass. Every slot of
  * the driver table is read, not only the counted ones, because a driver that
- * has just started may take contexts before the count includes it. */
-static int wf_contexts_stuck(const wf_driver *self) {
+ * has just started may take contexts before the count includes it.
+ *
+ * Each parking invocation's writes precede its seq_cst active decrement;
+ * intervening RMWs retain the release sequence acquired by the zero read.
+ * Retained adoption precedes that decrement. Displaced adoption publishes
+ * through ingress_lock and retires its seq_cst ingress count only after
+ * adoption. The zero reads, idle publications and unchanged double collect
+ * therefore acquire all completed parks, not just their count. */
+static int wf_all_contexts_inactive(const wf_driver *self) {
     uint64_t before = atomic_load_explicit(&wf_drivers_changes, memory_order_seq_cst);
     if (atomic_load_explicit(&wf_active_invocations, memory_order_seq_cst) != 0u) return 0;
     unsigned index;
@@ -4579,20 +4627,23 @@ static int wf_contexts_stuck(const wf_driver *self) {
 }
 
 static void wf_contexts_report_stuck(const wf_driver *self) {
+#if WF_DEADLOCK_SITES_ATTRIBUTION_NO_ROSTER
+    if (wf_all_contexts_inactive(self)
+        && !atomic_load_explicit(&wf_context_root_done, memory_order_acquire)) {
+        wf_bridge_fail(
+            "every context waits for a guard or for another context, and no host operation is outstanding");
+    }
+#else
     wf_spin_lock(&wf_contexts.lock);
-    /* The earlier snapshot may precede a spawn or finish that acquired the
-     * roster first. Recheck before reading any context. The roster lock
-     * protects membership and reclamation, not the wait-site store.
-     *
-     * Each relaxed site store precedes its invocation's seq_cst decrement
-     * of wf_active_invocations; the intervening RMWs retain its release
-     * sequence for an acquire read of zero. Retained adoption precedes
-     * that decrement; displaced adoption publishes through ingress_lock
-     * and retires its seq_cst ingress_count only after adoption. The detector's acquire
-     * reads of zero, driver idle publications and unchanged double collect
-     * therefore observe the completed parks. Slot loads remain atomic even
-     * if a later wait writes the slot; no waking path clears it. */
-    if (!wf_contexts_stuck(self)
+    /* Recheck after taking the lifetime lock. At all-stuck every live context
+     * waits for a guard or a join and has registered, even a guard on no unit.
+     * Ready work, invocations, ingress and host waits exclude all other states;
+     * an object acquisition has a running or runnable holder, hand-off owner,
+     * reserved guard retry or claimant under the lock-order/admission rules.
+     * The lock protects membership and reclamation and publishes each child's
+     * first site initialization; wf_all_contexts_inactive acquires later site
+     * stores. Slot loads remain atomic; no waking path clears the site. */
+    if (!wf_all_contexts_inactive(self)
         || atomic_load_explicit(&wf_context_root_done, memory_order_acquire)) {
         wf_spin_unlock(&wf_contexts.lock);
         return;
@@ -4607,6 +4658,7 @@ static void wf_contexts_report_stuck(const wf_driver *self) {
     }
     (void)fflush(stderr);
     abort();
+#endif
 }
 
 /* How long after asking a helper to give up an operation a driver asks again:
@@ -4834,7 +4886,9 @@ static void wf_context_adopt(wf_driver *driver, wf_context *context) {
         wf_context_commit_wake(context);
     } else if (context->disposition == WF_HAND_BACK_COMPLETE) {
         if (context == &wf_context_root) {
+#if !WF_DEADLOCK_SITES_ATTRIBUTION_NO_ROSTER
             wf_context_roster_remove(context);
+#endif
             atomic_store_explicit(&wf_context_root_done, 1u, memory_order_release);
             wf_completion_notify_target(wf_driver_root.runtime);
             if (atomic_load_explicit(&wf_executors[0].ready, memory_order_acquire))
@@ -4969,7 +5023,7 @@ static int wf_context_drive(wf_driver *driver) {
             atomic_fetch_add_explicit(&wf_drivers_changes, 1u, memory_order_seq_cst);
             atomic_store_explicit(&driver->idle, 1u, memory_order_seq_cst);
             atomic_fetch_add_explicit(&wf_drivers_idle, 1u, memory_order_seq_cst);
-            if (wf_contexts_stuck(driver)
+            if (wf_all_contexts_inactive(driver)
                 && !atomic_load_explicit(&wf_context_root_done, memory_order_acquire)) {
                 wf_contexts_report_stuck(driver);
             }
@@ -5349,7 +5403,9 @@ void wf__context_root_begin(void) {
     wf_driver_self = &wf_driver_root;
     wf_driver_service = &wf_driver_root;
     wf_context_root.driver = &wf_driver_root;
+#if !WF_DEADLOCK_SITES_ATTRIBUTION_NO_ROSTER
     wf_context_roster_add(&wf_context_root);
+#endif
     wf_context_current = &wf_context_root;
 }
 

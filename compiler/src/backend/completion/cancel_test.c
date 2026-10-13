@@ -387,6 +387,9 @@ static void guard_races(void) {
     wf__shared_unlock_unwritten(ordinary, 1u);
     wf__shared_unlock_unwritten(view, 1u);
     CHECK(wf_shared_reservation(&view->shared) == NULL && other.shared_turn == NULL);
+    CHECK(other.roster == &wf_contexts);
+    wf_context_roster_remove(&other);
+    CHECK(wf_contexts.head == &wf_context_root && wf_context_root.roster_next == NULL);
     wf_context_current = &wf_context_root;
     wf_driver_self = &wf_driver_root;
     CHECK(guard.used == 0u && other_guard.used == 0u);
