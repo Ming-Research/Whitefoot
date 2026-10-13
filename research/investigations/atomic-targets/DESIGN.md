@@ -55,9 +55,20 @@ four questions, and a coherent design answers each in exactly one place:
 | question | answered by | today | pending |
 |---|---|---|---|
 | what is held | the place: handle type, state type, one index atom | whole, entry, entries, whole map | one shard, all shards, the atomic value |
-| whether it is held on this execution | a per-target condition | always | Firn's "only when AOF is on" |
+| whether it is held on this execution | today the executed path: a group is taken at its first use, with every earlier untaken group (compiler behaviour that [SHARE-3] permits, not a guarantee); option A below would add a per-target condition | held on the paths that reach a use; entry, key-set and guard groups and every earlier group before the guard | Firn's "only when AOF is on", which the first-use rule already gives when every use is under the condition |
 | how the statement waits | the statement's wait clause | `when` guard | a deadline on the wait |
 | what the block may do with it | the state type and the handle type | read-only through `SharedRead`; writes decide a read hold | one operation per path on an atomic value; guards read no shard |
+
+**Two questions, kept apart.** Firn's immediate need, one statement per
+command that holds `meta` only when logging or timed, is met by today's
+compiler: keep `m = &store^.meta` unconditional and put every use of `m`
+under `if held { }` (option C's form, section 5.3; measured as Q0, section
+8.2). Firn's slow form used `m` on the block's first line, so it locked `meta`
+on every execution. The options below answer a different question: whether
+the language should also *guarantee* conditional holding and *refuse* a use
+outside the condition, and let a target of an earlier-ordered type be held
+conditionally. No current program needs either, so the recommended first step
+is no language change; option A is the design to adopt when one does.
 
 **The options** (section 5), each a different place to put "whether it is
 held":
@@ -79,7 +90,7 @@ held":
   the block: reuses payload-selection facts, but needs a reference
   representation no other binding has and nests `Option` for entries.
 
-**Recommendation (section 7): A**, with the wait clause extended to
+**Recommendation (section 7), if the language is to guarantee conditional holding: A**, with the wait clause extended to
 `when g until d { } else { }` for the deadline when that work is scheduled,
 and the shard and atomic-value forms adopted as index-atom and state-type
 rows of the one table. Reasons: it is the only option whose held set is fixed
@@ -1458,7 +1469,10 @@ it may not name `current`; A6 refuses it there.
 | unique power | — | hold an object found in held state | — | — |
 | what Firn writes | `if held` to the target, `if held { }` around uses | `if held { hold ... }` | restructure, no guarantee | `match m^` |
 
-**Recommendation: A**, with these parts:
+**Recommendation.** First, no language change: Firn writes one statement per
+command under today's first-use rule, confirmed by Q0. When a program needs
+the guarantee, a refusal of stray uses, or a conditional target of an
+earlier-ordered type, adopt **A**, with these parts:
 
 1. The target grammar `IDENT = &place (if IDENT)?`, rules A1 to A8, A-lex
    for the scope of a conditional binding.
