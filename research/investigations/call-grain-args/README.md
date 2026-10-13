@@ -204,8 +204,10 @@ Every verdict is void, and is printed `VERDICT: VOID`, when any of these holds
 - P8 a sequential or one-worker row handed out work;
 - P9 main rounds are odd or fewer than 10;
 - P10 the identity method does not find the pair's overlapped `wf_workload`
-  different from the sequential one, in either the base or the change object
-  (the criterion 5 comparison could pass vacuously);
+  different from the sequential one in the change object (the criterion 5
+  comparison could pass vacuously). Main does not split the pair at all (P3),
+  so its `wf_workload` has no overlapped form and its sequential version is
+  compared directly;
 - a cell whose twin spread exceeds 0.03 (that cell only).
 
 Also: an image or oracle failure, a worker-identity mismatch or a result mismatch

@@ -391,7 +391,7 @@ def cmd_summarize(a):
             all(g == 0 for (_, _, arm, w, _), g in table.grants.items() if w == 1 or arm.startswith("seq"))),
            ("P9 main rounds even and at least 10", a.mode != "main" or (a.rounds % 2 == 0 and a.rounds >= 10)),
            ("P10 the method finds the pair's overlapped world different from the sequential one (control)",
-            bool(ident) and all(ident["clones"][label]["pair"].get("control_overlapped_world_differs", False) for label in ("base", "chg")))]
+            bool(ident) and ident["clones"]["chg"]["pair"].get("control_overlapped_world_differs", False))]
     lines.append("")
     lines.append("Preconditions (any failure voids every verdict below):")
     for name, ok in pre:
