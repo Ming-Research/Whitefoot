@@ -283,10 +283,11 @@ jobs:
             sort -z |
             tar --null --files-from=- --owner=0 --group=0 --numeric-owner --mtime='1970-01-01' \
               -czf release/whitefoot-language.tar.gz
-          tar -tzf release/whitefoot-language.tar.gz
-          tar -tzf release/whitefoot-language.tar.gz | grep -qx 'spec/kernel-spec.md'
-          tar -tzf release/whitefoot-language.tar.gz | grep -qx 'lib/std/modules.wfg'
-          tar -tzf release/whitefoot-language.tar.gz | grep -q '/module\.wfm$'
+          listing=$(tar -tzf release/whitefoot-language.tar.gz)
+          echo "$listing"
+          grep -qx 'spec/kernel-spec.md' <<< "$listing"
+          grep -qx 'lib/std/modules.wfg' <<< "$listing"
+          grep -q '/module\.wfm$' <<< "$listing"
 
       - name: Write the manifest and checksums
         env:
