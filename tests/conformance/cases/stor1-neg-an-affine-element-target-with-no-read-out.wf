@@ -9,6 +9,6 @@ fn main() -> status: ExitStatus pure {
   let grid = move empty;
   let other = box_slots_new::<u8>(capacity: 512_u64);
   set grid[0_u64] = move other;
-  let held = grid.len;
+  let observed = grid.len;
   return exit_status(code: 0_u8);
 }

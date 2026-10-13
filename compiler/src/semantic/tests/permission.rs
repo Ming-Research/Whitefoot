@@ -31,6 +31,106 @@ use super::super::permission::{
 use super::super::places::ResolvedPlace;
 use super::{assert_rule_kind, with_semantics};
 
+/// Read/read footprints cannot reorder two control verdicts, including a
+/// helper whose signature carries the cell inside an aggregate. Before the
+/// boundary judgment these pairs were eligible once the new rows resolved.
+#[test]
+fn decision_cell_boundaries_keep_direct_and_wrapped_claims_in_order() {
+    let source = br#"struct VerdictHolder {
+  cell: DecisionCell;
+}
+
+fn wrapped(holder: &VerdictHolder) -> result: DecisionState reads(holder) {
+  return claim_written(cell: &holder^.cell);
+}
+
+fn decide(cell: &DecisionCell, holder: &VerdictHolder) -> result: unit reads(cell), reads(holder) {
+  let written = claim_written(cell: cell);
+  let killed = claim_killed(cell: cell);
+  let nested = wrapped(holder: holder);
+  return unit;
+}
+
+fn main() -> result: unit pure {
+  let cell = decision_cell_new();
+  let other = decision_cell_share(cell: &cell);
+  let holder = VerdictHolder(cell: move other);
+  return decide(cell: &cell, holder: &holder);
+}
+"#;
+    let table = permission_of(source);
+    for (first, second) in [
+        ("claim_written", "claim_killed"),
+        ("claim_killed", "wrapped"),
+    ] {
+        assert!(matches!(
+            denial(pair_of(&table, "decide", first, second), 3),
+            Denial::DecisionCell { .. }
+        ));
+    }
+}
+
+/// Only the function-kind argument's result carries a cell: the helper has
+/// no ordinary parameters and returns Bool. Without callable traversal, its
+/// pure, nonwaiting call and the independent call would have disjoint writes
+/// to their distinct let bindings and would incorrectly be eligible. The same
+/// helper with a cell-free factory must retain that overlap permission.
+#[test]
+fn decision_cell_boundaries_follow_function_kind_factory_results() {
+    let source = br#"fn factory_predicate<T: drop, fn make() -> result: T pure>() -> result: Bool pure {
+  let value = make();
+  return True();
+}
+
+fn byte_factory() -> result: u8 pure {
+  return 7_u8;
+}
+
+fn independent_flag() -> result: Bool pure {
+  return True();
+}
+
+fn cell_factory_pair() -> result: unit pure {
+  let first = factory_predicate::<DecisionCell, fn decision_cell_new>();
+  let second = independent_flag();
+  return unit;
+}
+
+fn plain_factory_pair() -> result: unit pure {
+  let first = factory_predicate::<u8, fn byte_factory>();
+  let second = independent_flag();
+  return unit;
+}
+
+fn main() -> result: unit pure {
+  cell_factory_pair();
+  plain_factory_pair();
+  return unit;
+}
+"#;
+    let table = permission_of(source);
+    let cell_pair = pair_of(
+        &table,
+        "cell_factory_pair",
+        "factory_predicate",
+        "independent_flag",
+    );
+    assert!(matches!(
+        denial(cell_pair, 3),
+        Denial::DecisionCell {
+            side: PairSide::First,
+            ..
+        }
+    ));
+    let plain_pair = pair_of(
+        &table,
+        "plain_factory_pair",
+        "factory_predicate",
+        "independent_flag",
+    );
+    assert!(plain_pair.verdict.is_eligible(), "{plain_pair:?}");
+}
+
 #[test]
 fn projected_operand_reads_keep_sibling_separation_and_prefix_conflicts() {
     // PAR-1 records pairs with at least one call, so each write is a helper
@@ -276,6 +376,7 @@ fn main() -> status: std::process::ExitStatus pure {
                 .iter()
                 .map(|function| PermissionSignature {
                     name: function.name.clone(),
+                    decision_cell: false,
                     parameter_declarations: function
                         .parameters
                         .iter()
@@ -476,14 +577,15 @@ fn permission_of_with_discharged_query(
         let SemanticOutcome::Complete(program) = outcome else {
             panic!("permission fixture must check: {outcome:?}");
         };
-        for function in &program.data.functions {
+        // Permission consumes ordinary analyses. The backing arena also
+        // retains symbolic hypotheses that publish no entailment summary.
+        for function in program.data.executable_functions() {
             super::entailment::validate_derivations(&function.entailment);
         }
         for &(expected_function, expected_ordering) in expected {
             let function = program
                 .data
-                .functions
-                .iter()
+                .executable_functions()
                 .find(|function| function.name == expected_function)
                 .unwrap_or_else(|| panic!("no checked function named {expected_function}"));
             assert!(
@@ -2725,13 +2827,12 @@ fn rebound(v: &[u8], p: u64) -> result: u64 writes(v) contract {
         let SemanticOutcome::Complete(program) = outcome else {
             panic!("permission fixture must check: {outcome:?}");
         };
-        for function in &program.data.functions {
+        for function in program.data.executable_functions() {
             super::entailment::validate_derivations(&function.entailment);
         }
         let function = program
             .data
-            .functions
-            .iter()
+            .executable_functions()
             .find(|function| function.name == "rebound")
             .expect("rebound is checked");
         let proofs = &function.entailment.permission_separations;
@@ -2996,7 +3097,7 @@ fn a_bound_context_runs_on_through_a_compound_statement_that_names_nothing_it_ho
     // here, is no reason to wait when it names nothing the context holds.
     assert_eq!(
         bound_await(
-            "  let other = 5_u64;\n  let held = box_new::<u64>(value: 3_u64);\n  let inner = held.inner;\n  let total = bound +wrap inner;"
+            "  let other = 5_u64;\n  let observed = box_new::<u64>(value: 3_u64);\n  let inner = observed.inner;\n  let total = bound +wrap inner;"
         ),
         Some(4)
     );

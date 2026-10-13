@@ -1,0 +1,41 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Counter {
+  doc "One count.";
+  count: u64;
+}
+
+fn peek(counter: &Counter) -> result: u64 reads(counter) {
+  doc "Reads the count.";
+  let count = counter^.count;
+  return count;
+}
+
+fn advance(counter: &Counter, delta: u64) -> result: u64 writes(counter) contract {
+  requires counter^.count + delta <= 800_u64;
+} {
+  doc "Calls a function whose row only reads the struct, then reads the count. A call with no projected write kills nothing, so the count keeps its entry image and the requirement bounds the sum.";
+  let seen = peek(counter: counter);
+  let count = counter^.count;
+  let total = count + delta;
+  set counter^.count = total;
+  return seen;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "Advances 5 by 7 and checks the value seen before the write and the count after it.";
+  let counter = Counter(count: 5_u64);
+  let kept = counter.count;
+  let seen = advance(counter: &counter, delta: 7_u64);
+  if seen == 5_u64 {
+  } else {
+    return exit_status(code: 2_u8);
+  }
+  let count = counter.count;
+  if count == 12_u64 {
+  } else {
+    return exit_status(code: 3_u8);
+  }
+  return exit_status(code: 0_u8);
+}

@@ -1,0 +1,30 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Counter {
+  doc "One count.";
+  count: u64;
+}
+
+fn clamp_to_limit(value: u64) -> result: u64 pure contract {
+  ensures result <= 800_u64;
+} {
+  doc "Returns value when it is at most 800 and 800 otherwise.";
+  if value <= 800_u64 {
+    return value;
+  }
+  return 800_u64;
+}
+
+fn probe(counter: &Counter, bounded: u64, wild: u64) -> result: u64 writes(counter) contract {
+  requires bounded <= 800_u64;
+  ensures counter^.count <= 800_u64;
+} {
+  doc "The call result is bounded by 800, while no fact bounds the untouched count. Its unrelated result image cannot prove the postcondition about that count.";
+  let small = clamp_to_limit(value: wild);
+  return small;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

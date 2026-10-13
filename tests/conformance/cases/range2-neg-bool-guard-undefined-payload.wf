@@ -11,7 +11,7 @@ fn need_zero(slot: u64) -> result: unit pure contract {
 
 fn inspect(nodes: &Slots<Node, 1>) -> result: unit reads(nodes) contract {
   requires nodes^.len == 1_u64;
-  requires forall held(k in 0_u64..nodes^.len) when nodes^[k].Open.live: nodes^[k].Closed.slot == 0_u64;
+  requires forall observed(k in 0_u64..nodes^.len) when nodes^[k].Open.live is True: nodes^[k].Closed.slot == 0_u64;
 } {
   let selected = nodes^[0_u64];
   match selected {

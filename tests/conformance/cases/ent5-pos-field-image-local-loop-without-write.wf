@@ -1,0 +1,25 @@
+struct Reading {
+  value: i64;
+}
+
+fn make() -> made: Reading pure contract {
+  ensures -1000_i64 <= made.value;
+} {
+  doc "The construction carries 0 into the field the postcondition names.";
+  return Reading(value: 0_i64);
+}
+
+fn shift(d: u8, steps: u64) -> result: i64 pure {
+  doc "The loop body reads the local's field and writes nothing that overlaps it, so the continuing kill leaves the call result's bound and the subtraction after the loop is proved.";
+  let e = make();
+  for (index in 0_u64..steps) {
+    let seen = e.value;
+  }
+  let w = cvt::<u8, i64>(d);
+  let v = e.value - w;
+  return v;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

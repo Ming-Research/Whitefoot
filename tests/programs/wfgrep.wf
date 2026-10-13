@@ -1174,9 +1174,9 @@ fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_leng
     }
     let best_readable = best < order_room;
     if best_readable {
-      let held = order^[selected];
+      let observed = order^[selected];
       let winner = order^[best];
-      set order^[best] = held;
+      set order^[best] = observed;
       set order^[selected] = winner;
     }
     set selected = selected +wrap 1_u64;

@@ -1,6 +1,6 @@
 use crate::{
     LexicalUseRole, ResolutionIssueKind, ResolutionOutcome, ResolutionRule, SemanticIssueKind,
-    SemanticLocation, SemanticOutcome, SemanticRule,
+    SemanticOutcome, SemanticRule,
 };
 
 use super::{
@@ -2449,14 +2449,9 @@ fn a_measured_recursive_return_requires_a_named_result_datum() {
 }
 
 #[test]
-fn a_bound_measured_recursive_return_cannot_assume_its_own_summary() {
+fn a_bound_measured_recursive_return_uses_its_callees_hypothesis() {
     let source = measured_recursive_return_source(true);
-    assert_fn9_unproved(source.as_bytes());
-    assert_rule_at(
-        source.as_bytes(),
-        SemanticRule::Fn9,
-        "return move forwarded;",
-    );
+    assert_complete(source.as_bytes());
 }
 
 #[test]
@@ -2756,10 +2751,7 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 #[test]
-fn a_successfully_resolved_foreign_variant_is_an_fn9_source_issue() {
-    // [TYPE-6] a route label resolves against its result ordinal's enum, so
-    // the resolved variant here belongs to the result's own source enum;
-    // FN-9 then admits only the prelude `Ok` route.
+fn a_successfully_resolved_source_variant_is_an_admitted_route() {
     let source = br#"enum Foreign {
   ForeignCase(value: i32);
 }
@@ -2774,20 +2766,7 @@ fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
 "#;
-    with_semantics(source, |outcome| {
-        let SemanticOutcome::SourceIssue { issue } = outcome else {
-            panic!("foreign selector variant must be FN-9, got {outcome:?}");
-        };
-        assert_eq!(issue.rule(), SemanticRule::Fn9);
-        assert_eq!(
-            issue.kind(),
-            &SemanticIssueKind::invalid_postcondition_selector()
-        );
-        let SemanticLocation::SourceNode(_, coordinate) = issue.location();
-        let start = usize::try_from(coordinate.start().value()).expect("offset fits");
-        let end = usize::try_from(coordinate.end().value()).expect("offset fits");
-        assert_eq!(&source[start..end], b"ForeignCase(value: payload)");
-    });
+    assert_complete(source);
 }
 
 #[test]
@@ -3347,7 +3326,7 @@ fn right(value: i32) -> result: i32 pure contract {
   ensures result == value;
 } {
   let called = left(value: value);
-  return called;
+  return 0_i32;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -3410,7 +3389,7 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 #[test]
-fn a_seedless_mutual_postcondition_cycle_publishes_no_summary() {
+fn a_nonreturning_mutual_postcondition_cycle_publishes_verified_summaries() {
     let source = br#"fn first(value: i32) -> result: i32 pure contract {
   ensures result == value;
 } {
@@ -3431,7 +3410,7 @@ fn main() -> status: std::process::ExitStatus pure {
 "#;
     with_semantics_dark(source, |outcome| {
         let SemanticOutcome::Complete(checked) = outcome else {
-            panic!("dark seedless cycle must retain dispositions: {outcome:?}");
+            panic!("nonreturning cycle must prove partial correctness: {outcome:?}");
         };
         let component = checked
             .data
@@ -3440,18 +3419,18 @@ fn main() -> status: std::process::ExitStatus pure {
             .iter()
             .find(|component| component.functions.len() == 2)
             .expect("seedless mutual component");
-        assert!(component.summaries.is_empty());
+        assert_eq!(component.summaries.len(), 2);
         for function in component
             .functions
             .iter()
             .map(|id| &checked.data.functions[id.0 as usize])
         {
             let proof = function.entailment.postconditions.first().unwrap();
-            assert!(!proof.aggregate.discharged);
-            assert!(proof.summary.is_none());
+            assert!(proof.aggregate.discharged);
+            assert!(proof.summary.is_some());
         }
     });
-    assert_fn9_unproved(source);
+    assert_complete(source);
 }
 
 #[test]

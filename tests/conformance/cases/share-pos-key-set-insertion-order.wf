@@ -27,8 +27,8 @@ fn main() -> status: std::process::ExitStatus pure waits {
   let a_value = 0_u64;
   atomic slot = &store[b] {
     match slot^ {
-      Some(value: held) => {
-        set b_value = held^;
+      Some(value: observed) => {
+        set b_value = observed^;
       }
       None() => {
       }
@@ -39,8 +39,8 @@ fn main() -> status: std::process::ExitStatus pure waits {
   }
   atomic slot = &store[a] {
     match slot^ {
-      Some(value: held) => {
-        set a_value = held^;
+      Some(value: observed) => {
+        set a_value = observed^;
       }
       None() => {
       }

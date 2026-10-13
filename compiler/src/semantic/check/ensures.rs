@@ -19,9 +19,10 @@ use super::super::model::{
     CheckedNominalKind, CheckedParameter, CheckedPlaceStep, CheckedStatement, CheckedType,
     CheckedValue, FunctionId, IntegerType,
 };
+use super::super::places::{PlaceRoot, ResolvedPlace};
 use super::super::postcondition::{
     CheckedPostcondition, CheckedPostconditionSelector, NormalizedRelation, ParameterDenotation,
-    PostconditionConstantOrigin, PostconditionFieldIdentity, PostconditionPlace,
+    PayloadRoute, PostconditionConstantOrigin, PostconditionFieldIdentity, PostconditionPlace,
     PostconditionPlaceRoot, PostconditionReturnDatum, PostconditionReturnPlace,
     PostconditionReturnPlaceRoot, RelationDatum, RelationTemplate, RelationTerm,
     SelectedPostconditionReturn,
@@ -37,9 +38,8 @@ use super::{
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum SelectorAdmissionType {
     Fragment,
-    /// [FN-9] a `Result` or `Option` ordinal whose success payload supplies
-    /// data under [CALL-4]; only a routed clause may name it.
-    SuccessPayload,
+    /// [FN-9] an enum field supplying data under [CALL-4].
+    Payload,
     Symbolic,
     /// [CALL-4] one declared result of measured or aggregate type. Its value
     /// is no [ENT-2] term, so only the places its owned descendant
@@ -121,7 +121,7 @@ impl<'unit> Checker<'_, 'unit> {
         signature: &FunctionSignature,
         selector: &CheckedPostconditionSelector,
     ) -> Vec<(String, u32, CheckedType)> {
-        let routed = selector.variant.is_some();
+        let routed = selector.is_routed();
         let mut datums = Vec::with_capacity(record.result_binders.len() + 1);
         for (ordinal, binder) in record.result_binders.iter().enumerate() {
             let Ok(ordinal) = u32::try_from(ordinal) else {
@@ -1481,19 +1481,28 @@ impl<'unit> DeclarationInventory<'unit> {
         selectors: &[CheckedPostconditionSelector],
         relations: &[RelationTemplate],
     ) -> Result<(), CheckStop> {
-        let mut routes: Vec<Option<BuiltinPreludeId>> = vec![None];
+        let route_key = |selector: &CheckedPostconditionSelector| {
+            Some((
+                selector.ordinal,
+                selector.variant,
+                selector.field.as_ref().map(|field| field.index),
+                selector.route,
+            ))
+        };
+        let mut routes = vec![None];
         for selector in selectors {
-            if let Some(variant) = selector.variant
-                && !routes.contains(&Some(variant))
-            {
-                routes.push(Some(variant));
+            if selector.is_routed() {
+                let route = route_key(selector);
+                if !routes.contains(&route) {
+                    routes.push(route);
+                }
             }
         }
         for route in routes {
             let published = selectors
                 .iter()
                 .zip(relations)
-                .filter(|(selector, _)| selector.variant.is_none() || selector.variant == route)
+                .filter(|(selector, _)| !selector.is_routed() || route_key(selector) == route)
                 .map(|(_, relation)| relation)
                 .collect::<Vec<_>>();
             // One clause is already a set: [CALL-6] asks whether the closure
@@ -1508,7 +1517,7 @@ impl<'unit> DeclarationInventory<'unit> {
             let rendered = selectors
                 .iter()
                 .zip(relations)
-                .filter(|(selector, _)| selector.variant.is_none() || selector.variant == route)
+                .filter(|(selector, _)| !selector.is_routed() || route_key(selector) == route)
                 .map(|(selector, _)| self.postcondition_clause_text(selector))
                 .collect::<Result<Vec<_>, _>>()?;
             return self.issue_node(
@@ -1739,7 +1748,7 @@ impl<'unit> DeclarationInventory<'unit> {
         record: &PostconditionResolutionRecord,
         admission: SelectorAdmissionType,
         ordinal: u32,
-        success_variants: &[BuiltinPreludeId],
+        required_fields: &[String],
     ) -> Result<(), CheckStop> {
         let candidate = match record.class {
             PostconditionSelectorClass::Plain => {
@@ -1762,19 +1771,8 @@ impl<'unit> DeclarationInventory<'unit> {
             PostconditionSelectorClass::Variant => {
                 if !matches!(
                     admission,
-                    SelectorAdmissionType::SuccessPayload | SelectorAdmissionType::Symbolic
+                    SelectorAdmissionType::Payload | SelectorAdmissionType::Symbolic
                 ) {
-                    return self.issue_selector(
-                        record,
-                        SemanticIssueKind::invalid_postcondition_selector(),
-                    );
-                }
-                // [FN-9] the route names the success variant of the routed
-                // ordinal's own type: `Ok` of a Result, `Some` of an Option.
-                if !success_variants
-                    .iter()
-                    .any(|variant| record.variant_target == Some(ResolvedTarget::Prelude(*variant)))
-                {
                     return self.issue_selector(
                         record,
                         SemanticIssueKind::invalid_postcondition_selector(),
@@ -1784,15 +1782,15 @@ impl<'unit> DeclarationInventory<'unit> {
                     return self.issue_selector(
                         record,
                         SemanticIssueKind::InvalidPostconditionFields {
-                            required_fields: vec!["value".to_owned()],
+                            required_fields: required_fields.to_vec(),
                         },
                     );
                 };
-                if field.spelling != "value" {
+                if !required_fields.contains(&field.spelling) {
                     return self.issue_origin_node(
                         &field.origin,
                         SemanticIssueKind::InvalidPostconditionFields {
-                            required_fields: vec!["value".to_owned()],
+                            required_fields: required_fields.to_vec(),
                         },
                     );
                 }
@@ -1800,7 +1798,7 @@ impl<'unit> DeclarationInventory<'unit> {
                     return self.issue_origin_node(
                         &extra.origin,
                         SemanticIssueKind::InvalidPostconditionFields {
-                            required_fields: vec!["value".to_owned()],
+                            required_fields: required_fields.to_vec(),
                         },
                     );
                 }
@@ -1979,37 +1977,31 @@ impl<'unit> TypeContext<'unit> {
             .filter_map(|index| self.signatures.get(*index).cloned())
             .collect()
     }
-    /// The success payload one routed ordinal produces at a return, `None`
-    /// for a direct failure variant, and the whole value for an ordinary
-    /// forwarded Result or Option [FN-9].
+    /// The payload one routed ordinal produces at a return: the routed
+    /// field's operand of a direct construction of the routed variant,
+    /// `None` for a direct construction of another variant, and the whole
+    /// value for an ordinary forwarded one [FN-9].
     fn postcondition_route_payload<'value>(
         &self,
         function: &FunctionSignature,
-        ordinal: u32,
+        selector: &CheckedPostconditionSelector,
         value: &'value CheckedExpression,
-        _node_path: &crate::NodePath,
     ) -> Result<Option<&'value CheckedExpression>, CheckStop> {
         let declared = function
             .results
-            .get(ordinal as usize)
+            .get(selector.ordinal as usize)
             .ok_or(SemanticCompilerFailure::InvalidResolution)?;
         let CheckedType::Nominal(result_nominal) = declared.ty else {
             return Err(SemanticCompilerFailure::InvalidResolution.into());
         };
-        if self.success_payload_type(declared.ty).is_none() {
-            return Err(SemanticCompilerFailure::InvalidResolution.into());
-        }
-        let CheckedNominalKind::Enum { variants } = &self.nominal(result_nominal)?.kind else {
+        let CheckedNominalKind::Enum { .. } = &self.nominal(result_nominal)?.kind else {
             return Err(SemanticCompilerFailure::InvalidResolution.into());
         };
-        let success = variants.iter().position(|variant| {
-            matches!(
-                variant.constructor,
-                super::super::model::CheckedConstructor::Prelude(
-                    BuiltinPreludeId::OK | BuiltinPreludeId::SOME
-                )
-            )
-        });
+        let route = selector
+            .route
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        let routed_variant = Some(route.variant as usize);
+        let routed_field = route.field as usize;
         match value {
             CheckedExpression::ConstructEnum {
                 nominal,
@@ -2017,17 +2009,44 @@ impl<'unit> TypeContext<'unit> {
                 fields,
                 ..
             } if *nominal == result_nominal => {
-                if Some(*variant as usize) == success {
-                    let [payload] = fields.as_slice() else {
-                        return Err(SemanticCompilerFailure::InvalidResolution.into());
-                    };
-                    Ok(Some(payload))
+                if Some(*variant as usize) == routed_variant {
+                    Ok(Some(
+                        fields
+                            .get(routed_field)
+                            .ok_or(SemanticCompilerFailure::InvalidResolution)?,
+                    ))
                 } else {
                     Ok(None)
                 }
             }
             _ => Ok(Some(value)),
         }
+    }
+    /// [FN-9, TYPE-11, ERR-3] whether a route names a field of the
+    /// `Err` variant of the routed ordinal's Result, which a propagated
+    /// error exit returns.
+    fn routes_error_variant(
+        &self,
+        function: &FunctionSignature,
+        selector: &CheckedPostconditionSelector,
+    ) -> Result<bool, CheckStop> {
+        let Some(route) = selector.route else {
+            return Ok(false);
+        };
+        let Some(CheckedType::Nominal(nominal)) = function
+            .results
+            .get(selector.ordinal as usize)
+            .map(|result| result.ty)
+        else {
+            return Ok(false);
+        };
+        let CheckedNominalKind::Enum { variants } = &self.nominal(nominal)?.kind else {
+            return Ok(false);
+        };
+        Ok(variants.get(route.variant as usize).is_some_and(|variant| {
+            variant.constructor
+                == super::super::model::CheckedConstructor::Prelude(BuiltinPreludeId::ERR)
+        }))
     }
     fn postcondition_return_place(
         &self,
@@ -2280,14 +2299,26 @@ impl<'unit> TypeContext<'unit> {
             place.range_referent = true;
             return Ok(Some(place));
         }
-        let Some(info) = binding_info.get(&root.binding) else {
+        // [ENT-2] a range alias's places are its source's.
+        let ResolvedPlace {
+            root: PlaceRoot::Binding(binding),
+            path,
+            ..
+        } = root.proof_place()
+        else {
+            return Err(SemanticCompilerFailure::InvalidResolution.into());
+        };
+        if !path.is_empty() {
+            return Err(SemanticCompilerFailure::InvalidResolution.into());
+        }
+        let Some(info) = binding_info.get(&binding) else {
             return Ok(None);
         };
         if info.ty != root.element_type {
             return Err(SemanticCompilerFailure::InvalidResolution.into());
         }
         Ok(Some(PostconditionReturnPlace {
-            root: PostconditionReturnPlaceRoot::Binding(root.binding),
+            root: PostconditionReturnPlaceRoot::Binding(binding),
             projections: Vec::new(),
             ty: root.element_type,
             range_referent: true,
@@ -2371,33 +2402,80 @@ impl<'unit> TypeContext<'unit> {
             _ => false,
         })
     }
-    /// [FN-9] the success payload type of a `Result` or `Option` result type,
-    /// `Ok` or `Some`, when that type is one of the two.
-    fn success_payload_type(&self, ty: CheckedType) -> Option<CheckedType> {
-        let CheckedType::Nominal(nominal) = ty else {
-            return None;
-        };
-        match self
-            .prelude_types
-            .get(nominal.0 as usize)
-            .and_then(|entry| *entry)?
-        {
-            super::PreludeType::Result(value, _) | super::PreludeType::Option(value) => Some(value),
-            _ => None,
-        }
-    }
-    /// Whether one declared result type can carry a route in this version:
-    /// exactly `own Result<T, E>` or `own Option<T>` whose success payload T
-    /// supplies data under [CALL-4] [FN-9].
-    fn postcondition_route_carrier(
+    /// The resolved variant in this concrete enum instance. Source constructor
+    /// identities remain the declaration's identities after substitution.
+    fn postcondition_route_variant(
         &self,
         ty: CheckedType,
-        symbolic: bool,
-    ) -> Result<bool, CheckStop> {
-        match self.success_payload_type(ty) {
-            Some(payload) => self.type_supplies_data(payload, symbolic),
-            None => Ok(false),
-        }
+        target: Option<ResolvedTarget>,
+    ) -> Result<Option<(usize, &super::super::model::CheckedVariant)>, CheckStop> {
+        let CheckedType::Nominal(nominal) = ty else {
+            return Ok(None);
+        };
+        let CheckedNominalKind::Enum { variants } = &self.nominal(nominal)?.kind else {
+            return Ok(None);
+        };
+        Ok(variants.iter().enumerate().find(|(_, variant)| {
+            match (variant.constructor, target) {
+                (
+                    super::super::model::CheckedConstructor::Prelude(actual),
+                    Some(ResolvedTarget::Prelude(wanted)),
+                ) => actual == wanted,
+                (
+                    super::super::model::CheckedConstructor::Source(actual),
+                    Some(ResolvedTarget::Source { declaration, .. }),
+                ) => actual == declaration,
+                _ => false,
+            }
+        }))
+    }
+    /// A symbolic result type has no enum instance yet, but its route's
+    /// resolved variant still fixes the declared field names and positions.
+    fn postcondition_variant_fields(
+        &self,
+        target: Option<ResolvedTarget>,
+    ) -> Result<Vec<String>, CheckStop> {
+        let declaration = match target {
+            Some(ResolvedTarget::Source { declaration, .. }) => declaration,
+            Some(ResolvedTarget::Prelude(variant)) => {
+                let field = match variant {
+                    BuiltinPreludeId::OK | BuiltinPreludeId::SOME => Some("value"),
+                    BuiltinPreludeId::ERR => Some("error"),
+                    BuiltinPreludeId::NEXT => Some("next"),
+                    BuiltinPreludeId::NEEDS => Some("bytes"),
+                    _ => None,
+                };
+                return Ok(field.into_iter().map(str::to_owned).collect());
+            }
+            _ => return Ok(Vec::new()),
+        };
+        let declaration = self
+            .declarations
+            .resolved
+            .declaration(declaration)
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        let node = self
+            .declarations
+            .tree
+            .node_with_path(declaration.origin().node())
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        let Some(list) = self
+            .declarations
+            .tree
+            .first_child_with(node, Production::VfieldList)?
+        else {
+            return Ok(Vec::new());
+        };
+        self.declarations
+            .tree
+            .children_with(list, Production::Vfield)?
+            .into_iter()
+            .map(|field| {
+                self.declarations
+                    .dependent_declaration_at(field, crate::DependentDeclarationRole::VariantField)
+                    .map(|field| field.spelling().to_owned())
+            })
+            .collect()
     }
     /// The table positions of the signatures `eligible` names, by the path
     /// of the function each one instantiates, in table order.
@@ -2724,18 +2802,13 @@ impl<'unit> TypeContext<'unit> {
                     // [FN-9] route selection precedes datum admission for
                     // every ordinal. An Err exit is unselected even when a
                     // different result precedes it in the written list.
-                    let routed_payload = if selector.variant.is_some() {
+                    let routed_payload = if selector.is_routed() {
                         let ordinal = usize::try_from(selector.ordinal)
                             .map_err(|_| SemanticCompilerFailure::CounterOverflow)?;
                         let produced = ordinals
                             .get(ordinal)
                             .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                        match self.postcondition_route_payload(
-                            function,
-                            selector.ordinal,
-                            produced,
-                            node_path,
-                        )? {
+                        match self.postcondition_route_payload(function, selector, produced)? {
                             Some(payload) => Some(payload),
                             None => continue,
                         }
@@ -2752,7 +2825,7 @@ impl<'unit> TypeContext<'unit> {
                         } else {
                             produced
                         };
-                        let datum = if selector.variant.is_some()
+                        let datum = if selector.is_routed()
                             && ordinal == selector.ordinal
                             && produced.ty() != selector.result_type
                         {
@@ -2780,13 +2853,32 @@ impl<'unit> TypeContext<'unit> {
                 // [FN-9, ERR-3] an unrouted clause also selects a
                 // propagated error exit, whose returned value is the
                 // propagated outcome and therefore no result datum.
-                CheckedStatement::PropagateLet { node_path, .. } if selector.variant.is_none() => {
+                CheckedStatement::PropagateLet { node_path, .. } if !selector.is_routed() => {
                     if !named.is_empty() {
                         return self.declarations.invalid_postcondition_return(node_path);
                     }
                     selected.push(SelectedPostconditionReturn {
                         statement: node_path.clone(),
                         values: vec![None; function.results.len().max(1)],
+                    });
+                }
+                // [TYPE-11, ERR-3] the propagated outcome holds the enclosing
+                // Result's `Err` variant, so a route over that variant's
+                // field selects the edge, and
+                // the edge forwards the operand's error payload.
+                CheckedStatement::PropagateLet { node_path, .. }
+                    if self.routes_error_variant(function, selector)? =>
+                {
+                    let mut values = vec![None; function.results.len().max(1)];
+                    let slot = values
+                        .get_mut(selector.ordinal as usize)
+                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                    *slot = Some(PostconditionReturnDatum::ResultPayload {
+                        ty: selector.result_type,
+                    });
+                    selected.push(SelectedPostconditionReturn {
+                        statement: node_path.clone(),
+                        values,
                     });
                 }
                 CheckedStatement::Match { arms, .. }
@@ -3001,7 +3093,10 @@ impl<'unit> TypeContext<'unit> {
         }
         let mut carriers = Vec::new();
         for (ordinal, declared) in signature.results.iter().enumerate() {
-            if self.postcondition_route_carrier(declared.ty, symbolic)? {
+            if self
+                .postcondition_route_variant(declared.ty, record.variant_target)?
+                .is_some()
+            {
                 carriers.push(ordinal);
             }
         }
@@ -3079,42 +3174,47 @@ impl<'unit> TypeContext<'unit> {
             .get(ordinal as usize)
             .ok_or(SemanticCompilerFailure::InvalidResolution)?;
 
-        let (admission, result_type) = match declared.ty {
-            ty if Checker::postcondition_fragment_type(ty, symbolic) => {
-                (SelectorAdmissionType::Fragment, ty)
-            }
-            // [FN-9] a `Result` or `Option` whose success payload supplies
-            // data under [CALL-4]; its routed payload datum supplies exactly
-            // the data an unrouted result ordinal of the payload type does.
-            ty if self.postcondition_route_carrier(ty, symbolic)? => (
-                SelectorAdmissionType::SuccessPayload,
-                self.success_payload_type(ty)
-                    .ok_or(SemanticCompilerFailure::InvalidResolution)?,
-            ),
-            // [CALL-4] a result of measured or aggregate type supplies the
-            // places its owned descendant projections reach: every boxed
-            // construction record's `ensures result.inner.len`, a
-            // constructor's `ensures made.storage.len`, and an identifier's
-            // `ensures atom.index < table^.spans.inner.len`.
-            ty if self.type_supplies_data(ty, symbolic)? => (SelectorAdmissionType::Aggregate, ty),
-            CheckedType::Generic(_) if symbolic => (SelectorAdmissionType::Symbolic, declared.ty),
-            _ => (SelectorAdmissionType::Invalid, declared.ty),
+        let routed = record.class == PostconditionSelectorClass::Variant;
+        let selected_variant = self.postcondition_route_variant(declared.ty, record.variant_target)?;
+        let symbolic_enum = symbolic && matches!(declared.ty, CheckedType::Generic(_));
+        let required_fields: Vec<String> = if let Some((_, variant)) = selected_variant {
+            variant.fields.iter().map(|field| field.name.clone()).collect()
+        } else if symbolic_enum {
+            self.postcondition_variant_fields(record.variant_target)?
+        } else {
+            Vec::new()
         };
-        // [FN-9] the success variant a route may name: the declared type's
-        // own for a Result or an Option, and either for a symbolic ordinal
-        // whose enum is not yet known.
-        let success_variants: &[BuiltinPreludeId] = match self
-            .success_payload_type(declared.ty)
-            .and(match declared.ty {
-                CheckedType::Nominal(nominal) => self
-                    .prelude_types
-                    .get(nominal.0 as usize)
-                    .and_then(|entry| *entry),
-                _ => None,
-            }) {
-            Some(super::PreludeType::Option(_)) => &[BuiltinPreludeId::SOME],
-            Some(_) => &[BuiltinPreludeId::OK],
-            None => &[BuiltinPreludeId::OK, BuiltinPreludeId::SOME],
+        let selected_field = selected_variant.and_then(|(variant_index, variant)| {
+            let written = record.fields.first()?;
+            variant
+                .fields
+                .iter()
+                .enumerate()
+                .find(|(_, field)| field.name == written.spelling)
+                .map(|(field_index, field)| (variant_index, variant.tag, field_index, field.ty))
+        });
+        let (admission, result_type) = if routed {
+            match selected_field {
+                Some((_, _, _, ty)) if self.type_supplies_data(ty, symbolic)? => {
+                    (SelectorAdmissionType::Payload, ty)
+                }
+                // Retain the field-specific diagnostic for a missing or
+                // misspelled field of a valid enum variant.
+                None if selected_variant.is_some() => {
+                    (SelectorAdmissionType::Payload, declared.ty)
+                }
+                _ if symbolic_enum => (SelectorAdmissionType::Symbolic, declared.ty),
+                _ => (SelectorAdmissionType::Invalid, declared.ty),
+            }
+        } else {
+            match declared.ty {
+                ty if Checker::postcondition_fragment_type(ty, symbolic) => {
+                    (SelectorAdmissionType::Fragment, ty)
+                }
+                ty if self.type_supplies_data(ty, symbolic)? => (SelectorAdmissionType::Aggregate, ty),
+                CheckedType::Generic(_) if symbolic => (SelectorAdmissionType::Symbolic, declared.ty),
+                _ => (SelectorAdmissionType::Invalid, declared.ty),
+            }
         };
         self.declarations.validate_postcondition_selector(
             record,
@@ -3124,44 +3224,48 @@ impl<'unit> TypeContext<'unit> {
                 admission
             },
             ordinal,
-            success_variants,
+            &required_fields,
         )?;
-
-        let (candidate, variant, field) = match record.class {
-            PostconditionSelectorClass::Plain => (
+        let route = selected_field
+            .map(|(variant, tag, field, _)| {
+                Ok::<_, SemanticCompilerFailure>(PayloadRoute {
+                    variant: u32::try_from(variant)
+                        .map_err(|_| SemanticCompilerFailure::CounterOverflow)?,
+                    field: u32::try_from(field)
+                        .map_err(|_| SemanticCompilerFailure::CounterOverflow)?,
+                    tag,
+                })
+            })
+            .transpose()?;
+        let (candidate, variant, field) = if routed {
+            let field = record
+                .fields
+                .first()
+                .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+            (
+                &field.candidate,
+                record.variant_target,
+                Some(PostconditionFieldIdentity {
+                    index: u32::try_from(
+                        required_fields
+                            .iter()
+                            .position(|declared| declared == &field.spelling)
+                            .ok_or(SemanticCompilerFailure::InvalidResolution)?,
+                    )
+                    .map_err(|_| SemanticCompilerFailure::CounterOverflow)?,
+                    origin: field.origin.clone(),
+                }),
+            )
+        } else {
+            (
                 record
                     .result_binders
                     .get(ordinal as usize)
                     .ok_or(SemanticCompilerFailure::InvalidResolution)?,
                 None,
                 None,
-            ),
-            PostconditionSelectorClass::Variant => {
-                let ResolvedTarget::Prelude(variant) = record
-                    .variant_target
-                    .ok_or(SemanticCompilerFailure::InvalidResolution)?
-                else {
-                    return Err(SemanticCompilerFailure::InvalidResolution.into());
-                };
-                let field = record
-                    .fields
-                    .first()
-                    .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                (
-                    &field.candidate,
-                    Some(variant),
-                    Some(PostconditionFieldIdentity {
-                        declaration: if variant == BuiltinPreludeId::SOME {
-                            BuiltinPreludeId::SOME_VALUE
-                        } else {
-                            BuiltinPreludeId::OK_VALUE
-                        },
-                        origin: field.origin.clone(),
-                    }),
-                )
-            }
+            )
         };
-
         Ok(CheckedPostconditionSelector {
             function: signature.id,
             block: record.block.clone(),
@@ -3170,6 +3274,8 @@ impl<'unit> TypeContext<'unit> {
             ordinal,
             variant,
             field,
+            route,
+            generated: false,
             result_type,
         })
     }

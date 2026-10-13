@@ -223,8 +223,8 @@ fn run_push(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   }
   atomic slot = &store^.keys[key], m = &store^.meta {
     match slot^ {
-      Some(value: held) => {
-        let edited = push_items(env: client, value: held);
+      Some(value: observed) => {
+        let edited = push_items(env: client, value: observed);
       }
       None() => {
       }
@@ -368,8 +368,8 @@ fn run_pop(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   atomic slot = &store^.keys[key], m = &store^.meta {
     match slot^ {
-      Some(value: held) => {
-        let edited = pop_items(env: client, value: held);
+      Some(value: observed) => {
+        let edited = pop_items(env: client, value: observed);
       }
       None() => {
       }
@@ -500,8 +500,8 @@ fn run_lrange(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
   set client^.high = stop.value;
   atomic slot = &store^.keys[key] {
     match slot^ {
-      Some(value: held) => {
-        let found = range_items(env: client, value: held);
+      Some(value: observed) => {
+        let found = range_items(env: client, value: observed);
       }
       None() => {
       }
@@ -562,8 +562,8 @@ fn run_llen(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   set client^.number = 0_u64;
   atomic slot = &store^.keys[key] {
     match slot^ {
-      Some(value: held) => {
-        let found = list_length(env: client, value: held);
+      Some(value: observed) => {
+        let found = list_length(env: client, value: observed);
       }
       None() => {
       }
@@ -584,8 +584,8 @@ fn run_llen(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
 
 fn word_at(input: &[u8], span: Span, word: &[u8]) -> matched: Bool reads(input), reads(word) {
   doc "Whether an argument spells an upper-case word, letters in either case, compared as Redis compares one with strcasecmp, up to a zero byte.";
-  let held = before_zero(input: input, span: span);
-  let matched = name_is(input: input, start: span.start, length: held, word: word);
+  let observed = before_zero(input: input, span: span);
+  let matched = name_is(input: input, start: span.start, length: observed, word: word);
   return matched;
 }
 
@@ -681,8 +681,8 @@ fn run_lindex(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
   set client^.number = index.state;
   atomic slot = &store^.keys[key] {
     match slot^ {
-      Some(value: held) => {
-        let found = index_item(env: client, value: held);
+      Some(value: observed) => {
+        let found = index_item(env: client, value: observed);
       }
       None() => {
       }
@@ -769,8 +769,8 @@ fn run_lset(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   set client^.number = index.state;
   atomic slot = &store^.keys[key], m = &store^.meta {
     match slot^ {
-      Some(value: held) => {
-        let edited = set_item(env: client, value: held, element: move element);
+      Some(value: observed) => {
+        let edited = set_item(env: client, value: observed, element: move element);
       }
       None() => {
         let dropped = move element;
@@ -916,8 +916,8 @@ fn run_lrem(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   set client^.low = count.value;
   atomic slot = &store^.keys[key], m = &store^.meta {
     match slot^ {
-      Some(value: held) => {
-        let edited = remove_items(env: client, value: held, input: input, element: element);
+      Some(value: observed) => {
+        let edited = remove_items(env: client, value: observed, input: input, element: element);
       }
       None() => {
       }
@@ -1054,8 +1054,8 @@ fn run_ltrim(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &C
   set client^.high = stop.value;
   atomic slot = &store^.keys[key], m = &store^.meta {
     match slot^ {
-      Some(value: held) => {
-        let edited = trim_items(env: client, value: held);
+      Some(value: observed) => {
+        let edited = trim_items(env: client, value: observed);
       }
       None() => {
       }
@@ -1181,8 +1181,8 @@ fn run_linsert(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: 
   set client^.number = 0_u64;
   atomic slot = &store^.keys[key], m = &store^.meta {
     match slot^ {
-      Some(value: held) => {
-        let edited = insert_item(env: client, value: held, input: input, pivot: pivot, element: move element, after: after);
+      Some(value: observed) => {
+        let edited = insert_item(env: client, value: observed, input: input, pivot: pivot, element: move element, after: after);
       }
       None() => {
         let dropped = move element;
@@ -1368,8 +1368,8 @@ fn run_lpos(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   let positions = box_slots_new::<u64>(capacity: 0_u64);
   atomic slot = &store^.keys[key] {
     match slot^ {
-      Some(value: held) => {
-        let found = seek_items(env: &seek, value: held, input: input, element: element, positions: &positions);
+      Some(value: observed) => {
+        let found = seek_items(env: &seek, value: observed, input: input, element: element, positions: &positions);
       }
       None() => {
       }
@@ -1405,12 +1405,12 @@ fn run_lpos(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
 fn list_kind(slot: &Option<Entry>, now: u64) -> kind: u64 reads(slot) {
   doc "What an entry holds for a list command naming several keys: entry_none for no value, entry_lapsed for one whose expiry has been reached at now, entry_wanted for a live list and entry_other for a live value of another kind.";
   match slot^ {
-    Some(value: held) => {
-      let reached = expired(expires: held^.expires, now: now);
+    Some(value: observed) => {
+      let reached = expired(expires: observed^.expires, now: now);
       if reached {
         return entry_lapsed;
       }
-      match held^.value {
+      match observed^.value {
         Items(items: list) => {
           return entry_wanted;
         }
@@ -1437,8 +1437,8 @@ fn list_kind(slot: &Option<Entry>, now: u64) -> kind: u64 reads(slot) {
 fn take_element(slot: &Option<Entry>, from_head: Bool, client: &Client) -> popped: Option<Box<Slots<u8>>> writes(slot), writes(client) {
   doc "Removes and returns the element at the head (from_head) or tail of the list an entry holds, leaving how many elements the list keeps in the client's number; none for an entry holding no list.";
   match slot^ {
-    Some(value: held) => {
-      match held^.value {
+    Some(value: observed) => {
+      match observed^.value {
         Items(items: list) => {
           let popped = pop_one(list: list, from_head: from_head);
           set client^.number = list^.inner.len;
@@ -1467,8 +1467,8 @@ fn take_element(slot: &Option<Entry>, from_head: Bool, client: &Client) -> poppe
 fn place_element(slot: &Option<Entry>, element: Box<Slots<u8>>, to_head: Bool) -> result: unit writes(slot) {
   doc "Pushes an element onto the head (to_head) or tail of the list an entry holds, creating the list, without an expiry, for an entry holding none; an entry holding another kind, which the caller has refused, drops it.";
   match slot^ {
-    Some(value: held) => {
-      match held^.value {
+    Some(value: observed) => {
+      match observed^.value {
         Items(items: list) => {
           push_element(list: list, element: move element, front: to_head);
           return unit;

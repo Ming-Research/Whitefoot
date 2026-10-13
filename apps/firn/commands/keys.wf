@@ -239,8 +239,8 @@ fn entry_kind(slot: &Option<Entry>, client: &Client) -> kind: u64 writes(slot), 
   set client^.state = state_absent;
   let kind = 0_u64;
   match slot^ {
-    Some(value: held) => {
-      set kind = kind_of(env: client, value: held);
+    Some(value: observed) => {
+      set kind = kind_of(env: client, value: observed);
     }
     None() => {
     }
@@ -551,7 +551,7 @@ fn expire_options(input: &[u8], args: &Box<Slots<Span>>) -> options: ExpireOptio
 fn expire_allowed(flags: u64, current: u64, deadline: i64) -> allowed: Bool pure {
   doc "Whether EXPIRE's options let it give a key whose expiry is current, zero for none, the expiry deadline, as Redis 7.0.15 judges them: NX only a key without one, XX only a key with one, GT only a later expiry than the key's, a key without one counting as never expiring, and LT only an earlier one, a key without one taking any.";
   let none = current == 0_u64;
-  let held = cvt.wrap::<u64, i64>(current);
+  let observed = cvt.wrap::<u64, i64>(current);
   let fresh = iand(flags, expire_nx);
   if fresh != 0_u64 {
     if none {
@@ -570,14 +570,14 @@ fn expire_allowed(flags: u64, current: u64, deadline: i64) -> allowed: Bool pure
     if none {
       return False();
     }
-    if deadline <= held {
+    if deadline <= observed {
       return False();
     }
   }
   let less = iand(flags, expire_lt);
   if less != 0_u64 {
     if none {
-    } else if deadline >= held {
+    } else if deadline >= observed {
       return False();
     }
   }
@@ -727,8 +727,8 @@ fn run_ttl(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   let key = &input^[place.start..place.end];
   atomic slot = &store^.keys[key], m = &store^.meta {
     match slot^ {
-      Some(value: held) => {
-        let found = read_expiry(env: &remaining, value: held);
+      Some(value: observed) => {
+        let found = read_expiry(env: &remaining, value: observed);
       }
       None() => {
       }
@@ -769,8 +769,8 @@ fn run_persist(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: 
   let key = &input^[place.start..place.end];
   atomic slot = &store^.keys[key], m = &store^.meta {
     match slot^ {
-      Some(value: held) => {
-        let outcome = clear_expiry(env: &expiry, value: held);
+      Some(value: observed) => {
+        let outcome = clear_expiry(env: &expiry, value: observed);
       }
       None() => {
       }
@@ -948,9 +948,9 @@ fn copy_value(value: &Value) -> made: Value reads(value) {
 fn held_copy(slot: &Option<Entry>) -> made: Option<Entry> reads(slot) {
   doc "A copy of the value an entry holds, its expiry kept, as COPY makes one; None for an absent entry.";
   match slot^ {
-    Some(value: held) => {
-      let copied = copy_value(value: &held^.value);
-      let duplicate = Entry(value: move copied, expires: held^.expires);
+    Some(value: observed) => {
+      let copied = copy_value(value: &observed^.value);
+      let duplicate = Entry(value: move copied, expires: observed^.expires);
       return Some<Entry>(value: move duplicate);
     }
     None() => {
@@ -982,13 +982,13 @@ fn run_rename(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
     } else if keys.len == 1_u64 {
       set outcome = rename_same;
     } else {
-      let held = entry_kind(slot: &slots^[target], client: client);
+      let observed = entry_kind(slot: &slots^[target], client: client);
       if client^.state == state_expired {
         if logged {
           log_removal(log: &m^.log, key: target_key);
         }
       }
-      let occupied = held != 0_u64;
+      let occupied = observed != 0_u64;
       let refused = band(fresh, occupied);
       if refused {
         set outcome = rename_occupied;
@@ -1088,13 +1088,13 @@ fn run_copy(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
       }
     }
     if kind != 0_u64 {
-      let held = entry_kind(slot: &slots^[target], client: client);
+      let observed = entry_kind(slot: &slots^[target], client: client);
       if client^.state == state_expired {
         if logged {
           log_removal(log: &m^.log, key: target_key);
         }
       }
-      let vacant = held == 0_u64;
+      let vacant = observed == 0_u64;
       let allowed = bor(vacant, replace);
       if allowed {
         let copied = held_copy(slot: &slots^[source]);

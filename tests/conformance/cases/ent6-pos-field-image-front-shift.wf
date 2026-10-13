@@ -1,0 +1,192 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Decimal {
+  doc "A nonnegative integer as decimal digits, most significant first: count digits of an array of 800, each at most nine. Digits past the 800 held are dropped and noted in truncated.";
+  digits: Array<u8, 800>;
+  count: u64;
+  truncated: Bool;
+  invariant count_ceiling(decimal): decimal.count <= 800_u64;
+  invariant(decimal): forall below_ten(k in 0_u64..decimal^.digits.len): decimal^.digits[k] <= 9_u8;
+}
+
+fn new_decimal() -> result: Decimal pure {
+  let digits = array_filled::<u8, 800>(value: 0_u8);
+  let clean = False();
+  return Decimal(digits: digits, count: 0_u64, truncated: clean);
+}
+
+fn append_digit(decimal: &Decimal, digit: u8) -> result: unit writes(decimal) contract {
+  requires digit <= 9_u8;
+} {
+  doc "Appends a digit, or notes a nonzero one past the 800 held as truncated.";
+  let count = decimal^.count;
+  if count < 800_u64 {
+    set decimal^.digits[count] = digit;
+    set decimal^.count = count + 1_u64;
+  } else if digit != 0_u8 {
+    set decimal^.truncated = True();
+  }
+  return unit;
+}
+
+fn digest(decimal: &Decimal) -> result: u64 reads(decimal) {
+  doc "FNV-1a over the held digits.";
+  let count = decimal^.count;
+  let hash = 14695981039346656037_u64;
+  for (index in 0_u64..count) {
+    let digit = decimal^.digits[index];
+    let wide = cvt::<u8, u64>(digit);
+    let mixed = ixor(hash, wide);
+    set hash = mixed *wrap 1099511628211_u64;
+  }
+  return hash;
+}
+
+fn shift_front(decimal: &Decimal, delta: u64) -> result: unit writes(decimal) contract {
+  requires decimal^.count + delta <= 800_u64;
+} {
+  doc "Moves the held digits delta places toward the end, from the last digit backward, and fills the vacated front with zeros.";
+  let count = decimal^.count;
+  let total = count + delta;
+  let remaining = count;
+  loop @copy (
+    invariant within: remaining <= count,
+    invariant forall small(k in 0_u64..decimal^.digits.len): decimal^.digits[k] <= 9_u8
+  ) {
+    if 0_u64 < remaining {
+    } else {
+      break @copy;
+    }
+    let index = remaining - 1_u64;
+    let digit = decimal^.digits[index];
+    let target = index + delta;
+    set decimal^.digits[target] = digit;
+    set remaining = index;
+  }
+  for (
+    position in 0_u64..delta,
+    invariant forall small(k in 0_u64..decimal^.digits.len): decimal^.digits[k] <= 9_u8
+  ) {
+    set decimal^.digits[position] = 0_u8;
+  }
+  set decimal^.count = total;
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "Checks that each decimal has the room the move needs, moves its digits toward the end and compares the digest and the count with the expected string.";
+  let decimal_1 = new_decimal();
+  append_digit(decimal: &decimal_1, digit: 1_u8);
+  append_digit(decimal: &decimal_1, digit: 2_u8);
+  append_digit(decimal: &decimal_1, digit: 3_u8);
+  append_digit(decimal: &decimal_1, digit: 4_u8);
+  append_digit(decimal: &decimal_1, digit: 5_u8);
+  let held_1 = decimal_1.count;
+  if held_1 <= 797_u64 {
+  } else {
+    return exit_status(code: 14_u8);
+  }
+  let done_1 = shift_front(decimal: &decimal_1, delta: 3_u64);
+  let digest_1 = digest(decimal: &decimal_1);
+  if digest_1 == 8515674637737317990_u64 {
+  } else {
+    return exit_status(code: 12_u8);
+  }
+  let count_1 = decimal_1.count;
+  if count_1 == 8_u64 {
+  } else {
+    return exit_status(code: 13_u8);
+  }
+  let decimal_2 = new_decimal();
+  append_digit(decimal: &decimal_2, digit: 1_u8);
+  let held_2 = decimal_2.count;
+  let done_2 = shift_front(decimal: &decimal_2, delta: 0_u64);
+  let digest_2 = digest(decimal: &decimal_2);
+  if digest_2 == 12638152016183539244_u64 {
+  } else {
+    return exit_status(code: 22_u8);
+  }
+  let count_2 = decimal_2.count;
+  if count_2 == 1_u64 {
+  } else {
+    return exit_status(code: 23_u8);
+  }
+  let decimal_3 = new_decimal();
+  append_digit(decimal: &decimal_3, digit: 3_u8);
+  append_digit(decimal: &decimal_3, digit: 1_u8);
+  append_digit(decimal: &decimal_3, digit: 4_u8);
+  append_digit(decimal: &decimal_3, digit: 1_u8);
+  append_digit(decimal: &decimal_3, digit: 5_u8);
+  append_digit(decimal: &decimal_3, digit: 9_u8);
+  append_digit(decimal: &decimal_3, digit: 2_u8);
+  append_digit(decimal: &decimal_3, digit: 6_u8);
+  append_digit(decimal: &decimal_3, digit: 5_u8);
+  append_digit(decimal: &decimal_3, digit: 3_u8);
+  append_digit(decimal: &decimal_3, digit: 5_u8);
+  append_digit(decimal: &decimal_3, digit: 8_u8);
+  append_digit(decimal: &decimal_3, digit: 9_u8);
+  append_digit(decimal: &decimal_3, digit: 7_u8);
+  append_digit(decimal: &decimal_3, digit: 9_u8);
+  append_digit(decimal: &decimal_3, digit: 3_u8);
+  append_digit(decimal: &decimal_3, digit: 2_u8);
+  append_digit(decimal: &decimal_3, digit: 3_u8);
+  append_digit(decimal: &decimal_3, digit: 8_u8);
+  append_digit(decimal: &decimal_3, digit: 4_u8);
+  append_digit(decimal: &decimal_3, digit: 6_u8);
+  append_digit(decimal: &decimal_3, digit: 2_u8);
+  append_digit(decimal: &decimal_3, digit: 6_u8);
+  append_digit(decimal: &decimal_3, digit: 4_u8);
+  append_digit(decimal: &decimal_3, digit: 3_u8);
+  append_digit(decimal: &decimal_3, digit: 3_u8);
+  append_digit(decimal: &decimal_3, digit: 8_u8);
+  append_digit(decimal: &decimal_3, digit: 3_u8);
+  append_digit(decimal: &decimal_3, digit: 2_u8);
+  append_digit(decimal: &decimal_3, digit: 7_u8);
+  append_digit(decimal: &decimal_3, digit: 9_u8);
+  append_digit(decimal: &decimal_3, digit: 5_u8);
+  append_digit(decimal: &decimal_3, digit: 0_u8);
+  append_digit(decimal: &decimal_3, digit: 2_u8);
+  append_digit(decimal: &decimal_3, digit: 8_u8);
+  append_digit(decimal: &decimal_3, digit: 8_u8);
+  append_digit(decimal: &decimal_3, digit: 4_u8);
+  append_digit(decimal: &decimal_3, digit: 1_u8);
+  append_digit(decimal: &decimal_3, digit: 9_u8);
+  append_digit(decimal: &decimal_3, digit: 7_u8);
+  let held_3 = decimal_3.count;
+  if held_3 <= 793_u64 {
+  } else {
+    return exit_status(code: 34_u8);
+  }
+  let done_3 = shift_front(decimal: &decimal_3, delta: 7_u64);
+  let digest_3 = digest(decimal: &decimal_3);
+  if digest_3 == 1504125598068926233_u64 {
+  } else {
+    return exit_status(code: 32_u8);
+  }
+  let count_3 = decimal_3.count;
+  if count_3 == 47_u64 {
+  } else {
+    return exit_status(code: 33_u8);
+  }
+  let decimal_4 = new_decimal();
+  append_digit(decimal: &decimal_4, digit: 9_u8);
+  append_digit(decimal: &decimal_4, digit: 0_u8);
+  let held_4 = decimal_4.count;
+  if held_4 <= 2_u64 {
+  } else {
+    return exit_status(code: 44_u8);
+  }
+  let done_4 = shift_front(decimal: &decimal_4, delta: 798_u64);
+  let digest_4 = digest(decimal: &decimal_4);
+  if digest_4 == 1492704591846552884_u64 {
+  } else {
+    return exit_status(code: 42_u8);
+  }
+  let count_4 = decimal_4.count;
+  if count_4 == 800_u64 {
+  } else {
+    return exit_status(code: 43_u8);
+  }
+  return exit_status(code: 0_u8);
+}

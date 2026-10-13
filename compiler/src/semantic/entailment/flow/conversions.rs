@@ -171,10 +171,7 @@ impl Judging<'_, '_, '_> {
         if outcome.route == Some(ProofRoute::Affine) || outcome.route.is_none() {
             state.affine = prepared;
         } else {
-            self.vocabulary.affine_atoms.truncate(candidate_atom_start);
-            // A rolled-back atom index can be minted again with another range,
-            // so no model view may keep the old one.
-            self.vocabulary.affine_models.clear();
+            self.vocabulary.discard_atoms_from(candidate_atom_start);
         }
         let discharged = outcome.disposition == ProofDisposition::Proved;
         if let Some(root) = outcome.derivation {

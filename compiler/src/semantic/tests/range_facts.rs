@@ -752,7 +752,7 @@ fn guarded_reads(reads: u64, paired: bool) -> Vec<u8> {
         (
             ", other: &[u64], spare: &[u64]) -> result: u64 reads(cells), reads(other), reads(spare)",
             "requires forall known(k in 0_u64..cells^.len, j in 0_u64..spare^.len): cells^[k] == spare^[j];
-  requires forall held(k in 0_u64..other^.len): other^[k] == 0_u64;",
+  requires forall observed_state(k in 0_u64..other^.len): other^[k] == 0_u64;",
             "  if 0_u64 < spare^.len {
     let seen = spare^[0_u64];
   }
@@ -1102,7 +1102,7 @@ fn field_range_measure_source(before: &str, start: &str, measure: &str) -> Vec<u
 }}
 
 fn forward(rows: &[Slots<u8, 8>]) -> result: unit {effect} contract {{
-  requires forall held(k in {start}..rows^.len): rows^[k].{measure} <= 4_u64;
+  requires forall observed_state(k in {start}..rows^.len): rows^[k].{measure} <= 4_u64;
 }} {{
 {before}  need_rows(rows: rows);
   return unit;
@@ -1175,7 +1175,7 @@ fn field_range_formation(declarations: &str, element: &str, suffix: &str) -> Vec
     };
     field_range_program(&format!(
         "{declarations}fn inspect(rows: &[{element}]) -> result: unit pure contract {{
-  requires forall held(k in 0_u64..rows^.len): rows^[k]{suffix} == 0_u64;
+  requires forall observed_state(k in 0_u64..rows^.len): rows^[k]{suffix} == 0_u64;
 }} {{
   return unit;
 }}
@@ -1351,7 +1351,7 @@ fn forward(numbers: &[Record<u64>], flags: &[Record<Bool>]) -> result: unit pure
 fn field_range_generic_cannot_select_undeclared_field() {
     let source = field_range_program(
         "fn inspect<T>(rows: &[T]) -> result: unit pure contract {
-  requires forall held(k in 0_u64..rows^.len): rows^[k].missing == 0_u64;
+  requires forall observed_state(k in 0_u64..rows^.len): rows^[k].missing == 0_u64;
 } {
   return unit;
 }
@@ -1375,7 +1375,7 @@ fn need_zero(rows: &[Pair]) -> result: unit pure contract {
 }
 
 fn forward(rows: &[Pair]) -> result: unit writes(rows) contract {
-  requires forall held(k in 0_u64..rows^.len): rows^[k].f == 0_u64;
+  requires forall observed_state(k in 0_u64..rows^.len): rows^[k].f == 0_u64;
 } {
   if 0_u64 < rows^.len {
     let made = Pair(f: 0_u64, g: 7_u64);
@@ -1404,7 +1404,7 @@ fn need_zero(rows: &[Pair]) -> result: unit pure contract {
 }
 
 fn forward(rows: &[Pair], replacement: Pair) -> result: unit writes(rows) contract {
-  requires forall held(k in 0_u64..rows^.len): rows^[k].f == 0_u64;
+  requires forall observed_state(k in 0_u64..rows^.len): rows^[k].f == 0_u64;
 } {
   if 0_u64 < rows^.len {
     set rows^[0_u64] = replacement;
@@ -1432,7 +1432,7 @@ fn need_segments(rows: &Segments<Pair>) -> result: unit pure contract {
 }
 
 fn forward(rows: &Segments<Pair>) -> result: unit writes(rows) contract {
-  requires forall held(d in 0_u64..rows^.len, k in 0_u64..rows^[d].len): rows^[d][k].f == 0_u64;
+  requires forall observed_state(d in 0_u64..rows^.len, k in 0_u64..rows^[d].len): rows^[d][k].f == 0_u64;
 } {
   if 0_u64 < rows^.len {
     let first = &rows^[0_u64];
@@ -1708,9 +1708,9 @@ fn check(order: &[Flow]) -> result: unit writes(order) contract {
       give b;
     }
   }
-  let held = Holder(value: saved);
+  let observed_state = Holder(value: saved);
   let target = Payload(slot: 9_u32);
-  set target = held.value;
+  set target = observed_state.value;
   set order^[0_u64] = Flow::Open(block: target);
   need(order: order);
   return unit;
@@ -1774,7 +1774,7 @@ fn field_range_give_join_tracks_each_arms_copy() {
 
 #[test]
 fn field_range_copy_join_keeps_nested_alias_overrides() {
-    let source = String::from_utf8(field_range_copy_join_source("  let held = Holder(value: item);\n  if flag {\n    set item.slot = 9_u32;\n    set held.value = item;\n  }\n  set rows^[0_u64] = held.value;\n")).unwrap()
+    let source = String::from_utf8(field_range_copy_join_source("  let observed_state = Holder(value: item);\n  if flag {\n    set item.slot = 9_u32;\n    set observed_state.value = item;\n  }\n  set rows^[0_u64] = observed_state.value;\n")).unwrap()
         .replace("fn need(", "struct Holder {\n  value: Entry;\n}\n\nfn need(");
     field_range_verdict(source.as_bytes(), Some(SemanticRule::Range3));
 }
@@ -1914,8 +1914,8 @@ fn a_bound_written_through_a_reference_inside_an_atomic_statement() {
         "pure waits",
         "  let n = 0_u64;
   let w = &n;
-  atomic held = &state {
-    set w^ = held^.value;
+  atomic observed_state = &state {
+    set w^ = observed_state^.value;
   }
   need(xs: xs, n: n);
 ",
@@ -2090,7 +2090,7 @@ fn inspect(rows: &[Row]) -> result: u64 reads(rows) {
 fn a_ring_is_not_an_element_projection_base() {
     let source = field_range_program(
         "fn inspect(rows: &Ring<u64, 8>) -> result: unit pure contract {
-  requires forall held(k in 0_u64..rows^.len): rows^[k] == 0_u64;
+  requires forall observed_state(k in 0_u64..rows^.len): rows^[k] == 0_u64;
 } {
   return unit;
 }
@@ -2289,6 +2289,132 @@ fn reference_match_payload_writes_reach_the_container() {
             (expected, outcome) => panic!("rejected={expected}: {outcome:?}"),
         });
     }
+}
+
+/// A conformance case's source and its expected verdict: `None` accepts, and
+/// `Some((rule, at))` rejects under `rule` with the diagnostic starting at the
+/// source text `at`.
+type PinnedCase<'a> = (&'a [u8], Option<(SemanticRule, &'a str)>);
+
+/// Checks each conformance case's verdict and pins each rejection to the
+/// source its diagnostic starts at, so a negative fails for its intended
+/// reason rather than an earlier type, effect or reference error. The corpus
+/// owns the verdicts.
+fn pinned_case_verdicts(cases: &[PinnedCase<'_>]) {
+    for &(source, expected) in cases {
+        with_semantics(source, |outcome| match (expected, outcome) {
+            (None, SemanticOutcome::Complete(_)) => {}
+            (Some((rule, at)), SemanticOutcome::SourceIssue { issue, .. }) => {
+                assert_eq!(issue.rule(), rule, "{issue:?}");
+                let crate::SemanticLocation::SourceNode(_, coordinate) = issue.location();
+                let start = usize::try_from(coordinate.start().value()).unwrap();
+                assert!(source[start..].starts_with(at.as_bytes()), "{issue:?}");
+            }
+            (expected, outcome) => panic!("expected {expected:?}: {outcome:?}"),
+        });
+    }
+}
+
+/// [RANGE-1] a payload binder's referent below an element projection is that
+/// element's payload projection in a range goal, at the subscript the match
+/// recorded, through nested matches and `Box` content, and no range term of
+/// a written clause.
+#[test]
+fn payload_binder_referents_are_element_projections() {
+    pinned_case_verdicts(&[
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range1-pos-payload-binder-referent.wf"
+            )
+            .as_slice(),
+            None,
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range1-neg-payload-binder-referent-unproved.wf"
+            )
+            .as_slice(),
+            Some((SemanticRule::Range3, "follow(")),
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range1-neg-payload-binder-referent-written.wf"
+            )
+            .as_slice(),
+            Some((SemanticRule::Fn8, "need_below(value: jump_to^")),
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range1-pos-payload-binder-recorded-index.wf"
+            )
+            .as_slice(),
+            None,
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range1-pos-payload-binder-array-element.wf"
+            )
+            .as_slice(),
+            None,
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range1-pos-payload-binder-nested.wf"
+            )
+            .as_slice(),
+            None,
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range1-pos-payload-binder-box-content.wf"
+            )
+            .as_slice(),
+            None,
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range1-neg-payload-binder-written-clause.wf"
+            )
+            .as_slice(),
+            Some((SemanticRule::Range1, "jump_to^")),
+        ),
+    ]);
+}
+
+/// [RANGE-1, RANGE-3] variant relations over a `Bool` element and an own-mode
+/// enum binding, and a guard `is not V` owed at a call.
+#[test]
+fn variant_relations_reach_their_verdicts() {
+    pinned_case_verdicts(&[
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range1-pos-variant-bool-operand.wf"
+            )
+            .as_slice(),
+            None,
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range1-pos-variant-own-binding.wf"
+            )
+            .as_slice(),
+            None,
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range3-pos-variant-not-guard-owed.wf"
+            )
+            .as_slice(),
+            None,
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range3-neg-variant-not-guard-owed.wf"
+            )
+            .as_slice(),
+            Some((SemanticRule::Range3, "walk(")),
+        ),
+    ]);
 }
 
 #[test]

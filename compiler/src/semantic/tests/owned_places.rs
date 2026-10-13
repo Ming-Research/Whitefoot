@@ -363,8 +363,8 @@ fn finish(value: Holder) -> result: unit pure {
 fn main() -> status: std::process::ExitStatus pure {
   let left = box_new::<u64>(value: 1_u64);
   let right = box_new::<u64>(value: 2_u64);
-  let held = Holder(left: move left, right: move right);
-  release::<Holder>(value: move held);
+  let observed = Holder(left: move left, right: move right);
+  release::<Holder>(value: move observed);
   release::<u64>(value: 7_u64);
   return std::process::exit_status(code: 0_u8);
 }

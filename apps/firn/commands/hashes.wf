@@ -202,8 +202,8 @@ fn run_hset(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   set client^.number = 0_u64;
   atomic slot = &store^.keys[key], m = &store^.meta {
     match slot^ {
-      Some(value: held) => {
-        let edited = set_fields(env: client, value: held);
+      Some(value: observed) => {
+        let edited = set_fields(env: client, value: observed);
       }
       None() => {
       }
@@ -302,8 +302,8 @@ fn run_hsetnx(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
   set client^.number = 0_u64;
   atomic slot = &store^.keys[key], m = &store^.meta {
     match slot^ {
-      Some(value: held) => {
-        let edited = set_field_once(env: client, value: held);
+      Some(value: observed) => {
+        let edited = set_field_once(env: client, value: observed);
       }
       None() => {
       }
@@ -390,8 +390,8 @@ fn run_hget(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   set client^.state = state_absent;
   atomic slot = &store^.keys[key] {
     match slot^ {
-      Some(value: held) => {
-        let found = get_field(env: client, value: held);
+      Some(value: observed) => {
+        let found = get_field(env: client, value: observed);
       }
       None() => {
       }
@@ -471,8 +471,8 @@ fn run_hmget(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &C
   set client^.state = state_absent;
   atomic slot = &store^.keys[key] {
     match slot^ {
-      Some(value: held) => {
-        let found = get_fields(env: client, value: held);
+      Some(value: observed) => {
+        let found = get_fields(env: client, value: observed);
       }
       None() => {
       }
@@ -558,8 +558,8 @@ fn run_hdel(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   set client^.number = 0_u64;
   atomic slot = &store^.keys[key], m = &store^.meta {
     match slot^ {
-      Some(value: held) => {
-        let edited = delete_fields(env: client, value: held);
+      Some(value: observed) => {
+        let edited = delete_fields(env: client, value: observed);
       }
       None() => {
       }
@@ -638,8 +638,8 @@ fn run_hfield(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
   set client^.number = 0_u64;
   atomic slot = &store^.keys[key] {
     match slot^ {
-      Some(value: held) => {
-        let found = find_field(env: client, value: held);
+      Some(value: observed) => {
+        let found = find_field(env: client, value: observed);
       }
       None() => {
       }
@@ -705,8 +705,8 @@ fn run_hlen(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   set client^.number = 0_u64;
   atomic slot = &store^.keys[key] {
     match slot^ {
-      Some(value: held) => {
-        let found = hash_size(env: client, value: held);
+      Some(value: observed) => {
+        let found = hash_size(env: client, value: observed);
       }
       None() => {
       }
@@ -796,8 +796,8 @@ fn run_hall(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   set client^.low = shown;
   atomic slot = &store^.keys[key] {
     match slot^ {
-      Some(value: held) => {
-        let found = all_fields(env: client, value: held);
+      Some(value: observed) => {
+        let found = all_fields(env: client, value: observed);
       }
       None() => {
       }
@@ -905,8 +905,8 @@ fn run_hincrby(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: 
   set client^.high = 0_i64;
   atomic slot = &store^.keys[key], m = &store^.meta {
     match slot^ {
-      Some(value: held) => {
-        let edited = add_to_field(env: client, value: held);
+      Some(value: observed) => {
+        let edited = add_to_field(env: client, value: observed);
       }
       None() => {
       }
@@ -1064,8 +1064,8 @@ fn run_hincrbyfloat(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, cli
   let floating = Floating(increment: read, text: move empty, state: state_absent);
   atomic slot = &store^.keys[key], m = &store^.meta {
     match slot^ {
-      Some(value: held) => {
-        let edited = add_float(env: client, value: held, floating: &floating);
+      Some(value: observed) => {
+        let edited = add_float(env: client, value: observed, floating: &floating);
       }
       None() => {
       }
@@ -1320,8 +1320,8 @@ fn run_hrandfield(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, clien
   if reading {
     atomic slot = &store^.keys[key] {
       match slot^ {
-        Some(value: held) => {
-          let found = random_fields(env: client, value: held);
+        Some(value: observed) => {
+          let found = random_fields(env: client, value: observed);
         }
         None() => {
         }
@@ -1330,8 +1330,8 @@ fn run_hrandfield(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, clien
   } else {
     atomic slot = &store^.keys[key] {
       match slot^ {
-        Some(value: held) => {
-          let found = hash_size(env: client, value: held);
+        Some(value: observed) => {
+          let found = hash_size(env: client, value: observed);
         }
         None() => {
         }

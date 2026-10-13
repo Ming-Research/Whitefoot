@@ -25,7 +25,7 @@ fn main() -> status: ExitStatus pure {
   } else {
     return exit_status(code: 13_u8);
   }
-  let held = run.len;
-  let code = cvt::<u64, u8>(held);
+  let observed = run.len;
+  let code = cvt::<u64, u8>(observed);
   return exit_status(code: code);
 }

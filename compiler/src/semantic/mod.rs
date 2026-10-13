@@ -97,6 +97,8 @@ pub enum SemanticRule {
     /// Atomic statements: the target's type, and a guard or block free of
     /// waiting calls, nested atomic statements and guard writes.
     Share2,
+    /// Typed snapshot resource-free owned closure.
+    Snap1,
     /// Type invariants: their formation over a struct's own fields and the
     /// publicity of that struct's fields [TYPE-11].
     Type11,
@@ -194,6 +196,8 @@ pub enum SemanticRule {
     Fn6,
     /// Finite atomic function requirement goal.
     Fn8,
+    /// Ordinary coherent held-reference origin and stability contract.
+    Hold1,
     /// Verified narrow normal-return relation.
     Fn9,
     /// Guaranteed direct self-tail call and activation replacement.
@@ -290,12 +294,14 @@ impl SemanticRule {
             Self::Fn5 => "FN-5",
             Self::Fn6 => "FN-6",
             Self::Fn8 => "FN-8",
+            Self::Hold1 => "HOLD-1",
             Self::Fn9 => "FN-9",
             Self::Fn10 => "FN-10",
             Self::Wait1 => "WAIT-1",
             Self::Wait3 => "WAIT-3",
             Self::Share1 => "SHARE-1",
             Self::Share2 => "SHARE-2",
+            Self::Snap1 => "SNAP-1",
             Self::Call4 => "CALL-4",
             Self::Eff1 => "EFF-1",
             Self::Eff2 => "EFF-2",
@@ -375,7 +381,8 @@ impl SemanticRule {
             Self::Fn4 => Self::Fn5,
             Self::Fn5 => Self::Fn6,
             Self::Fn6 => Self::Fn8,
-            Self::Fn8 => Self::Fn9,
+            Self::Fn8 => Self::Hold1,
+            Self::Hold1 => Self::Fn9,
             Self::Fn9 => Self::Call4,
             Self::Call4 => Self::Fn10,
             Self::Fn10 => Self::Wait1,
@@ -389,7 +396,8 @@ impl SemanticRule {
             Self::Mod6 => Self::Wait3,
             Self::Wait3 => Self::Share1,
             Self::Share1 => Self::Share2,
-            Self::Share2 => Self::Ent2,
+            Self::Share2 => Self::Snap1,
+            Self::Snap1 => Self::Ent2,
             Self::Ent2 => Self::Msr3,
             Self::Msr3 => Self::Call6,
             Self::Call6 => Self::Inv1,
@@ -457,29 +465,31 @@ impl SemanticRule {
             Self::Fn5 => 41,
             Self::Fn6 => 42,
             Self::Fn8 => 43,
-            Self::Fn9 => 44,
-            Self::Call4 => 45,
-            Self::Fn10 => 46,
-            Self::Wait1 => 47,
-            Self::Eff1 => 48,
-            Self::Eff2 => 49,
-            Self::Eff5 => 50,
-            Self::Err2 => 51,
-            Self::Err3 => 52,
-            Self::Mod5 => 53,
-            Self::Mod6 => 54,
-            Self::Wait3 => 55,
-            Self::Share1 => 56,
-            Self::Share2 => 57,
-            Self::Ent2 => 58,
-            Self::Msr3 => 59,
-            Self::Call6 => 60,
-            Self::Inv1 => 61,
-            Self::Prf1 => 62,
-            Self::Range1 => 63,
-            Self::Range3 => 64,
-            Self::Range4 => 65,
-            Self::Range5 => 66,
+            Self::Hold1 => 44,
+            Self::Fn9 => 45,
+            Self::Call4 => 46,
+            Self::Fn10 => 47,
+            Self::Wait1 => 48,
+            Self::Eff1 => 49,
+            Self::Eff2 => 50,
+            Self::Eff5 => 51,
+            Self::Err2 => 52,
+            Self::Err3 => 53,
+            Self::Mod5 => 54,
+            Self::Mod6 => 55,
+            Self::Wait3 => 56,
+            Self::Share1 => 57,
+            Self::Share2 => 58,
+            Self::Snap1 => 59,
+            Self::Ent2 => 60,
+            Self::Msr3 => 61,
+            Self::Call6 => 62,
+            Self::Inv1 => 63,
+            Self::Prf1 => 64,
+            Self::Range1 => 65,
+            Self::Range3 => 66,
+            Self::Range4 => 67,
+            Self::Range5 => 68,
         }
     }
 }
@@ -1260,6 +1270,11 @@ pub enum SemanticIssueKind {
         /// The repair [DIAG-1].
         mechanical_fix: &'static str,
     },
+    /// A guard calls a boundary that can reach a one-shot decision cell [SHARE-2].
+    AtomicGuardDecisionCell {
+        /// The repair [DIAG-1].
+        mechanical_fix: &'static str,
+    },
     /// An atomic statement's guard whose call reads or writes a path with a
     /// self-changing host handle part [SHARE-2, PRE-2].
     AtomicGuardReadsSelfChanging {
@@ -1299,6 +1314,10 @@ pub enum SemanticIssueKind {
     FunctionFallthrough,
     /// A requirement entry uses a construct outside the admitted FN-8 goal subset.
     InvalidRequires,
+    /// Structural callable requirement failed with ordinary repair guidance.
+    InvalidHeldContract { reason: String, mechanical_fix: &'static str },
+    /// A selected snapshot input closure contains a resource vertex.
+    SnapshotResource { owned_path: String, mechanical_fix: &'static str },
     /// An ensures selector does not match the concrete result class FN-9 admits.
     InvalidPostconditionSelector {
         /// The admitted result data and routes, and how to remove this clause.
@@ -1311,9 +1330,9 @@ pub enum SemanticIssueKind {
         /// route.
         mechanical_fix: String,
     },
-    /// A variant selector does not spell exact `Ok(value: result)`.
+    /// A route does not bind exactly one declared field of its variant.
     InvalidPostconditionFields {
-        /// Exact closed field list required by the admitted selector.
+        /// Declared field names from which one routed field must be selected.
         required_fields: Vec<String>,
     },
     /// The symbolic result candidate conflicts with a live declaration.

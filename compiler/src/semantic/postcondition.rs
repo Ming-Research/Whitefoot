@@ -6,7 +6,7 @@
 //! expression.  Task 0060 consumes these values to prove selected exits; H1
 //! stops explicitly before that proof.
 
-use crate::{BuiltinPreludeId, DeclarationId, NodePath, SourceOrigin};
+use crate::{DeclarationId, NodePath, ResolvedTarget, SourceOrigin};
 
 use super::goal::GoalProjection;
 use super::model::{
@@ -25,16 +25,71 @@ pub(crate) struct CheckedPostconditionSelector {
     /// [CALL-4]. A declaration that writes one result has ordinal zero, the
     /// route writes no ordinal binder, and every clause names it.
     pub(crate) ordinal: u32,
-    pub(crate) variant: Option<BuiltinPreludeId>,
+    pub(crate) variant: Option<ResolvedTarget>,
     pub(crate) field: Option<PostconditionFieldIdentity>,
+    /// The variant field a routed clause restricts its ordinal to [FN-9]:
+    /// one declared field for a written route or a generated type-invariant
+    /// route [TYPE-11]. `None` for an unrouted clause.
+    pub(crate) route: Option<PayloadRoute>,
+    /// [TYPE-11] whether a type invariant generated this clause, rather than
+    /// a writer. A generated routed clause that no exit selects holds
+    /// vacuously.
+    pub(crate) generated: bool,
+    /// The type of the ordinal's datum: the declared result type of an
+    /// unrouted clause, the routed field's type of a routed one.
     pub(crate) result_type: CheckedType,
 }
 
-/// Exact PRE-1 field identity and written origin of `Ok(value: result)`.
+/// One variant field of an enum, by the declaration-order positions of the
+/// variant among its enum's variants and of the field among its fields, and
+/// the variant's tag, which an arm names [TYPE-11, FN-9, ENT-5].
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub(crate) struct PayloadRoute {
+    pub(crate) variant: u32,
+    pub(crate) field: u32,
+    pub(crate) tag: u32,
+}
+
+/// [TYPE-11] one type invariant of the struct a parameter's enum carries in
+/// one variant field: a requirement restricted to a value of that parameter
+/// holding the variant, over that field [FN-8]. A call owes it in the
+/// argument's conditional context for the route, and body entry establishes
+/// it in the parameter's [ENT-5].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CheckedRoutedRequirement {
+    /// The `type_invariant` occurrence.
+    pub(crate) clause: NodePath,
+    /// The parameter ordinal the requirement is taken over.
+    pub(crate) subject: u32,
+    pub(crate) route: PayloadRoute,
+    /// The struct the routed field holds.
+    pub(crate) payload: CheckedType,
+    /// The predicate over the payload as parameter zero [FN-8].
+    pub(crate) goal: super::goal::GoalTemplate,
+    /// The same relation over the payload as result ordinal zero, the form
+    /// a conditional context holds it in [ENT-5].
+    pub(crate) relation: RelationTemplate,
+}
+
+impl CheckedPostconditionSelector {
+    /// Whether this clause is routed: written with a variant-field route, or
+    /// generated over a variant field [FN-9, TYPE-11].
+    pub(crate) const fn is_routed(&self) -> bool {
+        self.variant.is_some() || self.route.is_some()
+    }
+
+    /// [TYPE-11] whether this is a routed clause a type invariant generated,
+    /// which holds vacuously where no exit selects it.
+    pub(crate) const fn vacuous_when_unselected(&self) -> bool {
+        self.generated && self.route.is_some()
+    }
+}
+
+/// Declared field position within the resolved variant and its written origin.
 #[allow(dead_code)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct PostconditionFieldIdentity {
-    pub(crate) declaration: BuiltinPreludeId,
+    pub(crate) index: u32,
     pub(crate) origin: SourceOrigin,
 }
 

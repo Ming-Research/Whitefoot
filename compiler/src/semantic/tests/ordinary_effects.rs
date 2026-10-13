@@ -108,8 +108,8 @@ fn a_segment_field_repair_names_the_field_after_both_indexes() {
 const ENTRY_PAYLOAD_WRITE: &str = r#"fn replace_held(slots: &Entries<u8>, index: u64) -> result: unit writes(slots) {
   if index < slots^.len {
     match &slots^[index] {
-      Some(value: held) => {
-        set held^ = 1_u8;
+      Some(value: observed_state) => {
+        set observed_state^ = 1_u8;
       }
       None() => {
       }

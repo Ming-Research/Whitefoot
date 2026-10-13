@@ -20,7 +20,7 @@ fn walk(first: Holder) -> code: u8 pure {
   place_back(window: &run, value: move first);
   let second = hold(value: 5_u8);
   place_back(window: &run, value: move second);
-  let held = run.len;
+  let observed = run.len;
   let back = take_back(window: &run);
   let width = back.data.inner.len;
   if width == 2_u64 {
@@ -28,7 +28,7 @@ fn walk(first: Holder) -> code: u8 pure {
     return 2_u8;
   }
   let left = run.len;
-  let scaled = held * 10_u64;
+  let scaled = observed * 10_u64;
   let total = scaled + left;
   return cvt::<u64, u8>(total);
 }

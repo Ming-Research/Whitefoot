@@ -9,7 +9,7 @@ fn main() -> status: ExitStatus pure {
   place_front(window: &run, value: 2_u8);
   let spare2 = run.cap - run.len;
   place_front(window: &run, value: 3_u8);
-  let held = run.len;
+  let observed = run.len;
   let front = run[0_u64];
   if front == 3_u8 {
   } else {
@@ -33,7 +33,7 @@ fn main() -> status: ExitStatus pure {
   }
   let left = run.len;
   let spares = spare1 + spare2;
-  let lengths = held + remaining;
+  let lengths = observed + remaining;
   let measures = spares + lengths;
   let combined = measures + left;
   let code = cvt::<u64, u8>(combined);

@@ -242,7 +242,7 @@ impl Judging<'_, '_, '_> {
             };
             // A preservation query is a later reference-use obligation. It
             // does not make this event unreachable or suppress its effects.
-            all_discharged &= discharged || separation.reference_use.is_some();
+            all_discharged &= discharged || separation.reference_use.is_some() || separation.held_use.is_some();
         }
         all_discharged
     }
@@ -344,10 +344,11 @@ impl Judging<'_, '_, '_> {
                 .add_root(DerivationRootKind::BoundsObligation(ordinal), root);
         }
         self.output.obligations.push(ObligationOutcome {
-            node_path: match (&separation.reference_use, &separation.occasion) {
-                (Some(use_site), _) => use_site.site.clone(),
-                (None, CheckedSeparationOccasion::AtomicTargets(target)) => target.clone(),
-                (None, _) => separation.site.clone(),
+            node_path: match (&separation.reference_use, &separation.held_use, &separation.occasion) {
+                (Some(use_site), _, _) => use_site.site.clone(),
+                (None, Some(held_use), _) => held_use.site.clone(),
+                (None, None, CheckedSeparationOccasion::AtomicTargets(target)) => target.clone(),
+                (None, None, _) => separation.site.clone(),
             },
             family: match (&separation.reference_use, &separation.occasion) {
                 (Some(_), _) => ObligationFamily::ReferencePreservation(
@@ -651,6 +652,7 @@ impl Analyzer<'_, '_> {
                 actual_captures,
                 goal_arguments,
                 requirements,
+                routed_requirements,
                 formal_contract,
                 ..
             } => {
@@ -751,6 +753,45 @@ impl Analyzer<'_, '_> {
                         }
                     }
                 }
+                // [TYPE-11, FN-8] each requirement over a parameter's enum
+                // payload is owed in the argument's conditional context for
+                // its route [ENT-5]: if the argument holds the variant, its
+                // field satisfies the invariant.
+                let mut routed_parents = Vec::with_capacity(routed_requirements.len());
+                for requirement in routed_requirements {
+                    if !actuals_reached {
+                        break;
+                    }
+                    let Some(argument) = arguments.get(requirement.subject as usize) else {
+                        goals_ok = false;
+                        continue;
+                    };
+                    // The argument's admitted pre-transfer image, as an
+                    // ordinary requirement over this parameter reads it.
+                    let image = goal_arguments.get(requirement.subject as usize).map(|captured| {
+                        admitted_call_goal_expression(
+                            captured,
+                            call,
+                            admitted_arguments
+                                .as_deref()
+                                .expect("reached actuals have admitted argument slots"),
+                        )
+                    });
+                    let (goal, facts) =
+                        self.routed_requirement_goal(call, argument, image, requirement, states);
+                    let (disposition, derivation) = self.judging().judge_call_goal(
+                        *function,
+                        call,
+                        (requirement.clause.clone(), Some(requirement.subject)),
+                        goal,
+                        arguments.len(),
+                        (ProofContext::new(&facts, &states.affine), &*states),
+                    );
+                    goals_ok &= disposition == CallGoalDisposition::Discharged;
+                    if let Some(derivation) = derivation {
+                        routed_parents.push(derivation);
+                    }
+                }
                 let reached = actuals_reached && goals_ok;
                 let contract_parents = if reached {
                     formal_contract.as_deref().and_then(|contract| {
@@ -772,14 +813,18 @@ impl Analyzer<'_, '_> {
                     .available_call_postconditions(*function, formal_contract.as_deref());
                 let prepared_call = (|| {
                     let mut parents = actual_parents?;
-                    if !reached || goal_parents.len() != requirements.len() {
+                    if !reached
+                        || goal_parents.len() != requirements.len()
+                        || routed_parents.len() != routed_requirements.len()
+                    {
                         return None;
                     }
                     parents.extend(goal_parents);
+                    parents.extend(routed_parents);
                     parents.extend(contract_parents.unwrap_or_default());
-                    // A direct call needs an earlier-component verified FN-9
-                    // summary. A bound call needs either those actual
-                    // premises plus its retained FN-4 implication, or a
+                    // A direct call needs an FN-9 summary or a same-component
+                    // induction hypothesis [DIAG-2]. A bound call needs those
+                    // actual premises plus its retained FN-4 implication, or a
                     // zero-premise formal implication. Calls with no
                     // authorized relation retain the pre-S12 kill path.
                     if postconditions.is_empty() {
@@ -1811,10 +1856,7 @@ impl Analyzer<'_, '_> {
         if outcome.route == Some(ProofRoute::Affine) || outcome.route.is_none() {
             states.affine = prepared_affine;
         } else {
-            self.vocabulary.affine_atoms.truncate(candidate_atom_start);
-            // A rolled-back atom index can be minted again with another range,
-            // so no model view may keep the old one.
-            self.vocabulary.affine_models.clear();
+            self.vocabulary.discard_atoms_from(candidate_atom_start);
         }
         let discharged = outcome.disposition == ProofDisposition::Proved;
         let refuted = outcome.disposition == ProofDisposition::Refuted;

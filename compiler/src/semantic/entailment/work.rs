@@ -1,6 +1,5 @@
-//! Temporary checker work attribution for the many-arm join cost, outside
-//! the acceptance and derivation state. Remove it after the join-cost fix
-//! unless it is kept as a maintained diagnostic.
+//! Maintained checker work diagnostics for joins, affine query preparation
+//! and AUTO family traversal, outside the acceptance and derivation state.
 //!
 //! `WHITEFOOT_CHECK_WORK=<scratch TSV>` appends these counters through the
 //! ordinary semantic path, including `whitefootc --check`. The variable is
@@ -34,7 +33,8 @@
 //!   `affine_promotions` counts complete builds, at most one per residency.
 //!   `affine_final_family_starts` counts entry into AUTO's final L0 family;
 //!   `affine_final_family_exhaustions` counts those traversals returning no
-//!   proof after all entries. Repeated traversals count separately even when
+//!   proof after the retained entries are exhausted; omitted entries are
+//!   certified failures. Repeated traversals count separately even when
 //!   the complete index is reused. `affine_model_views` counts the query
 //!   views whose premises were gathered for a refuting integer point,
 //!   `affine_refutations` and `affine_refutation_misses` partition the
@@ -42,6 +42,29 @@
 //!   target, and `affine_bridge_refutations` counts step-6 loops that point
 //!   also ended. Cold scans are aggregated per request;
 //!   all affine counters are aggregated per function before emission.
+//! - Additional `function` affine observations (all emitted even when zero):
+//!   `affine_auto_calls_initial` counts initial numeric/bounded-relation AUTO
+//!   submissions; `affine_auto_calls_bridge` counts Step-6 residual submissions
+//!   in both numeric and bounded-relation routes; `affine_auto_calls_other`
+//!   counts other standalone AUTO (including quotient targets).
+//!   `affine_direct_initial`, `affine_direct_single`, `affine_direct_pair`,
+//!   `affine_direct_final_l0` count actual DIRECT calls in each AUTO family;
+//!   `affine_direct_other` counts DIRECT calls outside an AUTO family. Initial
+//!   here means DIRECT(T) of every AUTO, including a bridge-origin AUTO.
+//!   Tightened variants count in the same family; unformable residuals do not.
+//!   `affine_interval_construction_probes` and `_warm_probes` partition the
+//!   endpoint-map membership probes in DIRECT and final-family filter
+//!   preparation: absent (construct) or present (reuse). Dot-product and
+//!   successful-parent endpoint reads are excluded.
+//!   `affine_final_images_total` sums the complete index size at each reached
+//!   final family; `_selected` sums its planned retained size (all on fallback);
+//!   `_visited` counts retained candidates actually executed before success or
+//!   exhaustion; `_skipped` counts omitted ordinals before that success, or
+//!   all omissions on exhaustion. A post-success omitted suffix counts neither
+//!   visited nor skipped. `affine_final_filter_fallbacks` counts traversals
+//!   retaining every entry because the target is empty, the state contradictory,
+//!   or the exact target interval maximum is unavailable or does not exceed
+//!   its bound. Unknown candidate minima individually retain those entries.
 //! - `join`: ordinal identifies a pass; `join` identifies its enclosing
 //!   `join_at` call. `inputs` includes contradictory predecessors;
 //!   `union_rows` counts contributing closure rows plus requested extra rows
@@ -120,6 +143,100 @@ struct AffineWork {
     refutations: u64,
     refutation_misses: u64,
     bridge_refutations: u64,
+    extra: [u64; AffineMetric::Count as usize],
+}
+
+/// Observer-only affine metrics. Names are shared by TSV emission and tests.
+#[derive(Clone, Copy)]
+pub(super) enum AffineMetric {
+    AutoCallsInitial,
+    AutoCallsBridge,
+    AutoCallsOther,
+    DirectInitial,
+    DirectSingle,
+    DirectPair,
+    DirectFinalL0,
+    DirectOther,
+    IntervalConstructionProbes,
+    IntervalWarmProbes,
+    FinalImagesTotal,
+    FinalImagesSelected,
+    FinalImagesVisited,
+    FinalImagesSkipped,
+    FinalFilterFallbacks,
+    Count,
+}
+
+impl AffineMetric {
+    const NAMES: [&'static str; Self::Count as usize] = [
+        "affine_auto_calls_initial",
+        "affine_auto_calls_bridge",
+        "affine_auto_calls_other",
+        "affine_direct_initial",
+        "affine_direct_single",
+        "affine_direct_pair",
+        "affine_direct_final_l0",
+        "affine_direct_other",
+        "affine_interval_construction_probes",
+        "affine_interval_warm_probes",
+        "affine_final_images_total",
+        "affine_final_images_selected",
+        "affine_final_images_visited",
+        "affine_final_images_skipped",
+        "affine_final_filter_fallbacks",
+    ];
+}
+
+pub(super) fn affine_metric(metric: AffineMetric) {
+    affine_add(metric, 1);
+}
+
+pub(super) fn affine_add(metric: AffineMetric, amount: u64) {
+    update(|work| {
+        let value = &mut work.affine.extra[metric as usize];
+        *value = value.saturating_add(amount);
+    });
+}
+
+fn enabled() -> bool {
+    #[cfg(test)]
+    if let Some(enabled) = TEST_ENABLED.with(std::cell::Cell::get) {
+        return enabled;
+    }
+    ENABLED.load(Ordering::Relaxed)
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_ENABLED: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+}
+
+/// Installs a test-only thread-local sink without touching the process output
+/// OnceLock, environment, or another test's active invocation.
+#[cfg(test)]
+pub(super) struct AffineTestScope(Option<FunctionWork>, Option<bool>);
+
+#[cfg(test)]
+impl AffineTestScope {
+    pub(super) fn new() -> Self {
+        let previous = ACTIVE.with(|active| active.replace(Some(FunctionWork::new("test"))));
+        Self(
+            previous,
+            TEST_ENABLED.with(|enabled| enabled.replace(Some(true))),
+        )
+    }
+
+    pub(super) fn rows(&self) -> String {
+        ACTIVE.with(|active| active.borrow().as_ref().unwrap().text())
+    }
+}
+
+#[cfg(test)]
+impl Drop for AffineTestScope {
+    fn drop(&mut self) {
+        ACTIVE.with(|active| active.replace(self.0.take()));
+        TEST_ENABLED.with(|enabled| enabled.set(self.1));
+    }
 }
 
 struct FunctionWork {
@@ -166,7 +283,7 @@ pub(super) enum Phase {
     OriginViewFixedPoint,
     /// `prove`'s `prove_prepared` in the origin view.
     OriginViewProve,
-    /// `affine_target_search`.
+    /// Standalone or prepared affine target search, including preparation.
     AffineSearch,
     /// `ModelView::new`.
     ModelViewBuild,
@@ -228,7 +345,7 @@ pub(super) fn origin_view_pass() {
 }
 
 fn update(f: impl FnOnce(&mut FunctionWork)) {
-    if !ENABLED.load(Ordering::Relaxed) {
+    if !enabled() {
         return;
     }
     ACTIVE.with(|active| {
@@ -261,31 +378,7 @@ pub(super) fn function(name: &str) -> FunctionScope {
         return FunctionScope(None, false);
     }
     ENABLED.store(true, Ordering::Relaxed);
-    let previous = ACTIVE.with(|active| {
-        active.replace(Some(FunctionWork {
-            run: NEXT_RUN.fetch_add(1, Ordering::Relaxed),
-            name: name.replace(['\t', '\r', '\n'], " "),
-            joins: 0,
-            passes: Vec::new(),
-            active_pass: None,
-            snapshots: Sizes::default(),
-            closures: Sizes::default(),
-            probes: Sizes::default(),
-            closure_cache_hits: 0,
-            intern_calls: 0,
-            affine: AffineWork::default(),
-            conditions: 0,
-            condition_queries: 0,
-            redundant_conditions: 0,
-            phase_ns: [0; PHASES],
-            phase_calls: [0; PHASES],
-            origin_view_expressions: 0,
-            origin_view_members: 0,
-            origin_view_passes: 0,
-            goals: 0,
-            started: std::time::Instant::now(),
-        }))
-    });
+    let previous = ACTIVE.with(|active| active.replace(Some(FunctionWork::new(name))));
     FunctionScope(previous, true)
 }
 
@@ -453,7 +546,33 @@ pub(super) fn affine_bridge_refutation() {
 }
 
 impl FunctionWork {
-    fn write(&self) {
+    fn new(name: &str) -> Self {
+        Self {
+            run: NEXT_RUN.fetch_add(1, Ordering::Relaxed),
+            name: name.replace(['\t', '\r', '\n'], " "),
+            joins: 0,
+            passes: Vec::new(),
+            active_pass: None,
+            snapshots: Sizes::default(),
+            closures: Sizes::default(),
+            probes: Sizes::default(),
+            closure_cache_hits: 0,
+            intern_calls: 0,
+            affine: AffineWork::default(),
+            conditions: 0,
+            condition_queries: 0,
+            redundant_conditions: 0,
+            phase_ns: [0; PHASES],
+            phase_calls: [0; PHASES],
+            origin_view_expressions: 0,
+            origin_view_members: 0,
+            origin_view_passes: 0,
+            goals: 0,
+            started: std::time::Instant::now(),
+        }
+    }
+
+    fn text(&self) -> String {
         use std::fmt::Write as _;
         let mut text = String::new();
         let mut row = |kind: &str, ordinal: usize, metric: &str, value: u64| {
@@ -510,6 +629,9 @@ impl FunctionWork {
         ] {
             row("function", 0, metric, value);
         }
+        for (metric, value) in AffineMetric::NAMES.iter().zip(self.affine.extra) {
+            row("function", 0, metric, value);
+        }
         for (kind, sizes) in [
             ("snapshot", &self.snapshots),
             ("closure", &self.closures),
@@ -538,6 +660,11 @@ impl FunctionWork {
                 row("join", index, metric, value);
             }
         }
+        text
+    }
+
+    fn write(&self) {
+        let text = self.text();
         if let Some(Some(output)) = OUTPUT.get()
             && let Ok(mut file) = output.lock()
             && let Err(error) = file.write_all(text.as_bytes())

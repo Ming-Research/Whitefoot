@@ -1,0 +1,1284 @@
+//! Internal call entries: forms of a definition that only calls the
+//! compiler itself emits can name (compiler/recursive-environment).
+//!
+//! Every definition keeps its public symbol in the one callable ABI that
+//! linked C bodies share, and every caller the compiler cannot see, C or
+//! another fragment's code built without this plan, names that symbol. An
+//! internal entry is described by its form, [`EntryForm`], and is named by
+//! [`internal_entry_symbol`]; a call site chooses it in one place,
+//! [`FunctionEmitter::internal_call`], by the relation between caller and
+//! callee, and otherwise names the public symbol.
+//!
+//! The one form here is the shared environment of a recursive group. A group
+//! is a strongly connected component of the call graph among the functions
+//! that take part: definitions with a checked source signature that do not
+//! wait, are not synthesized, have no overlap groups, belong to no recursion
+//! budget family and contain no dispatch loop a split could take. Linked
+//! declarations have no body to give an internal form, a waiting function is
+//! entered by a frame transfer [WAIT-1], and a dispatch part's arguments are
+//! the registers its tail calls carry, so none of them takes part.
+//!
+//! A slot of the environment is one read-only borrowed parameter (a `&T`
+//! reference or a `&[T]` range whose declared effects never write through
+//! it) that every member has and that every call inside the group passes on
+//! unchanged: at each such call the argument is the caller's own parameter
+//! of the same slot, directly or through block parameters that only ever
+//! receive it. A recursive edge that passes a different borrow, such as a
+//! narrowed range, keeps that parameter out of the record, and so does a
+//! member that lacks it. A parameter written through keeps its own `noalias`
+//! argument, which a pointer loaded from the record cannot carry and which
+//! is what separates its writes from every other access, so it stays out.
+//!
+//! Inside the group a member's body is defined under its internal symbol and
+//! receives one pointer to the record in place of its slot parameters,
+//! loading each slot once in each block that uses it. Its public symbol
+//! becomes the group's entry from outside: it stores its slot parameters
+//! into a record in its own frame and calls the internal form, which the
+//! host can inline into each outside caller. A group uses the record only
+//! when it pays: the slots
+//! must replace at least two argument words with the one pointer, and some
+//! member must pass more argument words than the selected target's integer
+//! argument registers, since below that budget every argument already
+//! travels in a register and loading from the record could only add work.
+
+use super::*;
+use crate::cycles::components;
+
+/// The form of an internal entry.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum EntryForm {
+    /// The member of a recursive group that receives the group's shared
+    /// environment record in place of its slot parameters.
+    Environment,
+}
+
+impl EntryForm {
+    const fn tag(self) -> &'static str {
+        match self {
+            Self::Environment => "env",
+        }
+    }
+}
+
+/// The symbol of the internal entry of the function `name` in `form`.
+///
+/// It is compiler-owned: a `wf__` symbol holds a spelling no source symbol
+/// has [FORM-3], and each form's tag gives it a prefix no other
+/// compiler-owned symbol begins with.
+pub(super) fn internal_entry_symbol(form: EntryForm, name: &str) -> String {
+    format!("wf__{}_{name}", form.tag())
+}
+
+/// The operand an internal body receives its environment record through.
+pub(super) const ENVIRONMENT: &str = "%wf.env";
+
+/// The internal entry one call names in place of its callee's public symbol.
+pub(super) struct InternalCall {
+    pub(super) symbol: String,
+    /// The calling convention keyword with its trailing space, or empty for
+    /// the C convention.
+    pub(super) convention: &'static str,
+    /// The callee's parameters the caller passes as themselves, by index, in
+    /// the order its internal form declares them; every other parameter
+    /// travels inside the environment record.
+    pub(super) order: Vec<usize>,
+    /// The call-site attributes, with a leading space, or empty: `noinline`
+    /// on a call that closes a cycle of the group.
+    pub(super) attributes: &'static str,
+}
+
+/// How one borrowed parameter lies in the record.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SlotKind {
+    Reference,
+    Range,
+    Run,
+}
+
+/// A candidate slot: its first member parameter, its kind, and every
+/// `(member, parameter)` it joins.
+type SlotCandidate = (usize, SlotKind, Vec<(usize, usize)>);
+
+/// A member's slot parameter: `(parameter value, kind, first field)`.
+type SlotParameter = (IrValueId, SlotKind, usize);
+
+impl SlotKind {
+    const fn of(ty: IrType) -> Option<Self> {
+        match ty {
+            IrType::Address(_) => Some(Self::Reference),
+            IrType::Range { .. } => Some(Self::Range),
+            IrType::Run { .. } => Some(Self::Run),
+            _ => None,
+        }
+    }
+
+    /// The record's fields for one slot: exactly the words the parameter
+    /// crosses an ordinary call as (see [`super::super::abi`]).
+    const fn fields(self) -> &'static [&'static str] {
+        match self {
+            Self::Reference => &["ptr"],
+            Self::Range => &["ptr", "i64"],
+            Self::Run => &["ptr", "i64", "i64"],
+        }
+    }
+
+    const fn mode(self) -> crate::IrSourceMode {
+        match self {
+            Self::Reference => crate::IrSourceMode::Reference,
+            Self::Range | Self::Run => crate::IrSourceMode::Range,
+        }
+    }
+
+    /// The operands the parameter `value` arrives as in an ordinary
+    /// definition, one per field, which the body reads by these names.
+    fn operands(self, value: IrValueId) -> Vec<String> {
+        let (pointer, count) = incoming_range_parts(value);
+        match self {
+            Self::Reference => vec![value_name(value)],
+            Self::Range => vec![pointer, count],
+            Self::Run => vec![pointer, format!("%wf.arg.v{}.lo", value.ordinal()), count],
+        }
+    }
+}
+
+/// One member's place in its group.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct Member {
+    ordinal: u32,
+    group: usize,
+    /// For each parameter, its slot in the group's record, or `None` for a
+    /// parameter passed as itself.
+    parameter_slots: Vec<Option<usize>>,
+    /// The parameters passed as themselves, by index, in the order the
+    /// internal form declares them ([`forwarded_order`]).
+    order: Vec<usize>,
+}
+
+/// The module's recursive groups that pass a shared environment record.
+#[derive(Debug, Default)]
+pub(super) struct EnvironmentPlan {
+    /// Each group's slots in record order.
+    groups: Vec<Vec<SlotKind>>,
+    members: HashMap<u32, Member>,
+    /// The `(caller, callee)` calls inside a group that close one of its
+    /// cycles and are kept out of line ([`back_edges`]).
+    back_edges: HashSet<(u32, u32)>,
+}
+
+impl EnvironmentPlan {
+    pub(super) fn new(
+        program: &IrProgram,
+        target: TargetLayout,
+        frontiers: &RecursiveFrontiers,
+    ) -> Result<Self, BackendFailure> {
+        let functions = program.functions();
+        let mut taking_part = Vec::with_capacity(functions.len());
+        for (ordinal, function) in functions.iter().enumerate() {
+            taking_part.push(takes_part(function, ordinal, frontiers)?);
+        }
+        let mut edges = vec![Vec::new(); functions.len()];
+        for (caller, function) in functions.iter().enumerate() {
+            if !taking_part[caller] {
+                continue;
+            }
+            for (callee, _) in calls(function) {
+                let callee = callee as usize;
+                if taking_part.get(callee) == Some(&true) && !edges[caller].contains(&callee) {
+                    edges[caller].push(callee);
+                }
+            }
+        }
+        let mut plan = Self::default();
+        for mut component in components(&edges) {
+            component.sort_unstable();
+            let recursive = component.len() > 1
+                || component
+                    .first()
+                    .is_some_and(|only| edges[*only].contains(only));
+            if recursive {
+                plan.plan_group(program, target, &component)?;
+            }
+        }
+        Ok(plan)
+    }
+
+    /// The place of the `ordinal`th function in a group, if it has one.
+    pub(super) fn member(&self, ordinal: u32) -> Option<&Member> {
+        self.members.get(&ordinal)
+    }
+
+    fn slots(&self, group: usize) -> Result<&[SlotKind], BackendFailure> {
+        self.groups
+            .get(group)
+            .map(Vec::as_slice)
+            .ok_or(BackendFailure::InvalidIr)
+    }
+
+    /// The record's LLVM type and the first field of each slot.
+    fn record(&self, group: usize) -> Result<(String, Vec<usize>, usize), BackendFailure> {
+        let mut fields = Vec::new();
+        let mut starts = Vec::new();
+        for kind in self.slots(group)? {
+            starts.push(fields.len());
+            fields.extend_from_slice(kind.fields());
+        }
+        Ok((format!("{{ {} }}", fields.join(", ")), starts, fields.len()))
+    }
+
+    fn plan_group(
+        &mut self,
+        program: &IrProgram,
+        target: TargetLayout,
+        members: &[usize],
+    ) -> Result<(), BackendFailure> {
+        let functions = program.functions();
+        let position: HashMap<usize, usize> = members
+            .iter()
+            .enumerate()
+            .map(|(position, ordinal)| (*ordinal, position))
+            .collect();
+        // Every candidate parameter, keyed by (member position, index).
+        let mut keys = Vec::new();
+        let mut key_of = HashMap::new();
+        for (member, &ordinal) in members.iter().enumerate() {
+            let function = &functions[ordinal];
+            for (index, (value, ty)) in function.parameters().iter().enumerate() {
+                if is_candidate(function, index, *value, *ty) {
+                    key_of.insert((member, index), keys.len());
+                    keys.push((member, index));
+                }
+            }
+        }
+        // Each call inside the group joins the callee's candidate to the
+        // caller's candidate it passes unchanged, or rules the callee's out.
+        let mut parent: Vec<usize> = (0..keys.len()).collect();
+        let mut excluded = vec![false; keys.len()];
+        for (member, &ordinal) in members.iter().enumerate() {
+            let caller = &functions[ordinal];
+            let origins = formal_origins(caller, None);
+            for (callee, arguments) in calls(caller) {
+                let Some(&callee_member) = position.get(&(callee as usize)) else {
+                    continue;
+                };
+                let count = functions[callee as usize].parameters().len();
+                for index in 0..count {
+                    let Some(&key) = key_of.get(&(callee_member, index)) else {
+                        continue;
+                    };
+                    let passed = arguments
+                        .get(index)
+                        .and_then(|argument| origins.get(argument))
+                        .and_then(|formal| key_of.get(&(member, *formal)));
+                    match passed {
+                        Some(&source) if arguments.len() == count => {
+                            union(&mut parent, key, source);
+                        }
+                        _ => excluded[key] = true,
+                    }
+                }
+            }
+        }
+        let mut classes: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+        for key in 0..keys.len() {
+            let root = find(&mut parent, key);
+            classes.entry(root).or_default().push(key);
+        }
+        // A slot is a class holding exactly one parameter of every member,
+        // all of one type, none ruled out. Record order follows the first
+        // member's parameter order.
+        let mut slots: Vec<SlotCandidate> = Vec::new();
+        for class in classes.values() {
+            if class.len() != members.len() || class.iter().any(|key| excluded[*key]) {
+                continue;
+            }
+            let mut seen = vec![false; members.len()];
+            let mut ty = None;
+            let mut sound = true;
+            let mut first = None;
+            for &key in class {
+                let (member, index) = keys[key];
+                if std::mem::replace(&mut seen[member], true) {
+                    sound = false;
+                }
+                let parameter = functions[members[member]].parameters()[index].1;
+                if *ty.get_or_insert(parameter) != parameter {
+                    sound = false;
+                }
+                if member == 0 {
+                    first = Some(index);
+                }
+            }
+            let (Some(first), Some(kind)) = (first, ty.and_then(SlotKind::of)) else {
+                continue;
+            };
+            if sound {
+                slots.push((first, kind, class.iter().map(|key| keys[*key]).collect()));
+            }
+        }
+        slots.sort_by_key(|(first, ..)| *first);
+        // Profitability: the record replaces at least two words with one
+        // pointer, and some member passes more words than the registers hold.
+        let packed: usize = slots.iter().map(|(_, kind, _)| kind.fields().len()).sum();
+        if packed < 2 {
+            return Ok(());
+        }
+        let budget = target.integer_argument_registers();
+        let mut exceeds = false;
+        for &ordinal in members {
+            exceeds |= argument_words(program, target, &functions[ordinal])? > budget;
+        }
+        if !exceeds {
+            return Ok(());
+        }
+        let group = self.groups.len();
+        self.groups
+            .push(slots.iter().map(|(_, kind, _)| *kind).collect());
+        for (caller, callee) in back_edges(program, members) {
+            self.back_edges.insert((
+                u32::try_from(caller).map_err(|_| BackendFailure::CounterOverflow)?,
+                u32::try_from(callee).map_err(|_| BackendFailure::CounterOverflow)?,
+            ));
+        }
+        let mut all_slots = Vec::with_capacity(members.len());
+        for (member, &ordinal) in members.iter().enumerate() {
+            let mut parameter_slots = vec![None; functions[ordinal].parameters().len()];
+            for (slot, (_, _, keys)) in slots.iter().enumerate() {
+                for &(owner, index) in keys {
+                    if owner == member {
+                        parameter_slots[index] = Some(slot);
+                    }
+                }
+            }
+            all_slots.push(parameter_slots);
+        }
+        let orders = forwarded_order(program, members, &all_slots);
+        for ((&ordinal, parameter_slots), order) in members.iter().zip(all_slots).zip(orders) {
+            let ordinal = u32::try_from(ordinal).map_err(|_| BackendFailure::CounterOverflow)?;
+            self.members.insert(
+                ordinal,
+                Member {
+                    ordinal,
+                    group,
+                    parameter_slots,
+                    order,
+                },
+            );
+        }
+        Ok(())
+    }
+}
+
+/// Each member's parameters outside the record, by index, in the order its
+/// internal form declares them: first those that calls inside the group
+/// forward unchanged, by class in one group-wide order with classes every
+/// member has before partial classes, then the rest in source order.
+///
+/// A class joins a callee's parameter to the caller's own parameter that a
+/// call inside the group passes into it unchanged, as the slots join, but
+/// without requiring every call or every member to take part. A class that
+/// holds two parameters of one member gives neither a forwarded position.
+/// Within each group of full or partial classes, classes are ordered by
+/// their first member, then that member's parameter index. Full classes
+/// therefore occupy the same argument positions in every member; partial
+/// classes omit absent parameters without padding and need not align. An
+/// aligned forwarded value can stay in its argument register across the
+/// group: Snowghost's witness test,
+/// whose form was `(env, simple, id, context)`, copied id and context into
+/// step's positions `(env, first, last, id, context)` on every call for the
+/// sake of its rarely taken call of step.
+fn forwarded_order(
+    program: &IrProgram,
+    members: &[usize],
+    parameter_slots: &[Vec<Option<usize>>],
+) -> Vec<Vec<usize>> {
+    let functions = program.functions();
+    let position: HashMap<usize, usize> = members
+        .iter()
+        .enumerate()
+        .map(|(position, ordinal)| (*ordinal, position))
+        .collect();
+    let mut keys = Vec::new();
+    let mut key_of = HashMap::new();
+    for (member, slots) in parameter_slots.iter().enumerate() {
+        for (index, slot) in slots.iter().enumerate() {
+            if slot.is_none() {
+                key_of.insert((member, index), keys.len());
+                keys.push((member, index));
+            }
+        }
+    }
+    let mut parent: Vec<usize> = (0..keys.len()).collect();
+    let mut joined = vec![false; keys.len()];
+    for (member, &ordinal) in members.iter().enumerate() {
+        let caller = &functions[ordinal];
+        let origins = formal_origins(caller, None);
+        for (callee, arguments) in calls(caller) {
+            let Some(&callee_member) = position.get(&(callee as usize)) else {
+                continue;
+            };
+            for (index, argument) in arguments.iter().enumerate() {
+                let (Some(&key), Some(&source)) = (
+                    key_of.get(&(callee_member, index)),
+                    origins
+                        .get(argument)
+                        .and_then(|formal| key_of.get(&(member, *formal))),
+                ) else {
+                    continue;
+                };
+                if key != source {
+                    union(&mut parent, key, source);
+                    joined[key] = true;
+                    joined[source] = true;
+                }
+            }
+        }
+    }
+    let mut classes: BTreeMap<usize, Vec<(usize, usize)>> = BTreeMap::new();
+    for (key, &parameter) in keys.iter().enumerate() {
+        if joined[key] {
+            let root = find(&mut parent, key);
+            classes.entry(root).or_default().push(parameter);
+        }
+    }
+    let mut forwarded: Vec<Vec<(usize, usize)>> = classes
+        .into_values()
+        .filter(|class| {
+            let mut seen = HashSet::new();
+            class.iter().all(|(member, _)| seen.insert(*member))
+        })
+        .collect();
+    for class in &mut forwarded {
+        class.sort_unstable();
+    }
+    forwarded.sort_unstable_by_key(|class| {
+        (class.len() != members.len(), class.first().copied())
+    });
+    let mut orders = Vec::with_capacity(members.len());
+    for (member, slots) in parameter_slots.iter().enumerate() {
+        let mut order: Vec<usize> = forwarded
+            .iter()
+            .filter_map(|class| {
+                class
+                    .iter()
+                    .find(|(owner, _)| *owner == member)
+                    .map(|(_, index)| *index)
+            })
+            .collect();
+        for (index, slot) in slots.iter().enumerate() {
+            if slot.is_none() && !order.contains(&index) {
+                order.push(index);
+            }
+        }
+        orders.push(order);
+    }
+    orders
+}
+
+/// The calls of a group that close its cycles, as `(caller, callee)`
+/// function ordinals: the back edges of a depth-first walk of the group's
+/// calls, in call-site order, from its first member in program order that a
+/// function outside the group calls, or from its first member when none is.
+///
+/// Inlining one copy of a cycle into a member puts the whole chain's frame
+/// on every path of that member: Snowghost's witness test, which is leaf and
+/// frameless, inlined step and compound into its negation arm and then
+/// saved six callee-saved registers on every call, a cost the host's inline
+/// cost does not count. A cycle can never be inlined away, and keeping one
+/// call of it out of line changes no meaning. The walk starts where the
+/// chain is entered, so the edges it keeps inlinable are the ones each
+/// entry runs forward through, compound into test, and the cut falls on the
+/// call that returns to an activation already on the walk.
+fn back_edges(program: &IrProgram, members: &[usize]) -> Vec<(usize, usize)> {
+    let functions = program.functions();
+    let inside: HashSet<usize> = members.iter().copied().collect();
+    let entered = members.iter().copied().find(|member| {
+        functions.iter().enumerate().any(|(caller, function)| {
+            !inside.contains(&caller)
+                && calls(function).any(|(callee, _)| callee as usize == *member)
+        })
+    });
+    let Some(start) = entered.or_else(|| members.first().copied()) else {
+        return Vec::new();
+    };
+    let successors = |member: usize| {
+        let mut next: Vec<usize> = Vec::new();
+        for (callee, _) in calls(&functions[member]) {
+            let callee = callee as usize;
+            if inside.contains(&callee) && !next.contains(&callee) {
+                next.push(callee);
+            }
+        }
+        next
+    };
+    let mut found = Vec::new();
+    let mut visited: HashSet<usize> = HashSet::new();
+    let mut on_walk: HashSet<usize> = HashSet::new();
+    let mut walk: Vec<(usize, Vec<usize>, usize)> = Vec::new();
+    visited.insert(start);
+    on_walk.insert(start);
+    walk.push((start, successors(start), 0));
+    while let Some((member, next, cursor)) = walk.last_mut() {
+        let member = *member;
+        let Some(&callee) = next.get(*cursor) else {
+            on_walk.remove(&member);
+            walk.pop();
+            continue;
+        };
+        *cursor += 1;
+        if on_walk.contains(&callee) {
+            found.push((member, callee));
+        } else if visited.insert(callee) {
+            on_walk.insert(callee);
+            walk.push((callee, successors(callee), 0));
+        }
+    }
+    found
+}
+
+/// Whether the function may belong to a group (see the module comment).
+fn takes_part(
+    function: &IrFunction,
+    ordinal: usize,
+    frontiers: &RecursiveFrontiers,
+) -> Result<bool, BackendFailure> {
+    if function.blocks().is_empty()
+        || function.waits()
+        || function.synthesis().is_some()
+        || function.source_signature().is_none()
+        || !function.overlaps().is_empty()
+        || frontiers.grain(ordinal).is_some()
+    {
+        return Ok(false);
+    }
+    let reachable = dispatch::reachable(function)?;
+    Ok(dispatch::find(function, &reachable).0.is_none())
+}
+
+/// Whether the `index`th parameter can be a slot: a read-only `&T` or
+/// `&[T]` borrow by its checked source mode.
+fn is_candidate(function: &IrFunction, index: usize, value: IrValueId, ty: IrType) -> bool {
+    let Some(kind) = SlotKind::of(ty) else {
+        return false;
+    };
+    function
+        .source_signature()
+        .and_then(|signature| signature.parameters().get(index).copied())
+        == Some(kind.mode())
+        && function.readonly_reference_parameters.contains(&value)
+}
+
+/// Every ordinary call the function makes, with its arguments.
+fn calls(function: &IrFunction) -> impl Iterator<Item = (u32, &[IrValueId])> {
+    function
+        .blocks()
+        .iter()
+        .flat_map(IrBlock::instructions)
+        .filter_map(|instruction| match instruction {
+            IrInstruction::Define {
+                operation:
+                    IrOperation::Call {
+                        function,
+                        arguments,
+                    },
+                ..
+            } => Some((*function, arguments.as_slice())),
+            _ => None,
+        })
+}
+
+/// The values that are one of the function's own parameters unchanged, and
+/// that parameter's index: the parameters themselves, and each block
+/// parameter every jump into whose block passes the same one of them.
+///
+/// A block parameter starts unknown and settles at a parameter index or at
+/// nonalias. After the first closure, unresolved cycles become nonaliases and
+/// propagate again: an unresolved incoming value must not be ignored just
+/// because another edge already supplied a formal. A rooted loop still
+/// settles at its formal, including mutually dependent block parameters.
+/// Emission supplies only reachable edges; group planning conservatively
+/// considers every jump, including calls in blocks it does not emit.
+fn formal_origins(
+    function: &IrFunction,
+    incoming: Option<&[Vec<Incoming>]>,
+) -> HashMap<IrValueId, usize> {
+    let formals: HashMap<IrValueId, usize> = function
+        .parameters()
+        .iter()
+        .enumerate()
+        .map(|(index, (value, _))| (*value, index))
+        .collect();
+    let block_parameters: HashSet<IrValueId> = function
+        .blocks()
+        .iter()
+        .flat_map(|block| block.parameters().iter().map(|(value, _)| *value))
+        .collect();
+    let edges: Vec<_> = match incoming {
+        Some(incoming) => incoming
+            .iter()
+            .enumerate()
+            .flat_map(|(target, edges)| {
+                edges
+                    .iter()
+                    .map(move |edge| (target, edge.arguments.as_slice()))
+            })
+            .collect(),
+        None => function
+            .blocks()
+            .iter()
+            .filter_map(|block| match block.terminator() {
+                IrTerminator::Jump { target, arguments, .. } => {
+                    Some((target.index(), arguments.as_slice()))
+                }
+                _ => None,
+            })
+            .collect(),
+    };
+    let mut state: HashMap<IrValueId, Option<usize>> = HashMap::new();
+    let mut closed_unknowns = false;
+    loop {
+        let mut changed = false;
+        for &(target, arguments) in &edges {
+            let Some(target) = function.blocks().get(target) else {
+                continue;
+            };
+            for (index, (parameter, ty)) in target.parameters().iter().enumerate() {
+                let incoming = match arguments.get(index) {
+                    Some(argument) if function.value_type(*argument) != Some(*ty) => None,
+                    Some(argument) if formals.contains_key(argument) => {
+                        formals.get(argument).copied()
+                    }
+                    Some(argument) if block_parameters.contains(argument) => {
+                        match state.get(argument) {
+                            Some(known) => *known,
+                            None => continue,
+                        }
+                    }
+                    _ => None,
+                };
+                let next = match state.get(parameter) {
+                    None => incoming,
+                    Some(current) if *current == incoming => incoming,
+                    Some(_) => None,
+                };
+                if state.insert(*parameter, next) != Some(next) {
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            if closed_unknowns {
+                break;
+            }
+            // No external root can reach these values. Mark them together
+            // before propagating, so hash iteration order cannot select an
+            // origin for a downstream join.
+            for parameter in &block_parameters {
+                state.entry(*parameter).or_insert(None);
+            }
+            closed_unknowns = true;
+        }
+    }
+    let mut origins = formals;
+    for (value, formal) in state {
+        if let Some(formal) = formal {
+            origins.insert(value, formal);
+        }
+    }
+    origins
+}
+
+/// The integer-class words an ordinary call to the function passes: the
+/// destination pointer, one pointer per indirect parameter, a range's two
+/// words and a run's three, nothing for a floating or unit value, which
+/// travel elsewhere or not at all, and the eight-byte words of any other
+/// value's storage.
+fn argument_words(
+    program: &IrProgram,
+    target: TargetLayout,
+    function: &IrFunction,
+) -> Result<u64, BackendFailure> {
+    let abi = FunctionAbi::build(program, function)?;
+    let mut words = u64::from(abi.result().uses_destination());
+    for parameter in abi.parameters() {
+        words += if parameter.is_indirect() {
+            1
+        } else {
+            match parameter.ty() {
+                IrType::Unit | IrType::Float { .. } => 0,
+                IrType::Address(_) => 1,
+                IrType::Range { .. } => 2,
+                IrType::Run { .. } => 3,
+                ty => crate::target::validate_static_storage(
+                    target,
+                    program,
+                    &crate::target::TargetStorageType::source(ty),
+                )
+                .map_or(1, |layout| layout.size().div_ceil(8).max(1)),
+            }
+        };
+    }
+    Ok(words)
+}
+
+fn find(parent: &mut [usize], key: usize) -> usize {
+    let mut root = key;
+    while parent[root] != root {
+        root = parent[root];
+    }
+    let mut node = key;
+    while parent[node] != root {
+        let next = parent[node];
+        parent[node] = root;
+        node = next;
+    }
+    root
+}
+
+fn union(parent: &mut [usize], left: usize, right: usize) {
+    let left = find(parent, left);
+    let right = find(parent, right);
+    if left != right {
+        parent[left.max(right)] = left.min(right);
+    }
+}
+
+impl FunctionEmitter<'_, '_> {
+    /// The internal entry a call to the `function`th function names where it
+    /// would otherwise name `symbol`, or `None` for the public symbol.
+    ///
+    /// This is the one place a call site chooses an internal entry. A call
+    /// from a member of a recursive group to a member of the same group, in
+    /// the ordinary world, names the callee's environment form and passes
+    /// the caller's own record.
+    pub(super) fn internal_call(&self, function: u32, symbol: &str) -> Option<InternalCall> {
+        let own = self.environment.as_ref()?;
+        let callee = self.environments.member(function)?;
+        let target = self.program.functions().get(function as usize)?;
+        if callee.group != own.group || symbol != source_symbol(target.name()) {
+            return None;
+        }
+        Some(InternalCall {
+            symbol: internal_entry_symbol(EntryForm::Environment, target.name()),
+            convention: "",
+            order: callee.order.clone(),
+            attributes: if self
+                .environments
+                .back_edges
+                .contains(&(own.ordinal, function))
+            {
+                " noinline"
+            } else {
+                ""
+            },
+        })
+    }
+
+    fn own_environment(&self) -> Result<&Member, BackendFailure> {
+        self.environment.as_ref().ok_or(BackendFailure::InvalidIr)
+    }
+
+    /// The record pointer's declaration: the record lives in the outside
+    /// caller's frame for the whole call, nothing writes it after the entry
+    /// filled it, and no member keeps the pointer past its return.
+    fn environment_parameter(&self) -> Result<Parameter, BackendFailure> {
+        let (_, _, fields) = self.environments.record(self.own_environment()?.group)?;
+        Ok(Parameter::named(
+            format!(
+                "ptr noalias readonly nonnull {} align 8 dereferenceable({})",
+                crate::toolchain::facts().no_capture_attribute,
+                fields * 8
+            ),
+            ENVIRONMENT,
+        ))
+    }
+
+    /// The parameters of this member's internal form: the record pointer,
+    /// then every parameter outside the record with its facts, without the
+    /// destination pointer.
+    pub(super) fn internal_parameters(
+        &self,
+        abi: &FunctionAbi,
+    ) -> Result<(Vec<Parameter>, References), BackendFailure> {
+        let own = self.own_environment()?;
+        let mut parameters = vec![self.environment_parameter()?];
+        let mut references = References::default();
+        for &index in &own.order {
+            let (Some((value, _)), Some(parameter)) = (
+                self.function.parameters().get(index),
+                abi.parameters().get(index),
+            ) else {
+                return Err(BackendFailure::InvalidIr);
+            };
+            let facts = self.reference_parameter_facts(index, parameter.ty())?;
+            parameters.extend(incoming_parameters(
+                self.program,
+                *value,
+                *parameter,
+                &facts,
+                &mut references,
+            )?);
+        }
+        Ok((parameters, references))
+    }
+
+    /// The arguments a forward to this member's internal form passes, in the
+    /// forwarding function's own parameters and record.
+    pub(super) fn internal_call_arguments(
+        &self,
+        abi: &FunctionAbi,
+    ) -> Result<String, BackendFailure> {
+        let own = self.own_environment()?;
+        let mut arguments = Vec::new();
+        if abi.result().uses_destination() {
+            arguments.push(format!("ptr {RESULT_POINTER}"));
+        }
+        arguments.push(format!("ptr {ENVIRONMENT}"));
+        for &index in &own.order {
+            let (Some((value, _)), Some(parameter)) = (
+                self.function.parameters().get(index),
+                abi.parameters().get(index),
+            ) else {
+                return Err(BackendFailure::InvalidIr);
+            };
+            arguments.push(incoming_parameter(self.program, *value, *parameter, "")?);
+        }
+        Ok(arguments.join(", "))
+    }
+
+    /// The fields of each slot parameter of this member, with the record's
+    /// type: `(parameter value, kind, first field)`.
+    fn slot_parameters(&self) -> Result<(String, Vec<SlotParameter>), BackendFailure> {
+        let own = self.own_environment()?;
+        let (record, starts, _) = self.environments.record(own.group)?;
+        let kinds = self.environments.slots(own.group)?;
+        let mut found = Vec::new();
+        for ((value, _), slot) in self.function.parameters().iter().zip(&own.parameter_slots) {
+            if let Some(slot) = slot {
+                let kind = *kinds.get(*slot).ok_or(BackendFailure::InvalidIr)?;
+                let start = *starts.get(*slot).ok_or(BackendFailure::InvalidIr)?;
+                found.push((*value, kind, start));
+            }
+        }
+        Ok((record, found))
+    }
+
+    pub(super) fn is_environment_parameter(&self, value: IrValueId) -> bool {
+        self.environment.as_ref().is_some_and(|member| {
+            self.function
+                .parameters()
+                .iter()
+                .zip(&member.parameter_slots)
+                .any(|((parameter, _), slot)| *parameter == value && slot.is_some())
+        })
+    }
+
+    pub(super) fn environment_origin(&self, value: IrValueId) -> Option<IrValueId> {
+        self.environment_aliases.get(&value).copied()
+    }
+
+    /// Whether naming or placing `value` reaches a record slot, the only
+    /// operands that bind in the block that reads them. Everything else, and
+    /// every function without a record, resolves eagerly where it always has,
+    /// so such functions emit the IR they emitted before the record existed.
+    pub(super) fn defers_record_slot(&self, value: IrValueId) -> bool {
+        if self.environment_aliases.is_empty() {
+            return false;
+        }
+        if self.environment_origin(value).is_some() {
+            return true;
+        }
+        self.storage
+            .slot(value)
+            .and_then(|slot| self.storage.read_through(slot))
+            .is_some_and(|address| self.environment_origin(address).is_some())
+    }
+
+    /// Register each packed parameter's block-local definition. The printing
+    /// model binds local names to the actual LLVM block at each use, including
+    /// incoming operands whose load belongs to the predecessor's exit block.
+    ///
+    /// The loaded pointer carries what the parameter's attributes would
+    /// have said and a load can say: it is nonnull, and a reference is
+    /// dereferenceable for its referent's extent. `noalias` has no load
+    /// form, which is why only read-only borrows enter the record.
+    pub(super) fn register_environment_operands(&mut self) -> Result<(), BackendFailure> {
+        if self.environment.is_none() {
+            return Ok(());
+        }
+        let (record, slots) = self.slot_parameters()?;
+        let origins = formal_origins(self.function, Some(&self.incoming));
+        for (value, formal) in origins {
+            let parameter = self.function.parameters()[formal].0;
+            if self.is_environment_parameter(parameter) {
+                self.environment_aliases.insert(value, parameter);
+            }
+        }
+        for (value, kind, start) in slots {
+            let mut definition = Vec::new();
+            for (field, (operand, ty)) in kind.operands(value).iter().zip(kind.fields()).enumerate()
+            {
+                let address = format!("%wf.env.v{}.{field}", value.ordinal());
+                definition.extend([
+                    DeferredPart::Text("  ".to_owned()),
+                    DeferredPart::Local(address.clone()),
+                    DeferredPart::Text(format!(
+                        " = getelementptr inbounds {record}, ptr {ENVIRONMENT}, i32 0, i32 {}\n",
+                        start + field
+                    )),
+                ]);
+                let mut facts = String::new();
+                if field == 0 {
+                    facts.push_str(", !nonnull !{}");
+                    if let Some(IrType::Address(referent)) = self.value_type(value)
+                        && let Ok(layout) = crate::target::validate_static_storage(
+                            self.target,
+                            self.program,
+                            &crate::target::TargetStorageType::source(referent.ty()),
+                        )
+                        && layout.size() > 0
+                    {
+                        write!(facts, ", !dereferenceable !{{i64 {}}}", layout.size())?;
+                    }
+                }
+                definition.extend([
+                    DeferredPart::Text("  ".to_owned()),
+                    DeferredPart::Local(operand.clone()),
+                    DeferredPart::Text(format!(" = load {ty}, ptr ")),
+                    DeferredPart::Local(address),
+                    DeferredPart::Text(format!(", align 8, !noundef !{{}}{facts}\n")),
+                ]);
+            }
+            // A packed range/run's ordinary aggregate value is reassembled
+            // beside its loads, rather than eagerly in the function entry.
+            if !matches!(kind, SlotKind::Reference) {
+                let ty = self.value_type(value).ok_or(BackendFailure::InvalidIr)?;
+                let pair = self.output.type_name(self.program, ty)?;
+                let name = value_name(value);
+                let fields = kind.operands(value);
+                for (field, operand) in fields.iter().enumerate() {
+                    let result = if field + 1 == fields.len() {
+                        name.clone()
+                    } else {
+                        format!("{name}.field{field}")
+                    };
+                    definition.extend([
+                        DeferredPart::Text("  ".to_owned()),
+                        DeferredPart::Local(result),
+                        DeferredPart::Text(format!(" = insertvalue {pair} ")),
+                    ]);
+                    if field == 0 {
+                        definition.push(DeferredPart::Text("poison".to_owned()));
+                    } else {
+                        definition.push(DeferredPart::Local(format!(
+                            "{name}.field{}",
+                            field - 1
+                        )));
+                    }
+                    definition.extend([
+                        DeferredPart::Text(format!(", {} ", kind.fields()[field])),
+                        DeferredPart::Local(operand.clone()),
+                        DeferredPart::Text(format!(", {field}\n")),
+                    ]);
+                }
+            }
+            self.output
+                .register_block_operand(value_name(value), definition);
+        }
+        Ok(())
+    }
+
+    /// This member's public symbol as the group's entry from outside: the
+    /// ordinary signature `public` with its facts, which stores the slot
+    /// parameters into a record in its own frame and calls the internal
+    /// form.
+    pub(super) fn environment_entry(
+        &self,
+        symbol: &str,
+        public: &FunctionAbi,
+    ) -> Result<Module, BackendFailure> {
+        let (mut parameters, mut references) = self.signature_parameters(public)?;
+        let destination = public.result().uses_destination();
+        let result = if destination {
+            "void".to_owned()
+        } else {
+            llvm_type_with_references(self.program, public.result().ty(), &mut references.types)?
+        };
+        if destination {
+            parameters.insert(0, Parameter::named("ptr", RESULT_POINTER));
+        }
+        let (record, slots) = self.slot_parameters()?;
+        let internal = internal_entry_symbol(EntryForm::Environment, self.function.name());
+        let arguments = self.internal_call_arguments(public)?;
+        let mut output = FunctionBody::default();
+        output.open_block("entry".to_owned());
+        writeln!(output, "  {ENVIRONMENT} = alloca {record}, align 8")?;
+        for (value, kind, start) in slots {
+            for (field, (operand, ty)) in kind.operands(value).iter().zip(kind.fields()).enumerate()
+            {
+                let address = format!("%wf.env.v{}.{field}", value.ordinal());
+                writeln!(
+                    output,
+                    "  {address} = getelementptr inbounds {record}, ptr {ENVIRONMENT}, i32 0, i32 {}\n  \
+                     store {ty} {operand}, ptr {address}, align 8",
+                    start + field
+                )?;
+            }
+        }
+        output.symbol(internal.clone());
+        if destination {
+            write!(output, "  call void @{internal}({arguments})\n  ret void\n")?;
+        } else {
+            write!(
+                output,
+                "  %wf.entry = call {result} @{internal}({arguments})\n  ret {result} %wf.entry\n"
+            )?;
+        }
+        let mut signature = Signature::new(symbol, result, parameters);
+        signature.references = references;
+        let mut module = Module::default();
+        module.define(signature.define(output, "")?);
+        module.text("\n");
+        Ok(module)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const U64: IrType = IrType::Integer {
+        width: 64,
+        signed: false,
+    };
+
+    fn jump(parameters: &[u32], target: u32, arguments: &[u32]) -> IrBlock {
+        IrBlock {
+            parameters: parameters
+                .iter()
+                .map(|value| (IrValueId(*value), U64))
+                .collect(),
+            instructions: Vec::new(),
+            terminator: IrTerminator::Jump {
+                target: IrBlockId(target),
+                arguments: arguments.iter().copied().map(IrValueId).collect(),
+                drops: Vec::new(),
+            },
+        }
+    }
+
+    fn function(blocks: Vec<IrBlock>) -> IrFunction {
+        IrFunction {
+            name: "origins".to_owned(),
+            parameters: vec![(IrValueId(0), U64), (IrValueId(1), U64)],
+            readonly_reference_parameters: Vec::new(),
+            whole_read_reference_parameters: Vec::new(),
+            whole_write_reference_parameters: Vec::new(),
+            box_keeping_reference_parameters: Vec::new(),
+            source_signature: None,
+            source_calls: Vec::new(),
+            lock_ledger: Vec::new(),
+            result: U64,
+            values: vec![U64; 17],
+            blocks,
+            counted_ranges: Vec::new(),
+            overlaps: Vec::new(),
+            synthesis: None,
+            waits: false,
+        }
+    }
+
+    #[test]
+    fn formal_origins_close_rooted_cycles_and_reject_mixed_or_unresolved_roots() {
+        let mut rooted = function(vec![
+            jump(&[], 1, &[0, 1]),
+            jump(&[2, 3], 2, &[2, 3]),
+            jump(&[4, 5], 3, &[4, 5]),
+            jump(&[6, 7], 2, &[6, 7]),
+        ]);
+        let origins = formal_origins(&rooted, None);
+        for value in [2, 4, 6] {
+            assert_eq!(origins.get(&IrValueId(value)), Some(&0));
+        }
+        for value in [3, 5, 7] {
+            assert_eq!(origins.get(&IrValueId(value)), Some(&1));
+        }
+        // An additional edge mixes roots throughout the first cycle; the
+        // independent second cycle still carries exactly the second formal.
+        rooted.blocks.push(jump(&[], 2, &[1, 1]));
+        let origins = formal_origins(&rooted, None);
+        for value in [4, 6] {
+            assert!(!origins.contains_key(&IrValueId(value)));
+        }
+        for value in [3, 5, 7] {
+            assert_eq!(origins.get(&IrValueId(value)), Some(&1));
+        }
+        // The emitter's reachable-edge table excludes that extra dead edge.
+        let incoming = vec![
+            Vec::new(),
+            vec![Incoming {
+                predecessor: IrBlockId(0),
+                arguments: vec![IrValueId(0), IrValueId(1)],
+            }],
+            vec![
+                Incoming {
+                    predecessor: IrBlockId(1),
+                    arguments: vec![IrValueId(2), IrValueId(3)],
+                },
+                Incoming {
+                    predecessor: IrBlockId(3),
+                    arguments: vec![IrValueId(6), IrValueId(7)],
+                },
+            ],
+            vec![Incoming {
+                predecessor: IrBlockId(2),
+                arguments: vec![IrValueId(4), IrValueId(5)],
+            }],
+            Vec::new(),
+        ];
+        let origins = formal_origins(&rooted, Some(&incoming));
+        assert_eq!(origins.get(&IrValueId(6)), Some(&0));
+
+        // These origin constraints include an unreachable rootless cycle.
+        // Its unresolved value contaminates a join that also receives a
+        // formal. The old optimistic closure incorrectly retained formal 0.
+        let mut unresolved = function(vec![
+            jump(&[], 1, &[0]),
+            jump(&[2], 3, &[2]),
+            jump(&[3], 2, &[3]),
+            jump(&[4], 3, &[4]),
+            jump(&[], 1, &[3]),
+        ]);
+        let origins = formal_origins(&unresolved, None);
+        for value in [2, 3, 4] {
+            assert!(!origins.contains_key(&IrValueId(value)));
+        }
+        // Missing and mistyped incoming operands cannot establish aliases.
+        unresolved.blocks = vec![jump(&[], 1, &[0]), jump(&[2], 1, &[])];
+        assert!(!formal_origins(&unresolved, None).contains_key(&IrValueId(2)));
+        unresolved.blocks[1].terminator = IrTerminator::Unreachable;
+        unresolved.blocks[1].parameters[0].1 = IrType::Bool;
+        assert!(!formal_origins(&unresolved, None).contains_key(&IrValueId(2)));
+        // A parameter without any incoming edge has no formal origin.
+        unresolved.blocks[0].terminator = IrTerminator::Unreachable;
+        assert!(!formal_origins(&unresolved, None).contains_key(&IrValueId(2)));
+    }
+
+    #[test]
+    fn uniform_aliases_share_a_recipe_while_mixed_slots_keep_edge_loads() {
+        let referent = IrAddressed::Integer {
+            width: 64,
+            signed: false,
+        };
+        let address = IrType::Address(referent);
+        let mut function = function(vec![
+            IrBlock {
+                parameters: Vec::new(),
+                instructions: Vec::new(),
+                terminator: IrTerminator::Match {
+                    scrutinee: IrValueId(2),
+                    enum_type: IrEnumType::Bool,
+                    targets: vec![
+                        crate::IrMatchTarget {
+                            tag: 0,
+                            block: IrBlockId(1),
+                        },
+                        crate::IrMatchTarget {
+                            tag: 1,
+                            block: IrBlockId(2),
+                        },
+                    ],
+                },
+            },
+            jump(&[], 4, &[0]),
+            jump(&[], 3, &[0, 1]),
+            IrBlock {
+                parameters: vec![(IrValueId(9), address), (IrValueId(10), address)],
+                instructions: [9, 10, 0]
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, value)| IrInstruction::Define {
+                        result: IrValueId(11 + u32::try_from(index).unwrap()),
+                        ty: U64,
+                        operation: IrOperation::Load {
+                            address: IrValueId(value),
+                            referent,
+                        },
+                    })
+                    .collect(),
+                terminator: IrTerminator::Return {
+                    value: IrValueId(12),
+                    drops: Vec::new(),
+                },
+            },
+            jump(&[16], 3, &[16, 16]),
+        ]);
+        for value in [0, 1, 9, 10, 16] {
+            function.values[value] = address;
+        }
+        function.values[2] = IrType::Bool;
+        function.blocks[4].parameters[0].1 = address;
+        function.parameters = (0..9)
+            .map(|value| (IrValueId(value), function.values[value as usize]))
+            .collect();
+        function.readonly_reference_parameters = vec![IrValueId(0), IrValueId(1)];
+        function.source_signature = Some(crate::IrSourceSignature {
+            parameters: (0..9)
+                .map(|index| {
+                    if index < 2 {
+                        crate::IrSourceMode::Reference
+                    } else {
+                        crate::IrSourceMode::Own
+                    }
+                })
+                .collect(),
+            result: crate::IrSourceMode::Own,
+        });
+        // The recursive edge forwards the original formals. The unrelated
+        // mixed-slot join above must not disable the environment group.
+        function.blocks[3].instructions.push(IrInstruction::Define {
+            result: IrValueId(14),
+            ty: U64,
+            operation: IrOperation::Call {
+                function: 0,
+                arguments: (0..9).map(IrValueId).collect(),
+            },
+        });
+        let program = IrProgram {
+            nominal_ceilings: Vec::new(),
+            nominals: Vec::new(),
+            elements: Vec::new(),
+            constants: Vec::new(),
+            functions: vec![function],
+            actualization: Vec::new(),
+            sequential_compute_refusal: false,
+            recursion_budget: None,
+            loop_candidate_constructions: 0,
+        };
+        let llvm = crate::emit_llvm(&program)
+            .expect("valid alias graph emits")
+            .into_string();
+        let body = llvm
+            .split("define internal i64 @wf__env_origins(")
+            .nth(1)
+            .expect("environment member")
+            .split("\n}\n")
+            .next()
+            .unwrap();
+        assert!(!body.contains("%v9 = phi"), "{body}");
+        assert!(!body.contains("%v16 = phi"), "{body}");
+        assert!(
+            body.contains("%v10 = phi ptr [ %v1.bb2, %bb2 ], [ %v0.bb4, %bb4 ]"),
+            "{body}"
+        );
+        assert_eq!(
+            body.matches("load ptr, ptr %wf.env.v0.0.bb3,").count(),
+            1,
+            "{body}"
+        );
+        assert!(body.contains("%v11 = load i64, ptr %v0.bb3"), "{body}");
+        assert!(body.contains("%v13 = load i64, ptr %v0.bb3"), "{body}");
+        assert!(body.contains("%v12 = load i64, ptr %v10"), "{body}");
+        assert!(!body.contains("%wf.env.v0.0.bb1"), "{body}");
+        assert_eq!(body.matches("load ptr, ptr %wf.env.v").count(), 3, "{body}");
+    }
+}

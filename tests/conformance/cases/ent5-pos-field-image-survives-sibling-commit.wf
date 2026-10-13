@@ -1,0 +1,37 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Counter {
+  doc "A count and a tag.";
+  count: u64;
+  tag: u64;
+}
+
+fn advance(counter: &Counter, delta: u64) -> result: unit writes(counter) contract {
+  requires counter^.count + delta <= 800_u64;
+} {
+  doc "Writes the sibling tag before reading the count. A write to a sibling field kills no fact over the count, so the count keeps its entry image and the requirement bounds the sum.";
+  set counter^.tag = 5_u64;
+  let count = counter^.count;
+  let total = count + delta;
+  set counter^.count = total;
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "Advances 5 by 7 and checks the count and the tag.";
+  let counter = Counter(count: 5_u64, tag: 0_u64);
+  let kept = counter.count;
+  advance(counter: &counter, delta: 7_u64);
+  let count = counter.count;
+  if count == 12_u64 {
+  } else {
+    return exit_status(code: 2_u8);
+  }
+  let tag = counter.tag;
+  if tag == 5_u64 {
+  } else {
+    return exit_status(code: 3_u8);
+  }
+  return exit_status(code: 0_u8);
+}

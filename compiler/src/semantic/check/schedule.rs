@@ -9,8 +9,9 @@ use super::{CheckStop, CheckedFunctionInventory, Checker};
 use crate::DeclarationId;
 use crate::semantic::SemanticCompilerFailure;
 use crate::semantic::entailment::{
-    EntailmentCallee, EntailmentContext, PostconditionSchedule, VerifiedPostconditionSummary,
-    analyze_function, analyze_function_candidate, postcondition_schedule,
+    ComponentPostconditions, EntailmentCallee, EntailmentContext, PostconditionSchedule,
+    VerifiedPostconditionSummary, analyze_function, analyze_function_candidate,
+    postcondition_schedule,
 };
 
 impl Checker<'_, '_> {
@@ -123,6 +124,7 @@ impl Checker<'_, '_> {
                         contract_queries: &contract_queries,
                         verified_postconditions: &[],
                         verified_postcondition_proofs: &[],
+                        component_postconditions: &[],
                         binding_names: &checked.binding_names,
                     };
                     if optimistic_batch {
@@ -145,7 +147,7 @@ impl Checker<'_, '_> {
             // are in earlier components, so the components of one level, all
             // of whose callees are in lower levels, are analyzed concurrently;
             // each level then publishes in component order. Functions of one
-            // component read none of each other's summaries either.
+            // component read immutable induction hypotheses for each other.
             let mut levels = vec![0_usize; schedule.components.len()];
             for position in 0..schedule.components.len() {
                 levels[position] = schedule.components[position]
@@ -203,6 +205,69 @@ impl Checker<'_, '_> {
                             .collect::<Vec<_>>()
                     })
                     .collect::<Vec<_>>();
+                // [DIAG-2] a call to a member of the caller's own component
+                // receives all of that member's postconditions as induction
+                // hypotheses, named by the summary identities it publishes
+                // once every selected exit of every member has proved them.
+                let mut at_level = vec![false; schedule.components.len()];
+                for position in positions {
+                    at_level[*position] = true;
+                }
+                let component_postconditions = functions
+                    .iter()
+                    .map(|checked| {
+                        let index = checked.function.id.0 as usize;
+                        let component = schedule
+                            .function_components
+                            .get(index)
+                            .copied()
+                            .unwrap_or(u32::MAX);
+                        let verifying = selected(index)
+                            && at_level.get(component as usize).copied().unwrap_or(false);
+                        let hypotheses = checked
+                            .function
+                            .postconditions
+                            .iter()
+                            .enumerate()
+                            .filter(|_| verifying)
+                            .filter_map(|(ordinal, postcondition)| {
+                                Some((
+                                    postcondition,
+                                    VerifiedPostconditionSummary {
+                                        function: checked.function.id,
+                                        block: postcondition.selector.block.clone(),
+                                        relation_ordinal: u32::try_from(ordinal).ok()?,
+                                        component,
+                                    },
+                                ))
+                            })
+                            .collect();
+                        ComponentPostconditions {
+                            component,
+                            hypotheses,
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                // A receipt's key names every postcondition its analysis may
+                // read, the induction hypotheses included [MOD-8].
+                let receipt_published = receipts.map(|_| {
+                    verified_postconditions
+                        .iter()
+                        .zip(&component_postconditions)
+                        .map(|(verified, component)| {
+                            verified
+                                .iter()
+                                .copied()
+                                .chain(
+                                    component
+                                        .hypotheses
+                                        .iter()
+                                        .map(|(postcondition, _)| *postcondition),
+                                )
+                                .collect::<Vec<_>>()
+                        })
+                        .collect::<Vec<_>>()
+                });
                 let mut settled = Vec::new();
                 let mut fresh = Vec::new();
                 // Instances of a renaming class first met at this level: the
@@ -240,7 +305,7 @@ impl Checker<'_, '_> {
                                 functions,
                                 function_index,
                                 callees,
-                                &verified_postconditions,
+                                receipt_published.as_ref().unwrap_or(&verified_postconditions),
                                 &const_parameter_types,
                             ),
                             _ => None,
@@ -291,11 +356,14 @@ impl Checker<'_, '_> {
                             contract_queries: &contract_queries,
                             verified_postconditions: &verified_postconditions,
                             verified_postcondition_proofs: &verified_postcondition_proofs,
+                            component_postconditions: &component_postconditions,
                             binding_names: &checked.binding_names,
                         };
                         analyze_function_candidate(&checked.function, &context)
                     })
                 };
+                drop(receipt_published);
+                drop(component_postconditions);
                 drop(verified_postconditions);
                 drop(verified_postcondition_proofs);
                 for (function_index, entailment, renamed) in settled {
@@ -368,9 +436,10 @@ impl Checker<'_, '_> {
     /// publish a postcondition summary an analyzed body reads, by the same
     /// call graph the postcondition schedule is built from.
     ///
-    /// A component publishes summaries only for its functions' postconditions
-    /// [FN-9], so a callee component without one contributes nothing to its
-    /// callers and is left out with everything only it reaches. Components
+    /// A component publishes entailment summaries only for its functions'
+    /// ordinary postconditions [FN-9], so a callee component without one
+    /// contributes nothing to its callers' entailment analyses and is left out
+    /// with everything only it reaches. Components
     /// are taken whole: the schedule analyzes every member of a component it
     /// selects, and a member's own callees decide whether its component
     /// publishes, so each member's summary-publishing callees are followed.
@@ -390,6 +459,8 @@ impl Checker<'_, '_> {
             }
             return Ok(analyzed);
         }
+        // This is entailment-analysis reachability: range clauses are read
+        // directly by the separate range walk, not through these summaries.
         let publishes = schedule
             .components
             .iter()

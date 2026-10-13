@@ -246,6 +246,15 @@ wf_file_result wf_file_execute_direct(wf_file_request *request);
  * for an engine that can wait on it. */
 int wf_file_transfer_now(const wf_file_request *request, wf_file_result *result);
 
+/* The local endpoint of one connected socket, in the platform leaf
+ * (`local_address` [PRE-2]).  The host answers the query at once, so it is
+ * made on the calling thread with no request kind or record and never reaches
+ * a queue or a ring.  Answers 0 with `address` written in the portable form an
+ * emitted `SocketAddress` value carries (`socket_address.h`,
+ * `wf_socket_address_from_native`), or the host's own nonzero refusal code
+ * with `address` left all zero. */
+int wf_file_socket_local_address(int descriptor, wf_socket_address *address);
+
 /* One descriptor a waiting context needs ready before it retries a socket
  * operation without waiting [WAIT-2].  With no kernel completion ring, a
  * context whose receive, send or accept would wait is parked on this instead
@@ -276,7 +285,7 @@ int wf_file_readiness_supported(void);
  * it before it makes any host call. */
 int wf_file_request_valid(const wf_file_request *request);
 
-/* Whether this request's kind waits on a peer.
+/* Whether this request's kind waits on a peer or an owned snapshot child.
  *
  * An accept waits for a connection nobody in this program makes, a receive for
  * bytes the far side has not sent, a connect for the far side to answer, and a
@@ -285,6 +294,9 @@ int wf_file_request_valid(const wf_file_request *request);
  * and no measurement is needed to know it is there: the kind is the whole
  * condition.  A listen and a shutdown act on this program's own socket and
  * answer at once, so they are not peer-bound.
+ * Snapshot completion drains and reaps a separately running child; it shares
+ * this classification so a child waiting for output capacity cannot block a
+ * scheduler thread or enter the short host-call timing average.
  *
  * Three rules read it: growth adds a helper for a peer-bound submission
  * whatever the measured verdict says, a scheduler thread's progress pass

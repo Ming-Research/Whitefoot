@@ -1085,6 +1085,7 @@ impl<'unit> Checker<'_, 'unit> {
                 // prefix names storage the move has carried away, and
                 // [REF-2] says a move never re-roots an existing reference.
                 if !copy && !read_out {
+                    self.record_held_write(use_node, &ResolvedPlace::fields(local.binding, fields.clone()));
                     self.types.invalidate_references(
                         bindings,
                         &ResolvedPlace::fields(local.binding, fields.clone()),
@@ -1768,6 +1769,16 @@ impl<'unit> Checker<'_, 'unit> {
                         variant: u32::from(id == crate::BuiltinPreludeId::DIV_OVERFLOW),
                     }
                 }
+                crate::BuiltinPreludeId::OPEN
+                | crate::BuiltinPreludeId::WRITTEN
+                | crate::BuiltinPreludeId::KILLED => Constructor::Enum {
+                    nominal: self.types.prelude_nominal(super::PreludeType::DecisionState)?,
+                    variant: match id {
+                        crate::BuiltinPreludeId::OPEN => 0,
+                        crate::BuiltinPreludeId::WRITTEN => 1,
+                        _ => 2,
+                    },
+                },
                 crate::BuiltinPreludeId::NEXT | crate::BuiltinPreludeId::NEEDS => Constructor::Enum {
                     nominal: self.types.prelude_nominal(super::PreludeType::ScanStep)?,
                     variant: u32::from(id == crate::BuiltinPreludeId::NEEDS),

@@ -4,8 +4,8 @@ alias exit_status = std::process::exit_status;
 const maximum: u64 = 18446744073709551615_u64;
 
 fn main() -> status: ExitStatus pure {
-  let held = maximum;
-  let offset = held - 18446744073709551573_u64;
+  let observed = maximum;
+  let offset = observed - 18446744073709551573_u64;
   let status_code = cvt::<u64, u8>(offset);
   return exit_status(code: status_code);
 }

@@ -14,7 +14,7 @@ fn main() -> status: ExitStatus pure {
   }
   let spare = run.cap - run.len;
   place_back(window: &run, value: 40_u8);
-  let held = run.len;
+  let observed = run.len;
   let at_zero = run[0_u64];
   if at_zero == 20_u8 {
   } else {
@@ -26,7 +26,7 @@ fn main() -> status: ExitStatus pure {
     return exit_status(code: 3_u8);
   }
   let tens = spare * 10_u64;
-  let combined = tens + held;
+  let combined = tens + observed;
   let code = cvt::<u64, u8>(combined);
   return exit_status(code: code);
 }

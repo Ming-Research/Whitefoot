@@ -1,0 +1,21 @@
+fn probe(marks: &[u64], cells: &Array<u64, 4>, x: u64) -> result: u64 reads(cells) contract {
+  requires forall small(k in 0_u64..marks^.len): marks^[k] < 8_u64;
+} {
+  let v = 0_u64;
+  if x < 10_u64 {
+    if x == 1_u64 {
+      set v = 1_u64;
+    } else if x == 2_u64 {
+      set v = 2_u64;
+    } else {
+      return 0_u64;
+    }
+  } else {
+    set v = 5_u64;
+  }
+  return cells^[v];
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

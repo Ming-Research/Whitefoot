@@ -178,7 +178,7 @@ void wf_paged_unexpected_release(void *p, uint64_t bytes) {
 #[test]
 fn paged_page_zero_move_preserves_filled_element_range_fact() {
     let source = br#"fn filled(values: &Paged<u64>) -> result: unit pure contract {
-  requires forall held(k in 0_u64..values^.len): values^[k] == 73_u64;
+  requires forall observed_state(k in 0_u64..values^.len): values^[k] == 73_u64;
 } {
   return unit;
 }

@@ -1,0 +1,5 @@
+fn sample(value: &u64) -> result: u64 reads(value) waits contract {
+  requires held(value);
+} {
+  return value^;
+}
