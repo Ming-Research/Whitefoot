@@ -1351,6 +1351,7 @@ static void local_offset_probe(wf_inputs *inputs) {
 #endif
 }
 
+#if !defined(_WIN32)
 /* c(n) of [PRE-2], restated for the probe. */
 static uint64_t probe_limit_credits(uint64_t soft) {
     uint64_t bounded = soft > (UINT64_C(1) << 20) ? (UINT64_C(1) << 20) : soft;
@@ -1364,6 +1365,7 @@ static void probe_limits_now(uint64_t *soft, uint64_t *hard) {
     *soft = now.rlim_cur == RLIM_INFINITY ? UINT64_MAX : (uint64_t)now.rlim_cur;
     *hard = now.rlim_max == RLIM_INFINITY ? UINT64_MAX : (uint64_t)now.rlim_max;
 }
+#endif
 
 /* [PRE-2] the open-files limit. On POSIX a reading equals getrlimit's; a
  * raise above the hard limit is the host's refusal, which Linux and macOS
