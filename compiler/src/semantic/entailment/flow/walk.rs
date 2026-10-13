@@ -212,7 +212,9 @@ impl Analyzer<'_, '_> {
                     KillEvent::Consume { .. } | KillEvent::EntryImageHolderConsume { .. } => {
                         FlowEventKind::PostconditionCallConsume
                     }
-                    KillEvent::Write { .. } | KillEvent::EntryImageHolderWrite { .. } => {
+                    KillEvent::Rebind { .. }
+                    | KillEvent::Write { .. }
+                    | KillEvent::EntryImageHolderWrite { .. } => {
                         FlowEventKind::PostconditionCallWrite
                     }
                 };

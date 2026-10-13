@@ -1621,14 +1621,15 @@ impl Reasoning<'_, '_, '_> {
         if substitution.datum {
             return false;
         }
-        let holder_consumed = match event {
-            KillEvent::Consume { binding, .. }
+        let holder_killed = match event {
+            KillEvent::Rebind { binding, .. }
+            | KillEvent::Consume { binding, .. }
             | KillEvent::EntryImageHolderConsume { binding, .. } => {
                 substitution.transfer_holders.contains(binding)
             }
             _ => false,
         };
-        if holder_consumed {
+        if holder_killed {
             return true;
         }
         match event {
@@ -1661,7 +1662,8 @@ impl Reasoning<'_, '_, '_> {
     ) -> bool {
         let live_holders = self.postcondition_term_live_holders(term);
         let live_holder_killed = match event {
-            KillEvent::Consume { binding, .. }
+            KillEvent::Rebind { binding, .. }
+            | KillEvent::Consume { binding, .. }
             | KillEvent::EntryImageHolderConsume { binding, .. } => live_holders.contains(binding),
             KillEvent::Write {
                 place,
