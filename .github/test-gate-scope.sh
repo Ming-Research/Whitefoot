@@ -12,6 +12,7 @@ test_matrix() {
     perl - "$workflow" <<'MATRIX'
 use strict;
 use warnings;
+use File::Basename qw(dirname);
 use JSON::PP qw(decode_json encode_json);
 open my $file, '<', $ARGV[0] or die $!;
 my $workflow = do { local $/; <$file> };
@@ -29,25 +30,27 @@ sub names_equal {
     join("\n", sort @$actual) eq join("\n", sort @$expected)
         or die "gate matrix: $name has missing or extra jobs\n";
 }
-my @ordinary;
+my @groups;
 for my $group ('static', 'runtime') {
-    push @ordinary, {group => $group, shard => '1/1', name => $group, os => 'ubuntu-24.04'};
+    push @groups, {group => $group, shard => '1/1', name => $group, os => 'ubuntu-24.04'};
 }
 for my $group ('unit', 'corpus') {
     for my $index (1 .. 3) {
-        push @ordinary, {group => $group, shard => "$index/3",
+        push @groups, {group => $group, shard => "$index/3",
             name => "$group $index/3", os => 'ubuntu-24.04'};
     }
 }
 for my $group ('static', 'runtime') {
-    push @ordinary, {group => $group, shard => '1/1', name => $group, os => 'macos-15'};
+    push @groups, {group => $group, shard => '1/1', name => $group, os => 'macos-15'};
 }
 for my $group ('unit', 'corpus') {
     for my $index (1 .. 2) {
-        push @ordinary, {group => $group, shard => "$index/2",
+        push @groups, {group => $group, shard => "$index/2",
             name => "$group $index/2", os => 'macos-15'};
     }
 }
+push @groups, {group => 'receipts-whole', shard => '1/1',
+    name => 'proof receipts, all cases', os => 'ubuntu-24.04'};
 my @expected = (
     'static (ubuntu-24.04)', 'runtime (ubuntu-24.04)',
     'unit 1/3 (ubuntu-24.04)', 'unit 2/3 (ubuntu-24.04)', 'unit 3/3 (ubuntu-24.04)',
@@ -55,34 +58,35 @@ my @expected = (
     'static (macos-15)', 'runtime (macos-15)',
     'unit 1/2 (macos-15)', 'unit 2/2 (macos-15)',
     'corpus 1/2 (macos-15)', 'corpus 2/2 (macos-15)',
+    'proof receipts, all cases (ubuntu-24.04)',
 );
-for my $main (0, 1) {
-    my @groups = @ordinary;
-    my @required = @expected;
-    if ($main) {
-        push @groups, {group => 'whole', shard => '1/1',
-            name => 'proof receipts, all cases', os => 'ubuntu-24.04'};
-        push @required, 'proof receipts, all cases (ubuntu-24.04)';
-    }
-    my $jobs = decode_json(jq('-cn', '--argjson', 'groups', encode_json(\@groups),
-        '--argjson', 'platforms', '["ubuntu-24.04","macos-15"]', $matrix));
-    names_equal([map { "$_->{name} ($_->{os})" } @$jobs], \@required, "main=$main matrix");
-    my %groups = map { join("\0", $_->{group}, $_->{os}, $_->{shard}) => $_ } @groups;
-    for my $job (@$jobs) {
-        my $source = $groups{join("\0", $job->{group}, $job->{os}, $job->{shard})}
-            or die "gate matrix: unknown platform, group or shard\n";
-        $job->{shard} eq $source->{shard} && $job->{name} eq $source->{name}
-            or die "gate matrix: matrix changed the Make-owned group or shard\n";
-    }
-    my $required = jq('-nr', '--argjson', 'inventory', encode_json(\@groups),
-        '$inventory | ' . $qualify);
-    names_equal([grep { $_ ne '' } split /\n/, $required], \@required, "main=$main qualification");
+my $root = dirname(dirname($ARGV[0])) . '/..';
+open my $inventory, '-|', 'make', '--no-print-directory', '--silent', '-C', $root, 'check-groups'
+    or die "gate matrix: cannot read Make inventory: $!\n";
+my $text = do { local $/; <$inventory> };
+close $inventory or die "gate matrix: Make inventory failed with status $?\n";
+my $actual = decode_json($text);
+names_equal([map { join("\0", @{$_}{qw(group os shard name)}) } @$actual],
+    [map { join("\0", @{$_}{qw(group os shard name)}) } @groups], 'canonical Make inventory');
+@groups = @$actual;
+my $jobs = decode_json(jq('-cn', '--argjson', 'groups', encode_json(\@groups),
+    '--argjson', 'platforms', '["ubuntu-24.04","macos-15"]', $matrix));
+names_equal([map { "$_->{name} ($_->{os})" } @$jobs], \@expected, 'complete fifteen-job matrix');
+my %groups = map { join("\0", $_->{group}, $_->{os}, $_->{shard}) => $_ } @groups;
+for my $job (@$jobs) {
+    my $source = $groups{join("\0", $job->{group}, $job->{os}, $job->{shard})}
+        or die "gate matrix: unknown platform, group or shard\n";
+    $job->{shard} eq $source->{shard} && $job->{name} eq $source->{name}
+        or die "gate matrix: matrix changed the Make-owned group or shard\n";
 }
-my $draft = decode_json(jq('-cn', '--argjson', 'groups', encode_json(\@ordinary),
+my $required = jq('-nr', '--argjson', 'inventory', encode_json(\@groups),
+    '$inventory | ' . $qualify);
+names_equal([grep { $_ ne '' } split /\n/, $required], \@expected, 'complete fifteen-job qualification');
+my $draft = decode_json(jq('-cn', '--argjson', 'groups', encode_json(\@groups),
     '--argjson', 'platforms', '["ubuntu-24.04"]', $matrix));
 names_equal([map { "$_->{name} ($_->{os})" } @$draft],
-    [grep { /\(ubuntu-24\.04\)$/ } @expected], 'draft eight-job Linux matrix');
-my $macos = decode_json(jq('-cn', '--argjson', 'groups', encode_json(\@ordinary),
+    [grep { /\(ubuntu-24\.04\)$/ } @expected], 'draft nine-job Linux matrix includes whole receipt coverage');
+my $macos = decode_json(jq('-cn', '--argjson', 'groups', encode_json(\@groups),
     '--argjson', 'platforms', '["macos-15"]', $matrix));
 names_equal([map { "$_->{name} ($_->{os})" } @$macos],
     ['static (macos-15)', 'runtime (macos-15)', 'unit 1/2 (macos-15)', 'unit 2/2 (macos-15)',
@@ -97,7 +101,7 @@ for my $job (@$macos) {
             or die "gate matrix: macOS static and runtime must stay whole\n";
     }
 }
-print "gate matrix: regular platforms, main-only Linux group and qualification agree\n";
+print "gate matrix: Linux receipt coverage, platform shards and qualification agree\n";
 MATRIX
 }
 test_matrix

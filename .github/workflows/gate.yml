@@ -28,7 +28,7 @@
 # decides a merge: a push to a branch with an open pull request marked ready,
 # the opening of a ready pull request, the event of marking one ready, main,
 # and a manual run (compiler/verification). The last job then requires every
-# regular group green on both platforms for the revision; a push to main also
+# regular group green on both platforms for the revision. Every Linux gate
 # checks the whole proof-receipt corpus on Linux.
 name: gate
 
@@ -120,10 +120,9 @@ jobs:
       - name: Read the canonical group inventory
         id: select
         env:
-          MAIN_PUSH: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
           CHECK_PLATFORMS: ${{ steps.platforms.outputs.platforms }}
         run: |
-          groups=$(make --no-print-directory --silent check-groups MAIN_PUSH="$MAIN_PUSH")
+          groups=$(make --no-print-directory --silent check-groups)
           matrix=$(jq -cn --argjson groups "$groups" --argjson platforms "$CHECK_PLATFORMS" \
             '[$groups[] | .os as $os | select($platforms | index($os))]')
           echo "groups=$groups" >> "$GITHUB_OUTPUT"

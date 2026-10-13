@@ -22,7 +22,7 @@ RESEARCH_CARGO_TARGET := $(WHITEFOOT_SCRATCH_ROOT)/whitefoot-research-tests-targ
 # check-groups and invokes check-group; it keeps no second command inventory.
 CHECK_GROUPS := static unit corpus runtime
 CHECK_HOSTS := ubuntu-24.04 macos-15
-CHECK_MAIN_GROUPS := receipts-whole
+CHECK_LINUX_GROUPS := receipts-whole
 CHECK_NAME_receipts-whole := proof receipts, all cases
 CHECK_HOST_receipts-whole := ubuntu-24.04
 CHECK_SHARDS_ubuntu-24.04_unit := 3
@@ -63,7 +63,7 @@ _check:
 	@echo "== WHITEFOOT ALL TESTS GREEN =="
 
 # JSON is consumed directly by the GitHub Actions matrix. This is a view of
-# CHECK_GROUPS on each host, plus main-push-only coverage. Platform selection
+# CHECK_GROUPS on each host, plus Linux-only coverage. Platform selection
 # in CI filters this complete inventory and introduces no shard rules.
 check-groups:
 	@printf '['; separator=''; \
@@ -78,7 +78,7 @@ check-groups:
 			shard=$$((shard + 1)); \
 		done; \
 	done; \
-	for entry in $(foreach group,$(if $(filter true,$(MAIN_PUSH)),$(CHECK_MAIN_GROUPS)),"$(CHECK_HOST_$(group))|$(group)|$(CHECK_NAME_$(group))"); do \
+	for entry in $(foreach group,$(CHECK_LINUX_GROUPS),"$(CHECK_HOST_$(group))|$(group)|$(CHECK_NAME_$(group))"); do \
 		os=$${entry%%|*}; entry=$${entry#*|}; \
 		group=$${entry%%|*}; name=$${entry#*|}; \
 		printf '%s{"group":"%s","shard":"1/1","name":"%s","os":"%s"}' \
@@ -86,9 +86,9 @@ check-groups:
 	done; printf ']\n'
 
 check-group:
-	@$(if $(and $(filter 1,$(words $(GROUP))),$(filter $(CHECK_GROUPS) $(CHECK_MAIN_GROUPS),$(GROUP))),:,$(error GROUP must name one correctness group from: $(CHECK_GROUPS) $(CHECK_MAIN_GROUPS)))
+	@$(if $(and $(filter 1,$(words $(GROUP))),$(filter $(CHECK_GROUPS) $(CHECK_LINUX_GROUPS),$(GROUP))),:,$(error GROUP must name one correctness group from: $(CHECK_GROUPS) $(CHECK_LINUX_GROUPS)))
 	@perl .github/shard-tests.pl --validate "$(SHARD)"
-	@$(if $(filter $(CHECK_MAIN_GROUPS),$(GROUP)),test "$(SHARD)" = 1/1 || { echo "main-only groups require SHARD=1/1" >&2; exit 1; },:)
+	@$(if $(filter $(CHECK_LINUX_GROUPS),$(GROUP)),test "$(SHARD)" = 1/1 || { echo "Linux-only groups require SHARD=1/1" >&2; exit 1; },:)
 	@$(CHECK_RUN) "check/$(GROUP)" $(MAKE) --no-print-directory "_check-$(GROUP)"
 
 .PHONY: _check-static

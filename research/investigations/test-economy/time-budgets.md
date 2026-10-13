@@ -938,7 +938,7 @@ command launches: 161 Perl, 58 grep, 22 cmp, 16 cat, 15 awk, 5 sort, two each
 of wc and tr, and one each of dirname, mktemp, chmod and rm. This counts
 external child PIDs, excluding the entry shell and shell bookkeeping for
 command substitutions. These Mac observations identify and check the local
-cost; the hosted threshold still needs CI evidence.
+cost; hosted observations are recorded below.
 
 After the refactor, the same command passed in 0.029 s real, 0.02 s user and
 0.01 s system on the same Mac. Pure parsing, partitioning and invocation
@@ -947,9 +947,15 @@ replies. Two real pipe children retain argument, streamed-output, exit and
 signal checks. The shard-only entry replaces its shell with Perl before any
 temporary-directory setup: three interpreter launches in total, of which
 only two are child spawns. The ordinary wrapper self-tests remain unchanged.
-This removes repeated startup rather than reducing checked properties; the
-next hosted run must confirm the under-0.5 s self-test and the unchanged
-25 s repository-invariants budget.
+This removes repeated startup rather than reducing checked properties. In the
+[two-shard macOS trial](https://github.com/Ming-Research/Whitefoot/actions/runs/38460618651),
+Linux static logged the research-input check at 20:10:55.5743788 UTC and
+`test shards: partition` at 20:10:55.6975058 UTC, an interval of about 0.123 s.
+macOS static logged those lines at 20:10:41.1752770 and 20:10:41.2137010 UTC,
+about 0.038 s apart. These observed intervals include startup and output
+delivery after the preceding check, rather than a separate self-test timer;
+both are under 0.5 s. Both static jobs and their unchanged budget verdicts
+passed.
 
 ### macOS without self-queueing
 
@@ -981,8 +987,64 @@ expected sixth job is a short group (runtime about 1 min, static about
 shards. This prediction assumes a short sixth job; CI must check the actual
 start order and completion time. Three shards would restore the eight-job matrix
 whose queue reached about six minutes in the forced main-matrix trial above.
-The optional main-push receipt job remains Linux-only. The two-shard macOS
-scheduling prediction still needs a gate run on the changed revision.
+The subsequent [two-shard macOS trial](https://github.com/Ming-Research/Whitefoot/actions/runs/38460618651)
+at the [per-platform sharding revision](https://github.com/Ming-Research/Whitefoot/commit/1904f4d0908dfe1e2d3ec4300f140ec9467c4ce6)
+was green on both platforms in 7 min 09 s. The supplied completion summary
+reports Linux jobs at no more than 4 min 25 s and macOS jobs at about
+5.5 min. macOS unit 1/2 and corpus 2/2 started about one minute after the
+run's other macOS jobs. This is runner queueing, visible by comparing job
+start times with the run's creation time: the account-wide macOS concurrency
+limit is five, and other sessions' macOS jobs were running. Removing that
+wait estimates a run of about six minutes, on the target line rather than
+comfortably below it. macOS unit's measured 208 s build is a floor that
+test sharding cannot remove. The trial did not confirm the assumption that
+only a short sixth job would wait.
+
+### Shard mechanics and pre-merge receipt coverage
+
+The Makefile owns the per-platform inventory: three unit and corpus shards
+each on Linux, two each on macOS, with static and runtime whole. Each shard
+compiles its own targets. For each test binary, the helper uses libtest's
+native terse listing, bytewise-sorts names, and assigns zero-based position
+`p` to shard `i/N` when `p mod N == i-1`. Corpus discovers both the
+whitefootc bin and Cargo's integration targets and invokes each binary
+separately with `--exact` and its selected names. Ignored names are listed
+but remain ignored when run. Each invocation asserts that libtest's passed,
+failed and ignored summary counts sum to the names supplied; a missing or
+extra reported test fails the shard.
+
+The corpus integration target's two whole-manifest adapter tests instead
+run in every shard, in a separate invocation with `WHITEFOOT_CASE_SHARD=i/N`.
+Only that invocation receives the variable; the ordinary partitioned
+invocation does not. Both tests select manifest positions by the same
+round-robin rule, retaining manifest order. The receipt-cache test keeps
+its reverse and forward passes over the selected subset and all existing
+assertions. A listed test that ignores the variable repeats its complete
+cases in every shard; a reader missing from the list receives no variable
+and runs its complete cases in its one name shard. Either list error adds
+work rather than dropping coverage. Local `SHARD=1/1` retains the plain
+complete command with no variable and no duplicate receipt invocation.
+
+Every checked gate now adds the whole receipt-cache test as a parallel
+Linux-only job, requiring it green along with every platform's own shard
+inventory. Its single process uses one receipt cache over all cases with
+no case-shard variable, checking cross-shard interactions before merge;
+the sharded receipt runs retain partial cache coverage on both platforms.
+The [whole-receipt trial](https://github.com/Ming-Research/Whitefoot/actions/runs/38455013023)
+measured that job at 3 min 48 s, below the Linux unit jobs of up to
+4 min 25 s in the two-shard macOS trial above. This cross-run comparison
+supports running it in parallel without extending the measured Linux
+critical path; it does not promise the same ordering on every runner.
+Linux-only placement preserves the six-job macOS inventory. Main-push
+selection is removed; Linux-only runs require all nine Linux jobs, and
+both-platform qualification requires those nine plus all six macOS jobs.
+
+The `check/unit`, `check/corpus`, `compiler/test-unit` and
+`compiler/test-corpus` budget rows are now loose: a shard runs about a third
+of the Linux tests or half of the macOS tests, while group builds remain
+whole. Recompute Linux values once 20 sharded runs per CPU model exist,
+using the documented maximum plus 10%, rounded up to 5 s with a 10 s floor.
+No rows change now. The whole-receipt group and test rows remain provisional.
 
 ## Daily loop
 
