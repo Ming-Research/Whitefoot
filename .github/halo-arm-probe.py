@@ -189,9 +189,12 @@ class Probe:
     def disassembly(self, label, binary):
         _, stdout, _ = self.command(["objdump", "-d", "--no-show-raw-insn", "-M", "intel", binary],
                                     "objdump-" + label)
+        _, symbols, _ = self.command(["nm", "-S", "--defined-only", binary], "nm-bounds-" + label)
         target = self.out / "probe" / (label + ".objdump.txt")
         shutil.copy2(stdout, target)
-        save(self.out / "probe" / (label + ".shape.json"), normalized_assembly(target.read_text()))
+        shutil.copy2(symbols, self.out / "probe" / (label + ".nm-bounds.txt"))
+        save(self.out / "probe" / (label + ".shape.json"),
+             normalized_assembly(target.read_text(), parse_function_bounds(symbols.read_text())))
         return target
 
     def mir(self, label):
@@ -199,7 +202,11 @@ class Probe:
         pei = self.out / "mir" / (label + ".pei.mir")
         obj = self.out / "mir" / (label + ".guard.o")
         binary = self.out / "mir" / ("halo-" + label + "-guard")
-        options = ["llc-" + self.major, "-O2", "-relocation-model=pic"]
+        # Attribute-free WF arms need Clang's x86-64/generic default. An
+        # unspecified llc CPU instead selects generic CPU with i586 tuning.
+        # LLVM 22.1.8: clang/lib/Driver/ToolChains/Arch/X86.cpp:94-96;
+        # llvm/lib/Target/X86/X86Subtarget.cpp:227-233.
+        options = ["llc-" + self.major, "-O2", "-mcpu=x86-64", "-relocation-model=pic"]
         self.command([*options, "-stop-after=prologepilog", source, "-o", pei], "mir-pei-" + label)
         self.command([*options, "-filetype=obj", source, "-o", obj], "mir-guard-codegen-" + label)
         self.link(obj, binary, "mir-guard-link-" + label)
@@ -210,7 +217,7 @@ class Probe:
         mappings = parse_mir(pei.read_text())
         result = {"pipeline_guard": guard, "mappings": mappings,
                   "source_pins": source_pins(source.read_text()),
-                  "options": options, "source_target_settings": "module triple and per-function CPU/feature attributes preserved"}
+                  "options": options, "source_target_settings": "module triple and per-function CPU/feature attributes preserved; attribute-free functions explicitly use Clang's x86-64 default CPU"}
         save(self.out / "mir" / (label + ".mapping.json"), result)
         return result
 
@@ -398,13 +405,25 @@ class Probe:
             lines.append("| " + label + " | " + " | ".join(values + [primary, full]) + " |")
         lines += ["", "Primary PASS requires both known code-pointer pin initializers to have uniquely proven machine identity and exact zero dynamic Ir, plus no hot GetUpval local frame adjustment. Its RBP push is reported separately and allowed by the primary criterion.",
                   "The stronger criterion prohibits entry-frame preparation in all three arms. Smaller frames and new .cold symbols alone prove neither criterion.",
-                  "MIR provenance is trusted only when separately linked llc output reproduces the clang instruction shapes. Unnamed, ambiguous, or missing mappings remain UNVERIFIED.",
+                  "Whole-module guards cover nonzero-sized defined functions, retaining every instruction within the ELF-declared extent. PLT stubs and inter-function padding are outside that scope. RIP displacement and nearest-symbol data comments are relocation annotations, not operand shapes; other constants, frame offsets and control targets remain checked.",
+                  "Each named arm also has its own bounded instruction-shape guard. MIR pin provenance requires that arm's exact PASS and unique complete instruction mapping; a failed overall module guard remains failed and continues to withhold whole-program attribution. Unnamed, ambiguous, or missing mappings remain UNVERIFIED.",
                   "Exact integer per-instruction Ir and candidate slot references are in probe/*.analysis.json and *.exact.tsv; rounded historical arm text is diagnostic only.",
                   "Per-function SELF TSVs are additive within each image. Caller/callee inclusive edges are NONADDITIVE; do not sum them with SELF or each other. V0 prepare attribution has no historical base raw comparison and cannot decompose the earlier 73-instruction saving.",
                   "This fib probe does not validate slow/error/resume paths, other-kernel harm or adoption readiness.", ""]
         for label, result in verdicts["variants"].items():
             for role, evidence in result["per_arm"].items():
                 lines.append("- " + label + " " + role + ": " + evidence["status"] + "; " + evidence.get("reason", "see explicit mappings and dynamic counts") + ".")
+        lines += ["", "Named-arm guards (overall defined-function statuses are retained separately):", "",
+                  "| Arm | Original / V0 | V0 Clang / MIR twin | V1 Clang / MIR twin |", "|---|---|---|---|"]
+        mir_guards = [load(self.out / "mir" / (label + ".mapping.json"), {}).get("pipeline_guard", {})
+                      for label in ("V0", "V1")]
+        for role, number in ARMS.items():
+            statuses = []
+            for guard in (reproduction, *mir_guards):
+                found = [v["status"] for name, v in guard.get("arm_guards", {}).items()
+                         if name.endswith(".body.arm." + str(number))]
+                statuses.append(found[0] if len(found) == 1 else "UNAVAILABLE")
+            lines.append("| " + role + " | " + " | ".join(statuses) + " |")
         lines += ["", "Entry evidence (all counts are exact integer Ir over the measured fib32 run):", "",
                   "| Image / arm | Entry local allocation | Hot RBP saves | Entry stack stores: address / Ir | Known pin initializer: address / Ir |",
                   "|---|---|---|---|---|"]
@@ -469,16 +488,39 @@ def validate_measurement(measured):
                 raise ValueError(role + ": positive finite executable arm SELF required")
 
 
-def normalized_assembly(text):
-    functions, current = {}, None
+def parse_function_bounds(text):
+    bounds = {}
+    for line in text.splitlines():
+        entry = re.fullmatch(r"([0-9a-fA-F]+)\s+([0-9a-fA-F]+)\s+([tTwW])\s+(.+)", line.strip())
+        if entry:
+            bounds[entry[4]] = {"start": int(entry[1], 16), "size": int(entry[2], 16)}
+    return bounds
+
+
+def is_probe_arm(symbol):
+    return bool(re.fullmatch(r"wf_package\.halo\.vm\.run\$instance\$[0-9a-f]+\.body\.arm\.(25|54|5|63|65)", symbol))
+
+
+def normalized_assembly(text, bounds=None):
+    # Function extents, not mnemonic filtering, separate body instructions from
+    # linker/assembler padding. An in-body nop or int3 remains significant.
+    bounds = bounds or {}
+    functions = {name: [] for name, extent in bounds.items() if extent["size"] > 0}
+    current, excluded, arm_symbols = None, set(), set()
     for line in text.splitlines():
         heading = re.match(r"^[0-9a-f]+ <(.+)>:$", line)
         if heading:
             current = heading[1]
-            functions[current] = []
+            if is_probe_arm(current):
+                arm_symbols.add(current)
+            if current not in functions:
+                excluded.add(current)
             continue
         instruction = re.match(r"^\s*([0-9a-f]+):\s*(.+)$", line)
-        if current is None or instruction is None:
+        if current not in functions or instruction is None:
+            continue
+        address, extent = int(instruction[1], 16), bounds[current]
+        if not extent["start"] <= address < extent["start"] + extent["size"]:
             continue
         value = instruction[2]
         # Preserve symbol+offset targets, immediate constants and stack offsets.
@@ -486,23 +528,48 @@ def normalized_assembly(text):
         value = re.sub(r"\b[0-9a-f]+\s+(?=<[^>]+>)", "", value)
         if "#" in value:
             before, comment = value.split("#", 1)
-            if "<" in comment:
+            if re.search(r"\[rip(?:[+-]0x[0-9a-f]+)?\]", before):
                 before = re.sub(r"\[rip(?:[+-]0x[0-9a-f]+)?\]", "[rip+relocation]", before)
-                comment = re.sub(r"^\s*[0-9a-f]+\s*", "", comment)
-            value = before + "# " + comment.strip()
+                if re.search(r"(?:^|\s)(?:j\w+|call\w*)\s", before):
+                    # Indirect control transfers still carry a target identity.
+                    # Instruction prefixes may precede their actual mnemonic.
+                    comment = re.sub(r"^\s*[0-9a-f]+\s+(?=<[^>]+>)", "", comment)
+                    value = before + "# " + comment.strip()
+                else:
+                    # Objdump's nearest visible data symbol need not own the
+                    # anonymous constant. Its name changes with link layout.
+                    value = before
+            else:
+                value = before + "# " + comment.strip()
         functions[current].append(re.sub(r"\s+", " ", value).strip())
-    return functions
+    arm_symbols.update(name for name in bounds if is_probe_arm(name))
+    return {"functions": functions, "bounds": bounds, "arm_symbols": sorted(arm_symbols),
+            "excluded_unbounded_symbols": sorted(excluded),
+            "missing_instruction_bodies": sorted(name for name, body in functions.items() if not body),
+            "scope": "nonzero-sized defined functions from nm -S; all in-bound instructions retained"}
 
 
 def compare_shapes(left, right):
-    if not left or not right:
-        return {"status": "UNAVAILABLE", "reason": "both normalized disassemblies required"}
-    symbols = sorted(set(left) | set(right))
-    changed = [symbol for symbol in symbols if left.get(symbol) != right.get(symbol)]
-    arms = [symbol for symbol in symbols if re.search(r"\.body\.arm\.(25|54|5|63|65)$", symbol)]
-    arm_guard = len(arms) == 5 and all(symbol in left and symbol in right and left[symbol] == right[symbol] for symbol in arms)
-    return {"status": "PASS" if not changed and arm_guard else "FAIL", "changed_symbols": changed,
-            "five_arm_shapes_equal": arm_guard, "normalization": "addresses/RIP relocations removed; symbol targets, constants and stack offsets retained"}
+    if not left or not right or not left.get("bounds") or not right.get("bounds"):
+        return {"status": "UNAVAILABLE", "reason": "both disassemblies and explicit ELF function bounds required", "arm_guards": {}}
+    a, b = left["functions"], right["functions"]
+    symbols = sorted(set(a) | set(b))
+    changed = [symbol for symbol in symbols if a.get(symbol) != b.get(symbol)]
+    arms = sorted(set(left["arm_symbols"]) | set(right["arm_symbols"]))
+    arm_guards = {}
+    for arm in arms:
+        bounded = all(shape["bounds"].get(arm, {}).get("size", 0) > 0 and shape["functions"].get(arm)
+                      for shape in (left, right))
+        arm_guards[arm] = {"status": "UNAVAILABLE" if not bounded else "PASS" if a[arm] == b[arm] else "FAIL",
+                           "bounds_present": bool(bounded), "left_bounds": left["bounds"].get(arm),
+                           "right_bounds": right["bounds"].get(arm)}
+    complete = len(arms) == 5 and all(v["bounds_present"] for v in arm_guards.values())
+    arm_guard = complete and all(v["status"] == "PASS" for v in arm_guards.values())
+    missing = {"left": left["missing_instruction_bodies"], "right": right["missing_instruction_bodies"]}
+    status = "UNAVAILABLE" if not complete or any(missing.values()) else "FAIL" if changed else "PASS"
+    return {"status": status, "changed_symbols": changed, "arm_guards": arm_guards,
+            "five_arm_shapes_equal": arm_guard, "missing_instruction_bodies": missing,
+            "scope": left["scope"], "normalization": "body extents checked; addresses/RIP data annotations removed; constants, frame offsets, control-symbol targets and in-body padding instructions retained"}
 
 
 def assembly_store(text):
@@ -550,8 +617,9 @@ def source_pins(text):
 def pin_verdict(rows, mir, symbol):
     if not any(row["Ir"] > 0 for row in rows):
         return {"status": "UNVERIFIED", "reason": "arm has no measured executable activity; missing data cannot prove coldness"}
-    if mir.get("pipeline_guard", {}).get("status") != "PASS":
-        return {"status": "UNVERIFIED", "reason": "MIR codegen must reproduce the clang image before its provenance maps machine instructions"}
+    arm_guard = mir.get("pipeline_guard", {}).get("arm_guards", {}).get(symbol, {})
+    if arm_guard.get("status") != "PASS" or not arm_guard.get("bounds_present"):
+        return {"status": "UNVERIFIED", "reason": "MIR codegen must reproduce this bounded arm before its provenance maps machine instructions"}
     mappings = mir.get("mappings", {}).get(symbol, [])
     candidates = mir.get("source_pins", {}).get(symbol, [])
     if len(candidates) != 1 or any(mapping["pin"] != candidates[0] for mapping in mappings):
@@ -609,7 +677,8 @@ def self_test():
     """Fixed classifier fixtures; only run by CI, no application benchmark."""
     good = [{"address": "0x10", "instruction": "mov    QWORD PTR [rsp+0x28],r8", "Ir": 0},
             {"address": "0x20", "instruction": "push   rbp", "Ir": 7}]
-    mapping = {"pipeline_guard": {"status": "PASS"}, "source_pins": {"arm": ["wf.pin.8"]},
+    mapping = {"pipeline_guard": {"status": "PASS", "arm_guards": {"arm": {"status": "PASS", "bounds_present": True}}},
+               "source_pins": {"arm": ["wf.pin.8"]},
                "mappings": {"arm": [{"pin": "wf.pin.8", "base": "rsp", "offset": 40, "source": "r8"}]}}
     if pin_verdict(good, mapping, "arm")["status"] != "PASS":
         raise ValueError("good exact named cold pin fixture must pass")
@@ -661,15 +730,73 @@ def self_test():
                       " " + format(address + 4, "x") + ": lea rax,[rip+" + hex(base) + "] # " + format(base + 512, "x") + " <global>",
                       " " + format(address + 8, "x") + ": jne " + format(address + 16, "x") + " <" + name + "+0x10>"]
         return "\n".join(lines)
-    left = normalized_assembly(shape_fixture(4096))
-    right = normalized_assembly(shape_fixture(8192))
+    def shape_bounds(base):
+        return {"wf_package.halo.vm.run$instance$abc.body.arm." + str(number):
+                {"start": base + index * 64, "size": 24} for index, number in enumerate(ARMS.values())}
+    left = normalized_assembly(shape_fixture(4096), shape_bounds(4096))
+    right = normalized_assembly(shape_fixture(8192).replace("<global>", "<different_nearest_symbol+0x40>"), shape_bounds(8192))
     if compare_shapes(left, right)["status"] != "PASS":
-        raise ValueError("relocated but otherwise identical shape fixture must reproduce")
-    changed = normalized_assembly(shape_fixture(8192).replace("sub rsp,0x80", "sub rsp,0x40", 1))
-    if compare_shapes(left, changed)["status"] != "FAIL":
-        raise ValueError("changed frame instruction must fail reproduction")
+        raise ValueError("relocated body with different nearest-data annotations must reproduce")
+    pad_address = 8192 + (len(ARMS) - 1) * 64 + 32
+    padded = shape_fixture(8192) + "\n " + format(pad_address, "x") + ": int3"
+    if compare_shapes(left, normalized_assembly(padded, shape_bounds(8192)))["status"] != "PASS":
+        raise ValueError("padding outside declared function extent must not change its body shape")
+    in_body_address = 8192 + (len(ARMS) - 1) * 64 + 16
+    for opcode in ("nop", "int3"):
+        in_body = shape_fixture(8192) + "\n " + format(in_body_address, "x") + ": " + opcode
+        if compare_shapes(left, normalized_assembly(in_body, shape_bounds(8192)))["status"] != "FAIL":
+            raise ValueError("an added in-body nop/int3 must fail reproduction")
+    stack_body = shape_fixture(8192) + "\n " + format(in_body_address, "x") + ": mov QWORD PTR [rsp+0x28],r8"
+    stack_left = normalized_assembly(stack_body, shape_bounds(8192))
+    stack_right = normalized_assembly(stack_body.replace("[rsp+0x28]", "[rsp+0x30]"), shape_bounds(8192))
+    if compare_shapes(stack_left, stack_right)["status"] != "FAIL":
+        raise ValueError("changed in-body stack offset must fail reproduction")
+    for mnemonic in ("call", "jmp", "bnd jmp", "notrack jmp"):
+        indirect = shape_fixture(8192) + "\n " + format(in_body_address, "x") + ": " + mnemonic + " QWORD PTR [rip+0x20] # 3000 <callee>"
+        moved = indirect.replace("[rip+0x20] # 3000", "[rip+0x40] # 4000")
+        wrong_target = moved.replace("<callee>", "<different_callee>")
+        indirect_left = normalized_assembly(indirect, shape_bounds(8192))
+        if compare_shapes(indirect_left, normalized_assembly(moved, shape_bounds(8192)))["status"] != "PASS":
+            raise ValueError("relocated indirect control transfer with same target must reproduce")
+        if compare_shapes(indirect_left, normalized_assembly(wrong_target, shape_bounds(8192)))["status"] != "FAIL":
+            raise ValueError("changed indirect RIP call/jump target must fail reproduction")
+    for before, after in (("sub rsp,0x80", "sub rsp,0x40"), ("lea rax,", "mov rax,"),
+                          ("[rip+0x2000]", "[rsp+0x28]"), ("+0x10>", "+0x14>")):
+        changed = normalized_assembly(shape_fixture(8192).replace(before, after, 1), shape_bounds(8192))
+        if compare_shapes(left, changed)["status"] != "FAIL":
+            raise ValueError("changed in-body opcode, constant, frame operand or control target must fail reproduction")
     if compare_shapes(left, {})["status"] != "UNAVAILABLE":
         raise ValueError("missing disassembly must not reproduce")
+    if compare_shapes(left, normalized_assembly(shape_fixture(8192)))["status"] != "UNAVAILABLE":
+        raise ValueError("missing function bounds must not reproduce")
+    symbol_rows = "\n".join(format(v["start"], "x") + " " + format(v["size"], "x") + " t " + k
+                            for k, v in shape_bounds(8192).items())
+    if parse_function_bounds(symbol_rows) != shape_bounds(8192):
+        raise ValueError("nm bounds fixture must preserve each declared extent")
+    incomplete_bounds = shape_bounds(8192)
+    incomplete_bounds.pop(next(iter(incomplete_bounds)))
+    if compare_shapes(left, normalized_assembly(shape_fixture(8192), incomplete_bounds))["status"] != "UNAVAILABLE":
+        raise ValueError("missing an owned arm's bounds must not reproduce")
+    truncated_body = normalized_assembly(shape_fixture(8192), shape_bounds(8192))
+    truncated_body["functions"][next(iter(truncated_body["functions"]))] = []
+    truncated_body["missing_instruction_bodies"] = [next(iter(truncated_body["functions"]))]
+    if compare_shapes(left, truncated_body)["status"] != "UNAVAILABLE":
+        raise ValueError("missing a bounded function body must not reproduce")
+    extra_bounds = dict(shape_bounds(8192), other={"start": 65536, "size": 1})
+    extra_left = normalized_assembly(shape_fixture(8192) + "\n10000 <other>:\n 10000: ret", extra_bounds)
+    extra_right = normalized_assembly(shape_fixture(8192) + "\n10000 <other>:\n 10000: nop", extra_bounds)
+    unrelated = compare_shapes(extra_left, extra_right)
+    arm_name = "wf_package.halo.vm.run$instance$abc.body.arm.25"
+    if unrelated["status"] != "FAIL" or unrelated["arm_guards"][arm_name]["status"] != "PASS":
+        raise ValueError("unrelated function mismatch must remain globally failed with unchanged arm guard passing")
+    scoped_mapping = {"pipeline_guard": unrelated, "source_pins": {arm_name: ["wf.pin.8"]},
+                      "mappings": {arm_name: mapping["mappings"]["arm"]}}
+    if pin_verdict(good, scoped_mapping, arm_name)["status"] != "PASS":
+        raise ValueError("own-arm exact guard may validate its pin mapping despite unrelated module failure")
+    own_changed = normalized_assembly(shape_fixture(8192).replace("sub rsp,0x80", "sub rsp,0x40", 2), shape_bounds(8192))
+    scoped_mapping["pipeline_guard"] = compare_shapes(right, own_changed)
+    if pin_verdict(good, scoped_mapping, arm_name)["status"] != "UNVERIFIED":
+        raise ValueError("changed owned arm must prevent pin provenance")
     if read_count("events: Ir\nsummary: 7\n", "==1== Collected : 7\n") != 7:
         raise ValueError("valid count fixture rejected")
     for raw, stderr in (("events: Ir Dr\nsummary: 7\n", "==1== Collected : 7\n"),

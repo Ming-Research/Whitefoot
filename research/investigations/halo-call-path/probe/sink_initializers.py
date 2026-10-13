@@ -23,7 +23,9 @@ from pathlib import Path
 
 
 VALUE = r'%[-a-zA-Z$._0-9]+'
-LABEL = r'[-a-zA-Z$._0-9]+'
+# LLVM quotes names copied from inlined functions even when their characters
+# also admit the unquoted spelling. Other quoted forms remain unsupported.
+LABEL = r'(?:[-a-zA-Z$._0-9]+|"[-a-zA-Z$._0-9]+")'
 TARGET = re.compile(r'^wf_package\.halo\.vm\.run\$instance\$[0-9a-f]+\.body\.arm\.(25|54|5)$')
 DEFINE = re.compile(r'^define\b.*?@("[^"]+"|[-a-zA-Z$._0-9]+)\(')
 PIN = re.compile(r'^\s*(%wf\.pin\.[-a-zA-Z$._0-9]+)\s*=\s*alloca\s+ptr(?:\s*,\s*align\s+\d+)?\s*$')
@@ -72,7 +74,7 @@ def blocks_of(lines):
             continue
         match = re.fullmatch('(' + LABEL + r'):', text)
         if match:
-            current = match[1]
+            current = match[1].strip('"')
             if current in blocks:
                 raise Unavailable('duplicate block label')
             blocks[current] = []
@@ -95,8 +97,12 @@ def blocks_of(lines):
                 raise Unavailable('unterminated switch in ' + name)
         elif start != len(instructions) - 1:
             raise Unavailable('instructions after terminator in ' + name)
-        edges = re.findall(r'\blabel\s+%(' + LABEL + r')(?![-a-zA-Z$._0-9])', terminal)
-        if terminal.startswith('br ') and len(edges) not in (1, 2):
+        edges = [edge.strip('"') for edge in re.findall(
+            r'\blabel\s+%(' + LABEL + r')(?![-a-zA-Z$._0-9])', terminal)]
+        if len(edges) != len(re.findall(r'\blabel\s+%', terminal)):
+            raise Unavailable('unsupported successor label in ' + name)
+        expected = 1 if terminal.startswith('br label ') else 2
+        if terminal.startswith('br ') and len(edges) != expected:
             raise Unavailable('unsupported branch in ' + name)
         if terminal.startswith('switch ') and not edges:
             raise Unavailable('unsupported switch in ' + name)
@@ -343,6 +349,36 @@ class Fixtures(unittest.TestCase):
                          '  call void @consume(ptr %wf.pin.8.1)\n  br label %join\njoin:\n'
                          '  %p = load ptr, ptr %wf.pin.8.1\n  ret void\n')
         self.assertEqual(transform(source)[1]['status'], 'unavailable')
+        self.assertEqual(transform(source)[0], source)
+
+    def test_quoted_inlined_exit(self):
+        # V0 arm.54 bb11.i branches to this quoted, inlined-function exit.
+        exit_name = '"wf_package.halo.vm.instruction_lt_jmp_rk$instance$2ead40aebe81bc32.exit"'
+        source = fixture(self.entry + '  br i1 %condition, label %hot, label %bb11.i\n'
+                         'hot:\n  ret void\nbb11.i:\n'
+                         '  call void @consume(ptr %wf.pin.8.1)\n'
+                         '  br label %' + exit_name + '\n' + exit_name + ':\n'
+                         '  %p = load ptr, ptr %wf.pin.8.1, align 8\n  ret void\n')
+        output, report = transform(source)
+        self.assertEqual(report['status'], 'changed')
+        self.assertEqual(report['functions'][0]['slots'][0]['insertion_blocks'], ['bb11.i'])
+        self.assertEqual(output.count('store ptr %incoming'), 1)
+        self.assertNotIn('store ptr', output.split(exit_name + ':')[1])
+        # A bypass must not vanish from the CFG merely because it is quoted:
+        # the exit would then be reached both before and after a writing call.
+        bypass = source.replace('label %hot, label %bb11.i',
+                                'label %' + exit_name + ', label %bb11.i')
+        self.assertEqual(transform(bypass)[1]['status'], 'unavailable')
+        self.assertIn('initialized/uninitialized paths join',
+                      transform(bypass)[1]['functions'][0]['reason'])
+        self.assertEqual(transform(bypass)[0], bypass)
+
+    def test_unsupported_successor_not_silently_dropped(self):
+        source = fixture(self.entry + '  br i1 %condition, label %cold, label %"unsupported name"\n'
+                         'cold:\n  call void @consume(ptr %wf.pin.8.1)\n  ret void\n'
+                         '"unsupported name":\n  ret void\n')
+        self.assertEqual(transform(source)[1]['status'], 'unavailable')
+        self.assertIn('unsupported successor label', transform(source)[1]['functions'][0]['reason'])
         self.assertEqual(transform(source)[0], source)
 
     def test_missing_or_multiple_initializer(self):

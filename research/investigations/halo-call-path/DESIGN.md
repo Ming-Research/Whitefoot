@@ -1356,6 +1356,76 @@ post-LTO metadata/MIR, extraction legality and residual function counts
 prevent a stronger causal or performance claim. No compiler, specification,
 design-tree or test change is selected by this subsection.
 
+##### Second run of the arm-preparation probe
+
+[Run 38376242671](https://github.com/Ming-Research/Whitefoot/actions/runs/38376242671)
+built the probe at `c0451088e0abf673d9702d1f7d91f129a71541c5`.
+The saved original and unchanged V0 both execute 752.026399 instructions
+per Lua call; their five measured arm self counts agree exactly. V1, late
+HotColdSplitting, executes 747.027065. Additive function self counts attribute
+the 35,241,079-instruction saving to LtJmpRK (28,196,620, exactly four per
+Lua call), Return (7,049,156, approximately one per Lua call), and an
+increase of 4,697 instructions elsewhere. SubRK, GetUpval, Call and
+`prepare` do not change their measured self counts. Return combines two
+address-forming instructions into one; it does not lose its frame.
+
+The available V0/V1 IR and exact disassembly support three narrower findings:
+
+- Several useful weights survive optimization. SubRK's numeric tests have
+  approximately 2000:1 weights favouring the numeric path (V0 IR lines
+  107612, 107618, metadata at 148143). LtJmpRK's numeric tests remain
+  unweighted (115302, 115308), and its post-slow stopped-state checks retain
+  an opposite prediction (115440, 115445). This is not evidence that LLVM
+  ignored every weight. Hot frame accesses and RBP uses still constrain
+  shrink-wrapping independently of frequency.
+- The two pointer initializers are already in V0's entry IR, before machine
+  register allocation, and remain there in V1 (SubRK 107574–107575 versus
+  104866–104867; LtJmpRK 115258–115259 versus 111924–111925). Outlining
+  alone has not moved them. Across these three arms, V1 creates five cold
+  helpers and moves four interning-output allocations into them; caller
+  result storage remains. SubRK's allocation shrinks from 0x80 to 0x70,
+  LtJmpRK's from 0xc0 to 0xb0, and GetUpval's remains 0x80. The preparation
+  criterion fails.
+- LtJmpRK's unchanged-register `r13` save/reload disappears in V1 (V0 exact
+  instruction table lines 16 and 47); its register assignment changes too.
+  Thus eleven carried states do not prove that every observed hot spill is
+  unavoidable. Cold CFG and allocation coupling explain some work; the
+  remaining spills are not a measured register-pressure lower bound.
+
+V2 is unavailable. Its transactional rewrite initially rejects an ordinary
+quoted LLVM label at V0 IR line 115476, defined at 115538. Supporting that
+spelling repairs a parser defect. Static inspection then exposes a separate
+unsupported join: the path through `slow` first consumes the pointer slot
+at 115468, while the CFG also contains a bypass through 115427–115440 and
+115490–115492 to the same exit load at 115543. The script does not prove
+that bypass infeasible or split mixed initialized/uninitialized paths.
+Reinitializing at the exit could overwrite a consumer's changes; the call's
+slot parameter lacks `readonly`. That conservative refusal remains, and
+no partial SubRK rewrite is counted as V2.
+
+The run's whole-image shape guard fails despite matching executed counts.
+Its disassembly comparator includes padding outside ELF function extents
+and linker-dependent nearest-symbol comments on relocated data references.
+The five measured original/V0 arm bodies have the same instruction forms
+apart from those presentation differences. Separately, the llc MIR guard
+has real instruction differences: SubRK's two-instruction address formation
+becomes one, and GetUpval's cold vector copy becomes scalar copies. The arm
+functions lack CPU attributes, and llc omits Clang's Linux x86-64 default
+CPU ([Clang's default](https://github.com/llvm/llvm-project/blob/llvmorg-22.1.8/clang/lib/Driver/ToolChains/Arch/X86.cpp#L94),
+[llc's empty-CPU fallback](https://github.com/llvm/llvm-project/blob/llvmorg-22.1.8/llvm/lib/Target/X86/X86Subtarget.cpp#L227)).
+The probe repair supplies `-mcpu=x86-64`, bounds comparison by declared
+function sizes, and removes relocation commentary while retaining real
+instructions, constants, frame offsets and control-transfer targets.
+Whole-module differences remain reported; a pin mapping may use an exact
+guard for its own arm without claiming whole-module reproduction.
+
+These are static repairs, not a successful rerun. Native verification of
+the repaired CPU settings, normalization and MIR correspondence remains for
+CI; the old artifact's formal pin identities stay unverified. The V1 saving
+is a comparison with this reconstructed V0 pipeline, not a wall-time result
+or a retroactive verdict for the original E2 run. The prior preparation
+criterion is unchanged.
+
 **E3. Profile ceiling (no compiler change).** B built with
 `-fprofile-generate`, trained (a) on fib(32) and (b) on the six other
 kernels, then rebuilt with `-fprofile-use`; measured on fib(32). Prediction:
