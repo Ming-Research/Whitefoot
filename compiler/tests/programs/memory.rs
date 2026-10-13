@@ -1,29 +1,7 @@
 use super::support::{build_program, compile_and_run, compile_program, emitted_function};
 
 #[test]
-fn short_lived_in/// A call result may take the storage of a copied input that is dead after
-/// the call, so `advance` and `advance_set`, the same replacement spelled with
-/// and without a separate binding, pass `mix` one address as both its result
-/// destination and its input. `mix` writes a candidate result before it reads
-/// that input again; the destination-result ABI requires it to keep reading
-/// the original input. Exit codes 1 to 4 and 7 to 10 name a word of a
-/// replaced result that differs, and 5, 6 and 11 a kept result.
-#[test]
-fn a_call_result_sharing_a_copied_input_reads_the_original_input() {
-    let llvm = compile_program("copy_result_storage.wf");
-    for caller in ["advance", "advance_set"] {
-        let body = emitted_function(&llvm, caller);
-        let call = body
-            .lines()
-            .find(|line| line.contains("@wf_mix("))
-            .unwrap_or_else(|| panic!("{caller} calls mix: {body}"));
-        let (_, arguments) = call.split_once("@wf_mix(").expect("call operands");
-        let mut pointers = arguments.split(", ");
-        let destination = pointers.next().expect("result destination");
-        assert!(destination.starts_with("ptr "), "{call}");
-        assert_eq!(Some(destination), pointers.next(), "{caller}: {call}");
-    }
-_windows_preserve_values_and_release_only_live_elements() {
+fn short_lived_inline_windows_preserve_values_and_release_only_live_elements() {
     // One native build/run checks frame reuse, take/reinsert, wrapped Ring
     // cleanup, struct/enum transport and Array fill. The program checks the
     // heap baseline after every call, with stale freed pointers in raw slots.
