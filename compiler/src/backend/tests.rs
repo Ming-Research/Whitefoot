@@ -26,6 +26,7 @@ mod division_obligations;
 mod effect_attributes;
 mod entry_versions;
 mod enumeration_records;
+mod executable_runner;
 mod exhaustion;
 mod float_conversion;
 mod floating;
@@ -625,6 +626,7 @@ pub(super) fn build_linked_executable_with_library_fixture(
             library_fixture,
             directory,
         )
+        .unwrap_or_else(|failure| panic!("{failure}"))
     })
 }
 
@@ -635,7 +637,11 @@ fn build_linked_executable_inner(
     library_defines: &[String],
     library_fixture: &str,
     directory: &Path,
-) -> PathBuf {
+) -> Result<PathBuf, String> {
+    // A supplied host caller can run a checked library with another signature.
+    if host.is_none() {
+        crate::require_executable_runner(llvm)?;
+    }
     let module = directory.join("program.ll");
     let executable = directory.join("program");
     std::fs::write(&module, llvm).expect("write backend test module");
@@ -722,7 +728,7 @@ fn build_linked_executable_inner(
     for staged in ["completion", "sched"] {
         std::fs::remove_dir(directory.join(staged)).expect("remove staged runtime directory");
     }
-    executable
+    Ok(executable)
 }
 
 /// Runs one emitted module with exact argument bytes.

@@ -291,6 +291,7 @@ fn collect_steps(
                 collect_expression(&subscript.offset, bindings);
             }
             crate::semantic::CheckedPlaceStep::Field(_)
+            | crate::semantic::CheckedPlaceStep::Payload { .. }
             | crate::semantic::CheckedPlaceStep::Measure(_) => {}
         }
     }
@@ -625,6 +626,33 @@ impl IrBuilder<'_> {
                     (
                         IrPlaceStep::Field {
                             nominal,
+                            field: *field,
+                        },
+                        ty,
+                    )
+                }
+                crate::semantic::CheckedPlaceStep::Payload {
+                    nominal: checked_nominal,
+                    variant,
+                    field,
+                } => {
+                    let nominal = self.erased(*checked_nominal)?;
+                    if base.ty() != IrType::Nominal(nominal) {
+                        return Err(LoweringFailure::InvalidCheckedProgram);
+                    }
+                    let IrNominalKind::Enum { variants } = &self.nominals[nominal.index()].kind
+                    else {
+                        return Err(LoweringFailure::InvalidCheckedProgram);
+                    };
+                    let ty = variants
+                        .get(*variant as usize)
+                        .and_then(|variant| variant.fields.get(*field as usize))
+                        .ok_or(LoweringFailure::InvalidCheckedProgram)?
+                        .ty;
+                    (
+                        IrPlaceStep::EnumVariant {
+                            nominal,
+                            variant: *variant,
                             field: *field,
                         },
                         ty,
