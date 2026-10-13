@@ -56,6 +56,69 @@ fn blocks(function: &str) -> Vec<(&str, String)> {
     blocks
 }
 
+/// Each requested pointer has a real consumer after its load in this block.
+/// Follow descriptor reconstruction to its consumer: insertvalue alone, a
+/// phi transfer and an instruction mentioned in a comment are not consumers.
+fn assert_local_record_consumers(block: &str, consumer: impl Fn(&str) -> bool) {
+    let lines: Vec<_> = block
+        .lines()
+        .map(|line| line.split(';').next().unwrap_or_default())
+        .collect();
+    for (at, line) in lines.iter().enumerate() {
+        if !line.contains(" = load ptr, ptr %wf.env.v") {
+            continue;
+        }
+        let loaded = line.split_whitespace().next().expect("loaded pointer");
+        let mut reconstructed = std::collections::BTreeSet::from([loaded]);
+        assert!(
+            lines[at + 1..].iter().any(|line| {
+                if line.contains(" = phi ")
+                    || !line
+                        .split(|character: char| {
+                            character.is_ascii_whitespace()
+                                || matches!(character, ',' | '[' | ']' | '(' | ')')
+                        })
+                        .any(|operand| reconstructed.contains(operand))
+                {
+                    return false;
+                }
+                if let Some((result, _)) = line.split_once(" = insertvalue ") {
+                    reconstructed.insert(result.trim());
+                    false
+                } else {
+                    consumer(line)
+                }
+            }),
+            "{loaded} must have an actual consumer after its load in {block}"
+        );
+    }
+}
+
+#[test]
+fn reconstructed_record_pointer_needs_a_local_consumer() {
+    let reconstruction = "  %pointer = load ptr, ptr %wf.env.v0.0.bb1, align 8\n\
+                          %partial = insertvalue { ptr, i64 } poison, ptr %pointer, 0\n\
+                          %range = insertvalue { ptr, i64 } %partial, i64 4, 1\n";
+    for tail in [
+        "  br label %next\n",
+        "  ; call void @observe({ ptr, i64 } %range)\n  br label %next\n",
+        "  %forwarded = phi { ptr, i64 } [ %range, %previous ]\n  br label %next\n",
+    ] {
+        let block = format!("{reconstruction}{tail}");
+        assert!(
+            std::panic::catch_unwind(|| assert_local_record_consumers(&block, |_| true)).is_err(),
+            "reconstruction without a local consumer must fail: {block}"
+        );
+    }
+    for use_line in [
+        "  %count = extractvalue { ptr, i64 } %range, 1\n",
+        "  call void @observe({ ptr, i64 } %range)\n",
+    ] {
+        let block = format!("{reconstruction}{use_line}  br label %next\n");
+        assert_local_record_consumers(&block, |_| true);
+    }
+}
+
 #[test]
 fn a_recursive_group_passes_its_unchanged_borrows_in_one_record() {
     let llvm = compile(PROGRAM.as_bytes());
@@ -186,10 +249,13 @@ fn a_record_slot_is_loaded_only_in_the_branch_that_uses_it() {
     });
     let (_, unused_branch) = early_return.expect("depth == 0 returns total");
     assert!(!unused_branch.contains("ptr %wf.env"), "{unused_branch}");
+    for (_, block) in &blocks {
+        assert_local_record_consumers(block, |line| !line.contains(" = phi "));
+    }
 }
 
 #[test]
-fn recorded_array_borrows_load_only_in_the_equality_loop_body() {
+fn recorded_array_borrows_load_only_where_equality_snapshots_use_them() {
     let source = r#"fn compare_first(left: &Array<u64, SIZE>, right: &Array<u64, SIZE>, spare: &u64, depth: u64, x: u64, y: u64, z: u64, p: u64, q: u64) -> result: Bool reads(left), reads(right), reads(spare) {
   doc "Compare borrowed arrays after the recursive chain ends.";
   if depth == 0_u64 {
@@ -225,29 +291,20 @@ fn main() -> status: std::process::ExitStatus pure {
             .into_iter()
             .filter(|(_, block)| block.contains("load ptr, ptr %wf.env.v"))
             .collect();
+        // Equality consumes by-value snapshots. The storage planner copies
+        // them before comparison, including zero-byte copies for empty
+        // arrays; those memmoves really use the two borrowed pointers.
+        // Forwarding-only blocks and the unused spare must load nothing.
+        assert_eq!(loads.len(), 1, "{first}");
+        let (_, body) = &loads[0];
+        assert_eq!(body.matches("load ptr, ptr %wf.env.v").count(), 2, "{body}");
+        assert_eq!(body.matches("call void @llvm.memmove.").count(), 2, "{body}");
+        assert_local_record_consumers(body, |line| line.contains("call void @llvm.memmove."));
+        assert!(!first.contains("%wf.env.v2."), "{first}");
         if size == 0 {
-            // Empty-array equality has no read. Eagerly resolving its
-            // read-through storage requests two otherwise unused slot loads.
-            assert!(loads.is_empty(), "{first}");
+            assert!(!first.contains(".body:"), "{first}");
         } else {
-            // Resolving value_place before recursive comparison used to put
-            // these loads before the array loop. Their first real consumers
-            // are the element GEPs in its synthetic body block.
-            assert_eq!(loads.len(), 1, "{first}");
-            let (label, body) = &loads[0];
-            assert!(
-                label.starts_with("eq.") && label.ends_with(".body"),
-                "{first}"
-            );
-            assert_eq!(
-                body.matches("load ptr, ptr %wf.env.v").count(),
-                2,
-                "{body}"
-            );
-            assert!(
-                body.contains("getelementptr inbounds [2 x i64]"),
-                "{body}"
-            );
+            assert!(first.contains("getelementptr inbounds [2 x i64]"), "{first}");
         }
         let second = emitted_function(&llvm, "_env_compare_second");
         assert!(!second.contains("load ptr, ptr %wf.env.v"), "{second}");
@@ -302,7 +359,7 @@ fn main() -> status: std::process::ExitStatus pure {
     // than allowing an ordinary loop to satisfy the placement check.
     assert!(first.contains("@wf__par_split_budget("), "{first}");
     assert!(first.contains(".fill.head:"), "{first}");
-    assert!(first.contains("@wf__par_split_"), "{first}");
+    assert!(first.contains("@wf__par_split_count_first."), "{first}");
     let loads: Vec<_> = blocks(first)
         .into_iter()
         .filter(|(_, block)| block.contains("load ptr, ptr %wf.env.v"))
@@ -317,7 +374,8 @@ fn main() -> status: std::process::ExitStatus pure {
         "{first}"
     );
     assert_eq!(body.matches("load ptr, ptr %wf.env.v").count(), 2, "{body}");
-    assert!(body.contains("@wf__par_split_"), "{body}");
+    assert!(body.contains("@wf__par_split_count_first."), "{body}");
+    assert_local_record_consumers(body, |line| line.contains("@wf__par_split_count_first."));
 }
 
 #[test]

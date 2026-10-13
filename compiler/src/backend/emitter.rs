@@ -1570,6 +1570,8 @@ struct FunctionEmitter<'program, 'state> {
     /// ordinary world: its body is then the internal form that receives the
     /// record, and its public symbol the entry that builds it.
     environment: Option<call_entries::Member>,
+    /// Packed formals and uniform block aliases share one operand recipe.
+    environment_aliases: HashMap<IrValueId, IrValueId>,
 }
 
 /// What one function's emission shares with the rest of its module, and the
@@ -1707,6 +1709,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             dispatch_layout,
             environments,
             environment,
+            environment_aliases: HashMap::new(),
         })
     }
 
@@ -2360,7 +2363,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             return Err(BackendFailure::InvalidIr);
         }
         for (parameter_index, (parameter, ty)) in block.parameters().iter().enumerate() {
-            if self.storage.slot(*parameter).is_some() {
+            if self.storage.slot(*parameter).is_some()
+                || self.environment_origin(*parameter).is_some()
+            {
                 continue;
             }
             if incoming.is_empty() {
@@ -2403,8 +2408,8 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 }
                 // A packed incoming operand belongs to the predecessor's
                 // actual exit block, not this phi's block.
-                let operand = if self.is_environment_parameter(argument) {
-                    value_name(argument)
+                let operand = if let Some(origin) = self.environment_origin(argument) {
+                    value_name(origin)
                 } else {
                     self.value_name(argument)
                 };
@@ -3358,7 +3363,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             .or_else(|| self.materialized.get(&value))
             .cloned()
             .unwrap_or_else(|| {
-                let canonical = value_name(value);
+                let canonical = value_name(self.environment_origin(value).unwrap_or(value));
                 self.output.block_operand(&canonical).unwrap_or(canonical)
             })
     }

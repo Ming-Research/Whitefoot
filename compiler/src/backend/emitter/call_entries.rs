@@ -255,7 +255,7 @@ impl EnvironmentPlan {
         let mut excluded = vec![false; keys.len()];
         for (member, &ordinal) in members.iter().enumerate() {
             let caller = &functions[ordinal];
-            let origins = formal_origins(caller);
+            let origins = formal_origins(caller, None);
             for (callee, arguments) in calls(caller) {
                 let Some(&callee_member) = position.get(&(callee as usize)) else {
                     continue;
@@ -411,7 +411,7 @@ fn forwarded_order(
     let mut joined = vec![false; keys.len()];
     for (member, &ordinal) in members.iter().enumerate() {
         let caller = &functions[ordinal];
-        let origins = formal_origins(caller);
+        let origins = formal_origins(caller, None);
         for (callee, arguments) in calls(caller) {
             let Some(&callee_member) = position.get(&(callee as usize)) else {
                 continue;
@@ -590,10 +590,17 @@ fn calls(function: &IrFunction) -> impl Iterator<Item = (u32, &[IrValueId])> {
 /// that parameter's index: the parameters themselves, and each block
 /// parameter every jump into whose block passes the same one of them.
 ///
-/// A block parameter starts with no known incoming value and settles at a
-/// parameter index or at none; a loop's parameter that receives a formal on
-/// entry and itself on the back edge settles at that formal.
-fn formal_origins(function: &IrFunction) -> HashMap<IrValueId, usize> {
+/// A block parameter starts unknown and settles at a parameter index or at
+/// nonalias. After the first closure, unresolved cycles become nonaliases and
+/// propagate again: an unresolved incoming value must not be ignored just
+/// because another edge already supplied a formal. A rooted loop still
+/// settles at its formal, including mutually dependent block parameters.
+/// Emission supplies only reachable edges; group planning conservatively
+/// considers every jump, including calls in blocks it does not emit.
+fn formal_origins(
+    function: &IrFunction,
+    incoming: Option<&[Vec<Incoming>]>,
+) -> HashMap<IrValueId, usize> {
     let formals: HashMap<IrValueId, usize> = function
         .parameters()
         .iter()
@@ -605,29 +612,48 @@ fn formal_origins(function: &IrFunction) -> HashMap<IrValueId, usize> {
         .iter()
         .flat_map(|block| block.parameters().iter().map(|(value, _)| *value))
         .collect();
+    let edges: Vec<_> = match incoming {
+        Some(incoming) => incoming
+            .iter()
+            .enumerate()
+            .flat_map(|(target, edges)| {
+                edges
+                    .iter()
+                    .map(move |edge| (target, edge.arguments.as_slice()))
+            })
+            .collect(),
+        None => function
+            .blocks()
+            .iter()
+            .filter_map(|block| match block.terminator() {
+                IrTerminator::Jump { target, arguments, .. } => {
+                    Some((target.index(), arguments.as_slice()))
+                }
+                _ => None,
+            })
+            .collect(),
+    };
     let mut state: HashMap<IrValueId, Option<usize>> = HashMap::new();
+    let mut closed_unknowns = false;
     loop {
         let mut changed = false;
-        for block in function.blocks() {
-            let IrTerminator::Jump {
-                target, arguments, ..
-            } = block.terminator()
-            else {
+        for &(target, arguments) in &edges {
+            let Some(target) = function.blocks().get(target) else {
                 continue;
             };
-            let Some(target) = function.blocks().get(target.index()) else {
-                continue;
-            };
-            for ((parameter, _), argument) in target.parameters().iter().zip(arguments) {
-                let incoming = if let Some(formal) = formals.get(argument) {
-                    Some(*formal)
-                } else if block_parameters.contains(argument) {
-                    match state.get(argument) {
-                        Some(known) => *known,
-                        None => continue,
+            for (index, (parameter, ty)) in target.parameters().iter().enumerate() {
+                let incoming = match arguments.get(index) {
+                    Some(argument) if function.value_type(*argument) != Some(*ty) => None,
+                    Some(argument) if formals.contains_key(argument) => {
+                        formals.get(argument).copied()
                     }
-                } else {
-                    None
+                    Some(argument) if block_parameters.contains(argument) => {
+                        match state.get(argument) {
+                            Some(known) => *known,
+                            None => continue,
+                        }
+                    }
+                    _ => None,
                 };
                 let next = match state.get(parameter) {
                     None => incoming,
@@ -640,7 +666,16 @@ fn formal_origins(function: &IrFunction) -> HashMap<IrValueId, usize> {
             }
         }
         if !changed {
-            break;
+            if closed_unknowns {
+                break;
+            }
+            // No external root can reach these values. Mark them together
+            // before propagating, so hash iteration order cannot select an
+            // origin for a downstream join.
+            for parameter in &block_parameters {
+                state.entry(*parameter).or_insert(None);
+            }
+            closed_unknowns = true;
         }
     }
     let mut origins = formals;
@@ -837,6 +872,10 @@ impl FunctionEmitter<'_, '_> {
         })
     }
 
+    pub(super) fn environment_origin(&self, value: IrValueId) -> Option<IrValueId> {
+        self.environment_aliases.get(&value).copied()
+    }
+
     /// Register each packed parameter's block-local definition. The printing
     /// model binds local names to the actual LLVM block at each use, including
     /// incoming operands whose load belongs to the predecessor's exit block.
@@ -850,6 +889,13 @@ impl FunctionEmitter<'_, '_> {
             return Ok(());
         }
         let (record, slots) = self.slot_parameters()?;
+        let origins = formal_origins(self.function, Some(&self.incoming));
+        for (value, formal) in origins {
+            let parameter = self.function.parameters()[formal].0;
+            if self.is_environment_parameter(parameter) {
+                self.environment_aliases.insert(value, parameter);
+            }
+        }
         for (value, kind, start) in slots {
             let mut definition = Vec::new();
             for (field, (operand, ty)) in kind.operands(value).iter().zip(kind.fields()).enumerate()
@@ -976,5 +1022,245 @@ impl FunctionEmitter<'_, '_> {
         module.define(signature.define(output, "")?);
         module.text("\n");
         Ok(module)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const U64: IrType = IrType::Integer {
+        width: 64,
+        signed: false,
+    };
+
+    fn jump(parameters: &[u32], target: u32, arguments: &[u32]) -> IrBlock {
+        IrBlock {
+            parameters: parameters
+                .iter()
+                .map(|value| (IrValueId(*value), U64))
+                .collect(),
+            instructions: Vec::new(),
+            terminator: IrTerminator::Jump {
+                target: IrBlockId(target),
+                arguments: arguments.iter().copied().map(IrValueId).collect(),
+                drops: Vec::new(),
+            },
+        }
+    }
+
+    fn function(blocks: Vec<IrBlock>) -> IrFunction {
+        IrFunction {
+            name: "origins".to_owned(),
+            parameters: vec![(IrValueId(0), U64), (IrValueId(1), U64)],
+            readonly_reference_parameters: Vec::new(),
+            whole_read_reference_parameters: Vec::new(),
+            whole_write_reference_parameters: Vec::new(),
+            box_keeping_reference_parameters: Vec::new(),
+            source_signature: None,
+            source_calls: Vec::new(),
+            result: U64,
+            values: vec![U64; 17],
+            blocks,
+            counted_ranges: Vec::new(),
+            overlaps: Vec::new(),
+            synthesis: None,
+            waits: false,
+        }
+    }
+
+    #[test]
+    fn formal_origins_close_rooted_cycles_and_reject_mixed_or_unresolved_roots() {
+        let mut rooted = function(vec![
+            jump(&[], 1, &[0, 1]),
+            jump(&[2, 3], 2, &[2, 3]),
+            jump(&[4, 5], 3, &[4, 5]),
+            jump(&[6, 7], 2, &[6, 7]),
+        ]);
+        let origins = formal_origins(&rooted, None);
+        for value in [2, 4, 6] {
+            assert_eq!(origins.get(&IrValueId(value)), Some(&0));
+        }
+        for value in [3, 5, 7] {
+            assert_eq!(origins.get(&IrValueId(value)), Some(&1));
+        }
+        // An additional edge mixes roots throughout the first cycle; the
+        // independent second cycle still carries exactly the second formal.
+        rooted.blocks.push(jump(&[], 2, &[1, 1]));
+        let origins = formal_origins(&rooted, None);
+        for value in [4, 6] {
+            assert!(!origins.contains_key(&IrValueId(value)));
+        }
+        for value in [3, 5, 7] {
+            assert_eq!(origins.get(&IrValueId(value)), Some(&1));
+        }
+        // The emitter's reachable-edge table excludes that extra dead edge.
+        let incoming = vec![
+            Vec::new(),
+            vec![Incoming {
+                predecessor: IrBlockId(0),
+                arguments: vec![IrValueId(0), IrValueId(1)],
+            }],
+            vec![
+                Incoming {
+                    predecessor: IrBlockId(1),
+                    arguments: vec![IrValueId(2), IrValueId(3)],
+                },
+                Incoming {
+                    predecessor: IrBlockId(3),
+                    arguments: vec![IrValueId(6), IrValueId(7)],
+                },
+            ],
+            vec![Incoming {
+                predecessor: IrBlockId(2),
+                arguments: vec![IrValueId(4), IrValueId(5)],
+            }],
+            Vec::new(),
+        ];
+        let origins = formal_origins(&rooted, Some(&incoming));
+        assert_eq!(origins.get(&IrValueId(6)), Some(&0));
+
+        // These origin constraints include an unreachable rootless cycle.
+        // Its unresolved value contaminates a join that also receives a
+        // formal. The old optimistic closure incorrectly retained formal 0.
+        let mut unresolved = function(vec![
+            jump(&[], 1, &[0]),
+            jump(&[2], 3, &[2]),
+            jump(&[3], 2, &[3]),
+            jump(&[4], 3, &[4]),
+            jump(&[], 1, &[3]),
+        ]);
+        let origins = formal_origins(&unresolved, None);
+        for value in [2, 3, 4] {
+            assert!(!origins.contains_key(&IrValueId(value)));
+        }
+        // Missing and mistyped incoming operands cannot establish aliases.
+        unresolved.blocks = vec![jump(&[], 1, &[0]), jump(&[2], 1, &[])];
+        assert!(!formal_origins(&unresolved, None).contains_key(&IrValueId(2)));
+        unresolved.blocks[1].terminator = IrTerminator::Unreachable;
+        unresolved.blocks[1].parameters[0].1 = IrType::Bool;
+        assert!(!formal_origins(&unresolved, None).contains_key(&IrValueId(2)));
+        // A parameter without any incoming edge has no formal origin.
+        unresolved.blocks[0].terminator = IrTerminator::Unreachable;
+        assert!(!formal_origins(&unresolved, None).contains_key(&IrValueId(2)));
+    }
+
+    #[test]
+    fn uniform_aliases_share_a_recipe_while_mixed_slots_keep_edge_loads() {
+        let referent = IrAddressed::Integer {
+            width: 64,
+            signed: false,
+        };
+        let address = IrType::Address(referent);
+        let mut function = function(vec![
+            IrBlock {
+                parameters: Vec::new(),
+                instructions: Vec::new(),
+                terminator: IrTerminator::Match {
+                    scrutinee: IrValueId(2),
+                    enum_type: IrEnumType::Bool,
+                    targets: vec![
+                        crate::IrMatchTarget {
+                            tag: 0,
+                            block: IrBlockId(1),
+                        },
+                        crate::IrMatchTarget {
+                            tag: 1,
+                            block: IrBlockId(2),
+                        },
+                    ],
+                },
+            },
+            jump(&[], 4, &[0]),
+            jump(&[], 3, &[0, 1]),
+            IrBlock {
+                parameters: vec![(IrValueId(9), address), (IrValueId(10), address)],
+                instructions: [9, 10, 0]
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, value)| IrInstruction::Define {
+                        result: IrValueId(11 + u32::try_from(index).unwrap()),
+                        ty: U64,
+                        operation: IrOperation::Load {
+                            address: IrValueId(value),
+                            referent,
+                        },
+                    })
+                    .collect(),
+                terminator: IrTerminator::Return {
+                    value: IrValueId(12),
+                    drops: Vec::new(),
+                },
+            },
+            jump(&[16], 3, &[16, 16]),
+        ]);
+        for value in [0, 1, 9, 10, 16] {
+            function.values[value] = address;
+        }
+        function.values[2] = IrType::Bool;
+        function.blocks[4].parameters[0].1 = address;
+        function.parameters = (0..9)
+            .map(|value| (IrValueId(value), function.values[value as usize]))
+            .collect();
+        function.readonly_reference_parameters = vec![IrValueId(0), IrValueId(1)];
+        function.source_signature = Some(crate::IrSourceSignature {
+            parameters: (0..9)
+                .map(|index| {
+                    if index < 2 {
+                        crate::IrSourceMode::Reference
+                    } else {
+                        crate::IrSourceMode::Own
+                    }
+                })
+                .collect(),
+            result: crate::IrSourceMode::Own,
+        });
+        // The recursive edge forwards the original formals. The unrelated
+        // mixed-slot join above must not disable the environment group.
+        function.blocks[3].instructions.push(IrInstruction::Define {
+            result: IrValueId(14),
+            ty: U64,
+            operation: IrOperation::Call {
+                function: 0,
+                arguments: (0..9).map(IrValueId).collect(),
+            },
+        });
+        let program = IrProgram {
+            nominal_ceilings: Vec::new(),
+            nominals: Vec::new(),
+            elements: Vec::new(),
+            constants: Vec::new(),
+            functions: vec![function],
+            actualization: Vec::new(),
+            sequential_compute_refusal: false,
+            recursion_budget: None,
+            loop_candidate_constructions: 0,
+        };
+        let llvm = crate::emit_llvm(&program)
+            .expect("valid alias graph emits")
+            .into_string();
+        let body = llvm
+            .split("define internal i64 @wf__env_origins(")
+            .nth(1)
+            .expect("environment member")
+            .split("\n}\n")
+            .next()
+            .unwrap();
+        assert!(!body.contains("%v9 = phi"), "{body}");
+        assert!(!body.contains("%v16 = phi"), "{body}");
+        assert!(
+            body.contains("%v10 = phi ptr [ %v1.bb2, %bb2 ], [ %v0.bb4, %bb4 ]"),
+            "{body}"
+        );
+        assert_eq!(
+            body.matches("load ptr, ptr %wf.env.v0.0.bb3,").count(),
+            1,
+            "{body}"
+        );
+        assert!(body.contains("%v11 = load i64, ptr %v0.bb3"), "{body}");
+        assert!(body.contains("%v13 = load i64, ptr %v0.bb3"), "{body}");
+        assert!(body.contains("%v12 = load i64, ptr %v10"), "{body}");
+        assert!(!body.contains("%wf.env.v0.0.bb1"), "{body}");
+        assert_eq!(body.matches("load ptr, ptr %wf.env.v").count(), 3, "{body}");
     }
 }

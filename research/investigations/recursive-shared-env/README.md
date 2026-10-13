@@ -78,7 +78,7 @@ Snowghost's renderer has a function with a 36-arm dispatch whose borrowed
 inputs each serve several arms. The aligned-order version was measured
 downstream and missed the renderer target; the block-local load revision
 has not yet been measured. The
-[renderer attribution](#renderer-attribution-and-load-placement-prediction--2026-10-12)
+[renderer attribution](#renderer-attribution-and-load-placement-prediction)
 records the result and the next prediction. This check runs in Snowghost-wf
 with a released compiler and is not part of the minimal witness's decision.
 
@@ -161,7 +161,9 @@ top-level call for the whole chain. Both branch copies were identical.
   without-table test passed all 6 words in registers and needed no such
   record load.
 
-## Renderer attribution and load-placement prediction — 2026-10-12
+## Renderer attribution and load-placement prediction
+
+Recorded on 2026-10-12.
 
 Snowghost [run 38346501498](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38346501498)
 was compared with [base run 38317465865](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38317465865)
