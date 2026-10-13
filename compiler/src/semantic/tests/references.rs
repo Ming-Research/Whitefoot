@@ -252,7 +252,10 @@ fn main() -> status: std::process::ExitStatus pure {
             PlaceStep::Deref,
             PlaceStep::Field(0),
             PlaceStep::Payload {
-                variant: outer[0].tag,
+                variant: match outer[0].selection {
+                    super::super::model::CheckedMatchSelection::Variant(tag) => tag,
+                    _ => panic!("enum arm must have variant selection"),
+                },
                 field: 0,
             },
         ];
@@ -277,7 +280,10 @@ fn main() -> status: std::process::ExitStatus pure {
                 expected.extend([
                     PlaceStep::Deref,
                     PlaceStep::Payload {
-                        variant: arm.tag,
+                        variant: match arm.selection {
+                            super::super::model::CheckedMatchSelection::Variant(tag) => tag,
+                            _ => panic!("enum arm must have variant selection"),
+                        },
                         field: binder.field,
                     },
                 ]);

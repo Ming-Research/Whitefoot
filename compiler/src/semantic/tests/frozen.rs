@@ -252,7 +252,7 @@ fn frozen_type_mismatches_use_source_names_including_nested_boxes() {
                 panic!("{outcome:?}");
             };
             assert_eq!(issue.rule_id(), "TYPE-5");
-            let SemanticIssueKind::TypeMismatch { expected, found } = issue.kind() else {
+            let SemanticIssueKind::TypeMismatch { expected, found, .. } = issue.kind() else {
                 panic!("{issue:?}");
             };
             assert_eq!(expected, "Box<u8>");

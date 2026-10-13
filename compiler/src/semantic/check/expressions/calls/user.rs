@@ -138,6 +138,47 @@ struct FormalCallBoundary {
 pub(in crate::semantic::check) const WAIT1_DECLARE_THE_CALLER_WAITING: &str = "write `waits` after the enclosing function's effect row, so the call stands in a waiting function; each caller of that function then waits in turn, up to an entry that waits";
 
 impl<'unit> Checker<'_, 'unit> {
+    /// [TYPE-5, REF-4] an array reference and a range reference are distinct
+    /// kinds. Suggest re-slicing only when the array's element type is the
+    /// requested range element type; another mismatch keeps its own payload.
+    fn array_range_argument_repair(
+        &self,
+        atom: NodeId,
+        parameter: &ParameterSignature,
+        argument: &TypedExpression,
+    ) -> Result<Option<String>, CheckStop> {
+        if parameter.mode != CheckedMode::Range || argument.mode.is_range() {
+            return Ok(None);
+        }
+        let element = match argument.expression.ty() {
+            CheckedType::Array { element, .. } | CheckedType::Buffer { element } => element,
+            _ => return Ok(None),
+        };
+        if self.types.element_type(element)? != parameter.ty {
+            return Ok(None);
+        }
+        let tree = &self.types.declarations.tree;
+        if tree.has_fixed(atom, crate::syntax::terminal::FixedTerminal::Move)? {
+            return Ok(None);
+        }
+        let (place, borrowed) = match tree.first_child_with(atom, Production::BorrowExpr)? {
+            Some(borrow) => (tree.first_child_with(borrow, Production::Place)?, true),
+            None => (tree.first_child_with(atom, Production::Place)?, false),
+        };
+        let Some(place) = place else {
+            return Ok(None);
+        };
+        let written = tree.source_spelling(place)?;
+        let place = if !borrowed && argument.mode == CheckedMode::Reference {
+            format!("{written}^")
+        } else {
+            written
+        };
+        Ok(Some(
+            super::super::super::repairs::writer_references::array_range_argument(&place),
+        ))
+    }
+
     pub(super) fn check_user_call(
         &mut self,
         context: FunctionContext<'_, '_>,
@@ -364,12 +405,17 @@ impl<'unit> Checker<'_, 'unit> {
                     return self.types.declarations.issue_node(
                         SemanticRule::Type5,
                         atom,
-                        SemanticIssueKind::type_mismatch(
-                            self.types
+                        SemanticIssueKind::TypeMismatch {
+                            expected: self
+                                .types
                                 .checked_value_name(parameter.mode, parameter.ty)?,
-                            self.types
+                            found: self
+                                .types
                                 .checked_value_name(argument.mode, argument.expression.ty())?,
-                        ),
+                            mechanical_fix: self.array_range_argument_repair(
+                                atom, parameter, &argument,
+                            )?,
+                        },
                     );
                 }
             }
@@ -384,9 +430,9 @@ impl<'unit> Checker<'_, 'unit> {
                 );
             }
             if argument.mode != parameter.mode {
-                // [TYPE-7] "A reference binding used where a value of its
-                // referent type is expected is a hard error citing TYPE-7,
-                // with the mechanical fix `p^`." The operand mode is
+                // [TYPE-7] a reference binding used where a value of its
+                // referent type is expected is a hard error with a repair.
+                // The operand mode is
                 // what says which of the two refusals this is: a reference
                 // standing in an `own` position is the implicit read the rule
                 // refuses, and every other disagreement is [TYPE-5]'s.
@@ -397,7 +443,19 @@ impl<'unit> Checker<'_, 'unit> {
                         SemanticRule::Type7,
                         atom,
                         SemanticIssueKind::MissingDereference {
-                            mechanical_fix: "write `p^`",
+                            mechanical_fix: match &argument.expression {
+                                CheckedExpression::Binding { binding, .. } => {
+                                    match bindings.values().find(|local| local.binding == *binding) {
+                                        Some(local) => self.reference_payload_repair(
+                                            check_context,
+                                            local,
+                                            &self.types.declarations.tree.source_spelling(atom)?,
+                                        )?,
+                                        None => "write `p^`".to_owned(),
+                                    }
+                                }
+                                _ => "write `p^`".to_owned(),
+                            },
                         },
                     );
                 }
@@ -1070,9 +1128,9 @@ impl<'unit> Checker<'_, 'unit> {
                         {
                             "this call gives these two entries of the callee's row the same positions: pass positions this call proves do not overlap, or replace the callee's row entries at or below their common path with one `writes` entry of that path"
                         } else if left.argument == right.argument && unnamed_positions {
-                            "these two entries of the callee's row may reach overlapping places through one argument, and no fact names the positions this call passes for them: replace the callee's row entries at or below their common path with one `writes` entry of that path"
+                            super::super::super::repairs::joined_argument_overlap(true)
                         } else if left.argument == right.argument {
-                            "these two entries of the callee's row may reach overlapping places through one argument, and no position this call passes separates them: replace the callee's row entries at or below their common path with one `writes` entry of that path"
+                            super::super::super::repairs::joined_argument_overlap(false)
                         } else {
                             "pass places that do not overlap, or pass the shared place through one argument only"
                         },

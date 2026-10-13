@@ -117,6 +117,31 @@ impl IrBuilder<'_> {
                 CheckedPlaceStep::Field(field) => {
                     self.project_struct_path(value, &[*field], false)?
                 }
+                CheckedPlaceStep::Payload {
+                    nominal,
+                    variant,
+                    field,
+                } => {
+                    let nominal = self.erased(*nominal)?;
+                    let IrNominalKind::Enum { variants } = &self.nominals[nominal.index()].kind
+                    else {
+                        return Err(LoweringFailure::InvalidCheckedProgram);
+                    };
+                    let ty = variants
+                        .get(*variant as usize)
+                        .and_then(|variant| variant.fields.get(*field as usize))
+                        .ok_or(LoweringFailure::InvalidCheckedProgram)?
+                        .ty;
+                    self.define(
+                        ty,
+                        IrOperation::ProjectVariant {
+                            aggregate: value,
+                            nominal,
+                            variant: *variant,
+                            field: *field,
+                        },
+                    )?
+                }
                 // Box-referent places are promoted by storage planning and
                 // lowered through their owner slot's address. Reaching this
                 // value-only path would take an address from a copied Box.

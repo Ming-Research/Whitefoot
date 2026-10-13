@@ -23,7 +23,7 @@ use super::super::super::model::{
 use super::super::super::places::{
     CapturedTerm, CapturedValue, PlaceRoot, PlaceStep, ResolvedPlace, WindowPart,
 };
-use super::super::references::{OWN1_ROOTED_CONSUME, WIN3_NO_TAKE};
+use super::super::references::{OWN1_ROOTED_CONSUME, ReferenceSelection, WIN3_NO_TAKE};
 
 use super::super::{CheckStop, Checker, EffectSet, LocalBinding, PlaceAccess, TypedExpression};
 use super::{PlaceUseContext, PlaceUseOptions, ResolvedPlaceSet};
@@ -41,6 +41,12 @@ pub(in crate::semantic::check) enum PlaceMember {
         index: u32,
         ty: CheckedType,
     },
+    Payload {
+        nominal: super::super::super::model::NominalId,
+        variant: u32,
+        field: u32,
+        ty: CheckedType,
+    },
     BoxContent {
         nominal: super::super::super::model::NominalId,
         ty: CheckedType,
@@ -50,7 +56,7 @@ pub(in crate::semantic::check) enum PlaceMember {
 impl PlaceMember {
     pub(in crate::semantic::check) fn ty(self) -> CheckedType {
         match self {
-            Self::Field { ty, .. } | Self::BoxContent { ty, .. } => ty,
+            Self::Field { ty, .. } | Self::Payload { ty, .. } | Self::BoxContent { ty, .. } => ty,
             Self::Measure(_) => CheckedType::Integer(IntegerType::U64),
         }
     }
@@ -58,6 +64,16 @@ impl PlaceMember {
     pub(in crate::semantic::check) fn storage_step(self) -> CheckedPlaceStep {
         match self {
             Self::Field { index, .. } => CheckedPlaceStep::Field(index),
+            Self::Payload {
+                nominal,
+                variant,
+                field,
+                ..
+            } => CheckedPlaceStep::Payload {
+                nominal,
+                variant,
+                field,
+            },
             Self::Measure(measure) => CheckedPlaceStep::Measure(measure),
             Self::BoxContent { nominal, .. } => CheckedPlaceStep::BoxReferent(nominal),
         }
@@ -164,9 +180,18 @@ impl<'unit> Checker<'_, 'unit> {
             return self.types.declarations.issue_node(
                 SemanticRule::Own1,
                 use_node,
-                SemanticIssueKind::MoveOfCopy {
-                    mechanical_fix: self.copy_move_repair(use_node)?,
-                },
+                self.ownership_issue(
+                    check_context,
+                    node,
+                    if place.measure.is_some() {
+                        CheckedType::Integer(IntegerType::U64)
+                    } else {
+                        place.ty
+                    },
+                    true,
+                    None,
+                    None,
+                )?,
             );
         }
         for member in &place.resolved.members {
@@ -283,6 +308,37 @@ impl<'unit> Checker<'_, 'unit> {
                         },
                     );
                 }
+                // [OWN-1, WIN-3] an own-root payload consume requires the
+                // active variant's residual release judgment. The owned-take
+                // path and cleanup currently cover structs and Box shells
+                // only, so this judgment is incomplete for enum payloads.
+                // Keep element takes outside this compiler capability stop.
+                if place
+                    .resolved
+                    .identity
+                    .path
+                    .iter()
+                    .any(|step| matches!(step, PlaceStep::Payload { .. }))
+                    && place.resolved.identity.path.iter().all(|step| {
+                        matches!(
+                            step,
+                            PlaceStep::Field(_) | PlaceStep::Deref | PlaceStep::Payload { .. }
+                        )
+                    })
+                {
+                    self.types.reject_runtime_content_move(
+                        check_context,
+                        use_node,
+                        place.declaration,
+                        place.ty,
+                        &place.resolved.identity.path,
+                        bindings,
+                    )?;
+                    return self
+                        .types
+                        .declarations
+                        .unsupported(UnsupportedSemanticFeature::CompositeValues, use_node);
+                }
                 // [TYPE-9, WIN-3] an owned path through Box content consumes
                 // its complete root. Keep the selected value separate from
                 // the residual fields and enclosing cells to be released.
@@ -326,18 +382,23 @@ impl<'unit> Checker<'_, 'unit> {
                 return self.types.declarations.issue_node(
                     SemanticRule::Own1,
                     use_node,
-                    SemanticIssueKind::BareAffineUse {
-                        mechanical_fix: if self
+                    self.ownership_issue(
+                        check_context,
+                        node,
+                        place.ty,
+                        false,
+                        None,
+                        if self
                             .types
                             .declarations
                             .tree
                             .place_has_dereference(node)?
                         {
-                            OWN1_ROOTED_CONSUME
+                            Some(OWN1_ROOTED_CONSUME.to_owned())
                         } else {
-                            "write `move p` for the affine place"
+                            None
                         },
-                    },
+                    )?,
                 );
             }
         }
@@ -680,10 +741,14 @@ impl<'unit> Checker<'_, 'unit> {
                     SemanticRule::Type7,
                     suffix,
                     SemanticIssueKind::MissingDereference {
-                        mechanical_fix: "write `p^`",
+                        mechanical_fix: "write `p^`".to_owned(),
                     },
                 );
             }
+            let payload = matches!(
+                self.types.declarations.tree.place_suffix(suffix)?,
+                crate::syntax::views::PlaceSuffix::Member(member) if member.variant.is_some()
+            );
             let name = self
                 .types
                 .declarations
@@ -692,7 +757,7 @@ impl<'unit> Checker<'_, 'unit> {
                 .to_owned();
             // [TYPE-10] the selected type determines whether a spelling is
             // a measure, a window part, or an ordinary source field.
-            if let Some(measure) = super::super::types::measure_named(&name) {
+            if !payload && let Some(measure) = super::super::types::measure_named(&name) {
                 // [OP-14, PRE-1] at a boxed argument a compiler-owned row's
                 // measure place instantiates as `window.inner`: the shape
                 // parameter W admits `Box<Slots<T>>` and `Box<Ring<T>>`, and
@@ -745,12 +810,14 @@ impl<'unit> Checker<'_, 'unit> {
                     continue;
                 }
             }
-            self.types.declarations.reject_window_part(
-                suffix,
-                &name,
-                place.ty,
-                place.range_referent,
-            )?;
+            if !payload {
+                self.types.declarations.reject_window_part(
+                    suffix,
+                    &name,
+                    place.ty,
+                    place.range_referent,
+                )?;
+            }
             let member = self
                 .types
                 .elaborate_place_member(check_context, suffix, place.ty)?;
@@ -768,6 +835,42 @@ impl<'unit> Checker<'_, 'unit> {
                         value: Box::new(place.expression),
                     }
                 }
+                PlaceMember::Payload {
+                    nominal,
+                    variant,
+                    field,
+                    ty,
+                } => {
+                    self.require_payload_variant(
+                        suffix,
+                        variant,
+                        &place.expression,
+                        &place.resolved.identity,
+                        &place.resolved.members,
+                        bindings,
+                    )?;
+                    let (binding, mut path, proof_base) = self
+                        .types
+                        .declarations
+                        .explicit_container_path(&place.expression, carrier)?;
+                    path.push(CheckedPlaceStep::Payload {
+                        nominal,
+                        variant,
+                        field,
+                    });
+                    place
+                        .resolved
+                        .append_step(PlaceStep::Payload { variant, field });
+                    CheckedExpression::ReadStorage {
+                        carrier: self.types.declarations.tree.path(carrier)?.clone(),
+                        root: CheckedContainerRoot {
+                            root: PlaceRoot::Binding(binding),
+                            path,
+                            ty,
+                            proof_base,
+                        },
+                    }
+                }
                 PlaceMember::Field { nominal, index, ty } => {
                     place.resolved.extend_fields(&[index]);
                     CheckedExpression::ProjectValue {
@@ -782,6 +885,109 @@ impl<'unit> Checker<'_, 'unit> {
             place.ty = member.ty();
         }
         Ok(place)
+    }
+
+    pub(in crate::semantic::check) fn payload_selection_identity(
+        &self,
+        expression: &CheckedExpression,
+        places: &[ResolvedPlace],
+        node: NodeId,
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+    ) -> Result<ReferenceSelection, CheckStop> {
+        // A singleton already carries its exact selected-target identity,
+        // including any loop descendant token and captured selectors.
+        if let [place] = places {
+            return Ok(ReferenceSelection::Exact(place.clone()));
+        }
+        let written = if let CheckedExpression::RangeIndex { place, .. } = expression {
+            ResolvedPlace {
+                root: PlaceRoot::Binding(place.root.binding),
+                path: place.place_path(),
+                atomic_aliases: Vec::new(),
+            }
+        } else if let Some(named) = super::super::super::places::named_place(expression) {
+            let mut path = named.steps;
+            path.extend(named.suffix);
+            ResolvedPlace {
+                root: named.root,
+                path,
+                atomic_aliases: Vec::new(),
+            }
+        } else {
+            let (binding, path, _) = self
+                .types
+                .declarations
+                .explicit_container_path(expression, node)?;
+            ResolvedPlace {
+                root: PlaceRoot::Binding(binding),
+                path: path.iter().map(CheckedPlaceStep::place_step).collect(),
+                atomic_aliases: Vec::new(),
+            }
+        };
+        if let PlaceRoot::Binding(binding) = written.root
+            && let Some(reference) = bindings
+                .values()
+                .find(|local| local.binding == binding)
+                .and_then(|local| local.reference.as_ref())
+        {
+            let mut selection = reference
+                .selection
+                .clone()
+                .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+            for step in written.path {
+                selection.extend(step);
+            }
+            return Ok(selection);
+        }
+        Err(SemanticCompilerFailure::InvalidResolution.into())
+    }
+
+    /// [REF-1, ENT-3.S15] a new payload selection needs a current arm
+    /// witness for every possible enum the written prefix can name.
+    pub(in crate::semantic::check) fn require_payload_variant(
+        &self,
+        suffix: NodeId,
+        variant: u32,
+        expression: &CheckedExpression,
+        written: &ResolvedPlace,
+        places: &[ResolvedPlace],
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+    ) -> Result<(), CheckStop> {
+        let selection = self.payload_selection_identity(expression, places, suffix, bindings)?;
+        let witnesses = bindings
+            .values()
+            .flat_map(|local| &local.refinement_witnesses)
+            .collect::<Vec<_>>();
+        let established = witnesses.iter().any(|witness| {
+            witness.valid
+                && witness.variant == variant
+                && witness.selection.same_target(&selection)
+                && places.iter().all(|place| {
+                    witnesses.iter().any(|support| {
+                        support.valid
+                            && support.origin == witness.origin
+                            && support.variant == variant
+                            && support.selection == witness.selection
+                            && support.place.root == place.root
+                            && support.place.contains(place)
+                            && place.contains(&support.place)
+                    })
+                })
+        });
+        if !established {
+            return self.types.declarations.issue_node(
+                SemanticRule::Ref1,
+                suffix,
+                SemanticIssueKind::UnestablishedPayloadVariant {
+                    place: self.types.render_resolved_place(written, bindings)?,
+                    variant: self.types.declarations
+                        .deferred_use_at(suffix, DeferredUseRole::PayloadVariant)?
+                        .spelling().to_owned(),
+                    mechanical_fix: "match the enum again and select the payload inside its variant arm before any overlapping write",
+                },
+            );
+        }
+        Ok(())
     }
 
     /// [TYPE-7] `place^` denotes the referent of a reference, and
@@ -805,7 +1011,8 @@ impl<'unit> Checker<'_, 'unit> {
                 SemanticIssueKind::MissingDereference {
                     mechanical_fix:
                         "a Box's content is its field inner [TYPE-9]; an owned place is named \
-                         as itself",
+                         as itself"
+                            .to_owned(),
                 },
             );
         }
@@ -977,7 +1184,7 @@ impl<'unit> TypeContext<'unit> {
                     .parent(suffix)?
                     .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?,
                 SemanticIssueKind::MissingDereference {
-                    mechanical_fix: "apply `^` only to a reference; name an owned place as itself",
+                    mechanical_fix: "apply `^` only to a reference; name an owned place as itself".to_owned(),
                 },
             );
         }
@@ -990,6 +1197,50 @@ impl<'unit> TypeContext<'unit> {
             .declarations
             .deferred_use_at(suffix, DeferredUseRole::ProjectedField)?
             .spelling();
+        if let crate::syntax::views::PlaceSuffix::Member(member) =
+            self.declarations.tree.place_suffix(suffix)?
+            && member.variant.is_some()
+        {
+            let variant_name = self
+                .declarations
+                .deferred_use_at(suffix, DeferredUseRole::PayloadVariant)?
+                .spelling();
+            if let CheckedType::Nominal(nominal) = ty
+                && let CheckedNominalKind::Enum { variants } = &self.nominal(nominal)?.kind
+                && let Some(variant) = variants.iter().find(|variant| variant.name == variant_name)
+                && let Some((field, selected)) = variant
+                    .fields
+                    .iter()
+                    .enumerate()
+                    .find(|(_, field)| field.name == name)
+            {
+                self.reject_inaccessible_variant(check_context, nominal, variant_name, suffix)?;
+                self.reject_inaccessible_field(
+                    check_context,
+                    nominal,
+                    Some(variant.tag as usize),
+                    field,
+                    name,
+                    suffix,
+                )?;
+                return Ok(PlaceMember::Payload {
+                    nominal,
+                    variant: variant.tag,
+                    field: u32::try_from(field)
+                        .map_err(|_| SemanticCompilerFailure::CounterOverflow)?,
+                    ty: selected.ty,
+                });
+            }
+            return self.declarations.issue_node(
+                SemanticRule::Type5,
+                suffix,
+                SemanticIssueKind::type_mismatch(
+                    "a declared enum variant and its declared payload field",
+                    format!("{}.{variant_name}.{name}", self.checked_type_name(ty)?),
+                ),
+            );
+        }
+
         if name == "pages"
             && matches!(
                 ty,
@@ -1028,7 +1279,7 @@ impl<'unit> TypeContext<'unit> {
             .reject_window_part(suffix, name, ty, false)?;
         let member = self.place_member(ty, name)?;
         match member {
-            Some(PlaceMember::Measure(_)) => {}
+            Some(PlaceMember::Measure(_) | PlaceMember::Payload { .. }) => {}
             Some(PlaceMember::BoxContent { .. }) => {
                 if name != "inner" {
                     return self.declarations.issue_node(
@@ -1202,6 +1453,56 @@ impl<'unit> TypeContext<'unit> {
         }
         Ok((!range).then_some(ty))
     }
+    /// [TYPE-9] runtime-capacity content cannot leave the Box that owns its
+    /// allocation. Keep this selected-type judgment before any owned-take
+    /// capability stop, using the same repair for every typed owner path.
+    fn reject_runtime_content_move(
+        &self,
+        check_context: &CheckContext<'_>,
+        use_node: NodeId,
+        declaration: DeclarationId,
+        referent: CheckedType,
+        resolved_path: &[PlaceStep],
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+    ) -> Result<(), CheckStop> {
+        if matches!(
+            referent,
+            CheckedType::Buffer { .. }
+                | CheckedType::Segments { .. }
+                | CheckedType::Window { capacity: None, .. }
+        ) {
+            // The last content step selects the runtime-capacity value;
+            // its prefix is the Box that can move or be released [TYPE-9].
+            let (PlaceStep::Deref, cell_path) = resolved_path
+                .split_last()
+                .ok_or(SemanticCompilerFailure::InvalidResolution)?
+            else {
+                return Err(SemanticCompilerFailure::InvalidResolution.into());
+            };
+            let local = bindings
+                .get(&declaration)
+                .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+            let mut cell = ResolvedPlace::binding(local.binding);
+            cell.path = cell_path.to_vec();
+            let cell = self.render_resolved_place(&cell, bindings)?;
+            let window = matches!(referent, CheckedType::Window { .. });
+            let droppable = self
+                .linear_release_obligation(check_context, referent)?
+                .is_none();
+            return self.declarations.issue_node(
+                SemanticRule::Type9,
+                use_node,
+                SemanticIssueKind::InvalidRestrictedTypePlacement {
+                    spelling: self.checked_type_name(referent)?,
+                    mechanical_fix: super::super::repairs::runtime_content_move(
+                        &cell, window, droppable,
+                    ),
+                },
+            );
+        }
+        Ok(())
+    }
+
     /// [TYPE-9, WIN-3] `let n = move b.inner;`.
     ///
     /// [TYPE-9]: "`let n = move b.inner;` consumes the `Box`, yields its
@@ -1228,38 +1529,14 @@ impl<'unit> TypeContext<'unit> {
             .get(&declaration)
             .cloned()
             .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-        if matches!(
+        self.reject_runtime_content_move(
+            check_context,
+            use_node,
+            declaration,
             referent,
-            CheckedType::Buffer { .. }
-                | CheckedType::Segments { .. }
-                | CheckedType::Window { capacity: None, .. }
-        ) {
-            // The last content step selects the runtime-capacity value;
-            // its prefix is the Box that can move or be released [TYPE-9].
-            let (PlaceStep::Deref, cell_path) = resolved_path
-                .split_last()
-                .ok_or(SemanticCompilerFailure::InvalidResolution)?
-            else {
-                return Err(SemanticCompilerFailure::InvalidResolution.into());
-            };
-            let mut cell = ResolvedPlace::binding(local.binding);
-            cell.path = cell_path.to_vec();
-            let cell = self.render_resolved_place(&cell, bindings)?;
-            let window = matches!(referent, CheckedType::Window { .. });
-            let droppable = self
-                .linear_release_obligation(check_context, referent)?
-                .is_none();
-            return self.declarations.issue_node(
-                SemanticRule::Type9,
-                use_node,
-                SemanticIssueKind::InvalidRestrictedTypePlacement {
-                    spelling: self.checked_type_name(referent)?,
-                    mechanical_fix: super::super::repairs::runtime_content_move(
-                        &cell, window, droppable,
-                    ),
-                },
-            );
-        }
+            resolved_path,
+            bindings,
+        )?;
         let path = self.checked_owned_take_path(local.ty, resolved_path)?;
         let mut cleanup = Vec::new();
         for action in self.owned_take_cleanup(check_context, local.ty, &path)? {
@@ -1985,6 +2262,14 @@ impl<'unit> TypeContext<'unit> {
         mut ty: CheckedType,
     ) -> Result<(), CheckStop> {
         for &suffix in suffixes {
+            if matches!(
+                self.declarations.tree.place_suffix(suffix)?,
+                crate::syntax::views::PlaceSuffix::Member(member) if member.variant.is_some()
+            ) {
+                // Payload selection and its readonly provenance belong to
+                // the ordinary typed place walk, not measure-name routing.
+                return Ok(());
+            }
             if self.declarations.tree.subscript_offset(suffix)?.is_some() {
                 // [MSR-2] a write at an element position reaches that
                 // element's own storage; the offset carries no member name.
@@ -2146,6 +2431,9 @@ impl<'unit> DeclarationInventory<'unit> {
         else {
             return Ok(None);
         };
+        if member.variant.is_some() {
+            return Ok(None);
+        }
         let name = std::str::from_utf8(self.tree.token_bytes(member.field)?)
             .map_err(|_| SemanticCompilerFailure::InvalidSourceEncoding)?;
         Ok(super::super::types::measure_named(name))

@@ -3274,6 +3274,10 @@ impl<'p> SubscriptWalk<'p> {
         for step in steps {
             let step = match step {
                 CheckedPlaceStep::Field(field) => PlaceStep::Field(*field),
+                CheckedPlaceStep::Payload { variant, field, .. } => PlaceStep::Payload {
+                    variant: *variant,
+                    field: *field,
+                },
                 CheckedPlaceStep::BoxReferent(_) => PlaceStep::Deref,
                 CheckedPlaceStep::Measure(measure) => PlaceStep::Measure(*measure),
                 CheckedPlaceStep::Subscript(subscript) => {
