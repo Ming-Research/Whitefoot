@@ -1,0 +1,775 @@
+{
+  "versions": {
+    "opt": "Homebrew LLVM version 22.1.8\n  Optimized build.\n  Default target: arm64-apple-darwin27.0.0\n  Host CPU: apple-m4\n",
+    "llc": "Homebrew LLVM version 22.1.8\n  Optimized build.\n  Default target: arm64-apple-darwin27.0.0\n  Host CPU: apple-m4\n\n  Registered Targets:\n    aarch64     - AArch64 (little endian)\n    aarch64_32  - AArch64 (little endian ILP32)\n    aarch64_be  - AArch64 (big endian)\n    amdgcn      - AMD GCN GPUs\n    arm         - ARM\n    arm64       - ARM64 (little endian)\n    arm64_32    - ARM64 (little endian ILP32)\n    armeb       - ARM (big endian)\n    avr         - Atmel AVR Microcontroller\n    bpf         - BPF (host endian)\n    bpfeb       - BPF (big endian)\n    bpfel       - BPF (little endian)\n    hexagon     - Hexagon\n    lanai       - Lanai\n    loongarch32 - 32-bit LoongArch\n    loongarch64 - 64-bit LoongArch\n    mips        - MIPS (32-bit big endian)\n    mips64      - MIPS (64-bit big endian)\n    mips64el    - MIPS (64-bit little endian)\n    mipsel      - MIPS (32-bit little endian)\n    msp430      - MSP430 [experimental]\n    nvptx       - NVIDIA PTX 32-bit\n    nvptx64     - NVIDIA PTX 64-bit\n    ppc32       - PowerPC 32\n    ppc32le     - PowerPC 32 LE\n    ppc64       - PowerPC 64\n    ppc64le     - PowerPC 64 LE\n    r600        - AMD GPUs HD2XXX-HD6XXX\n    riscv32     - 32-bit RISC-V\n    riscv32be   - 32-bit big endian RISC-V\n    riscv64     - 64-bit RISC-V\n    riscv64be   - 64-bit big endian RISC-V\n    sparc       - Sparc\n    sparcel     - Sparc LE\n    sparcv9     - Sparc V9\n    spirv       - SPIR-V Logical\n    spirv32     - SPIR-V 32-bit\n    spirv64     - SPIR-V 64-bit\n    systemz     - SystemZ\n    thumb       - Thumb\n    thumbeb     - Thumb (big endian)\n    ve          - VE\n    wasm32      - WebAssembly 32-bit\n    wasm64      - WebAssembly 64-bit\n    x86         - 32-bit X86: Pentium-Pro and above\n    x86-64      - 64-bit X86: EM64T and AMD64\n    xcore       - XCore\n",
+    "llvm-extract": "Homebrew LLVM version 22.1.8\n  Optimized build.\n",
+    "llvm-dis": "Homebrew LLVM version 22.1.8\n  Optimized build.\n",
+    "llvm-nm": "llvm-nm, compatible with GNU nm\nHomebrew LLVM version 22.1.8\n  Optimized build.\n",
+    "llvm-lto2": "Homebrew LLVM version 22.1.8\n  Optimized build.\n"
+  },
+  "cases": {
+    "shape-buffer-emitted": {
+      "witness": "shape-buffer-emitted.ll",
+      "lto_options": [],
+      "whole_remarks": [
+        "remark: <unknown>:0:0: 'wf_font.blank_item' inlined into 'wf_font.read_item' with (cost=-30, threshold=337)",
+        "remark: <unknown>:0:0: 'wf_font.write_item' not inlined into 'wf_font.put_item' because too costly to inline (cost=290, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_font.fail' inlined into 'wf_font.put_item' with (cost=-30, threshold=337)",
+        "remark: <unknown>:0:0: 'wf_font.write_item' not inlined into 'wf_font.put_out' because too costly to inline (cost=290, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_font.put_item' inlined into 'wf_font.put_out' with (cost=10, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_font.fail' inlined into 'wf_font.put_out' with (cost=-30, threshold=337)",
+        "remark: <unknown>:0:0: 'wf_font.write_item' not inlined into 'wf_font.put_out' because too costly to inline (cost=290, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_font.read_item' inlined into 'wf_font.next_glyphs' with (cost=50, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_font.put_out' inlined into 'wf_font.next_glyphs' with (cost=70, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_font.write_item' not inlined into 'wf_font.next_glyphs' because too costly to inline (cost=290, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_font.write_item' not inlined into 'wf_font.next_glyphs' because too costly to inline (cost=290, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_font.next_glyphs' not inlined into 'wf_font.next_glyph' because too costly to inline (cost=330, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_font.read_item' inlined into 'wf_font.item_at' with (cost=115, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_font.read_item' inlined into 'wf_font.current' with (cost=115, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_font.read_item' inlined into 'wf_font.out_at' with (cost=115, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_font.read_item' inlined into 'wf_font.out_at' with (cost=115, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_font.fail' inlined into 'wf_font.make_room' with (cost=-30, threshold=337)",
+        "remark: <unknown>:0:0: 'wf_font.read_item' inlined into 'wf_font.make_room' with (cost=50, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_font.write_item' not inlined into 'wf_font.make_room' because too costly to inline (cost=290, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_font.fail' inlined into 'wf_font.make_room' with (cost=-30, threshold=337)",
+        "remark: <unknown>:0:0: 'wf_font.fail' inlined into 'wf_font.shift_forward' with (cost=-30, threshold=337)",
+        "remark: <unknown>:0:0: 'wf_font.blank_item' inlined into 'wf_font.shift_forward' with (cost=-30, threshold=337)",
+        "remark: <unknown>:0:0: 'wf_font.put_item' inlined into 'wf_font.shift_forward' with (cost=10, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_font.read_item' inlined into 'wf_font.shift_forward' with (cost=50, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_font.put_item' inlined into 'wf_font.shift_forward' with (cost=10, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_font.write_item' not inlined into 'wf_font.shift_forward' because too costly to inline (cost=290, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_font.write_item' not inlined into 'wf_font.shift_forward' because too costly to inline (cost=290, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_font.item_at' inlined into 'wf_font.apply_forward' with (cost=50, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_font.next_glyphs' not inlined into 'wf_font.apply_forward' because too costly to inline (cost=335, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_font.next_glyph' inlined into 'wf_font.apply_forward' with (cost=5, threshold=337)",
+        "remark: <unknown>:0:0: 'wf_font.next_glyphs' not inlined into 'wf_font.apply_forward' because too costly to inline (cost=330, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_font.next_glyphs' not inlined into 'wf_font.sync' because too costly to inline (cost=335, threshold=225)"
+      ],
+      "whole_static_instructions": {
+        "wf_font.blank_item": 5,
+        "wf_font.read_item": 28,
+        "wf_font.write_item": 56,
+        "wf_font.fail": 3,
+        "wf_font.put_item": 9,
+        "wf_font.put_out": 14,
+        "wf_font.next_glyphs": 88,
+        "wf_font.next_glyph": 6,
+        "wf_font.item_at": 28,
+        "wf_font.current": 29,
+        "wf_font.out_at": 34,
+        "wf_font.make_room": 70,
+        "wf_font.shift_forward": 112,
+        "wf_font.apply_forward": 111,
+        "wf_font.sync": 22
+      },
+      "summary_instructions": {
+        "wf_font.blank_item": 2,
+        "wf_font.read_item": 62,
+        "wf_font.write_item": 79,
+        "wf_font.fail": 3,
+        "wf_font.put_item": 5,
+        "wf_font.put_out": 11,
+        "wf_font.next_glyphs": 29,
+        "wf_font.next_glyph": 2,
+        "wf_font.item_at": 2,
+        "wf_font.current": 4,
+        "wf_font.out_at": 6,
+        "wf_font.make_room": 35,
+        "wf_font.shift_forward": 49,
+        "wf_font.apply_forward": 47,
+        "wf_font.sync": 19
+      },
+      "imports": {
+        "wf_font.blank_item": [],
+        "wf_font.current": [
+          "wf_font.blank_item",
+          "wf_font.read_item"
+        ],
+        "wf_font.out_at": [
+          "wf_font.blank_item",
+          "wf_font.read_item"
+        ],
+        "wf_font.make_room": [
+          "wf_font.blank_item",
+          "wf_font.fail",
+          "wf_font.read_item",
+          "wf_font.write_item"
+        ],
+        "wf_font.shift_forward": [
+          "wf_font.blank_item",
+          "wf_font.fail",
+          "wf_font.put_item",
+          "wf_font.read_item"
+        ],
+        "wf_font.apply_forward": [
+          "wf_font.blank_item",
+          "wf_font.fail",
+          "wf_font.item_at",
+          "wf_font.next_glyph",
+          "wf_font.next_glyphs",
+          "wf_font.put_item",
+          "wf_font.put_out",
+          "wf_font.read_item"
+        ],
+        "wf_font.sync": [
+          "wf_font.blank_item",
+          "wf_font.fail",
+          "wf_font.next_glyphs",
+          "wf_font.put_item",
+          "wf_font.put_out",
+          "wf_font.read_item"
+        ],
+        "wf_font.read_item": [
+          "wf_font.blank_item"
+        ],
+        "wf_font.write_item": [],
+        "wf_font.fail": [],
+        "wf_font.put_item": [
+          "wf_font.fail",
+          "wf_font.write_item"
+        ],
+        "wf_font.put_out": [
+          "wf_font.fail",
+          "wf_font.put_item",
+          "wf_font.write_item"
+        ],
+        "wf_font.next_glyphs": [
+          "wf_font.blank_item",
+          "wf_font.fail",
+          "wf_font.put_item",
+          "wf_font.put_out",
+          "wf_font.read_item"
+        ],
+        "wf_font.next_glyph": [
+          "wf_font.blank_item",
+          "wf_font.fail",
+          "wf_font.next_glyphs",
+          "wf_font.put_item",
+          "wf_font.put_out",
+          "wf_font.read_item"
+        ],
+        "wf_font.item_at": [
+          "wf_font.blank_item",
+          "wf_font.read_item"
+        ]
+      },
+      "thinlto_remarks": [
+        "<unknown>:0:0: 'wf_font.blank_item' inlined into 'wf_font.read_item' with (cost=-30, threshold=337)",
+        "<unknown>:0:0: 'wf_font.write_item' not inlined into 'wf_font.put_item' because too costly to inline (cost=290, threshold=225)",
+        "<unknown>:0:0: 'wf_font.fail' inlined into 'wf_font.put_item' with (cost=-30, threshold=337)",
+        "<unknown>:0:0: 'wf_font.write_item' not inlined into 'wf_font.put_item' because too costly to inline (cost=290, threshold=225)",
+        "<unknown>:0:0: 'wf_font.fail' inlined into 'wf_font.put_item' with (cost=-30, threshold=337)",
+        "<unknown>:0:0: 'wf_font.write_item' not inlined into 'wf_font.put_out' because too costly to inline (cost=290, threshold=225)",
+        "<unknown>:0:0: 'wf_font.put_item' inlined into 'wf_font.put_out' with (cost=10, threshold=225)",
+        "<unknown>:0:0: 'wf_font.fail' inlined into 'wf_font.put_out' with (cost=-30, threshold=337)",
+        "<unknown>:0:0: 'wf_font.write_item' not inlined into 'wf_font.put_out' because too costly to inline (cost=290, threshold=225)",
+        "<unknown>:0:0: 'wf_font.blank_item' inlined into 'wf_font.read_item' with (cost=-30, threshold=337)",
+        "<unknown>:0:0: 'wf_font.fail' inlined into 'wf_font.put_item' with (cost=-30, threshold=337)",
+        "<unknown>:0:0: 'wf_font.put_item' inlined into 'wf_font.put_out' with (cost=10, threshold=225)",
+        "<unknown>:0:0: 'wf_font.fail' inlined into 'wf_font.put_out' with (cost=-30, threshold=337)",
+        "<unknown>:0:0: 'wf_font.read_item' inlined into 'wf_font.next_glyphs' with (cost=50, threshold=225)",
+        "<unknown>:0:0: 'wf_font.put_out' inlined into 'wf_font.next_glyphs' with (cost=70, threshold=225)",
+        "<unknown>:0:0: 'wf_font.blank_item' inlined into 'wf_font.read_item' with (cost=-30, threshold=337)",
+        "<unknown>:0:0: 'wf_font.fail' inlined into 'wf_font.put_item' with (cost=-30, threshold=337)",
+        "<unknown>:0:0: 'wf_font.put_item' inlined into 'wf_font.put_out' with (cost=10, threshold=225)",
+        "<unknown>:0:0: 'wf_font.fail' inlined into 'wf_font.put_out' with (cost=-30, threshold=337)",
+        "<unknown>:0:0: 'wf_font.read_item' inlined into 'wf_font.next_glyphs' with (cost=50, threshold=225)",
+        "<unknown>:0:0: 'wf_font.put_out' inlined into 'wf_font.next_glyphs' with (cost=70, threshold=225)",
+        "<unknown>:0:0: 'wf_font.next_glyphs' not inlined into 'wf_font.next_glyph' because too costly to inline (cost=330, threshold=225)",
+        "<unknown>:0:0: 'wf_font.blank_item' inlined into 'wf_font.read_item' with (cost=-30, threshold=337)",
+        "<unknown>:0:0: 'wf_font.read_item' inlined into 'wf_font.item_at' with (cost=115, threshold=225)",
+        "<unknown>:0:0: 'wf_font.blank_item' inlined into 'wf_font.read_item' with (cost=-30, threshold=337)",
+        "<unknown>:0:0: 'wf_font.read_item' inlined into 'wf_font.current' with (cost=115, threshold=225)",
+        "<unknown>:0:0: 'wf_font.blank_item' inlined into 'wf_font.read_item' with (cost=-30, threshold=337)",
+        "<unknown>:0:0: 'wf_font.read_item' inlined into 'wf_font.out_at' with (cost=115, threshold=225)",
+        "<unknown>:0:0: 'wf_font.blank_item' inlined into 'wf_font.read_item' with (cost=-30, threshold=337)",
+        "<unknown>:0:0: 'wf_font.fail' inlined into 'wf_font.make_room' with (cost=-30, threshold=337)",
+        "<unknown>:0:0: 'wf_font.read_item' inlined into 'wf_font.make_room' with (cost=50, threshold=225)",
+        "<unknown>:0:0: 'wf_font.write_item' not inlined into 'wf_font.make_room' because too costly to inline (cost=290, threshold=225)",
+        "<unknown>:0:0: 'wf_font.fail' inlined into 'wf_font.make_room' with (cost=-30, threshold=337)",
+        "<unknown>:0:0: 'wf_font.fail' inlined into 'wf_font.put_item' with (cost=-30, threshold=337)",
+        "<unknown>:0:0: 'wf_font.blank_item' inlined into 'wf_font.read_item' with (cost=-30, threshold=337)",
+        "<unknown>:0:0: 'wf_font.fail' inlined into 'wf_font.shift_forward' with (cost=-30, threshold=337)",
+        "<unknown>:0:0: 'wf_font.blank_item' inlined into 'wf_font.shift_forward' with (cost=-30, threshold=337)",
+        "<unknown>:0:0: 'wf_font.put_item' inlined into 'wf_font.shift_forward' with (cost=10, threshold=225)",
+        "<unknown>:0:0: 'wf_font.read_item' inlined into 'wf_font.shift_forward' with (cost=50, threshold=225)",
+        "<unknown>:0:0: 'wf_font.put_item' inlined into 'wf_font.shift_forward' with (cost=10, threshold=225)",
+        "<unknown>:0:0: 'wf_font.blank_item' inlined into 'wf_font.read_item' with (cost=-30, threshold=337)",
+        "<unknown>:0:0: 'wf_font.read_item' inlined into 'wf_font.item_at' with (cost=115, threshold=225)",
+        "<unknown>:0:0: 'wf_font.fail' inlined into 'wf_font.put_item' with (cost=-30, threshold=337)",
+        "<unknown>:0:0: 'wf_font.put_item' inlined into 'wf_font.put_out' with (cost=10, threshold=225)",
+        "<unknown>:0:0: 'wf_font.fail' inlined into 'wf_font.put_out' with (cost=-30, threshold=337)",
+        "<unknown>:0:0: 'wf_font.read_item' inlined into 'wf_font.next_glyphs' with (cost=50, threshold=225)",
+        "<unknown>:0:0: 'wf_font.put_out' inlined into 'wf_font.next_glyphs' with (cost=70, threshold=225)",
+        "<unknown>:0:0: 'wf_font.next_glyphs' not inlined into 'wf_font.next_glyph' because too costly to inline (cost=330, threshold=225)",
+        "<unknown>:0:0: 'wf_font.item_at' inlined into 'wf_font.apply_forward' with (cost=50, threshold=225)",
+        "<unknown>:0:0: 'wf_font.next_glyphs' not inlined into 'wf_font.apply_forward' because too costly to inline (cost=335, threshold=225)",
+        "<unknown>:0:0: 'wf_font.next_glyph' inlined into 'wf_font.apply_forward' with (cost=5, threshold=337)",
+        "<unknown>:0:0: 'wf_font.next_glyphs' not inlined into 'wf_font.apply_forward' because too costly to inline (cost=330, threshold=225)",
+        "<unknown>:0:0: 'wf_font.blank_item' inlined into 'wf_font.read_item' with (cost=-30, threshold=337)",
+        "<unknown>:0:0: 'wf_font.fail' inlined into 'wf_font.put_item' with (cost=-30, threshold=337)",
+        "<unknown>:0:0: 'wf_font.put_item' inlined into 'wf_font.put_out' with (cost=10, threshold=225)",
+        "<unknown>:0:0: 'wf_font.fail' inlined into 'wf_font.put_out' with (cost=-30, threshold=337)",
+        "<unknown>:0:0: 'wf_font.read_item' inlined into 'wf_font.next_glyphs' with (cost=50, threshold=225)",
+        "<unknown>:0:0: 'wf_font.put_out' inlined into 'wf_font.next_glyphs' with (cost=70, threshold=225)",
+        "<unknown>:0:0: 'wf_font.next_glyphs' not inlined into 'wf_font.sync' because too costly to inline (cost=335, threshold=225)"
+      ],
+      "thinlto_static_instructions": {
+        "wf_font.blank_item": 5,
+        "wf_font.current": 29,
+        "wf_font.out_at": 29,
+        "wf_font.make_room": 70,
+        "wf_font.shift_forward": 107,
+        "wf_font.apply_forward": 111,
+        "wf_font.sync": 22,
+        "wf_font.read_item": 28,
+        "wf_font.write_item": 56,
+        "wf_font.fail": 3,
+        "wf_font.put_item": 9,
+        "wf_font.put_out": 14,
+        "wf_font.next_glyphs": 88,
+        "wf_font.next_glyph": 6,
+        "wf_font.item_at": 28
+      }
+    },
+    "shape-buffer-origin": {
+      "witness": "shape-buffer-origin.ll",
+      "lto_options": [],
+      "whole_remarks": [
+        "remark: <unknown>:0:0: 'wf_font.blank_item' inlined into 'wf_font.read_item' with (cost=-30, threshold=337)",
+        "remark: <unknown>:0:0: 'wf_font.write_item' not inlined into 'wf_font.put_item' because too costly to inline (cost=290, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_font.fail' inlined into 'wf_font.put_item' with (cost=-30, threshold=337)",
+        "remark: <unknown>:0:0: 'wf_font.write_item' not inlined into 'wf_font.put_out' because too costly to inline (cost=290, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_font.put_item' inlined into 'wf_font.put_out' with (cost=10, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_font.fail' inlined into 'wf_font.put_out' with (cost=-30, threshold=337)",
+        "remark: <unknown>:0:0: 'wf_font.write_item' not inlined into 'wf_font.put_out' because too costly to inline (cost=290, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_font.read_item' inlined into 'wf_font.next_glyphs' with (cost=-15, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_font.put_out' inlined into 'wf_font.next_glyphs' with (cost=70, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_font.write_item' not inlined into 'wf_font.next_glyphs' because too costly to inline (cost=290, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_font.write_item' not inlined into 'wf_font.next_glyphs' because too costly to inline (cost=290, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_font.next_glyphs' not inlined into 'wf_font.next_glyph' because too costly to inline (cost=330, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_font.read_item' inlined into 'wf_font.item_at' with (cost=-15, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_font.read_item' inlined into 'wf_font.current' with (cost=-15, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_font.read_item' inlined into 'wf_font.out_at' with (cost=-15, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_font.read_item' inlined into 'wf_font.out_at' with (cost=-15, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_font.fail' inlined into 'wf_font.make_room' with (cost=-30, threshold=337)",
+        "remark: <unknown>:0:0: 'wf_font.read_item' inlined into 'wf_font.make_room' with (cost=-15, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_font.write_item' not inlined into 'wf_font.make_room' because too costly to inline (cost=290, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_font.fail' inlined into 'wf_font.make_room' with (cost=-30, threshold=337)",
+        "remark: <unknown>:0:0: 'wf_font.fail' inlined into 'wf_font.shift_forward' with (cost=-30, threshold=337)",
+        "remark: <unknown>:0:0: 'wf_font.blank_item' inlined into 'wf_font.shift_forward' with (cost=-30, threshold=337)",
+        "remark: <unknown>:0:0: 'wf_font.put_item' inlined into 'wf_font.shift_forward' with (cost=10, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_font.read_item' inlined into 'wf_font.shift_forward' with (cost=-15, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_font.put_item' inlined into 'wf_font.shift_forward' with (cost=10, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_font.write_item' not inlined into 'wf_font.shift_forward' because too costly to inline (cost=290, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_font.write_item' not inlined into 'wf_font.shift_forward' because too costly to inline (cost=290, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_font.item_at' inlined into 'wf_font.apply_forward' with (cost=-15, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_font.next_glyphs' not inlined into 'wf_font.apply_forward' because too costly to inline (cost=335, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_font.next_glyph' inlined into 'wf_font.apply_forward' with (cost=5, threshold=337)",
+        "remark: <unknown>:0:0: 'wf_font.next_glyphs' not inlined into 'wf_font.apply_forward' because too costly to inline (cost=330, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_font.next_glyphs' not inlined into 'wf_font.sync' because too costly to inline (cost=335, threshold=225)"
+      ],
+      "whole_static_instructions": {
+        "wf_font.blank_item": 5,
+        "wf_font.read_item": 13,
+        "wf_font.write_item": 56,
+        "wf_font.fail": 3,
+        "wf_font.put_item": 9,
+        "wf_font.put_out": 14,
+        "wf_font.next_glyphs": 95,
+        "wf_font.next_glyph": 6,
+        "wf_font.item_at": 13,
+        "wf_font.current": 14,
+        "wf_font.out_at": 18,
+        "wf_font.make_room": 55,
+        "wf_font.shift_forward": 120,
+        "wf_font.apply_forward": 101,
+        "wf_font.sync": 22
+      },
+      "summary_instructions": {
+        "wf_font.blank_item": 2,
+        "wf_font.read_item": 13,
+        "wf_font.write_item": 79,
+        "wf_font.fail": 3,
+        "wf_font.put_item": 5,
+        "wf_font.put_out": 11,
+        "wf_font.next_glyphs": 80,
+        "wf_font.next_glyph": 2,
+        "wf_font.item_at": 2,
+        "wf_font.current": 4,
+        "wf_font.out_at": 6,
+        "wf_font.make_room": 35,
+        "wf_font.shift_forward": 100,
+        "wf_font.apply_forward": 47,
+        "wf_font.sync": 19
+      },
+      "imports": {
+        "wf_font.blank_item": [],
+        "wf_font.current": [
+          "wf_font.blank_item",
+          "wf_font.read_item"
+        ],
+        "wf_font.out_at": [
+          "wf_font.blank_item",
+          "wf_font.read_item"
+        ],
+        "wf_font.make_room": [
+          "wf_font.blank_item",
+          "wf_font.fail",
+          "wf_font.read_item",
+          "wf_font.write_item"
+        ],
+        "wf_font.shift_forward": [
+          "wf_font.blank_item",
+          "wf_font.fail",
+          "wf_font.put_item",
+          "wf_font.read_item"
+        ],
+        "wf_font.apply_forward": [
+          "wf_font.blank_item",
+          "wf_font.fail",
+          "wf_font.item_at",
+          "wf_font.next_glyph",
+          "wf_font.next_glyphs",
+          "wf_font.put_item",
+          "wf_font.put_out",
+          "wf_font.read_item"
+        ],
+        "wf_font.sync": [
+          "wf_font.blank_item",
+          "wf_font.fail",
+          "wf_font.next_glyphs",
+          "wf_font.put_item",
+          "wf_font.put_out",
+          "wf_font.read_item"
+        ],
+        "wf_font.read_item": [
+          "wf_font.blank_item"
+        ],
+        "wf_font.write_item": [],
+        "wf_font.fail": [],
+        "wf_font.put_item": [
+          "wf_font.fail",
+          "wf_font.write_item"
+        ],
+        "wf_font.put_out": [
+          "wf_font.fail",
+          "wf_font.put_item",
+          "wf_font.write_item"
+        ],
+        "wf_font.next_glyphs": [
+          "wf_font.blank_item",
+          "wf_font.fail",
+          "wf_font.put_item",
+          "wf_font.put_out",
+          "wf_font.read_item"
+        ],
+        "wf_font.next_glyph": [
+          "wf_font.blank_item",
+          "wf_font.fail",
+          "wf_font.next_glyphs",
+          "wf_font.put_item",
+          "wf_font.put_out",
+          "wf_font.read_item"
+        ],
+        "wf_font.item_at": [
+          "wf_font.blank_item",
+          "wf_font.read_item"
+        ]
+      },
+      "thinlto_remarks": [
+        "<unknown>:0:0: 'wf_font.blank_item' inlined into 'wf_font.read_item' with (cost=-30, threshold=337)",
+        "<unknown>:0:0: 'wf_font.write_item' not inlined into 'wf_font.put_item' because too costly to inline (cost=290, threshold=225)",
+        "<unknown>:0:0: 'wf_font.fail' inlined into 'wf_font.put_item' with (cost=-30, threshold=337)",
+        "<unknown>:0:0: 'wf_font.write_item' not inlined into 'wf_font.put_item' because too costly to inline (cost=290, threshold=225)",
+        "<unknown>:0:0: 'wf_font.fail' inlined into 'wf_font.put_item' with (cost=-30, threshold=337)",
+        "<unknown>:0:0: 'wf_font.write_item' not inlined into 'wf_font.put_out' because too costly to inline (cost=290, threshold=225)",
+        "<unknown>:0:0: 'wf_font.put_item' inlined into 'wf_font.put_out' with (cost=10, threshold=225)",
+        "<unknown>:0:0: 'wf_font.fail' inlined into 'wf_font.put_out' with (cost=-30, threshold=337)",
+        "<unknown>:0:0: 'wf_font.write_item' not inlined into 'wf_font.put_out' because too costly to inline (cost=290, threshold=225)",
+        "<unknown>:0:0: 'wf_font.blank_item' inlined into 'wf_font.read_item' with (cost=-30, threshold=337)",
+        "<unknown>:0:0: 'wf_font.fail' inlined into 'wf_font.put_item' with (cost=-30, threshold=337)",
+        "<unknown>:0:0: 'wf_font.put_item' inlined into 'wf_font.put_out' with (cost=10, threshold=225)",
+        "<unknown>:0:0: 'wf_font.fail' inlined into 'wf_font.put_out' with (cost=-30, threshold=337)",
+        "<unknown>:0:0: 'wf_font.read_item' inlined into 'wf_font.next_glyphs' with (cost=-15, threshold=225)",
+        "<unknown>:0:0: 'wf_font.put_out' inlined into 'wf_font.next_glyphs' with (cost=70, threshold=225)",
+        "<unknown>:0:0: 'wf_font.blank_item' inlined into 'wf_font.read_item' with (cost=-30, threshold=337)",
+        "<unknown>:0:0: 'wf_font.fail' inlined into 'wf_font.put_item' with (cost=-30, threshold=337)",
+        "<unknown>:0:0: 'wf_font.put_item' inlined into 'wf_font.put_out' with (cost=10, threshold=225)",
+        "<unknown>:0:0: 'wf_font.fail' inlined into 'wf_font.put_out' with (cost=-30, threshold=337)",
+        "<unknown>:0:0: 'wf_font.read_item' inlined into 'wf_font.next_glyphs' with (cost=-15, threshold=225)",
+        "<unknown>:0:0: 'wf_font.put_out' inlined into 'wf_font.next_glyphs' with (cost=70, threshold=225)",
+        "<unknown>:0:0: 'wf_font.next_glyphs' not inlined into 'wf_font.next_glyph' because too costly to inline (cost=330, threshold=225)",
+        "<unknown>:0:0: 'wf_font.blank_item' inlined into 'wf_font.read_item' with (cost=-30, threshold=337)",
+        "<unknown>:0:0: 'wf_font.read_item' inlined into 'wf_font.item_at' with (cost=-15, threshold=225)",
+        "<unknown>:0:0: 'wf_font.blank_item' inlined into 'wf_font.read_item' with (cost=-30, threshold=337)",
+        "<unknown>:0:0: 'wf_font.read_item' inlined into 'wf_font.current' with (cost=-15, threshold=225)",
+        "<unknown>:0:0: 'wf_font.blank_item' inlined into 'wf_font.read_item' with (cost=-30, threshold=337)",
+        "<unknown>:0:0: 'wf_font.read_item' inlined into 'wf_font.out_at' with (cost=-15, threshold=225)",
+        "<unknown>:0:0: 'wf_font.blank_item' inlined into 'wf_font.read_item' with (cost=-30, threshold=337)",
+        "<unknown>:0:0: 'wf_font.fail' inlined into 'wf_font.make_room' with (cost=-30, threshold=337)",
+        "<unknown>:0:0: 'wf_font.read_item' inlined into 'wf_font.make_room' with (cost=-15, threshold=225)",
+        "<unknown>:0:0: 'wf_font.write_item' not inlined into 'wf_font.make_room' because too costly to inline (cost=290, threshold=225)",
+        "<unknown>:0:0: 'wf_font.fail' inlined into 'wf_font.make_room' with (cost=-30, threshold=337)",
+        "<unknown>:0:0: 'wf_font.fail' inlined into 'wf_font.put_item' with (cost=-30, threshold=337)",
+        "<unknown>:0:0: 'wf_font.blank_item' inlined into 'wf_font.read_item' with (cost=-30, threshold=337)",
+        "<unknown>:0:0: 'wf_font.fail' inlined into 'wf_font.shift_forward' with (cost=-30, threshold=337)",
+        "<unknown>:0:0: 'wf_font.blank_item' inlined into 'wf_font.shift_forward' with (cost=-30, threshold=337)",
+        "<unknown>:0:0: 'wf_font.put_item' inlined into 'wf_font.shift_forward' with (cost=10, threshold=225)",
+        "<unknown>:0:0: 'wf_font.read_item' inlined into 'wf_font.shift_forward' with (cost=-15, threshold=225)",
+        "<unknown>:0:0: 'wf_font.put_item' inlined into 'wf_font.shift_forward' with (cost=10, threshold=225)",
+        "<unknown>:0:0: 'wf_font.blank_item' inlined into 'wf_font.read_item' with (cost=-30, threshold=337)",
+        "<unknown>:0:0: 'wf_font.read_item' inlined into 'wf_font.item_at' with (cost=-15, threshold=225)",
+        "<unknown>:0:0: 'wf_font.fail' inlined into 'wf_font.put_item' with (cost=-30, threshold=337)",
+        "<unknown>:0:0: 'wf_font.put_item' inlined into 'wf_font.put_out' with (cost=10, threshold=225)",
+        "<unknown>:0:0: 'wf_font.fail' inlined into 'wf_font.put_out' with (cost=-30, threshold=337)",
+        "<unknown>:0:0: 'wf_font.read_item' inlined into 'wf_font.next_glyphs' with (cost=-15, threshold=225)",
+        "<unknown>:0:0: 'wf_font.put_out' inlined into 'wf_font.next_glyphs' with (cost=70, threshold=225)",
+        "<unknown>:0:0: 'wf_font.next_glyphs' not inlined into 'wf_font.next_glyph' because too costly to inline (cost=330, threshold=225)",
+        "<unknown>:0:0: 'wf_font.item_at' inlined into 'wf_font.apply_forward' with (cost=-15, threshold=225)",
+        "<unknown>:0:0: 'wf_font.next_glyphs' not inlined into 'wf_font.apply_forward' because too costly to inline (cost=335, threshold=225)",
+        "<unknown>:0:0: 'wf_font.next_glyph' inlined into 'wf_font.apply_forward' with (cost=5, threshold=337)",
+        "<unknown>:0:0: 'wf_font.next_glyphs' not inlined into 'wf_font.apply_forward' because too costly to inline (cost=330, threshold=225)",
+        "<unknown>:0:0: 'wf_font.blank_item' inlined into 'wf_font.read_item' with (cost=-30, threshold=337)",
+        "<unknown>:0:0: 'wf_font.fail' inlined into 'wf_font.put_item' with (cost=-30, threshold=337)",
+        "<unknown>:0:0: 'wf_font.put_item' inlined into 'wf_font.put_out' with (cost=10, threshold=225)",
+        "<unknown>:0:0: 'wf_font.fail' inlined into 'wf_font.put_out' with (cost=-30, threshold=337)",
+        "<unknown>:0:0: 'wf_font.read_item' inlined into 'wf_font.next_glyphs' with (cost=-15, threshold=225)",
+        "<unknown>:0:0: 'wf_font.put_out' inlined into 'wf_font.next_glyphs' with (cost=70, threshold=225)",
+        "<unknown>:0:0: 'wf_font.next_glyphs' not inlined into 'wf_font.sync' because too costly to inline (cost=335, threshold=225)"
+      ],
+      "thinlto_static_instructions": {
+        "wf_font.blank_item": 5,
+        "wf_font.current": 14,
+        "wf_font.out_at": 14,
+        "wf_font.make_room": 55,
+        "wf_font.shift_forward": 115,
+        "wf_font.apply_forward": 101,
+        "wf_font.sync": 22,
+        "wf_font.read_item": 13,
+        "wf_font.write_item": 56,
+        "wf_font.fail": 3,
+        "wf_font.put_item": 9,
+        "wf_font.put_out": 14,
+        "wf_font.next_glyphs": 95,
+        "wf_font.next_glyph": 6,
+        "wf_font.item_at": 13
+      }
+    },
+    "styles-emitted": {
+      "witness": "styles-emitted.ll",
+      "lto_options": [],
+      "whole_remarks": [
+        "remark: <unknown>:0:0: 'wf_layout.element_position' inlined into 'wf_layout.computed_of' with (cost=10, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_layout.computed_of' inlined into 'wf_layout.font_index' with (cost=190, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_layout.computed_of' inlined into 'wf_layout.font_of' with (cost=190, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_layout.computed_of' inlined into 'wf_layout.text_of' with (cost=190, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_layout.font_of' inlined into 'wf_layout.same_shaping' with (cost=220, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_layout.font_of' inlined into 'wf_layout.same_shaping' with (cost=220, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_layout.text_of' not inlined into 'wf_layout.same_shaping' because too costly to inline (cost=465, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_layout.text_of' not inlined into 'wf_layout.same_shaping' because too costly to inline (cost=465, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_layout.font_of' inlined into 'wf_layout.column_gap_of' with (cost=220, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_layout.computed_of' inlined into 'wf_layout.box_of' with (cost=190, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_layout.initial_box' inlined into 'wf_layout.box_of' with (cost=-10, threshold=337)",
+        "remark: <unknown>:0:0: 'wf_layout.initial_box' inlined into 'wf_layout.box_of' with (cost=-25, threshold=337)",
+        "remark: <unknown>:0:0: 'wf_layout.box_of' inlined into 'wf_layout.positioned' with (cost=195, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_layout.text_of' not inlined into 'wf_layout.valign_edge' because too costly to inline (cost=465, threshold=225)"
+      ],
+      "whole_static_instructions": {
+        "wf_layout.element_position": 15,
+        "wf_layout.computed_of": 42,
+        "wf_layout.font_index": 33,
+        "wf_layout.font_of": 72,
+        "wf_layout.same_shaping": 158,
+        "wf_layout.column_gap_of": 75,
+        "wf_layout.box_of": 67,
+        "wf_layout.initial_box": 8,
+        "wf_layout.positioned": 47,
+        "wf_layout.text_of": 108,
+        "wf_layout.valign_edge": 19
+      },
+      "summary_instructions": {
+        "wf_layout.element_position": 18,
+        "wf_layout.computed_of": 119,
+        "wf_layout.font_index": 5,
+        "wf_layout.font_of": 104,
+        "wf_layout.same_shaping": 73,
+        "wf_layout.column_gap_of": 29,
+        "wf_layout.box_of": 107,
+        "wf_layout.initial_box": 10,
+        "wf_layout.positioned": 8,
+        "wf_layout.text_of": 109,
+        "wf_layout.valign_edge": 15
+      },
+      "imports": {
+        "wf_layout.element_position": [],
+        "wf_layout.text_of": [],
+        "wf_layout.valign_edge": [],
+        "wf_layout.computed_of": [
+          "wf_layout.element_position"
+        ],
+        "wf_layout.font_index": [],
+        "wf_layout.font_of": [],
+        "wf_layout.same_shaping": [],
+        "wf_layout.column_gap_of": [],
+        "wf_layout.box_of": [
+          "wf_layout.initial_box"
+        ],
+        "wf_layout.initial_box": [],
+        "wf_layout.positioned": []
+      },
+      "thinlto_remarks": [
+        "<unknown>:0:0: 'wf_layout.element_position' inlined into 'wf_layout.computed_of' with (cost=10, threshold=225)",
+        "<unknown>:0:0: 'wf_layout.initial_box' inlined into 'wf_layout.box_of' with (cost=-15, threshold=337)",
+        "<unknown>:0:0: 'wf_layout.initial_box' inlined into 'wf_layout.box_of' with (cost=-25, threshold=337)"
+      ],
+      "thinlto_static_instructions": {
+        "wf_layout.element_position": 15,
+        "wf_layout.text_of": 80,
+        "wf_layout.valign_edge": 19,
+        "wf_layout.computed_of": 42,
+        "wf_layout.font_index": 8,
+        "wf_layout.font_of": 50,
+        "wf_layout.same_shaping": 72,
+        "wf_layout.column_gap_of": 35,
+        "wf_layout.box_of": 45,
+        "wf_layout.initial_box": 7,
+        "wf_layout.positioned": 12
+      }
+    },
+    "styles-origin": {
+      "witness": "styles-origin.ll",
+      "lto_options": [],
+      "whole_remarks": [
+        "remark: <unknown>:0:0: 'wf_layout.element_position' inlined into 'wf_layout.computed_of' with (cost=10, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_layout.computed_of' inlined into 'wf_layout.font_index' with (cost=70, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_layout.computed_of' inlined into 'wf_layout.font_of' with (cost=70, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_layout.computed_of' inlined into 'wf_layout.text_of' with (cost=70, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_layout.font_of' inlined into 'wf_layout.same_shaping' with (cost=125, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_layout.font_of' inlined into 'wf_layout.same_shaping' with (cost=125, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_layout.text_of' not inlined into 'wf_layout.same_shaping' because too costly to inline (cost=465, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_layout.text_of' not inlined into 'wf_layout.same_shaping' because too costly to inline (cost=465, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_layout.font_of' inlined into 'wf_layout.column_gap_of' with (cost=125, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_layout.computed_of' inlined into 'wf_layout.box_of' with (cost=70, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_layout.initial_box' inlined into 'wf_layout.box_of' with (cost=-10, threshold=337)",
+        "remark: <unknown>:0:0: 'wf_layout.initial_box' inlined into 'wf_layout.box_of' with (cost=-25, threshold=337)",
+        "remark: <unknown>:0:0: 'wf_layout.box_of' inlined into 'wf_layout.positioned' with (cost=145, threshold=225)",
+        "remark: <unknown>:0:0: 'wf_layout.text_of' not inlined into 'wf_layout.valign_edge' because too costly to inline (cost=465, threshold=225)"
+      ],
+      "whole_static_instructions": {
+        "wf_layout.element_position": 15,
+        "wf_layout.computed_of": 40,
+        "wf_layout.font_index": 43,
+        "wf_layout.font_of": 65,
+        "wf_layout.same_shaping": 180,
+        "wf_layout.column_gap_of": 92,
+        "wf_layout.box_of": 62,
+        "wf_layout.initial_box": 8,
+        "wf_layout.positioned": 46,
+        "wf_layout.text_of": 114,
+        "wf_layout.valign_edge": 19
+      },
+      "summary_instructions": {
+        "wf_layout.element_position": 18,
+        "wf_layout.computed_of": 28,
+        "wf_layout.font_index": 5,
+        "wf_layout.font_of": 29,
+        "wf_layout.same_shaping": 73,
+        "wf_layout.column_gap_of": 29,
+        "wf_layout.box_of": 68,
+        "wf_layout.initial_box": 10,
+        "wf_layout.positioned": 8,
+        "wf_layout.text_of": 134,
+        "wf_layout.valign_edge": 15
+      },
+      "imports": {
+        "wf_layout.element_position": [],
+        "wf_layout.text_of": [
+          "wf_layout.computed_of",
+          "wf_layout.element_position"
+        ],
+        "wf_layout.valign_edge": [],
+        "wf_layout.computed_of": [
+          "wf_layout.element_position"
+        ],
+        "wf_layout.font_index": [
+          "wf_layout.computed_of",
+          "wf_layout.element_position"
+        ],
+        "wf_layout.font_of": [
+          "wf_layout.computed_of",
+          "wf_layout.element_position"
+        ],
+        "wf_layout.same_shaping": [
+          "wf_layout.computed_of",
+          "wf_layout.element_position",
+          "wf_layout.font_of"
+        ],
+        "wf_layout.column_gap_of": [
+          "wf_layout.computed_of",
+          "wf_layout.element_position",
+          "wf_layout.font_of"
+        ],
+        "wf_layout.box_of": [
+          "wf_layout.computed_of",
+          "wf_layout.element_position",
+          "wf_layout.initial_box"
+        ],
+        "wf_layout.initial_box": [],
+        "wf_layout.positioned": [
+          "wf_layout.box_of",
+          "wf_layout.computed_of",
+          "wf_layout.element_position",
+          "wf_layout.initial_box"
+        ]
+      },
+      "thinlto_remarks": [
+        "<unknown>:0:0: 'wf_layout.element_position' inlined into 'wf_layout.computed_of' with (cost=10, threshold=225)",
+        "<unknown>:0:0: 'wf_layout.element_position' inlined into 'wf_layout.computed_of' with (cost=10, threshold=225)",
+        "<unknown>:0:0: 'wf_layout.computed_of' inlined into 'wf_layout.font_index' with (cost=70, threshold=225)",
+        "<unknown>:0:0: 'wf_layout.element_position' inlined into 'wf_layout.computed_of' with (cost=10, threshold=225)",
+        "<unknown>:0:0: 'wf_layout.computed_of' inlined into 'wf_layout.font_of' with (cost=70, threshold=225)",
+        "<unknown>:0:0: 'wf_layout.element_position' inlined into 'wf_layout.computed_of' with (cost=10, threshold=225)",
+        "<unknown>:0:0: 'wf_layout.computed_of' inlined into 'wf_layout.font_of' with (cost=70, threshold=225)",
+        "<unknown>:0:0: 'wf_layout.font_of' inlined into 'wf_layout.same_shaping' with (cost=125, threshold=225)",
+        "<unknown>:0:0: 'wf_layout.font_of' inlined into 'wf_layout.same_shaping' with (cost=125, threshold=225)",
+        "<unknown>:0:0: 'wf_layout.element_position' inlined into 'wf_layout.computed_of' with (cost=10, threshold=225)",
+        "<unknown>:0:0: 'wf_layout.computed_of' inlined into 'wf_layout.font_of' with (cost=70, threshold=225)",
+        "<unknown>:0:0: 'wf_layout.font_of' inlined into 'wf_layout.column_gap_of' with (cost=125, threshold=225)",
+        "<unknown>:0:0: 'wf_layout.element_position' inlined into 'wf_layout.computed_of' with (cost=10, threshold=225)",
+        "<unknown>:0:0: 'wf_layout.computed_of' inlined into 'wf_layout.box_of' with (cost=70, threshold=225)",
+        "<unknown>:0:0: 'wf_layout.initial_box' inlined into 'wf_layout.box_of' with (cost=-15, threshold=337)",
+        "<unknown>:0:0: 'wf_layout.initial_box' inlined into 'wf_layout.box_of' with (cost=-25, threshold=337)",
+        "<unknown>:0:0: 'wf_layout.element_position' inlined into 'wf_layout.computed_of' with (cost=10, threshold=225)",
+        "<unknown>:0:0: 'wf_layout.computed_of' inlined into 'wf_layout.box_of' with (cost=70, threshold=225)",
+        "<unknown>:0:0: 'wf_layout.initial_box' inlined into 'wf_layout.box_of' with (cost=-15, threshold=337)",
+        "<unknown>:0:0: 'wf_layout.initial_box' inlined into 'wf_layout.box_of' with (cost=-25, threshold=337)",
+        "<unknown>:0:0: 'wf_layout.box_of' inlined into 'wf_layout.positioned' with (cost=145, threshold=225)",
+        "<unknown>:0:0: 'wf_layout.element_position' inlined into 'wf_layout.computed_of' with (cost=10, threshold=225)",
+        "<unknown>:0:0: 'wf_layout.computed_of' inlined into 'wf_layout.text_of' with (cost=70, threshold=225)"
+      ],
+      "thinlto_static_instructions": {
+        "wf_layout.element_position": 15,
+        "wf_layout.text_of": 114,
+        "wf_layout.valign_edge": 19,
+        "wf_layout.computed_of": 40,
+        "wf_layout.font_index": 43,
+        "wf_layout.font_of": 65,
+        "wf_layout.same_shaping": 180,
+        "wf_layout.column_gap_of": 92,
+        "wf_layout.box_of": 62,
+        "wf_layout.initial_box": 7,
+        "wf_layout.positioned": 46
+      }
+    },
+    "styles-emitted-import-200": {
+      "witness": "styles-emitted.ll",
+      "lto_options": [
+        "--import-instr-limit=200"
+      ],
+      "summary_instructions": {
+        "wf_layout.element_position": 18,
+        "wf_layout.computed_of": 119,
+        "wf_layout.font_index": 5,
+        "wf_layout.font_of": 104,
+        "wf_layout.same_shaping": 73,
+        "wf_layout.column_gap_of": 29,
+        "wf_layout.box_of": 107,
+        "wf_layout.initial_box": 10,
+        "wf_layout.positioned": 8,
+        "wf_layout.text_of": 109,
+        "wf_layout.valign_edge": 15
+      },
+      "imports": {
+        "wf_layout.element_position": [],
+        "wf_layout.text_of": [
+          "wf_layout.computed_of",
+          "wf_layout.element_position"
+        ],
+        "wf_layout.valign_edge": [
+          "wf_layout.computed_of",
+          "wf_layout.element_position",
+          "wf_layout.text_of"
+        ],
+        "wf_layout.computed_of": [
+          "wf_layout.element_position"
+        ],
+        "wf_layout.font_index": [
+          "wf_layout.computed_of",
+          "wf_layout.element_position"
+        ],
+        "wf_layout.font_of": [
+          "wf_layout.computed_of",
+          "wf_layout.element_position"
+        ],
+        "wf_layout.same_shaping": [
+          "wf_layout.computed_of",
+          "wf_layout.element_position",
+          "wf_layout.font_of",
+          "wf_layout.text_of"
+        ],
+        "wf_layout.column_gap_of": [
+          "wf_layout.computed_of",
+          "wf_layout.element_position",
+          "wf_layout.font_of"
+        ],
+        "wf_layout.box_of": [
+          "wf_layout.computed_of",
+          "wf_layout.element_position",
+          "wf_layout.initial_box"
+        ],
+        "wf_layout.initial_box": [],
+        "wf_layout.positioned": [
+          "wf_layout.box_of",
+          "wf_layout.computed_of",
+          "wf_layout.element_position",
+          "wf_layout.initial_box"
+        ]
+      },
+      "thinlto_remarks": [
+        "<unknown>:0:0: 'wf_layout.element_position' inlined into 'wf_layout.computed_of' with (cost=10, threshold=225)",
+        "<unknown>:0:0: 'wf_layout.element_position' inlined into 'wf_layout.computed_of' with (cost=10, threshold=225)",
+        "<unknown>:0:0: 'wf_layout.computed_of' inlined into 'wf_layout.font_index' with (cost=190, threshold=225)",
+        "<unknown>:0:0: 'wf_layout.element_position' inlined into 'wf_layout.computed_of' with (cost=10, threshold=225)",
+        "<unknown>:0:0: 'wf_layout.computed_of' inlined into 'wf_layout.font_of' with (cost=190, threshold=225)",
+        "<unknown>:0:0: 'wf_layout.element_position' inlined into 'wf_layout.computed_of' with (cost=10, threshold=225)",
+        "<unknown>:0:0: 'wf_layout.computed_of' inlined into 'wf_layout.font_of' with (cost=190, threshold=225)",
+        "<unknown>:0:0: 'wf_layout.computed_of' inlined into 'wf_layout.text_of' with (cost=190, threshold=225)",
+        "<unknown>:0:0: 'wf_layout.font_of' inlined into 'wf_layout.same_shaping' with (cost=220, threshold=225)",
+        "<unknown>:0:0: 'wf_layout.font_of' inlined into 'wf_layout.same_shaping' with (cost=220, threshold=225)",
+        "<unknown>:0:0: 'wf_layout.text_of' not inlined into 'wf_layout.same_shaping' because too costly to inline (cost=465, threshold=225)",
+        "<unknown>:0:0: 'wf_layout.text_of' not inlined into 'wf_layout.same_shaping' because too costly to inline (cost=465, threshold=225)",
+        "<unknown>:0:0: 'wf_layout.element_position' inlined into 'wf_layout.computed_of' with (cost=10, threshold=225)",
+        "<unknown>:0:0: 'wf_layout.computed_of' inlined into 'wf_layout.font_of' with (cost=190, threshold=225)",
+        "<unknown>:0:0: 'wf_layout.font_of' inlined into 'wf_layout.column_gap_of' with (cost=220, threshold=225)",
+        "<unknown>:0:0: 'wf_layout.element_position' inlined into 'wf_layout.computed_of' with (cost=10, threshold=225)",
+        "<unknown>:0:0: 'wf_layout.computed_of' inlined into 'wf_layout.box_of' with (cost=190, threshold=225)",
+        "<unknown>:0:0: 'wf_layout.initial_box' inlined into 'wf_layout.box_of' with (cost=-15, threshold=337)",
+        "<unknown>:0:0: 'wf_layout.initial_box' inlined into 'wf_layout.box_of' with (cost=-25, threshold=337)",
+        "<unknown>:0:0: 'wf_layout.element_position' inlined into 'wf_layout.computed_of' with (cost=10, threshold=225)",
+        "<unknown>:0:0: 'wf_layout.computed_of' inlined into 'wf_layout.box_of' with (cost=190, threshold=225)",
+        "<unknown>:0:0: 'wf_layout.initial_box' inlined into 'wf_layout.box_of' with (cost=-15, threshold=337)",
+        "<unknown>:0:0: 'wf_layout.initial_box' inlined into 'wf_layout.box_of' with (cost=-25, threshold=337)",
+        "<unknown>:0:0: 'wf_layout.box_of' inlined into 'wf_layout.positioned' with (cost=195, threshold=225)",
+        "<unknown>:0:0: 'wf_layout.element_position' inlined into 'wf_layout.computed_of' with (cost=10, threshold=225)",
+        "<unknown>:0:0: 'wf_layout.computed_of' inlined into 'wf_layout.text_of' with (cost=190, threshold=225)",
+        "<unknown>:0:0: 'wf_layout.element_position' inlined into 'wf_layout.computed_of' with (cost=10, threshold=225)",
+        "<unknown>:0:0: 'wf_layout.computed_of' inlined into 'wf_layout.text_of' with (cost=190, threshold=225)",
+        "<unknown>:0:0: 'wf_layout.text_of' not inlined into 'wf_layout.valign_edge' because too costly to inline (cost=465, threshold=225)"
+      ],
+      "thinlto_static_instructions": {
+        "wf_layout.element_position": 15,
+        "wf_layout.text_of": 108,
+        "wf_layout.valign_edge": 19,
+        "wf_layout.computed_of": 42,
+        "wf_layout.font_index": 33,
+        "wf_layout.font_of": 72,
+        "wf_layout.same_shaping": 158,
+        "wf_layout.column_gap_of": 75,
+        "wf_layout.box_of": 64,
+        "wf_layout.initial_box": 7,
+        "wf_layout.positioned": 47
+      }
+    }
+  }
+}

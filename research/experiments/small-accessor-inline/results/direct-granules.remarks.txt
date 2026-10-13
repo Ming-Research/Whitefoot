@@ -1,0 +1,2 @@
+remark: <unknown>:0:0: 'accessor' inlined into 'caller_partial' with (cost=20, threshold=45)
+remark: <unknown>:0:0: 'accessor' inlined into 'caller_full' with (cost=20, threshold=45)

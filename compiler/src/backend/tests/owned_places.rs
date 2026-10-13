@@ -710,13 +710,25 @@ fn main() -> status: std::process::ExitStatus pure {
 "#;
     for overlap in [super::OverlapLowering::Off, super::OverlapLowering::On] {
         let module = super::emit_lowered(source, overlap);
-        let relay = super::emitted_function(&module, "relay");
+        // When `relay` forwards `choose`'s result, its body is its `.source`
+        // entry (compiler/result-registers), which calls `choose`'s source
+        // entry with the same arguments.
+        let sourced =
+            super::emitted_function(&module, "relay").contains("call ptr @wf_relay.source(");
+        let (relay, callee) = if sourced {
+            (
+                super::emitted_function(&module, "relay.source"),
+                " @wf_choose.source(",
+            )
+        } else {
+            (super::emitted_function(&module, "relay"), " @wf_choose(")
+        };
         let call = relay
             .lines()
-            .find(|line| line.contains(" @wf_choose("))
+            .find(|line| line.contains(callee))
             .unwrap_or_else(|| panic!("{overlap:?}: relay calls choose: {relay}"));
         let arguments: Vec<&str> = call
-            .split_once(" @wf_choose(")
+            .split_once(callee)
             .and_then(|(_, rest)| rest.rsplit_once(')'))
             .map(|(list, _)| list.split(", ").collect())
             .unwrap_or_default();

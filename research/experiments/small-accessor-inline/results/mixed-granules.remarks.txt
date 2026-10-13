@@ -1,0 +1,2 @@
+remark: <unknown>:0:0: 'accessor' not inlined into 'caller_partial' because too costly to inline (cost=55, threshold=45)
+remark: <unknown>:0:0: 'accessor' not inlined into 'caller_full' because too costly to inline (cost=55, threshold=45)

@@ -22,7 +22,9 @@ use crate::{
 
 use super::BackendFailure;
 
+mod result_sources;
 mod snapshots;
+pub(super) use result_sources::{ReturnSource, ValueSource};
 pub(super) use snapshots::IncomingSnapshots;
 
 /// These values contain their payload inline. Descriptors retain their
@@ -76,6 +78,9 @@ pub(super) struct FunctionStoragePlan {
     /// instructions.len()). Only that use reads the private backing.
     snapshot_copies: BTreeMap<(usize, usize), BTreeSet<usize>>,
     snapshot_backing: BTreeSet<usize>,
+    /// Call results read at their source and this definition's source
+    /// returns, selected after read-through.
+    result_sources: result_sources::ResultSources,
 }
 
 /// A logical slot occupies one field of a complete local struct allocation.
@@ -134,6 +139,7 @@ impl FunctionStoragePlan {
                 read_through: Vec::new(),
                 snapshot_copies: BTreeMap::new(),
                 snapshot_backing: BTreeSet::new(),
+                result_sources: result_sources::ResultSources::default(),
             });
         }
         let graph = FlowGraph::from_function(program, function, sequential)?;
@@ -831,6 +837,7 @@ impl FlowGraph {
             read_through,
             snapshot_copies: BTreeMap::new(),
             snapshot_backing: BTreeSet::new(),
+            result_sources: result_sources::ResultSources::default(),
         })
     }
 

@@ -192,7 +192,11 @@ fn result_run_transfer_error_and_abandonment_execute() {
     assert!(!llvm.contains("call void @wf__heap_give"));
     let transforms: Vec<_> = llvm
         .lines()
-        .filter(|line| line.starts_with("define ") && line.contains("@wf_transform$instance$"))
+        .filter(|line| {
+            line.starts_with("define ")
+                && line.contains("@wf_transform$instance$")
+                && !line.contains(".source(")
+        })
         .collect();
     assert_eq!(
         transforms.len(),

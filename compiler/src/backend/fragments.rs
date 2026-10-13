@@ -29,6 +29,13 @@
 //! stable symbols and type names, an unchanged function keeps the bytes of
 //! its fragment across an edit elsewhere, and with them its cached object.
 //! A missing symbol, type or attribute definition fails the split.
+//!
+//! A definition's `<symbol>.source` entry is local in the whole module but
+//! is a member of its public symbol's group, `hidden` so that other groups
+//! can name it: its callers' fragments declare it from its signature, and
+//! an ordinary WF definition's fragment holds it whether or not any caller
+//! names it. Linked and budget-family entries are emitted on demand and
+//! remain anchored to the same public symbol when present.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -59,7 +66,7 @@ fn failure(message: impl Into<String>) -> SplitFailure {
 }
 
 use super::emission::{Module, References};
-use super::emitter::LlvmModule;
+use super::emitter::{LlvmModule, RESULT_SOURCE_SUFFIX};
 
 /// Where one entity's definition lives.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -134,19 +141,42 @@ fn split_emission(
         }
         references.push((entities, declared));
     }
+    // A source entry anchored to the externally visible definition it
+    // belongs to, by that definition's name.
+    let anchors = module
+        .entities
+        .iter()
+        .map(|entity| {
+            entity
+                .name
+                .strip_suffix(RESULT_SOURCE_SUFFIX)
+                .filter(|public| {
+                    entity.linkage.is_local()
+                        && !entity.global
+                        && by_name
+                            .get(public)
+                            .is_some_and(|index| !module.entities[*index].linkage.is_local())
+                })
+                .map(str::to_owned)
+        })
+        .collect::<Vec<_>>();
     // The groups of externally visible functions, by key.
     let mut keys: BTreeMap<String, Vec<usize>> = BTreeMap::new();
     for (index, entity) in module.entities.iter().enumerate() {
-        if !entity.linkage.is_local() {
-            let key = match granularity {
-                FragmentGranularity::Function => entity.name.clone(),
-                FragmentGranularity::Module => fragment_module(&entity.name),
-            };
-            keys.entry(key).or_default().push(index);
-        }
+        let name = match &anchors[index] {
+            Some(public) => public,
+            None if !entity.linkage.is_local() => &entity.name,
+            None => continue,
+        };
+        let key = match granularity {
+            FragmentGranularity::Function => name.clone(),
+            FragmentGranularity::Module => fragment_module(name),
+        };
+        keys.entry(key).or_default().push(index);
     }
     let groups = keys.into_values().collect::<Vec<_>>();
-    let owners = owners(module, &groups, &references);
+    let anchored = anchors.iter().map(Option::is_some).collect::<Vec<_>>();
+    let owners = owners(module, &groups, &references, &anchored);
     // One fragment per group, then one per shared local definition.
     let mut members = vec![Vec::new(); groups.len()];
     let mut roots: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
@@ -165,7 +195,7 @@ fn split_emission(
     members
         .iter()
         .chain(roots.values())
-        .map(|members| fragment(module, &owners, &references, members))
+        .map(|members| fragment(module, &owners, &references, &anchored, members))
         .collect()
 }
 
@@ -182,13 +212,15 @@ fn owners(
     module: &Module,
     groups: &[Vec<usize>],
     references: &[(BTreeSet<usize>, BTreeSet<String>)],
+    anchored: &[bool],
 ) -> Vec<Owner> {
-    // Nodes: 0 is the source, then the groups, then the local definitions.
+    // Nodes: 0 is the source, then the groups, then the local definitions
+    // outside every group.
     let locals = module
         .entities
         .iter()
         .enumerate()
-        .filter(|(_, entity)| entity.linkage.is_local())
+        .filter(|(index, entity)| entity.linkage.is_local() && !anchored[*index])
         .map(|(index, _)| index)
         .collect::<Vec<_>>();
     let node_of_local = locals
@@ -353,6 +385,7 @@ fn fragment(
     module: &Module,
     owners: &[Owner],
     references: &[(BTreeSet<usize>, BTreeSet<String>)],
+    anchored: &[bool],
     members: &[usize],
 ) -> Result<String, SplitFailure> {
     let mut inside = members.iter().copied().collect::<BTreeSet<_>>();
@@ -377,7 +410,7 @@ fn fragment(
         // A local definition that owns its fragment is named from others.
         let shared = !entity.fragment_local
             && entity.linkage.is_local()
-            && owners[member] == Owner::Root(member);
+            && (owners[member] == Owner::Root(member) || anchored[member]);
         let header = if shared {
             entity.hidden_header.clone()
         } else {
@@ -394,7 +427,7 @@ fn fragment(
                 continue;
             }
             let other = &module.entities[named];
-            if other.linkage.is_local() && owners[named] != Owner::Root(named) {
+            if other.linkage.is_local() && owners[named] != Owner::Root(named) && !anchored[named] {
                 return Err(failure(format!(
                     "@{} names the local definition @{}, which another fragment owns",
                     entity.name, other.name
