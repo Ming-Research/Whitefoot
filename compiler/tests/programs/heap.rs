@@ -28,6 +28,15 @@ fn musttail_consumes_a_deep_heap_linked_sequence() {
 }
 
 #[test]
+fn a_mutually_recursive_walk_sharing_its_borrows_matches_its_loop() {
+    let llvm = compile_program("shared_environment.wf");
+    let output = compile_and_run(&llvm);
+    assert!(output.status.success(), "{output:?}");
+    assert!(output.stdout.is_empty(), "{output:?}");
+    assert!(output.stderr.is_empty(), "{output:?}");
+}
+
+#[test]
 fn byte_string_builds_searches_and_publishes_its_report() {
     let llvm = compile_program("byte_string.wf");
     let output = compile_and_run(&llvm);
