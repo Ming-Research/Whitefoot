@@ -266,6 +266,33 @@ jobs:
               if text.strip() != str(a):
                   raise ValueError(f'fib({n}) expected {a}, got {text!r}')
 
+          def memory_snapshot(prefix, phase, returncode=None):
+              heading = f'{prefix.name}: memory {phase}'
+              if returncode is not None:
+                  heading += f'; process exit {returncode}'
+              try:
+                  snapshot = subprocess.run(['free', '-m'], check=False, stdout=subprocess.PIPE,
+                                            stderr=subprocess.STDOUT, text=True)
+                  record = heading + '\n' + snapshot.stdout
+                  if snapshot.returncode != 0:
+                      record += f'free -m exit {snapshot.returncode}\n'
+              except OSError as error:
+                  record = heading + f'\nfree -m unavailable: {error}\n'
+              if not record.endswith('\n'):
+                  record += '\n'
+              try:
+                  print(record, end='', flush=True)
+              except OSError:
+                  pass
+              try:
+                  with Path(str(prefix) + '.memory.txt').open('a') as stream:
+                      stream.write(record)
+              except OSError as error:
+                  try:
+                      print(f'{prefix.name}: memory artifact unavailable: {error}', flush=True)
+                  except OSError:
+                      pass
+
           def acquire(label, workload, pilot_round=None):
               pilot = pilot_round is not None
               prefix = OUT / ('pilot' if pilot else 'raw') / (f'{workload}.{label}' + (f'.{pilot_round}' if pilot else ''))
@@ -283,6 +310,9 @@ jobs:
                   cwd = WORK
                   argv = [binary]
                   stdin = (OUT / 'inputs' / ('pilot-fib24.lua' if pilot else workload + '.lua')).open('rb')
+              if is_core:
+                  memory_snapshot(prefix, 'before')
+              result = None
               start = time.monotonic()
               try:
                   with Path(str(prefix) + '.stdout').open('wb') as stdout, Path(str(prefix) + '.stderr').open('wb') as stderr:
@@ -292,12 +322,14 @@ jobs:
                                                str(PILOT_BOUND if pilot else FULL_BOUND) + 's',
                                                *flags, *map(str, argv)], cwd=cwd, stdin=stdin,
                                               stdout=stdout, stderr=stderr, env=environment(label))
-                  if result.returncode != 0:
-                      raise ValueError(f'{prefix.name}: measurement unavailable, process exit {result.returncode}')
               finally:
+                  elapsed = time.monotonic() - start
+                  if is_core:
+                      memory_snapshot(prefix, 'after', result.returncode if result is not None else None)
                   if stdin is not None:
                       stdin.close()
-              elapsed = time.monotonic() - start
+              if result.returncode != 0:
+                  raise ValueError(f'{prefix.name}: measurement unavailable, process exit {result.returncode}')
               text = Path(str(prefix) + '.stdout').read_text()
               if is_core:
                   validate_coremark(text, full=not pilot)
@@ -315,8 +347,8 @@ jobs:
                   rows = [acquire('base', workload, round_) for round_ in (1, 2)]
                   seconds = [r['elapsed_for_sizing_only'] for r in rows]
                   ratio = 200 if workload == 'CoreMark' else CALLS / 150049
-                  # Conservative 1.5 multiplier budgets the three-way pool;
-                  # this is a sizing estimate, never a speed comparison.
+                  # Retain the conservative 1.5 multiplier for three-way Halo
+                  # and serial CoreMark; sizing is never a speed comparison.
                   estimate = max(seconds) * ratio * 1.5
                   records[workload] = {'seconds': seconds, 'spread_seconds': max(seconds) - min(seconds),
                                        'scale_ratio': ratio, 'conservative_full_seconds': estimate,
@@ -329,11 +361,14 @@ jobs:
                   raise ValueError('measurement unavailable: baseline pilot extrapolates beyond full-run execution ceiling; full CoreMark remains 2000, no reduced fallback')
 
           def counts():
-              # One parent e2/counts stage owns every process; cap at three,
-              # matching the probe's recorded callgrind memory limit.
-              tasks = [(label, k) for k in (*SIZES, 'CoreMark') for label in LABELS]
+              # One parent e2/counts stage owns every process. Rerun all Halo
+              # tasks with at most three active; run CoreMark serially after.
+              tasks = [(label, k) for k in SIZES for label in LABELS]
               with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
                   rows = list(pool.map(lambda task: acquire(*task), tasks))
+              print('All Halo counts completed; starting serial CoreMark base, C1, C2.', flush=True)
+              for label in LABELS:
+                  rows.append(acquire(label, 'CoreMark'))
               for workload in SIZES:
                   baseline = (OUT / 'raw' / (workload + '.base.stdout')).read_bytes()
                   for label in ('C1', 'C2'):
