@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 the owner's agent instructions own the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-13 Field- and dereference-subscript terms carry captured place and formal offset identities
+
+Nodes: compiler/checker-facts
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the design-tree decision added for how subscripts with a field or a dereference record their identity? (#454, head commit ef598ae35)" (translated).
+
+Summary: A subscript such as `table^[s^.k]`, `nodes^[n^.parent_slot]` or `nodes^[r^]` is identified by a captured place id (its root and field or dereference steps) or, in a contract, a formal offset id (a parameter-relative suffix), both interned in one compilation-owned table shared by the checker's parts. While its support is unchanged the id stands for the current value with its complete support; a write or rebinding of any support place degrades it to an immutable capture with no support. At a call the actual's path is joined to the formal's remaining suffix and interned again. Small copyable ids let parallel checking and contract substitution share one identity and support without conflating sibling fields, captured and later values, or formal and body names; refused were root-only identity (which cannot separate `n.a` from `n.b`), embedding the recursive path in every capture, and per-part identity and support tables.
+
 ## 2026-10-13 Match branches on integer constant values, with one exclusion fact for `else` and one switch
 
 Nodes: compiler/checker-facts, compiler/match-dispatch-lowering, compiler/range-judgment, compiler/structured-emission, language/checks-and-proofs/automatic-facts, language/checks-and-proofs/range-facts, language/dispatch, language/grammar, language/name-resolution, language/surface-form/match-form

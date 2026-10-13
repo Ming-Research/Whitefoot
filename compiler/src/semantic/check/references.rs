@@ -3285,6 +3285,83 @@ mod tests {
         );
     }
 
+    /// [REF-1, ENT-5] a `set` target's selected payload storage, held while
+    /// its right-hand side is checked, captures its projected offset like a
+    /// reference does: a write of the offset's support ends that offset's
+    /// spelling there too. A holder-only replacement and a write of another
+    /// field leave it current.
+    #[test]
+    fn a_support_write_supersedes_a_projected_offset_in_a_set_payload_target() {
+        use crate::semantic::places::{CaptureId, CapturedTerm, CapturedValue};
+        crate::resolution::with_each_declaration_role(|resolved| {
+            let declarations = DeclarationInventory {
+                resolved,
+                ledger_line_starts: Default::default(),
+                no_heap: false,
+                tree: TreeView::new(resolved.syntax()).unwrap(),
+            };
+            let types = TypeContext::new(&declarations);
+            // `set t[s.k].Some.value = ...`: t is BindingId(0), s BindingId(1).
+            let field = |ordinal: u32| {
+                let mut place = ResolvedPlace::binding(BindingId(1));
+                place.path.push(PlaceStep::Field(ordinal));
+                place
+            };
+            let id = types.captured_places.intern(field(0));
+            let mut target = ResolvedPlace::binding(BindingId(0));
+            target.push_subscript(CapturedValue::new(
+                CaptureId::source(0),
+                CapturedTerm::Place(id),
+            ));
+            target.path.push(PlaceStep::Payload {
+                variant: 0,
+                field: 0,
+            });
+            let declaration = DeclarationId::from_index(0).unwrap();
+            let fresh = || {
+                HashMap::from([(
+                    declaration,
+                    LocalBinding {
+                        binding: BindingId(0),
+                        declaration,
+                        mode: CheckedMode::Own,
+                        ty: CheckedType::Integer(crate::semantic::model::IntegerType::U64),
+                        live: true,
+                        loop_depth: 0,
+                        compiler_updated: false,
+                        reference: None,
+                        commit_target: Some(ReferenceInfo::formed_paths(
+                            ReferenceKind::Single,
+                            vec![target.clone()],
+                        )),
+                        refinement_witnesses: Vec::new(),
+                        handle_watch: None,
+                        call_value: false,
+                        read_only_state: false,
+                    },
+                )])
+            };
+            let offset_term = |bindings: &HashMap<DeclarationId, LocalBinding>| {
+                let target = bindings[&declaration].commit_target.as_ref().unwrap();
+                assert!(target.is_valid(), "superseding writes no referent storage");
+                let [PlaceStep::Index(value), PlaceStep::Payload { .. }] =
+                    target.paths[0].path.as_slice()
+                else {
+                    panic!("the target keeps its subscript and payload steps");
+                };
+                value.term
+            };
+
+            let mut bindings = fresh();
+            types.supersede_reference_offsets(&mut bindings, &field(1), false);
+            assert_eq!(offset_term(&bindings), CapturedTerm::Place(id));
+            types.supersede_reference_offsets(&mut bindings, &field(0), true);
+            assert_eq!(offset_term(&bindings), CapturedTerm::Place(id));
+            types.supersede_reference_offsets(&mut bindings, &field(0), false);
+            assert_eq!(offset_term(&bindings), CapturedTerm::SupersededPlace(id));
+        });
+    }
+
     /// [REF-1] classify when a contribution retains its entering shape and
     /// when it needs a descendant summary instead.
     #[test]

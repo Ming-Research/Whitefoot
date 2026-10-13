@@ -171,6 +171,38 @@ fn main() -> status: std::process::ExitStatus pure {
     });
 }
 
+/// [ENT-2, DIAG-1] an enum-payload place is a clause (a) tracked place, so
+/// `table^[c^.Some.value].len` is a clause (b) term the specification admits.
+/// This compiler gives a payload offset no captured identity; reading that
+/// measure is the capability stop, never a later source rejection of the
+/// guarded element read for want of the fact.
+#[test]
+fn a_payload_offset_measure_reports_the_unrepresented_capability() {
+    super::assert_unsupported(
+        br#"fn select(table: &[Slots<u8, 8>], c: &Option<u64>, i: u64) -> result: u8 reads(table), reads(c) {
+  match &c^ {
+    None() => {
+      return 0_u8;
+    }
+    Some(value: inner) => {
+      if c^.Some.value < table^.len {
+        if i < table^[c^.Some.value].len {
+          return table^[c^.Some.value][i];
+        }
+      }
+      return 0_u8;
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        crate::UnsupportedSemanticFeature::CompositeValues,
+    );
+}
+
 /// Source-backed coverage replaces the retired synthetic payload-origin
 /// reconstruction tests: both roots, complete field/Box/payload suffixes,
 /// nested matches, distinct payload fields and variant overlap are retained.
