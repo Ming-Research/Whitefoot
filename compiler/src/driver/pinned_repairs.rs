@@ -1971,26 +1971,26 @@ fn main() -> status: std::process::ExitStatus pure {
 "#],
     },
     RepairPair {
-        name: "cap-field-in-reference-factor.wf",
-        rejected: include_bytes!("../../../tests/conformance/cases/inv1-neg-cap-field-factor.wf"),
+        name: "count-field-through-box-content-factor.wf",
+        rejected: include_bytes!(
+            "../../../tests/conformance/cases/inv1-neg-box-content-field-factor.wf"
+        ),
         rule: "INV-1",
         sentences: &[
             "\n  reason: an affine factor selects a field or an element of a place\n",
             "\n  mechanical_fix: bind the integer value with a `let` and use that binding\n",
         ],
-        repaired: &[br#"struct Bounds {
-  cap: u32;
+        repaired: &[br#"struct Counter {
+  count: u32;
 }
 
-fn inspect(limits: &Bounds) -> result: u32 reads(limits.cap) {
-  let capacity = limits^.cap;
-  invariant bounded: 0_u32 <= capacity;
-  return limits^.cap;
+fn inspect(made: Box<Counter>) -> result: u32 pure {
+  let count = made.inner.count;
+  invariant bounded: 0_u32 <= count;
+  return count;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
-  let limits = Bounds(cap: 4_u32);
-  let capacity = inspect(limits: &limits);
   return std::process::exit_status(code: 0_u8);
 }
 "#],
@@ -2017,8 +2017,10 @@ fn main() -> status: std::process::ExitStatus pure {
 "#],
     },
     RepairPair {
-        name: "measure-named-field-in-proof-source.wf",
-        rejected: include_bytes!("../../../tests/conformance/cases/prf1-neg-measure-named-field-factor.wf"),
+        name: "measure-named-field-through-box-content-in-proof-source.wf",
+        rejected: include_bytes!(
+            "../../../tests/conformance/cases/prf1-neg-box-content-field-factor.wf"
+        ),
         rule: "PRF-1",
         sentences: &[
             "\n  reason: an affine factor selects a field or an element of a place\n",
@@ -2028,14 +2030,14 @@ fn main() -> status: std::process::ExitStatus pure {
   len: u64;
 }
 
-fn combine(first: u64, second: u64, third: u64, limits: Bounds, second_limit: u64, third_limit: u64) -> result: u8 pure contract {
-  requires first <= limits.len;
+fn combine(first: u64, second: u64, third: u64, limits: Box<Bounds>, first_limit: u64, second_limit: u64, third_limit: u64) -> result: u8 pure contract {
+  requires first <= first_limit;
   requires second <= second_limit;
   requires third <= third_limit;
 } {
-  let length = limits.len;
-  invariant combined: first + second + third <= length + second_limit + third_limit {
-    use (first <= length);
+  let length = limits.inner.len;
+  invariant combined: length + first + second + third <= length + first_limit + second_limit + third_limit {
+    use (first <= first_limit);
     use (second <= second_limit);
     use (third <= third_limit);
   }
@@ -2043,8 +2045,9 @@ fn combine(first: u64, second: u64, third: u64, limits: Bounds, second_limit: u6
 }
 
 fn main() -> status: std::process::ExitStatus pure {
-  let limits = Bounds(len: 4_u64);
-  let answer = combine(first: 1_u64, second: 2_u64, third: 3_u64, limits: limits, second_limit: 5_u64, third_limit: 6_u64);
+  let bounds = Bounds(len: 4_u64);
+  let limits = box_new::<Bounds>(value: bounds);
+  let answer = combine(first: 1_u64, second: 2_u64, third: 3_u64, limits: move limits, first_limit: 4_u64, second_limit: 5_u64, third_limit: 6_u64);
   return std::process::exit_status(code: answer);
 }
 "#],

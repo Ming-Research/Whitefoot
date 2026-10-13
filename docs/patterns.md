@@ -131,9 +131,13 @@ relation over `len` and `cap`. `Array` has only `len`.
 
 A readonly integer field reached through subscripts is a term just as a
 measure is [ENT-2]. In an index-based tree, declare per-node structure such as
-`readonly count: u64;` and use `nodes^[i].count` directly as a counted
-endpoint, in a `requires`, or as a `let` source equal to its copy. Mark a
-field readonly when only whole-element replacement should change it; an
+`public readonly count: u64;` and use `nodes^[i].count` directly as a counted
+endpoint, in a `requires`, or as a `let` source equal to its copy. A field is
+readonly only together with `public`, and `public` is written only in an
+interface record [MOD-6]; inside its declaring module the field stays an
+ordinary assignable field; code outside that module cannot write a path
+through it directly, and changes it only by replacing the whole element or by
+calling a function of the declaring module [TYPE-2]. An
 ordinary field below a subscript is no term, so copy it with `let` before
 relying on it. Replacing or exchanging the element, a window operation that
 moves elements, a call whose row writes the storage, and a write to the index
@@ -680,9 +684,12 @@ The maintained [stdin_echo.wf](../tests/programs/stdin_echo.wf) shows an inline
 window passed to `read_next` and `write_once`, with the invocation's owners
 consumed explicitly.
 
-Every host function that acquires, transfers or closes waits, so a function
-that calls one writes `waits` after its effect row, and so does each function
-that calls that one, up to an entry that waits [WAIT-1]. Keep the computation
+Most host functions that acquire, transfer or close a resource wait, but not
+all: for example `stop_listen`, `cancel_source` and `close_cancel_source` do
+not.
+Read the callee's declaration [PRE-2]: a function that calls one declared
+`waits` writes `waits` after its effect row, and so does each function that
+calls that one, up to an entry that waits [WAIT-1]. Keep the computation
 in functions that do not wait: only they can be overlapped [PAR-1, PAR-2].
 
 ## P12. Use fixed arrays for immutable tables
@@ -773,16 +780,13 @@ independence fails there instead of slowing the program.
 For byte classification and scanner state, keep predicates in `Bool`, combine
 them with `band`, `bor`, `bxor`, and `bnot`, and update the state directly.
 When a numeric contribution is needed, select it with a value-producing
-`match`:
+`if`; a `match` on a `Bool` is rejected [GRAM-6]:
 
 ```whitefoot
-let increment = match starts_word {
-  True() => {
-    give 1_u64;
-  }
-  False() => {
-    give 0_u64;
-  }
+let increment = if starts_word {
+  give 1_u64;
+} else {
+  give 0_u64;
 }
 ```
 
@@ -791,8 +795,8 @@ program alternatives. Use an exact integer operation when overflow is excluded
 by proof, and a `.wrap` operation only when modular arithmetic is the intended
 result [OP-2]. A `give` of a literal, a named const or a bare integer binding
 delivers the binding's equality to it, so `increment <= 1` holds after the
-`match`, and a value-producing `if` keeps every bound that each branch's given
-value is known to satisfy, as two returns would [ENT-5].
+`if`: a value-producing `if` keeps every bound that each branch's given value
+is known to satisfy, as two returns would [ENT-5].
 
 ## Known gaps
 
@@ -1095,7 +1099,7 @@ between them; pass two operations through one owner when their order matters
 
 A bound spawn is joined at the beginning of the first later statement that
 names its binding or may leave its block, such as an `if` holding a `return`
-or a `?`, and otherwise at the block's end [WAIT-3]. A statement that makes
+or a `let` with `propagate`, and otherwise at the block's end [WAIT-3]. A statement that makes
 the spawned call's guard true therefore stands before that statement in the
 block, not inside it: inside, it would run only after the join, which waits
 for the guard.

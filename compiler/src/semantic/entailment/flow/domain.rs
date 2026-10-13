@@ -609,6 +609,11 @@ impl Vocabulary {
             | TermKind::EntryDatum { .. }
             | TermKind::MeasureDatum { .. }
             | TermKind::CallDatum { .. } => Some(self.measure_atom(term, state)),
+            // [ENT-6] a tracked field place carries its current image as a
+            // measure does.
+            TermKind::Place(_, _) if self.is_tracked_field_place(term) => {
+                Some(self.measure_atom(term, state))
+            }
             TermKind::Place(_, _)
             | TermKind::CountedCapture { .. }
             | TermKind::IndexCapture { .. }
@@ -638,6 +643,38 @@ impl Vocabulary {
             join_delta,
         });
         AffineForm::term(AffineTermId::from_index(index))
+    }
+
+    /// Discards every atom minted at or after `start`, with every record that
+    /// names one of them. The next atom minted reuses the first discarded
+    /// index, so a surviving record naming a discarded atom would silently
+    /// denote that unrelated new value; rolling back through this one entry
+    /// point prunes every atom-bearing table together.
+    ///
+    /// The L0 query cache needs no pruning: it memoizes its complete inputs,
+    /// the closed state and the candidate images, so it answers only a query
+    /// over exactly those images.
+    pub(super) fn discard_atoms_from(&mut self, start: usize) {
+        if self.affine_atoms.len() <= start {
+            return;
+        }
+        self.affine_atoms.truncate(start);
+        let kept = |term: AffineTermId| (term.index() as usize) < start;
+        let kept_all = |terms: &[AffineCoefficient]| terms.iter().all(|each| kept(each.term()));
+        self.product_atoms
+            .retain(|product, (left, right)| kept(*product) && kept(*left) && kept(*right));
+        self.handle_images.retain(|handle, image| kept(*handle) && kept_all(image.terms()));
+        self.power_atoms
+            .retain(|(amount, _), power| kept_all(amount.terms()) && kept_all(power.terms()));
+        self.unsigned_divisions.retain(|division| {
+            kept_all(division.quotient.terms())
+                && kept_all(division.dividend.terms())
+                && kept_all(division.divisor.terms())
+        });
+        self.invariant_targets.retain(|_, target| match target {
+            Ok(target) => kept_all(target.terms()),
+            Err(_) => true,
+        });
     }
 
     /// Folds every delta atom an earlier join minted back into the constant
@@ -679,6 +716,51 @@ impl Vocabulary {
         };
         Some(self.new_affine_atom(ty))
     }
+
+    /// [ENT-6] the power atom of one nonconstant shift-amount image at one
+    /// unsigned shift type of width K: the atom standing for `2^amount`,
+    /// minted on the first demand with the interval `[1, 2^(K - 1)]` and
+    /// returned to every later demand for the same image and type, so a left
+    /// shift of one and a right shift by that amount name one value. Only an
+    /// exact shift of that type whose `amount <= K - 1` obligation is proved
+    /// demands it, and the amount is one immutable value, so the interval
+    /// holds wherever the atom is named. A constant amount and a signed type
+    /// have no power atom.
+    pub(super) fn power_atom(
+        &mut self,
+        amount: &AffineForm,
+        ty: IntegerType,
+    ) -> Option<AffineForm> {
+        if amount.terms().is_empty() || ty.signed() {
+            return None;
+        }
+        let key = (amount.clone(), ty);
+        if let Some(power) = self.power_atoms.get(&key) {
+            return Some(power.clone());
+        }
+        let maximum = 1_i128 << (u32::from(ty.width()) - 1);
+        let power = self.new_affine_atom_with_interval(ty, 1, maximum, false);
+        self.power_atoms.insert(key, power.clone());
+        Some(power)
+    }
+
+    /// [ENT-6] the power divisor of one shift-amount image at a shift of
+    /// type `ty`: the constant `2^c` for a constant amount `c` the type's
+    /// width admits, the power atom otherwise.
+    pub(super) fn power_divisor(
+        &mut self,
+        amount: &AffineForm,
+        ty: IntegerType,
+    ) -> Option<AffineForm> {
+        if amount.terms().is_empty() {
+            let exponent = u32::try_from(amount.constant_value()).ok()?;
+            if exponent >= u32::from(ty.width()) {
+                return None;
+            }
+            return Some(AffineForm::constant(1_i128 << exponent));
+        }
+        self.power_atom(amount, ty)
+    }
 }
 
 impl Reasoning<'_, '_, '_> {
@@ -697,6 +779,21 @@ impl Reasoning<'_, '_, '_> {
             let value = self.vocabulary.new_affine_atom(ty);
             state.values.insert(binding, value);
         }
+    }
+
+    /// [ENT-6] a copy read of a tracked field place reads that place's
+    /// current image, minted on first demand; any other expression reads
+    /// none here.
+    pub(super) fn tracked_field_image(
+        &mut self,
+        expression: &CheckedExpression,
+        state: &AffineFlowState,
+    ) -> Option<AffineForm> {
+        let term = self.read_operand(expression)?;
+        if !self.vocabulary.is_tracked_field_place(term) {
+            return None;
+        }
+        Some(self.vocabulary.measure_atom(term, state))
     }
 
     /// Reads an expression as a term or constant [ENT-2]; anything else is
@@ -878,24 +975,40 @@ impl Reasoning<'_, '_, '_> {
         self.affine_pure_expression_form(expression, state)
     }
 
-    /// The operand value images of one admitted S7 unsigned division, read
-    /// where it was evaluated. A `set` commit reads both before its target
-    /// kill, since an operand naming that place has a new image afterwards.
+    /// The dividend and divisor images of one captured S7 division, read
+    /// where it was evaluated: a division's two operands, or a right shift's
+    /// value and the power divisor of its amount [ENT-6]. A `set` commit
+    /// reads them before its target kill, since an operand naming that place
+    /// has a new image afterwards.
     pub(super) fn unsigned_division_operand_forms(
         &mut self,
         value: &CheckedExpression,
         state: &mut AffineFlowState,
     ) -> Option<(AffineForm, AffineForm)> {
-        let CheckedExpression::IntegerOperation { arguments, .. } = value else {
+        let CheckedExpression::IntegerOperation {
+            operation,
+            operand_type,
+            arguments,
+            ..
+        } = value
+        else {
             return None;
         };
         let [dividend, divisor] = arguments.as_slice() else {
             return None;
         };
-        Some((
-            self.affine_pre_domain_form(dividend, state)?,
-            self.affine_pre_domain_form(divisor, state)?,
-        ))
+        let dividend = self.affine_pre_domain_form(dividend, state)?;
+        let divisor = self.affine_pre_domain_form(divisor, state)?;
+        match (operation, operand_type) {
+            (CheckedIntegerOperation::DivideExact, _) => Some((dividend, divisor)),
+            (CheckedIntegerOperation::ShiftRightExact, CheckedType::Integer(ty))
+                if !ty.signed() =>
+            {
+                let divisor = self.vocabulary.power_divisor(&divisor, *ty)?;
+                Some((dividend, divisor))
+            }
+            _ => None,
+        }
     }
 
     /// The atom a multiplication's operand contributes to the fold: the
@@ -967,10 +1080,15 @@ impl Reasoning<'_, '_, '_> {
                 value,
                 ..
             } => self.affine_pure_expression_form(value, state),
+            // [ENT-6] a field read of a value root or through a reference
+            // reads the tracked field place's current image.
+            CheckedExpression::Project { .. } | CheckedExpression::ProjectValue { .. } => {
+                self.tracked_field_image(expression, state)
+            }
             CheckedExpression::IntegerOperation {
                 operation,
                 arguments,
-                result: CheckedType::Integer(_),
+                result: CheckedType::Integer(result),
                 ..
             } => {
                 let [left, right] = arguments.as_slice() else {
@@ -997,12 +1115,31 @@ impl Reasoning<'_, '_, '_> {
                             None
                         }
                     }
+                    CheckedIntegerOperation::ShiftLeftExact => {
+                        self.shifted_one_image(*result, &left, &right)
+                    }
                     _ => None,
                 }
             }
             _ => None,
         };
         formed.or_else(|| self.vocabulary.affine_unknown_integer(expression.ty()))
+    }
+
+    /// [ENT-6] the image of an exact unsigned `ishl` whose value operand is
+    /// the constant one and whose amount image is not a constant: the power
+    /// atom of that amount, the divisor an `ishr` by the same amount reads
+    /// [ENT-3.S7]. Every other left shift has no listed image.
+    pub(super) fn shifted_one_image(
+        &mut self,
+        ty: IntegerType,
+        value: &AffineForm,
+        amount: &AffineForm,
+    ) -> Option<AffineForm> {
+        if ty.signed() || *value != AffineForm::constant(1) {
+            return None;
+        }
+        self.vocabulary.power_atom(amount, ty)
     }
 }
 
@@ -1162,7 +1299,7 @@ impl Judging<'_, '_, '_> {
                         match folded[0].form.add(&delta, &mut AffineCheckState::new()) {
                             Ok(value) => value,
                             Err(_) => {
-                                self.vocabulary.affine_atoms.truncate(atom_start);
+                                self.vocabulary.discard_atoms_from(atom_start);
                                 self.vocabulary.new_affine_atom(ty)
                             }
                         }

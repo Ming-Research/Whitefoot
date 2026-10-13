@@ -1,0 +1,16 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn quotient_of(total: i64, divisor: i64) -> result: i64 pure contract {
+  requires 1_i64 <= divisor;
+  requires total <= -1_i64;
+  ensures result <= -1_i64;
+} {
+  doc "A signed division truncates toward zero, so minus one divided by five is zero. The signed quotient is not bounded by its divisor and dividend, so no quotient bound is derived and the postcondition stays unproved.";
+  let quotient = total / divisor;
+  return quotient;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

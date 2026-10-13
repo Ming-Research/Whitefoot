@@ -5,6 +5,29 @@ Newest first. One entry per approved change of the tree: a dated title,
 the owner's agent instructions own the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-13 A range fact can state an element's variant, and each conclusion stands on its own reads
+
+Nodes: language/checks-and-proofs/range-facts
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve Whitefoot#394's specification and design-tree change ... (head commit 25cb94f9d)" (translated), whose background listed the changed Bool-guard decision, the four added decisions and the four added refusals.
+
+Summary: The Bool-guard decision now writes Bool data only as `is True` / `is False`. Four decisions are added: the variant relation `e is V` / `e is not V`; each conclusion holds by its own reads; a conclusion that can never hold is an error, identity being the written spelling; and a reference-bound payload binder denotes the element's payload projection in goals. Four refusals are recorded: `==` for variants (value equality would equate two values of one variant with different payloads), the pattern form `e is V(..)` (its parentheses suggest a binding), one definedness condition for the whole clause (it accepted vacuous clauses), and requiring the payload to be copied to a local first (it refuses the natural form).
+## 2026-10-13 A tracked integer field place has a current image, and a quotient's upper bound follows from its dividend and divisor
+
+Nodes: language/checks-and-proofs/automatic-facts
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the specification and design-tree changes of Whitefoot#406: every tracked integer field place has a current image, a quotient's upper bound follows from its dividend and divisor, and `ishl(1, s)` has its own name? (head commit f722d963a)". The revision merged here differs from f722d963a only by the removal of a temporary measurement workflow and the merge of main.
+
+Summary: One decision is added: every tracked integer field place, whether its root holds the value or is a reference, carries a current affine image that only a commit to the field replaces and every event invalidating its supporting facts removes, instead of limiting images to fields reached through reference parameters, which the owner widened on an earlier card. The same change states the quotient upper bound as dividend below (k+1) divisors with the divisor proved at least one, and treats a variable right shift as division by the named power `ishl(1, s)`, instead of product terms or a writer-supplied proof step.
+
+## 2026-10-13 A fact some arms hold survives their join, and a joined value is free where its join was bypassed
+
+Nodes: compiler/range-judgment, language/checks-and-proofs/range-facts
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the specification revision and design-tree change of Whitefoot#414 at commit cd4851320? It covers two things: keeping a fact that holds in only some arms after a join, and fixing the soundness defect where, when an inner arm returns early, the outer other path is wrongly treated as impossible" (translated).
+
+Summary: Three decisions are added and one is reworded. A fact active at the end of only some arms of a join stays active where one of those arms was taken, instead of being dropped, which refused v2h's slot-move loop, or kept unconditionally, which would accept an index bounded only in one arm. The range judgment carries such a fact under the literals that the join's selector differs from each arm lacking it, and splits a bare selector over arm numbers only, instead of one guarded copy per arm, which multiplies rules, or a split over the arms' full conditions, which asserts an inner join's conditions on paths that bypassed it. A join records the earlier joins some of its arms bypassed, and the choice defining a joined value or version adds one `selector == arm` alternative per bypass, transitively, instead of a choice over the inner arms alone, the soundness defect where an inner returning arm let `251_u8 + v` be accepted, or a free not-reached alternative, which loses the arms' values on paths through the join. The derivation decision now says a joined value is the arm taken's, or no value where a later join bypassed its join.
+
 ## 2026-10-13 A struct's type invariants travel through enum payloads, bare type parameters, recursive calls and branch deliveries
 
 Nodes: language/checks-and-proofs, language/checks-and-proofs/automatic-facts, language/checks-and-proofs/obligation-discharge

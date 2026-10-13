@@ -1,0 +1,28 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Inner {
+  doc "One count.";
+  count: u64;
+}
+
+struct Outer {
+  doc "A label and a count held one struct down.";
+  label: u64;
+  inner: Inner;
+}
+
+fn advance(outer: &Outer, delta: u64, wild: u64) -> result: unit writes(outer) contract {
+  requires outer^.inner.count + delta <= 800_u64;
+} {
+  doc "Replacing the inner struct writes a prefix of the nested count and kills its entry image; the count now holds wild, so the sum may overflow.";
+  set outer^.inner = Inner(count: wild);
+  let count = outer^.inner.count;
+  let total = count + delta;
+  set outer^.inner.count = total;
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

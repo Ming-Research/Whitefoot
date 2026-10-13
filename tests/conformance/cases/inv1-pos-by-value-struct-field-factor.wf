@@ -1,0 +1,14 @@
+struct Counter {
+  count: u64;
+}
+
+fn inspect(s: Counter) -> result: u64 pure {
+  doc "A field of a by-value struct parameter is a tracked field place, so INV-1 admits it as a factor and the relation holds over its u64 image.";
+  invariant bounded: 0_u64 <= s.count;
+  let capacity = s.count;
+  return capacity;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

@@ -1,0 +1,16 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn leading_digit(total: u64, base: u64) -> result: u64 pure contract {
+  requires base <= 100_u64;
+  requires total < 16_u64 * base;
+  ensures result <= 99_u64;
+} {
+  doc "A right shift by the constant four is the division by sixteen. A total below sixteen bases of at most one hundred is below 1600, so the quotient is at most 99, which MSR-4 step 7 submits as total - 1600 <= -1.";
+  let quotient = ishr(total, 4_u32);
+  return quotient;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

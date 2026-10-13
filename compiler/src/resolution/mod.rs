@@ -417,6 +417,10 @@ pub enum DeferredUseRole {
     /// [GRAM-5, EFF-1]. Which variant a place's enum type has is the owner
     /// type's judgment, exactly as the paired field name is.
     PayloadVariant,
+    /// The variant TYPEID of a range clause's variant relation, `e is V`
+    /// [GRAM-5, RANGE-1], resolved against the tested value's enum type as
+    /// an arm label is against its scrutinee's.
+    TestedVariant,
     /// The member name on the left side of a named binding.
     FunctionBinding,
     /// The member selected by a qualified group call.

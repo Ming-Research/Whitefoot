@@ -1,0 +1,29 @@
+struct Reading {
+  value: i64;
+}
+
+fn make() -> made: Reading pure contract {
+  ensures -1000_i64 <= made.value;
+} {
+  doc "The construction carries 0 into the field the postcondition names.";
+  return Reading(value: 0_i64);
+}
+
+fn peek(source: &Reading) -> result: i64 reads(source) {
+  doc "Reads the field.";
+  let seen = source^.value;
+  return seen;
+}
+
+fn shift(d: u8) -> result: i64 pure {
+  doc "A call whose row only reads the local projects no write, so the field keeps the call result's bound across it.";
+  let e = make();
+  let seen = peek(source: &e);
+  let w = cvt::<u8, i64>(d);
+  let v = e.value - w;
+  return v;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

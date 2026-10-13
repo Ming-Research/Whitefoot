@@ -1,0 +1,14 @@
+struct Counter {
+  count: u32;
+}
+
+fn inspect(made: Box<Counter>) -> result: u32 pure {
+  doc "A field reached through a Box content step is no tracked field place, so INV-1 refuses it as a field selection when an invariant names it as a factor.";
+  invariant bounded: 0_u32 <= made.inner.count;
+  let count = made.inner.count;
+  return count;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
