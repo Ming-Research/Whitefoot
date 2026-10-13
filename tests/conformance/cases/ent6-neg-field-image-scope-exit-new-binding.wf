@@ -1,0 +1,28 @@
+struct Reading {
+  value: i64;
+}
+
+fn make() -> made: Reading pure contract {
+  ensures -1000_i64 <= made.value;
+} {
+  doc "The construction carries 0 into the field the postcondition names.";
+  return Reading(value: 0_i64);
+}
+
+fn shift(flag: Bool, d: u8, x: i64) -> result: i64 pure {
+  doc "The first e leaves scope with its image, and the later binding of the same name is a new root holding the unbounded x, so the subtraction of a widened byte may overflow.";
+  if flag {
+    let e = make();
+    let inner_w = cvt::<u8, i64>(d);
+    let t = e.value - inner_w;
+    return t;
+  }
+  let e = Reading(value: x);
+  let w = cvt::<u8, i64>(d);
+  let v = e.value - w;
+  return v;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

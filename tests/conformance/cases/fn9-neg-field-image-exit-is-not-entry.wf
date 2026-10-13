@@ -1,0 +1,20 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Counter {
+  doc "One count.";
+  count: u64;
+}
+
+fn advance(counter: &Counter, delta: u64, wild: u64) -> result: unit writes(counter) contract {
+  requires counter^.count + delta <= 800_u64;
+  ensures counter^.count + delta <= 800_u64;
+} {
+  doc "The requirement bounds the count's entry image. The postcondition speaks of the count at return, whose image is wild's after the commit, so the entry bound does not prove it.";
+  set counter^.count = wild;
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}
