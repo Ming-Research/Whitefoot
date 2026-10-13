@@ -1980,8 +1980,9 @@ These are inspected rule and implementation evidence, not runs in this task.
 The following complete independent declaration fragment isolates that
 restriction. It describes variable-sized packed frames: zero denotes the
 root, and a frame's final cell stores the previous frame end; interior
-payload cells are arbitrary. It is not a runnable program and has not been
-compiled. It deliberately uses the ordinary function spelling whose use in
+payload cells are arbitrary. The complete program
+[`frame-chain-witness.wf`](../../experiments/match-dispatch/wasm/frame-chain-witness.wf)
+adds only a trivial `main`. It deliberately uses the ordinary function spelling whose use in
 a contract is refused by [FN-8].
 
 ```whitefoot
@@ -2013,9 +2014,10 @@ strictly smaller nonnegative integer. Its first node being valid means the
 parent chain is valid, so removing that first node preserves the predicate.
 This is the missing construction/decomposition principle; it is not a
 request to run `valid_chain` on every return. The fragment does not itself
-prove v2h's richer saved-PC and frame-layout facts. The contract's ordinary
-call is a source-predicted formation refusal under the explicit rule and
-implementation, not an observed checker diagnostic. This establishes the
+prove v2h's richer saved-PC and frame-layout facts. The temporary
+handler-code workflow compiled that program with the branch compiler (run
+38404666125): the checker refuses its first predicate requirement with
+`error[FN-8]: InvalidRequires` at `requires valid_chain(words: words, top: top);`. This establishes the
 narrow gap in expressing the natural named inductive predicate, not that
 every possible pointwise encoding is impossible.
 
