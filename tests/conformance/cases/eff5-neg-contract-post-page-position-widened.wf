@@ -1,0 +1,28 @@
+struct Cursor {
+  k: u64;
+}
+
+fn helper(source: &Paged<u64>, target: &[u64], selector: &Cursor) -> result: unit writes(target) contract {
+  requires selector^.k < source^.pages.len;
+  requires target^.len > 0_u64;
+  ensures source^.pages[selector^.k].len == source^.pages[selector^.k].len;
+} {
+  set target^[0_u64] = 1_u64;
+  return unit;
+}
+
+fn caller(source: &Paged<u64>, selector: &Cursor, second: u64) -> result: unit reads(source.len), writes(source.pages[second]) contract {
+  requires selector^.k == 0_u64;
+  requires second == 1_u64;
+  requires second < source^.pages.len;
+} {
+  doc "EFF-5: a projected postcondition page offset widens to the containing paged storage. The call-entry page 0 differs from the written page 1, which would separate an incorrectly retained offset.";
+  if source^.pages[second].len > 0_u64 {
+    helper(source: source, target: &source^.pages[second], selector: selector);
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

@@ -1,0 +1,25 @@
+struct Cursor {
+  k: u64;
+}
+
+fn helper(source: &Array<Array<u64, 1>, 2>, target: &u64, selector: &Cursor) -> result: unit writes(target) contract {
+  requires source^.len == 2_u64;
+  requires selector^.k == 0_u64;
+  ensures source^[selector^.k].len == source^[selector^.k].len;
+} {
+  set target^ = 1_u64;
+  return unit;
+}
+
+fn caller() -> result: unit pure {
+  doc "EFF-5: a postcondition field offset widens to the source run. The entry field is 0 and the target lies in row 1, so retaining the entry offset would wrongly separate the read from the write.";
+  let row = array_filled::<u64, 1>(value: 0_u64);
+  let rows = array_filled::<Array<u64, 1>, 2>(value: row);
+  let cursor = Cursor(k: 0_u64);
+  helper(source: &rows, target: &rows[1_u64][0_u64], selector: &cursor);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

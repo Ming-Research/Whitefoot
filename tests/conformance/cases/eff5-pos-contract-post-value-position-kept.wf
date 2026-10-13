@@ -1,0 +1,20 @@
+fn helper(source: &Array<Array<u64, 1>, 2>, target: &u64, selector: u64) -> result: unit writes(target) contract {
+  requires source^.len == 2_u64;
+  requires selector == 0_u64;
+  ensures source^[selector].len == source^[selector].len;
+} {
+  set target^ = 1_u64;
+  return unit;
+}
+
+fn caller() -> result: unit pure {
+  doc "EFF-5: a whole by-value parameter retains its call-entry position in a postcondition. Position 0 stays disjoint from the write in row 1.";
+  let row = array_filled::<u64, 1>(value: 0_u64);
+  let rows = array_filled::<Array<u64, 1>, 2>(value: row);
+  helper(source: &rows, target: &rows[1_u64][0_u64], selector: 0_u64);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

@@ -1,0 +1,31 @@
+struct Cursor {
+  k: u64;
+}
+
+struct Frame {
+  left: Array<Array<u64, 1>, 2>;
+  right: Array<Array<u64, 1>, 2>;
+}
+
+fn helper(source: &Array<Array<u64, 1>, 2>, target: &u64, selector: &Cursor) -> result: unit writes(target) contract {
+  requires source^.len == 2_u64;
+  requires selector^.k == 0_u64;
+  ensures source^[selector^.k].len == source^[selector^.k].len;
+} {
+  set target^ = 1_u64;
+  return unit;
+}
+
+fn caller() -> result: unit pure {
+  doc "EFF-5 and OWN-7: widening the postcondition offset ends at the source run in frame.left. The write remains disjoint in frame.right.";
+  let row = array_filled::<u64, 1>(value: 0_u64);
+  let rows = array_filled::<Array<u64, 1>, 2>(value: row);
+  let cursor = Cursor(k: 0_u64);
+  let frame = Frame(left: rows, right: rows);
+  helper(source: &frame.left, target: &frame.right[1_u64][0_u64], selector: &cursor);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
