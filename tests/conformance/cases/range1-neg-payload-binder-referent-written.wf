@@ -1,0 +1,37 @@
+enum Instr {
+  Jump(t: u64);
+  Branch(t: u64, c: u64);
+  Halt();
+}
+
+fn need_below(value: u64, bound: u64) -> result: unit pure contract {
+  requires value < bound;
+} {
+  return unit;
+}
+
+fn retarget(code: &Box<Slots<Instr>>, pc: u64) -> r: u64 writes(code) contract {
+  requires pc < code^.inner.len;
+  requires forall targets(j in 0_u64..code^.inner.len): code^.inner[j].Jump.t < code^.inner.len, code^.inner[j].Branch.t < code^.inner.len;
+} {
+  doc "The Branch arm passes its payload binder's referent directly and is bounded by targets. The Jump arm first writes the length through its binder, which keeps the binder valid; jump_to^ then reads that written value, not the element targets bounded, so need_below is unproved there.";
+  let n = code^.inner.len;
+  match code^.inner[pc] {
+    Jump(t: jump_to) => {
+      set jump_to^ = n;
+      need_below(value: jump_to^, bound: n);
+      return jump_to^;
+    }
+    Branch(t: branch_to, ..) => {
+      need_below(value: branch_to^, bound: n);
+      return branch_to^;
+    }
+    Halt() => {
+      return pc;
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

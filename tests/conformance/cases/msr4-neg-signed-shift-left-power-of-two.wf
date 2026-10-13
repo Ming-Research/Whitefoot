@@ -1,0 +1,15 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn power_of_two(shift: u32) -> result: i64 pure contract {
+  requires shift <= 63_u32;
+  ensures 1_i64 <= result;
+} {
+  doc "A signed left shift of one by 63 is the minimum i64, not 2^63, so a signed shift gets no power atom with an interval starting at one and the postcondition stays unproved.";
+  let multiplier = ishl(1_i64, shift);
+  return multiplier;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}
