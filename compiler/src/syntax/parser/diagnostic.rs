@@ -1,3 +1,10 @@
+#[path = "repairs.rs"]
+mod repairs;
+
+use crate::diagnostic_repairs::{
+    FLAT_CONTRACT_OPERATION_FIX, FLAT_OPERATION_FIX, FORM3_IDENT_FIX, FORM3_LABEL_FIX,
+    FORM3_TYPEID_FIX, GRAM2_CONTRACT_ORDER_FIX, GRAM9_BODY_FIX, GRAM9_CONTRACT_FIX,
+};
 use crate::lexer::TokenKind;
 use crate::syntax::grammar::{
     Decision, DecisionContext, DecisionKind, GrammarNodeId, GrammarNodeKind, LookaheadPredicate,
@@ -29,6 +36,7 @@ pub(crate) enum DecisionSelection {
 pub(crate) struct DiagnosticSite<'tokens> {
     pub(crate) source: SourceId,
     pub(crate) source_len: u64,
+    pub(crate) bundle: &'tokens crate::SourceBundle,
     pub(crate) tokens: &'tokens [ClassifiedToken],
     pub(crate) cursor: usize,
     pub(crate) limits: ParseLimits,
@@ -46,29 +54,15 @@ pub(crate) struct ProbeContext {
     /// `contract_define`. The grammar position decides which, so it is read
     /// from the open frames and never from the text of the offending line.
     pub(crate) in_contract: bool,
+    /// The nearest atom-bearing grammar role is an `infix_tail` operand.
+    pub(crate) infix_operand: bool,
+    /// The preceding completed statement has a value-match initializer.
+    pub(crate) after_value_match: bool,
+    /// The grammar is inside an expression, including its callee/type arguments.
+    pub(crate) in_expression: bool,
+    /// The nearest field-binding role is a match arm, not a result route or let.
+    pub(crate) match_binder: bool,
 }
-
-/// GRAM-9's repair in the two grammar positions that admit a binding.
-const GRAM9_BODY_FIX: &str = "a `call` or `construct` in an atom position does not derive [GRAM-9]: bind the inner call with its own preceding `let` in this body and write that binder in the atom position — `let inner = f(x: 0_u64); let outer = g(y: inner);`";
-const GRAM9_CONTRACT_FIX: &str = "a `call` or `construct` in an atom position does not derive [GRAM-9]: a `contract_block` has no `let`, so bind the inner call with a preceding `define` in this same block and write that binder in the atom position — `define inner = f(x: 0_u64); requires g(y: inner);`";
-
-/// [FORM-3]'s lexical class for each name slot, with the repair a slot filled
-/// from another class admits.
-///
-/// A name slot's class is a grammar position: `const_decl` writes IDENT,
-/// `struct_decl` writes TYPEID, and no class is admitted in another's slot.
-/// The expectation list names the class and never says what the class is, so
-/// a writer who spelled a const `Limit` read only `expected: ["IDENT"]`.
-const FORM3_IDENT_FIX: &str = "an IDENT slot admits only [FORM-3]'s IDENT `[a-z][a-z0-9_]*`, so a `const`, `fn`, parameter, `let`, field, or binder name is lowercase and is never a TYPEID `[A-Z][A-Za-z0-9]*`, a LABEL `@[a-z][a-z0-9_]*`, or an OPNAME; rename the name written here to the IDENT shape";
-const FORM3_TYPEID_FIX: &str = "a TYPEID slot admits only [FORM-3]'s TYPEID `[A-Z][A-Za-z0-9]*`, so a struct, enum, contract, variant, or constructor name is capitalized and is never an IDENT `[a-z][a-z0-9_]*`, a LABEL `@[a-z][a-z0-9_]*`, or an OPNAME; rename the name written here to the TYPEID shape";
-const FORM3_LABEL_FIX: &str = "a LABEL slot admits only [FORM-3]'s LABEL `@[a-z][a-z0-9_]*`, so write the leading `@`; an IDENT `[a-z][a-z0-9_]*`, a TYPEID `[A-Z][A-Za-z0-9]*`, and an OPNAME are other lexical classes and none is admitted here";
-
-/// [GRAM-2] fixes the order of a `contract_block`: every `contract_define`,
-/// then every `requires_clause`, then every `ensures_clause`. A clause written
-/// out of that order leaves the frontier at a position whose expectation list
-/// names only the sections still open, which states what is admitted next
-/// without ever stating the order that was broken.
-const GRAM2_CONTRACT_ORDER_FIX: &str = "a `contract_block` is written in one fixed order: all `define` definitions first, then all `requires` requirements, then all `ensures` postconditions. A clause of an earlier section written after a later one is not admitted, so move it above the first clause of the later section";
 
 /// The repair the failing production admits, when the production itself fixes
 /// one. The decision is the grammar position, never the text of the line.
@@ -358,11 +352,10 @@ fn forbidden_atom_override(
     source: SourceId,
     tokens: &[ClassifiedToken],
     cursor: usize,
-    atom_only: bool,
-    in_contract: bool,
+    context: ProbeContext,
     expected: super::ExpectedTerminals,
 ) -> Option<SyntaxIssue> {
-    if !atom_only {
+    if !context.atom_only {
         return None;
     }
     let first = tokens.get(cursor)?;
@@ -382,7 +375,9 @@ fn forbidden_atom_override(
         && (fixed(second, FixedTerminal::LeftParen)
             || fixed(second, FixedTerminal::LeftAngle)
             || fixed(second, FixedTerminal::ColonColon));
-    if call_start || construct_start {
+    let nested_infix = (context.infix_operand || context.production == Production::InfixTail)
+        && repairs::is_infix_operator(second);
+    if call_start || construct_start || nested_infix {
         return Some(SyntaxIssue {
             rule: SyntaxRule::Gram9,
             coordinate: SyntaxCoordinate::new(
@@ -391,7 +386,11 @@ fn forbidden_atom_override(
                 second.token().id().end(),
             ),
             expected,
-            mechanical_fix: Some(if in_contract {
+            mechanical_fix: Some(if nested_infix && context.in_contract {
+                FLAT_CONTRACT_OPERATION_FIX
+            } else if nested_infix {
+                FLAT_OPERATION_FIX
+            } else if context.in_contract {
                 GRAM9_CONTRACT_FIX
             } else {
                 GRAM9_BODY_FIX
@@ -671,8 +670,10 @@ fn override_issue(
         site.source,
         site.tokens,
         site.cursor,
-        context.atom_only || frontier.atom_only,
-        context.in_contract,
+        ProbeContext {
+            atom_only: context.atom_only || frontier.atom_only,
+            ..context
+        },
         frontier.expected,
     ) {
         return Ok(Some(issue));
@@ -852,7 +853,7 @@ fn descend_or_issue(
     }))
 }
 
-pub(crate) fn direct_mismatch(
+fn direct_mismatch_inner(
     expected_terminal: TerminalPredicate,
     context: ProbeContext,
     site: DiagnosticSite<'_>,
@@ -866,14 +867,9 @@ pub(crate) fn direct_mismatch(
         Ok(None) => {}
         Err(failure) => return DiagnosticResult::Resource(failure),
     }
-    if let Some(issue) = forbidden_atom_override(
-        site.source,
-        site.tokens,
-        site.cursor,
-        context.atom_only,
-        context.in_contract,
-        expected,
-    ) {
+    if let Some(issue) =
+        forbidden_atom_override(site.source, site.tokens, site.cursor, context, expected)
+    {
         return DiagnosticResult::Issue(issue);
     }
     if let Some(token) = site.tokens.get(site.cursor) {
@@ -976,6 +972,22 @@ fn probe(
                             atom_only: node.is_atom_only_reference(),
                             in_contract: task_context.in_contract
                                 || production == Production::ContractBlock,
+                            infix_operand: match production {
+                                Production::InfixTail => true,
+                                Production::Psuffix
+                                | Production::AtomList
+                                | Production::Fieldinit
+                                | Production::ForBinding => false,
+                                _ => task_context.infix_operand,
+                            },
+                            after_value_match: task_context.after_value_match,
+                            in_expression: task_context.in_expression
+                                || production == Production::Expr,
+                            match_binder: match production {
+                                Production::Arm => true,
+                                Production::ResultRoute | Production::LetStmt => false,
+                                _ => task_context.match_binder,
+                            },
                         };
                         if let Err(failure) = push_probe(
                             &mut tasks,
@@ -1150,7 +1162,7 @@ fn probe(
     DiagnosticResult::Compiler(ParseCompilerFailure::DiagnosticReachedSuccessfulEnd)
 }
 
-pub(crate) fn diagnose_decision(
+fn diagnose_decision_inner(
     decision: Decision,
     context: ProbeContext,
     site: DiagnosticSite<'_>,
@@ -1206,4 +1218,24 @@ pub(crate) fn diagnose_decision(
         expected: value.expected,
         mechanical_fix: production_fix(decision.production()),
     })
+}
+
+pub(crate) fn direct_mismatch(
+    expected_terminal: TerminalPredicate,
+    context: ProbeContext,
+    site: DiagnosticSite<'_>,
+    work: &mut Work,
+) -> DiagnosticResult {
+    let result = direct_mismatch_inner(expected_terminal, context, site, work);
+    repairs::attach(result, context, site)
+}
+
+pub(crate) fn diagnose_decision(
+    decision: Decision,
+    context: ProbeContext,
+    site: DiagnosticSite<'_>,
+    work: &mut Work,
+) -> DiagnosticResult {
+    let result = diagnose_decision_inner(decision, context, site, work);
+    repairs::attach(result, context, site)
 }

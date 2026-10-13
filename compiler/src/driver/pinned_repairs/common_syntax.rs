@@ -1,0 +1,646 @@
+//! Common syntax repairs, each pinned with its literal application.
+
+use super::RepairPair;
+
+pub(super) const COMMON_SYNTAX: &[RepairPair] = &[
+    RepairPair {
+        name: "syntax-effect-row.wf",
+        rejected: br#"fn value() -> result: u32 {
+  return 0_u32;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "GRAM-3",
+        sentences: &[
+            "\n  mechanical_fix: write an effect row after the result binding: `pure` for no effects, or `reads(path)` and `writes(path)` entries describing the body's reference accesses; write `waits` after that row [GRAM-2, EFF-1]\n",
+        ],
+        repaired: &[br#"fn value() -> result: u32 pure {
+  return 0_u32;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "syntax-waits-after-row.wf",
+        rejected: br#"fn value() -> result: u32 waits {
+  return 0_u32;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "GRAM-3",
+        sentences: &[
+            "\n  mechanical_fix: write an effect row after the result binding: `pure` for no effects, or `reads(path)` and `writes(path)` entries describing the body's reference accesses; write `waits` after that row [GRAM-2, EFF-1]\n",
+        ],
+        repaired: &[br#"fn value() -> result: u32 pure waits {
+  return 0_u32;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "syntax-effect-row-reads.wf",
+        rejected: br#"fn value(cell: &u32) -> result: u32 {
+  return cell^;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "GRAM-3",
+        sentences: &[
+            "\n  mechanical_fix: write an effect row after the result binding: `pure` for no effects, or `reads(path)` and `writes(path)` entries describing the body's reference accesses; write `waits` after that row [GRAM-2, EFF-1]\n",
+        ],
+        repaired: &[br#"fn value(cell: &u32) -> result: u32 reads(cell) {
+  return cell^;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "syntax-effect-row-writes.wf",
+        rejected: br#"fn value(cell: &u32) -> result: u32 {
+  set cell^ = 1_u32;
+  return 0_u32;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "GRAM-3",
+        sentences: &[
+            "\n  mechanical_fix: write an effect row after the result binding: `pure` for no effects, or `reads(path)` and `writes(path)` entries describing the body's reference accesses; write `waits` after that row [GRAM-2, EFF-1]\n",
+        ],
+        repaired: &[br#"fn value(cell: &u32) -> result: u32 writes(cell) {
+  set cell^ = 1_u32;
+  return 0_u32;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "syntax-infix-call-argument.wf",
+        rejected: br#"fn identity(x: u32) -> result: u32 pure {
+  return x;
+}
+
+fn value() -> result: u32 pure {
+  return identity(x: 1_u32 +wrap 2_u32);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "GRAM-5",
+        sentences: &[
+            "\n  mechanical_fix: bind each operation with its own preceding `let` and pass the binding as the operand; an expression has one operation over two atoms, with no chaining or parenthesized subexpressions [GRAM-6, GRAM-9]\n",
+        ],
+        repaired: &[br#"fn identity(x: u32) -> result: u32 pure {
+  return x;
+}
+
+fn value() -> result: u32 pure {
+  let sum = 1_u32 +wrap 2_u32;
+  return identity(x: sum);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "syntax-compare-call-argument.wf",
+        rejected: br#"fn identity(x: Bool) -> result: Bool pure {
+  return x;
+}
+
+fn value() -> result: Bool pure {
+  return identity(x: 1_u32 < 2_u32);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "GRAM-5",
+        sentences: &[
+            "\n  mechanical_fix: bind each operation with its own preceding `let` and pass the binding as the operand; an expression has one operation over two atoms, with no chaining or parenthesized subexpressions [GRAM-6, GRAM-9]\n",
+        ],
+        repaired: &[br#"fn identity(x: Bool) -> result: Bool pure {
+  return x;
+}
+
+fn value() -> result: Bool pure {
+  let ordered = 1_u32 < 2_u32;
+  return identity(x: ordered);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "syntax-chained-infix.wf",
+        rejected: br#"fn value() -> result: u32 pure {
+  return 0_u32 +wrap 1_u32 +wrap 2_u32;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "GRAM-9",
+        sentences: &[
+            "\n  mechanical_fix: bind each operation with its own preceding `let` and pass the binding as the operand; an expression has one operation over two atoms, with no chaining or parenthesized subexpressions [GRAM-6, GRAM-9]\n",
+        ],
+        repaired: &[br#"fn value() -> result: u32 pure {
+  let first = 0_u32 +wrap 1_u32;
+  return first +wrap 2_u32;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "syntax-parenthesized-infix.wf",
+        rejected: br#"fn value() -> result: u32 pure {
+  return (1_u32 +wrap 2_u32);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "GRAM-5",
+        sentences: &[
+            "\n  mechanical_fix: bind each operation with its own preceding `let` and pass the binding as the operand; an expression has one operation over two atoms, with no chaining or parenthesized subexpressions [GRAM-6, GRAM-9]\n",
+        ],
+        repaired: &[br#"fn value() -> result: u32 pure {
+  let sum = 1_u32 +wrap 2_u32;
+  return sum;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "syntax-array-list.wf",
+        rejected: br#"fn value() -> result: u32 pure {
+  let values = [1_u8, 2_u8];
+  return 0_u32;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "GRAM-4",
+        sentences: &[
+            "\n  mechanical_fix: replace the expression list with `array_filled` or `box_array_filled` for repeated copy elements, or `slots_new` followed by `place_back` for individual elements [OP-13]; for static elements, declare `const values: Array<u8, 2> =[1_u8, 2_u8];` and use `values` [CONST-2]\n",
+        ],
+        repaired: &[
+            br#"fn value() -> result: u32 pure {
+  let values = array_filled::<u8, 2>(value: 1_u8);
+  return 0_u32;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+            br#"fn value() -> result: u32 pure {
+  let values = box_array_filled::<u8>(count: 2_u64, value: 1_u8);
+  return 0_u32;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+            br#"fn value() -> result: u32 pure {
+  let values = slots_new::<u8, 2>();
+  place_back(window: &values, value: 1_u8);
+  place_back(window: &values, value: 2_u8);
+  return 0_u32;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+            br#"const values: Array<u8, 2> =[1_u8, 2_u8];
+
+fn value() -> result: u32 pure {
+  let first = values[0_u64];
+  return 0_u32;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        ],
+    },
+    RepairPair {
+        name: "syntax-typed-array-list.wf",
+        rejected: br#"fn value() -> result: u32 pure {
+  let values = Array<u8, 2>[1_u8, 2_u8];
+  return 0_u32;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "GRAM-3",
+        sentences: &[
+            "\n  mechanical_fix: replace the expression list with `array_filled` or `box_array_filled` for repeated copy elements, or `slots_new` followed by `place_back` for individual elements [OP-13]; for static elements, declare `const values: Array<u8, 2> =[1_u8, 2_u8];` and use `values` [CONST-2]\n",
+        ],
+        repaired: &[
+            br#"fn value() -> result: u32 pure {
+  let values = array_filled::<u8, 2>(value: 1_u8);
+  return 0_u32;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+            br#"fn value() -> result: u32 pure {
+  let values = box_array_filled::<u8>(count: 2_u64, value: 1_u8);
+  return 0_u32;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+            br#"fn value() -> result: u32 pure {
+  let values = slots_new::<u8, 2>();
+  place_back(window: &values, value: 1_u8);
+  place_back(window: &values, value: 2_u8);
+  return 0_u32;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+            br#"const values: Array<u8, 2> =[1_u8, 2_u8];
+
+fn value() -> result: u32 pure {
+  let first = values[0_u64];
+  return 0_u32;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        ],
+    },
+    RepairPair {
+        name: "syntax-value-match-semicolon.wf",
+        rejected: br#"fn value() -> result: u32 pure {
+  let option = Some<u32>(value: 1_u32);
+  let selected = match option {
+    Some(value: x) => {
+      give x;
+    }
+    None() => {
+      give 0_u32;
+    }
+  };
+  return selected;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "GRAM-4",
+        sentences: &[
+            "\n  mechanical_fix: remove the `;` after this value match: a `let` initializer `match` ends at its closing `}` [GRAM-4, GRAM-7]\n",
+        ],
+        repaired: &[br#"fn value() -> result: u32 pure {
+  let option = Some<u32>(value: 1_u32);
+  let selected = match option {
+    Some(value: x) => {
+      give x;
+    }
+    None() => {
+      give 0_u32;
+    }
+  }
+  return selected;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "syntax-empty-loop-header.wf",
+        rejected: br#"fn value() -> result: u32 pure {
+  loop () {
+    break;
+  }
+  return 0_u32;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "GRAM-4",
+        sentences: &[
+            "\n  mechanical_fix: remove the empty parentheses and write `loop {` when the loop has no header invariant [GRAM-4]\n",
+        ],
+        repaired: &[br#"fn value() -> result: u32 pure {
+  loop {
+    break;
+  }
+  return 0_u32;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "syntax-unnamed-loop-invariant.wf",
+        rejected: br#"fn value() -> result: u32 pure {
+  loop (
+    invariant 0_u32 <= 0_u32
+  ) {
+    break;
+  }
+  return 0_u32;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "GRAM-4",
+        sentences: &[
+            "\n  mechanical_fix: name this loop-header relation as `invariant name: left <= right`, with a fresh lowercase name before the colon [GRAM-4]\n",
+        ],
+        repaired: &[br#"fn value() -> result: u32 pure {
+  loop (
+    invariant bound: 0_u32 <= 0_u32
+  ) {
+    break;
+  }
+  return 0_u32;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "syntax-positional-match-binder.wf",
+        rejected: br#"fn value() -> result: u32 pure {
+  let option = Some<u32>(value: 1_u32);
+  let selected = match option {
+    Some(x) => {
+      give x;
+    }
+    None() => {
+      give 0_u32;
+    }
+  }
+  return selected;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "GRAM-4",
+        sentences: &[
+            "\n  mechanical_fix: write named field binders as `Variant(field: binder)` in declared field order, for example `Some(value: x)`; a final `..` covers omitted fields [GRAM-10]\n",
+        ],
+        repaired: &[
+            br#"fn value() -> result: u32 pure {
+  let option = Some<u32>(value: 1_u32);
+  let selected = match option {
+    Some(value: x) => {
+      give x;
+    }
+    None() => {
+      give 0_u32;
+    }
+  }
+  return selected;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+            br#"fn value() -> result: u32 pure {
+  let option = Some<u32>(value: 1_u32);
+  let selected = match option {
+    Some(..) => {
+      give 0_u32;
+    }
+    None() => {
+      give 0_u32;
+    }
+  }
+  return selected;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        ],
+    },
+    RepairPair {
+        name: "syntax-let-mut.wf",
+        rejected: br#"fn value() -> result: u32 pure {
+  let mut x = 0_u32;
+  set x = 1_u32;
+  return x;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "GRAM-4",
+        sentences: &[
+            "\n  mechanical_fix: remove `mut` and write `let x = value;`; `let` derives the binding's mode and type, and assignment uses `set x = value;` [GRAM-4, TYPE-5, SET-1]\n",
+        ],
+        repaired: &[br#"fn value() -> result: u32 pure {
+  let x = 0_u32;
+  set x = 1_u32;
+  return x;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "syntax-let-type.wf",
+        rejected: br#"fn value() -> result: u32 pure {
+  let x: u32 = 0_u32;
+  return x;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "GRAM-4",
+        sentences: &[
+            "\n  mechanical_fix: remove the type annotation and write `let x = value;`; the initializer determines the binding's mode and type [GRAM-4, TYPE-5]\n",
+        ],
+        repaired: &[br#"fn value() -> result: u32 pure {
+  let x = 0_u32;
+  return x;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "syntax-borrow-mut.wf",
+        rejected: br#"fn value() -> result: u32 pure {
+  let x = 0_u32;
+  let p = &mut x;
+  return p^;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "GRAM-5",
+        sentences: &[
+            "\n  mechanical_fix: remove `mut` and write `&p`; references have no permission marker, and a callee's effect row declares writes through its reference parameters [GRAM-5, REF-1, EFF-1]\n",
+        ],
+        repaired: &[br#"fn value() -> result: u32 pure {
+  let x = 0_u32;
+  let p = &x;
+  return p^;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "syntax-top-level-use.wf",
+        rejected: br#"use std::process;
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "GRAM-2",
+        sentences: &[
+            "\n  mechanical_fix: replace the import with an `alias` declaration, for example `alias process = std::process;`; in a module program, an alias names a module listed in this module's graph row [GRAM-2, MOD-4, MOD-5]\n",
+        ],
+        repaired: &[br#"alias process = std::process;
+
+fn main() -> status: process::ExitStatus pure {
+  return process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "syntax-boolean-and.wf",
+        rejected: br#"fn value() -> result: Bool pure {
+  let a = True();
+  let b = False();
+  return a && b;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "GRAM-5",
+        sentences: &[
+            "\n  mechanical_fix: write `band(a, b)` for boolean conjunction and `bor(a, b)` for boolean disjunction; both operations are eager, so bind computed operands first with `let` in a body or `define` in a contract block [OP-1, GRAM-5, GRAM-9]\n",
+        ],
+        repaired: &[br#"fn value() -> result: Bool pure {
+  let a = True();
+  let b = False();
+  return band(a, b);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "syntax-chained-infix-contract.wf",
+        rejected: br#"fn bounded(x: u32) -> result: u32 pure contract {
+  define total = 0_u32 +wrap 1_u32 +wrap 2_u32;
+  requires x <= total;
+} {
+  return x;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "GRAM-9",
+        sentences: &[
+            "\n  mechanical_fix: bind each operation with its own preceding `define` in this contract block and pass the binding as the operand; a `contract_block` has no `let`, and each expression has one operation over two atoms [GRAM-2, GRAM-6, GRAM-9]\n",
+        ],
+        repaired: &[br#"fn bounded(x: u32) -> result: u32 pure contract {
+  define subtotal = 0_u32 +wrap 1_u32;
+  define total = subtotal +wrap 2_u32;
+  requires x <= total;
+} {
+  return x;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+];
