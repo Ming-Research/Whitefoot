@@ -150,4 +150,20 @@ gate FAKE_FAIL_ALWAYS=1
 [ "$(wc -l < "$FAKE_DIR/calls" | tr -d ' ')" -eq 5 ] || fail 'f: expected 5 tries'
 want f '::error::gh api call failed 5 times: list gate.yml runs for abc123'
 
+# (g) The latest completed job of a name decides, whichever way round: a later
+# success supersedes an earlier failure, and a later failure an earlier
+# success, as a re-run or a later run of the same revision does.
+newcase g1
+jobs "$FAKE_DIR/jobs.1" 'unit (macos-15)=cancelled'
+printf '2026-10-13T11:00:00Z\tunit (macos-15)\tsuccess\n' >> "$FAKE_DIR/jobs.1"
+gate
+[ "$status" -eq 0 ] || fail 'g1: expected the later success to decide'
+want g1 '^ok      unit (macos-15)$'
+newcase g2
+jobs "$FAKE_DIR/jobs.1"
+printf '2026-10-13T11:00:00Z\tunit (macos-15)\tfailure\n' >> "$FAKE_DIR/jobs.1"
+gate
+[ "$status" -ne 0 ] || fail 'g2: expected the later failure to decide'
+want g2 '^MISSING unit (macos-15): failure$'
+
 echo 'test-gate-both-platforms: ok'

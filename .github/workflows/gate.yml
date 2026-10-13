@@ -332,9 +332,11 @@ jobs:
     needs: [groups, gate]
     if: ${{ !cancelled() && needs.groups.outputs.run == 'true' && needs.groups.outputs.both == 'true' }}
     runs-on: ubuntu-24.04
-    # Worst case: 4 listings of about 3 calls each, every call failing four
-    # times before it answers (5+10+20+40 = 75 s of waits), plus 3 waits of 30 s
-    # between listings: 4*3*75 + 90 = 990 s, under 20 minutes.
+    # A listing makes one call for the runs and one per run of the revision
+    # (usually one or two). With three calls, each failing four times before
+    # it answers (5+10+20+40 = 75 s of waits), and 3 waits of 30 s between 4
+    # listings, the step takes 4*3*75 + 90 = 990 s, under 20 minutes; more runs
+    # of one revision or a hung call can reach the limit, which fails the step.
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
