@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 the owner's agent instructions own the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-13 A copied range reference is identified through its source, a qualified constant is cited at its path, and a saturating form that cannot saturate gets no exact image
+
+Nodes: language/checks-and-proofs/proof-identity, language/name-resolution, language/checks-and-proofs/automatic-facts
+
+Owner-approved: On the shared status board on 2026-10-12, written in Chinese, the owner chose option A, "approve the specification revision and design-tree changes of the three items range alias, qualified-path constant diagnostic and the `+sat` record, exactly the content at commit eee7848bb" (translated), on the card "approve the specification revision and design-tree changes of Whitefoot#376 at commit eee7848bb?" (translated); before it, on the same day, the owner chose option A on the card "after `let q = r;` from a range reference, should q and r share proof terms?" (identify the alias through its source), option B on the card "should a qualified path name another module's constant directly?" (keep the grammar and fix only the diagnostic), and option A on the card "should a `+sat` that cannot saturate carry the exact sum?" (write `+` there; extend the design-tree rejection, specification unchanged) (all translated). The revision merged here differs from eee7848bb only by the merge of main and the renumbering of the specification from v0.134 to v0.143.
+
+Summary: Proof identity gains one decision: a range alias (`let q = r;` from a range-reference variable, neither rebound) is identified through its source, instead of publishing only a length equality, which carries no element facts, or identifying every range-reference variable through itself, which loses every fact after the copy TYPE-7's repair suggests. Name resolution gains one decision: a qualified path in an `expr` or `affine_factor` value position that continues no call is rejected over the path citing MOD-5 with the alias repair, and atom positions keep GRAM-9 with the same repair; admitting qualified constants as operands stays refused by the decision above it. The automatic-facts rejection of exact images now also names saturating forms that cannot saturate, on the added ground that the exact operation states no overflow occurs while a wrap or saturating spelling tells the reader it may; it is reopened when a program must keep `+sat` and needs the exact sum.
+
 ## 2026-10-12 Source calls the restricted snapshot export under a held contract
 
 Nodes: compiler/completion-runtime, compiler/parallel-lowering, compiler/prelude-records, compiler/structured-emission, language/contracts, language/contracts/held-observations, language/system-interface, language/system-interface/snapshot-export
