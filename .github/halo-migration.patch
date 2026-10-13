@@ -35,6 +35,20 @@ diff --git a/lib/halo/compile/parse_support.wf b/lib/halo/compile/parse_support.
        }
      }
    }
+diff --git a/lib/halo/compile/statements.wf b/lib/halo/compile/statements.wf
+--- a/lib/halo/compile/statements.wf
++++ b/lib/halo/compile/statements.wf
+@@ -503,9 +503,7 @@
+     } else {
+       k_oneret(p: p, e: &e);
+       let var = v;
+-      if at < lhs^.inner.len {
+-        set var = lhs^.inner[at];
+-      }
++      set var = lhs^.inner[at];
+       k_store(p: p, var: &var, e: &e);
+       return unit;
+     }
 diff --git a/lib/halo/embed/engine.wf b/lib/halo/embed/engine.wf
 --- a/lib/halo/embed/engine.wf
 +++ b/lib/halo/embed/engine.wf
@@ -366,7 +380,7 @@ diff --git a/lib/halo/heap/tables.wf b/lib/halo/heap/tables.wf
  }
  
  fn node_find(heap: &Heap, nodes: &Box<Slots<Node>>, key: Value) -> r: Option<u64> reads(heap.strings), reads(nodes) {
-@@ -571,37 +568,33 @@
+@@ -571,37 +568,31 @@
        if free > 4294967295_u64 {
          return False();
        }
@@ -398,6 +412,10 @@ diff --git a/lib/halo/heap/tables.wf b/lib/halo/heap/tables.wf
 -          }
 -        } else {
 -          set nodes^.inner[free].next = nodes^.inner[mp].next;
+-          let link = cvt::<u64, u32>(free);
+-          set nodes^.inner[mp].next = link;
+-          set mp = free;
+-        }
 +            let next = cvt::<u32, u64>(nodes^.inner[other].next);
 +            if next == mp {
 +              break @previous;
@@ -407,17 +425,13 @@ diff --git a/lib/halo/heap/tables.wf b/lib/halo/heap/tables.wf
 +            return False();
 +          }
 +        }
-+        if other < nodes^.inner.len {
-           let link = cvt::<u64, u32>(free);
--          set nodes^.inner[mp].next = link;
--          set mp = free;
-+          set nodes^.inner[other].next = link;
-+          let displaced = nodes^.inner[mp];
-+          set nodes^.inner[free] = displaced;
-+          set nodes^.inner[mp].next = no_handle;
-+          let nil = Value::Nil();
-+          set nodes^.inner[mp].val = nil;
-         }
++        let link = cvt::<u64, u32>(free);
++        set nodes^.inner[other].next = link;
++        let displaced = nodes^.inner[mp];
++        set nodes^.inner[free] = displaced;
++        set nodes^.inner[mp].next = no_handle;
++        let nil = Value::Nil();
++        set nodes^.inner[mp].val = nil;
        } else {
 -        return False();
 +        set nodes^.inner[free].next = nodes^.inner[mp].next;
@@ -427,7 +441,7 @@ diff --git a/lib/halo/heap/tables.wf b/lib/halo/heap/tables.wf
        }
      }
      if mp < nodes^.inner.len {
-@@ -658,11 +651,9 @@
+@@ -658,11 +649,9 @@
        }
        let live = 0_u64;
        for (i in lower..limit) {
@@ -442,7 +456,7 @@ diff --git a/lib/halo/heap/tables.wf b/lib/halo/heap/tables.wf
          }
        }
        set nums[bin] = nums[bin] +sat live;
-@@ -676,11 +667,9 @@
+@@ -676,11 +665,9 @@
        }
      }
      for (i in lower..array_length) {
@@ -457,7 +471,7 @@ diff --git a/lib/halo/heap/tables.wf b/lib/halo/heap/tables.wf
        }
      }
      for (i in 0_u64..heap^.tables.inner[ti].payload.nodes.inner.len) {
-@@ -789,9 +778,7 @@
+@@ -789,9 +776,7 @@
        let array = box_slots_new::<Value>(capacity: size);
        for (i in 0_u64..size) {
          let val = Value::Nil();
@@ -468,7 +482,7 @@ diff --git a/lib/halo/heap/tables.wf b/lib/halo/heap/tables.wf
          if array.inner.len < array.inner.cap {
            place_back(window: &array.inner, value: val);
          }
-@@ -835,13 +822,11 @@
+@@ -835,13 +820,11 @@
          let delta = old - fresh;
          uncharge(heap: heap, amount: delta);
        }
@@ -487,7 +501,7 @@ diff --git a/lib/halo/heap/tables.wf b/lib/halo/heap/tables.wf
      }
    }
    return False();
-@@ -922,26 +907,24 @@
+@@ -922,26 +905,24 @@
          let i = 0_u64;
          if j > 0_u64 {
            let last = j - 1_u64;
@@ -607,6 +621,36 @@ diff --git a/lib/halo/vm/calls.wf b/lib/halo/vm/calls.wf
          set nargs = nargs +sat 1_u64;
          if vm^.top < room {
            set vm^.top = room;
+@@ -581,9 +579,7 @@
+   let empty = array_filled::<u32, 0>(value: 0_u32);
+   let cl = pkg::heap::new_closure(heap: &vm^.heap, proto: proto, upvals: &empty[0_u64..0_u64]);
+   ensure_stack(stack: stack, size: 256_u64);
+-  if stack^.inner.len > 0_u64 {
+-    set stack^.inner[0_u64] = cl;
+-  }
++  set stack^.inner[0_u64] = cl;
+   let limited = vm^.heap.limit > 0_u64;
+   let exceeded = vm^.heap.bytes > vm^.heap.limit;
+   let allocated = vm^.heap.bytes_since_gc > vm^.heap.threshold;
+diff --git a/lib/halo/vm/handlers.wf b/lib/halo/vm/handlers.wf
+--- a/lib/halo/vm/handlers.wf
++++ b/lib/halo/vm/handlers.wf
+@@ -47,15 +47,6 @@
+   set stack^.inner[ra] = v;
+   if vm^.suspended {
+     let failure = Step::Budget();
+-    return Err<u64, Step>(error: failure);
+-  }
+-  if bnot(ok) {
+-    if vm^.host_stopped {
+-      restore_stopped_stack(vm: vm, stack: stack);
+-      let failure = Step::Stop();
+-      return Err<u64, Step>(error: failure);
+-    }
+-    let failure = unwind(vm: vm, stack: stack);
+     return Err<u64, Step>(error: failure);
+   }
+   if next < n {
 diff --git a/lib/json/decode/pull.wf b/lib/json/decode/pull.wf
 --- a/lib/json/decode/pull.wf
 +++ b/lib/json/decode/pull.wf
@@ -1033,14 +1077,3 @@ diff --git a/lib/msgpack/decode/decode.wf b/lib/msgpack/decode/decode.wf
      set size = 16_u64;
      set category = 7_u8;
    }
-@@ -188,10 +188,6 @@
-         set kind = reinterpret::<u8, i8>(b);
-         set at = at + 1_u64;
-       }
--      if at > length {
--        let e = Error::Offset(offset: at);
--        return Err<Option<Token>, Error>(error: e);
--      }
-       let remaining = length - at;
-       if size > remaining {
-         let e = Error::Truncated(start: offset, offset: at, needed: size, available: remaining);

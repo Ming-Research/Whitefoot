@@ -143,7 +143,7 @@ jobs:
         run: |
           # Keep the original whole-graph and per-module inputs until those
           # measurements finish. This patch targets the pinned, renamed tree.
-          git -C "$RUNNER_TEMP/halo" apply "$GITHUB_WORKSPACE/research/investigations/redundant-tests/halo-migration.patch"
+          git -C "$RUNNER_TEMP/halo" apply "$GITHUB_WORKSPACE/.github/halo-migration.patch"
           branch=compiler/target/gate/whitefootc
           main="$RUNNER_TEMP/main/compiler/target/gate/whitefootc"
           graph="$RUNNER_TEMP/halo/lib/halo/modules.wfg"

@@ -56,14 +56,16 @@ migration of either downstream project.
 
 ## Halo migration measurement input
 
-[halo-migration.patch](halo-migration.patch) targets Halo revision
+[.github/halo-migration.patch](../../../.github/halo-migration.patch) targets Halo revision
 `56878ac4d607f7496c8e23a4c2ffe2d45e9cb552`, after replacing the whole word
 `held` with `held_value` in every `.wf` file. Paths are relative to the Halo
-repository root. This is an input to the temporary comparison workflow, not
-a change to Halo's maintained sources.
+repository root. The patch lives beside the temporary comparison workflow
+because static checks prohibit workflows from reading research inputs. Both are
+measurement inputs to remove before the branch is ready; they do not change
+Halo's maintained sources.
 
-The supplied diagnostic inventory contains **11 rejected modules and 32
-reported condition sites**. Each reported condition is True. The patch
+The original supplied diagnostic inventory contains **11 rejected modules and
+32 reported condition sites**. Each of those conditions is True. The patch
 deletes its guard and dead else, retaining the selected statements and
 delivery. The final MessagePack tag test becomes `else`; the table hash
 position's unreachable fallback return is removed. Original source locations
@@ -92,10 +94,11 @@ are listed below, before any migration edits:
 | `json/encode/values.wf` | 144: `key` |
 | `msgpack/decode/decode.wf` | 129: `next` |
 
-Static inspection also deletes 19 further decided conditions in those same
-bodies, which a first-error-per-body inventory does not enumerate:
+The current patch retains 18 further condition deletions based on source
+inspection, beyond the reported sites in those bodies. Their rationales below
+are not checker evidence; acceptance after these edits remains unverified.
 
-| Source under `lib/`, original lines | Deciding source facts |
+| Source under `lib/`, original lines | Source-inspected rationale |
 | --- | --- |
 | `halo/heap/strings.wf`: 178 | The counted loop has `0 <= i < n`, so `n > 0`. |
 | `halo/heap/tables.wf`: 679, 792, 838 | The first index is below the captured array length; the second is below `size < array_length`; the table bound survives calls whose writes reach only separate temporary buffers or heap accounting fields. |
@@ -106,17 +109,23 @@ bodies, which a first-error-per-body inventory does not enumerate:
 | `json/decode/pull.wf`: 125, 187 | `i = stack.len - 1` after the zero-length exit; string decoding writes a separate output buffer and the offset assignment preserves stack length. |
 | `json/encode/state.wf`: 46, 106 | `i = stack.len - 1` after the zero-length exit; the now-unreachable fallback returns are also removed. |
 | `json/encode/values.wf`: 175 | The preceding stack bound survives calls that read the writer and write only output. |
-| `msgpack/decode/decode.wf`: 191 | The width check bounds `at + width` by input length; the optional extension-byte read checks `at < length` before incrementing, so `at > length` is False. |
 
 The sandbox clone failed because GitHub DNS was unavailable. An existing
 local object database contained the exact pinned commit, so the patch was
 derived from that commit's exported tree rather than reconstructed bodies.
 All 32 quoted diagnostic lines matched their recorded source positions after
-the rename. `git apply --check` and then `git apply` succeeded on a fresh
-export with the rename; all 20 resulting files matched the intended edited
-snapshot byte for byte. **Compiler acceptance and timing remain unverified**:
-no compiler or test ran locally. The compile and VM diagnostic inventories
-are incomplete, and further rejected conditions may remain.
+the rename. For the initial 20-file patch, `git apply --check` and then
+`git apply` succeeded on a fresh export with the rename, and the resulting
+files matched the intended edited snapshot byte for byte. The CI result below
+then exposed one mistaken extra deletion and four further reported sites.
+The revised patch preserves all 32 original diagnostic-backed repairs, adds
+the four newly reported repairs, and restores the mistakenly deleted guard.
+The revised 22-file patch also applied successfully to a fresh pinned-source
+export after the rename; all 22 files matched the intended edited snapshot
+byte for byte in an independent comparison.
+**Acceptance of this revised input remains unverified**; the compile and VM
+rejection inventories remain incomplete, so further rejected conditions may
+remain. No compiler or test ran locally.
 
 The comparison workflow applies the patch after the original whole-graph and
 per-module measurements, failing on any patch rejection. It checks all 15
@@ -128,6 +137,47 @@ The experiment asks whether removing rejection recovery and diagnostics
 removes the excess checking time; accepted migrated sources that retain an
 excess reject rejection recovery as its sole cause. The existing 50% trigger
 and the compiler-version attribution limitation recorded below still apply.
+
+### Migrated Halo CI result and repair provenance
+
+[Run 38459260777](https://github.com/Ming-Research/Whitefoot/actions/runs/38459260777)
+checked the initial migrated input in two alternating rounds. Each of the four
+supplied `halo-migrated-{1,2}-{main,branch}.txt` reports contains 15 module
+verdicts. Both rounds give the same counts:
+
+| Compiler | Accepted modules | Rejected modules | Reported failures |
+| --- | --- | --- | --- |
+| Main | 14 | 1 | MessagePack integer subtraction is unproved. |
+| Branch | 11 | 4 | The same MessagePack failure, plus four OP-5 tasks across heap, compile and VM. |
+
+Both compilers reject `msgpack::decode` at migrated
+`lib/msgpack/decode/decode.wf:191`, `let remaining = length - at;`, with
+OP-2 `UndischargedIntegerDomainObligation`, disposition `Unproved`. The
+original line-191 `if at > length` guard was not one of the 32 supplied OP-5
+sites: the initial patch deleted it as one of 19 additional source-inspected
+follow-ons. Its false continuation establishes `at <= length` for the
+subtraction. The mathematical bound inferred from the width check and
+conditional increment is not evidence that the fixed checker derives it.
+The revised patch restores the entire guard and its failure branch, while
+retaining the diagnosed line-129 `tag == 216_u8` conversion to `else`.
+These observations identify a migration mistake, not an observed OP-5
+mechanical-repair defect.
+
+The four newly reported OP-5 tasks below occur in both branch rounds; counting
+only each module's headline would omit `instruction_move`. Locations are those
+of the initial migrated input in the supplied CI reports:
+
+| Source under `lib/` and line | Function | Decided condition | Current repair |
+| --- | --- | --- | --- |
+| `halo/heap/tables.wf`: 584 | `insert_nodes` | `other < nodes^.inner.len`: True | Delete the test; retain its body. |
+| `halo/compile/statements.wf`: 506 | `assignment` | `at < lhs^.inner.len`: True | Delete the test; retain its assignment. |
+| `halo/vm/calls.wf`: 582 | `start` | `stack^.inner.len > 0_u64`: True | Delete the test; retain its assignment. |
+| `halo/vm/handlers.wf`: 52 | `instruction_move` | `bnot(ok)`: False | Delete the complete else-free statement and its dead body. |
+
+The revised input has not been checked in CI yet. The supplied reports contain
+no elapsed timings or compiler revision metadata, so they establish these
+verdicts and repair sites without a new performance comparison or acceptance
+claim for the revised patch.
 
 ## What the implementation actually does
 
