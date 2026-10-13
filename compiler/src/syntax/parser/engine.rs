@@ -7,6 +7,7 @@ use crate::{ByteOffset, SourceId};
 
 use crate::{ClassifiedBundle, ClassifiedToken};
 
+use super::diagnostic::Continuation;
 use super::tree::DerivationExtent;
 use super::{
     DecisionSelection, DerivationElement, DerivationTree, DiagnosticResult, DiagnosticSite, Frame,
@@ -21,6 +22,17 @@ enum Task {
     Continue(GrammarNodeId),
     Match(TerminalPredicate),
     Finish(Production),
+}
+
+impl Task {
+    fn continuation(self) -> Option<Continuation> {
+        match self {
+            Self::Execute(node) => Some(Continuation::Node(node)),
+            Self::Continue(node) => Some(Continuation::Repeat(node)),
+            Self::Match(terminal) => Some(Continuation::Terminal(terminal)),
+            Self::Finish(_) => None,
+        }
+    }
 }
 
 enum Stop {
@@ -343,6 +355,7 @@ impl<'classified> Parser<'classified> {
                 limits: self.limits,
             },
             &mut self.work,
+            self.tasks.iter().rev().filter_map(|task| task.continuation()),
         )
         .into()
     }
@@ -640,4 +653,10 @@ fn parse_from(
         Err(Stop::Resource(failure)) => ParseOutcome::ResourceFailure(failure),
         Err(Stop::Compiler(failure)) => ParseOutcome::CompilerFailure(failure),
     }
+}
+
+/// Derives a graph segment's complete row sequence, without graph ordering.
+/// This intermediate tree is discarded after diagnostic selection.
+pub(crate) fn parse_graph_segment(classified: ClassifiedBundle, limits: ParseLimits) -> ParseOutcome {
+    parse_from(classified, limits, Production::GraphSegment)
 }

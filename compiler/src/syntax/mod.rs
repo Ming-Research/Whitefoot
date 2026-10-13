@@ -34,7 +34,7 @@ pub use parser::{
     render_canonical,
 };
 
-pub(crate) use parser::{FinalizedExtent, FinalizedTopology, NodeId};
+pub(crate) use parser::{FinalizedExtent, FinalizedTopology, NodeId, parse_graph_segment};
 
 #[cfg(test)]
 mod tests;

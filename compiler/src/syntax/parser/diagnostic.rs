@@ -1,7 +1,7 @@
 use crate::lexer::TokenKind;
 use crate::syntax::grammar::{
     Decision, DecisionContext, DecisionKind, GrammarNodeId, GrammarNodeKind, LookaheadPredicate,
-    NamePredicate, Production, SelectRow, grammar_node,
+    NamePredicate, Production, SelectAtom, SelectRow, grammar_node, grammar_prefixes,
 };
 use crate::syntax::terminal::{FixedTerminal, TerminalPredicate};
 use crate::{ByteOffset, SourceId};
@@ -100,6 +100,120 @@ enum ProbeTask {
     Execute(GrammarNodeId, ProbeContext),
     Continue(GrammarNodeId, ProbeContext),
     Match(TerminalPredicate, ProbeContext),
+    Boundary,
+}
+
+/// Unconsumed grammar work, in execution order, with finished frames omitted.
+#[derive(Clone, Copy)]
+pub(crate) enum Continuation {
+    Node(GrammarNodeId),
+    Repeat(GrammarNodeId),
+    Terminal(TerminalPredicate),
+}
+
+impl ProbeTask {
+    fn continuation(self) -> Option<Continuation> {
+        match self {
+            Self::Execute(node, _) => Some(Continuation::Node(node)),
+            Self::Continue(node, _) => Some(Continuation::Repeat(node)),
+            Self::Match(terminal, _) => Some(Continuation::Terminal(terminal)),
+            Self::Boundary => None,
+        }
+    }
+}
+
+fn same_occurrence(left: SelectAtom, right: SelectAtom) -> bool {
+    left.predicate() == right.predicate()
+        && left.provenance() == right.provenance()
+        && left.transparent_name() == right.transparent_name()
+        && left.is_atom_only() == right.is_atom_only()
+}
+
+/// A global row belongs to this call instance exactly when its outside-arm
+/// suffix is a prefix of the actual pending continuation. FIRST(2) words
+/// carry their length, so nullable tasks advance to the next pending task;
+/// SOURCE_END is introduced only after that complete continuation ends.
+fn contextual_row(
+    decision: Decision,
+    row: SelectRow,
+    continuation: impl Iterator<Item = Continuation>,
+    work: &mut Work,
+) -> Result<bool, DiagnosticResult> {
+    let atoms = [row.position(0), row.position(1)];
+    let [Some(first), Some(second)] = atoms else {
+        return Err(DiagnosticResult::Compiler(
+            ParseCompilerFailure::InvalidGrammarData,
+        ));
+    };
+    let suffix = if !first.is_inside_arm() {
+        [Some(first), Some(second)]
+    } else if !second.is_inside_arm() {
+        [Some(second), None]
+    } else {
+        return Ok(true);
+    };
+    let length = if suffix[1].is_some() { 2 } else { 1 };
+    let repeated = (row.arm() == 0
+        && matches!(decision.kind(), DecisionKind::Repeat0 | DecisionKind::Repeat1))
+        .then_some(Continuation::Repeat(decision.node()));
+    let mut positions = [true, false];
+    for task in repeated.into_iter().chain(continuation) {
+        let mut next = [false; 2];
+        for consumed in 0..length {
+            if !positions[consumed] {
+                continue;
+            }
+            if let Continuation::Terminal(terminal) = task {
+                work.spend(1).map_err(DiagnosticResult::Resource)?;
+                if suffix[consumed].is_some_and(|atom| {
+                    atom.predicate() == LookaheadPredicate::Terminal(terminal)
+                }) {
+                    if consumed + 1 == length {
+                        return Ok(true);
+                    }
+                    next[consumed + 1] = true;
+                }
+                continue;
+            }
+            let (node, repeat_tail) = match task {
+                Continuation::Node(node) => (node, false),
+                Continuation::Repeat(node) => (node, true),
+                Continuation::Terminal(_) => {
+                    return Err(DiagnosticResult::Compiler(
+                        ParseCompilerFailure::InvalidGrammarData,
+                    ));
+                }
+            };
+            for word in grammar_prefixes(node, repeat_tail) {
+                work.spend(1).map_err(DiagnosticResult::Resource)?;
+                let mut position = consumed;
+                let mut matches = true;
+                for atom in word.iter().flatten() {
+                    if !suffix[position].is_some_and(|expected| same_occurrence(expected, *atom)) {
+                        matches = false;
+                        break;
+                    }
+                    position += 1;
+                    if position == length {
+                        return Ok(true);
+                    }
+                }
+                if matches {
+                    next[position] = true;
+                }
+            }
+        }
+        positions = next;
+        if !positions.iter().any(|position| *position) {
+            return Ok(false);
+        }
+    }
+    Ok((0..length).any(|consumed| {
+        positions[consumed]
+            && suffix[consumed..length].iter().all(|atom| {
+                atom.is_some_and(|atom| atom.predicate() == LookaheadPredicate::SourceEnd)
+            })
+    }))
 }
 
 fn accepts(
@@ -430,6 +544,7 @@ fn frontier(
     decision: Decision,
     tokens: &[ClassifiedToken],
     cursor: usize,
+    continuation: impl Iterator<Item = Continuation> + Clone,
     work: &mut Work,
 ) -> Result<Frontier, DiagnosticResult> {
     let arm_count = usize::from(decision.arm_count());
@@ -438,10 +553,13 @@ fn frontier(
             ParseCompilerFailure::InvalidGrammarData,
         ));
     }
-    let mut arm_scores = [0_u8; 64];
+    let mut arm_scores = [None; 64];
     let mut maximum = 0_u8;
     for row in decision.rows() {
         work.spend(1).map_err(DiagnosticResult::Resource)?;
+        if !contextual_row(decision, *row, continuation.clone(), work)? {
+            continue;
+        }
         let score = row_score(*row, tokens, cursor).map_err(DiagnosticResult::Compiler)?;
         if score == 2 {
             return Err(DiagnosticResult::Compiler(
@@ -454,8 +572,13 @@ fn frontier(
                 ParseCompilerFailure::InvalidGrammarData,
             ));
         }
-        arm_scores[arm] = arm_scores[arm].max(score);
+        arm_scores[arm] = Some(arm_scores[arm].map_or(score, |old: u8| old.max(score)));
         maximum = maximum.max(score);
+    }
+    if arm_scores[..arm_count].iter().all(Option::is_none) {
+        return Err(DiagnosticResult::Compiler(
+            ParseCompilerFailure::InvalidGrammarData,
+        ));
     }
     let mut expected = ExpectedBuilder::empty();
     let mut transparent_name = None;
@@ -463,6 +586,9 @@ fn frontier(
     let mut atom_only = false;
     for row in decision.rows() {
         work.spend(1).map_err(DiagnosticResult::Resource)?;
+        if !contextual_row(decision, *row, continuation.clone(), work)? {
+            continue;
+        }
         if row_score(*row, tokens, cursor).map_err(DiagnosticResult::Compiler)? != maximum {
             continue;
         }
@@ -483,12 +609,12 @@ fn frontier(
     }
     let best_arms = arm_scores[..arm_count]
         .iter()
-        .filter(|score| **score == maximum)
+        .filter(|score| **score == Some(maximum))
         .count();
     let best_arm = if best_arms == 1 {
         arm_scores[..arm_count]
             .iter()
-            .position(|score| *score == maximum)
+            .position(|score| *score == Some(maximum))
             .and_then(|index| u8::try_from(index).ok())
     } else {
         None
@@ -499,6 +625,7 @@ fn frontier(
             work.spend(1).map_err(DiagnosticResult::Resource)?;
             if row.arm() != arm
                 || row_score(*row, tokens, cursor).map_err(DiagnosticResult::Compiler)? != maximum
+                || !contextual_row(decision, *row, continuation.clone(), work)?
             {
                 continue;
             }
@@ -661,8 +788,16 @@ fn descend_or_issue(
     site: DiagnosticSite<'_>,
     work: &mut Work,
     tasks: &mut Vec<ProbeTask>,
+    continuation: impl Iterator<Item = Continuation> + Clone,
 ) -> Result<Option<SyntaxIssue>, DiagnosticResult> {
-    let value = frontier(decision, site.tokens, site.cursor, work)?;
+    let pending = tasks.iter().rev().filter_map(|task| task.continuation());
+    let value = frontier(
+        decision,
+        site.tokens,
+        site.cursor,
+        pending.chain(continuation),
+        work,
+    )?;
     if let Some(issue) = override_issue(decision, &value, site, context, work)? {
         return Ok(Some(issue));
     }
@@ -686,7 +821,18 @@ fn descend_or_issue(
                 mechanical_fix: production_fix(decision.production()),
             }));
         };
-        tasks.clear();
+        // Retain the enclosing arm's pending work as diagnostic continuation,
+        // but never execute past the selected arm after its failed frontier.
+        if matches!(decision.kind(), DecisionKind::Repeat0 | DecisionKind::Repeat1) {
+            push_probe(
+                tasks,
+                ProbeTask::Continue(decision.node(), context),
+                site.limits,
+            )
+            .map_err(DiagnosticResult::Resource)?;
+        }
+        push_probe(tasks, ProbeTask::Boundary, site.limits)
+            .map_err(DiagnosticResult::Resource)?;
         push_probe(tasks, ProbeTask::Execute(node, context), site.limits)
             .map_err(DiagnosticResult::Resource)?;
         return Ok(None);
@@ -780,6 +926,7 @@ fn probe(
     context: ProbeContext,
     site: DiagnosticSite<'_>,
     work: &mut Work,
+    continuation: impl Iterator<Item = Continuation> + Clone,
 ) -> DiagnosticResult {
     let mut cursor = site.cursor;
     let mut tasks = Vec::new();
@@ -795,6 +942,11 @@ fn probe(
             return DiagnosticResult::Resource(failure);
         }
         match task {
+            ProbeTask::Boundary => {
+                return DiagnosticResult::Compiler(
+                    ParseCompilerFailure::DiagnosticReachedSuccessfulEnd,
+                );
+            }
             ProbeTask::Match(expected, task_context) => {
                 let matches = site
                     .tokens
@@ -928,6 +1080,7 @@ fn probe(
                                 DiagnosticSite { cursor, ..site },
                                 work,
                                 &mut tasks,
+                                continuation.clone(),
                             ) {
                                 Ok(Some(issue)) => return DiagnosticResult::Issue(issue),
                                 Ok(None) => {}
@@ -978,6 +1131,7 @@ fn probe(
                         DiagnosticSite { cursor, ..site },
                         work,
                         &mut tasks,
+                        continuation.clone(),
                     ) {
                         Ok(Some(issue)) => return DiagnosticResult::Issue(issue),
                         Ok(None) => {}
@@ -1001,8 +1155,9 @@ pub(crate) fn diagnose_decision(
     context: ProbeContext,
     site: DiagnosticSite<'_>,
     work: &mut Work,
+    continuation: impl Iterator<Item = Continuation> + Clone,
 ) -> DiagnosticResult {
-    let value = match frontier(decision, site.tokens, site.cursor, work) {
+    let value = match frontier(decision, site.tokens, site.cursor, continuation.clone(), work) {
         Ok(value) => value,
         Err(result) => return result,
     };
@@ -1024,7 +1179,16 @@ pub(crate) fn diagnose_decision(
             }
             Err(failure) => return DiagnosticResult::Compiler(failure),
         };
-        return probe(initial, context, site, work);
+        let repeated = (arm == 0
+            && matches!(decision.kind(), DecisionKind::Repeat0 | DecisionKind::Repeat1))
+            .then_some(Continuation::Repeat(decision.node()));
+        return probe(
+            initial,
+            context,
+            site,
+            work,
+            repeated.into_iter().chain(continuation),
+        );
     }
     let coordinate = match boundary_coordinate(
         site.source,

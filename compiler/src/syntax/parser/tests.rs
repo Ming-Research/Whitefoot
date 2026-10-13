@@ -1254,6 +1254,81 @@ fn declaration_and_parameter_optionals_report_their_complete_expected_sets() {
     );
 }
 
+#[test]
+fn type_frontiers_use_only_the_actual_calling_context() {
+    use FixedTerminal::{
+        Comma, Equal, Pure, Reads, RightAngle, RightBracket, RightParen, Semicolon, Writes,
+    };
+    use crate::syntax::grammar::LookaheadPredicate;
+
+    let cases: &[(&[u8], &[FixedTerminal])] = &[
+        (
+            b"fn main(inputs: std::process::Inputs) -> result: u32 {",
+            &[Pure, Reads, Writes],
+        ),
+        (b"fn main(value: u64 {", &[RightParen, Comma]),
+        (b"const value: u64 {", &[Equal]),
+        (b"struct Cell { value: u64 {", &[Semicolon]),
+        (b"fn main(value: &[u64 {", &[RightBracket]),
+        (b"fn main() -> (first: u64 {", &[Comma]),
+        (
+            b"fn main() -> (first: u64, second: u64 {",
+            &[RightParen, Comma],
+        ),
+        (b"fn main() -> result: Array<u64 {", &[Comma, RightAngle]),
+    ];
+    for (source, expected) in cases {
+        let outcome = parse_active("type-context.wf", source);
+        let ParseOutcome::SourceIssue(issue) = outcome else {
+            panic!("a type followed by an opening brace must reject: {outcome:?}");
+        };
+        assert_eq!(issue_bytes(source, issue), b"{", "{source:?}");
+        let expected: Vec<_> = expected
+            .iter()
+            .map(|terminal| LookaheadPredicate::Terminal(TerminalPredicate::Fixed(*terminal)))
+            .collect();
+        assert_eq!(
+            issue.expected().iter().collect::<Vec<_>>(),
+            expected,
+            "{source:?}"
+        );
+    }
+}
+
+#[test]
+fn nullable_type_arguments_keep_their_own_prefix_and_the_real_outer_continuation() {
+    use crate::syntax::grammar::LookaheadPredicate;
+
+    // TYPEID's optional targs may enter with `<` or exit into the effect row.
+    // The qualified spelling additionally crosses type_path's nullable
+    // repetition and a production return before reaching that same suffix.
+    for source in [
+        b"fn main() -> result: Value {".as_slice(),
+        b"fn main() -> result: pkg::Value {".as_slice(),
+        b"fn main() -> result: pkg::nested::Value {".as_slice(),
+    ] {
+        let outcome = parse_active("nullable-context.wf", source);
+        let ParseOutcome::SourceIssue(issue) = outcome else {
+            panic!("the missing effect row must reject: {outcome:?}");
+        };
+        assert_eq!(issue_bytes(source, issue), b"{");
+        let expected: Vec<_> = [
+            FixedTerminal::LeftAngle,
+            FixedTerminal::Pure,
+            FixedTerminal::Reads,
+            FixedTerminal::Writes,
+        ]
+        .into_iter()
+        .map(|terminal| LookaheadPredicate::Terminal(TerminalPredicate::Fixed(terminal)))
+        .collect();
+        assert_eq!(
+            issue.expected().iter().collect::<Vec<_>>(),
+            expected,
+            "{source:?}"
+        );
+    }
+}
+
 /// [GRAM-5, RANGE-1] the suffix is parsed in guards and ordinary relations
 /// so the semantic restriction can name RANGE-1 instead of a grammar error.
 #[test]

@@ -126,6 +126,8 @@ const ENUM_ORDER: &[&str] = &[
     "package_decl",
     // v0.128 [GRAM-5, RANGE-1]: guards admit a single Bool datum.
     "range_guard",
+    // v0.143 [DIAG-1]: the diagnostic-only graph segment start.
+    "graph_segment",
 ];
 
 /// v0.33 deliberately replaces the old pseudo-statement contract grammar.
@@ -200,11 +202,11 @@ pub fn generate(path: &str, specification: &str) -> String {
     grammar.assign_decisions(&historical_decisions);
     let grammar = grammar;
 
-    let starts = [index["program"], index["graph_file"]];
+    let starts = [index["program"], index["graph_file"], index["graph_segment"]];
     let first = model::first_sets(&grammar);
     let follow = model::follow_sets(&grammar, &first, &starts);
     let decisions = build_decisions(&grammar, &first, &follow, &index);
-    emit(path, &grammar, &raw, &names, &decisions)
+    emit(path, &grammar, &raw, &names, &decisions, &first)
 }
 
 /// Which production a node belongs to; roots run in definition order and node
@@ -400,6 +402,7 @@ fn emit(
     raw: &[ebnf::RawProduction],
     names: &[String],
     decisions: &[DecisionRecord],
+    first: &First,
 ) -> String {
     let mut children_arena: Vec<usize> = Vec::new();
     let mut terminal_arena: Vec<Pred> = Vec::new();
@@ -508,6 +511,41 @@ fn emit(
         "GRAMMAR_NODES",
         "GrammarNode",
         &node_rows,
+        |row| row.clone(),
+    );
+
+    // Diagnostic continuations use the actual parser task stack. These
+    // unpadded words let it concatenate nullable suffixes without importing
+    // another caller's FOLLOW set or enumerating runtime derivations.
+    let mut prefixes = Vec::new();
+    for (name, sets) in [
+        ("NODE_PREFIX_RANGES", &first.node),
+        ("TAIL_PREFIX_RANGES", &first.tail),
+    ] {
+        let mut ranges = Vec::new();
+        for set in sets {
+            ranges.push((prefixes.len(), set.len()));
+            for word in set {
+                let atoms: Vec<_> = (0..2)
+                    .map(|index| {
+                        word.get(index).map_or_else(
+                            || "None".to_string(),
+                            |token| format!("Some({})", atom_text(*token)),
+                        )
+                    })
+                    .collect();
+                prefixes.push(format!("[{}, {}]", atoms[0], atoms[1]));
+            }
+        }
+        table(&mut out, name, "[usize; 2]", &ranges, |(start, len)| {
+            format!("[{start}, {len}]")
+        });
+    }
+    static_table(
+        &mut out,
+        "GRAMMAR_PREFIXES",
+        "[Option<SelectAtom>; 2]",
+        &prefixes,
         |row| row.clone(),
     );
 

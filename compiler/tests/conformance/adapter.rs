@@ -41,15 +41,19 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use whitefoot::{
     BuildCache, CheckOutcome, CompilationFailure, CompilationFailureKind, CompilerLimits,
-    HOST_LINK_LIBRARIES, HOST_OPTIMIZATION_ARGUMENTS, ModuleEntry, ModuleProgramFailure,
-    SourceInput, check, check_module_entry, check_module_program, check_with_cache, compile,
+    DiagnosticFormat, HOST_LINK_LIBRARIES, HOST_OPTIMIZATION_ARGUMENTS, ModuleEntry,
+    ModuleProgramFailure, SourceInput, check, check_module_entry, check_module_program,
+    check_with_cache, compile,
     compile_module_program, discover_module_sources, entry_verdict, form_module_program_graph,
     module_verdict,
 };
 
 use crate::support::{PROGRAM_DEADLINE, ProgramChild, append_runtime_objects};
 
-use super::corpus::{self, Arrangement, Case, Expectation, Verdict};
+use super::corpus::{
+    self, Arrangement, Case, DiagnosticCoordinate, Expectation, RejectedDiagnostic, Verdict,
+};
+use super::json;
 
 static NEXT_INVOCATION: AtomicU64 = AtomicU64::new(0);
 
@@ -87,7 +91,7 @@ fn reach_module_program(
         })
         .collect();
     match &case.expect {
-        Expectation::Accept | Expectation::Reject(_) => {
+        Expectation::Accept | Expectation::Reject(_) | Expectation::RejectDiagnostics(_) => {
             check_module_program(&graph, &inputs, CompilerLimits::default())?;
             for entry in graph.entries() {
                 check_module_entry(
@@ -124,7 +128,7 @@ fn reach(case: &Case) -> Reached {
         let path = case.logical_path();
         let inputs = [SourceInput::new(&path, &source)];
         match &case.expect {
-            Expectation::Accept | Expectation::Reject(_) => {
+            Expectation::Accept | Expectation::Reject(_) | Expectation::RejectDiagnostics(_) => {
                 check(&inputs, CompilerLimits::default()).map(|()| None)
             }
             Expectation::Run(_) | Expectation::Unsupported => {
@@ -136,22 +140,7 @@ fn reach(case: &Case) -> Reached {
         Ok(module) => module,
         Err(failure) => {
             let note = Some(failure.to_string());
-            let verdict = match failure.kind() {
-                // A numbered source rule was violated. The rule the
-                // diagnostic cites is the verdict's whole content; an
-                // uncited stop stays `None` rather than being attributed to
-                // the rule the case happens to declare.
-                CompilationFailureKind::Source => {
-                    Verdict::Reject(failure.rule_id().map(ToOwned::to_owned))
-                }
-                // Valid source needing an unimplemented capability reaches
-                // the same verdict kind, so a `runnable` case fails rather
-                // than passing as though the language had judged it.
-                CompilationFailureKind::Unsupported => Verdict::Unsupported(failure.to_string()),
-                // Everything else is a compiler, resource, or target stop the
-                // corpus does not model. It must never become a verdict.
-                _ => Verdict::Stopped(failure.to_string()),
-            };
+            let verdict = failure_verdict(&failure);
             return Reached { verdict, note };
         }
     };
@@ -377,9 +366,46 @@ fn the_corpus_reaches_its_declared_verdict_through_the_ordinary_compiler_path() 
 /// One failure's corpus verdict, as `reach` reduces it.
 fn failure_verdict(failure: &CompilationFailure) -> Verdict {
     match failure.kind() {
-        CompilationFailureKind::Source => Verdict::Reject(failure.rule_id().map(ToOwned::to_owned)),
+        CompilationFailureKind::Source => {
+            Verdict::Reject(failure.diagnostics().map(rejected_diagnostic).collect())
+        }
         CompilationFailureKind::Unsupported => Verdict::Unsupported(failure.to_string()),
         _ => Verdict::Stopped(failure.to_string()),
+    }
+}
+
+/// Retains the diagnostic's structured coordinate and expected-terminal labels.
+/// JSON is the public structured presentation boundary; parsing it checks the
+/// payload the writer receives rather than rebuilding grammar expectations.
+fn rejected_diagnostic(failure: &CompilationFailure) -> RejectedDiagnostic {
+    let rendered = failure.render_diagnostic(DiagnosticFormat::Json);
+    let value = json::parse(&rendered).expect("compiler diagnostic is structured JSON");
+    let expected = value
+        .get("detail")
+        .and_then(|detail| detail.get("expected"))
+        .and_then(json::Value::array)
+        .map(|terminals| {
+            terminals
+                .iter()
+                .map(|terminal| {
+                    terminal
+                        .string()
+                        .expect("expected terminal label")
+                        .to_owned()
+                })
+                .collect()
+        });
+    let coordinate = failure
+        .source_coordinate()
+        .map(|coordinate| DiagnosticCoordinate {
+            source_ordinal: u64::from(coordinate.source().ordinal()),
+            byte_start: coordinate.start().value(),
+            byte_end: coordinate.end().value(),
+        });
+    RejectedDiagnostic {
+        rule: failure.rule_id().map(ToOwned::to_owned),
+        coordinate,
+        expected,
     }
 }
 
@@ -441,7 +467,22 @@ fn reach_with_receipts(case: &Case, cache: &BuildCache) -> Verdict {
     verdicts
         .iter()
         .find_map(|verdict| match verdict.outcome() {
-            CheckOutcome::Rejected { rule, .. } => Some(Verdict::Reject(rule.clone())),
+            CheckOutcome::Rejected { diagnostics, .. } => Some(Verdict::Reject(
+                diagnostics
+                    .iter()
+                    .map(|diagnostic| RejectedDiagnostic {
+                        rule: Some(diagnostic.rule().to_owned()),
+                        coordinate: diagnostic.source_coordinate().map(|coordinate| {
+                            DiagnosticCoordinate {
+                                source_ordinal: u64::from(coordinate.source().ordinal()),
+                                byte_start: coordinate.start().value(),
+                                byte_end: coordinate.end().value(),
+                            }
+                        }),
+                        expected: diagnostic.expected().map(<[String]>::to_vec),
+                    })
+                    .collect(),
+            )),
             CheckOutcome::Accepted { .. } => None,
         })
         .unwrap_or(Verdict::Accept)
@@ -471,6 +512,9 @@ fn a_shared_proof_receipt_cache_reaches_every_declared_source_verdict() {
         let expected = match &case.expect {
             Expectation::Accept | Expectation::Run(_) => Expectation::Accept,
             Expectation::Reject(rule) => Expectation::Reject(rule.clone()),
+            Expectation::RejectDiagnostics(diagnostics) => {
+                Expectation::RejectDiagnostics(diagnostics.clone())
+            }
             Expectation::Unsupported => continue,
         };
         checked += 1;

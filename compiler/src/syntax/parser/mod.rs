@@ -5,6 +5,7 @@ mod outcome;
 mod tree;
 
 pub use engine::{parse, parse_graph};
+pub(crate) use engine::parse_graph_segment;
 pub use finalize::{
     BundleSourceExtent, CanonicalCompilerFailure, CanonicalIssue, CanonicalLimit, CanonicalLimits,
     CanonicalLocation, CanonicalOutcome, CanonicalResourceFailure, CanonicalStorage,

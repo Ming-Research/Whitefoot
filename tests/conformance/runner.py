@@ -20,13 +20,19 @@ rather than reporting an empty success.
 Because it tests the LANGUAGE (source -> verdict), not a compiler's internals, this
 suite outlives compiler implementations.
 
-Verdict = ("accept",) | ("reject", rule) | ("run", exit) | ("unsupported", why)
+Verdict = ("accept",) | ("reject", [DIAGNOSTIC...]) | ("run", exit) | ("unsupported", why)
 
 Manifest line (JSON):
   {"id": str, "rules": [rule_id...], "expect": EXPECT, "arrange": ARRANGE?,
    "status": "runnable", "doc": str}
-  EXPECT = {"kind":"accept"} | {"kind":"reject","rule":R} | {"kind":"run","exit":N}
+  EXPECT = {"kind":"accept"} | {"kind":"reject","rule":R}
+         | {"kind":"reject","diagnostics":[DIAGNOSTIC...]} | {"kind":"run","exit":N}
          | {"kind":"unsupported","why":str}
+  DIAGNOSTIC = {"rule":R, "source_ordinal":N, "byte_start":N, "byte_end":N,
+                "expected":[terminal_label...]?}
+  A rule-only rejection asserts exactly one diagnostic. A diagnostics list is
+  nonempty and fixes every rejection in report order; expected, when present,
+  fixes the exact ordered terminal labels rather than diagnostic prose.
 
   status: runnable = must match expect. It is the only status. There is no
           skipped and no expected-failure status: a case whose declared verdict
@@ -89,8 +95,17 @@ ADAPTER = None
 
 def matches(v, expect):
     k = expect["kind"]
+    if k == "reject" and v[0] == "reject":
+        if "diagnostics" in expect:
+            reached = v[1]
+            return (isinstance(reached, list)
+                    and len(reached) == len(expect["diagnostics"])
+                    and all(all(actual.get(key) == value for key, value in wanted.items())
+                            for actual, wanted in zip(reached, expect["diagnostics"])))
+        return (v[1] == expect["rule"] if isinstance(v[1], str)
+                else isinstance(v[1], list) and len(v[1]) == 1
+                and v[1][0].get("rule") == expect["rule"])
     return ((k == "accept" and v[0] == "accept")
-            or (k == "reject" and v[0] == "reject" and v[1] == expect["rule"])
             or (k == "run" and v[0] == "run" and v[1] == expect["exit"])
             # `why` is the adapter's prose; the corpus asserts the verdict kind,
             # never a diagnostic's wording.
@@ -323,6 +338,10 @@ def validate_manifest(cases, annots, root=ROOT, cases_dir=CASES):
         kind = expect.get("kind") if isinstance(expect, dict) else None
         if kind not in expectation_fields:
             errors.append(f"{case_id}: invalid expectation {kind!r}")
+        elif kind == "reject" and "diagnostics" in expect:
+            if set(expect) != {"kind", "diagnostics"}:
+                errors.append(f"{case_id}: reject expectation needs exactly one of rule, diagnostics")
+            errors += diagnostic_errors(case_id, expect["diagnostics"], case_rules)
         elif set(expect) != expectation_fields[kind]:
             fields = " ".join(sorted(expectation_fields[kind]))
             errors.append(
@@ -365,6 +384,40 @@ def validate_manifest(cases, annots, root=ROOT, cases_dir=CASES):
         raise ValueError("invalid conformance manifest:\n  " + "\n  ".join(errors))
 
 
+def diagnostic_errors(case_id, diagnostics, case_rules):
+    """Ordered rejection evidence is closed data, never a subset match."""
+    if not isinstance(diagnostics, list) or not diagnostics:
+        return [f"{case_id}: diagnostics must be a nonempty list"]
+    errors = []
+    coordinates = []
+    required = {"rule", "source_ordinal", "byte_start", "byte_end"}
+    for position, diagnostic in enumerate(diagnostics):
+        label = f"{case_id}: diagnostics[{position}]"
+        if not isinstance(diagnostic, dict):
+            errors.append(f"{label} must be an object")
+            continue
+        if not required <= set(diagnostic) or set(diagnostic) - required - {"expected"}:
+            errors.append(f"{label}: fields must be rule, source_ordinal, byte_start, byte_end and optional expected")
+        if diagnostic.get("rule") not in case_rules:
+            errors.append(f"{label}: reject rule must appear in case rules")
+        coordinate = [diagnostic.get(key) for key in ("source_ordinal", "byte_start", "byte_end")]
+        if any(type(value) is not int or value < 0 for value in coordinate):
+            errors.append(f"{label}: coordinate fields must be nonnegative integers")
+        elif coordinate[1] > coordinate[2]:
+            errors.append(f"{label}: byte_start must not exceed byte_end")
+        else:
+            coordinates.append(tuple(coordinate[:2]))
+        if "expected" in diagnostic:
+            expected = diagnostic["expected"]
+            if (not isinstance(expected, list) or not expected
+                    or any(not isinstance(terminal, str) or not terminal for terminal in expected)
+                    or len(set(expected)) != len(expected)):
+                errors.append(f"{label}: expected must be a nonempty list of distinct terminal labels")
+    if coordinates != sorted(coordinates):
+        errors.append(f"{case_id}: diagnostics must be in source ordinal and byte order")
+    return errors
+
+
 def coverage(cases, annots):
     rules, spec_name = spec_rule_ids()
     tagged, pos, neg = set(), set(), set()
@@ -376,7 +429,10 @@ def coverage(cases, annots):
         # expectation is a qualification stop: neither a positive exercise of
         # the rule nor a rejection citing it.
         if kind == "reject":
-            neg.add(c["expect"]["rule"])
+            if "diagnostics" in c["expect"]:
+                neg |= {diagnostic["rule"] for diagnostic in c["expect"]["diagnostics"]}
+            else:
+                neg.add(c["expect"]["rule"])
         elif kind != "unsupported":
             pos |= {base_rule(r) for r in c["rules"]}
     annotated = {a["rule"] for a in annots} & rules

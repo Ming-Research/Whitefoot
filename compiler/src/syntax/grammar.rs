@@ -399,11 +399,12 @@ impl Production {
     }
 
     /// Reports whether this production is a grammar start: `program` for
-    /// interface and implementation sources, `graph_file` for the module graph
-    /// [GRAM-1]. A start production is the derivation root and never a child.
+    /// interface and implementation sources, `graph_file` for the module graph,
+    /// or `graph_segment` for intermediate diagnostics [DIAG-1]. A start
+    /// production is the derivation root and never a child.
     #[must_use]
     pub const fn is_start(self) -> bool {
-        matches!(self, Self::Program | Self::GraphFile)
+        matches!(self, Self::Program | Self::GraphFile | Self::GraphSegment)
     }
 }
 
@@ -417,6 +418,21 @@ pub const fn productions() -> &'static [Production] {
 #[must_use]
 pub fn grammar_node(node: GrammarNodeId) -> Option<GrammarNode> {
     generated::GRAMMAR_NODES.get(node.index()).copied()
+}
+
+/// Unpadded FIRST(2) words of a node, or its zero-or-more repetition tail.
+/// Diagnostic callers concatenate these with their own pending tasks.
+pub(crate) fn grammar_prefixes(
+    node: GrammarNodeId,
+    repeat_tail: bool,
+) -> &'static [[Option<SelectAtom>; 2]] {
+    let ranges = if repeat_tail {
+        &generated::TAIL_PREFIX_RANGES
+    } else {
+        &generated::NODE_PREFIX_RANGES
+    };
+    let [start, len] = ranges[node.index()];
+    &generated::GRAMMAR_PREFIXES[start..start + len]
 }
 
 /// Returns all terminal predicates in first source-grammar occurrence order.

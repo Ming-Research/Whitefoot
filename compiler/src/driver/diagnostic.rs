@@ -71,6 +71,7 @@ pub fn render_driver_failure(category: &str, message: &str, format: DiagnosticFo
             kind: None,
             at: None,
             detail: vec![("message", Value::Text(message.to_owned()))],
+            expected: None,
         }
         .json(&Head {
             verdict: String::new(),
@@ -97,6 +98,7 @@ pub(crate) struct Record {
     kind: Option<String>,
     at: Option<Place>,
     detail: Vec<(&'static str, Value)>,
+    expected: Option<Vec<String>>,
 }
 
 impl Record {
@@ -128,6 +130,15 @@ impl Record {
             kind: Some(kind.to_owned()),
             at,
             detail: fields.detail,
+            expected: issue.expected_terminals().map(|expected| {
+                expected
+                    .iter()
+                    .map(|predicate| match predicate {
+                        LookaheadPredicate::Terminal(terminal) => terminal.spelling().to_owned(),
+                        LookaheadPredicate::SourceEnd => "end of source".to_owned(),
+                    })
+                    .collect()
+            }),
         }
     }
 
@@ -155,7 +166,18 @@ impl Record {
             kind: (!kind.is_empty()).then_some(kind),
             at: None,
             detail: vec![("payload", Value::Text(payload))],
+            expected: None,
         }
+    }
+
+    /// The grammar-selected terminal labels retained independently of rendering.
+    pub(super) fn expected_terminals(&self) -> Option<&[String]> {
+        self.expected.as_deref()
+    }
+
+    /// Rebinds a segment-local record to its original source coordinate.
+    pub(super) fn relocate(&mut self, bundle: &SourceBundle, coordinate: SyntaxCoordinate) {
+        self.at = Place::resolve(bundle, coordinate, Anchor::Start);
     }
 
     /// The payload fields in the text rendering, one `label: value` per line.
@@ -458,6 +480,11 @@ impl Fields<'_> {
 pub(super) trait Report {
     /// Adds every payload field to `fields` and returns the kind name.
     fn report(&self, fields: &mut Fields<'_>) -> &'static str;
+
+    /// Grammar diagnostics retain their typed set for recorded verdicts.
+    fn expected_terminals(&self) -> Option<ExpectedTerminals> {
+        None
+    }
 }
 
 /// A payload structure whose fields flatten into the record that holds it.
@@ -1022,6 +1049,10 @@ impl Report for TerminalIssue {
 /// The grammar's expected-terminal set at the failure boundary and what the
 /// source has there instead [DIAG-1].
 impl Report for SyntaxIssue {
+    fn expected_terminals(&self) -> Option<ExpectedTerminals> {
+        Some(self.expected())
+    }
+
     fn report(&self, fields: &mut Fields<'_>) -> &'static str {
         let Self {
             rule: _,

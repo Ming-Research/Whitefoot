@@ -131,8 +131,8 @@ An out-of-range integer, a leading-zero integer, a noncanonical float spelling, 
 ## 3. Grammar
 
 [GRAM-1] The grammar is deterministic and unambiguous.
-Raw lexical formation scans each source independently from byte offset zero and partitions it into tokens and trivia without normalization, decoding a value, or consulting grammar position, name lookup, the operation table, or another source.
-At each cursor it takes exactly the following maximal form; no token or trivia crosses a source boundary.
+Raw lexical formation partitions each diagnostic segment [DIAG-1] independently into tokens and trivia without normalization, decoding a value, or consulting grammar position, name lookup, the operation table, or another segment.
+At each cursor it takes exactly the following maximal form; every token and trivia item is contained in its segment.
 
 - One or more ASCII space bytes form one trivia item.
 One LF byte forms one trivia item.
@@ -218,11 +218,14 @@ capability_bound:= "copy" | "drop"
 param_list   := param ("," param)*
 param        := IDENT ":" (type | "&" (type | "[" type "]"))
 graph_file   := package_decl* module_row+ entry_decl*
+graph_segment:= (package_decl | module_row | entry_decl)*
 package_decl := "package" IDENT "=" STRING ";"
 module_row   := module_path ":" "[" (module_path ("," module_path)*)? "]" ";"
 module_path  := ("pkg" | "std" | IDENT) ("::" IDENT)*
 entry_decl   := "entry" IDENT "=" module_path (";" | "{" "no_heap" ";" "}")
 ```
+
+The `graph_segment` production is the diagnostic entry defined by [DIAG-1]; complete graph records derive `graph_file` [MOD-1].
 
 A `heap_decl` is admitted at most once in a source bundle and only as the first `item` of its first source record [PROG-2]; a second `heap_decl`, or one at any later item position, is a hard error citing GRAM-2 at that `heap_decl` node, and a module program admits none [MOD-9].
 Its two fixed atoms compete with no other `item` arm, so the decision is strong-LL(2) on the first token alone [GRAM-1].
@@ -1770,9 +1773,24 @@ In `SourceNode`, the rule-selected coordinate lies within that extent (`node_sta
 A diagnostic never fabricates a node or node path.
 A nested-place rejection additionally renders the offending access-path segment.
 
-The frontend selects defects stage by stage.
-Each stage scans every source in source-ordinal order and byte order, stops at its first defect, and the next stage begins only if the preceding stage succeeds for every source.
-The stage order is: raw lexical formation; terminal membership; grammar derivation; then canonical [FORM-2] rendering.
+The frontend partitions each source into diagnostic segments using its raw bytes.
+A line begins at byte offset zero or immediately after LF.
+A declaration start is a line whose column-zero maximal lower word is a fixed terminal in the FIRST set of `item` [GRAM-2].
+A graph-record start is a line whose column-zero maximal lower word satisfies a first-terminal predicate of `package_decl`, `module_row`, or `entry_decl` [GRAM-2].
+The maximal lower word is the complete `[a-z][a-z0-9_]*` byte sequence at that position; its boundary is the next byte outside that set or source end.
+For a source record the segment boundaries are source start, each declaration start, and source end; for a graph record they are source start, each graph-record start, and source end.
+Each distinct pair of adjacent boundaries delimits one segment, and an empty source has one empty segment.
+Thus bytes before the first declaration or graph-record start form a segment of their own.
+
+Each segment runs raw lexical formation, terminal membership, and grammar derivation in that order.
+Each stage scans that segment in byte order, reports its first defect, and admits the next stage only on success.
+Source-record segments derive `program`; graph-record segments derive `graph_segment` [GRAM-2].
+Every segment is judged independently, and each failing segment contributes exactly one rejection.
+The frontend reports these rejections together, ordered by source ordinal and then byte offset.
+The end of a segment acts as `SOURCE_END` during its lexical formation and grammar derivation and has a zero-width coordinate at its source-local ending byte offset.
+Success of every segment admits the complete source's grammar derivation, which retains its ordinary start production and selects its first defect in source order.
+Success of every complete derivation admits one canonical [FORM-2] rendering stage over the complete ordered source bundle; this stage reports only its first defect in source-ordinal and byte order.
+Success of canonical rendering admits the semantic stages below, which retain their single-rejection selection.
 Within one grammar decision, production definitions rank by their first appearance in this specification, and alternatives rank left to right as written.
 Numbered rules rank by their first appearance in this specification.
 
@@ -1790,23 +1808,26 @@ A backslash followed by an ASCII byte other than `\`, `n`, `t`, `r`, `u`, or the
 If the actual byte sequence beginning at a backslash's follower does not begin one complete well-formed UTF-8 encoding of a Unicode scalar value, that follower instead cites [FORM-2] and spans only its first byte; if the follower begins a valid non-ASCII scalar, [FORM-5] spans the backslash and that scalar's complete UTF-8 encoding.
 A raw ASCII byte outside the permitted interior set cites [FORM-5] and spans that byte.
 At any other cursor inside a quoted candidate, if the actual byte sequence beginning there does not begin one complete well-formed UTF-8 encoding of a Unicode scalar value, [FORM-2] spans its first byte; a valid non-ASCII scalar instead cites [FORM-5] and spans its complete UTF-8 encoding.
-If no unescaped closing quote occurs and no earlier defect applies, the unterminated quoted candidate cites [FORM-5] and spans from its opening quote through end of source.
+If no unescaped closing quote occurs and no earlier defect applies, the unterminated quoted candidate cites [FORM-5] and spans from its opening quote through end of segment.
 Terminal membership uses the complete context-free predicate set required by [GRAM-1]; a token with no matching predicate cites [FORM-3] or [FORM-5], whichever rule owns the rejected spelling.
-Every lexical, terminal-membership, or grammar rejection uses `SourceBytes`; its coordinate is the exact interval above, the exact offending token interval, or the zero-width end-of-source interval defined above.
+Every lexical, terminal-membership, or grammar rejection uses `SourceBytes`; its coordinate is the exact interval above, the exact offending token interval, or the zero-width segment-end interval defined above.
 
 Every grammar production and external terminal predicate is owned by the numbered rule containing its unique definition.
 A source-EBNF decision is a `|`, `?`, `*`, or the continuation decision of `+`.
 Its stable identity is the zero-based ordinal of its production by first definition in this specification followed by the zero-based EBNF child-index path from that production's root.
 Its arms retain source order; a consuming arm precedes an exit arm.
-The strong-LL(2) analysis required by [GRAM-1] supplies every arm's `SELECT_2` rows.
-Every predicate in a row retains its source-EBNF provenance and whether it came from inside that arm or from the arm's caller continuation.
+The strong-LL(2) analysis required by [GRAM-1] supplies every arm's recognition `SELECT_2` rows.
+For diagnostics, an arm's contextual `SELECT_2` rows are the two-terminal prefixes of that arm followed by the pending continuation of the actual production instances at the frontier.
+That continuation consists of the remaining sequence children and repetition continuations at each enclosing EBNF occurrence, followed by the continuation of each actual caller instance out to the segment's start production.
+Each completed continuation is padded with `SOURCE_END`.
+Every predicate in a contextual row retains its source-EBNF provenance and whether it came from inside that arm or from its continuation.
 Lookahead is padded to two positions with `SOURCE_END`.
 
 Recognition selects an arm only when that arm has a full two-position row match.
 Two matching arms are a [GRAM-1] specification defect, not a precedence rule.
-Whenever no row matches, the diagnostic machine computes each arm's score: the greatest proper-prefix length, zero or one, by which any of that arm's rows accepts the actual two-position lookahead.
+Whenever no recognition row matches, the diagnostic machine uses the contextual rows to compute each arm's score: the greatest proper-prefix length, zero or one, by which any of that arm's rows accepts the actual two-position lookahead.
 Let `m` be the greatest score at that frontier.
-The failure boundary is the actual lookahead token at position `m`, or the zero-width end-of-source coordinate when that position is `SOURCE_END`.
+The failure boundary is the actual lookahead token at position `m`, or the zero-width segment-end coordinate when that position is `SOURCE_END`.
 The maximal-prefix rows are every row with score `m`.
 The expected-terminal set is the distinct predicates at position `m` in those rows, ordered by their first terminal occurrence in the grammar; written terminals precede `SOURCE_END`.
 A direct terminal mismatch is the same calculation with one row and has a singleton expected set.
@@ -1849,7 +1870,7 @@ At `program`'s `item*`, after any complete item prefix, if the first actual toke
 If no attribution row applies and exactly one arm has a score strictly greater than every other arm, diagnostic traversal descends into that arm only when every next expected predicate in that arm's maximal-prefix rows came from inside the arm rather than from its caller continuation.
 Otherwise the current frontier is the stopping point.
 A tie is never guessed.
-Traversal through the selected arm follows the same source EBNF and repeats this procedure.
+Traversal through the selected arm follows the same source EBNF, retains the actual caller continuation, and repeats this procedure.
 It cannot cross from a completed arm into its continuation, make a failed row valid, insert, delete, recover, or skip a token, or create a derivation or node.
 It is used only after recognition has failed; reaching a successful end instead of a stopping point is a compiler-invariant failure.
 
@@ -1872,7 +1893,7 @@ After canonical FORM-2 succeeds for every source, semantic diagnostic selection 
 An empty or define-only block uses `SourceNode` at that complete `contract_block`; no declaration, route reservation, or use role inside such a rejected block is classified or counted.
 Grammar already fixes each admitted block's definitions-before-requirements-before-postconditions structure and excludes every statement form, so no second structural-entry filter exists.
 Only complete unit-wide FN-8 admission permits the remaining resolution stages, each complete over the unit before the next begins: the [GRAM-2] heap-declaration position of a source bundle; the module forms, one scan in source order judging [MOD-4]'s alias placement, [MOD-9]'s heap declaration of a module program, [MOD-6]'s `public` and `readonly` placement and [MOD-7]'s function item forms; ordinary role classification and declaration inventory, whose event order also reports each refused alias target [MOD-4, MOD-5]; lexical resolution, including qualified references [MOD-5]; [MOD-6]'s closure of public signatures, in source order of the offending use; and [MOD-7]'s correspondence of each definition with its interface declaration, in definition source order.
-A module program's graph records are formed first [MOD-1]. A graph record, when read, passes the lexical, grammar and canonical stages and has its locations' form and its repeated names judged [MOD-11]; the walk then judges its bindings in written order, each binding's reached directory, cycle and repeated package, reading a newly reached package's graph record and walking its bindings before the next binding; after the walk each graph's rows and entries are judged in package order. The first rejection in this order is reported, and no module record is read before every graph forms.
+A module program's graph records are formed first [MOD-1]. A graph record, when read, passes the lexical, grammar and canonical stages and has its locations' form and its repeated names judged [MOD-11]; the walk then judges its bindings in written order, each binding's reached directory, cycle and repeated package, reading a newly reached package's graph record and walking its bindings before the next binding; after the walk each graph's rows and entries are judged in package order. Each graph's segment rejections are reported as defined above; after segment success the first rejection in this graph-formation order is reported. Module records are read only after every graph forms.
 Within an admitted routed `ensures_clause`, the route's leading lookup and [FN-9] route-admission subjudgment occur before lexical resolution of that clause expression; every unrelated block and event retains the ordinary global ordering.
 Poison declarations and partial resolution are forbidden.
 An early FN-8 rejection outranks every inventory or resolution rejection; inventory still outranks resolution even when the later-stage event has an earlier source coordinate.
