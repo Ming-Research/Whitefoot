@@ -122,26 +122,44 @@ impl Input<'_, '_> {
             .is_some_and(|parameter| parameter.mode.is_range())
     }
 
+    /// The relations a direct call of `function` may publish [FN-9]: its
+    /// published summaries, or, while its component is being verified and
+    /// the caller is a member of it, exactly its type-invariant
+    /// postconditions as induction hypotheses [DIAG-2, TYPE-11].
     pub(super) fn available_postconditions(
         &self,
         function: super::super::super::model::FunctionId,
     ) -> Vec<AvailablePostcondition> {
+        let available = |postcondition: &CheckedPostcondition,
+                         summary: super::super::VerifiedPostconditionSummary| {
+            AvailablePostcondition {
+                relation: postcondition.relation.clone(),
+                route: postcondition.selector.route,
+                variant: postcondition.selector.variant,
+                field: postcondition
+                    .selector
+                    .field
+                    .as_ref()
+                    .map(|field| field.declaration),
+                authority: super::super::RelationProvenance::Verified(summary),
+            }
+        };
+        if let Some(component) = self
+            .context
+            .component_postconditions(self.function.id, function)
+        {
+            return component
+                .generated
+                .iter()
+                .map(|(postcondition, summary)| available(*postcondition, summary.clone()))
+                .collect();
+        }
         self.context
             .verified_postconditions(function)
             .unwrap_or_default()
             .into_iter()
             .filter_map(|(postcondition, proof)| {
-                Some(AvailablePostcondition {
-                    relation: postcondition.relation.clone(),
-                    route: postcondition.selector.route,
-                    variant: postcondition.selector.variant,
-                    field: postcondition
-                        .selector
-                        .field
-                        .as_ref()
-                        .map(|field| field.declaration),
-                    authority: super::super::RelationProvenance::Verified(proof.summary.clone()?),
-                })
+                Some(available(postcondition, proof.summary.clone()?))
             })
             .collect()
     }

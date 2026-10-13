@@ -1199,6 +1199,16 @@ impl Analyzer<'_, '_> {
                 value,
                 drops: _,
             } => {
+                // [GIVE-1, MSR-3] a value carrier mints its placements before
+                // the give's own kills, as the initializer of a `let` does.
+                let carrier = self
+                    .frames
+                    .gives
+                    .last()
+                    .is_some_and(|frame| {
+                        value_carrier(frame.result_mode, frame.result_type, value)
+                    })
+                    .then(|| self.reasoning().mint_value_carrier(node_path, value, state));
                 let mut result = self.capture_result(node_path, value, state);
                 let judgment = self.expression_effects(value, state);
                 self.reasoning()
@@ -1231,17 +1241,23 @@ impl Analyzer<'_, '_> {
                         None
                     };
                     let delivery = Some(if judgment.reached {
-                        self.value_delivery_image(
-                            value,
-                            state,
-                            DeliveryImageContext {
-                                statement: node_path,
-                                receiver_binding: binding,
-                                receiver_type: result_type,
-                                scope_depth,
-                                loop_depth,
-                            },
-                        )
+                        let context = DeliveryImageContext {
+                            statement: node_path,
+                            receiver_binding: binding,
+                            receiver_type: result_type,
+                            scope_depth,
+                            loop_depth,
+                        };
+                        match &carrier {
+                            Some(carrier) => self.value_carrier_delivery_image(
+                                value,
+                                state,
+                                context,
+                                carrier,
+                                judgment.prepared_call.as_ref(),
+                            ),
+                            None => self.value_delivery_image(value, state, context),
+                        }
                     } else {
                         ProofFlowState::default()
                     });
@@ -1494,6 +1510,7 @@ impl Analyzer<'_, '_> {
                 node_path,
                 binding,
                 result_type,
+                result_mode,
                 scrutinee,
                 enum_type,
                 arms,
@@ -1521,6 +1538,7 @@ impl Analyzer<'_, '_> {
                     node_path: node_path.clone(),
                     binding: *binding,
                     result_type: *result_type,
+                    result_mode: *result_mode,
                     gives: Vec::new(),
                     give_goal_origins: Vec::new(),
                     delivery_images: Vec::new(),
@@ -2069,4 +2087,22 @@ impl Analyzer<'_, '_> {
                 .establish(&relation, &mut self.vocabulary.derivations, formation);
         }
     }
+}
+
+/// [GIVE-1] whether a `give` delivers as a value carrier [ENT-5]: an own
+/// delivery whose type is no fragment integer. Only a nominal, a storage
+/// shape or a key set has tracked places or measures below it [ENT-2]; the
+/// image of any other such type relates no receiver term and is never formed.
+fn value_carrier(mode: CheckedMode, ty: CheckedType, value: &CheckedExpression) -> bool {
+    mode == CheckedMode::Own
+        && value.ty() == ty
+        && matches!(
+            ty,
+            CheckedType::Nominal(_)
+                | CheckedType::Array { .. }
+                | CheckedType::Buffer { .. }
+                | CheckedType::Window { .. }
+                | CheckedType::Segments { .. }
+                | CheckedType::KeySet
+        )
 }

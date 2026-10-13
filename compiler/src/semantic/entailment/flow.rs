@@ -266,6 +266,9 @@ struct GiveFrame {
     node_path: crate::NodePath,
     binding: BindingId,
     result_type: CheckedType,
+    /// The binder's derived mode [GIVE-1]: only an own delivery carries a
+    /// value carrier's relations [ENT-5].
+    result_mode: CheckedMode,
     gives: Vec<ProofFlowState>,
     give_goal_origins: Vec<Option<GoalId>>,
     delivery_images: Vec<ProofFlowState>,
@@ -318,6 +321,9 @@ struct DeliveryJoinContext<'a> {
     statement: &'a crate::NodePath,
     receiver_binding: BindingId,
     receiver: TermId,
+    /// The receiver terms of the same value carrier already joined, whose
+    /// pairs with this one that join has already delivered [ENT-5].
+    earlier: &'a [TermId],
     event: FlowEventId,
 }
 
@@ -2028,6 +2034,7 @@ mod indexed_goal_kill_tests {
             contract_queries: &[],
             verified_postconditions: &[],
             verified_postcondition_proofs: &[],
+            component_postconditions: &[],
             binding_names: &[],
         };
         let function = CheckedFunction {
@@ -2268,6 +2275,7 @@ mod range_argument_kill_tests {
             contract_queries: &[],
             verified_postconditions: &[],
             verified_postcondition_proofs: &[],
+            component_postconditions: &[],
             binding_names: &[],
         };
         let function = CheckedFunction {

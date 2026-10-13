@@ -23,6 +23,7 @@ fn with_integer_parameters(types: &[IntegerType], check: impl FnOnce(&mut Analyz
         contract_queries: &[],
         verified_postconditions: &[],
         verified_postcondition_proofs: &[],
+        component_postconditions: &[],
         binding_names: &[],
     };
     let function = CheckedFunction {
