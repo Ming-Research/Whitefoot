@@ -1075,8 +1075,7 @@ const values: Array<u8, 2> =[0_u8, 0_u8];
 fn probe() -> result: u8 pure {
   let cursor = Cursor(index: 1_u64, sibling: 0_u64);
   if values[cursor.index] +defined 1_u8 {
-    WRITE
-    return values[cursor.index] + 1_u8;
+WRITE    return values[cursor.index] + 1_u8;
   } else {
     return 0_u8;
   }
@@ -1087,9 +1086,9 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "#;
     for (write, accepted) in [
-        ("set cursor.index = 0_u64;", false),
+        ("    set cursor.index = 0_u64;\n", false),
         ("", true),
-        ("set cursor.sibling = 0_u64;", true),
+        ("    set cursor.sibling = 0_u64;\n", true),
     ] {
         let source = template.replace("WRITE", write);
         with_semantics(source.as_bytes(), |outcome| {
