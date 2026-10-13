@@ -109,7 +109,7 @@ jobs:
           # A grant keeps the claims' turn: the next free unlock grants a claim
           # again ahead of the parked head.
           if mutate 's/    shared->take_turn = 0u;\n    \/\* The claim/    \/\* The claim/ or die' grant-keeps-turn; then
-            expect_fail grant-keeps-turn order "a claim was granted ahead of the parked head's due hand-off"
+            expect_fail grant-keeps-turn order "claims took the object twice in a row while a parked context was due"
           fi
           git checkout -- "$bridge"
           # A hand-off while claims wait never gives the claims the next turn.
