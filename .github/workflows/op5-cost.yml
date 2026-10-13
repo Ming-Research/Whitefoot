@@ -162,8 +162,10 @@ jobs:
             [ "$actual" = "$revision" ]
             printf '%s %s\n' "$repository" "$actual" | tee "$out/$project-source.txt"
           done
-      # Halo's root Makefile builds the halo-e2e graph with entry test; it includes
-      # ../../../lib/halo and fpconv. Snowghost's renderer Makefile checks
+      # Halo is measured on its library graph lib/halo, which holds every module of
+      # the interpreter (value, lexer, compiler, heap, vm, embedding) with its json
+      # and msgpack packages; the test-entry graphs live under Halo's research
+      # directory, which the gate's research-input check refuses. Snowghost's renderer Makefile checks
       # modules separately because pending interfaces prevent entry builds
       # (layout_oracle is its renderer entry). --check-modules checks every
       # module AND every declared entry without emitting code or using a cache.
@@ -173,7 +175,7 @@ jobs:
           out="$RUNNER_TEMP/op5"
           for project in halo snowghost; do
             case $project in
-              halo) graph="$RUNNER_TEMP/halo/research/experiments/halo-e2e/modules.wfg" ;;
+              halo) graph="$RUNNER_TEMP/halo/lib/halo/modules.wfg" ;;
               snowghost) graph="$RUNNER_TEMP/snowghost/renderer/modules.wfg" ;;
             esac
             for round in 1 2 3; do
