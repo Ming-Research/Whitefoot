@@ -236,7 +236,7 @@ impl Walker<'_> {
             let id = self.add_fact(post.clause.clone(), frame);
             match routed {
                 None => state.facts.push(id),
-                Some((at, tag)) => state.routed.push((at, tag, id)),
+                Some((at, tag)) => state.routed.push((at, tag, id, Vec::new())),
             }
         }
     }

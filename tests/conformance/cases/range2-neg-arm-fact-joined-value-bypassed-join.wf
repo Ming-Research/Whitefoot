@@ -1,0 +1,29 @@
+fn small(n: u64) -> r: u64 pure contract {
+  requires n < 10_u64;
+  ensures r == n;
+  ensures r < 10_u64;
+} {
+  return n;
+}
+
+fn pick(t: &Box<Array<u64>>, x: u64, flag: Bool) -> r: u64 reads(t) contract {
+  requires 20_u64 <= t^.inner.len;
+  requires forall low(j in 0_u64..t^.inner.len): t^.inner[j] < 100_u64;
+} {
+  if flag {
+    let y = 0_u64;
+    if x < 10_u64 {
+      set y = 0_u64;
+    } else if x < 20_u64 {
+      set y = 1_u64;
+    } else {
+      return 0_u64;
+    }
+    let kept = small(n: y);
+  }
+  return t^.inner[x];
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

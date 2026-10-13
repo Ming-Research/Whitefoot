@@ -123,6 +123,7 @@ pub(crate) fn judge(
             &[],
             &[],
             &[],
+            &[],
             Query {
                 type_facts: formed.type_facts.clone(),
                 units,
