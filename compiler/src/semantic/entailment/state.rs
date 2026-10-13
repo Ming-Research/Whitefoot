@@ -3902,10 +3902,11 @@ impl FactState {
 /// representation: a written clause's constants are formed exactly and a
 /// clause whose formation leaves i128 is rejected where it is formed
 /// [INV-1, MSR-5]. Every term lies within plus or minus 2^66: a constant
-/// term is interned only from a fragment-typed value, a type limit or a
-/// length, while a clause constant, which may be any i128 value, folds
-/// through Z into a fact's constant and never becomes a term [ENT-2]. A
-/// fact whose constant is at least 2^67 then holds outright and one below
+/// term comes only from a fragment-typed value, a type limit or a length,
+/// and interning refuses one beyond that magnitude, while a clause's or a
+/// range formation's folded constant, which may be any i128 value, goes
+/// through Z into a fact's constant [ENT-2]. From that premise a fact
+/// `t1 - t2 <= k` with k at least 2^67 holds outright and one with k below
 /// -2^67 fails outright, so clamping a stored or composed constant at an
 /// i128 endpoint never changes whether its fact holds.
 pub(crate) type DistinctKey = (TermId, TermId, i128);
@@ -5225,14 +5226,11 @@ fn for_each_implicit_bound(
                 emit(ZERO, id, lower, ImplicitBoundKind::TypeMinimum);
             }
         }
-        // `Z - c <= -c` at `c = i128::MIN` states a bound outside i128; it
-        // is omitted, which only under-derives, since clamping it to
-        // `i128::MAX` would state the false `c >= -i128::MAX`.
+        // Interning bounds a constant term within plus or minus 2^66, so
+        // its negation is exact.
         TermKind::Constant(value) => {
             emit(id, ZERO, *value, ImplicitBoundKind::Constant);
-            if let Some(lower) = value.checked_neg() {
-                emit(ZERO, id, lower, ImplicitBoundKind::Constant);
-            }
+            emit(ZERO, id, -value, ImplicitBoundKind::Constant);
         }
         TermKind::Place(_, ty) | TermKind::ConstParameter(_, ty) => {
             let (minimum, maximum) = type_range(*ty);
@@ -5261,9 +5259,7 @@ fn for_each_implicit_bound(
             match terms.measure_bound(id) {
                 Some(MeasureBound::Constant(value)) => {
                     emit(id, ZERO, value, ImplicitBoundKind::StandingMeasure);
-                    if let Some(lower) = value.checked_neg() {
-                        emit(ZERO, id, lower, ImplicitBoundKind::StandingMeasure);
-                    }
+                    emit(ZERO, id, -value, ImplicitBoundKind::StandingMeasure);
                 }
                 Some(MeasureBound::Equal(other)) => {
                     emit(id, other, 0, ImplicitBoundKind::StandingMeasure);
@@ -9401,29 +9397,42 @@ pub(crate) mod tests {
         }
     }
 
-    /// [ENT-2] a constant term `c` carries `c - Z <= c` and `Z - c <= -c`.
-    /// At `c = i128::MIN` the second bound lies outside i128: it is omitted,
-    /// neither negated with overflow nor clamped to the false
-    /// `Z - c <= i128::MAX`, which with the first bound would close to a
-    /// contradiction. Each closure reading is either absent or true.
+    /// A constant term lies within plus or minus 2^66, the premise on which
+    /// saturating closure is exact. At the edge, `c = +-2^66` beside an
+    /// `i64` place `x`, every closed bound is exact, and `Z - x` keeps
+    /// `2^63`. Beyond it the state cannot be formed: interning `c` at
+    /// `i128::MAX` panics, where a closure composing through Z first would
+    /// clamp `c - x <= i128::MAX + 2^63` to `c - x <= i128::MAX` and,
+    /// through `Z - c <= -i128::MAX`, derive the false `Z - x <= 0`; at
+    /// `i128::MIN` it overflowed negating `c` for the bound `Z - c <= -c`.
     #[test]
-    fn constant_terms_at_the_i128_endpoints_close_to_true_bounds() {
+    fn constant_terms_stay_within_the_magnitude_saturating_closure_needs() {
         let goals = GoalTable::default();
-        for value in [i128::MIN, i128::MAX] {
+        let edge = i128::try_from(super::super::term::CONSTANT_TERM_MAGNITUDE)
+            .expect("the magnitude fits i128");
+        let (low, high) = type_range(IntegerType::I64);
+        for value in [-edge, edge] {
             let mut terms = TermTable::new();
+            let x = terms.intern(TermKind::Place(
+                super::super::term::ResolvedPlace::binding(BindingId(0)),
+                IntegerType::I64,
+            ));
             let constant = terms.intern(TermKind::Constant(value));
             let mut ledger = DerivationLedger::default();
-            let every = with_every_term(|| close(&FactState::new(), &terms, &goals, &mut ledger));
-            assert!(!every.contradictory(), "{value}");
-            assert_eq!(every.tight_bound(constant, ZERO), Some(value));
-            assert_eq!(every.tight_bound(ZERO, constant), value.checked_neg());
-            let elided = close(&FactState::new(), &terms, &goals, &mut ledger);
-            assert!(!elided.contradictory(), "{value}");
-            let upper = elided.tight_bound(constant, ZERO);
-            let lower = elided.tight_bound(ZERO, constant);
-            assert!(upper.is_none_or(|bound| bound >= value), "{value}");
-            let negated = value.checked_neg();
-            assert!(lower.is_none_or(|bound| negated.is_some_and(|least| bound >= least)));
+            let closed = with_every_term(|| close(&FactState::new(), &terms, &goals, &mut ledger));
+            assert!(!closed.contradictory(), "{value}");
+            assert_eq!(closed.tight_bound(ZERO, x), Some(-low));
+            assert_eq!(closed.tight_bound(x, ZERO), Some(high));
+            assert_eq!(closed.tight_bound(constant, ZERO), Some(value));
+            assert_eq!(closed.tight_bound(ZERO, constant), Some(-value));
+            assert_eq!(closed.tight_bound(constant, x), Some(value - low));
+            assert_eq!(closed.tight_bound(x, constant), Some(high - value));
+        }
+        for value in [i128::MIN, i128::MAX, edge + 1, -edge - 1] {
+            let interned = std::panic::catch_unwind(|| {
+                TermTable::new().intern(TermKind::Constant(value));
+            });
+            assert!(interned.is_err(), "{value}");
         }
     }
 

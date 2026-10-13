@@ -1603,6 +1603,13 @@ impl Reasoning<'_, '_, '_> {
     /// endpoint pair sharing a term gives the same. A pair naming two
     /// different terms — `&p[a..b]` — is outside the fragment and keeps only
     /// the affine image, which only under-derives [ENT-1].
+    ///
+    /// A constant length folds through Z [ENT-2] into the equality's
+    /// constant, as a clause's constant side does, and never becomes a
+    /// constant term: endpoints fold their literal arithmetic exactly, so
+    /// `&p[0_u64..4294967296_u64 * 4294967296_u64]` gives 2^64 and nested
+    /// products reach far beyond, outside the plus or minus 2^66 every term
+    /// keeps for the closure's saturating arithmetic to stay exact.
     pub(super) fn range_length_relation(
         &mut self,
         length: TermId,
@@ -1615,23 +1622,15 @@ impl Reasoning<'_, '_, '_> {
         let (end_term, end_constant) = self.goal_affine_side(&end_goal)?;
         let difference = end_constant.checked_sub(start_constant)?;
         let right = match (start_term, end_term) {
-            (None, None) => self.vocabulary.terms.intern(TermKind::Constant(difference)),
-            (None, Some(term)) => {
-                return Some(Relation::Equal {
-                    left: length,
-                    right: term,
-                    difference,
-                });
-            }
-            (Some(start), Some(end)) if start == end => {
-                self.vocabulary.terms.intern(TermKind::Constant(difference))
-            }
+            (None, None) => ZERO,
+            (None, Some(term)) => term,
+            (Some(start), Some(end)) if start == end => ZERO,
             _ => return None,
         };
         Some(Relation::Equal {
             left: length,
             right,
-            difference: 0,
+            difference,
         })
     }
 

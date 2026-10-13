@@ -195,6 +195,16 @@ pub(crate) enum MeasureBound {
 /// The zero term is always interned first.
 pub(crate) const ZERO: TermId = TermId(0);
 
+/// The bound on a constant term's magnitude. A constant term comes only from
+/// a fragment-typed value, a type limit or a length, each within plus or
+/// minus 2^65, while a clause's or a range formation's folded constant goes
+/// through Z into a fact's constant [ENT-2]. The bound keeps every term
+/// within the plus or minus 2^66 on which the closure's saturating
+/// arithmetic is exact (see `DistinctKey`): a constant term `c` at
+/// `i128::MAX` beside an `i64` place `x` would close `c - x <= i128::MAX +
+/// 2^63` to `c - x <= i128::MAX` and derive the false `Z - x <= 0`.
+pub(crate) const CONSTANT_TERM_MAGNITUDE: u128 = 1 << 66;
+
 /// Function-scoped term registry. Only terms written in the function
 /// participate [ENT-4]; the registry grows monotonically during the forward
 /// walk. A term registered after a query cannot change that query's answer:
@@ -306,6 +316,12 @@ impl TermTable {
     /// zero identity, with exactly the bounds a zero constant contributes.
     pub(crate) fn intern(&mut self, kind: TermKind) -> TermId {
         let kind = Self::identity(kind);
+        if let TermKind::Constant(value) = &kind {
+            assert!(
+                value.unsigned_abs() <= CONSTANT_TERM_MAGNITUDE,
+                "a constant term lies within plus or minus 2^66"
+            );
+        }
         if let Some(id) = self.ids.get(&kind) {
             return *id;
         }

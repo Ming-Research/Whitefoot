@@ -2170,11 +2170,8 @@ impl Analyzer<'_, '_> {
             .filter(|image| image.terms().is_empty())
             .map(|image| Relation::Equal {
                 left: term,
-                right: self
-                    .vocabulary
-                    .terms
-                    .intern(TermKind::Constant(image.constant_value())),
-                difference: 0,
+                right: ZERO,
+                difference: image.constant_value(),
             })
             .or_else(|| self.reasoning().range_length_relation(term, start, end));
         if let Some(relation) = relation {
