@@ -61,6 +61,7 @@ fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure w
   }
   std::time::close_cancel_watch(watch: move never);
   atomic ready = &started {
+    set ready^ = True();
     let winner = claim_written(cell: &stop);
   }
   if valid {
