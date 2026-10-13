@@ -1330,6 +1330,9 @@ fn run(function: &CheckedFunction, context: &EntailmentContext<'_>) -> AnalysisR
     // datum per measure of a parameter any declared relation names, equal to
     // that measure at body entry.
     analyzer.reasoning().establish_entry_datums(&mut state);
+    // [FN-9] and the entry datums each postcondition place's subscripts
+    // are judged over at its selected returns.
+    analyzer.establish_place_entry_datums(&mut state);
     analyzer
         .frames
         .scopes
