@@ -4,5 +4,5 @@ fn forward<fn callback(depth: u64) -> done: u64 pure contract {
   ensures result == 1_u64;
 } {
   let called = callback(depth: depth);
-  return called;
+  return 2_u64;
 }

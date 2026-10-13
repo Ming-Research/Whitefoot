@@ -83,7 +83,8 @@ fn recursive_generic_instances_prove_their_written_relations() {
   ensures result == value;
 } {
   if 0_u64 < depth {
-    let inner = repeat::<T>(value: value, depth: depth - 1_u64);
+    let next_depth = depth - 1_u64;
+    let inner = repeat::<T>(value: value, depth: next_depth);
     return inner;
   }
   return value;

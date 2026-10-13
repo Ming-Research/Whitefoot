@@ -6,7 +6,7 @@ fn local_one(depth: u64) -> done: u64 pure contract {
     let inner = pkg::relay::forward::<fn local_one>(depth: next);
     return inner;
   }
-  return 2_u64;
+  return 1_u64;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
