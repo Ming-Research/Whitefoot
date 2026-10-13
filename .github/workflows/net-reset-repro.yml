@@ -1,0 +1,179 @@
+# Temporary investigation workflow. Remove before marking the branch ready.
+# This exercises the readiness retry fix; a passing loop alone does not prove
+# that the same mechanism caused the historical intermittent failures.
+name: net-reset-repro
+
+on:
+  push:
+    branches: [claude/net-reset-flake]
+  workflow_dispatch:
+    inputs:
+      repetitions:
+        description: Maximum repetitions after one timed sample (also capped at ten minutes)
+        default: '100'
+        required: true
+      trace:
+        description: Record syscall and loopback packet traces (changes scheduling)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: net-reset-repro-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  reproduce:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        # Together retains contention between the three suspected cases;
+        # separate runs distinguish that from a failure with one server test.
+        selection: [together, reset, config, strings]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Set the scratch root
+        run: |
+          echo "WHITEFOOT_SCRATCH_ROOT=$RUNNER_TEMP/whitefoot" >> "$GITHUB_ENV"
+          echo "WHITEFOOT_TIME_BUDGET_RECORD=$RUNNER_TEMP/time-budget-overruns.txt" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/net-reset"
+      - name: Install the gate host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          ld.lld --version
+          test -x /usr/bin/clang
+          /usr/bin/clang --version
+          python3 --version
+          rustup default stable
+          rustup component add clippy rustfmt
+          cargo --version
+      - name: Fetch locked compiler dependencies
+        run: cargo fetch --locked --manifest-path compiler/Cargo.toml
+      - name: Record the host and decline core dumps
+        run: |
+          sudo sysctl -w kernel.core_pattern=core
+          uname -a
+          nproc
+          grep -m 1 'model name' /proc/cpuinfo
+          cat /proc/sys/net/ipv4/ip_local_port_range
+          git rev-parse HEAD
+      - name: Build the corpus harness without running tests
+        run: |
+          perl .github/run-check.pl compiler/test-build-corpus \
+            cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --test corpus --no-run
+      - name: Check the deterministic helper regressions
+        if: matrix.selection == 'together'
+        run: |
+          log="$RUNNER_TEMP/net-reset/helper-regressions.log"
+          if perl .github/run-check.pl compiler/test-corpus \
+            cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --test corpus \
+            programs::network::readiness_does_not_retry_a_timeout_after_a_completed_handshake -- \
+            programs::network::reply_assertion_rejects_distinct_non_utf8_bytes --exact --nocapture \
+            > "$log" 2>&1; then
+            cat "$log"
+          else
+            result=$?
+            cat "$log"
+            exit "$result"
+          fi
+          grep -Fq 'test result: ok. 2 passed; 0 failed;' "$log"
+          perl .github/run-check.pl --budget-verdict "$WHITEFOOT_TIME_BUDGET_RECORD"
+      - name: Install optional tracing
+        if: inputs.trace == true
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y strace tcpdump
+          cat > "$RUNNER_TEMP/net-reset-runner" <<'RUNNER'
+          #!/bin/bash
+          exec strace -ff -ttt -T -yy -s 96 \
+            -e trace=%network,close,exit_group,io_uring_setup,io_uring_enter,io_uring_register \
+            -o "$NET_RESET_TRACE_PREFIX" "$@"
+          RUNNER
+          chmod +x "$RUNNER_TEMP/net-reset-runner"
+          echo "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER=$RUNNER_TEMP/net-reset-runner" >> "$GITHUB_ENV"
+      - name: Sample then repeat only the selected tests
+        env:
+          SELECTION: ${{ matrix.selection }}
+          REPETITIONS: ${{ inputs.repetitions || '100' }}
+          TRACE: ${{ inputs.trace || false }}
+        run: |
+          set -euo pipefail
+          [[ "$REPETITIONS" =~ ^[1-9][0-9]{0,3}$ ]] || exit 2
+          reset=programs::network::a_peer_that_resets_reaches_the_program_as_its_own_outcome_on_both_routes
+          config=programs::network::firn_answers_config_and_echoes_client_bytes_as_redis_does
+          strings=programs::network::firn_answers_string_commands_as_redis_does
+          case "$SELECTION" in
+            together) filters=("$reset" "$config" "$strings"); count=3 ;;
+            reset) filters=("$reset"); count=1 ;;
+            config) filters=("$config"); count=1 ;;
+            strings) filters=("$strings"); count=1 ;;
+          esac
+          if [ "$TRACE" = true ]; then
+            sudo tcpdump -i lo -n -s 0 -U -C 20 -W 2 \
+              -w "$RUNNER_TEMP/net-reset/loopback.pcap" tcp &
+            capture_pid=$!
+            trap 'sudo kill -INT "$capture_pid" || true; wait "$capture_pid" || true; sudo chmod -R a+rX "$RUNNER_TEMP/net-reset"' EXIT
+          fi
+          run_selected() {
+            local iteration=$1
+            local log="$RUNNER_TEMP/net-reset/run-$iteration.log"
+            export NET_RESET_TRACE_PREFIX="$RUNNER_TEMP/net-reset/syscalls-$iteration"
+            # Reuse the corpus construction/execution labels and their existing
+            # budgets. Read the command's exit status directly, without a pipe.
+            if perl .github/run-check.pl compiler/test-corpus \
+              cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline \
+              --test corpus "${filters[0]}" -- "${filters[@]:1}" --exact --nocapture \
+              > "$log" 2>&1; then
+              cat "$log"
+            else
+              result=$?
+              cat "$log"
+              echo "First failure: iteration $iteration ($SELECTION)" >> "$GITHUB_STEP_SUMMARY"
+              return "$result"
+            fi
+            # A renamed/missing test must not turn this into a zero-test pass.
+            grep -Fq "test result: ok. $count passed; 0 failed;" "$log"
+            perl .github/run-check.pl --budget-verdict "$WHITEFOOT_TIME_BUDGET_RECORD"
+            # Retain the current/failing trace and packet ring, not hundreds of
+            # successful syscall logs. Text results remain for every iteration.
+            if [ "$TRACE" = true ]; then
+              rm -f "$NET_RESET_TRACE_PREFIX".*
+            fi
+          }
+          started=$SECONDS
+          run_selected sample
+          sample_seconds=$((SECONDS - started))
+          iterations=$((600 / (sample_seconds > 0 ? sample_seconds : 1)))
+          if (( iterations > REPETITIONS )); then iterations=$REPETITIONS; fi
+          echo "Sample: ${sample_seconds}s; up to $iterations repetitions of $count tests." >> "$GITHUB_STEP_SUMMARY"
+          started=$SECONDS
+          completed=0
+          for ((iteration=1; iteration<=iterations; iteration++)); do
+            if (( SECONDS - started >= 600 )); then break; fi
+            run_selected "$iteration"
+            completed=$iteration
+          done
+          echo "Completed $completed repetitions plus the sample; no observed failure (not proof of a fix)." >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload reproduction evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: net-reset-${{ matrix.selection }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/net-reset/
+            ${{ runner.temp }}/time-budget-overruns.txt
+          if-no-files-found: warn
