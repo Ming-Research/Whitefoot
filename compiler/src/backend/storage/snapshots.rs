@@ -656,7 +656,7 @@ impl<'a> SnapshotFacts<'a> {
                 return Ok(None);
             }
             let reads = match terminal {
-                IrTerminator::Match { .. } => true,
+                IrTerminator::Match { .. } | IrTerminator::IntegerMatch { .. } => true,
                 IrTerminator::Jump { drops, .. } => {
                     !drops
                         .iter()

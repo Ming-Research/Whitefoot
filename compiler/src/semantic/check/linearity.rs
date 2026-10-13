@@ -344,8 +344,7 @@ impl<'unit> TypeContext<'unit> {
     }
     /// [PROV-6] a value linear in this scope may not reach a scope exit by a
     /// compiler-derived release: in this scope no derived release exists to
-    /// carry it. The two routes that remain are the whole move and the whole
-    /// destructuring.
+    /// carry it. A repair uses only consumption forms its type admits.
     pub(in crate::semantic) fn reject_linear_value_not_consumed(
         &self,
         check_context: &CheckContext<'_>,
@@ -361,17 +360,78 @@ impl<'unit> TypeContext<'unit> {
         let Some(marked) = self.linear_release_obligation(check_context, ty)? else {
             return Ok(());
         };
+        use super::repairs::LinearValueKind;
+        let kind = match ty {
+            CheckedType::Nominal(id) => match &self.nominal(id)?.kind {
+                CheckedNominalKind::Opaque => LinearValueKind::Host,
+                CheckedNominalKind::Enum { variants }
+                    if self.repair_fields_accessible(
+                        check_context,
+                        id,
+                        variants
+                            .iter()
+                            .enumerate()
+                            .map(|(variant, data)| (Some(variant), data.fields.len())),
+                    )? =>
+                {
+                    LinearValueKind::Enum
+                }
+                CheckedNominalKind::Struct { fields }
+                    if self.repair_fields_accessible(
+                        check_context,
+                        id,
+                        [(None, fields.len())],
+                    )? =>
+                {
+                    LinearValueKind::Struct
+                }
+                CheckedNominalKind::Box {
+                    referent: CheckedType::Window { capacity: None, .. },
+                    ..
+                } => LinearValueKind::Window,
+                _ => LinearValueKind::Whole,
+            },
+            CheckedType::Window { .. } => LinearValueKind::Window,
+            _ => LinearValueKind::Whole,
+        };
         self.declarations.issue_node::<()>(
             SemanticRule::Prov6,
             node,
             SemanticIssueKind::LinearValueNotConsumed {
                 binding: name.to_owned(),
                 obligation: marked,
-                mechanical_fix: "move the value out whole, or take it apart with \
-                     let N(f: a, ...) = move v;",
+                mechanical_fix: super::repairs::linear_scope_exit_repair(kind, name),
             },
         )?;
         Ok(())
+    }
+    /// A diagnostic may suggest binding fields only where those fields are
+    /// available under the same module rules as a destructuring consume.
+    fn repair_fields_accessible(
+        &self,
+        check_context: &CheckContext<'_>,
+        nominal: NominalId,
+        groups: impl IntoIterator<Item = (Option<usize>, usize)>,
+    ) -> Result<bool, CheckStop> {
+        let (Some(module), Some(writer)) =
+            (self.nominal_module(nominal), check_context.writing_module)
+        else {
+            return Ok(true);
+        };
+        if writer == module {
+            return Ok(true);
+        }
+        if !self.declarations.module_lists(writer, module) {
+            return Ok(false);
+        }
+        for (variant, count) in groups {
+            for field in 0..count {
+                if !self.field_declared_public(nominal, variant, field)? {
+                    return Ok(false);
+                }
+            }
+        }
+        Ok(true)
     }
     /// [PROV-6, WIN-3] a field consume kills its whole owner. Only the
     /// unselected residual needs drop; linearity of the moved field does
