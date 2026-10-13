@@ -11,6 +11,14 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-13 v0.144: a routed postcondition may bind one field of any variant of an own enum result
+
+Rules: changed FN-9, GRAM-10, TYPE-5, DIAG-1, CALL-4, CALL-6, ENT-2, ENT-3, ENT-5, GIVE-1, ERR-3, RANGE-1, RANGE-2, RANGE-3
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the specification revision (v0.143 to v0.144) and design-tree change of Whitefoot#431 at commit 400ddd437?" (translated); before it, the same day, the owner chose option A on the direction card "should routed postconditions (`ensures when Variant(...)`) extend to any variant of a program-declared enum, beyond Ok and Some, and with which scope?" (translated): any own enum result may route one field of any variant per clause, reusing the per-field conditional contexts of type-invariant routes.
+
+Summary: FN-9 admitted a routed clause only as `when Ok(value: r):` or `when Some(value: r):`, so Halo's slot lookup, which returns a source enum whose `Array` and `Node` variants carry indices into different tables, could not promise each index's bound and its caller had to check it again. FN-9 now admits `when V(f: r):` and `when b is V(f: r):` for one declared field of any variant of an own enum result after generic substitution whose type supplies CALL-4 data, one field per clause; a return selects the clause when it constructs V or forwards a value carrying V's route evidence, and a propagated error exit selects a written `Err` clause. GRAM-10, TYPE-5 and DIAG-1 restate the admission order in place of success-payload wording, and DIAG-1 states the owner-local variant-label lookup the resolver performs; CALL-4 counts only results of the route's enum when the name is omitted; CALL-6 groups clauses by ordinal, variant and field; ENT-2, ENT-3.S12, ENT-5 and GIVE-1 carry a conditional context for every such field through the existing transport; ERR-3 and RANGE-1 to RANGE-3 select range clauses by the written variant and field. A multi-field clause was declined until a program needs a cross-field relation.
+
 ## 2026-10-13 v0.143: a range fact can state an element's variant, and each conclusion stands on its own reads
 
 Rules: changed FORM-3, GRAM-5, TYPE-6, DIAG-1, RANGE-1, RANGE-3

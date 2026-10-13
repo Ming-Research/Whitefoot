@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 the owner's agent instructions own the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-13 A written routed postcondition binds one field of any variant of an own enum result
+
+Nodes: language/checks-and-proofs, language/checks-and-proofs/automatic-facts, language/checks-and-proofs/range-facts, compiler/checker-facts
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the specification revision (v0.143 to v0.144) and design-tree change of Whitefoot#431 at commit 400ddd437?" (translated), after choosing option A the same day on the direction card "should routed postconditions extend to any variant of a program-declared enum, beyond Ok and Some?" (translated).
+
+Summary: Written routes were restricted to Result's Ok and Option's Some. They now bind one declared data-supplying field of any variant of any own enum result, because Halo's array-slot and node-slot indices need bounds against different tables and type-invariant routes already carry per-field conditional relations; multi-field clauses are rejected until a program needs a cross-field relation. The checker's conditional fact states, the automatic-facts transport and the range-fact routing are restated per variant field, the rejected implicit success route for an arbitrary enum is restated as having no distinguished success variant, and a propagated error exit owes exactly the written Err range clauses.
+
 ## 2026-10-13 A release carries the specification and the standard library interfaces of its commit
 
 Nodes: compiler/downstream-releases
