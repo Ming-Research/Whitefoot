@@ -177,3 +177,122 @@ jobs:
             ${{ runner.temp }}/net-reset/
             ${{ runner.temp }}/time-budget-overruns.txt
           if-no-files-found: warn
+
+  before-fix-control:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Set the scratch root
+        run: |
+          echo "WHITEFOOT_SCRATCH_ROOT=$RUNNER_TEMP/whitefoot" >> "$GITHUB_ENV"
+          echo "WHITEFOOT_TIME_BUDGET_RECORD=$RUNNER_TEMP/time-budget-overruns.txt" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/net-reset-before-fix"
+      - name: Install the gate host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          ld.lld --version
+          test -x /usr/bin/clang
+          /usr/bin/clang --version
+          python3 --version
+          rustup default stable
+          rustup component add clippy rustfmt
+          cargo --version
+      - name: Fetch locked compiler dependencies
+        run: cargo fetch --locked --manifest-path compiler/Cargo.toml
+      - name: Record the host and decline core dumps
+        run: |
+          sudo sysctl -w kernel.core_pattern=core
+          uname -a
+          nproc
+          grep -m 1 'model name' /proc/cpuinfo
+          cat /proc/sys/net/ipv4/ip_local_port_range
+          git rev-parse HEAD
+      - name: Restore only the old connection retry guard
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/net-reset-before-fix"
+          test -z "$(git status --porcelain)"
+          cat > "$evidence/retry-any-error.patch" <<'PATCH'
+          diff --git a/compiler/tests/programs/network.rs b/compiler/tests/programs/network.rs
+          --- a/compiler/tests/programs/network.rs
+          +++ b/compiler/tests/programs/network.rs
+          @@ -72,7 +72,6 @@
+                       Err(error)
+          -                if error.kind() == std::io::ErrorKind::ConnectionRefused
+          -                    && Instant::now() < deadline =>
+          +                if Instant::now() < deadline =>
+                       {
+                           std::thread::sleep(Duration::from_millis(10));
+                       }
+                       Err(error) => panic!("connect to program at {address} failed: {error}"),
+          PATCH
+          git apply --check "$evidence/retry-any-error.patch"
+          git apply "$evidence/retry-any-error.patch"
+          git apply --reverse --check "$evidence/retry-any-error.patch"
+          git diff > "$evidence/applied.diff"
+          git diff --numstat > "$evidence/applied.numstat"
+          cat "$evidence/applied.diff"
+          printf '1\t2\tcompiler/tests/programs/network.rs\n' > "$evidence/expected.numstat"
+          cmp "$evidence/expected.numstat" "$evidence/applied.numstat"
+      - name: Build the mutated corpus harness without running tests
+        run: |
+          log="$RUNNER_TEMP/net-reset-before-fix/build.log"
+          if perl .github/run-check.pl compiler/test-build-corpus \
+            cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --test corpus --no-run \
+            > "$log" 2>&1; then
+            result=0
+          else
+            result=$?
+          fi
+          printf '%s\n' "$result" > "$RUNNER_TEMP/net-reset-before-fix/build-exit.txt"
+          cat "$log"
+          test "$result" -eq 0
+          echo "Before-fix control: corpus build succeeded with exit 0." >> "$GITHUB_STEP_SUMMARY"
+      - name: Require the readiness regression to fail for the old guard
+        run: |
+          set -euo pipefail
+          log="$RUNNER_TEMP/net-reset-before-fix/test.log"
+          test_name=programs::network::readiness_does_not_retry_a_timeout_after_a_completed_handshake
+          # Accept only the intended test failure, never a build error, missing
+          # test, different panic, successful run or command deadline stop.
+          if perl .github/run-check.pl compiler/test-corpus \
+            cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --test corpus \
+            "$test_name" -- --exact --nocapture > "$log" 2>&1; then
+            result=0
+          else
+            result=$?
+          fi
+          printf '%s\n' "$result" > "$RUNNER_TEMP/net-reset-before-fix/test-exit.txt"
+          cat "$log"
+          test "$result" -eq 101
+          grep -Fxq 'running 1 test' "$log"
+          grep -Fxq "test $test_name ... FAILED" "$log"
+          grep -Eq '^test result: FAILED\. 0 passed; 1 failed; 0 ignored; 0 measured; [0-9]+ filtered out; finished in [0-9.]+s$' "$log"
+          grep -Eq '^a timeout must fail readiness:' "$log"
+          echo "Before-fix control: the single readiness regression failed with the expected panic and exit 101." >> "$GITHUB_STEP_SUMMARY"
+      - name: Hold the negative control to the existing time budgets
+        run: |
+          log="$RUNNER_TEMP/net-reset-before-fix/budget-verdict.log"
+          if perl .github/run-check.pl --budget-verdict "$WHITEFOOT_TIME_BUDGET_RECORD" > "$log" 2>&1; then
+            result=0
+          else
+            result=$?
+          fi
+          cat "$log"
+          exit "$result"
+      - name: Upload before-fix control evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: net-reset-before-fix-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/net-reset-before-fix/
+            ${{ runner.temp }}/time-budget-overruns.txt
+          if-no-files-found: warn
