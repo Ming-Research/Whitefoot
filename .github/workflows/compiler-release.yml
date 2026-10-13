@@ -279,15 +279,16 @@ jobs:
       - name: Pack the specification and the standard library interfaces
         run: |
           set -euo pipefail
-          git ls-files -z spec/kernel-spec.md lib/std/modules.wfg 'lib/std/**/module.wfm' |
-            sort -z |
+          wanted=$(git ls-files spec/kernel-spec.md lib/std/modules.wfg 'lib/std/**/module.wfm' | LC_ALL=C sort)
+          tr '\n' '\0' <<< "$wanted" |
             tar --null --files-from=- --owner=0 --group=0 --numeric-owner --mtime='1970-01-01' \
-              -czf release/whitefoot-language.tar.gz
+              --mode='a+r,u+w,go-w' -cf - |
+            gzip -n -9 > release/whitefoot-language.tar.gz
           listing=$(tar -tzf release/whitefoot-language.tar.gz)
           echo "$listing"
           grep -qx 'spec/kernel-spec.md' <<< "$listing"
           grep -qx 'lib/std/modules.wfg' <<< "$listing"
-          grep -q '/module\.wfm$' <<< "$listing"
+          test "$listing" = "$wanted"
 
       - name: Write the manifest and checksums
         env:
