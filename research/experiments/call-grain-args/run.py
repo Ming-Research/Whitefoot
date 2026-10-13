@@ -339,6 +339,31 @@ def finalize(table, cell, num, den, twin, bound, not_slower):
     return readings, state
 
 
+def one_thread_differences(clones, change_vs_main):
+    """Criterion 5 as the owner ruled it: the change may add no difference
+    between a sequential clone and the sequential build. A function whose clone
+    already differs on main is carried, not judged, when the change leaves that
+    clone byte-identical to main's; otherwise it is new. Returns (new, carried)."""
+    new, carried = [], []
+    for workload, entry in clones["chg"].items():
+        base_pairs = clones["base"][workload]["pairs"]
+        delta = change_vs_main.get(workload, {}).get("pairs", {})
+        for name, verdict in entry["pairs"].items():
+            if verdict == "identical":
+                continue
+            twin = identity.CLONE + name[3:]
+            counterpart = twin if twin in delta else name
+            if base_pairs.get(name, "identical") != "identical" and verdict != "missing" \
+                    and delta.get(counterpart) == "identical":
+                carried.append(f"{workload}/{name} ({verdict} on main and in the change, the change's clone identical to main's)")
+            else:
+                new.append(f"{workload}/{name}: {verdict} in the change, main {base_pairs.get(name, 'absent')}, "
+                           f"change vs main clone {delta.get(counterpart, 'absent')}")
+        if workload == "pair" and entry["pairs"].get("wf_workload") != "identical":
+            new.append(f"pair/wf_workload: required and {entry['pairs'].get('wf_workload', 'absent')}")
+    return new, carried
+
+
 def cmd_summarize(a):
     out = Path(a.out)
     verdict = a.mode == "main"
@@ -455,11 +480,15 @@ def cmd_summarize(a):
                  f"{('PASS' if c4 else 'FAIL') if verdict else '(no verdict) ' + str(c4)}  " +
                  ", ".join(f"{k}={'identical' if v['identical'] else 'DIFFERENT'}" for k, v in llvm.items()))
     clones = ident.get("clones", {})
-    chg_ok = bool(clones) and all(not e["failures"] and e["compared"] > 0 for e in clones["chg"].values())
-    base_ok = bool(clones) and all(not e["failures"] and e["compared"] > 0 for e in clones["base"].values())
-    lines.append(f"C5 the one-thread path (sequential clones) of the change is machine-code identical to the sequential build: "
-                 f"{('PASS' if chg_ok else 'FAIL') if verdict else '(no verdict) ' + str(chg_ok)}; method check on main alone: "
-                 f"{'identical' if base_ok else 'NOT identical (the method or main itself differs)'}; sequential lowering unchanged: {ident.get('seq_lowering_unchanged')}")
+    new, carried = one_thread_differences(clones, ident.get("change_vs_main", {})) if clones else (["no clone comparison"], [])
+    chg_ok = bool(clones) and not new and all(e["compared"] > 0 for e in clones["chg"].values())
+    lines.append(f"C5 the change adds no difference between the one-thread path (sequential clones) and the sequential build: "
+                 f"{('PASS' if chg_ok else 'FAIL') if verdict else '(no verdict) ' + str(chg_ok)}; sequential lowering unchanged: "
+                 f"{ident.get('seq_lowering_unchanged')}")
+    for text in new:
+        lines.append(f"   new: {text}")
+    for text in carried:
+        lines.append(f"   already on main, unchanged by the change (not judged): {text}")
     for w, e in ident.get("change_vs_main", {}).items():
         lines.append(f"   change's object vs main's object, {w}: {e['identical']} symbols identical, "
                      f"{len(e['failures'])} not" + (": " + "; ".join(e["failures"][:6]) if e["failures"] else ""))
@@ -469,8 +498,6 @@ def cmd_summarize(a):
                 lines.append(f"   {label}/{w}: " + "; ".join(e["failures"][:6]))
                 if e.get("first_difference"):
                     lines.append(e["first_difference"])
-    if clones and not base_ok:
-        voids.append("C5 method check: main's own clones are not identical to its sequential build")
     t1 = [table.ci(table.attempts(c)[0], c, ("chg", 1), ("seq", 1)) for c in table.cells() if c.startswith("pair-")]
     if t1:
         lines.append("   companion timing, change W1 / sequential, per pair cell: " + ", ".join(fmt(x) for x in t1))

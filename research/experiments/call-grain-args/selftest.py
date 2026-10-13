@@ -171,6 +171,20 @@ class Normalization(unittest.TestCase):
         self.assertEqual(pairs["wf_workload"], "identical")
         self.assertEqual(identity.compare_objects(a, {})[0]["wf_workload"], "only-base")
 
+    def test_criterion_five_judges_only_new_differences(self):
+        def clones(base_filter, chg_filter, workload="identical"):
+            entry = lambda f: dict(pairs={"wf_filter": f, "wf_workload": workload}, compared=1)
+            return dict(base=dict(pair=entry(base_filter)), chg=dict(pair=entry(chg_filter)))
+        same = dict(pair=dict(pairs={"wf__par_seq_filter": "identical"}))
+        moved = dict(pair=dict(pairs={"wf__par_seq_filter": "different"}))
+        self.assertEqual(run.one_thread_differences(clones("identical", "identical"), same), ([], []))
+        new, carried = run.one_thread_differences(clones("different", "different"), same)
+        self.assertEqual((len(new), len(carried)), (0, 1))
+        self.assertEqual(len(run.one_thread_differences(clones("identical", "different"), same)[0]), 1)
+        self.assertEqual(len(run.one_thread_differences(clones("different", "different"), moved)[0]), 1)
+        self.assertEqual(len(run.one_thread_differences(clones("different", "missing"), same)[0]), 1)
+        self.assertEqual(len(run.one_thread_differences(clones("identical", "identical", "different"), same)[0]), 1)
+
 
 class Program(unittest.TestCase):
     def test_generated_source_has_the_steps_and_the_pair(self):

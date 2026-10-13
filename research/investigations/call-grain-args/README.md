@@ -147,12 +147,17 @@ How each is judged here:
 4. **Kernel code unchanged.** The formal compute kernels' generated code is
    byte-identical between main and the change: the `--par` LLVM of each of the
    five kernels is `cmp`-identical between the two compilers.
-5. **One-thread path unchanged.** The 1-thread path's machine code is identical
-   to the sequential build's: in the change's `--par` object file, every
-   sequential clone (`wf__par_seq_X`, the code a one-worker run executes) has
-   the same normalized disassembly as `wf_X` in the `seq` object, for the pair
-   and the five kernels, and `wf_workload` of the pair is required and
-   compared.
+5. **One-thread path unchanged.** The change adds no difference between the
+   1-thread path and the sequential build: in the change's `--par` object file,
+   every sequential clone (`wf__par_seq_X`, the code a one-worker run executes)
+   whose counterpart on main has the same normalized disassembly as `wf_X` in
+   the `seq` object has it in the change too, for the pair and the five
+   kernels, and `wf_workload` of the pair is required and identical. A clone
+   that already differs on main is reported and not judged when the change's
+   clone is byte-identical to main's; if the change alters it, it counts as a
+   new difference. The owner chose this reading on 2026-10-13 after the smoke
+   run found fir's `wf_filter` clone already differing on main, which the
+   change does not cause (backlog item par-split-clone-identity).
 6. **Snowghost.** Snowghost's report no longer omits the interning calls and
    its style output is byte-identical. External: verified by Snowghost on its
    side; this experiment does not decide it.
@@ -176,8 +181,8 @@ How each is judged here:
   change's emission for that program.
 - **R-C4.** Criterion 4 fails: the change alters a formal kernel; rejected until
   the difference is explained.
-- **R-C5.** Criterion 5 fails while the method check on main alone passes: the
-  change alters the one-worker path; rejected.
+- **R-C5.** Criterion 5 fails: the change adds a difference to the one-worker
+  path; rejected.
 
 ## Void rules
 
@@ -201,9 +206,6 @@ Every verdict is void, and is printed `VERDICT: VOID`, when any of these holds
 - P10 the identity method does not find the pair's overlapped `wf_workload`
   different from the sequential one, in either the base or the change object
   (the criterion 5 comparison could pass vacuously);
-- the method check on main alone: if main's own sequential clones are not
-  identical to its sequential build, criterion 5 is void (the method, not the
-  change, differs);
 - a cell whose twin spread exceeds 0.03 (that cell only).
 
 Also: an image or oracle failure, a worker-identity mismatch or a result mismatch
@@ -241,7 +243,8 @@ Not run yet.
   estimate Snowghost's figure was derived with; it is not the change's own
   estimate of the callee.
 - The identity of criterion 5 compares object files; inlining can differ
-  between the two modules for reasons other than the change, and the method
-  check on main alone separates that.
+  between the two modules for reasons other than the change; a clone that
+  already differs on main and is untouched by the change is reported, not
+  judged.
 - Criterion 2 and 3 are judged on this machine's P-cores with the pinning
   above; they say nothing about other hosts or the hybrid scheduler.
