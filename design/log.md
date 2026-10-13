@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 the owner's agent instructions own the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-13 Documentation examples are complete programs whose stated outcome the gate checks
+
+Nodes: compiler/verification/documentation-examples
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve these three decisions and three refusal reasons; I write the design-tree change log, and #463 merges after the packaging item (#435), because the getting-started guide's install steps describe the bundled-clang package" (translated), on the card "approve the node 'documentation examples are checked by the gate' that Whitefoot#463 (head commit 0e9baae15) adds to the design tree?" (translated), whose background listed the three decisions (which programs are checked and how they are marked, where the check lives, rejection text compared byte for byte) and the three refused alternatives with their reasons. The revision merged here differs from 0e9baae15 only by the merge of main.
+
+Summary: A claim in user documentation must stay bound to the program it describes. Complete programs in `docs/guide/` and both READMEs sit in ```whitefoot blocks whose info string states the outcome (accepted as `--check` does, `run exit=N`, or `reject RULE`), matching the annotation Whitefoot-kit already uses; a Rust test in the corpus integration target checks every block through the same entry `--check` uses and the existing build-and-run support, reporting every failing block; and an optional ```whitefoot-output block after a rejection is compared byte for byte, because the rejection text is part of the example and changes only when its author changes it. Refused: a Python extractor (the compiler is checked through cargo test), treating unmarked blocks as programs (articles hold fragments and output), and checking every file under `docs/` with the current compiler (15 article and essay programs disagree with it by the articles' own convention of naming their compiler revision; recorded on the first-release articles item).
+
 ## 2026-10-13 The range walk checks every object partition of possibly aliased atomic targets
 
 Nodes: compiler/range-judgment
