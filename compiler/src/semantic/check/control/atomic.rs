@@ -1,18 +1,12 @@
 //! Atomic targets and their ordinary reference, effect and scope judgments [SHARE-2].
 use super::super::super::model::{
-    BindingId, CheckedAffineExpressionKind, CheckedAffineRelation, CheckedArrayRoot,
-    CheckedCallSeparation, CheckedCallSeparationPositions, CheckedExpression, CheckedLoopId,
-    CheckedLoopInvariant, CheckedMode, CheckedNominalKind, CheckedProofMultiplicity,
-    CheckedProofUseSource, CheckedRangeSource, CheckedSeparationOccasion, CheckedSetTarget,
-    CheckedShared, CheckedStatePath, CheckedStatement, CheckedTarget, CheckedTargetKind, CheckedType,
-    IntegerType, expression_children,
+    BindingId, CheckedCallSeparation, CheckedCallSeparationPositions, CheckedExpression, CheckedMode,
+    CheckedNominalKind, CheckedSeparationOccasion, CheckedShared, CheckedStatePath, CheckedStatement,
+    CheckedTarget, CheckedTargetKind, CheckedType, IntegerType, expression_children,
 };
 use super::super::super::places::{
     CapturedTerm, CapturedValue, PlaceRoot, PlaceStep, ResolvedPlace, UnprovedSeparations,
     places_overlap,
-};
-use super::super::super::range_facts::{
-    CheckedRangeClause, CheckedRangeFacts, CheckedRangeRoot, CheckedRangeTerm,
 };
 use super::super::expressions::calls::user::WAIT1_DECLARE_THE_CALLER_WAITING;
 use super::super::references::{ReferenceInfo, ReferenceKind};
@@ -368,15 +362,14 @@ impl Checker<'_, '_> {
         let checked = self.check_atomic_parts(context, node, &mut block_bindings, counters, scope);
         self.body.atomic_depth -= 1;
         let (mut guard, mut checked) = checked?;
-        for ((target, place), aliases) in targets.iter_mut().zip(&places).zip(&header_aliases) {
-            if !guard
-                .as_ref()
-                .is_some_and(|g| expression_mentions(&g.0, target.binding))
-                && !checked
-                    .statements
-                    .iter()
-                    .any(|s| statement_mentions(s, target.binding, &self.body.range_facts))
-            {
+        let named_bindings = self.atomic_part_mentions(node)?;
+        for (((target, place), aliases), declaration) in targets
+            .iter_mut()
+            .zip(&places)
+            .zip(&header_aliases)
+            .zip(&declarations)
+        {
+            if !named_bindings.contains(&declaration.id()) {
                 return self.types.declarations.issue_node(
                     SemanticRule::Share2,
                     *place,
@@ -719,6 +712,26 @@ impl Checker<'_, '_> {
                 .collect(),
         ))
     }
+    /// Source mentions survive proof erasure and inactive generic range clauses.
+    /// Only the guard and block count; the target declarations and places do not.
+    fn atomic_part_mentions(&self, node: NodeId) -> Result<HashSet<DeclarationId>, CheckStop> {
+        let declarations = &self.types.declarations;
+        let parts = declarations
+            .tree
+            .children_with(node, Production::Expr)?
+            .into_iter()
+            .chain(declarations.tree.children_with(node, Production::Stmt)?);
+        let mut named = HashSet::new();
+        for part in parts {
+            let prefix = declarations.tree.path(part)?.components();
+            for usage in declarations.resolved.lexical_uses_under(prefix) {
+                if let ResolvedTarget::Source { declaration, .. } = usage.target() {
+                    named.insert(declaration);
+                }
+            }
+        }
+        Ok(named)
+    }
     /// The guard and the block, checked with the binders in scope and inside
     /// the atomic statement, so a waiting call or another atomic statement in
     /// either is refused [SHARE-2].
@@ -895,200 +908,6 @@ impl Checker<'_, '_> {
         }
         Ok(false)
     }
-}
-
-/// Whether a checked statement, or a block it holds, names `binding`.
-fn statement_mentions(
-    statement: &CheckedStatement,
-    binding: BindingId,
-    range_facts: &CheckedRangeFacts,
-) -> bool {
-    let expression = |value: &CheckedExpression| expression_mentions(value, binding);
-    let block = |statements: &[CheckedStatement]| {
-        statements
-            .iter()
-            .any(|statement| statement_mentions(statement, binding, range_facts))
-    };
-    match statement {
-        CheckedStatement::Let { value, .. }
-        | CheckedStatement::DestructuringLet { value, .. }
-        | CheckedStatement::Evaluate { value, .. }
-        | CheckedStatement::DropExpression { value, .. }
-        | CheckedStatement::Return { value, .. }
-        | CheckedStatement::Give { value, .. } => expression(value),
-        CheckedStatement::PropagateLet { scrutinee, .. } => expression(scrutinee),
-        CheckedStatement::Set { target, value, .. } => {
-            let target = match target {
-                CheckedSetTarget::Place(place) => place.binding == binding,
-                CheckedSetTarget::RangeIndex(place) => {
-                    place.root.binding == binding || place.offsets().any(expression)
-                }
-                CheckedSetTarget::Storage(root) => {
-                    root.binding() == Some(binding) || root.offsets().any(expression)
-                }
-            };
-            target || expression(value)
-        }
-        CheckedStatement::Match {
-            scrutinee, arms, ..
-        }
-        | CheckedStatement::ValueMatchLet {
-            scrutinee, arms, ..
-        } => expression(scrutinee) || arms.iter().any(|arm| block(&arm.body)),
-        CheckedStatement::Loop {
-            id,
-            invariants,
-            body,
-            ..
-        } => loop_header_mentions(*id, invariants, binding, range_facts) || block(body),
-        CheckedStatement::CountedRange {
-            id,
-            lower,
-            upper,
-            invariants,
-            body,
-            ..
-        } => {
-            expression(lower)
-                || expression(upper)
-                || loop_header_mentions(*id, invariants, binding, range_facts)
-                || block(body)
-        }
-        CheckedStatement::Atomic {
-            targets,
-            guard,
-            body,
-            ..
-        } => {
-            targets
-                .iter()
-                .flat_map(CheckedTarget::expressions)
-                .any(expression)
-                || guard.as_deref().is_some_and(expression)
-                || block(body)
-        }
-        CheckedStatement::Proof(proof) => {
-            affine_relation_mentions(&proof.target, binding)
-                || proof.uses.iter().any(|written_use| {
-                    matches!(
-                        written_use.multiplicity,
-                        CheckedProofMultiplicity::Value { binding: named, .. } if named == binding
-                    ) || match &written_use.source {
-                        CheckedProofUseSource::Named(_) => false,
-                        CheckedProofUseSource::Relation(relation) => {
-                            affine_relation_mentions(relation, binding)
-                        }
-                        CheckedProofUseSource::Range(instance) => instance
-                            .arguments
-                            .iter()
-                            .any(|term| range_term_mentions(term, binding)),
-                    }
-                })
-        }
-        CheckedStatement::Break { .. } | CheckedStatement::Continue { .. } => false,
-    }
-}
-
-fn loop_header_mentions(
-    id: CheckedLoopId,
-    invariants: &[CheckedLoopInvariant],
-    binding: BindingId,
-    range_facts: &CheckedRangeFacts,
-) -> bool {
-    invariants
-        .iter()
-        .any(|invariant| affine_relation_mentions(&invariant.relation, binding))
-        || range_facts.loops.get(&id).is_some_and(|header| {
-            header
-                .invariants
-                .iter()
-                .any(|clause| range_clause_mentions(clause, binding))
-                || header.apart.as_ref().is_some_and(|apart| {
-                    apart
-                        .uses
-                        .iter()
-                        .flat_map(|instance| &instance.arguments)
-                        .any(|term| range_term_mentions(term, binding))
-                })
-        })
-}
-
-fn affine_relation_mentions(relation: &CheckedAffineRelation, binding: BindingId) -> bool {
-    [&relation.left, &relation.right]
-        .into_iter()
-        .flat_map(|side| side.postorder())
-        .any(|expression| match &expression.kind {
-            CheckedAffineExpressionKind::Local { binding: named, .. } => *named == binding,
-            CheckedAffineExpressionKind::Measure(expression)
-            | CheckedAffineExpressionKind::Field(expression) => {
-                expression_mentions(expression, binding)
-            }
-            CheckedAffineExpressionKind::Constant { .. }
-            | CheckedAffineExpressionKind::ConstGeneric { .. }
-            | CheckedAffineExpressionKind::Add(..)
-            | CheckedAffineExpressionKind::Subtract(..)
-            | CheckedAffineExpressionKind::MultiplyByConstant { .. } => false,
-        })
-}
-
-fn range_clause_mentions(clause: &CheckedRangeClause, binding: BindingId) -> bool {
-    clause
-        .binders
-        .iter()
-        .flat_map(|binder| [&binder.start, &binder.end])
-        .chain(
-            clause
-                .relations()
-                .flat_map(|relation| [&relation.left, &relation.right]),
-        )
-        .chain(&clause.contract_reads)
-        .any(|term| range_term_mentions(term, binding))
-}
-
-fn range_term_mentions(term: &CheckedRangeTerm, binding: BindingId) -> bool {
-    let mut values = Vec::new();
-    term.collect_values(&mut values);
-    let mut places = Vec::new();
-    term.collect_places(&mut places);
-    values
-        .into_iter()
-        .chain(places.into_iter().map(|place| place.root))
-        .any(|root| matches!(root, CheckedRangeRoot::Binding(named) if named == binding))
-}
-
-/// Whether a checked expression names `binding` as a place's root or as a
-/// value.
-fn expression_mentions(expression: &CheckedExpression, binding: BindingId) -> bool {
-    let names = match expression {
-        CheckedExpression::Binding { binding: named, .. }
-        | CheckedExpression::DerefAddressed { binding: named, .. }
-        | CheckedExpression::Project { binding: named, .. }
-        | CheckedExpression::BoxTake { binding: named, .. } => *named == binding,
-        CheckedExpression::BorrowAddressed { root, .. }
-        | CheckedExpression::ContainerMeasure { root, .. }
-        | CheckedExpression::ReadStorage { root, .. } => root.binding() == Some(binding),
-        CheckedExpression::BorrowSegment { root, .. } => root.binding() == Some(binding),
-        CheckedExpression::ArrayMeasure { root, .. }
-        | CheckedExpression::ArrayIndex { root, .. } => {
-            matches!(root, CheckedArrayRoot::Binding { binding: named, .. } if *named == binding)
-        }
-        CheckedExpression::BufferMeasure { root, .. }
-        | CheckedExpression::BufferIndex { root, .. } => root.binding == binding,
-        CheckedExpression::RangeMeasure { root, .. } => root.binding == binding,
-        CheckedExpression::RangeElementMeasure { place, .. }
-        | CheckedExpression::RangeIndex { place, .. }
-        | CheckedExpression::BorrowRangeIndex { place, .. } => place.root.binding == binding,
-        CheckedExpression::RangeOf { source, .. } => match source {
-            CheckedRangeSource::Storage(root) => root.binding() == Some(binding),
-            CheckedRangeSource::Range(root) => root.binding == binding,
-            CheckedRangeSource::Element(place) => place.root.binding == binding,
-        },
-        _ => false,
-    };
-    names
-        || expression_children(expression)
-            .into_iter()
-            .any(|child| expression_mentions(child, binding))
 }
 
 fn targets_alias_declarations(
