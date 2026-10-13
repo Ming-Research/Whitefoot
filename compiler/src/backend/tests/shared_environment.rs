@@ -197,11 +197,15 @@ fn main() -> status: std::process::ExitStatus pure {
 "#;
     let llvm = compile(source);
     assert!(!llvm.contains("@wf__env_"), "{llvm}");
-    // Outside the environment form no call is kept out of line.
+    // Outside the environment form no call of the group is kept out of
+    // line. (The host entry's own call of the program body is `noinline`
+    // in every module and is no call of the group.)
     assert!(
-        !llvm
-            .lines()
-            .any(|line| line.contains(" call ") && line.ends_with(" noinline")),
+        !llvm.lines().any(|line| {
+            line.contains(" call ")
+                && (line.contains(" @wf_ping(") || line.contains(" @wf_pong("))
+                && line.ends_with(" noinline")
+        }),
         "{llvm}"
     );
     assert!(emitted_function(&llvm, "ping").contains("call i64 @wf_pong("));
@@ -329,10 +333,19 @@ fn only_the_call_that_closes_the_cycle_is_kept_out_of_line() {
         );
     }
     // Calls from outside the group, and the entries' calls of their
-    // internal forms, stay inlinable.
+    // internal forms, stay inlinable: of every call naming a member, public
+    // or internal, only the back edge is marked. (The host entry's own call
+    // of the program body is `noinline` in every module and names no member.)
     let marked = llvm
         .lines()
-        .filter(|line| line.contains(" call ") && line.ends_with(" noinline"))
+        .filter(|line| {
+            line.contains(" call ")
+                && ["probe", "compound", "step"].iter().any(|name| {
+                    line.contains(&format!(" @wf_{name}("))
+                        || line.contains(&format!(" @wf__env_{name}("))
+                })
+                && line.ends_with(" noinline")
+        })
         .count();
     assert_eq!(marked, 1, "{llvm}");
 }
@@ -365,12 +378,53 @@ fn forwarded_parameters_take_the_same_position_in_every_internal_form() {
     );
     // A call inside the group passes its arguments in the callee's order:
     // step hands compound its own id and depth right after the record, and
-    // its span after them.
+    // its span after them. The body may carry a formal through block
+    // parameters, so each operand is traced back through phis whose every
+    // incoming value is one operand.
     let step = emitted_function(&llvm, "_env_step");
     let calls = calls_to(step, "wf__env_compound");
     assert_eq!(calls.len(), 1, "{step}");
+    let arguments = call_operands(calls[0]);
+    assert_eq!(arguments.len(), 4, "{step}");
+    assert_eq!(arguments[0], "%wf.env", "{step}");
+    assert_eq!(traced(step, arguments[1]), "%v6", "{step}");
+    assert_eq!(traced(step, arguments[2]), "%v7", "{step}");
     assert!(
-        calls[0].contains("(ptr %wf.env, i64 %v6, i64 %v7, i64 "),
+        !["%v4", "%v5", "%v6", "%v7"].contains(&traced(step, arguments[3])),
         "{step}"
     );
+}
+
+/// The operand names one call line passes, without their types.
+fn call_operands(line: &str) -> Vec<&str> {
+    let start = line.find('(').expect("a call has arguments") + 1;
+    let end = line.rfind(')').expect("a call's arguments close");
+    line[start..end]
+        .split(", ")
+        .map(|argument| argument.rsplit(' ').next().expect("an operand"))
+        .collect()
+}
+
+/// The value `name` stands for in `function`, followed back through phis
+/// whose every incoming value is the same operand.
+fn traced<'function>(function: &'function str, name: &'function str) -> &'function str {
+    let mut name = name;
+    loop {
+        let definition = format!("  {name} = phi ");
+        let Some(line) = function.lines().find(|line| line.starts_with(&definition)) else {
+            return name;
+        };
+        let incoming: Vec<&str> = line
+            .split('[')
+            .skip(1)
+            .filter_map(|edge| edge.trim().split(',').next())
+            .map(str::trim)
+            .collect();
+        match incoming.as_slice() {
+            [first, rest @ ..] if *first != name && rest.iter().all(|other| other == first) => {
+                name = *first;
+            }
+            _ => return name,
+        }
+    }
 }
