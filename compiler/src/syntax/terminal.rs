@@ -226,6 +226,8 @@ pub enum FixedTerminal {
     Musttail,
     /// `spawn`.
     Spawn,
+    /// `unchanged`.
+    Unchanged,
     /// `.`.
     Dot,
     /// `^`.
@@ -241,7 +243,7 @@ pub enum FixedTerminal {
 }
 
 /// Every fixed raw-token predicate in the active specification, in first occurrence order.
-pub const ALL_FIXED_TERMINALS: [FixedTerminal; 108] = [
+pub const ALL_FIXED_TERMINALS: [FixedTerminal; 109] = [
     FixedTerminal::Public,
     FixedTerminal::Alias,
     FixedTerminal::Equal,
@@ -344,6 +346,7 @@ pub const ALL_FIXED_TERMINALS: [FixedTerminal; 108] = [
     FixedTerminal::GreaterEqual,
     FixedTerminal::Musttail,
     FixedTerminal::Spawn,
+    FixedTerminal::Unchanged,
     FixedTerminal::Dot,
     FixedTerminal::Caret,
     FixedTerminal::Forall,
@@ -459,6 +462,7 @@ impl FixedTerminal {
             Self::LessEqual => "<=",
             Self::GreaterEqual => ">=",
             Self::Caret => "^",
+            Self::Unchanged => "unchanged",
             Self::Forall => "forall",
             Self::Package => "package",
             Self::Entry => "entry",
@@ -891,13 +895,14 @@ mod tests {
         assert_eq!(FixedTerminal::Times as u8, 67);
         assert_eq!(FixedTerminal::Musttail as u8, 100);
         assert_eq!(FixedTerminal::PercentChecked as u8, 95);
-        assert_eq!(FixedTerminal::Writes as u8, 107);
+        assert_eq!(FixedTerminal::Writes as u8, 108);
         assert_eq!(FixedTerminal::Waits as u8, 23);
         assert_eq!(FixedTerminal::Spawn as u8, 101);
         assert_eq!(FixedTerminal::Apart as u8, 77);
-        assert_eq!(FixedTerminal::Forall as u8, 104);
-        assert_eq!(TerminalPredicate::Identifier.index(), 108);
-        assert_eq!(TerminalPredicate::Digits.index(), 114);
+        assert_eq!(FixedTerminal::Unchanged as u8, 102);
+        assert_eq!(FixedTerminal::Forall as u8, 105);
+        assert_eq!(TerminalPredicate::Identifier.index(), 109);
+        assert_eq!(TerminalPredicate::Digits.index(), 115);
     }
 
     /// The inventory holds every predicate, once.

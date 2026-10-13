@@ -117,6 +117,7 @@ pub fn fixed_terminal(spelling: &str) -> Pred {
         ("atomic", "Atomic"),
         ("apart", "Apart"),
         ("forall", "Forall"),
+        ("unchanged", "Unchanged"),
         ("match", "Match"),
         ("=>", "FatArrow"),
         ("move", "Move"),

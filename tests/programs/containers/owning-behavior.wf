@@ -727,10 +727,10 @@ fn map_contract(seed: u64, scenario: u64, budget: u64) -> result: u64 pure {
   }
   if scenario == 2_u64 {
     for (round in 0_u64..14_u64) {
-      let unchanged = state_hash(state: &migration);
+      let preserved_value = state_hash(state: &migration);
       let (idle_work, idle_moved) = advance(source: &migration.source, target: &migration.target, progress: &migration.progress, budget: 0_u64);
       let after_idle = state_hash(state: &migration);
-      if unchanged != after_idle {
+      if preserved_value != after_idle {
         return 17_u64;
       }
       if idle_work != 0_u64 {
@@ -754,10 +754,10 @@ fn map_contract(seed: u64, scenario: u64, budget: u64) -> result: u64 pure {
       return 21_u64;
     }
     if scenario == 3_u64 {
-      let unchanged = state_hash(state: &migration);
+      let preserved_value = state_hash(state: &migration);
       let (retry_work, retry_moved) = advance(source: &migration.source, target: &migration.target, progress: &migration.progress, budget: 99_u64);
       let after_retry = state_hash(state: &migration);
-      if unchanged != after_retry {
+      if preserved_value != after_retry {
         return 22_u64;
       }
       if retry_work != 0_u64 {

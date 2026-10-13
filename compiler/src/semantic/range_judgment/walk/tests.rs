@@ -3,6 +3,85 @@
 use super::*;
 use crate::semantic::tests::with_semantics;
 
+/// [RANGE-2] Replacing an Array with its copied value must change element
+/// identity even when the copied container was already materialized.
+#[test]
+fn replacing_a_registered_container_with_its_copy_changes_identity_only() {
+    let source = br#"fn probe(cell: &Array<u64, 1>) -> result: unit writes(cell) {
+  let saved = cell^;
+  set cell^ = saved;
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    with_semantics(source, |outcome| {
+        let crate::SemanticOutcome::Complete(program) = outcome else {
+            panic!("the ordinary whole-array copy must check: {outcome:?}");
+        };
+        let data = &program.data;
+        let functions: Vec<_> = data.functions.iter().collect();
+        let probe = data
+            .executable_functions()
+            .find(|function| function.name == "probe")
+            .unwrap();
+        let prelude = BTreeSet::new();
+        let mut walker = Walker::new(
+            &functions,
+            &data.nominals,
+            &data.elements,
+            probe,
+            Vec::new(),
+            &data.constants,
+            JudgmentScope::Concrete,
+            &prelude,
+        );
+        let parameter = probe.parameters[0].binding;
+        let location = Location::root(Origin::Parameter(parameter));
+        let mut state = State::default();
+        state
+            .values
+            .insert(parameter, Value::Ref(View::Place(location.clone())));
+        let original = state
+            .container(&mut walker.world, location.clone(), 1)
+            .unwrap();
+        let entry = state.version(&mut walker.world, original);
+        for statement in &probe.body.as_ref().unwrap()[..2] {
+            state = walker.statement(state, statement).unwrap();
+        }
+        let replacement = state.container(&mut walker.world, location, 1).unwrap();
+        let exit = state.version(&mut walker.world, replacement);
+        assert_ne!(entry, exit, "a copied replacement has a distinct version");
+        for (projection, expected) in [
+            (Vec::new(), Verdict::Refuted),
+            (vec![CheckedRangeProjection::WholeElement], Verdict::Open),
+        ] {
+            let before = walker.world.read(
+                entry,
+                vec![Linear::constant(0)],
+                projection.clone(),
+                Some(IntegerType::U64),
+            );
+            let after = walker.world.read(
+                exit,
+                vec![Linear::constant(0)],
+                projection,
+                Some(IntegerType::U64),
+            );
+            let query = Query {
+                units: vec![Literal::new(before, Relation::NotEqual, after)],
+                ..Query::default()
+            };
+            assert_eq!(
+                facts::judge(&mut walker.world, &[], &[], &[], query),
+                Ok(expected)
+            );
+        }
+    });
+}
+
 #[test]
 fn boxed_affine_header_uses_the_container_measure_and_its_generation() {
     // No modified index or range-derived bound is needed here: the source
@@ -184,11 +263,7 @@ fn main() -> status: std::process::ExitStatus pure {
             if index == 0 {
                 assert_ne!(before, after, "writing the field creates a new image");
                 let mut units = branch.conds;
-                units.push(Literal::new(
-                    after,
-                    Relation::NotEqual,
-                    Linear::constant(1),
-                ));
+                units.push(Literal::new(after, Relation::NotEqual, Linear::constant(1)));
                 assert_eq!(
                     facts::judge(
                         &mut walker.world,
