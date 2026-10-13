@@ -181,11 +181,12 @@ impl<'unit> Checker<'_, 'unit> {
             .map(|variant| variant.name.clone())
             .collect::<Vec<_>>();
         if !missing_variants.is_empty() {
-            return self.types.declarations.issue_node(
-                SemanticRule::Err2,
+            self.record_non_exhaustive_match(
+                context.function.id,
                 node,
-                SemanticIssueKind::NonExhaustiveMatch { missing_variants },
-            );
+                scrutinee.expression.ty(),
+                missing_variants,
+            )?;
         }
         if let Some(arm) = duplicate_arm {
             return self

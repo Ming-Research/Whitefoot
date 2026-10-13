@@ -525,6 +525,17 @@ impl SemanticLocation {
     }
 }
 
+/// One source match that omits declared enum variants [ERR-2].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NonExhaustiveMatchSite {
+    /// The canonical match node and its complete source extent.
+    pub location: SemanticLocation,
+    /// The enum's source name, rather than a backend instance identity.
+    pub enum_name: String,
+    /// Declared variants with no written arm, in declaration order.
+    pub missing_variants: Vec<String>,
+}
+
 /// One non-discharged static source obligation disposition [ENT-6].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StaticObligationDisposition {
@@ -1400,6 +1411,9 @@ pub enum SemanticIssueKind {
     NonExhaustiveMatch {
         /// Declared variants with no arm, in declaration order.
         missing_variants: Vec<String>,
+        /// Every recorded site in traversal order, including the primary
+        /// site, with each canonical source node listed once across instances.
+        other_sites: Vec<NonExhaustiveMatchSite>,
     },
     /// A propagation operand or enclosing result has the wrong Result shape.
     InvalidPropagation,

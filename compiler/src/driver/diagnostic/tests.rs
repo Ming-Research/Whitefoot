@@ -8,6 +8,8 @@
 use super::{DiagnosticFormat, render_driver_failure};
 use crate::{CompilationFailure, CompilerLimits, SourceInput, check};
 
+mod match_sites;
+
 /// The failure one source-only compilation must stop with.
 fn stop(name: &str, source: &[u8]) -> CompilationFailure {
     check(&[SourceInput::new(name, source)], CompilerLimits::default())
