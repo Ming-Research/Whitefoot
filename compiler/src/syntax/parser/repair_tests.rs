@@ -276,6 +276,71 @@ fn marked_calls_outside_atom_only_positions_keep_their_derivations() {
 }
 
 #[test]
+fn range_and_slice_endpoints_attribute_calls_to_gram9() {
+    for prefix in ["", "musttail ", "spawn "] {
+        for (before, after) in [
+            (
+                "fn f() -> r: unit pure contract { requires forall each(i in ",
+                "..1_u64): i == i; } { return unit; }",
+            ),
+            (
+                "fn f() -> r: unit pure contract { requires forall each(i in 0_u64..",
+                "): i == i; } { return unit; }",
+            ),
+            (
+                "fn f() -> r: unit pure { let slice = &values[0_u64..",
+                "]; return unit; }",
+            ),
+        ] {
+            let source = format!("{before}{prefix}weigh(){after}");
+            let result = outcome(source.as_bytes(), false);
+            let ParseOutcome::SourceIssue(issue) = result else {
+                panic!("call in atom-only endpoint must reject: {source}: {result:?}");
+            };
+            assert_eq!(issue.rule(), SyntaxRule::Gram9, "{source}");
+            let start = if prefix.is_empty() {
+                "weigh(".to_owned()
+            } else {
+                format!("{prefix}weigh")
+            };
+            assert_eq!(
+                issue_bytes(source.as_bytes(), issue),
+                start.as_bytes(),
+                "{source}"
+            );
+        }
+    }
+}
+
+#[test]
+fn affine_factor_calls_keep_their_derivations_and_callee_attribution() {
+    for prefix in ["", "musttail ", "spawn "] {
+        let source = format!(
+            "fn f() -> r: unit pure contract {{ requires {prefix}weigh() == 0_u64; }} {{ return unit; }}"
+        );
+        assert!(
+            matches!(outcome(source.as_bytes(), false), ParseOutcome::Complete(_)),
+            "{source}"
+        );
+    }
+
+    // These call alternatives are legal grammar starts in affine_factor.
+    // A malformed qualification must reach its callee's expected IDENT,
+    // rather than letting the atom alternative claim the call as GRAM-9.
+    for callee in ["weigh::)", "pkg::)", "std::)"] {
+        let source = format!(
+            "fn f() -> r: unit pure contract {{ requires {callee} == 0_u64; }} {{ return unit; }}"
+        );
+        let result = outcome(source.as_bytes(), false);
+        let ParseOutcome::SourceIssue(issue) = result else {
+            panic!("malformed affine callee must reject: {source}: {result:?}");
+        };
+        assert_eq!(issue.rule(), SyntaxRule::Gram5, "{source}");
+        assert_eq!(issue_bytes(source.as_bytes(), issue), b")", "{source}");
+    }
+}
+
+#[test]
 fn marked_contract_calls_do_not_offer_a_definition_hoist() {
     for marker in ["musttail", "spawn"] {
         for clause in ["define value =", "requires"] {

@@ -384,7 +384,19 @@ Field names are redundant-explicit facts (the TYPE-5 class): checked, never chos
 The name-only-when-two-same-typed-fields alternative is a context-dependent spelling and is rejected [META-2].
 
 [GRAM-9] Flat (three-address) computation.
-Every call argument, construct field value, infix operand, subscript offset, and lower or upper endpoint of a `for_stmt` is an `atom` [GRAM-5]; a `call` or constructor `call` in an atom position does not derive under the grammar and is a hard error citing GRAM-9.
+The atom-only positions are the following production occurrences under [GRAM-4, GRAM-5].
+
+| Production | Atom-only occurrence |
+| --- | --- |
+| `atom_list` | Every list element |
+| `fieldinit` | The value after `":"` |
+| `infix_tail` | The right operand |
+| `psuffix` | The subscript offset or slice lower endpoint |
+| `range_tail` | The slice upper endpoint |
+| `for_binding` | Both endpoints |
+| `range_binder` | Both endpoints |
+
+A `call` or constructor `call` in an atom-only position does not derive under the grammar and is a hard error citing GRAM-9.
 A computed value is forwarded to another operation only by binding it with a preceding `let` (whose mode and type are derived [TYPE-5]) and referencing the binding.
 Nesting and let-splitting are not two spellings of one computation; there is no expression-nesting alternative [FORM-1].
 `borrow_expr` is an `atom`, so references passed as arguments need no binding and [REF-1] is untouched.
@@ -1843,7 +1855,7 @@ Its coordinate is the complete interval from the first IDENT through the second 
 An allowed suffix would already be one maximal OPNAME token, while a field place cannot be called or given targs.
 This bounded diagnostic window may include already recognized tokens, performs no operation-table or name lookup, consumes nothing, and does not enlarge recognition's two-token lookahead.
 2.
-If source-EBNF provenance reaches or would next enter an `atom` occurrence in `atom_list`, `fieldinit`, an `infix` operand, the subscript offset, or either endpoint of a `for_stmt`, and the two actual tokens at the start of that occurrence match a row in the following table, the rejection cites [GRAM-9].
+If source-EBNF provenance reaches or would next enter an atom-only position of [GRAM-9], and the two actual tokens at the start of that occurrence match a row in the following table, the rejection cites [GRAM-9].
 
 | First token predicate | Permitted second token predicates |
 | --- | --- |

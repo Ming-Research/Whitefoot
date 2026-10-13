@@ -10,6 +10,47 @@ use crate::syntax::terminal::{
 
 use super::generated::{DECISIONS, SELECT_ROWS};
 
+#[test]
+fn atom_only_provenance_matches_the_gram9_occurrence_table() {
+    let expected = [
+        (Production::AtomList, 2),
+        (Production::Fieldinit, 1),
+        (Production::InfixTail, 1),
+        (Production::Psuffix, 1),
+        (Production::RangeTail, 1),
+        (Production::ForBinding, 2),
+        (Production::RangeBinder, 2),
+    ];
+    let mut marked = 0;
+    for &production in productions() {
+        let count = expected
+            .iter()
+            .find_map(|&(owner, count)| (owner == production).then_some(count))
+            .unwrap_or(0);
+        let mut atom_references = 0;
+        let mut nodes = vec![production.root()];
+        while let Some(id) = nodes.pop() {
+            let node = grammar_node(id).expect("generated source node");
+            // References are leaves of their owner's source EBNF; following
+            // a production root would count another owner's occurrences.
+            if node.kind() == GrammarNodeKind::Production(Production::Atom) {
+                atom_references += 1;
+                assert_eq!(node.is_atom_only_reference(), count != 0, "{production:?}");
+                marked += usize::from(node.is_atom_only_reference());
+            } else {
+                assert!(!node.is_atom_only_reference(), "{production:?}: {node:?}");
+            }
+            nodes.extend_from_slice(node.children());
+        }
+        if count != 0 {
+            assert_eq!(atom_references, count, "{production:?}");
+        }
+    }
+    // `expr` and `affine_factor` both admit calls as alternatives, so their
+    // atom references contribute none of the ten GRAM-9 occurrences.
+    assert_eq!(marked, 10);
+}
+
 /// An independent linear scan of the provenance rows checks every generated
 /// lookup bucket, including absent predicates and the source-end sentinel.
 #[test]
@@ -192,7 +233,12 @@ fn complete_inventory_is_pinned() {
     // continuation adds package/pkg/std/IDENT after an entry semicolon,
     // four rows each in entry_decl's final choice and module_path's suffix
     // repetition. These graph-only changes add 25 to main's 8,384 rows.
-    assert_eq!(SELECT_ROWS.len(), 8_409);
+    // GRAM-9 leaves affine_factor's atom alternative unmarked. Its five
+    // atom starts now differ from infix_tail's marked starts after each of
+    // six compare_op tokens: 30 rows at compare_op and 30 exit rows at
+    // place's psuffix repeat. Other frontiers either truncate that second
+    // token or carry only affine continuations, adding 60 rows to 8,409.
+    assert_eq!(SELECT_ROWS.len(), 8_469);
     // v0.136's `unchanged` and v0.142's `not` are both fixed terminals.
     assert_eq!(diagnostic_terminal_order().len(), 117);
     assert_eq!(productions()[0], Production::Program);
@@ -668,6 +714,6 @@ fn all_detailed_rows_retain_provenance_and_remain_cross_arm_disjoint() {
     }
     // Count the complete inventory independently by summing each decision's
     // rows, including the explicit interface import arm [FN-3].
-    assert_eq!(total_rows, 8_409);
+    assert_eq!(total_rows, 8_469);
     assert!(saw_atom_only);
 }
