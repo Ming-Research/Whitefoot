@@ -99,6 +99,10 @@ pub(crate) const RECORDS: &[(&str, &str)] = &[
         include_str!("../../lib/std/float_text/decimal.wf"),
     ),
     (
+        "std/float_text/digits.wf",
+        include_str!("../../lib/std/float_text/digits.wf"),
+    ),
+    (
         "std/float_text/read.wf",
         include_str!("../../lib/std/float_text/read.wf"),
     ),

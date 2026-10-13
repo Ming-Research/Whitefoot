@@ -5,13 +5,16 @@ W4, here split into eight files so that one refusal does not hide the next,
 plus w2d, a restated form of w2c, the minimal witnesses w1c, w2e and w2f of
 the gaps E2 found, and w2g and w2h, which vary w2f one change at a time)
 to learn whether the checker accepts the arithmetic that exact decimal
-conversion needs. Every expected value in a witness is computed here with
+conversion needs. Every expected value in those generated witnesses is computed here with
 Python's exact integer arithmetic, from the definition of the operation and
-never from the output of any witness.
+never from the output of any witness. The directly authored W5 witnesses
+record further predicted proof gaps in their doc strings; their small expected
+results are derived by hand. This script inventories them for the same CI
+experiment without generating or rewriting their source.
 
     python3 -I generate.py            # write the witness files beside this script
-    python3 -I generate.py --check    # fail unless the files equal the generator output
-    python3 -I generate.py --expect   # print "name<TAB>accept|reject|open" per witness
+    python3 -I generate.py --check    # compare generated files and require authored files
+    python3 -I generate.py --expect   # print name<TAB>prediction per witness
 
 Standard library only.
 """
@@ -880,13 +883,32 @@ WITNESSES = [
 ]
 
 
+# These semantic witnesses are authored directly; their doc strings state the
+# predicted refusal. Keep them in the experiment's existing CI inventory, but
+# never overwrite them with the historical generated E2 programs.
+HANDWRITTEN_WITNESSES = [
+    ("w5a_normalization_bound", "reject (INV-1, predicted)"),
+    ("w5a_prefix_power_bound", "reject (INV-1, predicted)"),
+    ("w5b_leading_digit", "reject (FN-9, predicted)"),
+    ("w5b_selected_positive_table", "reject (FN-9, predicted)"),
+    ("w5c_shift_exhaustion", "reject (INV-1, predicted)"),
+]
+
+
 def main(argv):
     mode = argv[1] if len(argv) > 1 else "write"
     if mode == "--expect":
         for name, _, expected in WITNESSES:
             print(f"{name}\t{expected}")
+        for name, expected in HANDWRITTEN_WITNESSES:
+            print(f"{name}\t{expected}")
         return 0
     status = 0
+    if mode == "--check":
+        for name, _ in HANDWRITTEN_WITNESSES:
+            if not os.path.isfile(os.path.join(HERE, name + ".wf")):
+                print(f"{name}.wf is missing", file=sys.stderr)
+                status = 1
     for name, build, _ in WITNESSES:
         path = os.path.join(HERE, name + ".wf")
         text = build()

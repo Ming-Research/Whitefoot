@@ -7,6 +7,7 @@ library under test. Standard library only; run with `python3 -I`.
     python3 -I reference.py check N SEED   # compare with Python's own
                                            # correctly rounded repr and %g
     python3 -I reference.py cases          # print the named writer cases
+    python3 -I reference.py selfcheck      # exact rounding landmarks
     python3 -I reference.py generate DIR [SCALE]
                                            # write the request and expected
                                            # reply files of every family
@@ -161,6 +162,10 @@ def check(count, seed):
             if significant_text(d, p) != '%.*g' % (p, d):
                 failures += 1
                 print('significant', p, d.hex())
+        for text in (repr(d), '%.*g' % (17, d)):
+            if read_expected(text) != 'ok ' + hex16(bits(float(text))):
+                failures += 1
+                print('read', text)
     print('inputs', count, 'failures', failures)
     return failures
 
@@ -184,7 +189,8 @@ CASES = [
     ('smallest subnormal', 5e-324), ('largest subnormal', 2.225073858507201e-308),
     ('smallest normal', 2.0 ** -1022), ('largest finite', 1.7976931348623157e308),
     ('2^53 - 1', 2.0 ** 53 - 1), ('2^53', 2.0 ** 53), ('2^53 + 2', 2.0 ** 53 + 2),
-    ('2^62', 2.0 ** 62), ('2^63', 2.0 ** 63), ('1e23', 1e23), ('9.66e21', 9.66e21),
+    ('2^62', 2.0 ** 62), ('2^62 + 1024', 2.0 ** 62 + 1024),
+    ('2^63', 2.0 ** 63), ('1e23', 1e23), ('9.66e21', 9.66e21),
     ('1e-5', 1e-5), ('1e-7', 1e-7), ('123456789012345', 123456789012345.0),
     ('99999999999999.5', 99999999999999.5),
 ]
@@ -215,49 +221,104 @@ def digits_of(match):
     return whole, fraction, exponent
 
 
-def exact_class(text):
-    """'overflow', 'underflow' or 'ok' for a decimal text, from exact
-    rationals: the rounded value is infinite exactly from the midpoint
-    2^1024 - 2^970 up, and zero exactly up to the midpoint 2^-1075 (both
-    ties go to the even candidate)."""
-    whole, fraction, exponent = digits_of(DECIMAL.fullmatch(text))
+def round_binary64(value):
+    """Positive exact rational -> ('kind', unsigned binary64 bits).
+
+    Select the binary binade by exact integer comparisons, quantize at its
+    53-bit spacing (or the subnormal spacing 2^-1074), and round the integer
+    quotient to nearest, ties to even. The 2^1024 candidate becomes infinity.
+    No host floating-point conversion participates in the answer.
+    """
+    numerator, denominator = value.numerator, value.denominator
+    exponent = numerator.bit_length() - denominator.bit_length()
+    if exponent >= 0:
+        if numerator < denominator << exponent:
+            exponent -= 1
+    elif numerator << -exponent < denominator:
+        exponent -= 1
+    spacing = max(exponent - 52, -1074)
+    if spacing < 0:
+        numerator <<= -spacing
+    else:
+        denominator <<= spacing
+    coefficient, remainder = divmod(numerator, denominator)
+    twice = 2 * remainder
+    if twice > denominator or (twice == denominator and coefficient % 2):
+        coefficient += 1
+    if coefficient == 0:
+        return 'underflow', 0
+    if coefficient == 1 << 53:
+        coefficient >>= 1
+        spacing += 1
+    leading = spacing + 52
+    if leading >= 1024:
+        return 'overflow', 0x7ff0000000000000
+    if coefficient < 1 << 52:
+        return 'ok', coefficient
+    return 'ok', ((leading + 1023) << 52) | (coefficient - (1 << 52))
+
+
+def read_result(text):
+    """Decimal syntax -> class and signed bits, entirely from exact integers."""
+    match = DECIMAL.fullmatch(text)
+    if match is None:
+        return 'syntax', None
+    whole, fraction, exponent = digits_of(match)
+    sign = (1 << 63) if match.group(1) == '-' else 0
     significand = int(whole + fraction)
     if significand == 0:
-        return 'ok'
+        return 'ok', sign
     scale = exponent - len(fraction)
     size = len(str(significand)) + scale
     if size - 1 >= 309:
-        return 'overflow'
+        return 'overflow', sign | 0x7ff0000000000000
     if size <= -324:
-        return 'underflow'
+        return 'underflow', sign
     value = F(significand) * F(10) ** scale
-    if value >= F(2) ** 1024 - F(2) ** 970:
-        return 'overflow'
-    if value <= F(2) ** -1075:
-        return 'underflow'
-    return 'ok'
+    kind, pattern = round_binary64(value)
+    return kind, sign | pattern
 
 
 def read_expected(text):
-    """The reply for a request R<text>: the rounded value from Python's
-    correctly rounded float(), the class checked against exact rationals."""
-    match = DECIMAL.fullmatch(text)
-    if match is None:
+    """The reply for R<text>, including the exact ties-even binary64 value."""
+    kind, pattern = read_result(text)
+    if kind == 'syntax':
         return 'syntax'
-    whole, fraction, _ = digits_of(match)
-    value = float(text)
-    if not any(c != '0' for c in whole + fraction):
-        kind = 'ok'
-    elif math.isinf(value):
-        kind = 'overflow'
-    elif value == 0.0:
-        kind = 'underflow'
-    else:
-        kind = 'ok'
-    if kind != exact_class(text):
-        raise SystemExit('the class of %r is %s by float() and %s by exact '
-                         'rationals' % (text[:60], kind, exact_class(text)))
-    return kind + ' ' + hex16(bits(value))
+    return kind + ' ' + hex16(pattern)
+
+
+def selfcheck():
+    """Hand-derived binary64 landmarks protect the read oracle itself."""
+    landmarks = [
+        ('0', 'ok 0000000000000000'),
+        ('-0e99999999999999999999', 'ok 8000000000000000'),
+        ('0.1', 'ok 3fb999999999999a'),
+        ('9007199254740993', 'ok 4340000000000000'),
+        ('9007199254740995', 'ok 4340000000000002'),
+        ('9007199254740993.' + '0' * 1000 + '1', 'ok 4340000000000001'),
+        ('2.4703282292062327e-324', 'underflow 0000000000000000'),
+        ('2.4703282292062328e-324', 'ok 0000000000000001'),
+        ('-1e-400', 'underflow 8000000000000000'),
+        ('1.7976931348623158e308', 'ok 7fefffffffffffff'),
+        ('1.7976931348623159e308', 'overflow 7ff0000000000000'),
+        ('-1e400', 'overflow fff0000000000000'),
+        ('1e+', 'syntax'),
+    ]
+    for text, expected in landmarks:
+        actual = read_expected(text)
+        if actual != expected:
+            raise SystemExit('read oracle landmark %r: expected %s, got %s' %
+                             (text[:60], expected, actual))
+    for pattern in (0, 1, 2, 0x000fffffffffffff, 0x3ff0000000000000,
+                    0x3ff0000000000001, 0x7fefffffffffffff):
+        tie = pattern if pattern % 2 == 0 else pattern + 1
+        kind = 'overflow' if tie == 0x7ff0000000000000 else (
+            'underflow' if tie == 0 else 'ok')
+        actual = read_expected(midpoint_text(pattern))
+        expected = kind + ' ' + hex16(tie)
+        if actual != expected:
+            raise SystemExit('read oracle midpoint %s: expected %s, got %s' %
+                             (hex16(pattern), expected, actual))
 
 
 def nonfinite_text(pattern):
@@ -268,17 +329,28 @@ def nonfinite_text(pattern):
 def shortest_reply(pattern):
     if not finite_pattern(pattern):
         return nonfinite_text(pattern)
-    return shortest_text(double_of(pattern))
+    value = double_of(pattern)
+    digits = (0, 1, 0) if value == 0 else shortest(value)
+    return general(pattern >> 63, *digits, 17) + tuple_suffix(pattern, digits)
 
 
 def significant_reply(pattern, precision):
     if not finite_pattern(pattern):
         return nonfinite_text(pattern)
-    return significant_text(double_of(pattern), precision)
+    value = double_of(pattern)
+    digits = (0, 1, 0) if value == 0 else significant(value, precision)
+    return general(pattern >> 63, *digits, precision) + tuple_suffix(pattern, digits)
+
+
+def tuple_suffix(pattern, digits):
+    """The complete public FloatDigits value, not hidden by layout trimming."""
+    coefficient, count, exponent = digits
+    fields = (pattern >> 63, coefficient, count, exponent & ((1 << 64) - 1))
+    return '|' + ' '.join(hex16(field) for field in fields)
 
 
 def window_reply(pattern, capacity):
-    text = shortest_reply(pattern)
+    text = shortest_text(double_of(pattern))
     if len(text) <= capacity:
         return text
     return 'small %02d' % len(text)
@@ -321,7 +393,9 @@ def named_reads():
         '9007199254740993.' + '0' * 1000 + '1', '9007199254740993.' + '0' * 1000,
         '2.4703282292062327e-324', '2.4703282292062328e-324', '-1e-400',
         '1.7976931348623158e308', '1.7976931348623159e308', '-1e400',
-        '0e99999999999999999999', '-0', '1.', '.5', '+.5e-3',
+        '0e99999999999999999999', '-0e-99999999999999999999',
+        '1e99999999999999999999', '-1e-99999999999999999999',
+        '-0', '1.', '.5', '+.5e-3',
         '0.1000000000000000055511151231257827021181583404541015625',
         '', '.', '+', 'e5', '1e', '1e+', '1.2.3', ' 1', '1 ', '0x10', 'inf',
         'nan', '-', '+-1', '1e5.5', '1.e5', '.e5', '--1', '1e-', '1ee5',
@@ -331,7 +405,20 @@ def named_reads():
         '123456789012345678901234567890e-20', '1e308', '1e309',
         '4.9406564584124654e-324', '2.2250738585072011e-308',
         '2.2250738585072014e-308', '0.' + '0' * 400 + '1e400',
+        '999999999999999e22', '999999999999999e-22',
+        '9999999999999999e22', '999999999999999e23',
+        '100000000000000e-22', '100000000000000e-23',
+        '1' + '0' * 2000 + 'e-2000',
+        '-1' + '0' * 2000 + 'e-2000',
+        '0.' + '0' * 2000 + '1e2001',
+        '-0.' + '0' * 2000 + '1e2001',
     ]
+    for exponent in ('9999999999', '10000000000',
+                     '99999999999999999999', '100000000000000000000',
+                     '100000000000000000001'):
+        for sign in ('', '-'):
+            texts.extend((sign + '1e' + exponent, sign + '1e-' + exponent,
+                          sign + '0e' + exponent, sign + '0e-' + exponent))
     pairs = [read_pair(text) for text in texts]
     for name, d in CASES:
         if math.isinf(d) or d != d:
@@ -346,20 +433,24 @@ def named_reads():
 def named_writes():
     patterns = [bits(d) for _, d in CASES]
     patterns += [0x7ff0000000000000, 0xfff0000000000000, 0x7ff8000000000000,
-                 0xfff8000000000000, bits(-1.5), bits(-1e300), bits(1e300)]
+                 0xfff8000000000000, 0x7ff0000000000001, 0xfff0000000000001,
+                 bits(-1.5), bits(-1e300), bits(1e300)]
     pairs = []
     for pattern in patterns:
         pairs.append(shortest_pair(pattern))
-        if finite_pattern(pattern):
-            pairs.append(significant_pair(pattern, 17))
-            pairs.append(significant_pair(pattern, 14))
+        pairs.append(significant_pair(pattern, 17))
+        pairs.append(significant_pair(pattern, 14))
     for value, precision in [
             (2.5, 1), (0.125, 2), (0.375, 2), (0.5, 1), (1.5, 1), (9.5, 1),
+            (-2.5, 1), (-0.125, 2), (-0.375, 2), (-99.5, 2),
             (99.5, 2), (0.000123456, 3), (123456789.0, 3), (1e-4, 1),
             (1e-5, 1), (0.0001234, 2), (100.0, 1), (100000.0, 6),
             (1000000.0, 6), (1e16, 17), (1e17, 17), (123456789012345678.0, 17),
             (0.0, 1), (-0.0, 17), (5e-324, 1), (1.7976931348623157e308, 1)]:
         pairs.append(significant_pair(bits(value), precision))
+    for precision in range(1, 18):
+        if precision not in (1, 6, 14, 17):
+            pairs.append(significant_pair(bits(1 / 3), precision))
     for value, capacities in [
             (-2.2250738585072014e-308, (0, 1, 23, 24, 25, 60)),
             (1.0, (0, 1, 2, 3, 4)), (0.1, (2, 3, 4)), (-1e23, (4, 5, 6)),
@@ -393,9 +484,11 @@ def sweep_decimal_reads():
 
 def sweep_decimal_writes():
     pairs = []
-    for m in range(1, 100):
+    for m in range(1, 1000):
         for e in range(-30, 31):
-            pattern = bits(float('%de%d' % (m, e)))
+            kind, pattern = read_result('%de%d' % (m, e))
+            if kind != 'ok':
+                raise SystemExit('the decimal grid must contain finite nonzero values')
             pairs.append(shortest_pair(pattern))
             pairs.append(significant_pair(pattern, 14))
     return pairs
@@ -440,7 +533,7 @@ def generate(directory, scale):
     families = [
         ('named_read', named_reads()),
         ('named_write', named_writes()),
-        ('sweep_random', sweep_random(1000 * scale)),
+        ('sweep_random', sweep_random(10000 * scale)),
         ('sweep_decimal_reads', sweep_decimal_reads()),
         ('sweep_decimal_writes', sweep_decimal_writes()),
         ('sweep_powers', sweep_powers()),
@@ -463,6 +556,9 @@ if __name__ == '__main__':
         sys.set_int_max_str_digits(0)
     if sys.argv[1] == 'check':
         sys.exit(1 if check(int(sys.argv[2]), int(sys.argv[3])) else 0)
+    if sys.argv[1] == 'selfcheck':
+        selfcheck()
+        sys.exit(0)
     if sys.argv[1] == 'generate':
         generate(sys.argv[2], int(sys.argv[3]) if len(sys.argv) > 3 else 1)
         sys.exit(0)

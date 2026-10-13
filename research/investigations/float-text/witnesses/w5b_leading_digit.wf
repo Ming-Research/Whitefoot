@@ -1,0 +1,35 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn first_digit(value: u64) -> result: u8 pure contract {
+  requires 1_u64 <= value;
+  requires value <= 99_u64;
+  ensures 1_u8 <= result;
+} {
+  doc "Expected refusal, not run: FN-9 at the final return cannot establish that the last digit emitted by repeated division of a positive integer is nonzero. Two slots suffice for the admitted integers. This is the normalization fact needed before exact decimal shifts.";
+  let reversed = array_filled::<u8, 2>(value: 0_u8);
+  let rest = value;
+  let length = 1_u64;
+  for (
+    position in 0_u64..2_u64,
+    invariant length_floor: 1_u64 <= length,
+    invariant length_ceiling: length <= 2_u64
+  ) {
+    if rest != 0_u64 {
+      let digit = rest % 10_u64;
+      set reversed[position] = cvt::<u64, u8>(digit);
+      set rest = rest / 10_u64;
+      set length = position + 1_u64;
+    }
+  }
+  let last = length - 1_u64;
+  return reversed[last];
+}
+
+fn main() -> status: ExitStatus pure {
+  let digit = first_digit(value: 10_u64);
+  if digit == 1_u8 {
+    return exit_status(code: 0_u8);
+  }
+  return exit_status(code: 1_u8);
+}

@@ -178,11 +178,14 @@ length the text needs, leaving the window unchanged.
 | --- | --- |
 | `i64_write` | The shortest decimal text of the integer, with a leading `-` for a negative value; at most `integer_text_max` bytes. |
 | `digits_write` | Lays out a `FloatDigits` with `precision` (1 to 17) in the `%g` style: fixed notation when the decimal exponent is at least -4 and below the precision, otherwise `d.ddde+XX` with at least two exponent digits; trailing zeros are dropped; at most `float_text_max` bytes. |
-| `f64_read` | Pending. Reads a decimal number that fills the whole window and returns the correctly rounded `f64` (ties to even), `ReadSyntax`, or `ReadOverflow` and `ReadUnderflow` carrying the infinity or zero the value rounds to. |
-| `f64_shortest` | Pending. The fewest decimal digits that read back as the same `f64` (the nearest such digits, then the even one), or `NonFinite` for an infinity or NaN. |
-| `f64_significant` | Pending. The value correctly rounded to a given count (1 to 17) of significant digits. |
+| `f64_read` | Reads a decimal number that fills the whole window and returns the correctly rounded `f64` (ties to even), `ReadSyntax`, or `ReadOverflow` and `ReadUnderflow` carrying the infinity or zero the value rounds to. |
+| `f64_shortest` | The fewest decimal digits that read back as the same `f64` (the nearest such digits, then the even one), or `NonFinite` for an infinity or NaN. |
+| `f64_significant` | The value correctly rounded to a given count (1 to 17) of significant digits. |
 
-The pending operations wait on the decimal right shift and front shift of the
-exact big-decimal arithmetic; the module declares an operation only once it is
-defined. The programs under `tests/programs/float_text` check the module
-against an exact-rational oracle.
+The floating-point bodies are experimental source, with outstanding proof
+obligations and no completed CI validation. The
+[float-text witnesses](../../research/investigations/float-text/witnesses/)
+isolate the predicted proof gaps. The programs under
+`tests/programs/float_text` compare both returned values and formatted text
+against an exact-rational oracle; their full sweep retains 10,000 random bit
+patterns and the complete decimal grid required by the investigation.

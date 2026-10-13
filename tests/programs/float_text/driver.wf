@@ -80,8 +80,8 @@ fn copy_word(out: &[u8], word: &[u8]) -> result: unit reads(word), writes(out) c
 }
 
 fn put_hex(out: &[u8], at: u64, value: u64) -> result: unit writes(out) contract {
-  requires at <= 16_u64;
-  requires 64_u64 <= out^.len;
+  requires at <= 200_u64;
+  requires 256_u64 <= out^.len;
 } {
   doc "Writes the 16 lowercase hexadecimal digits of value, most significant first, from at.";
   for (index in 0_u64..16_u64) {
@@ -102,7 +102,9 @@ fn put_hex(out: &[u8], at: u64, value: u64) -> result: unit writes(out) contract
   return unit;
 }
 
-fn digit_value(byte: u8) -> nibble: u64 pure {
+fn digit_value(byte: u8) -> nibble: u64 pure contract {
+  ensures nibble <= 15_u64;
+} {
   doc "The value of a hexadecimal digit, lowercase letters included, and zero for any other byte.";
   if 48_u8 <= byte {
     if byte <= 57_u8 {
@@ -145,8 +147,8 @@ fn parse_two(line: &[u8]) -> parsed: u64 reads(line) contract {
   let ones_byte = line^[2_u64];
   let tens = digit_value(byte: tens_byte);
   let ones = digit_value(byte: ones_byte);
-  let scaled = tens *wrap 10_u64;
-  let total = scaled +wrap ones;
+  let scaled = tens * 10_u64;
+  let total = scaled + ones;
   return total;
 }
 
@@ -174,16 +176,37 @@ fn digits_line(outcome: Result<FloatDigits, NonFinite>, precision: u64, out: &[u
   requires 1_u64 <= precision;
   requires precision <= 17_u64;
   requires 256_u64 <= out^.len;
-  ensures length <= 100_u64;
+  ensures length <= 200_u64;
 } {
-  doc "Writes the text of digits at the given precision, or the spelling of an infinity or NaN, at the start of the output and returns its length.";
+  doc "Writes the text of digits at the given precision followed by a bar and the sign, digits, count and exponent as four hexadecimal words, or the spelling of an infinity or NaN. The tuple checks every public field even when layout strips its trailing zeros.";
   let produced = 0_u64;
   match outcome {
     Ok(value: digits) => {
       let written = digits_write(digits: digits, precision: precision, destination: out, start: 0_u64, end: 100_u64);
       match written {
         Ok(value: next) => {
-          set produced = next;
+          set out^[next] = 124_u8;
+          let sign_word = if digits.negative {
+            give 1_u64;
+          } else {
+            give 0_u64;
+          }
+          let sign_at = next + 1_u64;
+          put_hex(out: out, at: sign_at, value: sign_word);
+          let first_separator = next + 17_u64;
+          set out^[first_separator] = 32_u8;
+          let coefficient_at = next + 18_u64;
+          put_hex(out: out, at: coefficient_at, value: digits.digits);
+          let second_separator = next + 34_u64;
+          set out^[second_separator] = 32_u8;
+          let count_at = next + 35_u64;
+          put_hex(out: out, at: count_at, value: digits.count);
+          let third_separator = next + 51_u64;
+          set out^[third_separator] = 32_u8;
+          let exponent_at = next + 52_u64;
+          let exponent_word = reinterpret::<i64, u64>(digits.exponent);
+          put_hex(out: out, at: exponent_at, value: exponent_word);
+          set produced = next + 68_u64;
         }
         Err(error: shortage) => {
           copy_word(out: out, word: &word_toosmall[0_u64..8_u64]);
@@ -214,7 +237,7 @@ fn digits_line(outcome: Result<FloatDigits, NonFinite>, precision: u64, out: &[u
       }
     }
   }
-  let bounded = imin(produced, 100_u64);
+  let bounded = imin(produced, 200_u64);
   return bounded;
 }
 
@@ -290,13 +313,11 @@ fn handle_line(line: &[u8], length: u64, out: &[u8]) -> total: u64 reads(line), 
   requires 256_u64 <= out^.len;
   ensures total <= 201_u64;
 } {
-  doc "Answers one request line, whose first byte names the operation: R reads the rest of the line as decimal text and reports ok, syntax, overflow or underflow with the bits of the value; S writes the shortest digits of the binary64 value whose 16 hexadecimal digits follow; G and a two-digit precision before the hexadecimal digits write that many significant digits; W and a two-digit window length write the shortest digits into a window of that length inside a guard. Returns the length of the reply with its final newline.";
+  doc "Answers one request line, whose first byte names the operation: R reads the rest of the line as decimal text and reports ok, syntax, overflow or underflow with the bits of the value; S writes the shortest digits of the binary64 value whose 16 hexadecimal digits follow and reports every FloatDigits field; G and a two-digit precision before the hexadecimal digits write and report that many significant digits; W and a two-digit window length write the shortest digits into a window of that length inside a guard. Returns the length of the reply with its final newline.";
   let opcode = line^[0_u64];
   let reply = 0_u64;
   if opcode == 82_u8 {
-    let view = &line^[1_u64..length];
-    let count = view^.len;
-    let outcome = f64_read(input: view, start: 0_u64, end: count);
+    let outcome = f64_read(input: line, start: 1_u64, end: length);
     match outcome {
       Ok(value: number) => {
         copy_word(out: out, word: &word_ok[0_u64..3_u64]);

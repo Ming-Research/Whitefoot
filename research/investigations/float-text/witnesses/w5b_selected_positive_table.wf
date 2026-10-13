@@ -1,0 +1,21 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+const shifts: Array<u32, 3> =[0_u32, 3_u32, 6_u32];
+
+fn positive_shift(index: u64) -> result: u32 pure contract {
+  requires 1_u64 <= index;
+  requires index < 3_u64;
+  ensures 1_u32 <= result;
+} {
+  doc "Every selected element is positive because the requirements exclude the sole zero at index zero. Predicted refusal: FN-9 at return, since ENT-3.S9 bounds a read by the whole constant array's element extrema rather than the selected index range. This prediction has not been compiled.";
+  return shifts[index];
+}
+
+fn main() -> status: ExitStatus pure {
+  let shift = positive_shift(index: 1_u64);
+  if shift == 3_u32 {
+    return exit_status(code: 0_u8);
+  }
+  return exit_status(code: 1_u8);
+}

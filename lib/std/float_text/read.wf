@@ -10,20 +10,14 @@ struct Significand {
 }
 
 struct Exponent {
-  doc "What the first pass reads of an exponent: whether the text has none or a well-formed one, its value, which saturates once the digits reach 10^14 so that it stays within a billion times any digit count a window can hold, and the index of the first byte it did not consume.";
+  doc "The optional decimal exponent as a sign and two base-ten-billion limbs, capped at 10^20. That cap exceeds every u64 window length, so digit counts can cancel exactly before the net exponent is classified.";
   valid: Bool;
-  value: i64;
+  negative: Bool;
+  high: u64;
+  low: u64;
   next: u64;
-  invariant value_floor(exponent): -1000000000000000_i64 <= exponent.value;
-  invariant value_ceiling(exponent): exponent.value <= 1000000000000000_i64;
-}
-
-enum ReadScan {
-  doc "What the first pass decides: the text is not a decimal text; it denotes a zero of the given sign; it denotes a nonzero value the fast path rounded, sign applied; or it needs the exact path, which reads the significand bytes first to last and scales the result by ten to the exponent.";
-  ScanSyntax();
-  ScanZero(negative: Bool);
-  ScanFast(value: f64);
-  ScanExact(negative: Bool, first: u64, last: u64, exponent: i64);
+  invariant high_ceiling(exponent): exponent.high <= 10000000000_u64;
+  invariant low_ceiling(exponent): exponent.low <= 9999999999_u64;
 }
 
 fn scan_sign(input: &[u8], start: u64, end: u64) -> (negative: Bool, next: u64) reads(input) contract {
@@ -49,6 +43,7 @@ fn scan_sign(input: &[u8], start: u64, end: u64) -> (negative: Bool, next: u64) 
 fn scan_significand(input: &[u8], start: u64, end: u64) -> result: Significand reads(input) contract {
   requires start <= end;
   requires end <= input^.len;
+  ensures start <= result.next;
   ensures result.next <= end;
 } {
   doc "Reads digits with at most one point from start: a digit joins the mantissa while another cannot overflow it and is otherwise counted as dropped; fraction counts the digits kept after the point.";
@@ -110,7 +105,7 @@ fn scan_exponent(input: &[u8], start: u64, end: u64) -> result: Exponent reads(i
   doc "Reads an optional exponent from start: nothing is a valid empty exponent that consumes nothing, and an e or E must be followed by an optional sign and at least one digit.";
   let yes = True();
   let no = False();
-  let absent = Exponent(valid: yes, value: 0_i64, next: start);
+  let absent = Exponent(valid: yes, negative: no, high: 0_u64, low: 0_u64, next: start);
   if start < end {
   } else {
     return absent;
@@ -134,15 +129,19 @@ fn scan_exponent(input: &[u8], start: u64, end: u64) -> result: Exponent reads(i
       set index = index + 1_u64;
     }
   }
-  let magnitude = 0_u64;
+  let high = 0_u64;
+  let low = 0_u64;
   let seen = 0_u64;
   loop @digits (
     invariant inside: index <= end,
     invariant counted: seen <= index,
-    invariant capped: magnitude <= 1000000000000000_u64
+    invariant high_capped: high <= 10000000000_u64,
+    invariant low_capped: low <= 9999999999_u64
   ) {
     if index < end {
     } else {
+      invariant high_done: high <= 10000000000_u64;
+      invariant low_done: low <= 9999999999_u64;
       break @digits;
     }
     let byte = input^[index];
@@ -150,27 +149,35 @@ fn scan_exponent(input: &[u8], start: u64, end: u64) -> result: Exponent reads(i
       if byte <= 57_u8 {
         let digit = byte - 48_u8;
         let wide = cvt::<u8, u64>(digit);
-        if magnitude < 100000000000000_u64 {
-          let scaled = magnitude * 10_u64;
-          set magnitude = scaled + wide;
+        if high < 10000000000_u64 {
+          let scaled = low * 10_u64;
+          let total = scaled + wide;
+          let carry = total / 10000000000_u64;
+          let next_low = total % 10000000000_u64;
+          let high_scaled = high * 10_u64;
+          let next_high = high_scaled + carry;
+          if next_high < 10000000000_u64 {
+            set high = next_high;
+            set low = next_low;
+          } else {
+            set high = 10000000000_u64;
+            set low = 0_u64;
+          }
         }
         set seen = seen + 1_u64;
         set index = index + 1_u64;
         continue @digits;
       }
     }
+    invariant high_finished: high <= 10000000000_u64;
+    invariant low_finished: low <= 9999999999_u64;
     break @digits;
   }
   if 0_u64 < seen {
   } else {
-    return Exponent(valid: no, value: 0_i64, next: index);
+    return Exponent(valid: no, negative: no, high: 0_u64, low: 0_u64, next: index);
   }
-  let signed = cvt::<u64, i64>(magnitude);
-  if negative {
-    let flipped = 0_i64 - signed;
-    return Exponent(valid: yes, value: flipped, next: index);
-  }
-  return Exponent(valid: yes, value: signed, next: index);
+  return Exponent(valid: yes, negative: negative, high: high, low: low, next: index);
 }
 
 fn read_fast(mantissa: u64, exponent: i64) -> value: Option<f64> pure {
@@ -196,50 +203,264 @@ fn read_fast(mantissa: u64, exponent: i64) -> value: Option<f64> pure {
   return None<f64>();
 }
 
-fn read_scan(input: &[u8], start: u64, end: u64) -> result: ReadScan reads(input) contract {
+const read_decimal_shifts: Array<u32, 19> =[0_u32, 3_u32, 6_u32, 9_u32, 13_u32, 16_u32, 19_u32, 23_u32, 26_u32, 29_u32, 33_u32, 36_u32, 39_u32, 43_u32, 46_u32, 49_u32, 53_u32, 56_u32, 59_u32];
+
+fn read_decimal_shift(power: i64) -> result: u32 pure contract {
+  requires 1_i64 <= power;
+  ensures 1_u32 <= result;
+  ensures result <= 60_u32;
+} {
+  doc "Selects a power of two below ten to the given positive power, capped at 60 bits so the schoolbook digit products fit in u64.";
+  if power < 19_i64 {
+    let index = cvt::<i64, u64>(power);
+    return read_decimal_shifts[index];
+  }
+  return 60_u32;
+}
+
+fn decimal_binary_bits(decimal: &Decimal) -> result: u64 writes(decimal) contract {
+  requires 1_u64 <= decimal^.count;
+  requires 1_u8 <= decimal^.digits[0_u64];
+  requires -1000000000000000_i64 <= decimal^.point;
+  requires decimal^.point <= 1000000000000000_i64;
+} {
+  doc "Simple Decimal Conversion: normalize the exact decimal into [1/2,1), tracking its binary exponent, then round its 53-bit significand once with ties to even. A subnormal first shifts to the common exponent -1022. Infinity and zero are returned as magnitude bit patterns for the caller to classify.";
+  if decimal^.point < -324_i64 {
+    return 0_u64;
+  }
+  if 310_i64 <= decimal^.point {
+    return 9218868437227405312_u64;
+  }
+  let exponent = 0_i64;
+  loop @down (
+    invariant exponent_floor: 0_i64 <= exponent,
+    invariant exponent_ceiling: exponent <= 1080_i64,
+    invariant point_floor: -324_i64 <= decimal^.point,
+    invariant point_ceiling: decimal^.point <= 309_i64,
+    invariant nonempty: 1_u64 <= decimal^.count,
+    invariant forall leading_nonzero(k in 0_u64..1_u64): 1_u8 <= decimal^.digits[k]
+  ) {
+    if 0_i64 < decimal^.point {
+    } else {
+      break @down;
+    }
+    let shift = read_decimal_shift(power: decimal^.point);
+    decimal_right(decimal: decimal, shift: shift);
+    let change = cvt::<u32, i64>(shift);
+    set exponent = exponent + change;
+  }
+  loop @up (
+    invariant exponent_floor: -1136_i64 <= exponent,
+    invariant exponent_ceiling: exponent <= 1080_i64,
+    invariant point_floor: -324_i64 <= decimal^.point,
+    invariant point_ceiling: decimal^.point <= 19_i64,
+    invariant nonempty: 1_u64 <= decimal^.count,
+    invariant forall leading_nonzero(k in 0_u64..1_u64): 1_u8 <= decimal^.digits[k]
+  ) {
+    if 0_i64 < decimal^.point {
+      break @up;
+    }
+    let shift = 0_u32;
+    if decimal^.point == 0_i64 {
+      let first = decimal_digit(decimal: decimal, index: 0_u64);
+      if 5_u8 <= first {
+        break @up;
+      }
+      set shift = 1_u32;
+      if first <= 1_u8 {
+        set shift = 2_u32;
+      }
+    } else {
+      let depth = 0_i64 - decimal^.point;
+      set shift = read_decimal_shift(power: depth);
+    }
+    decimal_left(decimal: decimal, shift: shift);
+    let change = cvt::<u32, i64>(shift);
+    set exponent = exponent - change;
+  }
+  set exponent = exponent - 1_i64;
+  loop @subnormal (
+    invariant exponent_floor: -1137_i64 <= exponent,
+    invariant exponent_ceiling: exponent <= 1079_i64,
+    invariant point_floor: -400_i64 <= decimal^.point,
+    invariant point_ceiling: decimal^.point <= 19_i64,
+    invariant nonempty: 1_u64 <= decimal^.count,
+    invariant forall leading_nonzero(k in 0_u64..1_u64): 1_u8 <= decimal^.digits[k]
+  ) {
+    if exponent < -1022_i64 {
+    } else {
+      break @subnormal;
+    }
+    let distance = -1022_i64 - exponent;
+    let capped = imin(distance, 60_i64);
+    let shift = cvt::<i64, u32>(capped);
+    decimal_right(decimal: decimal, shift: shift);
+    set exponent = exponent + capped;
+  }
+  if 1024_i64 <= exponent {
+    return 9218868437227405312_u64;
+  }
+  decimal_left(decimal: decimal, shift: 53_u32);
+  invariant scaled_point: decimal^.point <= 18_i64;
+  let mantissa = decimal_round_integer(decimal: decimal);
+  if 9007199254740992_u64 <= mantissa {
+    decimal_right(decimal: decimal, shift: 1_u32);
+    set mantissa = decimal_round_integer(decimal: decimal);
+    set exponent = exponent + 1_i64;
+    if 1024_i64 <= exponent {
+      return 9218868437227405312_u64;
+    }
+  }
+  let biased = exponent + 1023_i64;
+  if mantissa < 4503599627370496_u64 {
+    set biased = 0_i64;
+  }
+  let field = cvt::<i64, u64>(biased);
+  let placed = ishl(field, 52_u32);
+  let fraction = iand(mantissa, 4503599627370495_u64);
+  return ior(placed, fraction);
+}
+
+fn f64_read(input: &[u8], start: u64, end: u64) -> value: Result<f64, ReadError> reads(input) contract {
   requires start <= end;
   requires end <= input^.len;
 } {
-  doc "Reads the whole window: sign, significand, exponent, and nothing after them. A syntax failure, a zero, and a nonzero value of at most 15 significant digits with a decimal exponent from -22 to 22 are decided here; everything else is left to the exact path.";
+  doc "Reads the complete decimal grammar, takes the single-rounding exact fast path where its operands are representable, and otherwise rounds an 800-digit decimal with a sticky tail. Nonzero magnitudes rounding to infinity or zero preserve their sign in the corresponding range error.";
   let (negative, after_sign) = scan_sign(input: input, start: start, end: end);
   let significand = scan_significand(input: input, start: after_sign, end: end);
   let exponent = scan_exponent(input: input, start: significand.next, end: end);
-  if 0_u64 < significand.digits {
-  } else {
-    return ReadScan::ScanSyntax();
+  if significand.digits == 0_u64 {
+    let error = ReadError::ReadSyntax();
+    return Err<f64, ReadError>(error: error);
   }
   let valid = exponent.valid;
   if valid {
   } else {
-    return ReadScan::ScanSyntax();
+    let error = ReadError::ReadSyntax();
+    return Err<f64, ReadError>(error: error);
   }
   if exponent.next == end {
   } else {
-    return ReadScan::ScanSyntax();
+    let error = ReadError::ReadSyntax();
+    return Err<f64, ReadError>(error: error);
+  }
+  let sign = if negative {
+    give 9223372036854775808_u64;
+  } else {
+    give 0_u64;
   }
   if significand.mantissa == 0_u64 {
-    return ReadScan::ScanZero(negative: negative);
+    let zero = reinterpret::<u64, f64>(sign);
+    return Ok<f64, ReadError>(value: zero);
   }
   if significand.dropped == 0_u64 {
-    let fraction = significand.fraction;
-    if fraction < 1000000_u64 {
-      let fraction_signed = cvt::<u64, i64>(fraction);
-      let scale = exponent.value - fraction_signed;
-      let fast = read_fast(mantissa: significand.mantissa, exponent: scale);
-      match fast {
-        Some(value: magnitude) => {
-          let signed = if negative {
-            let flipped = fneg(magnitude);
-            give flipped;
-          } else {
-            give magnitude;
-          }
-          return ReadScan::ScanFast(value: signed);
+    let fraction_negative = True();
+    let scale = read_combined_point(exponent: exponent, negative: fraction_negative, magnitude: significand.fraction);
+    let fast = read_fast(mantissa: significand.mantissa, exponent: scale);
+    match fast {
+      Some(value: magnitude) => {
+        let signed = if negative {
+          give fneg(magnitude);
+        } else {
+          give magnitude;
         }
-        None() => {
-        }
+        return Ok<f64, ReadError>(value: signed);
+      }
+      None() => {
       }
     }
   }
-  return ReadScan::ScanExact(negative: negative, first: after_sign, last: significand.next, exponent: exponent.value);
+  let decimal = decimal_new();
+  let (point_negative, point_magnitude) = decimal_assign(decimal: &decimal, input: input, first: after_sign, last: significand.next);
+  let point = read_combined_point(exponent: exponent, negative: point_negative, magnitude: point_magnitude);
+  set decimal.point = point;
+  let magnitude_bits = decimal_binary_bits(decimal: &decimal);
+  let bits = ior(sign, magnitude_bits);
+  let rounded = reinterpret::<u64, f64>(bits);
+  if magnitude_bits == 9218868437227405312_u64 {
+    let error = ReadError::ReadOverflow(value: rounded);
+    return Err<f64, ReadError>(error: error);
+  }
+  if magnitude_bits == 0_u64 {
+    let error = ReadError::ReadUnderflow(value: rounded);
+    return Err<f64, ReadError>(error: error);
+  }
+  return Ok<f64, ReadError>(value: rounded);
+}
+
+fn read_capped_point(negative: Bool, high: u64, low: u64) -> result: i64 pure contract {
+  requires low <= 9999999999_u64;
+  ensures -1000000000_i64 <= result;
+  ensures result <= 1000000000_i64;
+} {
+  doc "Clamps a fully combined point, after cancellation, beyond the binary64 decimal range. The high limb is measured in ten-billion units.";
+  let capped = 1000000000_u64;
+  if high == 0_u64 {
+    set capped = imin(low, 1000000000_u64);
+  }
+  let signed = cvt::<u64, i64>(capped);
+  if negative {
+    return 0_i64 - signed;
+  }
+  return signed;
+}
+
+fn read_point_difference(negative: Bool, high: u64, low: u64, other_high: u64, other_low: u64) -> result: i64 pure contract {
+  requires high <= 10000000000_u64;
+  requires low <= 9999999999_u64;
+  requires other_high <= 1844674407_u64;
+  requires other_low <= 9999999999_u64;
+  ensures -1000000000_i64 <= result;
+  ensures result <= 1000000000_i64;
+} {
+  doc "Subtracts the unsigned digit-count magnitude from a signed exponent magnitude. Ordering selects the result sign, and a low-limb borrow is exact, so large opposite scales cancel before the final clamp.";
+  if other_high < high {
+    let delta_high = high - other_high;
+    if other_low <= low {
+      let delta_low = low - other_low;
+      return read_capped_point(negative: negative, high: delta_high, low: delta_low);
+    }
+    let borrowed_high = delta_high - 1_u64;
+    let raised = low + 10000000000_u64;
+    let delta_low = raised - other_low;
+    return read_capped_point(negative: negative, high: borrowed_high, low: delta_low);
+  }
+  if high < other_high {
+    let reversed = bnot(negative);
+    let delta_high = other_high - high;
+    if low <= other_low {
+      let delta_low = other_low - low;
+      return read_capped_point(negative: reversed, high: delta_high, low: delta_low);
+    }
+    let borrowed_high = delta_high - 1_u64;
+    let raised = other_low + 10000000000_u64;
+    let delta_low = raised - low;
+    return read_capped_point(negative: reversed, high: borrowed_high, low: delta_low);
+  }
+  if other_low <= low {
+    let delta_low = low - other_low;
+    return read_capped_point(negative: negative, high: 0_u64, low: delta_low);
+  }
+  let reversed = bnot(negative);
+  let delta_low = other_low - low;
+  return read_capped_point(negative: reversed, high: 0_u64, low: delta_low);
+}
+
+fn read_combined_point(exponent: Exponent, negative: Bool, magnitude: u64) -> result: i64 pure contract {
+  ensures -1000000000_i64 <= result;
+  ensures result <= 1000000000_i64;
+} {
+  doc "Combines the parsed exponent and the significand's signed point exactly in two decimal limbs. Only their net result is clamped; a billion leading zeros can therefore cancel a billion in the exponent without changing the represented value.";
+  let count_high = magnitude / 10000000000_u64;
+  let count_low = magnitude % 10000000000_u64;
+  let different = bxor(exponent.negative, negative);
+  if different {
+    return read_point_difference(negative: exponent.negative, high: exponent.high, low: exponent.low, other_high: count_high, other_low: count_low);
+  }
+  let low_sum = exponent.low + count_low;
+  let carry = low_sum / 10000000000_u64;
+  let low = low_sum % 10000000000_u64;
+  let high_sum = exponent.high + count_high;
+  let high = high_sum + carry;
+  return read_capped_point(negative: negative, high: high, low: low);
 }
