@@ -46,48 +46,74 @@ pub(super) const REMAINING_REPAIRS: &[RepairPair] = &[
     },
     RepairPair {
         name: "joined-argument-overlaps-own-row.wf",
-        rejected: br#"fn copy_within(values: &[u8], i: u64, j: u64) -> result: unit reads(values[i]), writes(values[j]) contract {
-  requires 2_u64 <= values^.len;
-  requires i < 2_u64;
-  requires j < 2_u64;
-} {
-  let byte = values^[i];
-  set values^[j] = byte;
-  return unit;
+        rejected: br#"struct Node {
+  byte: u8;
+  next: Option<Box<Node>>;
 }
 
-fn copy_selected(flag: Bool) -> result: unit pure {
-  let values = array_filled::<u8, 3>(value: 0_u8);
-  let selected = if flag {
-    give &values[0_u64..2_u64];
-  } else {
-    give &values[1_u64..3_u64];
+fn touch(root: &Box<Node>) -> result: unit reads(root.inner.next), writes(root.inner.byte) {
+  set root^.inner.byte = 0_u8;
+  match &root^.inner.next {
+    Some(value: unused) => {
+      return unit;
+    }
+    None() => {
+      return unit;
+    }
   }
-  copy_within(values: selected, i: 0_u64, j: 1_u64);
-  return unit;
+}
+
+fn select(root: &Box<Node>, flag: Bool) -> result: unit writes(root.inner) {
+  match &root^.inner.next {
+    Some(value: child) => {
+      let selected = if flag {
+        give root;
+      } else {
+        give child;
+      }
+      touch(root: selected);
+      return unit;
+    }
+    None() => {
+      return unit;
+    }
+  }
 }
 "#,
         rule: "EFF-5",
         sentences: &["\n  mechanical_fix: these two entries of the callee's row may reach overlapping places through one argument, and no position this call passes separates them: replace the callee's row entries at or below their common path with one `writes` entry of that path\n"],
-        repaired: &[br#"fn copy_within(values: &[u8], i: u64, j: u64) -> result: unit writes(values) contract {
-  requires 2_u64 <= values^.len;
-  requires i < 2_u64;
-  requires j < 2_u64;
-} {
-  let byte = values^[i];
-  set values^[j] = byte;
-  return unit;
+        repaired: &[br#"struct Node {
+  byte: u8;
+  next: Option<Box<Node>>;
 }
 
-fn copy_selected(flag: Bool) -> result: unit pure {
-  let values = array_filled::<u8, 3>(value: 0_u8);
-  let selected = if flag {
-    give &values[0_u64..2_u64];
-  } else {
-    give &values[1_u64..3_u64];
+fn touch(root: &Box<Node>) -> result: unit writes(root.inner) {
+  set root^.inner.byte = 0_u8;
+  match &root^.inner.next {
+    Some(value: unused) => {
+      return unit;
+    }
+    None() => {
+      return unit;
+    }
   }
-  copy_within(values: selected, i: 0_u64, j: 1_u64);
-  return unit;
+}
+
+fn select(root: &Box<Node>, flag: Bool) -> result: unit writes(root.inner) {
+  match &root^.inner.next {
+    Some(value: child) => {
+      let selected = if flag {
+        give root;
+      } else {
+        give child;
+      }
+      touch(root: selected);
+      return unit;
+    }
+    None() => {
+      return unit;
+    }
+  }
 }
 "#],
     },
@@ -695,8 +721,8 @@ public fn consume(value: Parcel) -> result: unit pure doc "Consumes the parcel."
             .as_slice(),
             br#"fn consume(value: Parcel) -> result: unit pure {
   match move value {
-    Full(token: token) => {
-      let Token(value: byte) = move token;
+    Full(token: held) => {
+      let Token(value: byte) = move held;
     }
   }
   return unit;
