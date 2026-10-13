@@ -1085,11 +1085,46 @@ impl<'unit> Checker<'_, 'unit> {
                 // prefix names storage the move has carried away, and
                 // [REF-2] says a move never re-roots an existing reference.
                 if !copy && !read_out {
+                    self.record_held_write(use_node, &ResolvedPlace::fields(local.binding, fields.clone()));
                     self.types.invalidate_references(
                         bindings,
                         &ResolvedPlace::fields(local.binding, fields.clone()),
                         &super::references::InvalidationEvent::PrefixMoved,
                     )?;
+                    // [WIN-3, STOR-3] a move out of a field releases the
+                    // owner's other affine parts here, and [REF-2] counts
+                    // that compiler-derived release as an invalidating
+                    // event for every reference at or below a released part.
+                    for drop in &residual_drops {
+                        self.types.invalidate_references(
+                            bindings,
+                            &ResolvedPlace::fields(local.binding, drop.fields.clone()),
+                            &super::references::InvalidationEvent::PrefixReleased,
+                        )?;
+                    }
+                    // [WIN-3] the move consumes the whole owner, so the root
+                    // is a moved prefix of every remaining reference into it,
+                    // its copy parts and the root itself included, exactly as
+                    // a move out of `Box` content consumes the `Box`. The
+                    // events above come first so a reference keeps the more
+                    // specific one [REF-2].
+                    if !fields.is_empty() {
+                        self.types.invalidate_references(
+                            bindings,
+                            &ResolvedPlace::binding(local.binding),
+                            &super::references::InvalidationEvent::PrefixMoved,
+                        )?;
+                    }
+                }
+                // [SHARE-1, WIN-3] the consume also releases each unselected
+                // resource part of the root here, which an atomic statement's
+                // handle place may be, so every handle watch observes exactly
+                // the parts this consume releases as well as the moved place.
+                for drop in &residual_drops {
+                    super::references::HandleWatch::observe(
+                        bindings,
+                        &ResolvedPlace::fields(local.binding, drop.fields.clone()),
+                    );
                 }
                 let access = ResolvedPlace::fields(local.binding, access_fields);
                 let mut effects = EffectSet::NONE;
@@ -1744,6 +1779,16 @@ impl<'unit> Checker<'_, 'unit> {
                         variant: u32::from(id == crate::BuiltinPreludeId::DIV_OVERFLOW),
                     }
                 }
+                crate::BuiltinPreludeId::OPEN
+                | crate::BuiltinPreludeId::WRITTEN
+                | crate::BuiltinPreludeId::KILLED => Constructor::Enum {
+                    nominal: self.types.prelude_nominal(super::PreludeType::DecisionState)?,
+                    variant: match id {
+                        crate::BuiltinPreludeId::OPEN => 0,
+                        crate::BuiltinPreludeId::WRITTEN => 1,
+                        _ => 2,
+                    },
+                },
                 crate::BuiltinPreludeId::NEXT | crate::BuiltinPreludeId::NEEDS => Constructor::Enum {
                     nominal: self.types.prelude_nominal(super::PreludeType::ScanStep)?,
                     variant: u32::from(id == crate::BuiltinPreludeId::NEEDS),

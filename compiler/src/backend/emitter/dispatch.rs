@@ -1328,9 +1328,10 @@ impl FunctionEmitter<'_, '_> {
 
     /// Emits the dispatch function, every arm's function and the handler
     /// table after the enclosing function. A frame slot that the enclosing
-    /// function never uses and exactly one part uses is that part's own
-    /// allocation, which the host can then remove; every other slot is
-    /// reached through the shared frame.
+    /// function never uses and whose contents no transfer carries (see
+    /// `confined`) is the own allocation of each part that uses it, which
+    /// the host can then remove; every other slot is reached through the
+    /// shared frame.
     pub(super) fn emit_dispatch_parts(
         &mut self,
         module: &mut Module,
@@ -1433,21 +1434,20 @@ impl FunctionEmitter<'_, '_> {
                 symbol.strip_suffix(".dispatch").unwrap_or(&symbol)
             ));
         }
-        let mut users: HashMap<FunctionSlot, usize> = HashMap::new();
-        for (_, _, uses) in &parts {
-            for key in uses {
-                *users.entry(*key).or_default() += 1;
-            }
-        }
+        let across = self.storage.allocations_across(
+            self.program,
+            self.function,
+            header.index(),
+            self.sequential_clones.is_some(),
+        )?;
         for (signature, mut body, uses) in parts {
+            // The enclosing function also runs instructions the loop's
+            // blocks hold (hoisted header values and pinned projections),
+            // which the loop's value liveness does not place there.
             let locals: HashSet<FunctionSlot> = uses
                 .iter()
                 .copied()
-                .filter(|key| {
-                    !enclosing_uses.contains(key)
-                        && users.get(key) == Some(&1)
-                        && !matches!(key, FunctionSlot::Address(_))
-                })
+                .filter(|key| !enclosing_uses.contains(key) && confined(*key, &across))
                 .collect();
             let mut prelude =
                 self.frame
@@ -2355,7 +2355,9 @@ impl FunctionEmitter<'_, '_> {
                 edge.predecessor,
             );
         }
-        writeln!(self.output, "\n  br label %{}", block_label(success))?;
+        self.output.push('\n');
+        self.output.terminator();
+        writeln!(self.output, "  br label %{}", block_label(success))?;
         Ok(true)
     }
 
@@ -2408,10 +2410,12 @@ impl FunctionEmitter<'_, '_> {
         let address = self.edge_cursor(&cursor, &[(cursor.index, offset)], true)?;
         writeln!(
             self.output,
-            "  {} = getelementptr i8, ptr {address}, i64 0\n  br label %{}",
+            "  {} = getelementptr i8, ptr {address}, i64 0",
             predecessor_cursor_name(index, block),
-            block_label(target)
         )?;
+        // The join's phis may take a record slot from this edge's exit block.
+        self.output.terminator();
+        writeln!(self.output, "  br label %{}", block_label(target))?;
         Ok(true)
     }
 
@@ -2643,6 +2647,46 @@ impl FunctionEmitter<'_, '_> {
         if let Some(dispatch) = &mut self.dispatch {
             dispatch.part = part;
         }
+    }
+}
+
+/// Whether the contents of the frame slot `key`, which the enclosing
+/// function does not use, never cross a transfer between the parts: the
+/// enclosing function's call of the dispatch function, a part's guaranteed
+/// tail call of it or of an arm, and a part's return
+/// (compiler/match-dispatch-lowering). Such a slot is the own allocation of
+/// each part that uses it.
+fn confined(key: FunctionSlot, across: &BTreeSet<usize>) -> bool {
+    match key {
+        // A planned value's allocation crosses when a value it holds does;
+        // `across` holds the allocations the storage plan finds.
+        FunctionSlot::OwnedValue(slot) => !across.contains(&slot),
+        // Written and read within one edge or one instruction, which one
+        // part emits.
+        FunctionSlot::EdgeSnapshot(_)
+        | FunctionSlot::TransferScratch
+        | FunctionSlot::ArrayFillIndex(_) => true,
+        // Reached through the address, reference or range its instruction
+        // forms. An address derived from that one, such as a field's
+        // address or a range view, is a register value a part may pass to
+        // the next in its tail call, and the storage plan follows values,
+        // not addresses, so the slot counts as crossing.
+        FunctionSlot::Address(_)
+        | FunctionSlot::IndexedDirectory(_)
+        | FunctionSlot::IndexedReference(..) => false,
+        // Written by the enclosing function before the loop and read by the
+        // parts.
+        FunctionSlot::Spill(_) => false,
+        // Never in a split frame: a waiting call's result occurs only in a
+        // function that waits [WAIT-1] and a context's result only in one
+        // that starts a bound context [WAIT-3], and a function with either
+        // is emitted whole (the `waits` and context-prelude reasons that
+        // keep a loop unsplit); the result slot
+        // occurs only in a register-returned definition's public entry,
+        // which holds no loop.
+        FunctionSlot::WaitingResult(_)
+        | FunctionSlot::ContextResult(_)
+        | FunctionSlot::Result => false,
     }
 }
 

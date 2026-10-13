@@ -1,0 +1,21 @@
+fn second_of(window: &[u64]) -> result: u64 reads(window) contract {
+  requires window^.len >= 2_u64;
+} {
+  doc "Reads the element at index one, which the requirement bounds.";
+  let second = window^[1_u64];
+  return second;
+}
+
+fn probe(r: &[u64]) -> result: u64 reads(r) contract {
+  requires r^.len >= 2_u64;
+} {
+  doc "ENT-2, FN-8: q is a range alias of r, so the argument q names r's len term and r's length requirement discharges the callee's requirement at the call.";
+  let q = r;
+  let second = second_of(window: q);
+  return second;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "No call is needed to exercise the proof identity.";
+  return std::process::exit_status(code: 0_u8);
+}

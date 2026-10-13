@@ -25,6 +25,8 @@ pub(crate) const MAX_RANGE_ATOMS: usize = 4096;
 pub(crate) enum CheckedRangeRoot {
     /// A parameter or a binding live where the clause is written.
     Binding(BindingId),
+    /// A written reference parameter's storage at function entry [RANGE-1].
+    Entry(BindingId),
     /// One result ordinal of the function, in a postcondition, zero for a
     /// single result; for the ordinal a route `when V(value: r)` names, the
     /// payload r denotes [RANGE-1, FN-9].
@@ -58,6 +60,8 @@ pub(crate) enum CheckedRangeStep {
 /// Ordinals identify declared fields and variants of the selected type.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) enum CheckedRangeProjection {
+    /// Opaque whole-selection identity for `unchanged`; not value equality [RANGE-1].
+    WholeElement,
     Field(u32),
     BoxContent,
     /// A subscript below the outer element, indexing this tuple position.
@@ -241,8 +245,10 @@ pub(crate) struct CheckedRangePostcondition {
 pub(crate) struct CheckedRangeRoute {
     /// The result ordinal the route names.
     pub(crate) ordinal: u32,
-    /// The tag of its success variant V.
+    /// The tag of its variant V.
     pub(crate) tag: u32,
+    /// The selected field in declaration order.
+    pub(crate) field: u32,
     /// The type of V's payload, which [`CheckedRangeRoot::Result`] of that
     /// ordinal names.
     pub(crate) payload: CheckedType,

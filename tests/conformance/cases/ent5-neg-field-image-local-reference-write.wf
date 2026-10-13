@@ -1,0 +1,24 @@
+struct Reading {
+  value: i64;
+}
+
+fn make() -> made: Reading pure contract {
+  ensures -1000_i64 <= made.value;
+} {
+  doc "The construction carries 0 into the field the postcondition names.";
+  return Reading(value: 0_i64);
+}
+
+fn shift(d: u8, x: i64) -> result: i64 pure {
+  doc "A write through a local reference to the local struct reaches its field and kills the call result's bound, so the subtraction of a widened byte may overflow.";
+  let e = make();
+  let r = &e;
+  set r^.value = x;
+  let w = cvt::<u8, i64>(d);
+  let v = e.value - w;
+  return v;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

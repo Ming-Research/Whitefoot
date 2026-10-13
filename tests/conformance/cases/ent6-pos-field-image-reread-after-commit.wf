@@ -1,0 +1,33 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Counter {
+  doc "One count.";
+  count: u64;
+}
+
+fn store_sum(counter: &Counter, value: u64, extra: u64) -> result: u64 writes(counter) contract {
+  requires value + extra <= 800_u64;
+  ensures result <= 800_u64;
+} {
+  doc "Stores the sum and reads the field back. The read-back has the committed image value + extra, which the requirement bounds; no own binding holds that sum, so only the committed image proves the postcondition.";
+  set counter^.count = value + extra;
+  let again = counter^.count;
+  return again;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "Stores 300 + 500 and checks the returned read-back and the field itself.";
+  let counter = Counter(count: 0_u64);
+  let back = store_sum(counter: &counter, value: 300_u64, extra: 500_u64);
+  if back == 800_u64 {
+  } else {
+    return exit_status(code: 1_u8);
+  }
+  let count = counter.count;
+  if count == 800_u64 {
+  } else {
+    return exit_status(code: 2_u8);
+  }
+  return exit_status(code: 0_u8);
+}

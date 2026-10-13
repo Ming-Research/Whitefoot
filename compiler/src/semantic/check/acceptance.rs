@@ -21,6 +21,7 @@ use super::super::entailment::{
 use super::super::goal::{GoalExpression, GoalOperation};
 use super::super::model::{CheckedFunction, CheckedNumericType, FunctionId};
 use super::super::obligations::{ObligationRecord, RecordAnswer};
+use super::control::SHARE2_PROVE_THE_HANDLE_PLACES_APART;
 use super::{CheckStop, references, repairs};
 
 /// One position in the causal order in which obligations are decided.
@@ -364,22 +365,6 @@ impl<'unit> DeclarationInventory<'unit> {
             request: None,
         })
     }
-    /// Whether a node lies in a `requires_clause` or a `contract_define`,
-    /// whose places a requirement forms at body entry and which evaluate
-    /// nothing [FN-8].
-    fn in_requirement(&self, path: &NodePath) -> Result<bool, CheckStop> {
-        let mut node = self.tree.node_with_path(path);
-        while let Some(current) = node {
-            if matches!(
-                self.tree.production(current)?,
-                Production::RequiresClause | Production::ContractDefine
-            ) {
-                return Ok(true);
-            }
-            node = self.tree.parent(current)?;
-        }
-        Ok(false)
-    }
 }
 
 impl<'unit> TypeContext<'unit> {
@@ -484,9 +469,11 @@ impl<'unit> TypeContext<'unit> {
                 | SemanticRule::Op2
                 | SemanticRule::Op6
                 | SemanticRule::Eff5
+                | SemanticRule::Hold1
                 | SemanticRule::Op11
                 | SemanticRule::Ref2
-                | SemanticRule::Ref4,
+                | SemanticRule::Ref4
+                | SemanticRule::Share2,
                 RecordAnswer::Obligation(index),
             ) => self.undischarged_obligation(function, record.rule, index),
             (
@@ -618,13 +605,33 @@ impl<'unit> TypeContext<'unit> {
                     Some(TermRead::Constant)
                 );
                 let calls = self.killing_calls(function, &outcome.killed_by)?;
-                let mechanical_fix = if self.declarations.in_requirement(&outcome.node_path)? {
-                    repairs::clause_bounds(&case, constant_offset)
-                } else if let (Some(note), false) = (outcome.killed_by.first(), calls.is_empty()) {
-                    repairs::bounds_after_kill(&case, &note.measure, &calls)
-                } else {
-                    repairs::bounds(&case, constant_offset)
-                };
+                // A definition's place is formed by the first requirement
+                // reaching it, and otherwise at the returns of the
+                // postconditions reaching it [ENT-2].
+                let mechanical_fix =
+                    if super::obligations::requirement_forms_site(function, &outcome.node_path) {
+                        repairs::clause_bounds(&case, constant_offset)
+                    } else if let Some(exit) = &outcome.selected_return {
+                        let (_, line) = self.declarations.tree.source_line(&exit.statement)?;
+                        // [FORM-2] a requirement is spelled canonically, so
+                        // one the contract already writes has this spelling.
+                        let required = format!("requires {};", exit.requirement);
+                        let held = function.requirements.iter().any(|requirement| {
+                            requirement.subject.is_none()
+                                && self
+                                    .declarations
+                                    .tree
+                                    .path_spelling(&requirement.clause)
+                                    .is_ok_and(|spelling| spelling == required)
+                        });
+                        repairs::postcondition_bounds(&case, constant_offset, line, exit, held)
+                    } else if let (Some(note), false) =
+                        (outcome.killed_by.first(), calls.is_empty())
+                    {
+                        repairs::bounds_after_kill(&case, &note.measure, &calls)
+                    } else {
+                        repairs::bounds(&case, constant_offset)
+                    };
                 SemanticIssueKind::UndischargedBoundsObligation {
                     mechanical_fix,
                     residual,
@@ -676,6 +683,17 @@ impl<'unit> TypeContext<'unit> {
                     disposition,
                 }
             }
+            (SemanticRule::Hold1, ObligationFamily::CallSeparation(query)) => {
+                let use_site = function.call_separations.get(query as usize)
+                    .and_then(|separation| separation.held_use.as_ref())
+                    .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                let requirement = self.declarations.tree.node_with_path(&use_site.requirement)
+                    .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                SemanticIssueKind::InvalidHeldContract {
+                    reason: format!("{}: {residual}", self.declarations.tree.source_spelling(requirement)?),
+                    mechanical_fix: super::held::REPAIR,
+                }
+            }
             (SemanticRule::Eff5, ObligationFamily::CallSeparation(query)) => {
                 let separation = function
                     .call_separations
@@ -694,6 +712,12 @@ impl<'unit> TypeContext<'unit> {
                 SemanticIssueKind::UndischargedCallSeparation {
                     residual,
                     mechanical_fix: "prove before the `swap` that the two positions are distinct, or exchange places that are equal or disjoint without an ancestor relation",
+                }
+            }
+            (SemanticRule::Share2, ObligationFamily::AtomicTargetSeparation(_)) => {
+                SemanticIssueKind::UndischargedCallSeparation {
+                    residual,
+                    mechanical_fix: SHARE2_PROVE_THE_HANDLE_PLACES_APART,
                 }
             }
             (SemanticRule::Ref2, ObligationFamily::ReferencePreservation(query)) => {

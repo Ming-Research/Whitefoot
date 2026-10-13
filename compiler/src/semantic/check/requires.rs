@@ -179,6 +179,82 @@ fn expand_definition_offsets(place: &mut CheckedExpression, offsets: &Definition
     }
 }
 
+/// [ENT-2] the clause (b) places one `contract_block` forms: each
+/// definition's own places, with every offset read through an earlier
+/// definition expanded, and the places each clause forms through the
+/// definitions its expansion reaches [FN-8, FN-9].
+#[derive(Default)]
+pub(super) struct ClausePlaces {
+    definitions: Vec<ClauseDefinition>,
+    offsets: DefinitionOffsets,
+}
+
+impl ClausePlaces {
+    /// Records one checked definition, in written order.
+    pub(super) fn define(&mut self, binding: BindingId, value: &CheckedExpression) {
+        let mut places = Vec::new();
+        collect_clause_places(value, &mut places);
+        for place in &mut places {
+            expand_definition_offsets(place, &self.offsets);
+        }
+        if let Some(offset) = definition_offset(value, &self.definitions, &self.offsets) {
+            self.offsets.insert(binding, offset);
+        }
+        let mut uses = Vec::new();
+        collect_clause_reads(value, &mut uses);
+        uses.retain(|read| {
+            self.definitions
+                .iter()
+                .any(|earlier| earlier.binding == *read)
+        });
+        self.definitions.push(ClauseDefinition {
+            binding,
+            places,
+            uses,
+        });
+    }
+
+    /// The recorded definitions' bindings, in written order.
+    pub(super) fn bindings(&self) -> impl Iterator<Item = BindingId> + '_ {
+        self.definitions.iter().map(|definition| definition.binding)
+    }
+
+    /// The places one clause forms: those of every definition its expansion
+    /// reaches that `formed` does not already hold, in definition order,
+    /// then its own. Each definition reached is added to `formed`.
+    pub(super) fn clause(
+        &self,
+        condition: &CheckedExpression,
+        formed: &mut HashSet<BindingId>,
+    ) -> Vec<CheckedExpression> {
+        let mut reached = HashSet::new();
+        let mut pending = Vec::new();
+        collect_clause_reads(condition, &mut pending);
+        while let Some(read) = pending.pop() {
+            if let Some(definition) = self
+                .definitions
+                .iter()
+                .find(|definition| definition.binding == read)
+                && reached.insert(read)
+            {
+                pending.extend(definition.uses.iter().copied());
+            }
+        }
+        let mut places = Vec::new();
+        for definition in &self.definitions {
+            if reached.contains(&definition.binding) && formed.insert(definition.binding) {
+                places.extend(definition.places.iter().cloned());
+            }
+        }
+        let own = places.len();
+        collect_clause_places(condition, &mut places);
+        for place in &mut places[own..] {
+            expand_definition_offsets(place, &self.offsets);
+        }
+        places
+    }
+}
+
 /// The bindings one checked clause expression reads by name.
 fn collect_clause_reads(expression: &CheckedExpression, reads: &mut Vec<BindingId>) {
     if let CheckedExpression::Binding { binding, .. } | CheckedExpression::Project { binding, .. } =
@@ -376,8 +452,7 @@ impl<'unit> Checker<'_, 'unit> {
             function,
         } = context;
         let mut expanded_bindings = HashMap::new();
-        let mut definitions: Vec<ClauseDefinition> = Vec::new();
-        let mut definition_offsets = DefinitionOffsets::new();
+        let mut clause_places = ClausePlaces::default();
         for (ordinal, parameter) in function.parameters.iter().enumerate() {
             let local = bindings
                 .get(&parameter.declaration)
@@ -454,22 +529,7 @@ impl<'unit> Checker<'_, 'unit> {
                 &expanded_bindings,
             )?;
             expanded_bindings.insert(*binding, expanded);
-            let mut places = Vec::new();
-            collect_clause_places(value, &mut places);
-            for place in &mut places {
-                expand_definition_offsets(place, &definition_offsets);
-            }
-            if let Some(offset) = definition_offset(value, &definitions, &definition_offsets) {
-                definition_offsets.insert(*binding, offset);
-            }
-            let mut uses = Vec::new();
-            collect_clause_reads(value, &mut uses);
-            uses.retain(|read| definitions.iter().any(|earlier| earlier.binding == *read));
-            definitions.push(ClauseDefinition {
-                binding: *binding,
-                places,
-                uses,
-            });
+            clause_places.define(*binding, value);
         }
 
         // [ENT-2, FN-8] a requirement forms its places at body entry, in the
@@ -488,6 +548,9 @@ impl<'unit> Checker<'_, 'unit> {
             .tree
             .children_with(block, Production::RequiresClause)?
         {
+            if self.types.declarations.tree.first_child_with(clause, Production::HeldClause)?.is_some() {
+                continue;
+            }
             if let Some(range_clause) = self
                 .types
                 .declarations
@@ -542,41 +605,17 @@ impl<'unit> Checker<'_, 'unit> {
                 clause: self.types.declarations.tree.path(clause)?.clone(),
                 subject: None,
             });
-            let mut reached = HashSet::new();
-            let mut pending = Vec::new();
-            collect_clause_reads(&condition.expression, &mut pending);
-            while let Some(read) = pending.pop() {
-                if let Some(definition) = definitions
-                    .iter()
-                    .find(|definition| definition.binding == read)
-                    && reached.insert(read)
-                {
-                    pending.extend(definition.uses.iter().copied());
-                }
-            }
-            let mut places = Vec::new();
-            for definition in &definitions {
-                if reached.contains(&definition.binding)
-                    && expanded_definitions.insert(definition.binding)
-                {
-                    places.extend(definition.places.iter().cloned());
-                }
-            }
-            let own = places.len();
-            collect_clause_places(&condition.expression, &mut places);
-            for place in &mut places[own..] {
-                expand_definition_offsets(place, &definition_offsets);
-            }
-            requirement_places.push(places);
+            requirement_places
+                .push(clause_places.clause(&condition.expression, &mut expanded_definitions));
         }
-        let definitions = definitions
-            .into_iter()
-            .map(|definition| {
+        let definitions = clause_places
+            .bindings()
+            .map(|binding| {
                 let expression = expanded_bindings
-                    .remove(&definition.binding)
+                    .remove(&binding)
                     .and_then(ExpandedClauseExpression::into_goal_expression)
                     .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                Ok((definition.binding, expression))
+                Ok((binding, expression))
             })
             .collect::<Result<Vec<_>, CheckStop>>()?;
         Ok(CheckedRequires {
@@ -722,6 +761,17 @@ impl<'unit> DeclarationInventory<'unit> {
         entry: NodeId,
         expression: NodeId,
     ) -> Result<(), CheckStop> {
+        // [RANGE-1] the grammar retains this shape to diagnose its misplaced use.
+        if self.tree.has_fixed(expression, FixedTerminal::Unchanged)? {
+            return self.issue_node(
+                SemanticRule::Range1,
+                expression,
+                SemanticIssueKind::InvalidRangeClause {
+                    reason: "unchanged occurs in an ordinary relation",
+                    mechanical_fix: "state unchanged in an ensures forall conclusion",
+                },
+            );
+        }
         match self.tree.children(expression)? {
             [side] => {
                 let side = *side;

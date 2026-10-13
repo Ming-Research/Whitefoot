@@ -134,18 +134,19 @@ printf "== END %s: %.2f s, exit %d ==\n", $label, $elapsed, $code;
 check_budget($label, $elapsed) if !defined $cancelled;
 exit $code;
 
-# Each labeled stage has a wall-time budget per hosted runner class in
-# time-budgets.txt. The budget never changes the command's own exit status,
-# which some callers read. CI names a record file in
-# WHITEFOOT_TIME_BUDGET_RECORD: a stage over its budget, or one without a
-# budget for this host, is appended there, and the job's final verdict step
-# fails on a nonempty record, after every stage has run. Without a record
-# the budget is only printed, since a local host is not the runner it was
-# measured on.
+# Linux budgets select an exact CPU model's class; unknown models use the
+# slowest class. macOS overruns are report-only, while missing budgets and
+# Linux/Windows overruns are enforced. The command's own exit status never
+# changes: CI appends typed entries to WHITEFOOT_TIME_BUDGET_RECORD and checks
+# enforcing entries after every stage has run. Without a record, print only.
 sub check_budget {
     my ($label, $elapsed) = @_;
-    my ($budget, $problem) = budget_for($label);
-    my $verdict;
+    my ($budget, $problem, $note) = budget_for($label);
+    if (defined $note) {
+        print "== BUDGET NOTE: $note ==\n";
+        record_budget('NOTE', $note);
+    }
+    my ($verdict, $kind) = ('', 'ENFORCED');
     if (defined $problem) {
         $verdict = $problem;
     } elsif (!defined $budget || $budget eq '-') {
@@ -153,37 +154,66 @@ sub check_budget {
         $verdict = sprintf "%s has no %s budget in %s", $label, $host, $budget_file;
     } elsif ($elapsed > $budget) {
         $verdict = sprintf "%s took %.1f s, over its %d s %s budget", $label, $elapsed, $budget, $host;
+        $kind = 'REPORT-ONLY' if $host eq 'macos';
     } else {
         printf "== BUDGET %s: %.1f s of %d s (%s) ==\n", $label, $elapsed, $budget, $host;
         return;
     }
-    warn "== OVER BUDGET: $verdict ==\n";
+    warn "== OVER BUDGET: " . lc($kind) . ": $verdict ==\n";
+    record_budget($kind, $verdict);
+}
+
+sub record_budget {
+    my ($kind, $message) = @_;
     return if $budget_record eq '';
-    open my $record, '>>', $budget_record or die "record budget overrun in $budget_record: $!\n";
-    print {$record} "  $verdict\n";
+    open my $record, '>>', $budget_record or die "record budget result in $budget_record: $!\n";
+    print {$record} "  $kind: $message\n";
     close $record;
 }
 
-# Returns the budget, undef for no row, or a problem with the table itself.
+# Returns a budget (undef for no row), a table problem, and a fallback note.
 sub budget_for {
     my ($label) = @_;
     open my $file, '<', $budget_file or return (undef, "cannot read $budget_file: $!");
-    my @hosts;
+    my (@columns, %cpu_classes);
     while (my $line = <$file>) {
         next if $line =~ /^\s*(#|$)/;
+        if (!@columns && $line =~ /^cpu\s+(\S+)\s+(.+?)\s*$/) {
+            $cpu_classes{$2} = $1;
+            next;
+        }
         my ($name, @values) = split ' ', $line;
-        if (!@hosts) {
-            return (undef, "$budget_file: the first row must name the hosts") if $name ne 'label';
-            @hosts = @values;
+        if (!@columns) {
+            return (undef, "$budget_file: the table header must name the hosts and CPU classes") if $name ne 'label';
+            @columns = @values;
             next;
         }
         next if $name ne $label;
-        for my $index (0 .. $#hosts) {
-            next if $hosts[$index] ne $host;
-            my $value = $values[$index] // '';
-            return (undef, "$budget_file: $label needs seconds or - for $host") if $value !~ /^(\d+|-)$/;
-            return ($value, undef);
+        if ($host ne 'linux') {
+            for my $index (0 .. $#columns) {
+                next if $columns[$index] ne $host;
+                my $value = $values[$index] // '';
+                return (undef, "$budget_file: $label needs seconds or - for $host") if $value !~ /^(\d+|-)$/;
+                return ($value, undef);
+            }
+            return (undef, undef);
         }
+        my $cpuinfo = read_file($ENV{WHITEFOOT_CPUINFO} // '/proc/cpuinfo');
+        my ($model) = $cpuinfo =~ /^model name[ \t]*:[ \t]*(.*?)[ \t]*$/m;
+        $model = '<unavailable>' if !defined $model || $model eq '';
+        my $class = $cpu_classes{$model};
+        my %linux_classes = map { $_ => 1 } values %cpu_classes;
+        my $slowest;
+        for my $index (0 .. $#columns) {
+            next if !$linux_classes{$columns[$index]};
+            my $value = $values[$index] // '';
+            return (undef, "$budget_file: $label needs seconds or - for $columns[$index]") if $value !~ /^(\d+|-)$/;
+            return ($value, undef) if defined $class && $columns[$index] eq $class;
+            $slowest = $value if $value ne '-' && (!defined $slowest || $value > $slowest);
+        }
+        my $note = sprintf 'Linux CPU model "%s" has no class column; %s uses the slowest Linux class budget (%s)',
+            $model, $label, defined $slowest ? "$slowest s" : 'unavailable';
+        return ($slowest, undef, $note);
     }
     return (undef, undef);
 }
@@ -195,9 +225,16 @@ sub budget_verdict {
         print "time budgets: every recorded stage finished within its budget\n";
         exit 0;
     }
+    # Unknown/legacy nonempty entries fail closed rather than being silently
+    # treated as reports when a writer and its final verdict disagree.
+    my @enforcing = grep { /\S/ && !/^  (?:REPORT-ONLY|NOTE): / } split /\n/, $over;
+    if (!@enforcing) {
+        print "time budgets: no enforcing budget violations; reports and notes follow\n$over";
+        exit 0;
+    }
     print "== TIME BUDGETS EXCEEDED ==\n$over",
         "Find what grew (the gate lists each job's ten largest gaps between cases)\n",
-        "and make it cheaper, or raise the budget in .github/time-budgets.txt with\n",
-        "the owner's approval.\n";
+        "and make it cheaper, or revise the measured CPU budgets in .github/time-budgets.txt\n",
+        "with the owner's approval. macOS overruns are report-only.\n";
     exit 1;
 }

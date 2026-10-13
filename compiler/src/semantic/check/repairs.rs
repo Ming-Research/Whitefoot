@@ -33,7 +33,7 @@
 
 use std::collections::{BTreeSet, HashSet};
 
-use super::super::entailment::TermRead;
+use super::super::entailment::{SelectedReturnBound, TermRead};
 use super::super::goal::{
     EvaluatedValueOccurrence, GoalDatum, GoalExpression, GoalOperation, GoalProjection,
 };
@@ -70,7 +70,7 @@ pub(super) const fn instantiation_cycle_repair() -> &'static str {
 /// [FN-9] an unsupported selector cannot state this postcondition. Removing
 /// its last clause also removes a now-empty or define-only contract [FN-8].
 pub(crate) const fn postcondition_selector_repair() -> &'static str {
-    "remove this ensures clause, and remove its contract block if no requires or ensures clauses remain; an unrouted clause can name only result data admitted by [CALL-4]; a routed clause selects `when b is Ok(value: r):` for an own Result<T, E> or `when b is Some(value: r):` for an own Option<T>, where b names that result, r is fresh and payload T supplies admitted data [FN-9]; omit `b is` only when exactly one declared result has the route's enum type [CALL-4]; Err, None and user-enum variants are not postcondition routes"
+    "remove this ensures clause, and remove its contract block if no requires or ensures clauses remain; an unrouted clause can name only result data admitted by [CALL-4]; a routed clause selects `when b is V(f: r):` for an own enum result, where b names that result, V is its variant, f is one declared field whose type supplies admitted data, and r is fresh [FN-9]; omit `b is` only when exactly one declared result has the route's enum type [CALL-4]; use a separate clause for each field"
 }
 
 /// [INV-1, ENT-5] the name's scope and the conclusion's survival are separate.
@@ -1130,7 +1130,7 @@ pub(super) fn bounds_after_kill(
         (_, None) => ("leave", String::new(), "each one's"),
     };
     format!(
-        "`{}` is not proved here, but facts about `{measure}` that held before the {call} {sites} would prove it, and {rows} {written}, removed them: where {who} {leaves} `{measure}` unchanged, {narrowing}state `{measure}` unchanged in {its} `ensures`; or {}",
+        "`{}` is not proved here, but facts about `{measure}` that held before the {call} {sites} would prove it, and {rows} {written}, removed them: where {who} {leaves} `{measure}` unchanged, {narrowing}state equality of the entry and exit values of `{measure}` in {its} `ensures`; or {}",
         case.text,
         case.guard("access", SKIP)
     )
@@ -1151,6 +1151,84 @@ pub(super) fn clause_bounds(case: &GoalCase<'_>, constant_offset: bool) -> Strin
             "add `requires {};` to the `contract` of `{}` ahead of the requirement that forms this place, which each caller then establishes",
             case.text, case.function
         ),
+    }
+}
+
+/// [OP-4] a subscript of a place a postcondition forms [ENT-2, FN-9]. The
+/// place is formed at every return that selects the clause, in the state that
+/// return leaves with, so a requirement or the facts before each such return
+/// establish the bound.
+pub(super) fn postcondition_bounds(
+    case: &GoalCase<'_>,
+    constant_offset: bool,
+    return_line: u64,
+    bound: &SelectedReturnBound,
+    held: bool,
+) -> String {
+    // [FN-9, MSR-3] a place reads its formal offsets, and the bases it
+    // denotes at entry, at function entry. Once the body rebinds an offset,
+    // the clause is unavailable at the return whatever bounds it, so the
+    // value the body computes needs its own name; `held` says the contract
+    // already requires the bound, which then needs nothing more. A base
+    // length the body changes is established only by facts about its entry
+    // value.
+    if let Some((rebound, values, them)) = entry_values(&bound.rebound) {
+        let alternative = match (case.disposition, held) {
+            (Disposition::Refuted, _) => {
+                format!(", and {}", refuted_index(constant_offset, false))
+            }
+            // The contract already requires the bound; only the rebinding
+            // keeps it from the place.
+            (Disposition::Unproved, true) => String::new(),
+            (Disposition::Unproved, false) => format!(
+                ", and add `requires {};` to the `contract` of `{}`, which each caller then establishes",
+                bound.requirement, case.function
+            ),
+        };
+        return format!(
+            "`{}` reads {rebound} at {values}, and a clause reading {them} is unavailable at the `return` on line {return_line}, where the body has rebound {them}: give the new value its own name instead of rebinding {rebound}{alternative}",
+            case.text
+        );
+    }
+    match (case.disposition, entry_values(&bound.entry_lengths)) {
+        (Disposition::Refuted, None) => format!(
+            "`{}` is false at the `return` on line {return_line}, which selects this postcondition: {}",
+            case.text,
+            refuted_index(constant_offset, false)
+        ),
+        (Disposition::Refuted, Some((lengths, values, _))) => format!(
+            "`{}` is false at the `return` on line {return_line}, which selects this postcondition, with {lengths} at {values}: {}",
+            case.text,
+            refuted_index(constant_offset, false)
+        ),
+        (Disposition::Unproved, None) => format!(
+            "add `requires {};` to the `contract` of `{}`, which each caller then establishes, or establish it before the `return` on line {return_line} and every other `return` that selects this postcondition",
+            bound.requirement, case.function
+        ),
+        (Disposition::Unproved, Some((lengths, values, them))) => format!(
+            "add `requires {};` to the `contract` of `{}`, which each caller then establishes, or establish it with {lengths} at {values} before the `return` on line {return_line} and every other `return` that selects this postcondition, which a test made after the body changes {them} does not",
+            bound.requirement, case.function
+        ),
+    }
+}
+
+/// A list of code spans read at function entry, joined for a sentence, with
+/// the noun and pronoun that agree with it.
+fn entry_values(spans: &[String]) -> Option<(String, &'static str, &'static str)> {
+    match spans {
+        [] => None,
+        [one] => Some((one.clone(), "its function-entry value", "it")),
+        [rest @ .., last] => Some((
+            format!(
+                "{} and {last}",
+                rest.iter()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            "their function-entry values",
+            "them",
+        )),
     }
 }
 
@@ -1340,6 +1418,7 @@ pub(super) enum OpaqueStruct {
     Frozen,
     Shared,
     SharedRead,
+    DecisionCell,
     ConcurrentHashMap,
     /// A host handle: a standard library module declares it with no fields,
     /// and only a host function forms one [PRE-2]. `linear` when its
@@ -1368,6 +1447,7 @@ const PROGRAM_OPAQUE_STRUCT: &str = "no value of an opaque struct the program de
 /// names both sources.
 pub(super) fn opaque_struct_constructed(opaque: OpaqueStruct) -> &'static str {
     match opaque {
+        OpaqueStruct::DecisionCell => "replace this construction with `decision_cell_new()` [PRE-1]",
         OpaqueStruct::Frozen => {
             "replace this construction with `frozen_new::<T>(value: v)`, passing a copy value bare or an affine value with `move` [SHARE-1]"
         }
@@ -1397,6 +1477,7 @@ pub(super) fn opaque_struct_constructed(opaque: OpaqueStruct) -> &'static str {
 /// nothing makes through a reference or an element [OWN-1, WIN-3].
 pub(super) fn opaque_struct_taken_apart(opaque: OpaqueStruct, owned: bool) -> &'static str {
     match opaque {
+        OpaqueStruct::DecisionCell => "keep the decision cell handle intact and read its verdict with `decision_cell_read(cell: &h)` [PRE-1]",
         OpaqueStruct::Frozen => {
             "keep the handle formed by `frozen_new` intact; replace this destructuring with reads of copy-typed parts through `h.inner` or borrows into `&h.inner`, adapting uses of the destructured bindings to those reads or references [SHARE-1]"
         }

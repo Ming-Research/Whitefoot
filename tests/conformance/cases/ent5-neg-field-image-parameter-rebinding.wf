@@ -1,0 +1,23 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Counter {
+  doc "One count.";
+  count: u64;
+}
+
+fn advance(counter: &Counter, delta: u64, wild: u64) -> result: u64 reads(counter) contract {
+  requires counter^.count + delta <= 800_u64;
+} {
+  doc "Rebinding the parameter to a local struct replaces the reference its field path reads through, which kills the count's entry image; the count read afterward is the local's, which is unbounded, so the sum may overflow.";
+  let first = counter^.count;
+  let other = Counter(count: wild);
+  set counter = &other;
+  let count = counter^.count;
+  let total = count + delta;
+  return first;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

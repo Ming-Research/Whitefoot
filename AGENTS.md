@@ -161,8 +161,11 @@ read.
 - `spec/kernel-spec.md`: normative syntax, semantics, judgments, boundaries
   and examples; not compiler convenience presented as law or editing history.
   `spec/log.md` holds its approvals.
-- `docs/patterns.md`: writer problems, usable forms, examples, applicability
-  and costs; not acceptance rules or universal performance claims.
+- Whitefoot-kit's [writing guide](https://github.com/Ming-Research/Whitefoot-kit/blob/main/docs/writing.md): writer
+  problems, usable forms, examples, applicability and costs, for agents;
+  the line that merges a specification change into `main` files a request
+  to Whitefoot-kit on the status board naming the specification version,
+  the rules it changed and what writers must now watch for.
 - `docs/ideas.md` and `docs/why-whitefoot.md`: candidate mechanisms and
   explanatory essays; not a work queue or invented measurements.
 - `docs/articles/`: one idea each for readers outside the project, every
@@ -177,7 +180,7 @@ read.
 
 - Technical claims point to the specification, source and cases, a relevant
   design, or reproducible evidence.
-- The constitution, specification, writer patterns and essays stand without
+- The constitution, specification and essays stand without
   the design trees: they do not link to `design/` or use it as authority.
 - Maintainer navigation (README, this file, the research index) may point to
   the design trees. Research records and PRs may cite decisions as historical
@@ -193,23 +196,29 @@ build time apart from test and program execution.
 
 ## Checks
 
-- `make static`, before every push and in `gate.yml` on every push:
-  repository invariants, the specification archives, the README and its
-  translation changed together, prose integrity, guidance references,
-  Rust sources under `compiler/src/` over 4,000 lines listed in
-  `.github/oversized-sources.txt`, and the design tree's form. It needs the
-  `design/skill` submodule (`git submodule update --init`).
+- `make static`, run by the static group of `gate.yml`, which adds the
+  conformance structure, the performance instrument and the compiler's
+  format and lint checks: repository invariants, the specification
+  archives, the README and its translation changed together, prose
+  integrity, guidance references, Rust sources under `compiler/src/` over
+  4,000 lines listed in `.github/oversized-sources.txt`, and the design
+  tree's form, read through the `design/skill` submodule.
 - `make check`, on the revision to merge: the static group plus the compiler
   build, tests, the conformance adapter and the runtime; `make check-groups`
-  lists the groups. `gate.yml` runs those groups on Linux on every push, and
-  on macOS as well for a push to a pull request marked ready, the event of
-  marking one ready, `main` and a manual run; its job `Gate on both platforms`
-  passes only when every group is green on both for the revision. That job's
+  lists the groups. `gate.yml` and `io-hosts.yml` check a push to `main`, a
+  push to a branch with an open pull request, draft or ready, the opening or
+  reopening of a pull request and a manual run; any other push, to a branch
+  with no open pull request, skips their checks, so work that needs CI opens
+  its Draft pull request first. `gate.yml` runs the groups on Linux, and on
+  macOS as well for a pull request marked ready, the event of marking one
+  ready, `main` and a manual run; its job `Gate on both platforms` passes
+  only when every group is green on both for the revision. That job's
   success on the exact revision to be merged, a head current with `main`, is
-  that revision's `make check`. It needs `python3`, LLD on
-  Linux (`ld.lld`) and the `time` utility.
+  that revision's `make check`. It needs `python3`, `jq`, LLD on Linux
+  (`ld.lld`) and the `time` utility.
 - `make design-ready` runs in `design-readiness.yml`.
-- CI only: `io-hosts.yml` on every push (Linux io_uring and Windows IOCP),
+- CI only: `io-hosts.yml`, on the same revisions as the gate (Linux io_uring
+  and Windows IOCP),
   `map-sanitizers.yml` on every push to a PR that changes the concurrent
   map's runtime or its test (that test under AddressSanitizer and
   ThreadSanitizer, on the PR's head),
@@ -223,39 +232,40 @@ build time apart from test and program execution.
   releases older than 30 days each week, keeping the newest of main; each
   file's header gives the commands and contents
   ([downstream releases](design/compiler/downstream-releases.md)).
-- `make install-hooks` optionally reports an edit of a released archive at
-  commit.
+Every build, check, test and measurement runs in CI, never on a
+contributor's workstation. A focused result the existing workflows do not
+give, such as one test filter or a compiler probe over a set of cases, comes
+from a temporary workflow on the work branch, removed before the branch is
+ready; such a step runs its command under `perl .github/run-check.pl`, for
+example `perl .github/run-check.pl <label> cargo test --manifest-path
+compiler/Cargo.toml --profile gate --locked --offline --lib <filter>`.
 
-Focused commands for a compiler change, before `make static`:
-
-```sh
-make -C compiler format lint
-make -C compiler build        # optimized compiler only
-make -C compiler test-build   # construct test executables without running cases
-perl .github/run-check.pl <label> cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib <filter>
-```
-
-Heavy commands run under `perl .github/run-check.pl <label> <command> ...`,
-as the `make` targets do, from any worktree. It holds one host-wide lock,
+CI runs heavy commands under `perl .github/run-check.pl <label> <command> ...`,
+as the `make` targets do. It holds one host-wide lock,
 leaves Cargo and the test harness at every available processor unless
 `CARGO_BUILD_JOBS` or `RUST_TEST_THREADS` names fewer, prints wall, user and
 system time every 30 seconds, and stops a command after 30 minutes unless
 `WHITEFOOT_CHECK_TIMEOUT` gives another limit in seconds. It compares each
 labeled stage with its budget in `.github/time-budgets.txt` without changing
-the command's status: CI fails the job in a final verdict step, a local run
-only prints the comparison. Inspect an existing lock owner's PID instead of
-starting another heavy command, and after an uncatchable stop inspect the
-recorded PID and command before removing a stale lock.
+the command's status. Linux budgets are per CPU model: the maximum of at least
+its 20 most recent recorded runs plus 10%, rounded up to 5 s, with a 10 s floor.
+Models with fewer runs have no column; unknown models use the stage's largest
+Linux budget, with a note. macOS overruns are report-only; Windows rows keep their rule.
+The final CI verdict fails on Linux and Windows overruns and on a missing row
+for any host. On a self-hosted runner, inspect an existing lock owner's PID
+instead of starting another heavy command, and after an uncatchable stop
+inspect the recorded PID and command before removing a stale lock.
 
 When a stage exceeds its budget, look at what the change adds to it and at the
 job's slowest cases and host; fix a cause you find or bring the raise to the
 owner, and re-run once when you cannot tell; an overrun the change plainly
-cannot cause is reported as runner variance and cleared by a passing re-run.
-A raise is the owner's decision and adds 10 s to the stage and to its group
-stage, if any; lower a budget when a change makes its stage much faster, and
-give a new labeled stage a budget. The `gate` Cargo profile builds the Rust
-compiler with optimization, debug assertions and overflow checks; it does
-not change how WF source is compiled. `WHITEFOOT_TEST_TIMINGS=<scratch TSV>`
+cannot cause is reported as runner variance, and an enforced overrun is
+cleared by a passing re-run. A raise is the owner's decision; recompute Linux
+values by the rule above; Windows raises add 10 s to the stage and its group,
+if any. Lower a budget when a change makes its stage much faster, and give a
+new labeled stage a budget. The `gate` Cargo profile builds the Rust compiler
+with optimization, debug assertions and overflow checks; it does not change
+how WF source is compiled. `WHITEFOOT_TEST_TIMINGS=<scratch TSV>`
 records the phases of the shared test helpers for a slow compiler test.
 
 `WHITEFOOT_CHECK_WORK=<scratch TSV>` appends the checker's per-join,

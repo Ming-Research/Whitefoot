@@ -83,6 +83,7 @@ impl<'unit> Checker<'_, 'unit> {
                         read_only_state: false,
                         reference: None,
                         refinement_witnesses: Vec::new(),
+                        handle_watch: None,
                         call_value: false,
                     },
                 )
@@ -325,6 +326,7 @@ impl<'unit> Checker<'_, 'unit> {
                         read_only_state: false,
                         reference: None,
                         refinement_witnesses: Vec::new(),
+                        handle_watch: None,
                         call_value: false,
                     },
                 )
@@ -543,6 +545,7 @@ impl<'unit> Checker<'_, 'unit> {
                     read_only_state: false,
                     reference: None,
                     refinement_witnesses: Vec::new(),
+                    handle_watch: None,
                     call_value: false,
                 },
             )

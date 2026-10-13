@@ -16,8 +16,8 @@ use super::super::super::super::goal::{
 use super::super::super::super::model::{
     BindingId, CheckedCallContract, CheckedCallSeparation, CheckedCallSeparationPositions,
     CheckedEffectStep, CheckedEffects, CheckedExpression, CheckedMode, CheckedNominalKind,
-    CheckedRangeSource, CheckedSegmentSelect, CheckedSegmentSource, CheckedSetTarget,
-    CheckedStatePath, CheckedType,
+    CheckedRangeSource, CheckedSegmentSelect, CheckedSegmentSource, CheckedSeparationOccasion,
+    CheckedSetTarget, CheckedStatePath, CheckedType,
 };
 use super::super::super::super::places::{
     CaptureId, CapturedRange, CapturedTerm, CapturedValue, PlaceRoot, PlaceStep, ResolvedPlace,
@@ -622,6 +622,13 @@ impl<'unit> Checker<'_, 'unit> {
             }
         }
         self.check_call_pairwise_disjointness(node, signature, &compared, bindings)?;
+        self.check_held_call(node, function, signature, &actual_paths, bindings)?;
+        let selected = self.types.signatures.get(target.0 as usize)
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        self.qualify_snapshot_selection(node, selected.declaration, &selected.substitution)?;
+        for entry in substituted.iter().filter(|entry| entry.write) {
+            self.record_held_write(node, &entry.place);
+        }
         self.types.invalidate_call_references(
             node,
             &substituted,
@@ -699,6 +706,7 @@ impl<'unit> Checker<'_, 'unit> {
                 goal_arguments,
                 goal_regions: Vec::new(),
                 requirements: Vec::new(),
+                routed_requirements: Vec::new(),
                 result,
                 result_borrow: None,
             },
@@ -906,10 +914,30 @@ impl<'unit> Checker<'_, 'unit> {
                 // A pair whose only unseparated steps are index or range
                 // positions, or an index beside a window part, is the fixed
                 // families' question; every other overlap is refused here and
-                // now.
-                if let Some((positions, window)) =
-                    Checker::separable_by_position(&left.place, &right.place)
-                {
+                // now. A position whose value no fact names is no question
+                // the families can answer, so a pair separable only there is
+                // one no position separates.
+                let separable = Checker::separable_by_position(&left.place, &right.place);
+                let named = separable.as_ref().and_then(|(positions, window)| {
+                    let positions = positions
+                        .iter()
+                        .copied()
+                        .filter(|candidate| candidate.names_its_values())
+                        .collect::<Vec<_>>();
+                    // The window is read only by a position beside its part.
+                    let window = window.clone().filter(|_| {
+                        positions.iter().any(|candidate| {
+                            matches!(
+                                candidate,
+                                CheckedCallSeparationPositions::Live(_)
+                                    | CheckedCallSeparationPositions::RangeWithinLength(_)
+                            )
+                        })
+                    });
+                    (!positions.is_empty()).then_some((positions, window))
+                });
+                let unnamed_positions = separable.is_some() && named.is_none();
+                if let Some((positions, window)) = named {
                     // [OWN-7] positions below different range frames are
                     // relative to those frames. Name the range pair the
                     // proof actually compares, rather than descendant runs
@@ -934,8 +962,13 @@ impl<'unit> Checker<'_, 'unit> {
                     }
                     self.body.call_separations.push(CheckedCallSeparation {
                         site: self.types.declarations.tree.path(node)?.clone(),
-                        exchange,
+                        occasion: if exchange {
+                            CheckedSeparationOccasion::Exchange
+                        } else {
+                            CheckedSeparationOccasion::Call
+                        },
                         reference_use: None,
+                        held_use: None,
                         positions,
                         contract_indices: left
                             .contract_indices
@@ -971,11 +1004,13 @@ impl<'unit> Checker<'_, 'unit> {
                         // the same values over one place the argument names,
                         // or because no family this checker poses at a call
                         // separates the steps at which the two paths differ,
-                        // as for two places a joined argument may name. Only
-                        // the first is repaired at the call's positions.
+                        // as for two places a joined argument may name, or
+                        // whose positions there no fact names. Only the first
+                        // is repaired at the call's positions.
                         mechanical_fix: if exchange {
                             "exchange equal or disjoint places without an ancestor relation"
                         } else if left.argument == right.argument
+                            && !unnamed_positions
                             && left.place.root == right.place.root
                             && left.place.path.get(..left.formed)
                                 == right.place.path.get(..right.formed)
@@ -984,6 +1019,8 @@ impl<'unit> Checker<'_, 'unit> {
                             && Checker::separable_by_position(left_formal, right_formal).is_some()
                         {
                             "this call gives these two entries of the callee's row the same positions: pass positions this call proves do not overlap, or replace the callee's row entries at or below their common path with one `writes` entry of that path"
+                        } else if left.argument == right.argument && unnamed_positions {
+                            "these two entries of the callee's row may reach overlapping places through one argument, and no fact names the positions this call passes for them: replace the callee's row entries at or below their common path with one `writes` entry of that path"
                         } else if left.argument == right.argument {
                             "these two entries of the callee's row may reach overlapping places through one argument, and no position this call passes separates them: replace the callee's row entries at or below their common path with one `writes` entry of that path"
                         } else {
@@ -1320,7 +1357,8 @@ impl<'unit> TypeContext<'unit> {
         // [ENT-2] the actual is identified by the proof path of the place it
         // names: the resolved path where that path is exact and the place is
         // not written through a reference variable that is not exact, and
-        // otherwise the place as written through that variable.
+        // otherwise the place as written through that variable, or through
+        // its source where it is a range alias.
         let spelled =
             crate::semantic::places::named_place(&argument.expression).and_then(|named| {
                 let PlaceRoot::Binding(root) = named.root else {
@@ -1330,7 +1368,7 @@ impl<'unit> TypeContext<'unit> {
                 (local.reference.is_some() && exactness.exact_path(local).is_none()).then(|| {
                     let mut place = ResolvedPlace {
                         atomic_aliases: Vec::new(),
-                        root: named.root,
+                        root: PlaceRoot::Binding(exactness.proof_binding(root)),
                         path: named.steps,
                     };
                     place.path.extend(named.suffix);
@@ -1360,9 +1398,10 @@ impl<'unit> TypeContext<'unit> {
             // whose captured endpoints are what [REF-4] makes the range's
             // `len`.
             return Ok(match &argument.expression {
+                // A range alias names its source's term [ENT-2].
                 CheckedExpression::Binding { binding, .. } => {
                     GoalExpression::Datum(GoalDatum::Place {
-                        root: *binding,
+                        root: exactness.proof_binding(*binding),
                         projections: Vec::new(),
                         ty: expected_type,
                         admission: GoalAdmission::plain_range(expected_type),
@@ -1709,7 +1748,7 @@ impl<'unit> TypeContext<'unit> {
                                 // the reference's identity so proof kills can
                                 // resolve every candidate.
                                 None => GoalExpression::Datum(GoalDatum::Place {
-                                    root: local.binding,
+                                    root: exactness.proof_binding(local.binding),
                                     projections: Vec::new(),
                                     ty: local.ty,
                                     admission,

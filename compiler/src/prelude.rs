@@ -140,6 +140,13 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
 "#,
     ),
     (
+        "prelude/DecisionCell.wf",
+        PreludeSource::Opaque,
+        r#"opaque nocopy struct DecisionCell {
+}
+"#,
+    ),
+    (
         "prelude/box_new.wf",
         PreludeSource::Function,
         r#"fn box_new<T>(value: T) -> result: Box<T> pure;
@@ -475,6 +482,36 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
         r#"fn release<T: drop>(value: T) -> result: unit pure;
 "#,
     ),
+    (
+        "prelude/decision_cell_new.wf",
+        PreludeSource::Function,
+        r#"fn decision_cell_new() -> result: DecisionCell pure;
+"#,
+    ),
+    (
+        "prelude/decision_cell_share.wf",
+        PreludeSource::Function,
+        r#"fn decision_cell_share(cell: &DecisionCell) -> result: DecisionCell reads(cell);
+"#,
+    ),
+    (
+        "prelude/decision_cell_read.wf",
+        PreludeSource::Function,
+        r#"fn decision_cell_read(cell: &DecisionCell) -> result: DecisionState reads(cell);
+"#,
+    ),
+    (
+        "prelude/claim_written.wf",
+        PreludeSource::Function,
+        r#"fn claim_written(cell: &DecisionCell) -> result: DecisionState reads(cell);
+"#,
+    ),
+    (
+        "prelude/claim_killed.wf",
+        PreludeSource::Function,
+        r#"fn claim_killed(cell: &DecisionCell) -> result: DecisionState reads(cell);
+"#,
+    ),
 ];
 
 #[cfg(test)]
@@ -534,12 +571,17 @@ mod tests {
         signatures.sort_unstable();
         // [PRE-1] keeps no host record: the host signatures are the standard
         // library's [PRE-2], which this unit names none of. Of the
-        // compiler-owned rows only the key set's four functions [SHARE-1]
-        // take no type parameter, so each is one ordinary checked function;
-        // every other row is generic, and [FN-2] gives it a checked function
-        // only per concrete instance, of which this unit, calling none of
-        // them, has none.
+        // compiler-owned rows the key set's four functions [SHARE-1] and
+        // the decision cell's five functions [PRE-1] take no type parameter,
+        // so each is one ordinary checked function; every other row is
+        // generic, and [FN-2] gives it a checked function only per concrete
+        // instance, of which this unit, calling none of them, has none.
         let ungeneric = [
+            "claim_killed",
+            "claim_written",
+            "decision_cell_new",
+            "decision_cell_read",
+            "decision_cell_share",
             "key_set_bytes",
             "key_set_insert",
             "key_set_new",

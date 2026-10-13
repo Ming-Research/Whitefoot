@@ -2,6 +2,7 @@
 //! judged where the walk reaches it and its outcome is recorded.
 
 use super::*;
+use crate::semantic::model::CheckedSeparationOccasion;
 
 impl Input<'_, '_> {
     /// The [OWN-5] resolved place that root names.
@@ -241,7 +242,41 @@ impl Judging<'_, '_, '_> {
             };
             // A preservation query is a later reference-use obligation. It
             // does not make this event unreachable or suppress its effects.
-            all_discharged &= discharged || separation.reference_use.is_some();
+            all_discharged &= discharged || separation.reference_use.is_some() || separation.held_use.is_some();
+        }
+        all_discharged
+    }
+
+    /// [SHARE-2, OWN-7] the pairs of one atomic statement's handle places
+    /// whose separation is a proof, judged where the statement begins, after
+    /// its handle places and index atoms are read and before it holds any
+    /// state. Only the statement's own queries are taken: a call or set in
+    /// its block owns the queries below it.
+    pub(super) fn judge_atomic_target_separations(
+        &mut self,
+        site: &crate::NodePath,
+        state: &mut ProofFlowState,
+    ) -> bool {
+        let pending: Vec<_> = self
+            .input
+            .function
+            .call_separations
+            .iter()
+            .enumerate()
+            .filter(|(query, _)| !self.output.judged_separations.contains(query))
+            .filter(|(_, separation)| {
+                separation.site == *site
+                    && matches!(
+                        separation.occasion,
+                        CheckedSeparationOccasion::AtomicTargets(_)
+                    )
+            })
+            .map(|(query, separation)| (query, separation.clone()))
+            .collect();
+        let mut all_discharged = true;
+        for (query, separation) in pending {
+            self.output.judged_separations.insert(query);
+            all_discharged &= self.judge_one_separation(query, &separation, state);
         }
         all_discharged
     }
@@ -309,20 +344,27 @@ impl Judging<'_, '_, '_> {
                 .add_root(DerivationRootKind::BoundsObligation(ordinal), root);
         }
         self.output.obligations.push(ObligationOutcome {
-            node_path: separation.reference_use.as_ref()
-                .map_or_else(|| separation.site.clone(), |use_site| use_site.site.clone()),
-            family: if separation.reference_use.is_some() {
-                ObligationFamily::ReferencePreservation(
+            node_path: match (&separation.reference_use, &separation.held_use, &separation.occasion) {
+                (Some(use_site), _, _) => use_site.site.clone(),
+                (None, Some(held_use), _) => held_use.site.clone(),
+                (None, None, CheckedSeparationOccasion::AtomicTargets(target)) => target.clone(),
+                (None, None, _) => separation.site.clone(),
+            },
+            family: match (&separation.reference_use, &separation.occasion) {
+                (Some(_), _) => ObligationFamily::ReferencePreservation(
                     u32::try_from(query).expect("reference-preservation queries exceed u32"),
-                )
-            } else if separation.exchange {
-                ObligationFamily::ExchangeSeparation(
+                ),
+                (None, CheckedSeparationOccasion::Exchange) => ObligationFamily::ExchangeSeparation(
                     u32::try_from(query).expect("exchange-separation queries exceed u32"),
-                )
-            } else {
-                ObligationFamily::CallSeparation(
+                ),
+                (None, CheckedSeparationOccasion::AtomicTargets(_)) => {
+                    ObligationFamily::AtomicTargetSeparation(
+                        u32::try_from(query).expect("atomic-target separation queries exceed u32"),
+                    )
+                }
+                (None, CheckedSeparationOccasion::Call) => ObligationFamily::CallSeparation(
                     u32::try_from(query).expect("call-separation queries exceed u32"),
-                )
+                ),
             },
             conjunct: 0,
             canonical_goal: None,
@@ -362,6 +404,7 @@ impl Judging<'_, '_, '_> {
             range_partitions: Vec::new(),
             written_before: state.written_before(discharged),
             killed_by: Vec::new(),
+            selected_return: None,
         });
         discharged
     }
@@ -521,6 +564,7 @@ impl Judging<'_, '_, '_> {
             range_partitions: Vec::new(),
             written_before: states.written_before(discharged),
             killed_by: Vec::new(),
+            selected_return: None,
         });
     }
 
@@ -610,6 +654,7 @@ impl Analyzer<'_, '_> {
                 actual_captures,
                 goal_arguments,
                 requirements,
+                routed_requirements,
                 formal_contract,
                 ..
             } => {
@@ -710,6 +755,45 @@ impl Analyzer<'_, '_> {
                         }
                     }
                 }
+                // [TYPE-11, FN-8] each requirement over a parameter's enum
+                // payload is owed in the argument's conditional context for
+                // its route [ENT-5]: if the argument holds the variant, its
+                // field satisfies the invariant.
+                let mut routed_parents = Vec::with_capacity(routed_requirements.len());
+                for requirement in routed_requirements {
+                    if !actuals_reached {
+                        break;
+                    }
+                    let Some(argument) = arguments.get(requirement.subject as usize) else {
+                        goals_ok = false;
+                        continue;
+                    };
+                    // The argument's admitted pre-transfer image, as an
+                    // ordinary requirement over this parameter reads it.
+                    let image = goal_arguments.get(requirement.subject as usize).map(|captured| {
+                        admitted_call_goal_expression(
+                            captured,
+                            call,
+                            admitted_arguments
+                                .as_deref()
+                                .expect("reached actuals have admitted argument slots"),
+                        )
+                    });
+                    let (goal, facts) =
+                        self.routed_requirement_goal(call, argument, image, requirement, states);
+                    let (disposition, derivation) = self.judging().judge_call_goal(
+                        *function,
+                        call,
+                        (requirement.clause.clone(), Some(requirement.subject)),
+                        goal,
+                        arguments.len(),
+                        (ProofContext::new(&facts, &states.affine), &*states),
+                    );
+                    goals_ok &= disposition == CallGoalDisposition::Discharged;
+                    if let Some(derivation) = derivation {
+                        routed_parents.push(derivation);
+                    }
+                }
                 let reached = actuals_reached && goals_ok;
                 let contract_parents = if reached {
                     formal_contract.as_deref().and_then(|contract| {
@@ -731,14 +815,18 @@ impl Analyzer<'_, '_> {
                     .available_call_postconditions(*function, formal_contract.as_deref());
                 let prepared_call = (|| {
                     let mut parents = actual_parents?;
-                    if !reached || goal_parents.len() != requirements.len() {
+                    if !reached
+                        || goal_parents.len() != requirements.len()
+                        || routed_parents.len() != routed_requirements.len()
+                    {
                         return None;
                     }
                     parents.extend(goal_parents);
+                    parents.extend(routed_parents);
                     parents.extend(contract_parents.unwrap_or_default());
-                    // A direct call needs an earlier-component verified FN-9
-                    // summary. A bound call needs either those actual
-                    // premises plus its retained FN-4 implication, or a
+                    // A direct call needs an FN-9 summary or a same-component
+                    // induction hypothesis [DIAG-2]. A bound call needs those
+                    // actual premises plus its retained FN-4 implication, or a
                     // zero-premise formal implication. Calls with no
                     // authorized relation retain the pre-S12 kill path.
                     if postconditions.is_empty() {
@@ -1460,16 +1548,71 @@ impl Analyzer<'_, '_> {
         node_path: crate::NodePath,
         states: &ProofFlowState,
     ) {
+        self.judge_index_measure_over(
+            base,
+            measured,
+            array_length,
+            measure,
+            offset,
+            IndexTerms::default(),
+            node_path,
+            states,
+        );
+    }
+
+    /// [OP-4] one bounds obligation, with `terms` replacing the offset's and
+    /// the length's ordinary terms where the place the subscript occurs in
+    /// denotes another state than the current one [FN-9, MSR-3].
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn judge_index_measure_over(
+        &mut self,
+        base: ResolvedPlace,
+        measured: MeasuredKind,
+        array_length: Option<CheckedConst>,
+        measure: CheckedMeasure,
+        offset: &CheckedExpression,
+        terms: IndexTerms,
+        node_path: crate::NodePath,
+        states: &ProofFlowState,
+    ) {
         // [OP-4] the obligation is against `len_of(p)` in logical coordinates
         // [MSR-1], never against `cap_of(p)`.
-        let length_term =
+        let length_term = terms.length.unwrap_or_else(|| {
             self.reasoning()
-                .place_measure_term(measure, base.clone(), measured, array_length);
-        let offset_term = self.reasoning().read_operand(offset);
-        let affine_offset = self
-            .input
-            .direct_goal_expression(offset)
-            .and_then(|offset| self.reasoning().affine_goal_value(&offset, &states.affine));
+                .place_measure_term(measure, base.clone(), measured, array_length)
+        });
+        let (offset_term, affine_offset, fixed_array_affine) = match terms.offset {
+            Some(term) => {
+                let affine = self.vocabulary.measure_atom(term, &states.affine);
+                let fixed = match array_length {
+                    Some(CheckedConst::Value(length)) => {
+                        i128::from(length).checked_sub(1).and_then(|last| {
+                            AffineInequality::from_forms(
+                                &affine,
+                                &AffineForm::constant(last),
+                                &mut AffineCheckState::new(),
+                            )
+                            .ok()
+                        })
+                    }
+                    Some(CheckedConst::Parameter(_) | CheckedConst::Derived(_)) | None => None,
+                };
+                (Some(term), Some(affine), fixed)
+            }
+            None => {
+                let offset_term = self.reasoning().read_operand(offset);
+                let affine_offset = self
+                    .input
+                    .direct_goal_expression(offset)
+                    .and_then(|offset| self.reasoning().affine_goal_value(&offset, &states.affine));
+                let fixed_array_affine = self.reasoning().affine_fixed_array_index_target(
+                    offset,
+                    array_length,
+                    &states.affine,
+                );
+                (offset_term, affine_offset, fixed_array_affine)
+            }
+        };
         // [MSR-4] the subscript submits its own normalized target to the one
         // disposition, so steps 4 and 5 range over the measure's own affine
         // atom instead of being reachable only through the L0-right bridge.
@@ -1478,15 +1621,14 @@ impl Analyzer<'_, '_> {
             let mut check = AffineCheckState::new();
             AffineInequality::from_bounded_forms(offset, &length, -1, &mut check).ok()
         });
-        let fixed_array_affine =
-            self.reasoning()
-                .affine_fixed_array_index_target(offset, array_length, &states.affine);
-        let rendered_residual = format!(
-            "{} < {}.{}",
-            self.input.render_expression(offset),
-            self.input.render_place(&base),
-            measure.spelling()
-        );
+        let rendered_residual = terms.residual.unwrap_or_else(|| {
+            format!(
+                "{} < {}.{}",
+                self.input.render_expression(offset),
+                self.input.render_place(&base),
+                measure.spelling()
+            )
+        });
         let request = BoundsRequest {
             left: offset_term,
             right: length_term,
@@ -1596,6 +1738,7 @@ impl Analyzer<'_, '_> {
             range_partitions: Vec::new(),
             written_before: states.written_before(discharged),
             killed_by,
+            selected_return: None,
         });
     }
 
@@ -1770,7 +1913,7 @@ impl Analyzer<'_, '_> {
         if outcome.route == Some(ProofRoute::Affine) || outcome.route.is_none() {
             states.affine = prepared_affine;
         } else {
-            self.vocabulary.affine_atoms.truncate(candidate_atom_start);
+            self.vocabulary.discard_atoms_from(candidate_atom_start);
         }
         let discharged = outcome.disposition == ProofDisposition::Proved;
         let refuted = outcome.disposition == ProofDisposition::Refuted;
@@ -1827,6 +1970,7 @@ impl Analyzer<'_, '_> {
             range_partitions: Vec::new(),
             written_before: states.written_before(discharged),
             killed_by: Vec::new(),
+            selected_return: None,
         });
     }
 
@@ -1915,4 +2059,17 @@ pub(super) fn set_target_place(target: &CheckedSetTarget) -> Option<ResolvedPlac
 /// subscript by its captured offset [REF-1].
 fn judged_place(root: &CheckedContainerRoot) -> ResolvedPlace {
     root.proof_place()
+}
+
+/// [FN-9, MSR-3] the terms a postcondition place's subscript is judged over
+/// in place of the current offset and base length: the function-entry value
+/// of a formal offset, and the entry length of a base the place reads at
+/// function entry. `None` keeps the ordinary current term. `residual`
+/// replaces the bound as the subscript's own spelling renders it, for a place
+/// whose operands denote another state than the body's spelling of them does.
+#[derive(Clone, Default)]
+pub(super) struct IndexTerms {
+    pub(super) offset: Option<TermId>,
+    pub(super) length: Option<TermId>,
+    pub(super) residual: Option<String>,
 }

@@ -469,6 +469,7 @@ impl<'unit> Checker<'_, 'unit> {
                 )?;
                 BlockResult {
                     statements: vec![CheckedStatement::Match {
+                        node_path: self.types.declarations.tree.path(*nested)?.clone(),
                         scrutinee: chained.scrutinee,
                         enum_type: chained.enum_type,
                         arms: chained.arms,
@@ -762,6 +763,7 @@ impl<'unit> Checker<'_, 'unit> {
                         read_only_state: false,
                         reference,
                         refinement_witnesses,
+                        handle_watch: None,
                         call_value: false,
                     },
                 )

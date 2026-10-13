@@ -5,7 +5,7 @@ fn reserve(rows: &Slots<Box<Slots<u64>>, 2>, selected: u64, observed: u64, n: u6
   requires capacity >= rows^[selected].inner.cap;
 } {
   grow(cell: &rows^[selected], capacity: capacity);
-  invariant unchanged: rows^[observed].inner.len == n;
+  invariant preserved_value: rows^[observed].inner.len == n;
   return unit;
 }
 

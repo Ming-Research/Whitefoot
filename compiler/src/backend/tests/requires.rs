@@ -106,8 +106,8 @@ fn main() -> status: std::process::ExitStatus pure {
   }
   let destination = &output.inner[0_u64..4_u64];
   let capacity = destination^.len;
-  let held = source.inner.len;
-  if held <= capacity {
+  let observed = source.inner.len;
+  if observed <= capacity {
   } else {
     return std::process::exit_status(code: 5_u8);
   }

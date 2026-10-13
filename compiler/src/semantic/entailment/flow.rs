@@ -266,6 +266,9 @@ struct GiveFrame {
     node_path: crate::NodePath,
     binding: BindingId,
     result_type: CheckedType,
+    /// The binder's derived mode [GIVE-1]: only an own delivery carries a
+    /// value carrier's relations [ENT-5].
+    result_mode: CheckedMode,
     gives: Vec<ProofFlowState>,
     give_goal_origins: Vec<Option<GoalId>>,
     delivery_images: Vec<ProofFlowState>,
@@ -318,6 +321,9 @@ struct DeliveryJoinContext<'a> {
     statement: &'a crate::NodePath,
     receiver_binding: BindingId,
     receiver: TermId,
+    /// The receiver terms of the same value carrier already joined, whose
+    /// pairs with this one that join has already delivered [ENT-5].
+    earlier: &'a [TermId],
     event: FlowEventId,
 }
 
@@ -325,7 +331,7 @@ struct DeliveryJoinContext<'a> {
 #[derive(Clone, Debug, Default)]
 struct ProofFlowState {
     facts: FactState,
-    results: BTreeMap<BindingId, ResultEvidence>,
+    results: BTreeMap<BindingId, Vec<ResultEvidence>>,
     /// Proof-carrying [OWN-7] separations available on this edge. Captured
     /// positions are immutable, but a proof about them is available only
     /// where the judgment that established it dominates this state.
@@ -561,7 +567,7 @@ enum ProofGoal<'a> {
     },
     /// PRF-1 admits written relation premises and judges certificate
     /// redundancy through AUTO alone. Neither query may borrow MSR-4's
-    /// Step 6 route, which a blockless INV-1 target may use.
+    /// Step 6 or Step 7 route, which a blockless INV-1 target may use.
     AutomaticAffine { inequality: &'a AffineInequality },
     Signed {
         expression: &'a GoalExpression,
@@ -606,6 +612,24 @@ struct FixedAffineBoundBridge<'a> {
     target: &'a AffineInequality,
     middle: TermId,
     left_to_middle_bound: i128,
+}
+
+/// Which of MSR-4's affine steps answer one affine target.
+#[derive(Clone, Copy)]
+enum AffineDisposition {
+    /// A PRF-1 query: AUTO alone.
+    AutoOnly,
+    /// A target submitted to MSR-4's complete disposition, whose Step 6
+    /// bridges to `right` when the source normalization retained one.
+    Complete { right: Option<TermId> },
+}
+
+/// The step that proves an affine target the fixed bounded-relation routes
+/// submit: AUTO, or MSR-4's Step 7 quotient bound.
+#[derive(Clone, Copy)]
+enum AffineStep {
+    Auto,
+    QuotientBound,
 }
 
 #[derive(Clone)]
@@ -677,8 +701,10 @@ struct ActiveAffineFact {
     evidence: AffineFactEvidence,
 }
 
-/// Captured values of one admitted unsigned division. These identities are
-/// immutable, like product atoms: a replacement binding gets a fresh image.
+/// Captured values of one admitted unsigned division, or of one unsigned
+/// exact right shift read as the division by its power divisor [ENT-3.S7].
+/// These identities are immutable, like product atoms: a replacement binding
+/// gets a fresh image.
 #[derive(Clone, Debug)]
 struct CapturedUnsignedDivision {
     quotient: AffineForm,
@@ -749,6 +775,14 @@ struct AffineL0Entry {
 struct AffineL0Index {
     entries: Vec<AffineL0Entry>,
     by_terms: WordHashMap<Box<[AffineCoefficient]>, usize>,
+    postings: std::cell::OnceCell<AffineL0Postings>,
+}
+
+/// Target-independent support metadata for one complete, immutable index.
+#[derive(Default)]
+struct AffineL0Postings {
+    by_atom: WordHashMap<AffineTermId, Vec<usize>>,
+    by_support: WordHashMap<Box<[AffineTermId]>, Vec<usize>>,
 }
 
 /// One function-local query memo, including the full ordered value images.
@@ -790,6 +824,9 @@ struct AffineDirectQuery<'a> {
     intervals: WordHashMap<AffineTermId, AffineAtomInterval>,
     measures: Option<WordHashMap<AffineTermId, Vec<TermId>>>,
     residual: AffineResidualScratch,
+    direct_metric: super::work::AffineMetric,
+    /// Entries whose strongest-interval feasibility is false or unknown.
+    final_interval_exceptions: Option<Vec<usize>>,
 }
 
 impl<'a> AffineDirectQuery<'a> {
@@ -805,8 +842,39 @@ impl<'a> AffineDirectQuery<'a> {
             intervals: WordHashMap::default(),
             measures: None,
             residual: AffineResidualScratch::default(),
+            direct_metric: super::work::AffineMetric::DirectOther,
+            final_interval_exceptions: None,
         }
     }
+}
+
+/// One numeric disposition retains AUTO preparation through its bridge targets.
+/// The borrows freeze binding images and premise order for this session. Atoms
+/// are immutable on this call path; it neither rolls back nor replaces them.
+/// Interior-mutable measure images are checked through the prepared index.
+struct AffineAutoQuery<'a> {
+    values: &'a AffineFlowState,
+    assumptions: &'a [ActiveAffineFact],
+    prepared: Option<PreparedAffineAuto>,
+}
+
+impl<'a> AffineAutoQuery<'a> {
+    fn new(values: &'a AffineFlowState, assumptions: &'a [ActiveAffineFact]) -> Self {
+        Self {
+            values,
+            assumptions,
+            prepared: None,
+        }
+    }
+}
+
+struct PreparedAffineAuto {
+    closed: Rc<ClosedState>,
+    l0: Rc<LazyAffineL0Index>,
+    intervals: WordHashMap<AffineTermId, AffineAtomInterval>,
+    measures: Option<WordHashMap<AffineTermId, Vec<TermId>>>,
+    residual: AffineResidualScratch,
+    final_interval_exceptions: Option<Vec<usize>>,
 }
 
 struct AutomaticAffinePremise {
@@ -981,9 +1049,17 @@ struct ExpressionJudgment {
 #[derive(Clone, Debug)]
 struct AvailablePostcondition {
     relation: RelationTemplate,
-    variant: Option<crate::BuiltinPreludeId>,
-    field: Option<crate::BuiltinPreludeId>,
+    /// The variant field a routed relation is restricted to [FN-9, TYPE-11].
+    route: Option<super::super::postcondition::PayloadRoute>,
     authority: super::RelationProvenance,
+}
+
+impl AvailablePostcondition {
+    /// Whether the relation is restricted to one variant field of its
+    /// result, a written variant-field route or a generated one.
+    const fn routed(&self) -> bool {
+        self.route.is_some()
+    }
 }
 
 /// [MSR-3] one payload placement's datums, held between the mint before the
@@ -1254,6 +1330,9 @@ fn run(function: &CheckedFunction, context: &EntailmentContext<'_>) -> AnalysisR
     // datum per measure of a parameter any declared relation names, equal to
     // that measure at body entry.
     analyzer.reasoning().establish_entry_datums(&mut state);
+    // [FN-9] and the entry datums each postcondition place's subscripts
+    // are judged over at its selected returns.
+    analyzer.establish_place_entry_datums(&mut state);
     analyzer
         .frames
         .scopes
@@ -1276,6 +1355,7 @@ fn run(function: &CheckedFunction, context: &EntailmentContext<'_>) -> AnalysisR
             .reasoning()
             .establish_requirement_affine_images(requirement, ordinal, &mut state);
     }
+    analyzer.establish_routed_requirements(&mut state);
     let body_disposition = {
         let closed = close(
             &state.facts,
@@ -1361,6 +1441,7 @@ impl<'check, 'unit> Analyzer<'check, 'unit> {
                 handle_images: HashMap::new(),
                 invariant_targets: HashMap::new(),
                 unsigned_divisions: Vec::new(),
+                power_atoms: HashMap::new(),
                 encountered_counted: 0,
                 completed_counted_roots: 0,
                 s12_roots: 0,
@@ -1784,6 +1865,13 @@ struct Vocabulary {
     /// Source-establishment order is the specified tie-break for matching
     /// a product against more than one captured division.
     unsigned_divisions: Vec<CapturedUnsignedDivision>,
+    /// [ENT-6] the one power atom, standing for `2^s`, of each nonconstant
+    /// shift-amount image `s` and unsigned shift type this function has
+    /// demanded. Keys and values are immutable value identities, so like
+    /// `product_atoms` this needs no kill and no join: a left shift of one and
+    /// a right shift by the same amount image at one type name the same atom
+    /// wherever either occurs.
+    power_atoms: HashMap<(AffineForm, IntegerType), AffineForm>,
     encountered_counted: u32,
     completed_counted_roots: u32,
     s12_roots: u32,
@@ -2017,6 +2105,7 @@ mod indexed_goal_kill_tests {
             contract_queries: &[],
             verified_postconditions: &[],
             verified_postcondition_proofs: &[],
+            component_postconditions: &[],
             binding_names: &[],
         };
         let function = CheckedFunction {
@@ -2036,7 +2125,10 @@ mod indexed_goal_kill_tests {
             declared_state_writes: Vec::new(),
             declared_state_reads: Vec::new(),
             requirements: Vec::new(),
+            held_parameters: Vec::new(),
+            held_calls: Vec::new(),
             requirement_places: Vec::new(),
+            routed_requirements: Vec::new(),
             postconditions: Vec::new(),
             range_facts: Default::default(),
             body: None,
@@ -2233,6 +2325,7 @@ mod range_argument_kill_tests {
             binding: VIEW,
             element: CheckedElement(0),
             element_type: CheckedType::Integer(IntegerType::U64),
+            proof_base: None,
         })
     }
 
@@ -2256,6 +2349,7 @@ mod range_argument_kill_tests {
             contract_queries: &[],
             verified_postconditions: &[],
             verified_postcondition_proofs: &[],
+            component_postconditions: &[],
             binding_names: &[],
         };
         let function = CheckedFunction {
@@ -2275,7 +2369,10 @@ mod range_argument_kill_tests {
             declared_state_writes: Vec::new(),
             declared_state_reads: Vec::new(),
             requirements: Vec::new(),
+            held_parameters: Vec::new(),
+            held_calls: Vec::new(),
             requirement_places: Vec::new(),
+            routed_requirements: Vec::new(),
             postconditions: Vec::new(),
             range_facts: Default::default(),
             body: None,

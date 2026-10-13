@@ -129,11 +129,11 @@ impl TargetLayout {
         {
             return Self::for_triple("x86_64-apple-darwin");
         }
-        #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
+        #[cfg(all(target_arch = "aarch64", target_os = "linux", target_env = "gnu"))]
         {
             return Self::for_triple("aarch64-unknown-linux-gnu");
         }
-        #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+        #[cfg(all(target_arch = "x86_64", target_os = "linux", target_env = "gnu"))]
         {
             return Self::for_triple("x86_64-unknown-linux-gnu");
         }
@@ -170,6 +170,21 @@ impl TargetLayout {
     /// frame past the page threshold, so an ordinary frame pays nothing.
     pub(super) const fn stack_probe(self) -> &'static str {
         self.stack_probe
+    }
+
+    /// How many integer-class argument words the selected target's C calling
+    /// convention passes in registers: six on x86-64 System V, four on
+    /// x86-64 Windows and eight on AArch64; a call that passes more puts the
+    /// rest on the stack. Only a lowering's profitability choice reads it
+    /// (compiler/recursive-environment); no calling interface depends on it.
+    pub(super) fn integer_argument_registers(self) -> u64 {
+        if self.triple.starts_with("aarch64") {
+            8
+        } else if self.triple.contains("windows") {
+            4
+        } else {
+            6
+        }
     }
 
     pub(super) const fn address_index_max(self) -> u64 {
@@ -1005,6 +1020,65 @@ impl TargetAggregateLayout {
     }
 }
 
+/// Native value extent used by immutable supplied-definition metadata.
+pub(crate) fn representation_layout(
+    target: TargetLayout,
+    program: &IrProgram,
+    ty: IrType,
+) -> Result<TargetAggregateLayout, TargetLayoutFailure> {
+    let layout = LayoutComputer::new(target, program.nominals(), program.elements()).layout(ty)?;
+    Ok(TargetAggregateLayout {
+        size: layout.size,
+        align: layout.align,
+    })
+}
+
+/// Declared field offsets, using the same layout walk as value emission.
+pub(crate) fn representation_fields(
+    target: TargetLayout,
+    program: &IrProgram,
+    fields: &[IrType],
+) -> Result<Vec<(IrType, u64)>, TargetLayoutFailure> {
+    LayoutComputer::new(target, program.nominals(), program.elements()).field_offsets(fields)
+}
+
+/// Payload offsets for either enum representation. Tags always begin at zero.
+pub(crate) fn representation_variant(
+    target: TargetLayout,
+    program: &IrProgram,
+    nominal: IrNominalId,
+    tag: u32,
+) -> Result<Vec<(IrType, u64)>, TargetLayoutFailure> {
+    let data = program
+        .nominal(nominal)
+        .ok_or(TargetLayoutFailure::InvalidIr)?;
+    let IrNominalKind::Enum { variants } = data.kind() else {
+        return Err(TargetLayoutFailure::InvalidIr);
+    };
+    let selected = variants
+        .iter()
+        .position(|v| v.tag() == tag)
+        .ok_or(TargetLayoutFailure::InvalidIr)?;
+    let mut fields = vec![IrType::Integer {
+        width: 32,
+        signed: false,
+    }];
+    let union = is_union_enum(program.nominals(), program.elements(), nominal)?;
+    let start = if union {
+        1
+    } else {
+        for variant in &variants[..selected] {
+            fields.extend(variant.fields().iter().map(|f| f.ty()));
+        }
+        fields.len()
+    };
+    fields.extend(variants[selected].fields().iter().map(|f| f.ty()));
+    Ok(representation_fields(target, program, &fields)?
+        .into_iter()
+        .skip(start)
+        .collect())
+}
+
 /// Alignment the compiler-owned parallel runtime guarantees for the byte
 /// storage at the start of every worker slot.
 ///
@@ -1303,7 +1377,7 @@ fn validate_target_obligation(
         }
         // [SHARE-1] an object is the runtime's header and then its state, in
         // one block the runtime takes from its pool.
-        IrOperation::SharedNew { nominal } => {
+        IrOperation::SharedNew { nominal } | IrOperation::DecisionCellNew { nominal } => {
             if result_type != IrType::Nominal(*nominal) {
                 return Err(TargetLayoutFailure::InvalidIr);
             }

@@ -1,0 +1,18 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn rounded_down(total: u64, shift: u32) -> result: u64 pure contract {
+  requires total <= 1000_u64;
+  requires shift <= 20_u32;
+  ensures result <= total;
+} {
+  doc "The quotient of the total by two to the shift, multiplied back by the same power of two, is at most the total. The left shift of one and the right shift by the same amount name one power atom, so the product of the quotient and the multiplier is the captured division's quotient times its divisor.";
+  let multiplier = ishl(1_u64, shift);
+  let quotient = ishr(total, shift);
+  let product = quotient * multiplier;
+  return product;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

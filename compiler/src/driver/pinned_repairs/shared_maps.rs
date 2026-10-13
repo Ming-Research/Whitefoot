@@ -67,6 +67,114 @@ fn main() -> status: std::process::ExitStatus pure waits {
         ],
     },
     RepairPair {
+        name: "indexed-handle-places-possibly-equal.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/share-neg-indexed-handle-places-possibly-equal.wf"
+        ),
+        rule: "SHARE-2",
+        sentences: &[
+            "]: UndischargedCallSeparation\n",
+            "prove before the statement that the positions of the two handle places are distinct, such as by a `requires` clause or an `if` around the statement, or hold the second handle in an atomic statement of its own",
+        ],
+        repaired: &[
+            include_bytes!(
+                "../../../../tests/conformance/cases/share-pos-indexed-handle-places-proved-apart.wf"
+            ),
+            br#"fn pour(shards: &Array<Shared<u64>, 4>, from: u64, into: u64) -> result: unit reads(shards) waits contract {
+  requires from < 4_u64;
+  requires into < 4_u64;
+} {
+  if from != into {
+    atomic source = &shards^[from], target = &shards^[into] {
+      set target^ = target^ +wrap source^;
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+            br#"fn pour(shards: &Array<Shared<u64>, 4>, from: u64, into: u64) -> result: unit reads(shards) waits contract {
+  requires from < 4_u64;
+  requires into < 4_u64;
+} {
+  let poured = 0_u64;
+  atomic source = &shards^[from] {
+    set poured = source^;
+  }
+  atomic target = &shards^[into] {
+    set target^ = target^ +wrap poured;
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        ],
+    },
+    RepairPair {
+        name: "indexed-handle-places-range-reference-possibly-equal.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/share-neg-indexed-handle-places-range-reference-possibly-equal.wf"
+        ),
+        rule: "SHARE-2",
+        sentences: &[
+            "]: UndischargedCallSeparation\n",
+            "prove before the statement that the positions of the two handle places are distinct, such as by a `requires` clause or an `if` around the statement, or hold the second handle in an atomic statement of its own",
+        ],
+        repaired: &[
+            include_bytes!(
+                "../../../../tests/conformance/cases/share-pos-indexed-handle-places-range-reference-proved-apart.wf"
+            ),
+            br#"fn pour(shards: &[Shared<u64>], from: u64, into: u64) -> result: unit reads(shards) waits contract {
+  requires from < shards^.len;
+  requires into < shards^.len;
+} {
+  let poured = 0_u64;
+  atomic source = &shards^[from] {
+    set poured = source^;
+  }
+  atomic target = &shards^[into] {
+    set target^ = target^ +wrap poured;
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        ],
+    },
+    RepairPair {
+        name: "indexed-handle-places-same-index.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/share-neg-indexed-handle-places-same-index.wf"
+        ),
+        rule: "SHARE-2",
+        sentences: &[
+            "]: AtomicTargetNotShared\n",
+            "hold a handle whole once, or name its entries with entry and key-set targets",
+        ],
+        repaired: &[br#"fn pour(shards: &Array<Shared<u64>, 4>, slot: u64) -> result: unit reads(shards) waits contract {
+  requires slot < 4_u64;
+} {
+  atomic kept = &shards^[slot] {
+    set kept^ = kept^ +wrap kept^;
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
         name: "map-whole-target-unused.wf",
         rejected: include_bytes!("../../../../tests/conformance/cases/share-neg-target-unused.wf"),
         rule: "SHARE-2",
@@ -148,5 +256,43 @@ fn main() -> status: std::process::ExitStatus pure waits {
   return std::process::exit_status(code: 0_u8);
 }
 "#],
+    },
+    RepairPair {
+        name: "atomic-guard-reads-wall-clock.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/share-neg-guard-reads-wall-clock.wf"
+        ),
+        rule: "SHARE-2",
+        sentences: &[
+            "]: AtomicGuardReadsSelfChanging\n",
+            "\n  mechanical_fix: wait for the time outside the guard: call `std::time::sleep_until` with the deadline before the statement, or spawn a context that sleeps until the deadline and then fires a cancellation source, and give the statement a target on that source's `cancel_state` whose `fired` the guard reads\n",
+        ],
+        repaired: &[
+            br#"struct Progress {
+  n: u64;
+}
+
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
+  let std::process::Inputs(cwd: directory, handles: factory, clock: clock, ..) = move inputs;
+  let std::fs::Directory(read: directory_read, write: directory_write) = move directory;
+  std::fs::close_directory_write(factory: &factory, directory: move directory_write);
+  std::fs::close_directory(factory: &factory, directory: move directory_read);
+  let start = std::time::now(clock: &clock);
+  let deadline = std::time::instant_after(instant: start, nanoseconds: 1000000_u64);
+  let never = std::time::cancel_never();
+  std::time::sleep_until(deadline: deadline, cancel: &never);
+  std::time::close_cancel_watch(watch: move never);
+  let initial = Progress(n: 0_u64);
+  let state = shared_new::<Progress>(value: initial);
+  atomic g = &state {
+    set g^.n = 1_u64;
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+            include_bytes!(
+                "../../../../tests/conformance/cases/share-run-guard-deadline-through-a-cancel-watch.wf"
+            ),
+        ],
     },
 ];

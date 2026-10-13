@@ -245,7 +245,7 @@ fn add_ranked(sorted: &Sorted, client: &Client, adding: &Adding) -> result: unit
           let placed = ordered_map_put::<RankOrder, unit, ceiling>(map: &sorted^.order, key: move rank, value: unit, env: &keys);
           set adding^.updated = adding^.updated +wrap 1_u64;
         } else {
-          let unchanged = move member;
+          let retained_member = move member;
         }
       }
     } else if adding^.xx {
@@ -398,8 +398,8 @@ fn run_zadd(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   let adding = Adding(nx: nx, xx: xx, gt: gt, lt: lt, incr: incr, added: 0_u64, updated: 0_u64, processed: 0_u64, score: 0.0_f64, nan: unset);
   atomic slot = &store^.keys[key], m = &store^.meta {
     match slot^ {
-      Some(value: held) => {
-        let edited = add_scores(env: client, value: held, adding: &adding);
+      Some(value: observed) => {
+        let edited = add_scores(env: client, value: observed, adding: &adding);
       }
       None() => {
       }
@@ -479,8 +479,8 @@ fn remove_ranked(env: &Client, value: &Entry) -> kind: u64 writes(env), writes(v
           let pair = hash_map_remove::<KeyHash, f64, ceiling>(map: &sorted^.scores, key: &member, env: &keys);
           match move pair {
             Some(value: gone) => {
-              let HashMapPair(key: held, value: score) = move gone;
-              let rank = Rank(score: score, member: move held);
+              let HashMapPair(key: observed, value: score) = move gone;
+              let rank = Rank(score: score, member: move observed);
               let unranked = ordered_map_remove::<RankOrder, unit, ceiling>(map: &sorted^.order, key: &rank, env: &keys);
               set removed = removed +wrap 1_u64;
             }
@@ -528,8 +528,8 @@ fn run_zrem(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   set client^.number = 0_u64;
   atomic slot = &store^.keys[key], m = &store^.meta {
     match slot^ {
-      Some(value: held) => {
-        let edited = remove_ranked(env: client, value: held);
+      Some(value: observed) => {
+        let edited = remove_ranked(env: client, value: observed);
       }
       None() => {
       }
@@ -722,8 +722,8 @@ fn run_zpop(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   }
   atomic slot = &store^.keys[key], m = &store^.meta {
     match slot^ {
-      Some(value: held) => {
-        let edited = pop_ranked(env: client, value: held);
+      Some(value: observed) => {
+        let edited = pop_ranked(env: client, value: observed);
       }
       None() => {
       }
@@ -804,8 +804,8 @@ fn run_zcard(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &C
   set client^.number = 0_u64;
   atomic slot = &store^.keys[key] {
     match slot^ {
-      Some(value: held) => {
-        let found = sorted_size(env: client, value: held);
+      Some(value: observed) => {
+        let found = sorted_size(env: client, value: observed);
       }
       None() => {
       }
@@ -876,8 +876,8 @@ fn run_zscore(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
   set client^.state = state_absent;
   atomic slot = &store^.keys[key] {
     match slot^ {
-      Some(value: held) => {
-        let found = member_score(env: client, value: held);
+      Some(value: observed) => {
+        let found = member_score(env: client, value: observed);
       }
       None() => {
       }
@@ -957,8 +957,8 @@ fn run_zmscore(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: 
   set client^.state = state_absent;
   atomic slot = &store^.keys[key] {
     match slot^ {
-      Some(value: held) => {
-        let found = member_scores(env: client, value: held);
+      Some(value: observed) => {
+        let found = member_scores(env: client, value: observed);
       }
       None() => {
       }
@@ -1103,8 +1103,8 @@ fn run_zrank(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &C
   }
   atomic slot = &store^.keys[key] {
     match slot^ {
-      Some(value: held) => {
-        let found = member_rank(env: client, value: held);
+      Some(value: observed) => {
+        let found = member_rank(env: client, value: observed);
       }
       None() => {
       }

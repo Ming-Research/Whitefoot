@@ -1,0 +1,127 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn shift_right_digits(digits: &Array<u8, 6>, shift: u32) -> result: u64 writes(digits) contract {
+  requires shift <= 60_u32;
+} {
+  doc "Divides the six-digit decimal held in digits by two to the shift in place, schoolbook from the most significant digit, and returns the remainder. Each quotient digit is the running remainder times ten plus the next digit, shifted right, and its low bits are the next remainder. A byte above nine is no digit: the division stops there and returns the multiplier, which no remainder equals.";
+  let multiplier = ishl(1_u64, shift);
+  let mask = multiplier - 1_u64;
+  let remainder = 0_u64;
+  for (
+    index in 0_u64..6_u64,
+    invariant remainder_bound: remainder <= mask
+  ) {
+    let digit = digits^[index];
+    if digit <= 9_u8 {
+    } else {
+      return multiplier;
+    }
+    let wide = cvt::<u8, u64>(digit);
+    let scaled = remainder * 10_u64;
+    let total = scaled + wide;
+    invariant total_bound: total <= 10_u64 * mask + 9_u64 {
+      use 10 times remainder_bound;
+    }
+    let quotient = ishr(total, shift);
+    let kept = iand(total, mask);
+    let narrow = cvt::<u64, u8>(quotient);
+    set digits^[index] = narrow;
+    set remainder = kept;
+  }
+  return remainder;
+}
+
+fn decimal_value(digits: &Array<u8, 6>) -> result: u64 reads(digits) {
+  doc "The six held bytes read as one decimal number, most significant first, with wrapping arithmetic.";
+  let number = 0_u64;
+  for (index in 0_u64..6_u64) {
+    let digit = digits^[index];
+    let wide = cvt::<u8, u64>(digit);
+    let shifted = number *wrap 10_u64;
+    set number = shifted +wrap wide;
+  }
+  return number;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "Divides six-digit decimals by powers of two and compares each remainder and quotient with the values computed outside the compiler.";
+  let digits_1 = array_filled::<u8, 6>(value: 0_u8);
+  set digits_1[5_u64] = 1_u8;
+  let remainder_1 = shift_right_digits(digits: &digits_1, shift: 1_u32);
+  if remainder_1 == 1_u64 {
+  } else {
+    return exit_status(code: 11_u8);
+  }
+  let number_1 = decimal_value(digits: &digits_1);
+  if number_1 == 0_u64 {
+  } else {
+    return exit_status(code: 12_u8);
+  }
+  let digits_2 = array_filled::<u8, 6>(value: 9_u8);
+  let remainder_2 = shift_right_digits(digits: &digits_2, shift: 5_u32);
+  if remainder_2 == 31_u64 {
+  } else {
+    return exit_status(code: 21_u8);
+  }
+  let number_2 = decimal_value(digits: &digits_2);
+  if number_2 == 31249_u64 {
+  } else {
+    return exit_status(code: 22_u8);
+  }
+  let digits_3 = array_filled::<u8, 6>(value: 0_u8);
+  set digits_3[0_u64] = 1_u8;
+  set digits_3[1_u64] = 2_u8;
+  set digits_3[2_u64] = 3_u8;
+  set digits_3[3_u64] = 4_u8;
+  set digits_3[4_u64] = 5_u8;
+  set digits_3[5_u64] = 6_u8;
+  let remainder_3 = shift_right_digits(digits: &digits_3, shift: 0_u32);
+  if remainder_3 == 0_u64 {
+  } else {
+    return exit_status(code: 31_u8);
+  }
+  let number_3 = decimal_value(digits: &digits_3);
+  if number_3 == 123456_u64 {
+  } else {
+    return exit_status(code: 32_u8);
+  }
+  let digits_4 = array_filled::<u8, 6>(value: 9_u8);
+  let remainder_4 = shift_right_digits(digits: &digits_4, shift: 60_u32);
+  if remainder_4 == 999999_u64 {
+  } else {
+    return exit_status(code: 41_u8);
+  }
+  let number_4 = decimal_value(digits: &digits_4);
+  if number_4 == 0_u64 {
+  } else {
+    return exit_status(code: 42_u8);
+  }
+  let digits_5 = array_filled::<u8, 6>(value: 0_u8);
+  set digits_5[0_u64] = 4_u8;
+  set digits_5[2_u64] = 9_u8;
+  set digits_5[3_u64] = 6_u8;
+  let remainder_5 = shift_right_digits(digits: &digits_5, shift: 12_u32);
+  if remainder_5 == 0_u64 {
+  } else {
+    return exit_status(code: 51_u8);
+  }
+  let number_5 = decimal_value(digits: &digits_5);
+  if number_5 == 100_u64 {
+  } else {
+    return exit_status(code: 52_u8);
+  }
+  let digits_6 = array_filled::<u8, 6>(value: 0_u8);
+  set digits_6[0_u64] = 12_u8;
+  let remainder_6 = shift_right_digits(digits: &digits_6, shift: 3_u32);
+  if remainder_6 == 8_u64 {
+  } else {
+    return exit_status(code: 61_u8);
+  }
+  let number_6 = decimal_value(digits: &digits_6);
+  if number_6 == 1200000_u64 {
+  } else {
+    return exit_status(code: 62_u8);
+  }
+  return exit_status(code: 0_u8);
+}
