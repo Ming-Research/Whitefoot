@@ -1,0 +1,243 @@
+const exact_powers: Array<f64, 23> =[1.0_f64, 10.0_f64, 1.0e2_f64, 1.0e3_f64, 1.0e4_f64, 1.0e5_f64, 1.0e6_f64, 1.0e7_f64, 1.0e8_f64, 1.0e9_f64, 1.0e10_f64, 1.0e11_f64, 1.0e12_f64, 1.0e13_f64, 1.0e14_f64, 1.0e15_f64, 1.0e16_f64, 1.0e17_f64, 1.0e18_f64, 1.0e19_f64, 1.0e20_f64, 1.0e21_f64, 1.0e22_f64];
+
+struct Significand {
+  doc "What the first pass reads of a significand: the value of its first digits, as many as keep the value below 2^64 / 10; how many digits after the point those include; how many digits it dropped after them; how many digits it saw; and the index of the first byte it did not consume.";
+  mantissa: u64;
+  fraction: u64;
+  dropped: u64;
+  digits: u64;
+  next: u64;
+}
+
+struct Exponent {
+  doc "What the first pass reads of an exponent: whether the text has none or a well-formed one, its value, which saturates once the digits reach 10^14 so that it stays within a billion times any digit count a window can hold, and the index of the first byte it did not consume.";
+  valid: Bool;
+  value: i64;
+  next: u64;
+  invariant value_floor(exponent): -1000000000000000_i64 <= exponent.value;
+  invariant value_ceiling(exponent): exponent.value <= 1000000000000000_i64;
+}
+
+enum ReadScan {
+  doc "What the first pass decides: the text is not a decimal text; it denotes a zero of the given sign; it denotes a nonzero value the fast path rounded, sign applied; or it needs the exact path, which reads the significand bytes first to last and scales the result by ten to the exponent.";
+  ScanSyntax();
+  ScanZero(negative: Bool);
+  ScanFast(value: f64);
+  ScanExact(negative: Bool, first: u64, last: u64, exponent: i64);
+}
+
+fn scan_sign(input: &[u8], start: u64, end: u64) -> (negative: Bool, next: u64) reads(input) contract {
+  requires start <= end;
+  requires end <= input^.len;
+  ensures start <= next;
+  ensures next <= end;
+} {
+  doc "Consumes one optional sign byte; the sign is negative exactly for a minus.";
+  if start < end {
+    let byte = input^[start];
+    let following = start + 1_u64;
+    if byte == 45_u8 {
+      return True(), following;
+    }
+    if byte == 43_u8 {
+      return False(), following;
+    }
+  }
+  return False(), start;
+}
+
+fn scan_significand(input: &[u8], start: u64, end: u64) -> result: Significand reads(input) contract {
+  requires start <= end;
+  requires end <= input^.len;
+  ensures result.next <= end;
+} {
+  doc "Reads digits with at most one point from start: a digit joins the mantissa while another cannot overflow it and is otherwise counted as dropped; fraction counts the digits kept after the point.";
+  let index = start;
+  let mantissa = 0_u64;
+  let fraction = 0_u64;
+  let dropped = 0_u64;
+  let digits = 0_u64;
+  let seen_point = False();
+  loop @text (
+    invariant ahead: start <= index,
+    invariant inside: index <= end,
+    invariant fraction_seen: fraction <= index,
+    invariant dropped_seen: dropped <= index,
+    invariant digits_seen: digits <= index
+  ) {
+    if index < end {
+    } else {
+      break @text;
+    }
+    let byte = input^[index];
+    let following = index + 1_u64;
+    if 48_u8 <= byte {
+      if byte <= 57_u8 {
+        let digit = byte - 48_u8;
+        let wide = cvt::<u8, u64>(digit);
+        if mantissa < 1844674407370955161_u64 {
+          let scaled = mantissa * 10_u64;
+          set mantissa = scaled + wide;
+          if seen_point {
+            set fraction = fraction + 1_u64;
+          }
+        } else {
+          set dropped = dropped + 1_u64;
+        }
+        set digits = digits + 1_u64;
+        set index = following;
+        continue @text;
+      }
+    }
+    if byte == 46_u8 {
+      if seen_point {
+        break @text;
+      }
+      set seen_point = True();
+      set index = following;
+      continue @text;
+    }
+    break @text;
+  }
+  return Significand(mantissa: mantissa, fraction: fraction, dropped: dropped, digits: digits, next: index);
+}
+
+fn scan_exponent(input: &[u8], start: u64, end: u64) -> result: Exponent reads(input) contract {
+  requires start <= end;
+  requires end <= input^.len;
+  ensures result.next <= end;
+} {
+  doc "Reads an optional exponent from start: nothing is a valid empty exponent that consumes nothing, and an e or E must be followed by an optional sign and at least one digit.";
+  let absent = Exponent(valid: True(), value: 0_i64, next: start);
+  if start < end {
+  } else {
+    return absent;
+  }
+  let marker = input^[start];
+  let is_lower = marker == 101_u8;
+  let is_upper = marker == 69_u8;
+  let is_marker = bor(is_lower, is_upper);
+  if is_marker {
+  } else {
+    return absent;
+  }
+  let index = start + 1_u64;
+  let negative = False();
+  if index < end {
+    let sign_byte = input^[index];
+    if sign_byte == 45_u8 {
+      set negative = True();
+      set index = index + 1_u64;
+    } else if sign_byte == 43_u8 {
+      set index = index + 1_u64;
+    }
+  }
+  let magnitude = 0_u64;
+  let seen = 0_u64;
+  loop @digits (
+    invariant inside: index <= end,
+    invariant counted: seen <= index,
+    invariant capped: magnitude <= 1000000000000000_u64
+  ) {
+    if index < end {
+    } else {
+      break @digits;
+    }
+    let byte = input^[index];
+    if 48_u8 <= byte {
+      if byte <= 57_u8 {
+        let digit = byte - 48_u8;
+        let wide = cvt::<u8, u64>(digit);
+        if magnitude < 100000000000000_u64 {
+          let scaled = magnitude * 10_u64;
+          set magnitude = scaled + wide;
+        }
+        set seen = seen + 1_u64;
+        set index = index + 1_u64;
+        continue @digits;
+      }
+    }
+    break @digits;
+  }
+  if 0_u64 < seen {
+  } else {
+    return Exponent(valid: False(), value: 0_i64, next: index);
+  }
+  let signed = cvt::<u64, i64>(magnitude);
+  if negative {
+    let flipped = 0_i64 - signed;
+    return Exponent(valid: True(), value: flipped, next: index);
+  }
+  return Exponent(valid: True(), value: signed, next: index);
+}
+
+fn read_fast(mantissa: u64, exponent: i64) -> value: Option<f64> pure {
+  doc "Clinger's fast path: a mantissa below 10^15 is exact in binary64, and so is each power of ten up to 10^22, so one multiplication or division by a power of ten is the correctly rounded result. It declines every other input.";
+  if mantissa < 1000000000000000_u64 {
+    if -22_i64 <= exponent {
+      if exponent <= 22_i64 {
+        let wide = cvt.nearest::<u64, f64>(mantissa);
+        if 0_i64 <= exponent {
+          let index = cvt::<i64, u64>(exponent);
+          let scale = exact_powers[index];
+          let product = fmul.strict(wide, scale);
+          return Some<f64>(value: product);
+        }
+        let negated = 0_i64 - exponent;
+        let index = cvt::<i64, u64>(negated);
+        let scale = exact_powers[index];
+        let quotient = fdiv.strict(wide, scale);
+        return Some<f64>(value: quotient);
+      }
+    }
+  }
+  return None<f64>();
+}
+
+fn read_scan(input: &[u8], start: u64, end: u64) -> result: ReadScan reads(input) contract {
+  requires start <= end;
+  requires end <= input^.len;
+} {
+  doc "Reads the whole window: sign, significand, exponent, and nothing after them. A syntax failure, a zero, and a nonzero value of at most 15 significant digits with a decimal exponent from -22 to 22 are decided here; everything else is left to the exact path.";
+  let (negative, after_sign) = scan_sign(input: input, start: start, end: end);
+  let significand = scan_significand(input: input, start: after_sign, end: end);
+  let exponent = scan_exponent(input: input, start: significand.next, end: end);
+  if 0_u64 < significand.digits {
+  } else {
+    return ReadScan::ScanSyntax();
+  }
+  let valid = exponent.valid;
+  if valid {
+  } else {
+    return ReadScan::ScanSyntax();
+  }
+  if exponent.next == end {
+  } else {
+    return ReadScan::ScanSyntax();
+  }
+  if significand.mantissa == 0_u64 {
+    return ReadScan::ScanZero(negative: negative);
+  }
+  if significand.dropped == 0_u64 {
+    let fraction = significand.fraction;
+    if fraction < 1000000_u64 {
+      let fraction_signed = cvt::<u64, i64>(fraction);
+      let scale = exponent.value - fraction_signed;
+      let fast = read_fast(mantissa: significand.mantissa, exponent: scale);
+      match fast {
+        Some(value: magnitude) => {
+          let signed = if negative {
+            let flipped = fneg(magnitude);
+            give flipped;
+          } else {
+            give magnitude;
+          }
+          return ReadScan::ScanFast(value: signed);
+        }
+        None() => {
+        }
+      }
+    }
+  }
+  return ReadScan::ScanExact(negative: negative, first: after_sign, last: significand.next, exponent: exponent.value);
+}

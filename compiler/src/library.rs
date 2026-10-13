@@ -90,6 +90,22 @@ pub(crate) const RECORDS: &[(&str, &str)] = &[
         "std/collections/ordered_map/ordered-map.wf",
         include_str!("../../lib/std/collections/ordered_map/ordered-map.wf"),
     ),
+    (
+        "std/float_text/module.wfm",
+        include_str!("../../lib/std/float_text/module.wfm"),
+    ),
+    (
+        "std/float_text/decimal.wf",
+        include_str!("../../lib/std/float_text/decimal.wf"),
+    ),
+    (
+        "std/float_text/read.wf",
+        include_str!("../../lib/std/float_text/read.wf"),
+    ),
+    (
+        "std/float_text/write.wf",
+        include_str!("../../lib/std/float_text/write.wf"),
+    ),
 ];
 
 /// The standard library's modules in the order its graph registers them,
@@ -109,6 +125,7 @@ pub(crate) const MODULES: &[(&str, &[&str])] = &[
     ("collections::hash_map", &[]),
     ("collections::priority_queue", &[]),
     ("collections::ordered_map", &[]),
+    ("float_text", &[]),
 ];
 
 /// The standard library's modules as registered modules: its graph's rows

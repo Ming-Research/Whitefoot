@@ -1,0 +1,183 @@
+alias ExitStatus = std::process::ExitStatus;
+alias WriteError = std::float_text::WriteError;
+alias exit_status = std::process::exit_status;
+alias i64_write = std::float_text::i64_write;
+
+const image_zero: Array<u8, 32> = "0XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX";
+
+const image_seven_at_five: Array<u8, 32> = "XXXXX7XXXXXXXXXXXXXXXXXXXXXXXXXX";
+
+const image_ten: Array<u8, 32> = "10XXXXXXXXXXXXXXXXXXXXXXXXXXXXXX";
+
+const image_minus_one: Array<u8, 32> = "-1XXXXXXXXXXXXXXXXXXXXXXXXXXXXXX";
+
+const image_largest: Array<u8, 32> = "9223372036854775807XXXXXXXXXXXXX";
+
+const image_smallest: Array<u8, 32> = "-9223372036854775808XXXXXXXXXXXX";
+
+const image_million: Array<u8, 32> = "1000000XXXXXXXXXXXXXXXXXXXXXXXXX";
+
+const image_minus_forty_five_at_two: Array<u8, 32> = "XX-45XXXXXXXXXXXXXXXXXXXXXXXXXXX";
+
+const image_hundred: Array<u8, 32> = "100XXXXXXXXXXXXXXXXXXXXXXXXXXXXX";
+
+const image_smallest_plus_one: Array<u8, 32> = "-9223372036854775807XXXXXXXXXXXX";
+
+const image_nine: Array<u8, 32> = "9XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX";
+
+const image_blank: Array<u8, 32> = "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX";
+
+fn outcome_code(outcome: Result<u64, WriteError>, small: Bool, number: u64) -> code: u8 pure {
+  doc "Compares an outcome with the expected one: 0 when it is Ok carrying number, or WriteTooSmall carrying number when small is set; 1 for an Ok where WriteTooSmall was expected; 2 for another Ok index; 3 for a WriteTooSmall where Ok was expected; 4 for another required length.";
+  let answer = 9_u8;
+  match outcome {
+    Ok(value: next) => {
+      if small {
+        set answer = 1_u8;
+      } else if next == number {
+        set answer = 0_u8;
+      } else {
+        set answer = 2_u8;
+      }
+    }
+    Err(error: failure) => {
+      match failure {
+        WriteTooSmall(required: needed) => {
+          if small {
+            if needed == number {
+              set answer = 0_u8;
+            } else {
+              set answer = 4_u8;
+            }
+          } else {
+            set answer = 3_u8;
+          }
+        }
+      }
+    }
+  }
+  return answer;
+}
+
+fn image_matches(buffer: &[u8], image: &[u8]) -> matches: Bool reads(buffer), reads(image) contract {
+  requires 32_u64 <= buffer^.len;
+  requires 32_u64 <= image^.len;
+} {
+  doc "Reports whether the first 32 bytes of the buffer are those of the image.";
+  let same = True();
+  for (index in 0_u64..32_u64) {
+    let left = buffer^[index];
+    let right = image^[index];
+    if left != right {
+      set same = False();
+    }
+  }
+  return same;
+}
+
+fn run_case(value: i64, start: u64, end: u64, small: Bool, number: u64, image: &[u8]) -> code: u8 reads(image) contract {
+  requires start <= end;
+  requires end <= 32_u64;
+  requires 32_u64 <= image^.len;
+} {
+  doc "Writes value into a buffer of 32 X bytes at the window start to end and returns 0 when the outcome is the expected one and the whole buffer is the image, and a nonzero code otherwise.";
+  let buffer = array_filled::<u8, 32>(value: 88_u8);
+  let outcome = i64_write(value: value, destination: &buffer[0_u64..32_u64], start: start, end: end);
+  let verdict = outcome_code(outcome: outcome, small: small, number: number);
+  if verdict == 0_u8 {
+  } else {
+    return verdict;
+  }
+  let same = image_matches(buffer: &buffer[0_u64..32_u64], image: image);
+  if same {
+    return 0_u8;
+  }
+  return 10_u8;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "Writes integers into 32-byte buffers at different windows and compares the outcome and the whole buffer with the text and extent computed by hand: zero, one digit, powers of ten, both extremes of i64, windows that fit exactly and windows one byte too short.";
+  let no = False();
+  let yes = True();
+  let code_1 = run_case(value: 0_i64, start: 0_u64, end: 32_u64, small: no, number: 1_u64, image: &image_zero[0_u64..32_u64]);
+  if code_1 == 0_u8 {
+  } else {
+    return exit_status(code: 1_u8);
+  }
+  let code_2 = run_case(value: 7_i64, start: 5_u64, end: 20_u64, small: no, number: 6_u64, image: &image_seven_at_five[0_u64..32_u64]);
+  if code_2 == 0_u8 {
+  } else {
+    return exit_status(code: 2_u8);
+  }
+  let code_3 = run_case(value: 10_i64, start: 0_u64, end: 32_u64, small: no, number: 2_u64, image: &image_ten[0_u64..32_u64]);
+  if code_3 == 0_u8 {
+  } else {
+    return exit_status(code: 3_u8);
+  }
+  let code_4 = run_case(value: -1_i64, start: 0_u64, end: 32_u64, small: no, number: 2_u64, image: &image_minus_one[0_u64..32_u64]);
+  if code_4 == 0_u8 {
+  } else {
+    return exit_status(code: 4_u8);
+  }
+  let code_5 = run_case(value: 9223372036854775807_i64, start: 0_u64, end: 32_u64, small: no, number: 19_u64, image: &image_largest[0_u64..32_u64]);
+  if code_5 == 0_u8 {
+  } else {
+    return exit_status(code: 5_u8);
+  }
+  let code_6 = run_case(value: -9223372036854775808_i64, start: 0_u64, end: 32_u64, small: no, number: 20_u64, image: &image_smallest[0_u64..32_u64]);
+  if code_6 == 0_u8 {
+  } else {
+    return exit_status(code: 6_u8);
+  }
+  let code_7 = run_case(value: 1000000_i64, start: 0_u64, end: 32_u64, small: no, number: 7_u64, image: &image_million[0_u64..32_u64]);
+  if code_7 == 0_u8 {
+  } else {
+    return exit_status(code: 7_u8);
+  }
+  let code_8 = run_case(value: -45_i64, start: 2_u64, end: 30_u64, small: no, number: 5_u64, image: &image_minus_forty_five_at_two[0_u64..32_u64]);
+  if code_8 == 0_u8 {
+  } else {
+    return exit_status(code: 8_u8);
+  }
+  let code_9 = run_case(value: -45_i64, start: 2_u64, end: 5_u64, small: no, number: 5_u64, image: &image_minus_forty_five_at_two[0_u64..32_u64]);
+  if code_9 == 0_u8 {
+  } else {
+    return exit_status(code: 9_u8);
+  }
+  let code_10 = run_case(value: 100_i64, start: 0_u64, end: 32_u64, small: no, number: 3_u64, image: &image_hundred[0_u64..32_u64]);
+  if code_10 == 0_u8 {
+  } else {
+    return exit_status(code: 10_u8);
+  }
+  let code_11 = run_case(value: -9223372036854775807_i64, start: 0_u64, end: 32_u64, small: no, number: 20_u64, image: &image_smallest_plus_one[0_u64..32_u64]);
+  if code_11 == 0_u8 {
+  } else {
+    return exit_status(code: 11_u8);
+  }
+  let code_12 = run_case(value: 9_i64, start: 0_u64, end: 32_u64, small: no, number: 1_u64, image: &image_nine[0_u64..32_u64]);
+  if code_12 == 0_u8 {
+  } else {
+    return exit_status(code: 12_u8);
+  }
+  let code_13 = run_case(value: 12345_i64, start: 0_u64, end: 4_u64, small: yes, number: 5_u64, image: &image_blank[0_u64..32_u64]);
+  if code_13 == 0_u8 {
+  } else {
+    return exit_status(code: 13_u8);
+  }
+  let code_14 = run_case(value: -9223372036854775808_i64, start: 0_u64, end: 19_u64, small: yes, number: 20_u64, image: &image_blank[0_u64..32_u64]);
+  if code_14 == 0_u8 {
+  } else {
+    return exit_status(code: 14_u8);
+  }
+  let code_15 = run_case(value: 0_i64, start: 5_u64, end: 5_u64, small: yes, number: 1_u64, image: &image_blank[0_u64..32_u64]);
+  if code_15 == 0_u8 {
+  } else {
+    return exit_status(code: 15_u8);
+  }
+  let code_16 = run_case(value: -45_i64, start: 2_u64, end: 4_u64, small: yes, number: 3_u64, image: &image_blank[0_u64..32_u64]);
+  if code_16 == 0_u8 {
+  } else {
+    return exit_status(code: 16_u8);
+  }
+  return exit_status(code: 0_u8);
+}

@@ -1,0 +1,431 @@
+alias ExitStatus = std::process::ExitStatus;
+alias FloatDigits = std::float_text::FloatDigits;
+alias HandleFactory = std::io::HandleFactory;
+alias Inputs = std::process::Inputs;
+alias IoError = std::io::IoError;
+alias NonFinite = std::float_text::NonFinite;
+alias OutputStream = std::io::OutputStream;
+alias close_directory = std::fs::close_directory;
+alias digits_write = std::float_text::digits_write;
+alias exit_status = std::process::exit_status;
+alias f64_read = std::float_text::f64_read;
+alias f64_shortest = std::float_text::f64_shortest;
+alias f64_significant = std::float_text::f64_significant;
+alias read_next = std::io::read_next;
+alias write_once = std::io::write_once;
+
+const word_ok: Array<u8, 3> = "ok ";
+
+const word_syntax: Array<u8, 6> = "syntax";
+
+const word_overflow: Array<u8, 9> = "overflow ";
+
+const word_underflow: Array<u8, 10> = "underflow ";
+
+const word_inf: Array<u8, 3> = "inf";
+
+const word_minus_inf: Array<u8, 4> = "-inf";
+
+const word_nan: Array<u8, 3> = "nan";
+
+const word_minus_nan: Array<u8, 4> = "-nan";
+
+const word_small: Array<u8, 6> = "small ";
+
+const word_toosmall: Array<u8, 8> = "toosmall";
+
+const word_corrupt: Array<u8, 7> = "corrupt";
+
+const word_unknown: Array<u8, 7> = "unknown";
+
+fn publish_all(factory: &HandleFactory, output: &OutputStream, source: &[u8], length: u64) -> result: Result<unit, IoError> reads(source), writes(factory), writes(output) waits contract {
+  define source_length = source^.len;
+  requires length <= source_length;
+} {
+  doc "Publishes one prefix of the source range, reattempting until the host has accepted every byte or refused it.";
+  let sent = 0_u64;
+  loop @publish {
+    let pending = sent < length;
+    if pending {
+    } else {
+      break @publish;
+    }
+    let no_deadline = None<std::time::Instant>();
+    let wait_cancel_1 = std::time::cancel_never();
+    let wait_outcome_1 = write_once(factory: factory, output: output, source: source, start: sent, end: length, deadline: no_deadline, cancel: &wait_cancel_1);
+    std::time::close_cancel_watch(watch: move wait_cancel_1);
+    match wait_outcome_1 {
+      Ok(value: next) => {
+        set sent = next;
+      }
+      Err(error: problem) => {
+        return Err<unit, IoError>(error: problem);
+      }
+    }
+  }
+  return Ok<unit, IoError>(value: unit);
+}
+
+fn copy_word(out: &[u8], word: &[u8]) -> result: unit reads(word), writes(out) contract {
+  requires word^.len <= 16_u64;
+  requires 32_u64 <= out^.len;
+} {
+  doc "Copies a word of at most 16 bytes to the start of the output.";
+  let length = word^.len;
+  for (index in 0_u64..length) {
+    let byte = word^[index];
+    set out^[index] = byte;
+  }
+  return unit;
+}
+
+fn put_hex(out: &[u8], at: u64, value: u64) -> result: unit writes(out) contract {
+  requires at <= 16_u64;
+  requires 64_u64 <= out^.len;
+} {
+  doc "Writes the 16 lowercase hexadecimal digits of value, most significant first, from at.";
+  for (index in 0_u64..16_u64) {
+    let place_from_end = 15_u64 - index;
+    let amount_wide = place_from_end * 4_u64;
+    let amount = cvt::<u64, u32>(amount_wide);
+    let shifted = ishr(value, amount);
+    let nibble = shifted % 16_u64;
+    let code = if nibble < 10_u64 {
+      give nibble + 48_u64;
+    } else {
+      give nibble + 87_u64;
+    }
+    let byte = cvt::<u64, u8>(code);
+    let slot = at + index;
+    set out^[slot] = byte;
+  }
+  return unit;
+}
+
+fn digit_value(byte: u8) -> nibble: u64 pure {
+  doc "The value of a hexadecimal digit, lowercase letters included, and zero for any other byte.";
+  if 48_u8 <= byte {
+    if byte <= 57_u8 {
+      let digit = byte - 48_u8;
+      let wide = cvt::<u8, u64>(digit);
+      return wide;
+    }
+    if 97_u8 <= byte {
+      if byte <= 102_u8 {
+        let digit = byte - 87_u8;
+        let wide = cvt::<u8, u64>(digit);
+        return wide;
+      }
+    }
+  }
+  return 0_u64;
+}
+
+fn parse_hex(line: &[u8], at: u64) -> parsed: u64 reads(line) contract {
+  requires at <= 3_u64;
+  requires 19_u64 <= line^.len;
+} {
+  doc "Reads 16 hexadecimal digits from at as one u64.";
+  let accumulated = 0_u64;
+  for (index in 0_u64..16_u64) {
+    let slot = at + index;
+    let byte = line^[slot];
+    let nibble = digit_value(byte: byte);
+    let shifted = ishl(accumulated, 4_u32);
+    set accumulated = ior(shifted, nibble);
+  }
+  return accumulated;
+}
+
+fn parse_two(line: &[u8]) -> parsed: u64 reads(line) contract {
+  requires 19_u64 <= line^.len;
+} {
+  doc "Reads the two decimal digits at positions 1 and 2.";
+  let tens_byte = line^[1_u64];
+  let ones_byte = line^[2_u64];
+  let tens = digit_value(byte: tens_byte);
+  let ones = digit_value(byte: ones_byte);
+  let scaled = tens *wrap 10_u64;
+  let total = scaled +wrap ones;
+  return total;
+}
+
+fn guard_intact(guard: &[u8], from_index: u64, to_index: u64) -> intact: Bool reads(guard) contract {
+  requires 64_u64 <= guard^.len;
+} {
+  doc "Reports whether every byte of the guard outside from_index up to to_index is still the X it was filled with.";
+  let same = True();
+  for (index in 0_u64..64_u64) {
+    let at_or_after = from_index <= index;
+    let before_end = index < to_index;
+    let inside = band(at_or_after, before_end);
+    if inside {
+    } else {
+      let byte = guard^[index];
+      if byte != 88_u8 {
+        set same = False();
+      }
+    }
+  }
+  return same;
+}
+
+fn digits_line(outcome: Result<FloatDigits, NonFinite>, precision: u64, out: &[u8]) -> length: u64 writes(out) contract {
+  requires 1_u64 <= precision;
+  requires precision <= 17_u64;
+  requires 256_u64 <= out^.len;
+  ensures length <= 100_u64;
+} {
+  doc "Writes the text of digits at the given precision, or the spelling of an infinity or NaN, at the start of the output and returns its length.";
+  let produced = 0_u64;
+  match outcome {
+    Ok(value: digits) => {
+      let written = digits_write(digits: digits, precision: precision, destination: out, start: 0_u64, end: 100_u64);
+      match written {
+        Ok(value: next) => {
+          set produced = next;
+        }
+        Err(error: shortage) => {
+          copy_word(out: out, word: &word_toosmall[0_u64..8_u64]);
+          set produced = 8_u64;
+        }
+      }
+    }
+    Err(error: unusual) => {
+      match unusual {
+        Infinite(negative: infinite_sign) => {
+          if infinite_sign {
+            copy_word(out: out, word: &word_minus_inf[0_u64..4_u64]);
+            set produced = 4_u64;
+          } else {
+            copy_word(out: out, word: &word_inf[0_u64..3_u64]);
+            set produced = 3_u64;
+          }
+        }
+        NotANumber(negative: nan_sign) => {
+          if nan_sign {
+            copy_word(out: out, word: &word_minus_nan[0_u64..4_u64]);
+            set produced = 4_u64;
+          } else {
+            copy_word(out: out, word: &word_nan[0_u64..3_u64]);
+            set produced = 3_u64;
+          }
+        }
+      }
+    }
+  }
+  let bounded = imin(produced, 100_u64);
+  return bounded;
+}
+
+fn window_line(outcome: Result<FloatDigits, NonFinite>, capacity: u64, out: &[u8]) -> length: u64 writes(out) contract {
+  requires capacity <= 60_u64;
+  requires 256_u64 <= out^.len;
+  ensures length <= 100_u64;
+} {
+  doc "Writes the digits at precision 17 into a window of the given capacity that starts at byte 3 of a guard of 64 X bytes, and reports the text there, or small and the length the text needs, or corrupt when any byte outside the text changed.";
+  let produced = 0_u64;
+  match outcome {
+    Ok(value: digits) => {
+      let guard = array_filled::<u8, 64>(value: 88_u8);
+      let window_end = 3_u64 + capacity;
+      let written = digits_write(digits: digits, precision: 17_u64, destination: &guard[0_u64..64_u64], start: 3_u64, end: window_end);
+      match written {
+        Ok(value: next) => {
+          let intact = guard_intact(guard: &guard[0_u64..64_u64], from_index: 3_u64, to_index: next);
+          if intact {
+            for (index in 0_u64..64_u64) {
+              if 3_u64 <= index {
+                if index < next {
+                  let byte = guard[index];
+                  let slot = index - 3_u64;
+                  set out^[slot] = byte;
+                }
+              }
+            }
+            set produced = next - 3_u64;
+          } else {
+            copy_word(out: out, word: &word_corrupt[0_u64..7_u64]);
+            set produced = 7_u64;
+          }
+        }
+        Err(error: shortage) => {
+          match shortage {
+            WriteTooSmall(required: needed) => {
+              let untouched = guard_intact(guard: &guard[0_u64..64_u64], from_index: 0_u64, to_index: 0_u64);
+              if untouched {
+                copy_word(out: out, word: &word_small[0_u64..6_u64]);
+                let tens_total = needed / 10_u64;
+                let tens = tens_total % 10_u64;
+                let ones = needed % 10_u64;
+                let tens_code = tens + 48_u64;
+                let ones_code = ones + 48_u64;
+                let tens_byte = cvt::<u64, u8>(tens_code);
+                let ones_byte = cvt::<u64, u8>(ones_code);
+                set out^[6_u64] = tens_byte;
+                set out^[7_u64] = ones_byte;
+                set produced = 8_u64;
+              } else {
+                copy_word(out: out, word: &word_corrupt[0_u64..7_u64]);
+                set produced = 7_u64;
+              }
+            }
+          }
+        }
+      }
+    }
+    Err(error: unusual) => {
+      copy_word(out: out, word: &word_unknown[0_u64..7_u64]);
+      set produced = 7_u64;
+    }
+  }
+  let bounded = imin(produced, 100_u64);
+  return bounded;
+}
+
+fn handle_line(line: &[u8], length: u64, out: &[u8]) -> total: u64 reads(line), writes(out) contract {
+  requires 1_u64 <= length;
+  requires length <= line^.len;
+  requires 4096_u64 <= line^.len;
+  requires 256_u64 <= out^.len;
+  ensures total <= 201_u64;
+} {
+  doc "Answers one request line, whose first byte names the operation: R reads the rest of the line as decimal text and reports ok, syntax, overflow or underflow with the bits of the value; S writes the shortest digits of the binary64 value whose 16 hexadecimal digits follow; G and a two-digit precision before the hexadecimal digits write that many significant digits; W and a two-digit window length write the shortest digits into a window of that length inside a guard. Returns the length of the reply with its final newline.";
+  let opcode = line^[0_u64];
+  let reply = 0_u64;
+  if opcode == 82_u8 {
+    let view = &line^[1_u64..length];
+    let count = view^.len;
+    let outcome = f64_read(input: view, start: 0_u64, end: count);
+    match outcome {
+      Ok(value: number) => {
+        copy_word(out: out, word: &word_ok[0_u64..3_u64]);
+        let bits = reinterpret::<f64, u64>(number);
+        put_hex(out: out, at: 3_u64, value: bits);
+        set reply = 19_u64;
+      }
+      Err(error: failure) => {
+        match failure {
+          ReadSyntax() => {
+            copy_word(out: out, word: &word_syntax[0_u64..6_u64]);
+            set reply = 6_u64;
+          }
+          ReadOverflow(value: infinite) => {
+            copy_word(out: out, word: &word_overflow[0_u64..9_u64]);
+            let bits = reinterpret::<f64, u64>(infinite);
+            put_hex(out: out, at: 9_u64, value: bits);
+            set reply = 25_u64;
+          }
+          ReadUnderflow(value: zero) => {
+            copy_word(out: out, word: &word_underflow[0_u64..10_u64]);
+            let bits = reinterpret::<f64, u64>(zero);
+            put_hex(out: out, at: 10_u64, value: bits);
+            set reply = 26_u64;
+          }
+        }
+      }
+    }
+  } else if opcode == 83_u8 {
+    let bits = parse_hex(line: line, at: 1_u64);
+    let number = reinterpret::<u64, f64>(bits);
+    let outcome = f64_shortest(value: number);
+    let produced = digits_line(outcome: outcome, precision: 17_u64, out: out);
+    set reply = produced;
+  } else if opcode == 71_u8 {
+    let raw = parse_two(line: line);
+    let at_least = imax(raw, 1_u64);
+    let precision = imin(at_least, 17_u64);
+    let bits = parse_hex(line: line, at: 3_u64);
+    let number = reinterpret::<u64, f64>(bits);
+    let outcome = f64_significant(value: number, count: precision);
+    let produced = digits_line(outcome: outcome, precision: precision, out: out);
+    set reply = produced;
+  } else if opcode == 87_u8 {
+    let raw = parse_two(line: line);
+    let capacity = imin(raw, 60_u64);
+    let bits = parse_hex(line: line, at: 3_u64);
+    let number = reinterpret::<u64, f64>(bits);
+    let outcome = f64_shortest(value: number);
+    let produced = window_line(outcome: outcome, capacity: capacity, out: out);
+    set reply = produced;
+  } else {
+    copy_word(out: out, word: &word_unknown[0_u64..7_u64]);
+    set reply = 7_u64;
+  }
+  let bounded = imin(reply, 200_u64);
+  set out^[bounded] = 10_u8;
+  let finished = bounded + 1_u64;
+  return finished;
+}
+
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  doc "Reads request lines from standard input and writes one reply line to standard output for each, as handle_line describes. A byte past the 4096th of a line is dropped, which the generator of the requests never makes necessary.";
+  let Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: input, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
+  std::fs::close_directory_write(factory: &entry_factory, directory: move unused_cwd_write);
+  close_directory(factory: &entry_factory, directory: move unused_cwd);
+  let chunk = slots_new::<u8, 4096>();
+  for @fill (
+    at in 0_u64..4096_u64,
+    invariant grown: chunk.len == at
+  ) {
+    place_back(window: &chunk, value: 0_u8);
+  }
+  let held = 4096_u64;
+  let sink = &chunk[0_u64..4096_u64];
+  let line = array_filled::<u8, 4096>(value: 0_u8);
+  let reply = array_filled::<u8, 256>(value: 0_u8);
+  let used = 0_u64;
+  let outcome = 0_u8;
+  loop @chunks {
+    let available = 0_u64;
+    let ended = 0_u8;
+    let no_deadline = None<std::time::Instant>();
+    let wait_cancel_2 = std::time::cancel_never();
+    let wait_outcome_2 = read_next(factory: &entry_factory, input: &input, destination: sink, start: 0_u64, end: held, deadline: no_deadline, cancel: &wait_cancel_2);
+    std::time::close_cancel_watch(watch: move wait_cancel_2);
+    match wait_outcome_2 {
+      Ok(value: endpoint) => {
+        set available = endpoint;
+      }
+      Err(error: read_stop_14) => {
+        match read_stop_14 {
+          ReadEnd() => {
+            set ended = 1_u8;
+          }
+          ReadFailed(error: problem) => {
+            set outcome = 3_u8;
+            set ended = 2_u8;
+          }
+        }
+      }
+    }
+    if ended == 0_u8 {
+      for (offset in 0_u64..available) {
+        let byte = sink^[offset];
+        if byte == 10_u8 {
+          if 0_u64 < used {
+            let finished = handle_line(line: &line[0_u64..4096_u64], length: used, out: &reply[0_u64..256_u64]);
+            match publish_all(factory: &entry_factory, output: &out, source: &reply[0_u64..256_u64], length: finished) {
+              Ok(value: published) => {
+              }
+              Err(error: failure) => {
+                set outcome = 4_u8;
+                set ended = 2_u8;
+              }
+            }
+          }
+          set used = 0_u64;
+        } else if used < 4096_u64 {
+          set line[used] = byte;
+          set used = used + 1_u64;
+        }
+      }
+    }
+    if ended == 0_u8 {
+    } else {
+      break @chunks;
+    }
+  }
+  return exit_status(code: outcome);
+}
