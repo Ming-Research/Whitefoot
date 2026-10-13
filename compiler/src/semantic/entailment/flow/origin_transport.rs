@@ -245,6 +245,7 @@ impl Reasoning<'_, '_, '_> {
         context: ProofContext<'_>,
         submitted: Option<&GoalExpression>,
     ) -> FactState {
+        let build = super::super::work::timed(super::super::work::Phase::OriginViewBuild);
         let mut keys = OriginKeys::default();
         let mut expressions = Vec::new();
         let mut seen = HashMap::new();
@@ -417,9 +418,16 @@ impl Reasoning<'_, '_, '_> {
             }
         }
 
+        super::super::work::origin_view(
+            expressions.len(),
+            classes.values().map(Vec::len).sum(),
+        );
+        drop(build);
+        let _fixed_point = super::super::work::timed(super::super::work::Phase::OriginViewFixedPoint);
         // Monotone finite signed closure. Every changing pass installs at
         // least one of exactly two signs per collected Boolean member.
         loop {
+            super::super::work::origin_view_pass();
             let closed = close(
                 &view,
                 &self.vocabulary.terms,

@@ -1179,6 +1179,7 @@ pub(super) fn contract_implies(
             .derivations
             .add_root(DerivationRootKind::ContractGoal(0), root);
     }
+    super::work::goal_table(analyzer.vocabulary.goals.ids().count());
     let (terms, measure_bounds) = analyzer.vocabulary.terms.into_inventory();
     FunctionEntailment {
         contract_goals: vec![ContractGoalOutcome {
@@ -1315,6 +1316,7 @@ fn run(function: &CheckedFunction, context: &EntailmentContext<'_>) -> AnalysisR
         analyzer.vocabulary.completed_counted_roots, analyzer.vocabulary.encountered_counted,
         "every encountered counted statement must publish one complete S11 root group"
     );
+    super::work::goal_table(analyzer.vocabulary.goals.ids().count());
     let (terms, measure_bounds) = analyzer.vocabulary.terms.into_inventory();
     let inventory = DerivationInventory {
         terms,

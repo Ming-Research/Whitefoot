@@ -137,6 +137,94 @@ struct FunctionWork {
     conditions: u64,
     condition_queries: u64,
     redundant_conditions: u64,
+    /// Inclusive nanoseconds per [`Phase`]; phases nest, so they overlap.
+    phase_ns: [u64; PHASES],
+    /// Entries per [`Phase`].
+    phase_calls: [u64; PHASES],
+    /// Origin-view size: collected expressions and Boolean class members.
+    origin_view_expressions: u64,
+    origin_view_members: u64,
+    origin_view_passes: u64,
+    goals: u64,
+    started: std::time::Instant,
+}
+
+/// Timed regions. Each is inclusive of the regions it encloses.
+#[derive(Clone, Copy)]
+pub(super) enum Phase {
+    /// The whole function analysis.
+    Analysis,
+    /// `judge_condition`, both truths.
+    Condition,
+    /// Fresh closure computation (cache misses only).
+    Closure,
+    /// `prove`'s ordinary-view `prove_prepared`.
+    OrdinaryProve,
+    /// `origin_query_view` construction up to its fixed-point loop.
+    OriginViewBuild,
+    /// The fixed-point loop of `origin_query_view`.
+    OriginViewFixedPoint,
+    /// `prove`'s `prove_prepared` in the origin view.
+    OriginViewProve,
+    /// `affine_target_search`.
+    AffineSearch,
+    /// `ModelView::new`.
+    ModelViewBuild,
+}
+
+const PHASES: usize = 9;
+const PHASE_NAMES: [&str; PHASES] = [
+    "analysis",
+    "condition",
+    "closure",
+    "ordinary_prove",
+    "origin_view_build",
+    "origin_view_fixed_point",
+    "origin_view_prove",
+    "affine_search",
+    "model_view_build",
+];
+
+/// Adds the elapsed time to its phase when dropped; free when disabled.
+pub(super) struct Timed(Option<(Phase, std::time::Instant)>);
+
+pub(super) fn timed(phase: Phase) -> Timed {
+    if !ENABLED.load(Ordering::Relaxed) {
+        return Timed(None);
+    }
+    Timed(Some((phase, std::time::Instant::now())))
+}
+
+impl Drop for Timed {
+    fn drop(&mut self) {
+        if let Some((phase, start)) = self.0.take() {
+            let elapsed = u64::try_from(start.elapsed().as_nanos()).unwrap_or(u64::MAX);
+            update(|work| {
+                let at = phase as usize;
+                work.phase_ns[at] = work.phase_ns[at].saturating_add(elapsed);
+                work.phase_calls[at] = work.phase_calls[at].saturating_add(1);
+            });
+        }
+    }
+}
+
+pub(super) fn origin_view(expressions: usize, members: usize) {
+    update(|work| {
+        work.origin_view_expressions = work
+            .origin_view_expressions
+            .saturating_add(expressions as u64);
+        work.origin_view_members = work.origin_view_members.saturating_add(members as u64);
+    });
+}
+
+/// The function's final goal-table size, which every closure's goal
+/// contradiction scan visits.
+pub(super) fn goal_table(goals: usize) {
+    update(|work| work.goals = goals as u64);
+}
+
+pub(super) fn origin_view_pass() {
+    update(|work| work.origin_view_passes = work.origin_view_passes.saturating_add(1));
 }
 
 fn update(f: impl FnOnce(&mut FunctionWork)) {
@@ -189,6 +277,13 @@ pub(super) fn function(name: &str) -> FunctionScope {
             conditions: 0,
             condition_queries: 0,
             redundant_conditions: 0,
+            phase_ns: [0; PHASES],
+            phase_calls: [0; PHASES],
+            origin_view_expressions: 0,
+            origin_view_members: 0,
+            origin_view_passes: 0,
+            goals: 0,
+            started: std::time::Instant::now(),
         }))
     });
     FunctionScope(previous, true)
@@ -200,9 +295,12 @@ impl Drop for FunctionScope {
             return;
         }
         let work = ACTIVE.with(|active| active.replace(self.0.take()));
-        if let Some(work) = work
+        if let Some(mut work) = work
             && !std::thread::panicking()
         {
+            let at = Phase::Analysis as usize;
+            work.phase_ns[at] = u64::try_from(work.started.elapsed().as_nanos()).unwrap_or(u64::MAX);
+            work.phase_calls[at] = 1;
             work.write();
         }
     }
@@ -379,6 +477,14 @@ impl FunctionWork {
             "redundant_conditions",
             self.redundant_conditions,
         );
+        row("function", 0, "origin_view_expressions", self.origin_view_expressions);
+        row("function", 0, "origin_view_members", self.origin_view_members);
+        row("function", 0, "origin_view_passes", self.origin_view_passes);
+        row("function", 0, "goals", self.goals);
+        for (at, name) in PHASE_NAMES.iter().enumerate() {
+            row("phase_ns", 0, name, self.phase_ns[at]);
+            row("phase_calls", 0, name, self.phase_calls[at]);
+        }
         for (metric, value) in [
             ("affine_attempts", self.affine.attempts),
             ("affine_memo_hits", self.affine.memo_hits),

@@ -20,6 +20,7 @@ impl Judging<'_, '_, '_> {
         origins: &ArmFacts,
         state: &ProofFlowState,
     ) {
+        let _timed = super::super::work::timed(super::super::work::Phase::Condition);
         let mut outcome = super::super::ConditionOutcome {
             node_path: site.clone(),
             decided: None,

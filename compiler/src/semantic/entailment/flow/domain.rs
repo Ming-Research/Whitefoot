@@ -1162,6 +1162,9 @@ impl Judging<'_, '_, '_> {
                             Ok(value) => value,
                             Err(_) => {
                                 self.vocabulary.affine_atoms.truncate(atom_start);
+                                // A rolled-back atom index can be minted again with another range,
+                                // so no model view may keep the old one.
+                                self.vocabulary.affine_models.clear();
                                 self.vocabulary.new_affine_atom(ty)
                             }
                         }

@@ -439,7 +439,10 @@ impl Reasoning<'_, '_, '_> {
             },
             ..context
         };
-        let ordinary = self.prove_prepared(prepared, goal);
+        let ordinary = {
+            let _timed = super::super::work::timed(super::super::work::Phase::OrdinaryProve);
+            self.prove_prepared(prepared, goal)
+        };
         // A proof in the entering state remains a proof in its origin view.
         // Preserve its selected parent and diagnostic grounds; internal
         // component queries already share their enclosing prepared view.
@@ -465,7 +468,10 @@ impl Reasoning<'_, '_, '_> {
             closed: None,
             origin_view: OriginView::Prepared,
         };
-        let mut result = self.prove_prepared(prepared, goal);
+        let mut result = {
+            let _timed = super::super::work::timed(super::super::work::Phase::OriginViewProve);
+            self.prove_prepared(prepared, goal)
+        };
         if result.disposition == ordinary.disposition {
             return ordinary;
         }
@@ -3242,6 +3248,7 @@ impl Reasoning<'_, '_, '_> {
         context: ProofContext<'_>,
         refute: bool,
     ) -> Option<AffineConsequenceProof> {
+        let _timed = super::super::work::timed(super::super::work::Phase::AffineSearch);
         let values = context.affine;
         let mut check = AffineCheckState::new();
         let (closed, l0) = self.affine_query_view(context);

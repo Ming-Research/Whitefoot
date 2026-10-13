@@ -5493,6 +5493,7 @@ fn close_with_excluded_term(
     ledger: &mut DerivationLedger,
     excluded: Option<TermId>,
 ) -> ClosedState {
+    let _timed = super::work::timed(super::work::Phase::Closure);
     let closed = close_with_row_pruning::<true, false>(state, terms, goals, ledger, excluded);
     super::work::closure(closed.matrix.dimension, closed.matrix.live);
     closed

@@ -1812,6 +1812,9 @@ impl Analyzer<'_, '_> {
             states.affine = prepared_affine;
         } else {
             self.vocabulary.affine_atoms.truncate(candidate_atom_start);
+            // A rolled-back atom index can be minted again with another range,
+            // so no model view may keep the old one.
+            self.vocabulary.affine_models.clear();
         }
         let discharged = outcome.disposition == ProofDisposition::Proved;
         let refuted = outcome.disposition == ProofDisposition::Refuted;

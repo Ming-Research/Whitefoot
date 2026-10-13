@@ -172,6 +172,9 @@ impl Judging<'_, '_, '_> {
             state.affine = prepared;
         } else {
             self.vocabulary.affine_atoms.truncate(candidate_atom_start);
+            // A rolled-back atom index can be minted again with another range,
+            // so no model view may keep the old one.
+            self.vocabulary.affine_models.clear();
         }
         let discharged = outcome.disposition == ProofDisposition::Proved;
         if let Some(root) = outcome.derivation {

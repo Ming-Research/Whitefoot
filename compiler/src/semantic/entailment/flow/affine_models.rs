@@ -168,12 +168,14 @@ impl Reasoning<'_, '_, '_> {
             return slot;
         }
         super::super::work::affine_model_view();
+        let timed = super::super::work::timed(super::super::work::Phase::ModelViewBuild);
         let view = ModelView::new(
             &index.candidates,
             closed,
             assumptions,
             &self.vocabulary.affine_atoms,
         );
+        drop(timed);
         let models = &mut self.vocabulary.affine_models;
         if models.len() == MODEL_VIEWS {
             models.remove(0);
