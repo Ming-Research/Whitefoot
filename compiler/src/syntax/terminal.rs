@@ -819,10 +819,20 @@ fn float_literal(spelling: &[u8]) -> bool {
 /// predicate, as required by FORM-7.
 #[must_use]
 pub fn is_literal(spelling: &[u8]) -> bool {
-    matches!(spelling, b"unit" | b"0_T" | b"1_T")
+    spelling == b"unit"
+        || is_generic_numeric_literal(spelling)
         || integer_literal(spelling)
         || float_literal(spelling)
         || character_literal(spelling)
+}
+
+/// Generic numeric identities carry the written TYPEID suffix [FORM-5].
+/// Its declaration and numeric bound are resolved and checked after parsing.
+pub(crate) fn is_generic_numeric_literal(spelling: &[u8]) -> bool {
+    spelling
+        .strip_prefix(b"0_")
+        .or_else(|| spelling.strip_prefix(b"1_"))
+        .is_some_and(is_type_identifier)
 }
 
 /// A character literal's shape [FORM-5]: exactly one text item between `'`
@@ -1021,6 +1031,10 @@ mod tests {
             b"unit".as_slice(),
             b"0_T",
             b"1_T",
+            b"0_N",
+            b"1_N",
+            b"0_Number2",
+            b"1_Float",
             b"00_i8",
             b"-0_i64",
             b"999999999999999999999_u8",
@@ -1032,6 +1046,12 @@ mod tests {
         }
         for spelling in [
             b"2_T".as_slice(),
+            b"2_N",
+            b"00_N",
+            b"-0_N",
+            b"0_",
+            b"0_n",
+            b"1_N_name",
             b"1_i128",
             b"01.0_f32",
             b"1.0e01_f32",
