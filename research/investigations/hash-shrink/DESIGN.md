@@ -1,9 +1,103 @@
 # Shrinking the standard-library hash table
 
-Status: research proposal, 2026-10-13. No implementation, compilation or
-measurement has been performed for this investigation. The questions below
-need the owner's decisions before implementation; this document does not
-amend the language or the approved design tree.
+Status: proposed implementation in the worktree, 2026-10-13. The owner
+instructed implementation on the three recommended options while the board
+cards remain open: automatic shrinking, removal allowed to shrink a table
+reserved to its ceiling, and one-shot migration. These are adjustable proposed
+decisions, not approval records. No compilation, test or measurement result
+has been produced for the implementation. The owner commits, pushes and runs
+CI; this session only reads and edits source.
+
+## Implementation submitted for CI
+
+The library now calls a private shrinking helper only after a successful
+removal has returned its key/value owner from the bucket and updated the live
+count. Empty maps migrate to zero capacity and release their previous backing.
+Nonempty maps test `n <= (C-1)/8` after establishing `C>0`, then migrate once
+to `max(8,4*n)`. Missing-key removal retains the existing early return.
+No public signature or representation changes, and no explicit shrink
+operation is added in this round.
+
+The previous owning migration body is shared by growth and shrinking.
+The growth/rehash wrapper retains its original ceiling refusal, refusal of
+targets smaller than the current bucket count, and zero-capacity no-op.
+The insertion and try-insertion function bodies retain their previous policy
+and operations. Extracting a private helper can still affect emitted code;
+equivalent growth cost remains a CI/performance question, not an established
+result.
+
+The private backing-initialization helper now states actual storage
+length/capacity obligations without a logical map-ceiling parameter. It does
+not select a map's capacity. Construction and growth retain their ceiling
+checks; shrinking preserves the ceiling because its nonempty target is
+strictly smaller than the previous capacity. This separates initialization
+from capacity policy rather than adding a runtime clamp, recount or fallback.
+
+The arithmetic certificate derives `8*n <= C-1` from `n <= floor((C-1)/8)`
+and the specification's division fact. This bounds exact `4*n` without
+overflow. Since n is nonzero in that branch, C is at least nine, so the
+eight-bucket floor is also smaller than C. The source records the final
+`target<C` invariant after the mutable-target branch. Its checker acceptance,
+like every new source obligation, awaits CI. No checker rejection or language
+gap has been observed in this session.
+
+Local take/place/index/swap/free obligations retain the existing pending-owner
+protocol. The library's inductive live-count invariant supplies the progress
+argument for a smaller destination: before moving the next owner, fewer than
+the target's buckets are filled. This is a reviewed correctness argument,
+not a new machine-checked cardinality invariant or a general termination
+claim. The zero-target path drains only vacant/deleted enums when live count
+is zero; it does not discard a generic owner as an impossible case.
+
+The library interface and README describe shrinking removals and their
+allocation, hashing and reference-invalidation implications. The proposed
+HashMap design node retains insertion's no-rebuild rule at the current
+ceiling and removes the lifetime no-more-allocations promise for maps that
+undergo removal. No specification rule or approval log changes.
+
+The existing normal-home HashMap fixture now covers the million-to-thousand
+eight-buckets-per-member bound, exact threshold/hysteresis across 128 cycles,
+empty-to-zero reuse, regrowth with all surviving lookups, reserved-ceiling
+removal versus ceiling insertion, and smaller migration of must-consume
+Box-owning keys/values. The old C=16,n=1 tombstone trace would now shrink,
+so it instead retains two pairs at the strict equality boundary and keeps
+testing same-capacity insertion cleanup and tombstone reuse. The existing
+native allocation/release ledger remains exact; its new 118-event expectation
+is derived from those sources, not observed in a passing run.
+
+The [temporary hosted workflow](../../../.github/workflows/hash-shrink-hosted.yml)
+uses the [explicit experiment bundle](../../experiments/hash-shrink/README.md).
+It prepares identical-source base/head images and a separately emitted/linked
+twin from a byte-identical base compiler. A small pilot precedes any selected
+million-entry panel, and panel dispatch checks the previous pilot's source
+identity while rebuilding images and rerunning a small pilot on its current
+host. No native binary is reused across hosted machines. The bundle retains
+raw results, identities, generated sources and LLVM for later inspection.
+
+The library panel covers three owning representations, grow/presize/hit and
+sparse/full pops, plus same-process disjoint maps with one and two configured
+workers. Actual parallel offering still needs CI evidence. Fixed Firn source
+builds cover SADD, sparse SPOP, threshold crossing, full counted drain,
+LRANGE_100 and competing same-set requests on one/two server CPUs. Network
+latency includes client overhead and cannot directly measure internal holds;
+low-sample tails and hosted precision remain unresolved. The qualification
+entry compiles the same maintained fixture with six separately selected test
+entries under both compilers, requiring baseline assertion exit 1 and head
+exit 0. A compiler rejection or crash cannot count as the pre-change failure.
+
+Review identified missing measured budget rows for the new temporary labels
+(the new-stage requirement in AGENTS.md). No 20-run CPU-model evidence exists
+from which to derive them. The workflow therefore refuses execution by
+default. Its `allow_unbudgeted_experiment` input exposes a proposed temporary
+report-only mode for the owner to rule on and explicitly select at dispatch;
+the choice is recorded, and it supplies no gate/readiness budget evidence.
+This budget decision is additional to the three open design cards. No measured
+budget or owner approval is fabricated. Remove the temporary workflow before
+readiness and update its active documentation link at the same time.
+
+The sections below preserve the pre-measurement question, alternatives and
+acceptance criteria. They are not measured results or a record that the open
+board cards have been ruled.
 
 ## Question and evidence boundary
 
@@ -47,7 +141,8 @@ There are three unrelated hash-table concerns here:
 | `Shared<ConcurrentHashMap<Entry>>` | Firn's outer keyspace, [lines 236–243](https://github.com/Ming-Research/Firn-wf/blob/c6f6058fb17277d4d44d364a45efad1eae01a22b/firn/store/module.wfm#L236) | It protects the set value under atomic entry access; its buckets are not what SPOP scans. |
 | Compiler fact maps | [fact-map hashing decision](../../../design/compiler/fact-map-hashing.md) | Compiler proof-state hashing, unrelated to either runtime table. The requested `design/language/fact-map-hashing.md` does not exist; the compiler node is its actual location. |
 
-The standard-library [interface](../../../lib/std/collections/hash_map/module.wfm),
+The following representation and removal description records the inspected
+baseline, before this implementation. The current standard-library [interface](../../../lib/std/collections/hash_map/module.wfm),
 [implementation](../../../lib/std/collections/hash_map/hash-map.wf) and
 [library documentation](../../../lib/std/README.md) define the first table.
 It is ordinary Whitefoot over `Box<Slots<HashMapSlot<K,V>>>`, with linear
@@ -72,13 +167,16 @@ The private rebuild rejects a requested capacity smaller than the old bucket
 count. It migrates by occupancy, never equality, through a one-pair pending
 window, retaining every owner even with inconsistent callbacks.
 
-The approved [HashMap storage decisions](../../../design/language/data-model/hash-map-storage.md)
+The baseline [HashMap storage decisions](https://github.com/Ming-Research/Whitefoot/blob/50773fdcd3007685e4cdd1903b2dcb0cc1052600/design/language/data-model/hash-map-storage.md)
 and their ancestors [data model](../../../design/language/data-model.md) and
 [language](../../../design/language.md) therefore support enum storage and
 owning transfer, but contain no shrink policy. The ceiling decision expressly
 says a map created at its ceiling never allocates again. Automatic removal
 shrink would change that promise, including later regrowth, and needs an
-explicit owner ruling rather than an undocumented exception.
+explicit owner ruling rather than an undocumented exception. The
+[current draft node](../../../design/language/data-model/hash-map-storage.md)
+now proposes the removal policy and revised ceiling promise; the board cards
+remain open.
 
 The separate [C concurrent map](../../../compiler/src/backend/concurrent_map.c)
 uses atomic cell words, entry nodes, cooperative moves and retired-table
@@ -385,7 +483,7 @@ fn main() -> status: ExitStatus pure {
 ```
 
 The affine map is released at scope exit under STOR-3. The before program
-retains 64 buckets today; A should leave eight without a caller change, while
+retains 64 buckets under the inspected baseline; A should leave eight without a caller change, while
 B reaches eight only after the explicit call. Calling B after each threshold
 crossing within counted SPOP would be necessary to bound scans inside that
 command; calling it only after the command does not fix the current long hold.
@@ -512,11 +610,14 @@ correctness cases belong in the ordinary gate, never depending on research.
 5. Apply an independent completion review, fix findings, run the canonical
    gate on the delivery revision, and bring exact design changes/evidence to
    the owner. Only after rulings write approval records and prepare delivery;
-   the owner merges. This research task performs none of those implementation
-   or measurement steps.
+   the owner merges. Implementation and test sources are now being prepared
+   in this worktree on the recommended options; the owner performs commits,
+   pushes and all CI execution. No acceptance run is complete yet.
 
-The following are proposed decision-card texts, not recorded owner rulings.
-The session has no callable wf-board tools, so they could not be filed there.
+The owner reports that the following three decisions are now cards on the
+board. Their texts below remain proposals, not recorded owner rulings. The
+instruction to implement their recommended options provisionally authorizes
+this worktree change while the owner may still choose otherwise.
 
 ### 删除后默认缩容吗？
 
@@ -546,15 +647,33 @@ The session has no callable wf-board tools, so they could not be filed there.
 
 **把握 3/5：** 接口成本明确，最长持锁时间还没有测量。
 
+### 临时测量阶段可以先只报告预算吗？
+
+**背景：** 临时 hosted 流程已写好，但新阶段没有同一 CPU 型号至少二十次运行的数据，不能按现行规则计算预算。流程默认停止，只有显式选择临时模式才运行；编译失败、错误结果、缺失输入和超时仍会失败。
+
+- A（推荐）：允许本次手动实验暂时只报告预算。先运行小样本，按结果选规模，保留全部记录；准备合并前移除临时流程。此决定只处理临时阶段预算，不批准设计，也不把 hosted 数据当作精确性能验收。
+- B：暂不启用临时流程，先决定新阶段预算的形成办法。库实现和普通正确性 CI 可以先验证，性能比较等待该决定。
+
+**把握 3/5：** 缺少数据和默认停止可从源码确认；临时政策仍需要主人裁定，不能由既有实验先例代替。
+
 ## Unverified and found along the way
 
-- Independent source review used `gpt-6.1-sol` at high effort, from the
-  inspected Whitefoot HEAD to this new research file. It covered repository,
+- The research-only source review used `gpt-6.1-sol` at high effort, from the
+  inspected Whitefoot HEAD to the original research file. It covered repository,
   documentation and reporting checks plus applicable design/correspondence
   checks, with no material findings. No implementation or test-wiring checks
   applied; algorithm/proof completion remained unverified. The review read
   the Firn snapshots and Redis sources and ran no build, test or measurement.
-- This is a source-based proposal. The illustrative programs, smaller rebuild
+- The independent implementation review used `gpt-6.1-sol` at high effort,
+  from study commit `8f6a273ca53d6d1a2df56a35ab6093ff3a7165b1` to the dirty
+  worktree including the temporary workflow and experiment assets. It covered
+  every applicable repository, documentation, code/case, check-wiring and
+  design/correspondence group. Experiment source grammar and a historical
+  decision citation were repaired and reread. The missing temporary stage
+  budgets remain an owner decision, guarded by a default execution refusal.
+  Machine proof, actual tests, gate and performance remain unverified; the
+  review ran none of them locally.
+- This contains a source-based proposed implementation. The illustrative programs, smaller rebuild
   proof acceptance, all correctness cases and all performance outcomes remain
   unverified. No new specification behavior is claimed or approved.
 - Live-count preservation must replace the old bucket-count progress argument;
@@ -570,6 +689,6 @@ The session has no callable wf-board tools, so they could not be filed there.
 - Full downstream memory-accounting, persistence, scripts and direct-bucket
   consumer audits remain with implementation and Firn verification. Existing
   outer-map cursor semantics must not be confused with member iteration.
-- Status-board filing was unavailable in this session. These decisions and
-  dispositions are preserved here for the responsible session to file; no
-  board update, CI result, measurement or owner approval is implied.
+- Status-board tools remain unavailable in this session. The owner reports
+  that the three decision cards have been filed; this session cannot verify
+  or update their state. No CI result, measurement or owner approval is implied.

@@ -255,8 +255,15 @@ fn hash_map_operations_preserve_owned_pairs_in_both_lowering_modes() {
     // The growth case adds ten backings: a map of eight buckets, its doubled
     // and its same-capacity rebuild, a map of three buckets and its doubled
     // rebuild, two maps of sixteen buckets, one doubled and one rebuilt at the
-    // same capacity, and a map at its ceiling that is not rebuilt.
-    execute_container_program("hash-map", &sources, 38, false);
+    // same capacity, and a map at its ceiling that insertion does not rebuild.
+    // Reserving that ceiling from empty and later shrinking adds two events.
+    // Shrink regression cases add 46: million-entry growth/deletion has 22
+    // growing and nine shrinking backings plus its shared empty header (32);
+    // threshold oscillation has two backings; empty/reuse has four backings
+    // plus its shared empty header (5); regrowth has seven backings.
+    // The nodrop shrink trace adds 32: four backings and its shared empty
+    // header, eighteen stored child Boxes, and nine separately consumed queries.
+    execute_container_program("hash-map", &sources, 118, false);
 }
 
 #[test]

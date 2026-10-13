@@ -21,7 +21,7 @@ modules checked like any other; their interfaces are their documentation.
 | [`std::collections::vector`](collections/vector/module.wfm) | Reserve, growing append, indexed insertion/removal, and ordered consumption over `Box<Slots<T>>`. |
 | [`std::collections::deque`](collections/deque/module.wfm) | Reference-taking endpoints, logical visitation and drain over `Box<Ring<T>>`; explicit consuming rebase produces a new backing. No automatic endpoint growth or zero-copy two-span interface. |
 | [`std::collections::slab`](collections/slab/module.wfm) | One bounded backing with lazily materialized slots, generation handles, borrowed lookup/edit, reuse, expiry, exhaustion returning the offered owner, and explicit consumption. Handles are relative to the supplied slab. |
-| [`std::collections::hash_map`](collections/hash_map/module.wfm) | Generic owning keys and values with supplied hash/equality, growing insertion, removal, borrowed lookup/edit, rehash, and explicit consumption. No stable bucket index or payload address. |
+| [`std::collections::hash_map`](collections/hash_map/module.wfm) | Generic owning keys and values with supplied hash/equality, growing insertion, shrinking removal, borrowed lookup/edit, rehash, and explicit consumption. No stable bucket index or payload address. |
 | [`std::collections::priority_queue`](collections/priority_queue/module.wfm) | Growing boxed binary heap with supplied comparison, proved-nonempty borrowed peek and owning pop/replacement, bottom-up heapify, ordered drain, and explicit final consumption. Indexed operations additionally report resident positions and support arbitrary-position removal/replacement. |
 | [`std::collections::ordered_map`](collections/ordered_map/module.wfm) | Owning B-tree with supplied ordering, insertion/replacement, complete deletion and rebalancing, borrowed lookup/edit, ordered and bounded-range visitation, and explicit consumption. |
 
@@ -48,8 +48,9 @@ after installing the offered pair, and `HashMapFull` returns the offered pair.
 map below its ceiling once its filled buckets and the buckets removals vacated
 number three quarters or more of its buckets: at the same capacity when fewer
 than half that mark, rounded down, are filled, and otherwise from zero buckets
-to one or at twice its buckets, saturating at the ceiling; a map at its ceiling
-is not rebuilt, so its vacated buckets remain until `hash_map_rehash`.
+to one or at twice its buckets, saturating at the ceiling. Insertion does not
+rebuild a map whose current capacity equals its ceiling; its vacated buckets
+remain until an explicit rehash or a shrinking removal.
 `hash_map_reserve` is a no-op at or below current capacity and refuses requests
 above the ceiling; `hash_map_rehash` rebuilds at the same capacity. Capacity
 refusal is not an allocation-failure outcome.
@@ -57,7 +58,16 @@ refusal is not an allocation-failure outcome.
 `hash_map_lookup` and `hash_map_each` borrow stored pairs for callbacks.
 `hash_map_edit` permits its callback to change the value while reading the key,
 and the callback can return ordinary owned data. `hash_map_remove` returns the
-removed owned pair. Supply a `HashMapConsume` binding to `hash_map_free` and
+removed owned pair. After a successful removal, an empty map releases its backing
+and has zero capacity. A nonempty map shrinks when eight times its remaining
+length is strictly below its current capacity, into four buckets per pair with
+a minimum of eight buckets. Equality at one eighth does not shrink; a missing
+key changes neither capacity nor contents. A shrinking removal clears vacated
+buckets and may allocate a second backing, move all retained pairs and invoke
+their hash callbacks; it releases the old backing before returning. This policy
+also applies after reserving to the ceiling, so a later insertion may grow the
+map again. No stable bucket positions or lifetime reservation is promised.
+Supply a `HashMapConsume` binding to `hash_map_free` and
 `hash_map_pair_consume` to consume every key and value, including `nodrop`
 owners. Hash/equality consistency determines ordinary map contents; ownership
 and bounded probing do not assume those laws. Neither iteration order nor
