@@ -3518,7 +3518,7 @@ Its subscripts and their offsets are those [ENT-2] clause (b) admits.
 
 For an admitted measure place P of type `Paged<T>`, `P.pages.len` is additionally a u64 measure term with value `ceil(P.len / B)`, the number of pages holding initialized elements, using [OP-13]'s B and mathematical arithmetic. It is zero for an empty window and counts no page that holds only free slots. Its support is [MSR-2], and it adds no term relating an element index to a page index.
 
-A `borrow_expr` whose complete `place` selects a measure with no field declaration — the `len` of `&[T]` or `&Run<T>`, a run-selection length, or a `Paged` page count — is a hard error citing MSR-1 at that complete `place`, with a repair [DIAG-1], and the measure is read by value [OP-15].
+A `borrow_expr` whose complete `place` selects a measure with no field declaration — the `len` of `&[T]` or `&Run<T>`, the `len` of a run-selecting place [OP-4], or a `Paged` page count — is a hard error citing MSR-1 at that complete `place`, with a repair [DIAG-1], and the measure is read by value [OP-15].
 
 The table classifies the prelude's readonly measure fields and reference lengths by what each denotes and whether it is *exact* or *bounded*; the page count is the derived measure defined above.
 The rule is that the table exists, gives every measured type a row, and gives every cell exactly one of *exact*, *bounded*, or *absent*.
