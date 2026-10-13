@@ -1119,7 +1119,34 @@ fn darwin_native_stack_probe(body: &str) -> bool {
             && words
                 .next()
                 .is_some_and(|callee| callee.trim_start_matches('_') == "chkstk_darwin")
-    }) || darwin_inline_stack_probe(body)
+    }) || darwin_indirect_helper_call(body)
+        || darwin_inline_stack_probe(body)
+}
+
+/// Apple's AArch64 backend may reach the helper through the GOT: it loads
+/// `___chkstk_darwin@GOTPAGEOFF` into a register and later branches through
+/// that register with `blr`, rather than a direct `bl`.
+fn darwin_indirect_helper_call(body: &str) -> bool {
+    let mut loaded: Option<String> = None;
+    for line in body.lines() {
+        let code = line.split(';').next().unwrap_or_default().trim();
+        let mut words = code.split_whitespace();
+        match words.next() {
+            Some("ldr") => {
+                let operands: String = words.collect();
+                if operands.contains("chkstk_darwin@GOTPAGEOFF]") {
+                    loaded = operands.split(',').next().map(str::to_owned);
+                }
+            }
+            Some("blr") => {
+                if loaded.is_some() && words.next() == loaded.as_deref() {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
 }
 
 // This exact inline sequence is qualified only for AArch64. Intel Darwin
@@ -1206,6 +1233,15 @@ fn darwin_probe_recognizer_requires_a_complete_backward_page_walk() {
     assert!(darwin_native_stack_probe("\tbl ___chkstk_darwin\n"));
     assert!(darwin_native_stack_probe("\tcallq ___chkstk_darwin\n"));
     assert!(!darwin_native_stack_probe("; ___chkstk_darwin\n\tbl _other\n"));
+    let indirect = "\tadrp x16, ___chkstk_darwin@GOTPAGE\n\tldr x16, [x16, ___chkstk_darwin@GOTPAGEOFF]\n\tblr x16\n";
+    assert!(darwin_native_stack_probe(indirect), "{indirect}");
+    for malformed in [
+        indirect.replace("blr x16", "blr x17"),
+        indirect.replace("\tblr x16\n", ""),
+        indirect.replace("___chkstk_darwin@GOTPAGEOFF", "_other@GOTPAGEOFF"),
+    ] {
+        assert!(!darwin_native_stack_probe(&malformed), "{malformed}");
+    }
 }
 
 fn native_function_body<'assembly>(assembly: &'assembly str, label: &str) -> &'assembly str {
