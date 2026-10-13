@@ -40,7 +40,7 @@ use crate::{
     PostconditionProofDisposition, ReservedDeclarationRole, ReservedNameClass, ResolutionIssue,
     ResolutionIssueKind, SemanticIssue, SemanticIssueKind, SemanticLocation, SemanticUnsupported,
     SourceIssue, SourceIssueKind, SourceOrigin, SourceProofObligation, StaticObligationDisposition,
-    SyntaxCoordinate, SyntaxIssue, TerminalIssue, UndischargedCallRequirementDetail,
+    SyntaxCoordinate, SyntaxIssue, SyntaxRepair, TerminalIssue, UndischargedCallRequirementDetail,
     UndischargedPostconditionDetail, UnsupportedSemanticFeature,
 };
 
@@ -569,6 +569,14 @@ impl FieldValue for u64 {
     }
 }
 
+impl FieldValue for i128 {
+    fn value(&self, _: &SourceBundle) -> Option<Value> {
+        // The mathematical integer domain includes signed values and u64's
+        // maximum; textual decimal preserves both in the diagnostic format.
+        Some(Value::Text(self.to_string()))
+    }
+}
+
 /// Exact bytes that must be read quoted, such as trivia a canonical-form
 /// rejection wanted and found.
 struct Exact<'text>(&'text str);
@@ -592,6 +600,18 @@ impl FieldValue for Spelled {
             return Some(Value::Text("end of source".to_owned()));
         }
         Some(Value::Exact(bytes.get(start..end)?.to_vec()))
+    }
+}
+
+/// A grammar rejection's repair [DIAG-1]; one that names the source's own
+/// spelling reads it from the source the rejection cites.
+impl FieldValue for SyntaxRepair {
+    fn value(&self, bundle: &SourceBundle) -> Option<Value> {
+        let bytes = match self.source() {
+            Some(source) => bundle.file(source)?.bytes(),
+            None => &[],
+        };
+        self.sentence(bytes).map(Value::Text)
     }
 }
 
@@ -698,7 +718,7 @@ variant_names! {
     DeclarationDomain { LexicalIdentifier, NominalType, Constructor, BuiltinBound, Label, Invariant }
     LexicalUseRole {
         Type, GenericBound, FormalGroup, TypeArgument, Construct, VariantOwner, EnsuresVariant,
-        EffectRoot, EffectIndex, BreakLabel, Const, ConstValue, PlaceBase, IdentifierCallee,
+        EffectRoot, EffectIndex, BreakLabel, Const, ConstValue, IntegerMatchValue, PlaceBase, IdentifierCallee,
         OperationCallee, FunctionBinding, GenericNumericSuffix, InvariantValue, ProofValue,
         InvariantFact,
     }
@@ -716,9 +736,9 @@ variant_names! {
     StaticObligationDisposition { Refuted, Unproved }
     UnsupportedSemanticFeature {
         Generics, PreludeNominalValues, ReferenceFormation, CompositeValues,
-        RecursiveNominalLayout, OwnershipJoin, DuplicateMatchArm, OperationFamily,
+        RecursiveNominalLayout, OwnershipJoin, OperationFamily,
         RangeArithmetic, RangeOrdinaryGoal, RangeOperationIntervals,
-        RangeLoopNesting, RangeAtomicAliases,
+        RangeLoopNesting, PageLengthPostcondition,
     }
 }
 
@@ -845,7 +865,7 @@ impl Report for SemanticIssueKind {
             ConstEvalOverflow { operation };
             ConstArgumentOutOfRange { parameter_type, value };
             ConstRuntimeArithmeticMode { mechanical_fix };
-            TypeMismatch { expected, found };
+            TypeMismatch { expected, found, mechanical_fix };
             UnadmittedOperandShape { expected, mechanical_fix };
             BehaviorArgumentMismatch { expected, mechanical_fix };
             UnforwardedGroupApplication { mechanical_fix };
@@ -866,11 +886,13 @@ impl Report for SemanticIssueKind {
             ReadonlyWriteTarget { spelling, mechanical_fix };
             FrozenForbiddenPart { part, mechanical_fix };
             FrozenContentConsume { mechanical_fix };
-            MoveOfCopy { mechanical_fix };
-            BareAffineUse { mechanical_fix };
+            MoveOfCopy { binding, ty, reason, mechanical_fix };
+            BareAffineUse { binding, ty, reason, mechanical_fix };
             ContainerConstruction { nominal, mechanical_fix };
+            OpaqueDestructuring { nominal, mechanical_fix };
             UseAfterMove { mechanical_fix };
             InvalidReferenceUse { binder, event, mechanical_fix };
+            UnestablishedPayloadVariant { place, variant, mechanical_fix };
             ReferenceToReferenceVariable { mechanical_fix };
             EscapingReference { mechanical_fix };
             RangeOverRing { mechanical_fix };
@@ -879,7 +901,7 @@ impl Report for SemanticIssueKind {
             MissingDereference { mechanical_fix };
             RangeReferentUse { mechanical_fix };
             MoveOuterBindingInLoop { binding, mechanical_fix };
-            InvalidOperation;
+            InvalidOperation { operation, operand_types, mechanical_fix };
             InvalidEqualityType { mechanical_fix };
             InvalidPredicateCondition;
             InvalidConditionalForm { mechanical_fix };
@@ -944,7 +966,11 @@ impl Report for SemanticIssueKind {
             InvalidMatchFields { variant, declared_fields };
             ForeignMatchVariant;
             NonExhaustiveMatch { missing_variants };
-            InvalidPropagation;
+            DuplicateMatchVariant { variant, mechanical_fix };
+            InvalidIntegerMatchArm { reason, mechanical_fix };
+            DuplicateIntegerMatchValue { value, earlier, mechanical_fix };
+            InvalidIntegerMatchCoverage { integer_type, domain, mechanical_fix };
+            InvalidPropagation { enclosing_return_type, operand_type, mechanical_fix };
             InvalidGive;
             EmptyDeliverySet { binding, mechanical_fix };
             InvalidEffectRow { reason, mechanical_fix };
@@ -963,6 +989,15 @@ impl Report for ResolutionIssue {
             origin: _,
             kind,
         } = self;
+        if matches!(
+            kind,
+            ResolutionIssueKind::UnresolvedUse {
+                role: LexicalUseRole::IntegerMatchValue,
+                ..
+            }
+        ) {
+            fields.field("mechanical_fix", "write one in-scope named const of the scrutinee's exact integer type, or an integer literal of that type");
+        }
         report_variants!(ResolutionIssueKind, kind, fields;
             ContractShape(shape);
             MisplacedHeapDeclaration { admitted };
@@ -1059,8 +1094,11 @@ impl Report for CanonicalIssue {
 /// A valid source that needs a semantic family the compiler has not built;
 /// the node is the record's location.
 impl Report for SemanticUnsupported {
-    fn report(&self, _: &mut Fields<'_>) -> &'static str {
+    fn report(&self, fields: &mut Fields<'_>) -> &'static str {
         let Self { feature, node: _ } = self;
+        if *feature == UnsupportedSemanticFeature::PageLengthPostcondition {
+            fields.field("reason", &"not yet supported: a page's length in a postcondition");
+        }
         feature.name()
     }
 }

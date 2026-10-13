@@ -158,6 +158,37 @@ fn the_json_record_is_complete_on_one_line() {
 }
 
 #[test]
+fn propagation_payload_types_and_repair_are_rendered_in_both_formats() {
+    let failure = stop(
+        "propagation.wf",
+        include_bytes!("../../../../tests/conformance/cases/err3-neg-error-type-mismatch.wf"),
+    );
+    let text = failure.to_string();
+    let json = failure.render(DiagnosticFormat::Json);
+    for (label, value) in [
+        ("enclosing_return_type", "Result<i32, ErrB>"),
+        ("operand_type", "Result<i32, ErrA>"),
+    ] {
+        assert!(text.contains(&format!("\n  {label}: {value}")), "{text}");
+        assert!(json.contains(&format!("\"{label}\":\"{value}\"")), "{json}");
+    }
+    assert!(
+        text.contains("\n  mechanical_fix: `propagate` needs"),
+        "{text}"
+    );
+    assert!(
+        json.contains("\"mechanical_fix\":\"`propagate` needs"),
+        "{json}"
+    );
+    assert!(
+        json.contains("\"kind\":\"InvalidPropagation\""),
+        "{json}"
+    );
+    assert_no_internal_identity(&text);
+    assert_no_internal_identity(&json);
+}
+
+#[test]
 fn a_call_requirement_names_the_callee_clause_by_its_position_and_text() {
     let source =
         br#"fn drop_spaces(out: &[u8], src: &[u8]) -> kept: u64 reads(src), writes(out) contract {
@@ -504,13 +535,13 @@ fn a_declaration_origin_quotes_its_declaration() {
 #[test]
 fn a_capability_stop_names_its_stage_and_never_cites_a_rule() {
     let failure = stop(
-        "arms.wf",
-        b"enum Flag {\n  A();\n  B();\n}\n\nfn main() -> status: std::process::ExitStatus pure {\n  let flag = Flag::A();\n  match flag {\n    A() => {\n    }\n    A() => {\n    }\n    B() => {\n    }\n  }\n  return std::process::exit_status(code: 0_u8);\n}\n",
+        "layout.wf",
+        b"struct Node {\n  next: Node;\n}\n\nfn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 0_u8);\n}\n",
     );
     let rendered = failure.to_string();
     assert!(
         rendered.starts_with(
-            "arms.wf:11:5: unsupported capability in Semantics: DuplicateMatchArm\n  source:     A() => {\n"
+            "layout.wf:1:1: unsupported capability in Semantics: RecursiveNominalLayout\n  source: struct Node {\n"
         ),
         "{rendered}"
     );
@@ -518,7 +549,7 @@ fn a_capability_stop_names_its_stage_and_never_cites_a_rule() {
     assert_no_internal_identity(&rendered);
     assert!(
         failure.render(DiagnosticFormat::Json).starts_with(
-            r#"{"kind":"DuplicateMatchArm","category":"Unsupported","stage":"Semantics","at":"#
+            r#"{"kind":"RecursiveNominalLayout","category":"Unsupported","stage":"Semantics","at":"#
         ),
         "{}",
         failure.render(DiagnosticFormat::Json)
@@ -537,6 +568,98 @@ fn a_compiler_facing_stop_keeps_its_payload_under_its_category_and_stage() {
         failure.render(DiagnosticFormat::Json),
         r#"{"kind":"EmptySourceSequence","category":"Invocation","stage":"SourceEnvelope","detail":{"payload":"EmptySourceSequence"}}"#
     );
+}
+
+#[test]
+fn a_page_length_postcondition_names_the_unsupported_construct() {
+    let source = br#"fn page_width(p: &Paged<u64>, k: u64) -> r: u64 pure contract {
+  requires k < p^.pages.len;
+  ensures r <= p^.pages[k].len;
+} {
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let failure = stop("page-width.wf", source);
+    let rendered = failure.to_string();
+    assert!(
+        rendered.starts_with(
+            "page-width.wf:3:3: unsupported capability in Semantics: PageLengthPostcondition\n"
+        ),
+        "{rendered}"
+    );
+    assert!(
+        rendered.ends_with(
+            "\n  reason: not yet supported: a page's length in a postcondition"
+        ),
+        "{rendered}"
+    );
+    assert!(!rendered.contains("NoSelectedNormalExit"), "{rendered}");
+    assert_eq!(failure.rule_id(), None);
+    assert!(
+        failure
+            .render(DiagnosticFormat::Json)
+            .contains(r#""category":"Unsupported""#)
+    );
+}
+
+#[test]
+fn a_weaker_existing_requirement_does_not_supply_the_missing_bound() {
+    let failure = stop(
+        "weaker-bound.wf",
+        br#"const first_index: u64 = 0_u64;
+
+fn inspect(rows: &[Slots<u8, 4>]) -> result: unit pure contract {
+  requires rows^[0_u64].len == 0_u64;
+  requires first_index <= rows^.len;
+} {
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+    );
+    let rendered = failure.to_string();
+    assert_eq!(failure.rule_id(), Some("OP-4"));
+    assert!(
+        rendered.contains("mechanical_fix: add `requires 0_u64 < rows^.len;`"),
+        "{rendered}"
+    );
+    assert!(!rendered.contains("move the existing"), "{rendered}");
+}
+
+#[test]
+fn an_implicit_type_invariant_is_not_a_requirement_the_writer_can_move() {
+    let failure = stop(
+        "implicit-bound.wf",
+        br#"struct Rows {
+  cells: Slots<Slots<u8, 4>, 2>;
+  invariant nonempty(r): 0_u64 < r.cells.len;
+}
+
+fn inspect(rows: &Rows) -> result: unit pure contract {
+  requires rows^.cells[0_u64].len == 0_u64;
+} {
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+    );
+    let rendered = failure.to_string();
+    assert_eq!(failure.rule_id(), Some("OP-4"));
+    assert!(
+        rendered.contains("mechanical_fix: add `requires 0_u64 < rows^.cells.len;`"),
+        "{rendered}"
+    );
+    assert!(!rendered.contains("move the existing"), "{rendered}");
 }
 
 #[test]
@@ -711,4 +834,48 @@ fn entry_measures_keep_reference_boundaries_before_box_content() {
         );
         assert!(rendered.contains("\n  disposition: Unproved\n"), "{rendered}");
     }
+}
+
+#[test]
+fn duplicate_integer_arm_diagnostic_names_the_value_earlier_arm_and_repair() {
+    let failure = stop(
+        "integer-arms.wf",
+        include_bytes!("../../../../tests/conformance/cases/gram12-neg-duplicate-const-value.wf"),
+    );
+    let rendered = failure.to_string();
+    assert!(
+        rendered.contains("error[GRAM-12]: DuplicateIntegerMatchValue"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("earlier:"), "{rendered}");
+    assert!(
+        rendered.contains("mechanical_fix: remove the later arm"),
+        "{rendered}"
+    );
+    assert_no_internal_identity(&rendered);
+    let json = failure.render(DiagnosticFormat::Json);
+    assert!(json.contains("\"rule\":\"GRAM-12\""), "{json}");
+    assert!(json.contains("\"earlier\":{\"at\":"), "{json}");
+}
+
+#[test]
+fn integer_match_coverage_diagnostic_carries_full_domain_and_repair() {
+    let failure = stop(
+        "coverage.wf",
+        include_bytes!("../../../../tests/conformance/cases/err2-neg-integer-missing-else.wf"),
+    );
+    let rendered = failure.to_string();
+    assert!(
+        rendered.contains("error[ERR-2]: InvalidIntegerMatchCoverage"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("all 256 mathematical values"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("add one final `else => { ... }` arm"),
+        "{rendered}"
+    );
+    assert_no_internal_identity(&rendered);
 }

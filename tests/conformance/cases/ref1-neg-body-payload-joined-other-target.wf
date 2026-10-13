@@ -1,0 +1,21 @@
+fn choose_other(first: &Option<u64>, second: &Option<u64>, flag: Bool) -> result: u64 reads(first), reads(second) {
+  doc "A match on a joined reference establishes the variant only at its selected target, never at every possible candidate separately.";
+  let selected = if flag {
+    give first;
+  } else {
+    give second;
+  }
+  match &selected^ {
+    None() => {
+      return 0_u64;
+    }
+    Some(value: inner) => {
+      let direct = second^.Some.value;
+      return direct;
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

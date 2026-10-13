@@ -201,6 +201,7 @@ mod tests {
             range_partitions: Vec::new(),
             written_before: Vec::new(),
             killed_by: Vec::new(),
+            selected_return: None,
         }
     }
 
