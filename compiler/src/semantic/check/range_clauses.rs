@@ -14,6 +14,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
 mod aggregate;
+mod definitions;
 mod vacuous;
 use aggregate::RangeOperand;
 
@@ -979,19 +980,7 @@ impl Checker<'_, '_> {
                 let right_term = self
                     .range_factor(context, *right, bindings, names)?
                     .integer(self, node, names)?;
-                let (constant, value) = match (&left_term, &right_term) {
-                    (CheckedRangeTerm::Constant(constant), _) => (*constant, right_term),
-                    (_, CheckedRangeTerm::Constant(constant)) => (*constant, left_term),
-                    _ => {
-                        return self.invalid_range(
-                            SemanticRule::Range1,
-                            node,
-                            "a range term multiplies two terms neither of which is a constant",
-                            "multiply one term by an integer literal or a named integer const",
-                        );
-                    }
-                };
-                Ok(range_sum(vec![(constant, value)]).into())
+                self.range_multiply(node, left_term, right_term)
             }
             _ => Err(SemanticCompilerFailure::InvalidCanonicalTree.into()),
         }
@@ -1096,6 +1085,17 @@ impl Checker<'_, '_> {
         bindings: &HashMap<DeclarationId, LocalBinding>,
         names: &RangeNames,
     ) -> Result<RangeOperand, CheckStop> {
+        self.range_place_with_suffixes(context, place, &[], bindings, names)
+    }
+
+    fn range_place_with_suffixes(
+        &mut self,
+        context: FunctionContext<'_, '_>,
+        place: NodeId,
+        following_suffixes: &[NodeId],
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+        names: &RangeNames,
+    ) -> Result<RangeOperand, CheckStop> {
         let FunctionContext { check_context, .. } = context;
         let pbase = self
             .types
@@ -1116,11 +1116,12 @@ impl Checker<'_, '_> {
                 "read entry storage in an ensures forall clause",
             );
         }
-        let suffixes = self
+        let mut suffixes = self
             .types
             .declarations
             .tree
             .children_with(place, Production::Psuffix)?;
+        suffixes.extend_from_slice(following_suffixes);
         // [RANGE-1] a postcondition names a result ordinal through its
         // selector spelling, which resolves to no declaration [FN-9].
         if let Some(spelling) = self
@@ -1169,6 +1170,9 @@ impl Checker<'_, '_> {
                 return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
             }
             return Ok(CheckedRangeTerm::Iteration(*position).into());
+        }
+        if let Some(initializer) = self.range_definition(declaration)? {
+            return self.range_definition_expression(context, initializer, &suffixes, bindings, names);
         }
         // [MSR-6] const generics are admitted wherever named consts are.
         // Keep a symbolic caller's declaration, not the callee's formal n,

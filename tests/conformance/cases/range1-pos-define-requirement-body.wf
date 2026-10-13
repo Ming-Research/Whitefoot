@@ -1,0 +1,16 @@
+fn remaining(source: &[u64], i: u64) -> result: u64 reads(source) contract {
+  define offset = i + 1_u64;
+  define next = offset;
+  requires next < source^.len;
+  requires forall small(k in 0_u64..1_u64): source^[next] <= 7_u64;
+} {
+  doc "Recursive definition expansion makes the entry fact constrain the body read.";
+  let at = i + 1_u64;
+  let x = source^[at];
+  let left = 7_u64 - x;
+  return left;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
