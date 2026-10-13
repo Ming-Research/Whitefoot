@@ -10,9 +10,9 @@ cited rules), **source-read**, **measured** (with its run, measured elsewhere
 and cited) or **estimate** (unmeasured judgment).
 
 It answers the owner's direction on the Firn card that asked for a
-conditional target (2026-10-13, quoted on the board item "原子语句要锁哪些对象有一套统一设计的写法"):
+conditional target (2026-10-13, quoted on the board item "the atomic statement has one designed way to write which objects it holds" (translated)):
 
-> atomic后面的语句形式越来越复杂了，得要wf好好设计一下atimic后面的语法形态了。不能这么来一个加一个
+> The forms after `atomic` keep getting more complicated; Whitefoot needs to design the shape of what follows `atomic` properly. We cannot keep adding one form at a time. (translated)
 
 So this is not a study of one addition. It lays out every target form the
 statement has or is about to get, states the questions the header must
@@ -26,7 +26,7 @@ The pending additions it must fit, and the records they live in:
   target (owner-approved specification draft on Whitefoot PR #385, branch
   `claude/shared-counter-study`, `research/investigations/shared-counters/DESIGN.md`
   there; its draft is written against v0.136 and needs rebasing on v0.138);
-- the atomic value (owner chose option A on 2026-10-13, card "要不要加一种『原子值』类型"):
+- the atomic value (owner chose option A on 2026-10-13, card "should there be an 'atomic value' type?" (translated)):
   a shared 64-bit unsigned value used only as a target, at most one operation
   per statement per path, performed at the statement's point without a lock
   on targets with a hardware atomic add, plus the rule "a statement that
@@ -35,7 +35,7 @@ The pending additions it must fit, and the records they live in:
   `claude/sequence-take`, candidate (V));
 - Firn's request for a target held only when a run-time condition holds
   (board item above; Firn-wf PR #65 is the two-statement form);
-- the backlog item "atomic 语句等守卫时可以设期限" (a guard wait with a deadline);
+- the backlog item "an atomic statement waiting on its guard can set a deadline" (translated) (a guard wait with a deadline);
 - the handle-count rule of Whitefoot PR #409 (branch `claude/skip-handle-count`,
   not yet on main): a statement counts its handle on the object only when its
   guard or block may write, move or release the place it read the handle from.
@@ -1467,7 +1467,7 @@ it may not name `current`; A6 refuses it there.
    drafted, with their own rules (S1 to S3, V1 to V6) unchanged.
 3. The wait clause `when expr (until atom)?` with the `else` block, specified
    now so the grammar has its place, implemented when the backlog item
-   "atomic 语句等守卫时可以设期限" is scheduled (P2 today).
+   "an atomic statement waiting on its guard can set a deadline" is scheduled (P2 today).
 4. SHARE-2's "what may stand beside what" sentences replaced by R-overlap
    stated once over the table: targets on overlapping handle places each
    have an index step of an entry or key-set kind.
