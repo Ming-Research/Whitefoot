@@ -97,9 +97,7 @@ fn text_reserve(text: &Box<Slots<u8>>, needed: u64) -> result: unit writes(text)
     let target = imax(doubled, wanted);
     let fits = target <= 4611686018427387904_u64;
     if fits {
-      if target >= text^.inner.cap {
-        grow(cell: text, capacity: target);
-      }
+      grow(cell: text, capacity: target);
     }
   }
   return unit;
