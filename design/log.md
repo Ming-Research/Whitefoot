@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 the owner's agent instructions own the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-13 Match branches on integer constant values, with one exclusion fact for `else` and one switch
+
+Nodes: compiler/checker-facts, compiler/match-dispatch-lowering, compiler/range-judgment, compiler/structured-emission, language/checks-and-proofs/automatic-facts, language/checks-and-proofs/range-facts, language/dispatch, language/grammar, language/name-resolution, language/surface-form/match-form
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve Whitefoot#424's specification and design-tree change: match can branch on integer constant values, a value arm gives 'equals that value', `else` gives one 'not among these values' fact? (head commit e8393a057)" (translated), covering the language nodes, and option A, "approve" (translated), on the card "approve the compiler part of Whitefoot#424's design-tree change: how integer match is represented, how its facts are kept and how it is lowered? (head commit 69c06a0bc)" (translated), covering the compiler nodes; the direction was the owner's earlier choice to add integer-value match for the first release.
+
+Summary: `match` takes integer constant arms (literals or consts of the scrutinee's type, pairwise distinct, `else` last unless the arms cover the type), because dispatch on integer codes, as in Firn's command table, otherwise needs a long `if` chain whose accumulated disequalities make checking quadratic; refused were a code-to-enum helper (itself an `if` chain) and matching on Bool. A value arm establishes `scrutinee == value` and `else` one shared exclusion-set fact, instead of one disequality per earlier arm. The compiler keeps an explicit integer selection in checked matches instead of synthetic enum tags, holds the exclusion as one expression with one sorted shared value set that joins intersect and queries consult by membership, advances endpoint tightening across a whole excluded run, represents `else` in the range judgment as one whole-set literal counted per RANGE-3, keeps integer-match loops on ordinary switch lowering instead of the nominal-enum split planner, and emits one LLVM switch over the once-evaluated scrutinee instead of an equality chain.
+
 ## 2026-10-13 A range fact can state an element's variant, and each conclusion stands on its own reads
 
 Nodes: language/checks-and-proofs/range-facts
