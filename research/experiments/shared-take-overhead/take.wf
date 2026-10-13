@@ -17,7 +17,7 @@ fn take_context(totals: Shared<Totals>, gate: Shared<Gate>, clock: Clock, index:
   let done = 0_u64;
   loop @run {
     for @batch (turn in 0_u64..1024_u64) {
-      atomic slot = &entries[name], held = &counter {
+      atomic slot = &entries[name], obj = &counter {
         match slot^ {
           Some(value: seen) => {
             let next = seen^ +wrap 1_u64;
@@ -27,8 +27,8 @@ fn take_context(totals: Shared<Totals>, gate: Shared<Gate>, clock: Clock, index:
             set slot^ = Some<u64>(value: 1_u64);
           }
         }
-        set state = ixor(state, held^);
-        set held^ = held^ +wrap 1_u64;
+        set state = ixor(state, obj^);
+        set obj^ = obj^ +wrap 1_u64;
       }
       set state = step(state: state);
     }
@@ -40,7 +40,7 @@ fn take_context(totals: Shared<Totals>, gate: Shared<Gate>, clock: Clock, index:
   }
   let entry_total = 0_u64;
   let object_total = 1_u64;
-  atomic slot = &entries[name], held = &counter {
+  atomic slot = &entries[name], obj = &counter {
     match slot^ {
       Some(value: seen) => {
         set entry_total = seen^;
@@ -48,7 +48,7 @@ fn take_context(totals: Shared<Totals>, gate: Shared<Gate>, clock: Clock, index:
       None() => {
       }
     }
-    set object_total = held^;
+    set object_total = obj^;
   }
   let mismatch = 0_u64;
   if entry_total != done {
