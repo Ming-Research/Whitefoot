@@ -1753,6 +1753,14 @@ impl Reasoning<'_, '_, '_> {
                     capture: value.capture,
                 })
             }
+            CapturedTerm::Binding(binding)
+                if value.capture == CaptureId::SpellingDetermined =>
+            {
+                self.vocabulary.terms.interned(&TermKind::Place(
+                    ResolvedPlace::binding(binding),
+                    IntegerType::U64,
+                ))
+            }
             // A superseded binding's capture still names the value its
             // formation read, which is the immutable term the capture minted.
             CapturedTerm::Binding(_) | CapturedTerm::Superseded(_)

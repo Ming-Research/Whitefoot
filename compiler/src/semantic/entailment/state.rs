@@ -1042,13 +1042,17 @@ pub(crate) struct DerivationMetrics {
     pub(crate) retained_bytes: usize,
 }
 
-/// Which mandatory checked-program query owns a retained root.
+/// Which checked-program query owns a retained root.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum DerivationRootKind {
     HeaderRelation {
         occurrence: u32,
     },
     LoopInduction {
+        occurrence: u32,
+    },
+    /// A successful optional [ENT-5] support-separation proof at a write.
+    FactPreservation {
         occurrence: u32,
     },
     BodyEntryContradiction,

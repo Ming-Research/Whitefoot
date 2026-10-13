@@ -228,7 +228,7 @@ impl CapturedValue {
     /// The half of [OWN-7]'s index separation this module settles without a
     /// proof: two written literals of different value select two slots.
     /// Every other pair is the fixed [ENT-6] families' question.
-    const fn literals_distinct(self, other: Self) -> bool {
+    pub(crate) const fn literals_distinct(self, other: Self) -> bool {
         matches!(
             (self.term, other.term),
             (CapturedTerm::Literal(left), CapturedTerm::Literal(right)) if left != right
@@ -273,10 +273,24 @@ impl CapturedRange {
         (end as i128).checked_sub(start as i128)
     }
 
+    /// [OWN-7]'s endpoint orderings when written literals settle them.
+    pub(crate) const fn literally_disjoint(self, other: Self) -> bool {
+        const fn no_greater(left: CapturedValue, right: CapturedValue) -> bool {
+            matches!(
+                (left.term, right.term),
+                (CapturedTerm::Literal(left), CapturedTerm::Literal(right)) if left <= right
+            )
+        }
+        no_greater(self.end, other.start)
+            || no_greater(other.end, self.start)
+            || no_greater(self.end, self.start)
+            || no_greater(other.end, other.start)
+    }
+
     /// The half of [OWN-7]'s index-and-range separation this module settles
     /// without a proof: written literals that put the index before the start
     /// or at or after the end, or make the range empty.
-    const fn literally_excludes(self, index: CapturedValue) -> bool {
+    pub(crate) const fn literally_excludes(self, index: CapturedValue) -> bool {
         match (self.start.term, self.end.term, index.term) {
             (CapturedTerm::Literal(start), CapturedTerm::Literal(end), _) if end <= start => true,
             (_, CapturedTerm::Literal(end), CapturedTerm::Literal(index)) if end <= index => true,
@@ -945,10 +959,10 @@ fn separation(
         // the walk: unequal subscripts below two different range steps never
         // establish separation by themselves.
         (PlaceStep::Range(left), PlaceStep::Range(right)) => {
-            if left.start.provably_same(right.start) && left.end.provably_same(right.end) {
-                StepSeparation::Same
-            } else if oracle.ranges_disjoint(left, right) {
+            if left.literally_disjoint(right) || oracle.ranges_disjoint(left, right) {
                 StepSeparation::Separate
+            } else if left.start.provably_same(right.start) && left.end.provably_same(right.end) {
+                StepSeparation::Same
             } else {
                 StepSeparation::Overlapping
             }
@@ -1985,6 +1999,27 @@ mod tests {
         assert!(!map.overlaps(&denied, &part(WindowPart::Next), &part(WindowPart::Last)));
         assert!(map.overlaps(&denied, &part(WindowPart::Next), &part(WindowPart::Free)));
         assert!(map.overlaps(&denied, &part(WindowPart::Last), &part(WindowPart::Filled)));
+    }
+
+    #[test]
+    fn literal_range_endpoints_separate_adjacent_and_empty_ranges() {
+        let map = PlaceMap::default();
+        let range = |start, end| {
+            place(
+                0,
+                &[PlaceStep::Range(CapturedRange {
+                    start: literal(1, start),
+                    end: literal(2, end),
+                })],
+            )
+        };
+        assert!(!map.overlaps(&DENIED, &range(0, 1), &range(1, 3)));
+        assert!(!map.overlaps(&DENIED, &range(1, 3), &range(0, 1)));
+        assert!(!map.overlaps(&DENIED, &range(2, 2), &range(2, 2)));
+        assert!(!map.overlaps(&DENIED, &range(0, 3), &range(2, 2)));
+        assert!(!map.overlaps(&DENIED, &range(2, 2), &range(0, 3)));
+        assert!(map.overlaps(&DENIED, &range(0, 2), &range(1, 3)));
+        assert!(map.overlaps(&DENIED, &range(0, 3), &range(0, 3)));
     }
 
     /// [OWN-7] an index beside a range of one base is separated only when
