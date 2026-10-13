@@ -90,24 +90,38 @@ impl IrBuilder<'_> {
         while position < self.pending_contexts.len() {
             let due = self.pending_contexts[position]
                 .before
-                .is_none_or(|before| before <= index);
+                .is_some_and(|before| before <= index);
             if !due {
                 position += 1;
                 continue;
             }
             let pending = self.pending_contexts.remove(position);
-            let value = self.define(
-                pending.result,
-                IrOperation::ContextAwait {
-                    start: pending.start,
-                },
-            )?;
-            if self.bindings.insert(pending.binding, value).is_some() {
-                return Err(LoweringFailure::InvalidCheckedProgram);
-            }
-            self.promote_binding_if_needed(pending.binding)?;
+            self.await_context(pending)?;
         }
         Ok(())
+    }
+
+    /// At the block's normal end, awaits every context it still owns without
+    /// touching contexts pending in an enclosing block [WAIT-3].
+    pub(super) fn await_contexts_at_block_end(&mut self, from: usize) -> Result<(), LoweringFailure> {
+        while self.pending_contexts.len() > from {
+            let pending = self.pending_contexts.remove(from);
+            self.await_context(pending)?;
+        }
+        Ok(())
+    }
+
+    fn await_context(&mut self, pending: PendingContext) -> Result<(), LoweringFailure> {
+        let value = self.define(
+            pending.result,
+            IrOperation::ContextAwait {
+                start: pending.start,
+            },
+        )?;
+        if self.bindings.insert(pending.binding, value).is_some() {
+            return Err(LoweringFailure::InvalidCheckedProgram);
+        }
+        self.promote_binding_if_needed(pending.binding)
     }
 
     fn bound_result_type(&self, start: IrValueId) -> Result<IrType, LoweringFailure> {
