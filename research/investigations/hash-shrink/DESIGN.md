@@ -47,8 +47,9 @@ one-premise family can subtract the sparse fact: the floor branch leaves
 domain. Explicit blocks would be redundant under PRF-1. Both publish the same
 difference bound before the join, so its intersection can retain it for the
 final invariant. These are erased proof steps, not additional runtime checks.
-Checker acceptance of the repair awaits CI; the initial refusal alone does
-not establish a language gap.
+Gate run 38401080942 accepts the repaired library; its Firn program tests
+pass. The initial missing branch fact was an authoring error, not a demonstrated
+language gap. The separate HashMap fixture repairs below still await CI.
 
 Local take/place/index/swap/free obligations retain the existing pending-owner
 protocol. The library's inductive live-count invariant supplies the progress
@@ -679,7 +680,25 @@ this worktree change while the owner may still choose otherwise.
   The shared-receipt adapter reported 76 mismatches, all reaching INV-1;
   its graph checks the carried standard-library modules, so the failing
   HashMap module is the common displayed cause. No separate receipt-cache
-  defect is evidenced by that log. All repairs await the owner's CI rerun.
+  defect is evidenced by that log. The later gate outcome is recorded below.
+- Gate run 38401080942 on `176740a6286ee44eab11ecf4f7d28ec209fa26d9`
+  checks the library and passes the Firn program tests. The remaining HashMap
+  fixture refusal is GRAM-9: a True constructor used directly as a call argument.
+  That parse refusal also causes its unexpectedly-underived canonical result.
+  The repair binds this constructor first, and likewise binds four False
+  constructors used directly inside hash-environment fields. These are the
+  specified flat source forms; assertions and workloads are unchanged.
+  The indexed-membership fixture executes successfully and releases every
+  allocation, but its observer reports 137 events against the old 129.
+  Four payload/policy traces each keep C=8 until final expiry removes IDs
+  16,17,10, reducing live count 3,2,1,0. No positive-live shrink is possible
+  because 8*n<8 is false for n>=1. The last removal returns to C=0; final
+  attachment of ID313 then allocates C=1 and retires that new shared empty
+  header. Each trace adds one allocation plus one header event, so
+  129+4*(1+1)=137. Auxiliary maps never lose their last ID through removal.
+  The harness expectation now includes that derivation beside the number;
+  its exact release checks remain. These test repairs await the owner's CI,
+  and neither authoring error establishes a language/checker gap.
 - The committed implementation, compared with its study-only parent
   `8f6a273ca53d6d1a2df56a35ab6093ff3a7165b1`, enlarged the existing fixture
   from 1,037 to 1,370 lines (386 inserted, 53 deleted; net 333). It added five

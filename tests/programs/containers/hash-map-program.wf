@@ -388,7 +388,8 @@ fn hash_map_test_growth() -> result: u64 pure {
   hash_map_free::<HashMapScalarConsume, 64>(map: move below_half, env: &seen);
   let bounded = hash_map_new::<u64, u64, 64>(capacity: 0_u64);
   let reserved = hash_map_reserve::<HashMapIdentityKey, u64, 64>(map: &bounded, capacity: 64_u64, env: &env);
-  hash_map_test_check_reserve(outcome: reserved, expected: True(), seen: &seen);
+  let true_value = True();
+  hash_map_test_check_reserve(outcome: reserved, expected: true_value, seen: &seen);
   for (key in 0_u64..48_u64) {
     hash_map_test_growth_put::<64>(map: &bounded, key: key, env: &env, seen: &seen);
   }
@@ -415,7 +416,8 @@ fn hash_map_test_growth() -> result: u64 pure {
 fn hash_map_test_shrink_million() -> result: u64 pure {
   doc "Identity hashing supplies ordinary homes rather than one forced collision chain. Insert one million distinct keys, remove the first 999000, then require at most 8000 buckets for the 1000 retained pairs. The fixed factor eight rejects retaining the peak backing. Every removal checks its returned pair and every retained key is looked up against key times ten, independently of bucket order.";
   let seen = HashMapTestSeen(failures: 0_u64, consumed: 0_u64, key_sum: 0_u64, value_sum: 0_u64, visits: 0_u64, observed: 0_u64);
-  let env = HashMapHashEnv(hostile: False());
+  let false_value = False();
+  let env = HashMapHashEnv(hostile: false_value);
   let map = hash_map_new::<u64, u64, 2097152>(capacity: 0_u64);
   for (key in 0_u64..1000000_u64) {
     hash_map_test_growth_put::<2097152>(map: &map, key: key, env: &env, seen: &seen);
@@ -457,7 +459,8 @@ fn hash_map_test_shrink_million() -> result: u64 pure {
 fn hash_map_test_shrink_oscillation() -> result: u64 pure {
   doc "At 64 buckets, removing to eight pairs does not shrink; removing to seven changes capacity once to 28. Then 128 insert/remove cycles alternate seven and eight live pairs. Counting capacity changes including that first shrink makes the old never-shrink policy fail, while retaining one tombstone after each removal detects an unwanted same-capacity rebuild on each operation.";
   let seen = HashMapTestSeen(failures: 0_u64, consumed: 0_u64, key_sum: 0_u64, value_sum: 0_u64, visits: 0_u64, observed: 0_u64);
-  let env = HashMapHashEnv(hostile: False());
+  let false_value = False();
+  let env = HashMapHashEnv(hostile: false_value);
   let map = hash_map_new::<u64, u64, 64>(capacity: 64_u64);
   for (key in 0_u64..9_u64) {
     hash_map_test_growth_put::<64>(map: &map, key: key, env: &env, seen: &seen);
@@ -509,7 +512,8 @@ fn hash_map_test_shrink_oscillation() -> result: u64 pure {
 fn hash_map_test_shrink_empty_reuse() -> result: u64 pure {
   doc "Removing the last pair must release all buckets and clear tombstones. An unsuccessful removal must not rebuild the empty map. The next insertion grows from capacity zero to one, so both the empty observation and reuse reject the old retained-capacity behavior.";
   let seen = HashMapTestSeen(failures: 0_u64, consumed: 0_u64, key_sum: 0_u64, value_sum: 0_u64, visits: 0_u64, observed: 0_u64);
-  let env = HashMapHashEnv(hostile: False());
+  let false_value = False();
+  let env = HashMapHashEnv(hostile: false_value);
   let map = hash_map_new::<u64, u64, 64>(capacity: 32_u64);
   for (key in 0_u64..4_u64) {
     hash_map_test_growth_put::<64>(map: &map, key: key, env: &env, seen: &seen);
@@ -547,7 +551,8 @@ fn hash_map_test_shrink_empty_reuse() -> result: u64 pure {
 fn hash_map_test_shrink_regrow() -> result: u64 pure {
   doc "Remove fifteen of sixteen normal-home pairs from 64 buckets, require the eight-bucket floor for the one retained pair, then insert 47 new pairs. All 48 keys and values must survive regrowth to the unchanged ceiling, and removal/free consumption must account for each inserted pair exactly once.";
   let seen = HashMapTestSeen(failures: 0_u64, consumed: 0_u64, key_sum: 0_u64, value_sum: 0_u64, visits: 0_u64, observed: 0_u64);
-  let env = HashMapHashEnv(hostile: False());
+  let false_value = False();
+  let env = HashMapHashEnv(hostile: false_value);
   let map = hash_map_new::<u64, u64, 64>(capacity: 64_u64);
   for (key in 0_u64..16_u64) {
     hash_map_test_growth_put::<64>(map: &map, key: key, env: &env, seen: &seen);

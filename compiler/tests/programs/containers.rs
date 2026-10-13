@@ -297,7 +297,15 @@ fn indexed_memberships_match_the_model_and_release_every_owner_in_both_lowering_
     // direct indexed heapify adds one; the nodrop SlabEdit result adds one
     // backing and two payload Boxes. The source model independently checks
     // dictionary membership, sorted expiration and exact owner identities.
-    execute_container_program("indexed-membership", &sources, 129, false);
+    // Shrinking adds two observer events to each of the four traces above.
+    // Their ID map grows 0 -> 1 -> 2 -> 4 -> 8 before removal. At capacity 8,
+    // 8 * live < capacity permits no positive-live shrink; final expiry removes
+    // the last member and migrates 8 -> 0. The final indexed_attach then grows
+    // 0 -> 1: one allocation and one retirement of the new shared empty header
+    // (STOR-1), counted separately by the observer. No other fixture removes
+    // its last ID member. Thus 129 + 4 * (1 + 1) = 137 events, not eight extra
+    // heap allocations; the observer still requires every allocation released.
+    execute_container_program("indexed-membership", &sources, 137, false);
 }
 
 #[test]
