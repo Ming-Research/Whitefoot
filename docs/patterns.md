@@ -135,8 +135,9 @@ measure is [ENT-2]. In an index-based tree, declare per-node structure such as
 endpoint, in a `requires`, or as a `let` source equal to its copy. A field is
 readonly only together with `public`, and `public` is written only in an
 interface record [MOD-6]; inside its declaring module the field stays an
-ordinary assignable field, so only code outside that module is limited to
-whole-element replacement [TYPE-2]. An
+ordinary assignable field; code outside that module cannot write a path
+through it directly, and changes it only by replacing the whole element or by
+calling a function of the declaring module [TYPE-2]. An
 ordinary field below a subscript is no term, so copy it with `let` before
 relying on it. Replacing or exchanging the element, a window operation that
 moves elements, a call whose row writes the storage, and a write to the index
@@ -644,7 +645,8 @@ window passed to `read_next` and `write_once`, with the invocation's owners
 consumed explicitly.
 
 Most host functions that acquire, transfer or close a resource wait, but not
-all: `stop_listen`, `close_cancel_source` and `close_cancel_watch` do not.
+all: for example `stop_listen`, `cancel_source` and `close_cancel_source` do
+not.
 Read the callee's declaration [PRE-2]: a function that calls one declared
 `waits` writes `waits` after its effect row, and so does each function that
 calls that one, up to an entry that waits [WAIT-1]. Keep the computation
@@ -753,8 +755,8 @@ program alternatives. Use an exact integer operation when overflow is excluded
 by proof, and a `.wrap` operation only when modular arithmetic is the intended
 result [OP-2]. A `give` of a literal, a named const or a bare integer binding
 delivers the binding's equality to it, so `increment <= 1` holds after the
-`match`, and a value-producing `if` keeps every bound that each branch's given
-value is known to satisfy, as two returns would [ENT-5].
+`if`: a value-producing `if` keeps every bound that each branch's given value
+is known to satisfy, as two returns would [ENT-5].
 
 ## Known gaps
 
