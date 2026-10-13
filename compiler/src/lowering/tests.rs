@@ -368,33 +368,148 @@ fn main() -> status: std::process::ExitStatus pure waits {
 }
 "#;
     with_ir(source, |program| {
-        let operations = function(program, "main")
+        let main = function(program, "main");
+        let definitions = main
             .blocks()
             .iter()
             .flat_map(IrBlock::instructions)
             .filter_map(|instruction| match instruction {
-                IrInstruction::Define { operation, .. } => Some(operation),
+                IrInstruction::Define {
+                    result, operation, ..
+                } => Some((*result, operation)),
                 _ => None,
             })
-            .collect::<Vec<_>>();
-        let targets = operations
-            .iter()
-            .filter_map(|operation| match operation {
-                IrOperation::ShardsGroupTarget { record, whole, .. } => Some((*record, *whole)),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(targets.len(), 2);
-        assert_eq!(targets[0].0, targets[1].0);
-        assert_eq!((targets[0].1, targets[1].1), (false, true));
-        assert!(matches!(targets[0].0.kind(), crate::IrRecordKind::ShardsGroup { count: 2 }));
-        assert!(operations.iter().any(|operation| {
-            matches!(operation, IrOperation::ShardsGroupTake { record, .. } if *record == targets[0].0)
-        }));
-        assert!(operations.iter().any(|operation| {
-            matches!(operation, IrOperation::ShardsGroupRelease { record, .. } if *record == targets[0].0)
-        }));
-        assert!(!operations.iter().any(|operation| {
+            .collect::<std::collections::HashMap<_, _>>();
+        // Each source statement has a lazy acquisition site. Its flag==0
+        // branch takes the group; a held group bypasses the entire site.
+        let gate = |work: usize, taking: bool| {
+            main.blocks()
+                .iter()
+                .enumerate()
+                .find_map(|(index, block)| {
+                    let IrTerminator::Match {
+                        scrutinee, targets, ..
+                    } = block.terminator()
+                    else {
+                        return None;
+                    };
+                    let arm = targets
+                        .iter()
+                        .find(|target| target.block().index() == work)?;
+                    assert_eq!(arm.tag(), u32::from(taking));
+                    let bypass = targets
+                        .iter()
+                        .find(|target| target.tag() != arm.tag())
+                        .expect("a flag test has a bypass")
+                        .block();
+                    let IrOperation::Integer {
+                        operation: IrIntegerOperation::Equal,
+                        arguments,
+                        ..
+                    } = definitions[scrutinee] else {
+                        panic!("a lazy group tests its held flag");
+                    };
+                    let [loaded, zero] = arguments.as_slice() else {
+                        panic!("the flag comparison has two operands");
+                    };
+                    assert!(matches!(
+                        definitions[zero],
+                        IrOperation::Constant(crate::IrConstant::Integer { bits: 0, .. })
+                    ));
+                    let IrOperation::Load { address, .. } = definitions[loaded] else {
+                        panic!("the comparison reads the held flag");
+                    };
+                    let IrInstruction::Store {
+                        address: stored,
+                        value,
+                        ..
+                    } = main.blocks()[work]
+                        .instructions()
+                        .last()
+                        .expect("the flag is updated")
+                    else {
+                        panic!("the hold changes its flag before joining");
+                    };
+                    assert_eq!(stored, address);
+                    assert!(matches!(
+                        definitions[value],
+                        IrOperation::Constant(crate::IrConstant::Integer { bits, .. })
+                            if *bits == u64::from(taking)
+                    ));
+                    assert!(matches!(
+                        main.blocks()[work].terminator(),
+                        IrTerminator::Jump { target, .. } if *target == bypass
+                    ));
+                    Some((index, bypass.index(), *address))
+                })
+                .expect("every hold operation has a flag-controlled predecessor")
+        };
+        let mut acquisitions = Vec::new();
+        let mut releases = Vec::new();
+        for (block, body) in main.blocks().iter().enumerate() {
+            for instruction in body.instructions() {
+                match instruction {
+                    IrInstruction::Define {
+                        operation: IrOperation::ShardsGroupTake { record, .. },
+                        ..
+                    } => {
+                        let targets = body
+                            .instructions()
+                            .iter()
+                            .filter_map(|instruction| match instruction {
+                                IrInstruction::Define {
+                                    operation: IrOperation::ShardsGroupTarget {
+                                        record, index, object, whole,
+                                    },
+                                    ..
+                                } => Some((*record, *index, *object, *whole)),
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>();
+                        assert_eq!(targets.len(), 2);
+                        assert_eq!(
+                            (targets[0].0, targets[0].1, targets[0].3),
+                            (*record, 0, false)
+                        );
+                        assert_eq!(
+                            (targets[1].0, targets[1].1, targets[1].3),
+                            (*record, 1, true)
+                        );
+                        assert!(matches!(
+                            record.kind(),
+                            crate::IrRecordKind::ShardsGroup { count: 2 }
+                        ));
+                        acquisitions.push((gate(block, true), targets));
+                    }
+                    IrInstruction::Define {
+                        operation: IrOperation::ShardsGroupRelease { record, .. },
+                        ..
+                    } => releases.push((gate(block, false), *record)),
+                    _ => {}
+                }
+            }
+        }
+        let [(first, first_targets), (second, second_targets)] = acquisitions.as_slice() else {
+            panic!("the two source writes each have one lazy acquisition site");
+        };
+        let [(release, record)] = releases.as_slice() else {
+            panic!("the statement has one group release site");
+        };
+        assert_eq!(first_targets, second_targets);
+        assert_eq!(*record, first_targets[0].0);
+        assert_eq!(first.0, 0, "the first write tests the initially empty flag");
+        assert_eq!(first.1, second.0, "the first hold joins at the second test");
+        assert_eq!(second.1, release.0, "both writes precede the release test");
+        assert_eq!(first.2, second.2);
+        assert_eq!(second.2, release.2);
+        let IrOperation::AddressOf { value, .. } = definitions[&first.2] else {
+            panic!("one private flag carries the group's held state");
+        };
+        assert!(matches!(
+            definitions[value],
+            IrOperation::Constant(crate::IrConstant::Integer { bits: 0, .. })
+        ));
+        assert!(!definitions.values().any(|operation| {
             matches!(operation, IrOperation::ShardsTake { .. } | IrOperation::SharedAcquire { .. })
         }));
     });
@@ -925,22 +1040,20 @@ fn main() -> status: std::process::ExitStatus pure {
     with_checked(source, |checked| {
         let plan = super::specialize::PhysicalFunctions::build(&checked.data)
             .expect("accepted call inventory must close");
+        // Generic compiler-owned records have concrete instances only where
+        // called. The nongeneric key-set rows and any_shard are unused here.
+        let emitted = |function: &crate::semantic::CheckedFunction| {
+            let record = function.body.is_none()
+                && crate::lowering::COMPILER_OWNED_PRELUDE_ROWS.contains(&function.name.as_str());
+            !record || (!function.name.starts_with("key_set_") && function.name != "any_shard")
+        };
         for function in checked.data.executable_functions() {
             let variants = plan
                 .variants
                 .iter()
                 .filter(|variant| variant.source == function.id)
                 .count();
-            // A compiler-owned [PRE-1] record is emitted where a call reaches
-            // it: a generic one's instance exists only where called, and the
-            // key set's four and any_shard, which take no type parameter,
-            // are not called here.
-            let record = function.body.is_none()
-                && crate::lowering::COMPILER_OWNED_PRELUDE_ROWS.contains(&function.name.as_str());
-            let expected = usize::from(
-                !record
-                    || (!function.name.starts_with("key_set_") && function.name != "any_shard"),
-            );
+            let expected = usize::from(emitted(function));
             assert_eq!(
                 variants, expected,
                 "{}: one heap leaves one release environment, and every ordinary \
@@ -967,10 +1080,7 @@ fn main() -> status: std::process::ExitStatus pure {
                 .executable_functions
                 .iter()
                 .copied()
-                .filter(|source| {
-                    let function = &checked.data.functions[source.0 as usize];
-                    function.body.is_some() || !function.name.starts_with("key_set_")
-                })
+                .filter(|source| emitted(&checked.data.functions[source.0 as usize]))
                 .collect::<Vec<_>>(),
             "physical order follows ordinary discovery order"
         );

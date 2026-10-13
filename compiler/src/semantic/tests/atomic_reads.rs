@@ -130,7 +130,7 @@ fn main() -> status: std::process::ExitStatus pure {{
 #[test]
 fn a_guard_that_does_not_read_its_shard_argument_checks() {
     let source = r#"fn ready(value: &u8) -> result: Bool pure {
-  return true;
+  return True();
 }
 
 fn inspect(stats: &Shared<Shards<u8>>, mine: AnyShard) -> result: unit reads(stats) waits {
