@@ -188,6 +188,16 @@ size_t wf_linux_io_uring_in_flight(
     const wf_linux_io_uring_adapter *adapter
 );
 
+/* Whether the ring holds work only a thread entering it can move: CQEs not
+ * yet reaped, completions the kernel keeps on its overflow list, or staged
+ * SQEs the deferred doorbell has not yet carried to the kernel.  It reads the
+ * shared queue words with acquire loads, takes no lock and makes no syscall,
+ * so any thread may ask it; the answer is a hint that can be stale the moment
+ * it is read.  Zero for an adapter that is not initialized. */
+int wf_linux_io_uring_pending(
+    const wf_linux_io_uring_adapter *adapter
+);
+
 /* The ring's submission-queue depth as the kernel gave it.  Zero before
  * initialization succeeds.  It is a throughput parameter, not a bound on how
  * many operations may be outstanding. */
