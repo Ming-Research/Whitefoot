@@ -983,7 +983,15 @@ impl<'program> Walker<'program> {
     /// below a dereference extends that view without reading a snapshot.
     fn match_view(&mut self, state: &mut State, scrutinee: &CheckedExpression) -> View {
         match scrutinee {
-            CheckedExpression::ProjectValue { value, field, .. } => {
+            // A field or `Box` content below the matched storage [RANGE-1].
+            CheckedExpression::ProjectValue { value, .. }
+            | CheckedExpression::BoxDeref { value, .. } => {
+                let (projected, step) = match scrutinee {
+                    CheckedExpression::ProjectValue { field, .. } => {
+                        (CheckedRangeProjection::Field(*field), Step::Field(*field))
+                    }
+                    _ => (CheckedRangeProjection::BoxContent, Step::BoxContent),
+                };
                 match self.match_view(state, value) {
                     View::Element {
                         container,
@@ -991,7 +999,7 @@ impl<'program> Walker<'program> {
                         mut projection,
                     } => {
                         if let Some(path) = &mut projection {
-                            path.push(CheckedRangeProjection::Field(*field));
+                            path.push(projected);
                         }
                         View::Element {
                             container,
@@ -999,7 +1007,7 @@ impl<'program> Walker<'program> {
                             projection,
                         }
                     }
-                    View::Place(location) => View::Place(location.child(Step::Field(*field))),
+                    View::Place(location) => View::Place(location.child(step)),
                     _ => View::Unknown,
                 }
             }
@@ -1007,15 +1015,20 @@ impl<'program> Walker<'program> {
                 Some(Value::Ref(view)) => view.clone(),
                 _ => View::Unknown,
             },
-            CheckedExpression::RangeIndex { place, .. } => match self.range_element(state, place) {
-                Some((container, indices, projection)) => View::Element {
-                    container,
-                    indices,
-                    projection,
-                },
-                None => View::Unknown,
-            },
-            CheckedExpression::ReadStorage { root, .. } => {
+            // A borrowed scrutinee `&p` matches the storage p names [OWN-13].
+            CheckedExpression::RangeIndex { place, .. }
+            | CheckedExpression::BorrowRangeIndex { place, .. } => {
+                match self.range_element(state, place) {
+                    Some((container, indices, projection)) => View::Element {
+                        container,
+                        indices,
+                        projection,
+                    },
+                    None => View::Unknown,
+                }
+            }
+            CheckedExpression::ReadStorage { root, .. }
+            | CheckedExpression::BorrowAddressed { root, .. } => {
                 self.view_of(state, root.root, &root.path)
             }
             CheckedExpression::Binding { .. } | CheckedExpression::Project { .. } => {
