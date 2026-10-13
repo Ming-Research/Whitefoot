@@ -211,6 +211,17 @@ const LTO_LINKER: &[&str] = &["-fuse-ld=lld"];
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 const THIN_LINK_CACHE: &str = "-Wl,--thinlto-cache-dir=";
 
+/// The host linker's spelling for its ThinLTO backend worker count.
+fn thin_link_jobs(jobs: usize) -> String {
+    #[cfg(target_os = "macos")]
+    let prefix = "-Wl,-mllvm,-threads=";
+    #[cfg(target_os = "windows")]
+    let prefix = "-Wl,/opt:lldltojobs=";
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    let prefix = "-Wl,--thinlto-jobs=";
+    format!("{prefix}{jobs}")
+}
+
 /// The libraries this host's link needs. The ordinary Windows library uses
 /// Winsock and the shell's Unicode command-line conversion. The build launcher
 /// defines `main`; argument conversion does not require a `wmain` entry.
@@ -1028,6 +1039,27 @@ fn link_cached_objects(
     fragments: Option<&[String]>,
     report: &mut BuildReport,
 ) -> Result<(), String> {
+    // The checker uses the same available-processor ceiling. Its workers
+    // have all joined before the native build begins.
+    let jobs = std::thread::available_parallelism().map_or(1, usize::from);
+    link_cached_objects_with_jobs(
+        cache, directory, staged, compiled, llvm, output, fragments, report, jobs,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn link_cached_objects_with_jobs(
+    cache: &BuildCache,
+    directory: &Path,
+    staged: &[RuntimeUnit],
+    compiled: &[&str],
+    llvm: &str,
+    output: &Path,
+    fragments: Option<&[String]>,
+    report: &mut BuildReport,
+    jobs: usize,
+) -> Result<(), String> {
+    let jobs = jobs.max(1);
     let host = host_compiler_identity()?;
     let thin: &[&str] = if fragments.is_some() {
         &["-flto=thin"]
@@ -1075,35 +1107,10 @@ fn link_cached_objects(
     }
     let parts = fragments.map_or_else(|| vec![llvm.to_owned()], <[String]>::to_vec);
     report.fragments = parts.len();
-    for (index, text) in parts.iter().enumerate() {
-        // Relative names keep the staging directory, which differs per
-        // invocation, out of the compiler's inputs.
-        let part = directory.join(format!("fragment-{index}.ll"));
-        std::fs::write(&part, text)
-            .map_err(|error| format!("cannot write {}: {error}", part.display()))?;
-        let mut material = b"program-object 1\n".to_vec();
-        material.extend_from_slice(&host);
-        material.extend_from_slice(&content_digest(text.as_bytes()));
-        material.extend_from_slice(
-            format!("\n{TARGET_COMPILE_ARGUMENTS:?} {HOST_OPTIMIZATION_ARGUMENTS:?} {thin:?}\n")
-                .as_bytes(),
-        );
-        let object = directory.join(format!("program-{index}.o"));
-        let reused = cached_object(cache, "program-objects", &material, &object, |command| {
-            command
-                .current_dir(directory)
-                .args(TARGET_COMPILE_ARGUMENTS)
-                .args(thin)
-                .arg("-Wno-override-module")
-                .arg("-x")
-                .arg("ir")
-                .arg(part.file_name().unwrap_or(part.as_os_str()));
-            None
-        })?;
-        report.count_object(reused);
-        objects.push(object);
-    }
-    report.compile = compiling.elapsed().saturating_sub(report.split);
+    objects.extend(compile_fragments(
+        cache, directory, &parts, &host, thin, jobs, report,
+    )?);
+    report.compile = compiling.elapsed();
     let partial = output.with_file_name(format!(
         ".{}.{}.partial",
         output
@@ -1113,11 +1120,7 @@ fn link_cached_objects(
     ));
     let linking = std::time::Instant::now();
     let mut command = Command::new(clang_executable());
-    command
-        .args(TARGET_COMPILE_ARGUMENTS)
-        .args(HOST_OPTIMIZATION_ARGUMENTS)
-        .args(&objects)
-        .args(TARGET_LINK_LIBRARIES);
+    object_link_arguments(&mut command, &objects);
     if fragments.is_some() {
         let optimized = cache
             .area("thinlto")
@@ -1127,11 +1130,15 @@ fn link_cached_objects(
         command
             .args(LTO_LINKER)
             .arg("-flto=thin")
-            .arg(cache_argument);
+            .arg(cache_argument)
+            .arg(thin_link_jobs(jobs));
+    }
+    command.arg("-o").arg(&partial);
+    #[cfg(test)]
+    {
+        report.link_arguments = command.get_args().map(std::ffi::OsStr::to_owned).collect();
     }
     let status = command
-        .arg("-o")
-        .arg(&partial)
         .status()
         .map_err(|error| format!("cannot start {}: {error}", clang_executable()))?;
     report.link = linking.elapsed();
@@ -1141,6 +1148,151 @@ fn link_cached_objects(
     }
     std::fs::rename(&partial, output)
         .map_err(|error| format!("cannot write {}: {error}", output.display()))
+}
+
+/// Keeps the selected object's order unchanged in the actual link command.
+fn object_link_arguments(command: &mut Command, objects: &[PathBuf]) {
+    command
+        .args(TARGET_COMPILE_ARGUMENTS)
+        .args(HOST_OPTIMIZATION_ARGUMENTS)
+        .args(objects)
+        .args(TARGET_LINK_LIBRARIES);
+}
+
+/// Runs at most `jobs` independent operations, returning results in input
+/// order. The caller also takes work, and a refused thread leaves its work
+/// for the threads the host did start.
+fn fragment_pool<T: Sync, R: Send>(
+    items: &[T],
+    jobs: usize,
+    work: impl Fn(usize, &T) -> R + Sync,
+) -> Vec<R> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let workers = jobs.max(1).min(items.len()).saturating_sub(1);
+    let next = AtomicUsize::new(0);
+    let take_items = || {
+        let mut done = Vec::new();
+        loop {
+            let index = next.fetch_add(1, Ordering::Relaxed);
+            let Some(item) = items.get(index) else {
+                return done;
+            };
+            done.push((index, work(index, item)));
+        }
+    };
+    let finished = std::thread::scope(|scope| {
+        let workers = (0..workers)
+            .filter_map(|_| {
+                std::thread::Builder::new()
+                    .spawn_scoped(scope, take_items)
+                    .ok()
+            })
+            .collect::<Vec<_>>();
+        let mut finished = take_items();
+        for worker in workers {
+            finished.extend(
+                worker
+                    .join()
+                    .unwrap_or_else(|panic| std::panic::resume_unwind(panic)),
+            );
+        }
+        finished
+    });
+    let mut slots = (0..items.len()).map(|_| None).collect::<Vec<_>>();
+    for (index, result) in finished {
+        slots[index] = Some(result);
+    }
+    slots
+        .into_iter()
+        .map(|slot| slot.expect("every fragment has a result"))
+        .collect()
+}
+
+/// Compiles independently, then publishes only the successful prefix in
+/// fragment order. Later successes cannot publish records after a failure.
+fn compile_fragments(
+    cache: &BuildCache,
+    directory: &Path,
+    parts: &[String],
+    host: &[u8; 32],
+    thin: &[&str],
+    jobs: usize,
+    report: &mut BuildReport,
+) -> Result<Vec<PathBuf>, String> {
+    let mut seen = std::collections::HashSet::new();
+    let inputs = parts
+        .iter()
+        .map(|text| {
+            let mut material = b"program-object 1\n".to_vec();
+            material.extend_from_slice(host);
+            material.extend_from_slice(&content_digest(text.as_bytes()));
+            material.extend_from_slice(
+                format!(
+                    "\n{TARGET_COMPILE_ARGUMENTS:?} {HOST_OPTIMIZATION_ARGUMENTS:?} {thin:?}\n"
+                )
+                .as_bytes(),
+            );
+            let first = seen.insert(material.clone());
+            (material, first)
+        })
+        .collect::<Vec<_>>();
+    let compile_part = |index: usize, material: &[u8]| {
+        // Relative names keep the changing staging directory out of clang's inputs.
+        let part = directory.join(format!("fragment-{index}.ll"));
+        let object = directory.join(format!("program-{index}.o"));
+        if let Err(error) = std::fs::write(&part, &parts[index]) {
+            return PreparedObject::failed(format!("cannot write {}: {error}", part.display()));
+        }
+        prepare_cached_object(
+            cache,
+            "program-objects",
+            material,
+            &object,
+            true,
+            |command| {
+                command
+                    .current_dir(directory)
+                    .args(TARGET_COMPILE_ARGUMENTS)
+                    .args(thin)
+                    .arg("-Wno-override-module")
+                    .arg("-x")
+                    .arg("ir")
+                    .arg(part.file_name().unwrap_or(part.as_os_str()));
+                None
+            },
+        )
+    };
+    if jobs <= 1 {
+        return inputs
+            .iter()
+            .enumerate()
+            .map(|(index, (material, _))| {
+                let object = directory.join(format!("program-{index}.o"));
+                let reused = compile_part(index, material).publish(
+                    cache,
+                    "program-objects",
+                    material,
+                    &object,
+                )?;
+                report.count_object(reused);
+                Ok(object)
+            })
+            .collect();
+    }
+    let results = fragment_pool(&inputs, jobs, |index, (material, first)| {
+        first.then(|| compile_part(index, material))
+    });
+    let mut objects = Vec::with_capacity(parts.len());
+    for (index, (prepared, (material, _))) in results.into_iter().zip(&inputs).enumerate() {
+        // Identical keys use the earlier publication just as the serial
+        // loop does. If publication failed, the ordinary path recompiles.
+        let prepared = prepared.unwrap_or_else(|| compile_part(index, material));
+        let object = directory.join(format!("program-{index}.o"));
+        let reused = prepared.publish(cache, "program-objects", material, &object)?;
+        report.count_object(reused);
+        objects.push(object);
+    }
+    Ok(objects)
 }
 
 /// The phases and reuse of one build, reported by `--report`.
@@ -1155,6 +1307,9 @@ struct BuildReport {
     objects_reused: usize,
     compile: std::time::Duration,
     link: std::time::Duration,
+    /// The actual arguments supplied to the link process.
+    #[cfg(test)]
+    link_arguments: Vec<std::ffi::OsString>,
     /// Function analyses the front end took from proof receipts and
     /// recorded, with a cache [MOD-8].
     analyses: Option<(u64, u64)>,
@@ -1200,45 +1355,115 @@ fn cached_object<'text>(
     object: &Path,
     configure: impl FnOnce(&mut Command) -> Option<&'text str>,
 ) -> Result<bool, String> {
-    if let Some(bytes) = cache.load(family, material) {
-        return std::fs::write(object, bytes)
-            .map(|()| true)
-            .map_err(|error| format!("cannot write {}: {error}", object.display()));
+    prepare_cached_object(cache, family, material, object, false, configure)
+        .publish(cache, family, material, object)
+}
+
+/// A worker's completed object and buffered diagnostics; publication and
+/// object reads happen in input order without retaining object payloads.
+struct PreparedObject {
+    result: Result<bool, String>,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+}
+
+impl PreparedObject {
+    fn failed(message: String) -> Self {
+        Self {
+            result: Err(message),
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+        }
     }
-    let mut command = Command::new(clang_executable());
-    let stdin = configure(&mut command);
-    command
-        .args(HOST_OPTIMIZATION_ARGUMENTS)
-        .arg("-c")
-        .arg("-o")
-        .arg(object)
-        .stdin(if stdin.is_some() {
-            Stdio::piped()
+
+    fn publish(
+        self,
+        cache: &BuildCache,
+        family: &str,
+        material: &[u8],
+        object: &Path,
+    ) -> Result<bool, String> {
+        // Match inherited clang streams, in fragment order rather than
+        // process-completion order, including the first failing fragment.
+        let _ = std::io::stdout().write_all(&self.stdout);
+        let _ = std::io::stderr().write_all(&self.stderr);
+        let reused = self.result?;
+        if !reused {
+            let bytes = std::fs::read(object)
+                .map_err(|error| format!("cannot read {}: {error}", object.display()))?;
+            // A failed publication costs only a later recompilation. The
+            // cache writes a unique temporary file and atomically renames it.
+            let _ = cache.store(family, material, &bytes);
+        }
+        Ok(reused)
+    }
+}
+
+/// Looks up or compiles an object without publishing a cache miss. Workers
+/// capture clang's output so only the serially visible prefix is printed.
+fn prepare_cached_object<'text>(
+    cache: &BuildCache,
+    family: &str,
+    material: &[u8],
+    object: &Path,
+    capture: bool,
+    configure: impl FnOnce(&mut Command) -> Option<&'text str>,
+) -> PreparedObject {
+    let mut prepared = PreparedObject {
+        result: Ok(false),
+        stdout: Vec::new(),
+        stderr: Vec::new(),
+    };
+    prepared.result = (|| {
+        if let Some(bytes) = cache.load(family, material) {
+            return std::fs::write(object, bytes)
+                .map(|()| true)
+                .map_err(|error| format!("cannot write {}: {error}", object.display()));
+        }
+        let mut command = Command::new(clang_executable());
+        let stdin = configure(&mut command);
+        command
+            .args(HOST_OPTIMIZATION_ARGUMENTS)
+            .arg("-c")
+            .arg("-o")
+            .arg(object)
+            .stdin(if stdin.is_some() {
+                Stdio::piped()
+            } else {
+                Stdio::null()
+            });
+        if capture {
+            command.stdout(Stdio::piped()).stderr(Stdio::piped());
+        }
+        let mut child = command
+            .spawn()
+            .map_err(|error| format!("cannot start {}: {error}", clang_executable()))?;
+        if let Some(text) = stdin {
+            child
+                .stdin
+                .take()
+                .ok_or_else(|| "clang stdin was not available".to_owned())?
+                .write_all(text.as_bytes())
+                .map_err(|error| format!("cannot send LLVM to clang: {error}"))?;
+        }
+        let status = if capture {
+            let output = child
+                .wait_with_output()
+                .map_err(|error| format!("cannot wait for clang: {error}"))?;
+            prepared.stdout = output.stdout;
+            prepared.stderr = output.stderr;
+            output.status
         } else {
-            Stdio::null()
-        });
-    let mut child = command
-        .spawn()
-        .map_err(|error| format!("cannot start {}: {error}", clang_executable()))?;
-    if let Some(text) = stdin {
-        child
-            .stdin
-            .take()
-            .ok_or_else(|| "clang stdin was not available".to_owned())?
-            .write_all(text.as_bytes())
-            .map_err(|error| format!("cannot send LLVM to clang: {error}"))?;
-    }
-    let status = child
-        .wait()
-        .map_err(|error| format!("cannot wait for clang: {error}"))?;
-    if !status.success() {
-        return Err(format!("clang exited with {status}"));
-    }
-    let bytes = std::fs::read(object)
-        .map_err(|error| format!("cannot read {}: {error}", object.display()))?;
-    // A failed publication costs only a later recompilation.
-    let _ = cache.store(family, material, &bytes);
-    Ok(false)
+            child
+                .wait()
+                .map_err(|error| format!("cannot wait for clang: {error}"))?
+        };
+        if !status.success() {
+            return Err(format!("clang exited with {status}"));
+        }
+        Ok(false)
+    })();
+    prepared
 }
 
 /// The host compiler's identity: its path and its own version report.
@@ -2622,6 +2847,286 @@ mod tests {
             assert_eq!(status(), Some(6), "{granularity:?}");
         }
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Independent clang jobs preserve every object, cache record and input
+    /// position. The link and executed result exercise the complete path.
+    #[test]
+    fn fragment_workers_preserve_objects_link_order_and_program() {
+        use whitefoot::{CompilerLimits, FragmentGranularity, SourceInput, compile};
+        let source = b"fn first(value: u64) -> result: u64 pure {\n  return value *wrap 3_u64;\n}\n\nfn second(value: u64) -> result: u64 pure {\n  return first(value: value) +wrap 1_u64;\n}\n\nfn main() -> status: std::process::ExitStatus pure {\n  let chosen = second(value: 2_u64);\n  match cvt.checked::<u64, u8>(chosen) {\n    Ok(value: code) => {\n      return std::process::exit_status(code: code);\n    }\n    Err(error: refused) => {\n      return std::process::exit_status(code: 255_u8);\n    }\n  }\n}\n";
+        let llvm = compile(
+            &[SourceInput::new("pool.wf", source)],
+            CompilerLimits::default(),
+        )
+        .expect("the multi-function program compiles");
+        let mut fragments =
+            super::split_module(&llvm, FragmentGranularity::Function).expect("the program splits");
+        assert!(
+            fragments.len() >= 3,
+            "the build exercises several fragments"
+        );
+        // An empty module is a real link input. Two identical ones also
+        // exercise serial cache reuse of a key first published in this build.
+        fragments.extend([String::new(), String::new()]);
+        let root =
+            std::env::temp_dir().join(format!("whitefootc-pool-build-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let directory = root.join("staging");
+        std::fs::create_dir_all(&directory).expect("create staging");
+        let output = root.join("program");
+        let (staged, compiled) = super::runtime_units(&llvm);
+        for unit in &staged {
+            let path = directory.join(unit.relative_path);
+            std::fs::create_dir_all(path.parent().unwrap()).expect("create runtime parent");
+            std::fs::write(path, unit.source).expect("stage runtime");
+        }
+        let snapshot = |cache_root: &Path| {
+            let family = cache_root.join("program-objects");
+            let mut records = std::fs::read_dir(family)
+                .expect("program cache exists")
+                .map(|entry| {
+                    let entry = entry.expect("cache entry");
+                    (
+                        entry.file_name(),
+                        std::fs::read(entry.path()).expect("cache bytes"),
+                    )
+                })
+                .collect::<Vec<_>>();
+            records.sort_by(|left, right| left.0.cmp(&right.0));
+            let objects = (0..fragments.len())
+                .map(|index| {
+                    std::fs::read(directory.join(format!("program-{index}.o")))
+                        .expect("fragment object")
+                })
+                .collect::<Vec<_>>();
+            (records, objects)
+        };
+        let build = |jobs, cache_root: &Path| {
+            let cache = super::open_cache(cache_root).expect("open isolated cache");
+            let mut report = super::BuildReport {
+                // The compile timer starts after splitting. Subtracting
+                // this synthetic duration would incorrectly report zero.
+                split: std::time::Duration::MAX,
+                ..super::BuildReport::default()
+            };
+            super::link_cached_objects_with_jobs(
+                &cache,
+                &directory,
+                &staged,
+                &compiled,
+                &llvm,
+                &output,
+                Some(&fragments),
+                &mut report,
+                jobs,
+            )
+            .expect("the build links");
+            assert!(
+                report.compile > std::time::Duration::ZERO,
+                "compile includes its own elapsed work"
+            );
+            assert_eq!(
+                report.objects_reused, 1,
+                "the duplicate fragment reuses the preceding publication"
+            );
+            assert_eq!(
+                report.objects_compiled,
+                compiled.len() + fragments.len() - 1
+            );
+            assert_eq!(
+                super::process::run_command(&mut std::process::Command::new(&output))
+                    .status
+                    .code(),
+                Some(7)
+            );
+            let objects = (0..compiled.len())
+                .map(|index| directory.join(format!("unit-{index}.o")))
+                .chain(
+                    (0..fragments.len()).map(|index| directory.join(format!("program-{index}.o"))),
+                )
+                .collect::<Vec<_>>();
+            let arguments = report.link_arguments;
+            assert!(
+                arguments.contains(&std::ffi::OsString::from(super::thin_link_jobs(jobs))),
+                "the actual link receives the same worker limit as the fragment pool"
+            );
+            let prefix =
+                super::TARGET_COMPILE_ARGUMENTS.len() + super::HOST_OPTIMIZATION_ARGUMENTS.len();
+            assert_eq!(
+                &arguments[prefix..prefix + objects.len()],
+                &objects
+                    .iter()
+                    .map(|object| object.as_os_str().to_owned())
+                    .collect::<Vec<_>>()
+            );
+            (
+                snapshot(cache_root),
+                arguments[..prefix + objects.len() + super::TARGET_LINK_LIBRARIES.len()].to_vec(),
+                std::fs::read(&output).expect("linked bytes"),
+            )
+        };
+        let serial = build(1, &root.join("serial-cache"));
+        let parallel = build(3, &root.join("parallel-cache"));
+        assert_eq!(
+            serial.0, parallel.0,
+            "objects and cache bytes do not depend on workers"
+        );
+        assert_eq!(
+            serial.1, parallel.1,
+            "the actual link arguments keep fragment order"
+        );
+        // COFF's linker timestamp is independent of fragment scheduling.
+        #[cfg(not(target_os = "windows"))]
+        assert_eq!(
+            serial.2, parallel.2,
+            "the same link inputs produce the same executable"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Staging and clang errors report the earliest fragment, keep only the
+    /// serially successful cache prefix, and leave the old executable intact.
+    #[test]
+    fn fragment_failure_preserves_the_serial_cache_prefix_and_executable() {
+        let root =
+            std::env::temp_dir().join(format!("whitefootc-pool-failure-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        for bad_ir in [false, true] {
+            let mut expected = None;
+            for jobs in [1, 3] {
+                let case = root.join(format!("{bad_ir}-{jobs}"));
+                let directory = case.join("staging");
+                std::fs::create_dir_all(&directory).expect("create staging");
+                std::fs::create_dir(directory.join("fragment-2.ll"))
+                    .expect("the later staging failure");
+                if !bad_ir {
+                    std::fs::create_dir(directory.join("fragment-1.ll"))
+                        .expect("the first staging failure");
+                }
+                let fragments = vec![
+                    "define i32 @main() { ret i32 0 }\n".to_owned(),
+                    "invalid LLVM for the first clang failure\n".to_owned(),
+                    "invalid LLVM for the later failure\n".to_owned(),
+                    "define i32 @later() { ret i32 7 }\n".to_owned(),
+                ];
+                let output = case.join("program");
+                std::fs::write(&output, b"previous executable").expect("previous build");
+                let cache_root = case.join("cache");
+                let cache = super::open_cache(&cache_root).expect("open cache");
+                let mut report = super::BuildReport::default();
+                let error = super::link_cached_objects_with_jobs(
+                    &cache,
+                    &directory,
+                    &[],
+                    &[],
+                    "",
+                    &output,
+                    Some(&fragments),
+                    &mut report,
+                    jobs,
+                )
+                .expect_err("the build fails");
+                if bad_ir {
+                    assert!(error.starts_with("clang exited with "), "{error}");
+                    if let Some(expected) = &expected {
+                        assert_eq!(&error, expected);
+                    }
+                    expected = Some(error);
+                } else {
+                    assert!(
+                        error.starts_with(&format!(
+                            "cannot write {}:",
+                            directory.join("fragment-1.ll").display()
+                        )),
+                        "{error}"
+                    );
+                }
+                assert_eq!(report.objects_compiled, 1);
+                assert_eq!(report.objects_reused, 0);
+                assert_eq!(
+                    std::fs::read_dir(cache_root.join("program-objects"))
+                        .expect("cache prefix")
+                        .count(),
+                    1,
+                    "later successful work must not publish, and no partial record remains"
+                );
+                assert_eq!(
+                    std::fs::read(&output).expect("previous output"),
+                    b"previous executable"
+                );
+                if jobs > 1 {
+                    assert!(
+                        directory.join("program-3.o").exists(),
+                        "later work completed without publication"
+                    );
+                } else {
+                    assert!(
+                        !directory.join("program-3.o").exists(),
+                        "one worker stops at the first failure"
+                    );
+                }
+                assert!(
+                    !cache_root.join("thinlto").exists(),
+                    "failed fragments never reach the link"
+                );
+            }
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Observe simultaneous workers through handshakes, without using elapsed
+    /// build time as evidence, and check both the ceiling and result order.
+    #[test]
+    fn fragment_pool_is_bounded_parallel_and_returns_input_order() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let (started, starts) = std::sync::mpsc::channel();
+        let (release, releases) = std::sync::mpsc::channel();
+        let releases = std::sync::Mutex::new(releases);
+        let active = AtomicUsize::new(0);
+        let maximum = AtomicUsize::new(0);
+        std::thread::scope(|scope| {
+            let pool = scope.spawn(|| {
+                super::fragment_pool(&[0, 1, 2, 3, 4, 5], 3, |index, value| {
+                    let running = active.fetch_add(1, Ordering::SeqCst) + 1;
+                    maximum.fetch_max(running, Ordering::SeqCst);
+                    started
+                        .send(std::thread::current().id())
+                        .expect("report worker");
+                    if index < 3 {
+                        releases
+                            .lock()
+                            .unwrap()
+                            .recv_timeout(super::process::PROGRAM_DEADLINE)
+                            .expect("worker released");
+                    }
+                    active.fetch_sub(1, Ordering::SeqCst);
+                    value * 2
+                })
+            });
+            let workers = (0..3)
+                .map(|_| {
+                    starts
+                        .recv_timeout(super::process::PROGRAM_DEADLINE)
+                        .expect("three jobs overlap")
+                })
+                .collect::<HashSet<_>>();
+            assert_eq!(
+                workers.len(),
+                3,
+                "three distinct workers run the first jobs"
+            );
+            assert!(starts.try_recv().is_err());
+            for _ in 0..3 {
+                release.send(()).expect("release worker");
+            }
+            assert_eq!(pool.join().expect("pool joins"), vec![0, 2, 4, 6, 8, 10]);
+            assert_eq!(
+                maximum.load(Ordering::SeqCst),
+                3,
+                "no more than three jobs run at once"
+            );
+        });
     }
 
     /// The full link-time optimization comparator links the program with
