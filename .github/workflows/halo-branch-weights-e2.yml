@@ -42,7 +42,7 @@ jobs:
         run: |
           set -euo pipefail
           out="$RUNNER_TEMP/halo-e2"
-          mkdir -p "$out"/{inputs,images,ir,logs,raw,pilot,probe}
+          mkdir -p "$out"/{inputs,images,ir,logs,raw,pilot,probe,native-rss}
           echo "E2_OUT=$out" >> "$GITHUB_ENV"
           echo "WHITEFOOT_TIME_BUDGET_FILE=$out/execution-ceilings.txt" >> "$GITHUB_ENV"
           echo "WHITEFOOT_TIME_BUDGET_RECORD=$out/execution-ceilings-record.txt" >> "$GITHUB_ENV"
@@ -52,6 +52,7 @@ jobs:
           label                 linux
           compiler/build        1800
           e2/build              1800
+          e2/native-rss         480
           e2/pilot              480
           e2/counts             4800
           BUDGETS
@@ -63,7 +64,7 @@ jobs:
           curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
           version=$(tr -d '[:space:]' < .github/llvm-major)
           sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
-          sudo apt-get install -y -q "llvm-$version" valgrind binutils
+          sudo apt-get install -y -q "llvm-$version" valgrind binutils time
           sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
           sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
           sudo ln -sf "/usr/bin/llvm-dis-$version" /usr/local/bin/llvm-dis
@@ -125,6 +126,8 @@ jobs:
             echo "Halo: full LTO, uncached; diagnostics: emit LLVM + ledger, separate fresh caches"
             echo "v2h: direct source compilation, default optimizing level, separate fresh caches"
             echo "Counts: callgrind Ir; executable self per Lua call differs from process-total Ir"
+            echo "CoreMark: fixed 200-iteration comparison; native base RSS diagnostics at 10, 200, 2000 iterations"
+            echo "Full 2000-iteration callgrind coverage is unavailable on the 16 GB hosted runner; reduced counts do not validate that workload"
             echo "Ceilings are provisional acquisition limits; hosted elapsed times are not speed evidence"
           } > "$E2_OUT/manifest.txt"
 
@@ -153,6 +156,19 @@ jobs:
                    'integer-table': 1000000, 'loop': 5000000,
                    'sort': 100000, 'string-key': 200000}
           CALLS = 7049155
+          # Run 38350625447 could not measure full 2000-iteration CoreMark on
+          # the 16 GB host: Valgrind had 20303183872 anonymous mmap bytes and
+          # failed to obtain a further 29360132096 bytes. The owner selected
+          # 200 iterations, fixed before acquisition, with no adaptive fallback.
+          # C1/base and C2/C1 below describe this identical 200-iteration workload;
+          # they do not establish the full 2000-iteration criterion's coverage.
+          COREMARK_ITERATIONS = 200
+          PILOT_COREMARK_ITERATIONS = 10
+          NATIVE_BOUND = 120
+          MEMORY_LIMITATION = ('Full 2000-iteration CoreMark callgrind coverage is unavailable: '
+                              'run 38350625447 on the 16 GB host had 20303183872 anonymous mmap bytes '
+                              'and failed to obtain a further 29360132096 bytes. The fixed 200-iteration '
+                              'comparison reports only that workload; it does not validate the full 2000-iteration criterion.')
           # Provisional single-process bounds fit inside the 4800s count stage.
           # A measured pilot that predicts a longer run makes data unavailable;
           # there is no smaller fallback and no fabricated successful verdict.
@@ -244,7 +260,7 @@ jobs:
                   raise ValueError(f'callgrind summary/Collected disagree or are empty: {n}/{c}')
               return c
 
-          def validate_coremark(text, full):
+          def validate_coremark(text, iterations):
               # Match the independent coremark.py oracle's fields. A short run
               # may print the 10-second warning: it is not a CRC failure. Never
               # compare timing scores or full stdout across CoreMark launches.
@@ -256,8 +272,76 @@ jobs:
                   raise ValueError('wrong CoreMark component CRCs: ' + str(got))
               # research/experiments/match-dispatch/RESULTS.md, v1, records
               # 0x4983 for this checked-in module / seeds / 2000 iterations.
-              if full and got['crcfinal'].lower() != '0x4983':
-                  raise ValueError('wrong full CoreMark final CRC: ' + str(got))
+              if iterations == 2000 and got['crcfinal'].lower() != '0x4983':
+                  raise ValueError('wrong 2000-iteration CoreMark final CRC: ' + str(got))
+              return got['crcfinal'].lower()
+
+          def validate_final_crcs(finals):
+              # No independent final CRC is known for 200 iterations. Require
+              # agreement across settings at the same iteration count instead.
+              if not finals or len(set(finals.values())) != 1:
+                  raise ValueError('CoreMark final CRCs disagree at the same iteration count: ' + str(finals))
+
+          def read_max_rss(text):
+              values = re.findall(r'^\s*Maximum resident set size \(kbytes\):\s*([0-9]+)\s*$', text, re.M)
+              return int(values[0]) if len(values) == 1 else None
+
+          def native_rss():
+              # Run all three serial diagnostics before any CoreMark callgrind
+              # pilot. Findings remain visible but do not discard a valid
+              # reduced comparison; the diagnostic panel is not a leak test.
+              rows = []
+              env = environment('base')
+              env['LC_ALL'] = 'C'  # GNU time's RSS field has a fixed spelling.
+              for iterations in (10, COREMARK_ITERATIONS, 2000):
+                  prefix = OUT / 'native-rss' / f'CoreMark.base.{iterations}'
+                  timefile = Path(str(prefix) + '.time.txt')
+                  argv = ['timeout', '--foreground', '--signal=TERM', '--kill-after=10s',
+                          str(NATIVE_BOUND) + 's', '/usr/bin/time', '-v', '-o', str(timefile),
+                          str(OUT / 'images/v2h-base'), 'coremark.wasm', '0x0', '0x0', '0x66', str(iterations)]
+                  row = {'iterations': iterations, 'actual_returncode': None, 'max_rss_kib': None,
+                         'crc_validated': False, 'final_crc': None, 'findings': []}
+                  try:
+                      with Path(str(prefix) + '.stdout').open('wb') as stdout, Path(str(prefix) + '.stderr').open('wb') as stderr:
+                          result = subprocess.run(argv, cwd=TEMP / 'halo-e2-silverfir/benchmarks/wasi/coremark',
+                                                  stdout=stdout, stderr=stderr, env=env)
+                      row['actual_returncode'] = result.returncode
+                      if result.returncode != 0:
+                          row['findings'].append(f'native timed-command subprocess returned {result.returncode}; not validated')
+                      else:
+                          row['final_crc'] = validate_coremark(Path(str(prefix) + '.stdout').read_text(), iterations)
+                          row['crc_validated'] = True
+                  except (OSError, ValueError) as error:
+                      row['findings'].append(str(error) + '; not validated')
+                  try:
+                      row['max_rss_kib'] = read_max_rss(timefile.read_text())
+                  except OSError:
+                      pass
+                  if row['max_rss_kib'] is None:
+                      row['findings'].append('maximum RSS unavailable')
+                  row['status'] = 'FINDING / NOT VALIDATED' if row['findings'] else 'VALIDATED'
+                  Path(str(prefix) + '.json').write_text(json.dumps(row, indent=2) + '\n')
+                  rows.append(row)
+                  print(f'{prefix.name}: max RSS KiB={row["max_rss_kib"] if row["max_rss_kib"] is not None else "unavailable"}; '
+                        f'actual subprocess returncode={row["actual_returncode"] if row["actual_returncode"] is not None else "unavailable"}; '
+                        f'{row["status"]}; {"; ".join(row["findings"])}', flush=True)
+              (OUT / 'native-rss/diagnostics.json').write_text(json.dumps(rows, indent=2) + '\n')
+              lines = ['## Native base CoreMark memory diagnostics', '', MEMORY_LIMITATION, '',
+                       'GNU time wraps the native program directly; timeout is outside it. Actual return codes come from subprocess, '
+                       'not GNU time\'s Exit status field (which can mislead after a signal). A timeout may leave RSS unavailable.',
+                       'This three-point RSS growth panel alone cannot establish a leak.', '',
+                       '| Iterations | Maximum RSS KiB | Actual subprocess return code | CRC validation | Diagnostic status |',
+                       '|---:|---:|---:|---|---|']
+              for row in rows:
+                  rss = row['max_rss_kib'] if row['max_rss_kib'] is not None else 'unavailable'
+                  code = row['actual_returncode'] if row['actual_returncode'] is not None else 'unavailable'
+                  crc = row['final_crc'] if row['crc_validated'] else 'not validated'
+                  lines.append(f'| {row["iterations"]} | {rss} | {code} | {crc} | {row["status"]} |')
+              for row in rows:
+                  for finding in row['findings']:
+                      lines.append(f'\nFinding at {row["iterations"]} iterations: {finding}.')
+              (OUT / 'native-rss/report.md').write_text('\n'.join(lines) + '\n')
+              print('\n'.join(lines), flush=True)
 
           def validate_fib(text, n):
               a, b = 0, 1
@@ -304,7 +388,8 @@ jobs:
               if is_core:
                   # interp_tail.wf's relative_path requires this cwd and argument.
                   cwd = TEMP / 'halo-e2-silverfir/benchmarks/wasi/coremark'
-                  argv = [binary, 'coremark.wasm', '0x0', '0x0', '0x66', '10' if pilot else '2000']
+                  iterations = PILOT_COREMARK_ITERATIONS if pilot else COREMARK_ITERATIONS
+                  argv = [binary, 'coremark.wasm', '0x0', '0x0', '0x66', str(iterations)]
                   stdin = None
               else:
                   cwd = WORK
@@ -312,6 +397,9 @@ jobs:
                   stdin = (OUT / 'inputs' / ('pilot-fib24.lua' if pilot else workload + '.lua')).open('rb')
               if is_core:
                   memory_snapshot(prefix, 'before')
+              # The same GNU time wrapper records peak profiler RSS for every
+              # CoreMark setting and pilot, without changing callgrind flags.
+              timed = ['/usr/bin/time', '-v', '-o', str(prefix) + '.time.txt'] if is_core else []
               result = None
               start = time.monotonic()
               try:
@@ -320,7 +408,7 @@ jobs:
                       # subprocesses inside run-check's owned process group.
                       result = subprocess.run(['timeout', '--foreground', '--signal=TERM', '--kill-after=10s',
                                                str(PILOT_BOUND if pilot else FULL_BOUND) + 's',
-                                               *flags, *map(str, argv)], cwd=cwd, stdin=stdin,
+                                               *timed, *flags, *map(str, argv)], cwd=cwd, stdin=stdin,
                                               stdout=stdout, stderr=stderr, env=environment(label))
               finally:
                   elapsed = time.monotonic() - start
@@ -331,12 +419,15 @@ jobs:
               if result.returncode != 0:
                   raise ValueError(f'{prefix.name}: measurement unavailable, process exit {result.returncode}')
               text = Path(str(prefix) + '.stdout').read_text()
+              final_crc = None
               if is_core:
-                  validate_coremark(text, full=not pilot)
+                  final_crc = validate_coremark(text, iterations)
               elif workload == 'fib':
                   validate_fib(text, 24 if pilot else 32)
               count = read_count(Path(str(prefix) + '.out').read_text(), Path(str(prefix) + '.stderr').read_text())
               row = {'label': label, 'workload': workload, 'Ir': count, 'elapsed_for_sizing_only': elapsed}
+              if is_core:
+                  row.update(iterations=iterations, final_crc=final_crc)
               Path(str(prefix) + '.json').write_text(json.dumps(row, indent=2) + '\n')
               print(f'{prefix.name}: Ir={count}; elapsed-for-sizing-only={elapsed:.3f}s', flush=True)
               return row
@@ -346,19 +437,19 @@ jobs:
               for workload in ('fib', 'CoreMark'):
                   rows = [acquire('base', workload, round_) for round_ in (1, 2)]
                   seconds = [r['elapsed_for_sizing_only'] for r in rows]
-                  ratio = 200 if workload == 'CoreMark' else CALLS / 150049
+                  ratio = COREMARK_ITERATIONS / PILOT_COREMARK_ITERATIONS if workload == 'CoreMark' else CALLS / 150049
                   # Retain the conservative 1.5 multiplier for three-way Halo
                   # and serial CoreMark; sizing is never a speed comparison.
                   estimate = max(seconds) * ratio * 1.5
                   records[workload] = {'seconds': seconds, 'spread_seconds': max(seconds) - min(seconds),
-                                       'scale_ratio': ratio, 'conservative_full_seconds': estimate,
+                                       'scale_ratio': ratio, 'conservative_comparison_seconds': estimate,
                                        'single_process_ceiling_seconds': FULL_BOUND}
               (OUT / 'pilot/sizing.json').write_text(json.dumps(records, indent=2) + '\n')
               (OUT / 'pilot/sizing.txt').write_text('\n'.join(
-                  f'{k}: seconds {v["seconds"]}, spread {v["spread_seconds"]:.3f}s; full estimate {v["conservative_full_seconds"]:.1f}s; ceiling {FULL_BOUND}s (sizing only)' for k, v in records.items()) + '\n')
+                  f'{k}: seconds {v["seconds"]}, spread {v["spread_seconds"]:.3f}s; comparison estimate {v["conservative_comparison_seconds"]:.1f}s; scale {v["scale_ratio"]}; ceiling {FULL_BOUND}s (sizing only)' for k, v in records.items()) + '\n')
               print((OUT / 'pilot/sizing.txt').read_text(), flush=True)
-              if any(v['conservative_full_seconds'] > FULL_BOUND for v in records.values()):
-                  raise ValueError('measurement unavailable: baseline pilot extrapolates beyond full-run execution ceiling; full CoreMark remains 2000, no reduced fallback')
+              if any(v['conservative_comparison_seconds'] > FULL_BOUND for v in records.values()):
+                  raise ValueError(f'measurement unavailable: baseline pilot extrapolates beyond comparison execution ceiling; CoreMark remains fixed at {COREMARK_ITERATIONS}, no smaller fallback')
 
           def counts():
               # One parent e2/counts stage owns every process. Rerun all Halo
@@ -366,9 +457,15 @@ jobs:
               tasks = [(label, k) for k in SIZES for label in LABELS]
               with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
                   rows = list(pool.map(lambda task: acquire(*task), tasks))
-              print('All Halo counts completed; starting serial CoreMark base, C1, C2.', flush=True)
+              print(f'All Halo counts completed; starting serial CoreMark base, C1, C2 at {COREMARK_ITERATIONS} iterations.', flush=True)
               for label in LABELS:
                   rows.append(acquire(label, 'CoreMark'))
+              finals = {r['label']: r['final_crc'] for r in rows if r['workload'] == 'CoreMark'}
+              native_rows = json.loads((OUT / 'native-rss/diagnostics.json').read_text())
+              for native in native_rows:
+                  if native['iterations'] == COREMARK_ITERATIONS and native['crc_validated']:
+                      finals['native base'] = native['final_crc']
+              validate_final_crcs(finals)
               for workload in SIZES:
                   baseline = (OUT / 'raw' / (workload + '.base.stdout')).read_bytes()
                   for label in ('C1', 'C2'):
@@ -407,7 +504,9 @@ jobs:
               lines = ['# E2 branch weights: hosted instruction counts', '',
                        'PASS means no quoted rejection; FAIL selects rejection and does not fail acquisition.',
                        'Executable self / Lua call comes from the exact historical measure.py; harm uses total process Ir.',
-                       'fib(32): 7,049,155 Lua calls, expected output 2178309. CoreMark: full 2000 iterations.', '',
+                       f'fib(32): 7,049,155 Lua calls, expected output 2178309. CoreMark: fixed {COREMARK_ITERATIONS} iterations.', '',
+                       MEMORY_LIMITATION,
+                       'The quoted E2 thresholds below are unchanged; CoreMark harm verdicts are scoped to the reduced workload.', '',
                        '| Instructions / Lua call | base | C1 | C2 |', '|---|---:|---:|---:|']
               def display(name, fn):
                   lines.append('| ' + name + ' | ' + ' | '.join(f'{fn(data[l]):.6f}' for l in LABELS) + ' |')
@@ -428,8 +527,13 @@ jobs:
                   if k in SIZES:
                       harm1[k] = p1
                   harm2[k] = p2
-                  size = '2000 iterations' if k == 'CoreMark' else 'N=' + str(SIZES[k])
+                  size = str(COREMARK_ITERATIONS) + ' iterations' if k == 'CoreMark' else 'N=' + str(SIZES[k])
                   lines.append(f'| {k} ({size}) | {b} | {c1} | {c2} | {float(p1):+.6f}% | {float(p2):+.6f}% |')
+                  if k == 'CoreMark':
+                      lines.append(f'\nCoreMark ({COREMARK_ITERATIONS} iterations) C1/base ratio: {float(Fraction(c1, b)):.6f} '
+                                   f'(exact {Fraction(c1, b)}); C2/C1 ratio: {float(Fraction(c2, c1)):.6f} '
+                                   f'(exact {Fraction(c2, c1)}). The unchanged C2 harm limit is '
+                                   'C2/C1 <= 1.01, checked as 100 * C2 <= 101 * C1.\n')
               worst1, worst2 = max(harm1, key=harm1.get), max(harm2, key=harm2.get)
               h1, h2 = harm1[worst1], harm2[worst2]
               b, c1, c2 = (Fraction(data[l]['total'], CALLS) for l in LABELS)
@@ -450,7 +554,10 @@ jobs:
                         'Pilot sizing (no speed verdict):', '```', (OUT / 'pilot/sizing.txt').read_text().rstrip(), '```']
               (OUT / 'table.md').write_text('\n'.join(lines) + '\n')
               print('\n'.join(lines), flush=True)
-              (OUT / 'acquisition-status.txt').write_text('All required E2 instruction-count data acquired; timing remains NOT EVALUATED.\n')
+              native_findings = sum(len(r['findings']) for r in json.loads((OUT / 'native-rss/diagnostics.json').read_text()))
+              (OUT / 'acquisition-status.txt').write_text(
+                  f'E2 instruction counts acquired with CoreMark fixed at {COREMARK_ITERATIONS} iterations; '
+                  f'native diagnostic findings: {native_findings}. Full 2000-iteration CoreMark coverage unavailable; timing remains NOT EVALUATED.\n')
 
           def sensitivity():
               def must_fail(fn):
@@ -465,10 +572,18 @@ jobs:
                                (good_raw, '==123== Collected : bad\n'), (good_raw, '==123== Collected : 124\n')]:
                   must_fail(lambda raw=raw, err=err: read_count(raw, err))
               good_crc = '\n'.join('[0]' + k + ' : ' + v for k, v in {**CRC, 'crcfinal': '0x4983'}.items())
-              validate_coremark(good_crc, True)
-              validate_coremark(good_crc.replace('0x4983', '0x0001'), False)
+              validate_coremark(good_crc, 2000)
+              validate_coremark(good_crc.replace('0x4983', '0x0001'), COREMARK_ITERATIONS)
               for text in ('', good_crc.replace('0xe714', '0xe715'), good_crc.replace('0x4983', '0x4984')):
-                  must_fail(lambda text=text: validate_coremark(text, True))
+                  must_fail(lambda text=text: validate_coremark(text, 2000))
+              must_fail(lambda: validate_coremark(good_crc.replace('0xe714', '0xe715'), COREMARK_ITERATIONS))
+              validate_final_crcs({'base': '0x0001', 'C1': '0x0001', 'C2': '0x0001'})
+              must_fail(lambda: validate_final_crcs({'base': '0x0001', 'C1': '0x0001', 'C2': '0x0002'}))
+              must_fail(lambda: validate_final_crcs({'base': '0x0001', 'native base': '0x0002'}))
+              assert read_max_rss(' Maximum resident set size (kbytes): 123\n') == 123
+              for text in ('', 'Maximum resident set size (kbytes): bad\n',
+                           'Maximum resident set size (kbytes): 1\nMaximum resident set size (kbytes): 2\n'):
+                  assert read_max_rss(text) is None
               validate_fib('2178309\n', 32)
               must_fail(lambda: validate_fib('2178310\n', 32))
               # Equality at the published limits passes; a tiny violation fails.
@@ -482,7 +597,7 @@ jobs:
               assert not reject_c2(Fraction('814.9'), c2_limit, False)
               assert reject_c2(Fraction('814.900001'), c2_limit, False)
               assert reject_c2(Fraction('814.9'), c2_limit, True)
-              (OUT / 'sensitivity.txt').write_text('PASS: absent/malformed/disagreeing Ir, wrong CRC/fib, exact boundary and tiny threshold violations detected.\n')
+              (OUT / 'sensitivity.txt').write_text('PASS: absent/malformed/disagreeing Ir, wrong component/2000-final CRC, cross-setting/native-final CRC disagreement, unavailable RSS, wrong fib, exact boundary and tiny threshold violations detected.\n')
 
           def hashes():
               paths = [p for p in OUT.rglob('*') if p.is_file() and p.name != 'sha256.txt']
@@ -496,7 +611,7 @@ jobs:
 
           if __name__ == '__main__':
               try:
-                  {'build': build, 'pilot': pilot, 'counts': counts, 'sensitivity': sensitivity, 'hashes': hashes}[sys.argv[1]]()
+                  {'build': build, 'native-rss': native_rss, 'pilot': pilot, 'counts': counts, 'sensitivity': sensitivity, 'hashes': hashes}[sys.argv[1]]()
               except Exception as error:
                   if sys.argv[1] != 'hashes':
                       (OUT / 'acquisition-status.txt').write_text('Measurement unavailable: ' + str(error) + '\nNo unavailable criterion is a PASS.\n')
@@ -511,12 +626,17 @@ jobs:
           WHITEFOOT_CHECK_TIMEOUT: "1800"
         run: perl .github/run-check.pl e2/build python3 "$E2_OUT/inputs/e2.py" build
 
+      - name: Diagnose native base CoreMark RSS at 10, 200 and 2000 iterations serially
+        env:
+          WHITEFOOT_CHECK_TIMEOUT: "480"
+        run: perl .github/run-check.pl e2/native-rss python3 "$E2_OUT/inputs/e2.py" native-rss
+
       - name: Pilot baseline fib24 and CoreMark10 twice for scale sizing only
         env:
           WHITEFOOT_CHECK_TIMEOUT: "480"
         run: perl .github/run-check.pl e2/pilot python3 "$E2_OUT/inputs/e2.py" pilot
 
-      - name: Acquire full E2 counts and emit historical and measured-base verdicts
+      - name: Acquire all Halo and fixed CoreMark200 E2 counts and emit scoped verdicts
         env:
           WHITEFOOT_CHECK_TIMEOUT: "4800"
         run: perl .github/run-check.pl e2/counts python3 "$E2_OUT/inputs/e2.py" counts
@@ -525,6 +645,13 @@ jobs:
         if: always()
         run: |
           set -euo pipefail
+          if [ -f "$E2_OUT/native-rss/report.md" ]; then
+            cat "$E2_OUT/native-rss/report.md" >> "$GITHUB_STEP_SUMMARY"
+            printf '\n' >> "$GITHUB_STEP_SUMMARY"
+          else
+            printf '\nNative CoreMark RSS diagnostics: unavailable; not validated.\n' >> "$GITHUB_STEP_SUMMARY"
+            printf '\nCoreMark callgrind comparison is fixed at 200 iterations; full 2000-iteration coverage is unavailable.\n' >> "$GITHUB_STEP_SUMMARY"
+          fi
           if [ -f "$E2_OUT/table.md" ]; then
             cat "$E2_OUT/table.md" >> "$GITHUB_STEP_SUMMARY"
           else
