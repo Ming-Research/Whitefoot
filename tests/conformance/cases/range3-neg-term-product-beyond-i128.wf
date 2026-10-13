@@ -1,0 +1,11 @@
+fn largest() -> result: u64 pure contract {
+  ensures forall huge(k in 0_u64..1_u64): result >= 18446744073709551615_u64 * (18446744073709551615_u64 * 1_u64) - 18446744073709551615_u64 * (9223372036854775808_u64 * 1_u64);
+} {
+  return 18446744073709551615_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "The postcondition's bound is (2^64-1)(2^63-1), about 1.7e38, so no u64 result meets it.";
+  let value = largest();
+  return std::process::exit_status(code: 0_u8);
+}
