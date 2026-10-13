@@ -110,11 +110,18 @@ pub(super) fn attach(
                     | Production::OrdinaryLetRhs
                     | Production::PropagateLetRhs
                     | Production::Fieldinit
+                    | Production::FieldinitList
                     | Production::AtomList
                     | Production::ReturnStmt
                     | Production::GiveStmt
                     | Production::SetStmt
-            );
+            )
+            // A first positional atom can stop at the call's argument
+            // optional before diagnostic traversal enters `atom_list`.
+            // Its delimiters distinguish it from callee and type arguments.
+            || (context.production == Production::Call
+                && expects(T::Fixed(F::RightParen))
+                && expects(T::Fixed(F::Comma)));
         let hint = if graph {
             Some(GRAPH_FIX)
         } else if expects(T::Fixed(F::Pure))

@@ -44,6 +44,42 @@ fn outcome_from(source: &[u8], entry: Production) -> ParseOutcome {
 }
 
 #[test]
+fn infix_in_named_and_positional_arguments_keeps_gram5_and_the_flat_repair() {
+    for argument in ["value: 1_u32", "1_u32"] {
+        for operator in ["+wrap", "<"] {
+            let source = format!(
+                "fn f() -> r: u32 pure {{ return identity({argument} {operator} 2_u32); }}"
+            );
+            let result = outcome(source.as_bytes(), false);
+            let ParseOutcome::SourceIssue(issue) = result else {
+                panic!("operation in argument must reject: {result:?}");
+            };
+            // The atom has completed; the argument list admits only its next
+            // comma or the call's closing parenthesis. DIAG-1 row 2 attributes
+            // nested infix starts only in infix operands, not call arguments.
+            assert_eq!(issue.rule(), SyntaxRule::Gram5);
+            assert_eq!(issue_bytes(source.as_bytes(), issue), operator.as_bytes());
+            assert!(issue.expected.iter().eq([
+                crate::syntax::grammar::LookaheadPredicate::Terminal(
+                    crate::syntax::terminal::TerminalPredicate::Fixed(
+                        crate::syntax::terminal::FixedTerminal::RightParen,
+                    ),
+                ),
+                crate::syntax::grammar::LookaheadPredicate::Terminal(
+                    crate::syntax::terminal::TerminalPredicate::Fixed(
+                        crate::syntax::terminal::FixedTerminal::Comma,
+                    ),
+                ),
+            ]));
+            assert_eq!(
+                issue.mechanical_fix,
+                Some(crate::diagnostic_repairs::FLAT_OPERATION_FIX)
+            );
+        }
+    }
+}
+
+#[test]
 fn nested_infix_operand_uses_gram9_and_spans_its_two_token_start() {
     for operator in ["+wrap", "<"] {
         for statement in ["return", "let result ="] {
@@ -177,12 +213,17 @@ fn subscript_offset_does_not_inherit_its_enclosing_infix_operand_role() {
 }
 
 #[test]
-fn bracket_in_a_call_type_argument_does_not_suggest_an_expression_list() {
-    let result = outcome(b"fn f() -> r: u32 pure { return value::<[u8]>(); }", false);
-    let ParseOutcome::SourceIssue(issue) = result else {
-        panic!("unsupported type form must reject: {result:?}");
-    };
-    assert_eq!(issue.mechanical_fix, None);
+fn call_type_argument_does_not_suggest_an_expression_repair() {
+    for source in [
+        b"fn f() -> r: u32 pure { return value::<[u8]>(); }".as_slice(),
+        b"fn f() -> r: u32 pure { return value::<u32 +wrap u32>(); }".as_slice(),
+    ] {
+        let result = outcome(source, false);
+        let ParseOutcome::SourceIssue(issue) = result else {
+            panic!("unsupported type form must reject: {result:?}");
+        };
+        assert_eq!(issue.mechanical_fix, None);
+    }
 }
 
 #[test]
