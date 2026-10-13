@@ -17,10 +17,6 @@ pub(super) const ENUM_ROUTED_ENSURES: &[RepairPair] = &[
   OwnCase(index: u64);
 }
 
-enum RouteOther {
-  OtherCase(index: u64);
-}
-
 fn selected(value: u64) -> result: RouteOwner pure {
   return RouteOwner::OwnCase(index: value);
 }
@@ -59,6 +55,51 @@ fn main() -> status: std::process::ExitStatus pure {
             "\n  required_fields: []\n",
         ],
         repaired: &[br#"fn nothing(limit: u64) -> result: Option<u64> pure {
+  return None<u64>();
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let made = nothing(limit: 7_u64);
+  match made {
+    Some(value: found) => {
+      return std::process::exit_status(code: 1_u8);
+    }
+    None() => {
+      return std::process::exit_status(code: 0_u8);
+    }
+  }
+}
+"#],
+    },
+    RepairPair {
+        name: "none-postcondition-retain-requires.wf",
+        rejected: br#"fn nothing(limit: u64) -> result: Option<u64> pure contract {
+  requires limit <= 7_u64;
+  ensures when None(value: payload): payload <= limit;
+} {
+  return None<u64>();
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let made = nothing(limit: 7_u64);
+  match made {
+    Some(value: found) => {
+      return std::process::exit_status(code: 1_u8);
+    }
+    None() => {
+      return std::process::exit_status(code: 0_u8);
+    }
+  }
+}
+"#,
+        rule: "FN-9",
+        sentences: &[
+            "]: InvalidPostconditionFields\n",
+            "\n  required_fields: []\n",
+        ],
+        repaired: &[br#"fn nothing(limit: u64) -> result: Option<u64> pure contract {
+  requires limit <= 7_u64;
+} {
   return None<u64>();
 }
 

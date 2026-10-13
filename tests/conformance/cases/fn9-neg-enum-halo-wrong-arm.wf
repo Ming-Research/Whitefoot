@@ -24,7 +24,7 @@ fn find_slot(array: &Box<Slots<u64>>, nodes: &Box<Slots<u64>>, key: u64) -> r: S
   return Slot::Missing();
 }
 
-fn store(array: &Box<Slots<u64>>, nodes: &Box<Slots<u64>>, key: u64, value: u64) -> r: Bool writes(array), reads(nodes) {
+fn store(array: &Box<Slots<u64>>, nodes: &Box<Slots<u64>>, key: u64, value: u64) -> r: Bool reads(nodes), writes(array) {
   let slot = find_slot(array: array, nodes: nodes, key: key);
   match slot {
     Array(value: i) => {

@@ -2464,53 +2464,6 @@ impl<'unit> TypeContext<'unit> {
             })
             .collect()
     }
-    /// [FN-9, DIAG-1] routed result-mode admission precedes REF-3's
-    /// ordinary result escape judgment. This preflight publishes no selector
-    /// or relation; it only diagnoses a non-own ordinal a written route names.
-    pub(super) fn reject_borrowed_postcondition_routes(
-        &self,
-        function: NodeId,
-        results: &[super::ResultSignature],
-    ) -> Result<(), CheckStop> {
-        let function = self.declarations.tree.path(function)?;
-        for record in self.declarations.resolved.postconditions() {
-            if record.function != *function || record.class != PostconditionSelectorClass::Variant {
-                continue;
-            }
-            let selected = if let Some(binder) = &record.route_ordinal {
-                record
-                    .result_binders
-                    .iter()
-                    .position(|candidate| &candidate.spelling == binder)
-            } else if results.len() == 1 {
-                Some(0)
-            } else {
-                let mut carriers = Vec::new();
-                for (ordinal, result) in results.iter().enumerate() {
-                    if self
-                        .postcondition_route_variant(result.ty, record.variant_target)?
-                        .is_some()
-                    {
-                        carriers.push(ordinal);
-                    }
-                }
-                match carriers.as_slice() {
-                    [only] => Some(*only),
-                    _ => None,
-                }
-            };
-            if selected
-                .and_then(|ordinal| results.get(ordinal))
-                .is_some_and(|result| result.mode != CheckedMode::Own)
-            {
-                return self.declarations.issue_selector(
-                    record,
-                    SemanticIssueKind::invalid_postcondition_selector(),
-                );
-            }
-        }
-        Ok(())
-    }
     /// The table positions of the signatures `eligible` names, by the path
     /// of the function each one instantiates, in table order.
     ///

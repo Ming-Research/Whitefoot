@@ -1445,11 +1445,11 @@ A source call must still prove every contradictory requirement, which no reachab
 A source declaration is not a trusted assertion: its body proves the relation by the selected-return judgment below. A PRE-1 or PRE-2 signature supplies its declared relation under SCOPE-3 and has no source returns to check. Formation and caller instantiation are the same ordinary judgments in both cases.
 No contract definition or clause contributes an effect, executable epilogue, runtime operation, storage slot, or runtime report.
 
-The clause's result ordinals and data are [CALL-4]'s.
-An unrouted clause is admitted only when every result ordinal it names is `own T` with T a type that supplies data under [CALL-4] after concrete [FN-2] substitution, and the clause names it only through those data.
+The clause's result ordinals have [GRAM-3, FN-1]'s owned-value mode and [CALL-4]'s data.
+An unrouted clause is admitted only when every result ordinal it names has a type T that supplies data under [CALL-4] after concrete [FN-2] substitution, and the clause names it only through those data.
 Its symbolic result datums are those data of those ordinals' `result_binding`s.
-A routed clause is admitted as exact `when V(f: r):` or `when b is V(f: r):` for a result ordinal whose mode is `own` and whose type after concrete [FN-2] substitution is an enum, where V is a variant of that enum, f is one declared field of V written by its declared name, that field's substituted type T supplies data under [CALL-4], `b` names that ordinal, and r is that clause's fresh symbolic payload datum supplying exactly the data an unrouted result ordinal of type T supplies. The enum, variant and field retain their declaration identities. Each clause binds one field; independent clauses may route the same or different fields of the same or different variants.
-[CALL-4] attributes each route to one result ordinal.
+A routed clause is admitted as exact `when V(f: r):` or `when b is V(f: r):` for a result ordinal whose type after concrete [FN-2] substitution is an enum, where V is a variant of that enum, f is one declared field of V written by its declared name, that field's substituted type T supplies data under [CALL-4], `b` names that ordinal, and r is that clause's fresh symbolic payload datum supplying exactly the data an unrouted result ordinal of type T supplies. The enum, variant and field retain their declaration identities. Each clause binds one field; independent clauses may route the same or different fields of the same or different variants.
+Each route is attributed to one result ordinal under [CALL-4].
 Route owner, ordinal, variant, field, and freshness admission precedes resolution of that clause expression [GRAM-10, TYPE-6].
 The routed ordinal's whole-value binder is unavailable in that clause; every other ordinal's binder remains a datum of it.
 The complete result-datum vocabulary is the data [CALL-4] supplies; every other legal ordinary result supplies no relation datum.
@@ -1985,13 +1985,13 @@ The header candidate produces one reservation event with `role_ordinal` zero in 
 The route candidate produces one reservation event with `role_ordinal` one in its `fieldbind`, after the first IDENT's FN-9 field-owner carrier.
 A result-datum reservation uses the canonical key above but is not a runtime declaration, lexical use, dependent declaration, or deferred use.
 Candidates participate in FORM-3 reservation checking but provide no pbase target before FN-9 admission; they enter no owner/member lookup and no TYPE-6 duplicate or shadow inventory.
-The header candidate is available only to an admitted unrouted ensures clause; after the leading route TYPEID's ordinary constructor lookup, FN-9 admits the route payload candidate only within that one routed clause.
+The header candidate is available only to an admitted unrouted ensures clause; after the leading route TYPEID's variant-label lookup [TYPE-6], FN-9 admits the route payload candidate only within that one routed clause.
 No result datum is visible in a contract definition, requirement, function body, or different ensures clause.
 The name of every `header_invariant` and `invariant_stmt` produces one proof-only invariant declaration record that uses TYPE-6's inventory and scope machinery; [INV-1] owns collision and lookup failure in this domain.
 An IDENT premise of `use_premise` produces one lexical-use record querying only that domain; it can never resolve to a value declaration that happens to have the same spelling. A `proof_use`'s own IDENT is the named multiplicity and queries the value domain instead, so the two positions never compete for one spelling.
 These records have no runtime declaration or value identity and participate in deterministic lexical resolution exactly at their stated scopes; OP-1 owns declaration-name reservation.
 A function-formal expansion retains its written declaration and application identities rather than fabricating a second lexical spelling.
-In an `arm` or `result_route`, the leading TYPEID first resolves globally to an enum variant.
+In an `arm` or `result_route`, a source variant label uses [TYPE-6]'s owner-local lookup; a PRE-1 variant uses its global constructor declaration.
 Later typed checking compares that variant's owner with the scrutinee enum for an arm; a foreign arm variant cites TYPE-6.
 FN-9 separately judges the route's successfully resolved variant and owner against its result ordinal.
 The resolver does not otherwise accept or reject a dependent role's owner/member relation.
@@ -2049,8 +2049,8 @@ This rejection is never replaced with a runtime fallback or reported at the call
 
 An [FN-9] result-datum admission subjudgment begins only after [FN-8] contract admission, FORM-3 result reservation, the route's ordinary leading-variant lookup when present, and concrete [FN-2] signature substitution.
 Admission through freshness precedes lexical resolution or semantic checking of the owning `ensures_clause` expression; the remaining clause, selected-return, and proof judgments begin only after that expression resolves and the surrounding function's ordinary semantic judgments required by the failed premise succeed.
-For an unrouted clause, test in this fixed order: result mode/type determined by its declared `rtype` and the data [CALL-4] gives its class; header result-candidate freshness against every declaration live in the clause that it competes with [TYPE-6].
-For a routed clause, test in this fixed order: whole-result mode/type determined by its declared `rtype` and its enum class; resolved variant owner and membership in that enum; the written field's membership in that variant and the data [CALL-4] gives its substituted type; route-candidate freshness against that field, the header result candidate, and every declaration live in the clause that it competes with [TYPE-6].
+For an unrouted clause, test in this fixed order: result type determined by its declared `rtype` and the data [CALL-4] gives its class; header result-candidate freshness against every declaration live in the clause that it competes with [TYPE-6].
+For a routed clause, test in this fixed order: whole-result type determined by its declared `rtype` and its enum class; resolved variant owner and membership in that enum; the written field's membership in that variant and the data [CALL-4] gives its substituted type; route-candidate freshness against that field, the header result candidate, and every declaration live in the clause that it competes with [TYPE-6].
 A result, class, owner, variant, or missing-field failure uses `SourceNode` at the complete `ensures_clause` or its `result_route` when present.
 An extra or misspelled field uses `SourceNode` at the complete `fieldbind`.
 A candidate equal to its paired field, another live candidate, or a live declaration it competes with uses `SourceNode` at its owning `result_binding` or `fieldbind`, with coordinate equal to the candidate IDENT token.

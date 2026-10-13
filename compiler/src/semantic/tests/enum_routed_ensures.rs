@@ -93,18 +93,9 @@ fn a_missing_source_variant_field_is_reported_at_its_fieldbind() {
 }
 
 #[test]
-fn a_variant_owned_by_another_source_enum_is_an_fn9_selector_issue() {
+fn a_variant_owned_by_another_enum_is_an_fn9_selector_issue() {
     assert_rule(
         include_bytes!("../../../../tests/conformance/cases/fn9-neg-enum-foreign-variant.wf"),
-        SemanticRule::Fn9,
-        SemanticIssueKind::invalid_postcondition_selector(),
-    );
-}
-
-#[test]
-fn a_borrowed_result_route_is_refused_before_reference_return_checking() {
-    assert_rule(
-        include_bytes!("../../../../tests/conformance/cases/fn9-neg-enum-borrowed-result.wf"),
         SemanticRule::Fn9,
         SemanticIssueKind::invalid_postcondition_selector(),
     );

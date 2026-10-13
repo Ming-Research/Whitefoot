@@ -2,12 +2,8 @@ enum RouteOwner {
   OwnCase(index: u64);
 }
 
-enum RouteOther {
-  OtherCase(index: u64);
-}
-
 fn selected(value: u64) -> result: RouteOwner pure contract {
-  ensures when OtherCase(index: payload): payload == value;
+  ensures when result is Some(value: payload): payload == value;
 } {
   return RouteOwner::OwnCase(index: value);
 }
