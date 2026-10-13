@@ -1388,6 +1388,20 @@ Program-wide sharing or teardown calls do not falsify that optimization.
 Keep the W2 workload unchanged and expose this limitation with its counts;
 do not attribute a throughput difference to retained W2 statement counts.
 
+**Recorded before the main dispatch (2026-10-13).** The pilot, run
+38412811971 at 7e93d8718, built every arm and ran one block at 8 P-cores.
+It found W4t/W4 at 0.999, W4/W5p at 0.743 and W4/W3 at 5.61, each far from
+its threshold, and the W4rd reader and the A1 drain starved: one whole read
+and one drain in a 5 s cell instead of about 5,000 and 500, while the 64
+writers never wait. The main run therefore has 6 blocks, the registered
+minimum, and the arms `W3 W4 W4t W4r W4rd M1 M2 M3 M4 A1 W5p`, every
+comparison and twin a criterion above needs; W0, W1, W2, W2t, W2r, W6, W3rd
+and W5 were measured in the section 8.6 runs and decide nothing here. W4rd
+and A1 still run, at every list, to record the starvation; a reader or
+drain cell with fewer than half its nominal reads is reported as starved,
+not as a pass or fail of the reader and A1 criteria, which wait for the
+single-driver progress decision.
+
 ## 9. Results: the arms that need no language change
 
 The owner chose, on the board card that asked what Whitefoot should offer for
