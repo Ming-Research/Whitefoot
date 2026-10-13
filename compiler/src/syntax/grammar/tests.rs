@@ -185,7 +185,9 @@ fn complete_inventory_is_pinned() {
     // Together the projected entry former and the guard comparison add
     // 95 + 104 rows to the 7,932-row v0.127 inventory.
     // The row inventory preserves FIRST(2), FOLLOW(2) and SELECT provenance.
-    assert_eq!(SELECT_ROWS.len(), 8_142);
+    // v0.140's `unchanged` conclusion and v0.141's single `range_relation`
+    // production (guards and conclusions alike) together give 8,384 rows.
+    assert_eq!(SELECT_ROWS.len(), 8_384);
     // v0.136's `unchanged` and v0.141's `not` are both fixed terminals.
     assert_eq!(diagnostic_terminal_order().len(), 117);
     assert_eq!(productions()[0], Production::Program);
@@ -646,6 +648,6 @@ fn all_detailed_rows_retain_provenance_and_remain_cross_arm_disjoint() {
     }
     // Count the complete inventory independently by summing each decision's
     // rows, including the explicit interface import arm [FN-3].
-    assert_eq!(total_rows, 8_142);
+    assert_eq!(total_rows, 8_384);
     assert!(saw_atom_only);
 }
