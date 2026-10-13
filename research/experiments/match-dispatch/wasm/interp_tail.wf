@@ -36,7 +36,7 @@ struct Trans {
   last_pos: u64;
   copy_d: u64;
   copy_s: u64;
-  held: u64;
+  held_slot: u64;
   failed: Bool;
   cslot: u64;
   cbase: u64;
@@ -835,7 +835,7 @@ fn acc_feed(st: &Trans, code: &Box<Slots<Op>>, op: Op) -> o: Op writes(st), writ
           match acc_dest(op: code^.inner[latest]) {
             Some(value: p) => {
               set code^.inner[latest] = p;
-              set st^.held = 18446744073709551615_u64;
+              set st^.held_slot = 18446744073709551615_u64;
               return o;
             }
             None() => {
@@ -847,11 +847,11 @@ fn acc_feed(st: &Trans, code: &Box<Slots<Op>>, op: Op) -> o: Op writes(st), writ
       }
     }
   }
-  let held = st^.held;
-  if held >= 65535_u64 {
+  let held_slot = st^.held_slot;
+  if held_slot >= 65535_u64 {
     return op;
   }
-  let h16 = slot16(value: held);
+  let h16 = slot16(value: held_slot);
   match acc_input(op: op, s: h16) {
     Some(value: from_held) => {
       return from_held;
@@ -875,7 +875,7 @@ fn acc_claim(st: &Trans, code: &Box<Slots<Op>>, slot: u64) -> s: u64 writes(st),
         Some(value: p) => {
           set code^.inner[latest] = p;
           set st^.last = 18446744073709551615_u64;
-          set st^.held = 18446744073709551615_u64;
+          set st^.held_slot = 18446744073709551615_u64;
           return 65535_u64;
         }
         None() => {
@@ -883,9 +883,9 @@ fn acc_claim(st: &Trans, code: &Box<Slots<Op>>, slot: u64) -> s: u64 writes(st),
       }
     }
   }
-  let held = st^.held;
-  if held < 65535_u64 {
-    if held == slot {
+  let held_slot = st^.held_slot;
+  if held_slot < 65535_u64 {
+    if held_slot == slot {
       return 65535_u64;
     }
   }
@@ -1326,7 +1326,7 @@ fn end_block(st: &Trans, provs: &Box<Slots<Prov>>, code: &Box<Slots<Op>>, brtab:
   set_height(st: st, provs: provs, height: height);
   set st^.dead = False();
   set st^.last = 18446744073709551615_u64;
-  set st^.held = 18446744073709551615_u64;
+  set st^.held_slot = 18446744073709551615_u64;
   if c.kind == 0_u64 {
     return 1_u64;
   }
@@ -1466,7 +1466,7 @@ fn step_control(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, funcs: &
     let height = provs^.inner.len -wrap p;
     let target = code^.inner.len;
     set st^.last = 18446744073709551615_u64;
-    set st^.held = 18446744073709551615_u64;
+    set st^.held_slot = 18446744073709551615_u64;
     let marks = fixes^.inner.len;
     let c = Ctl(kind: kind, height: height, params: p, brk: brk, results: q, target: target, fixes: marks, else_at: else_at, c: cond, cmp: fused_cmp, fb: fused_b);
     push_ctl(cell: ctls, value: c);
@@ -1502,7 +1502,7 @@ fn step_control(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, funcs: &
     let height = c.height +wrap c.params;
     set_height(st: st, provs: provs, height: height);
     set st^.dead = False();
-    set st^.held = 18446744073709551615_u64;
+    set st^.held_slot = 18446744073709551615_u64;
     return 0_u64;
   }
   if op == 12_u8 {
@@ -1538,7 +1538,7 @@ fn step_control(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, funcs: &
       let o = Op::Call(f: f32v, at: at16);
       emit_plain(st: st, code: code, op: o);
     }
-    set st^.held = 18446744073709551615_u64;
+    set st^.held_slot = 18446744073709551615_u64;
     pop_prov(st: st, provs: provs, count: callee.params);
     for (i in 0_u64..callee.results) {
       push_temp(st: st, provs: provs);
@@ -1567,7 +1567,7 @@ fn step_control(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, funcs: &
     let idx16 = slot16(value: index_slot);
     let o = Op::CallIndirect(canon: canon, at: at16, i: idx16);
     emit_plain(st: st, code: code, op: o);
-    set st^.held = 18446744073709551615_u64;
+    set st^.held_slot = 18446744073709551615_u64;
     pop_prov(st: st, provs: provs, count: ft.params);
     for (i in 0_u64..ft.results) {
       push_temp(st: st, provs: provs);
@@ -1592,8 +1592,8 @@ fn set_local(st: &Trans, provs: &Box<Slots<Prov>>, code: &Box<Slots<Op>>, local:
   }
   let p = provs^.inner[top];
   pop_prov(st: st, provs: provs, count: 1_u64);
-  if st^.held == local {
-    set st^.held = 18446744073709551615_u64;
+  if st^.held_slot == local {
+    set st^.held_slot = 18446744073709551615_u64;
   }
   let li = slot16(value: local);
   if p.kind == 1_u64 {
@@ -1638,7 +1638,7 @@ fn set_local(st: &Trans, provs: &Box<Slots<Prov>>, code: &Box<Slots<Op>>, local:
           match acc_slot_dest(op: o) {
             Some(value: both) => {
               set code^.inner[latest] = both;
-              set st^.held = local;
+              set st^.held_slot = local;
             }
             None() => {
               set code^.inner[latest] = o;
@@ -1854,7 +1854,7 @@ fn step_data(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, consts: &Bo
     let s16 = slot16(value: s);
     let o = Op::MemoryGrow(d: d16, s: s16);
     emit_dest(st: st, code: code, op: o, pos: dest_pos);
-    set st^.held = 18446744073709551615_u64;
+    set st^.held_slot = 18446744073709551615_u64;
     push_temp(st: st, provs: provs);
     return 0_u64;
   }
@@ -2102,7 +2102,7 @@ fn translate(r: &Reader, bytes: &Box<Array<u8>>, fi: u64, funcs: &Box<Slots<Func
   }
   let base = l +wrap 2_u64;
   let no = False();
-  let st = Trans(dead: no, skip: 0_u64, base: base, l: l, results: f.results, last: 18446744073709551615_u64, last_pos: 0_u64, copy_d: 0_u64, copy_s: 0_u64, held: 18446744073709551615_u64, failed: no, cslot: pl, cbase: cbase, cn: cn);
+  let st = Trans(dead: no, skip: 0_u64, base: base, l: l, results: f.results, last: 18446744073709551615_u64, last_pos: 0_u64, copy_d: 0_u64, copy_s: 0_u64, held_slot: 18446744073709551615_u64, failed: no, cslot: pl, cbase: cbase, cn: cn);
   let top = Ctl(kind: 0_u64, height: 0_u64, params: 0_u64, brk: f.results, results: f.results, target: 0_u64, fixes: 0_u64, else_at: 18446744073709551615_u64, c: 0_u64, cmp: 0_u64, fb: 0_u64);
   push_ctl(cell: ctls, value: top);
   loop @ops {
