@@ -5,6 +5,28 @@ Newest first. One entry per approved change of the tree: a dated title,
 the owner's agent instructions own the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-13 A struct's type invariants travel through enum payloads, bare type parameters, recursive calls and branch deliveries
+
+Nodes: language/checks-and-proofs, language/checks-and-proofs/automatic-facts, language/checks-and-proofs/obligation-discharge
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the specification revision and design-tree change of Whitefoot#398 at commit b8d1126d3? (including bare type parameters symmetric, recursive results carrying invariants, and branch give delivering values)" (translated); before it, on 2026-10-12, the owner approved the enum-payload part at commit f42b49029 (option A, "approve"), chose option B on the card asking whether bare type parameters also take invariants at entry before merging, and chose option A on the direction cards "a recursive function's own successful result carries the invariant" and "a struct delivered by an if-branch give carries the invariant" (translated).
+
+Summary: Type invariants cross a function boundary inside an own enum's variant field as routed requirements and postconditions, because fallible producers return their structs inside `Result` or `Option`; refused were a written every-exit-is-`Err` form alone or beside the routes and assuming a parameter's routed invariant at body entry. Boundary positions are judged on the instance's type, instead of the written type (a wrapper would owe the invariant at exit and get nothing at entry) or parameters only (a `Span` result and a `T` result would promise different things). A callable whose definition the build supplies requires and promises no invariant, because no body proves the promise. The multi-module component decision now admits generated invariant postconditions inside a component as induction hypotheses, since they come from signatures and struct declarations, keeping each module's verdict a function of its own bodies and its dependencies' interfaces; written postconditions stay withheld, because no program needs them and they would change which written clauses are accepted. The `give` delivery decision splits into integers (unchanged) and other own values, delivered as a `let` binding; delivering only type invariants and re-calling the producer in each branch were refused.
+
+## 2026-10-13 A program reads a socket address's parts and a connection's local address
+
+Nodes: language/system-interface/socket-addresses
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve Whitefoot#402 (head commit 3cd02e6d4)'s specification change and design decisions, letting a Whitefoot program read the parts of a socket address and the local address of a connection?" (translated).
+
+Summary: A new node records four decisions. The family and components of a `SocketAddress` are read by the nonwaiting `socket_address_ip`, which returns the enum `IpAddress` with the constructors' own components, because a pattern match yields them with no proof, instead of a byte-window copy, a per-byte reader, a fixed 16-byte array or formatted text. The port is read by `socket_address_port`. An IPv6 address keeps only address and port, as a provisional choice reopened when a program must reconnect to or print a link-local peer. The local address is `local_address` on the receiving half, returning `Result<SocketAddress, IoError>` with the new origin 10, instead of a field of `AcceptedConnection`, a query on `TcpConnection` or on each half, or an infallible query, each refused with its reason in the node.
+## 2026-10-13 A split-dispatch frame slot whose contents never cross a transfer belongs to each part
+
+Nodes: compiler/match-dispatch-lowering
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve; I write the design-tree change log, mark the PR ready and hand it to the coordinator's merge queue" (translated), on the card "approve Whitefoot#405's change to the design tree: in split dispatch, frame slots whose contents do not cross a transfer between parts belong to each part (head commit 3605cbec0640)?" (translated), whose background stated the changed shared-frame decision, the added refused alternative and the Halo fib(32) measurement.
+
+Summary: A frame slot of a split `loop { match }` stays in the shared frame only when its contents cross a transfer between parts (the outer function's call into dispatch, a part's tail call or a part's return) or its address can reach another part; every other slot belongs to each part that uses it. The join after a `match` is copied into every arm, so the refused rule of keeping a slot local only when exactly one part uses it put the join's slots in the shared frame and cost Halo 14 dead stores per Lua call; with the new rule Halo's fib(32) fell from 862.53 to 841.53 executed instructions per Lua call ([the join's slots in each arm](../research/investigations/halo-call-path/DESIGN.md#the-joins-slots-in-each-arm)). Slots holding an element address stay shared because the analysis does not track derived addresses.
 ## 2026-10-12 The gate runs for revisions that can merge
 
 Nodes: compiler/verification

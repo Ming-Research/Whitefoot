@@ -59,6 +59,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          if [ ! -f .github/gate-scope.sh ]; then
+            echo "::error::.github/gate-scope.sh is missing from the checked-out head: the branch was cut from main before main gained it. Merge main into the branch and push again."
+            exit 1
+          fi
           scope=$(sh .github/gate-scope.sh)
           echo "$scope"
           echo "$scope" >> "$GITHUB_OUTPUT"

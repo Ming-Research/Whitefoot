@@ -1,0 +1,47 @@
+struct Span {
+  low: u64;
+  high: u64;
+  invariant ordered(span): span.low <= span.high;
+}
+
+struct Slot {
+  item: Option<Span>;
+}
+
+fn spread(item: Option<Span>) -> result: u64 pure {
+  match item {
+    Some(value: s) => {
+      let h = s.high;
+      let l = s.low;
+      let d = h - l;
+      return d;
+    }
+    None() => {
+      return 0_u64;
+    }
+  }
+}
+
+fn guarded(slot: Slot) -> result: u64 pure {
+  match &slot.item {
+    Some(value: r) => {
+      if r^.low <= r^.high {
+        let d = spread(item: slot.item);
+        return d;
+      }
+      return 0_u64;
+    }
+    None() => {
+      return 0_u64;
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let span = Span(low: 2_u64, high: 9_u64);
+  let item = Some<Span>(value: span);
+  let slot = Slot(item: item);
+  let d = guarded(slot: slot);
+  let code = cvt.wrap::<u64, u8>(d);
+  return std::process::exit_status(code: code);
+}

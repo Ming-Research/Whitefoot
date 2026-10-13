@@ -731,6 +731,19 @@ int wf_file_wait_readiness(wf_file_readiness *entries, size_t count, int timeout
     return answered;
 }
 
+int wf_file_socket_local_address(int descriptor, wf_socket_address *address) {
+    wf_socket_native_address native;
+    socklen_t length = (socklen_t)sizeof(native.bytes);
+    memset(&native, 0, sizeof(native));
+    memset(address, 0, sizeof(*address));
+    if (getsockname(descriptor, (struct sockaddr *)native.bytes, &length) != 0) {
+        /* A failed call sets errno; zero would read as success. */
+        return errno != 0 ? errno : EIO;
+    }
+    wf_socket_address_from_native(&native, (unsigned)length, address);
+    return 0;
+}
+
 int wf_file_transfer_now(const wf_file_request *request, wf_file_result *result) {
     ssize_t moved;
     memset(result, 0, sizeof(*result));

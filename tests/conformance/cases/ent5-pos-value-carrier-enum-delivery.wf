@@ -1,0 +1,33 @@
+struct BoundedSource {
+  values: Box<Array<u32>>;
+  invariant limit(owner): owner.values.inner.len <= 1073741824_u64;
+}
+
+fn source_length(source: &BoundedSource) -> length: u64 reads(source) {
+  return source^.values.inner.len;
+}
+
+fn make_source() -> made: Option<BoundedSource> pure {
+  let values = box_array_filled::<u32>(count: 1_u64, value: 0_u32);
+  let source = BoundedSource(values: move values);
+  return Some<BoundedSource>(value: move source);
+}
+
+fn chosen_length(first: Bool) -> total: u64 pure {
+  let chosen = if first {
+    let left = make_source();
+    give move left;
+  } else {
+    let right = make_source();
+    give move right;
+  }
+  match move chosen {
+    Some(value: found) => {
+      let length = source_length(source: &found);
+      return length;
+    }
+    None() => {
+      return 0_u64;
+    }
+  }
+}
