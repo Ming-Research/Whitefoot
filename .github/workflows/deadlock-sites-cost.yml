@@ -1,0 +1,115 @@
+# Temporary manual experiment for research/investigations/deadlock-sites.
+# Remove this workflow and its helper before the diagnostic branch is ready.
+# research-boundary: manual-only
+name: deadlock-sites-cost
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Pilot first; choose full work and rounds from its spread
+        type: choice
+        options: [pilot, full]
+        default: pilot
+      rounds:
+        description: Full matched rounds, a multiple of three (pilot always three)
+        type: string
+        default: "9"
+      work:
+        description: Full executions or server batches per sample (pilot always one)
+        type: string
+        default: "10"
+      p_core_cpus:
+        description: Auto detects eight P-core pairs; or list eight distinct-core CPU IDs then their eight siblings in matching order
+        type: string
+        default: auto
+      tcp_include_1024:
+        description: Include 1024 connections in addition to 64
+        type: boolean
+        default: false
+      tcp_client_threads:
+        description: Fixed netload client thread count for every side
+        type: string
+        default: "4"
+      tcp_bytes:
+        description: Payload bytes per TCP exchange
+        type: string
+        default: "64"
+      tcp_exchanges:
+        description: Full exchanges per connection (pilot two, churn always one)
+        type: string
+        default: "100"
+      sample_timeout:
+        description: Seconds bounding each native execution or TCP server/client batch
+        type: string
+        default: "120"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deadlock-sites-cost-14900k
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  compare:
+    runs-on: [self-hosted, 14900k]
+    timeout-minutes: 100
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_TERM_COLOR: never
+      DEADLOCK_MODE: ${{ inputs.mode }}
+      DEADLOCK_ROUNDS: ${{ inputs.rounds }}
+      DEADLOCK_WORK: ${{ inputs.work }}
+      DEADLOCK_P_CORE_CPUS: ${{ inputs.p_core_cpus }}
+      DEADLOCK_TCP_1024: ${{ inputs.tcp_include_1024 }}
+      DEADLOCK_CLIENT_THREADS: ${{ inputs.tcp_client_threads }}
+      DEADLOCK_BYTES: ${{ inputs.tcp_bytes }}
+      DEADLOCK_EXCHANGES: ${{ inputs.tcp_exchanges }}
+      DEADLOCK_SAMPLE_TIMEOUT: ${{ inputs.sample_timeout }}
+      DEADLOCK_NETLOAD_SOURCE: research/experiments/io-completion-bench/netload.c
+      DEADLOCK_CANDIDATE: ${{ github.sha }}
+      WHITEFOOT_CHECK_TIMEOUT: "5400"
+      # Manual experiments use the wrapper's lock and deadline, not a
+      # correctness-stage budget or a fabricated measured budget row.
+      WHITEFOOT_TIME_BUDGET_RECORD: ""
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Find the installed Rust tools
+        run: |
+          echo "DEADLOCK_OUT=$RUNNER_TEMP/deadlock-sites-cost-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
+          if [ -d "$HOME/.cargo/bin" ]; then
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          fi
+      - name: Build, qualify and compare under the host-wide lock
+        run: |
+          mkdir -p "$DEADLOCK_OUT"
+          perl .github/run-check.pl deadlock-sites/cost \
+            python3 -B .github/deadlock-sites-cost.py
+      - name: Publish even a partial result
+        if: always()
+        run: |
+          if [ -f "$DEADLOCK_OUT/summary.md" ]; then
+            cat "$DEADLOCK_OUT/summary.md" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'Deadlock-sites cost: no valid panel; inspect the lock/tool failure in the job log.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: deadlock-sites-cost-${{ github.run_id }}
+          if-no-files-found: warn
+          path: |
+            ${{ env.DEADLOCK_OUT }}/*.json
+            ${{ env.DEADLOCK_OUT }}/*.jsonl
+            ${{ env.DEADLOCK_OUT }}/*.tsv
+            ${{ env.DEADLOCK_OUT }}/*.md
+            ${{ env.DEADLOCK_OUT }}/*.log
+            ${{ env.DEADLOCK_OUT }}/bundle/
+            ${{ env.DEADLOCK_OUT }}/logs/

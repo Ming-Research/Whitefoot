@@ -12,6 +12,13 @@ at its ninth insertion while its parent waits at that implicit join.
 [WAIT-2](../../../spec/kernel-spec.md) permits a report for that execution;
 the report is not a program outcome and changes no source judgment.
 
+The global roster's spawn and finish paths take one shared spin lock. A
+single spawner cannot expose cache-line contention among drivers that spawn
+and finish children simultaneously. The comparison therefore includes both a
+single-spawner input and independent concurrent spawners, each retaining its
+fixed work across panels through eight physical performance cores and their
+sixteen hyperthreads.
+
 This record owns the synchronization argument and the comparison protocol.
 It is kept with the runtime mechanism and updated if that mechanism changes.
 No timing has been run. The cost criterion below is recorded before any
@@ -92,13 +99,13 @@ runner (`self-hosted`, `14900k`), after confirming it is idle and coordinating
 the run. Use the same toolchain, release compilation settings, native host
 route, driver count, CPU affinity and source bytes for all three builds:
 
-1. Base: the main revision on which this branch is based.
+1. Base: the merge-base of the candidate revision and the fetched main head.
 2. Twin: a second independent build of that same base revision.
 3. Branch: this implementation's exact candidate revision.
 
 Record the resolved revisions and all compiler/runtime settings with the
 results. Build time is recorded separately and excluded from runtime time.
-The comparison has two maintained program inputs, both compiled with `--par`:
+The comparison has three maintained program inputs, all compiled with `--par`:
 
 - `tests/programs/context_starts.wf`: 10,000 tiny named contexts, each joined
   at its result's first use, followed by 100 batches of 100 unnamed contexts
@@ -106,6 +113,14 @@ The comparison has two maintained program inputs, both compiled with `--par`:
   total batch count of 10,000 detect wrong results.
   This fixture isolates frequent spawn/finish and includes overlapping live
   contexts; no measured side gets a source variant.
+- `tests/programs/context_starts_concurrent.wf`: 16 top-level contexts each
+  perform 10,000 tiny named spawn/result-use joins. Each registers at a
+  startup barrier and waits until all 16 have arrived, allowing the drivers
+  to take ready spawners together. Each spawner keeps its sum locally and
+  publishes once at completion; no shared-state access serializes its inner
+  loop. The expected aggregate sum of 799,920,000 and completion count of 16
+  detect wrong results. The same 16 spawners and work run in every panel,
+  exposing concurrent roster add/remove traffic that one spawner cannot.
 - `tests/programs/tcp_contexts.wf`: one context per accepted TCP connection,
   each echoing through its own buffer. Use a loopback client on the same
   runner, the same connection count and byte stream on all sides, and verify
@@ -114,14 +129,41 @@ The comparison has two maintained program inputs, both compiled with `--par`:
   numbers of exchanges per connection and connection churn, so a long-lived
   connection does not hide spawn/finish contention.
 
-Take both fixtures from the candidate revision and preserve their exact bytes
-in the comparison bundle. Compile those same files with all three compiler
-builds, including the new spawn fixture that is absent from the base tree.
-Both fixtures use unchanged language forms; this is a same-source comparison,
-not a comparison of different test directories in the three checkouts.
+Take all three fixtures from the candidate revision and preserve their exact
+bytes in the comparison bundle. Compile those same files with all three
+compiler builds, including the spawn fixtures absent from the base tree.
+All three fixtures use unchanged language forms; this is a same-source
+comparison, not a comparison of different test directories in the checkouts.
 
-Use one and four drivers in separate panels. First run the smallest useful
-sample of every side and workload, time it and inspect its spread. Select a
+Use one, four, eight and sixteen drivers in separate panels. Discover the
+runner's performance-core CPUs through `/sys/devices/cpu_core/cpus` and group
+them by physical package and core ID, checking reciprocal
+`thread_siblings_list` entries against online CPUs and the allowed affinity.
+This reuses io-bench's sysfs core grouping and `taskset` placement mechanism;
+unlike its client/server placement, the eight-core panel needs all eight
+performance cores and does not reserve one for the OS. The one/four/eight
+panels use one logical CPU from each of one/four/eight distinct performance
+cores. The sixteen-driver panel adds the partner hyperthread of each of those
+same eight cores. Every measured side in a panel gets the same mask. Record
+the exposed topology and all selected masks, rather than assuming CPU numbers
+0 through 15 are performance cores. An explicit ordered CPU list is still
+checked against that topology. Missing physical topology, guest-only topology
+or an affinity that cannot supply all eight performance cores and their
+partners stops the comparison before construction; no logical-only panel is
+reported as a physical-core measurement. TCP clients share their panel's mask
+as in the temporary harness, so their competing CPU use is an explicit part
+of that workload and is identical across arms.
+
+The [io-bench workflow](../../../.github/workflows/io-bench.yml) describes
+the runner as a Hyper-V virtual machine. That description does not establish
+the requested physical-core placement. The runner must expose qualified
+physical topology for this protocol; guest CPU numbers alone cannot supply
+the eight-P-core or sixteen-sibling measurement. Current host qualification
+remains unverified until dispatch, and a qualification failure is retained as
+such rather than producing cost ratios.
+
+First run the smallest useful sample of every side and workload, time it and
+inspect its spread. Select a
 fixed amount of work and repetitions from that pilot, sufficient to resolve
 one percent, before the comparison. If a single spawn fixture execution is
 too short, time equal batches of unchanged executions and retain their launch
@@ -138,15 +180,59 @@ when the twin's spread prevents a decision. Investigate a repeatable branch
 loss with runtime profiles and roster-lock contention evidence; a source
 change or different work amount cannot serve as attribution.
 
-**Rejection criterion:** reject this branch's mechanism if spawn-heavy wall
+**Rejection criterion:** apply the same criterion separately to both
+spawn-heavy fixtures at each of one, four, eight and sixteen drivers. Reject
+this branch's mechanism if any such full panel's spawn-heavy wall
 time rises by more than 1% over base beyond the twin's spread. For each
 matched round let the overhead be `branch / base - 1`; define the twin spread
 as the largest absolute `twin / base - 1` in the valid panel. The criterion is
 `median(overhead) > 0.01 + twin_spread`; a noisy panel that cannot resolve the
-threshold is inconclusive, not a pass. If the global roster lock shows
-contention, switch to per-driver rosters and repeat the same comparison and
-criterion. TCP results separately state the effect on equal-work wall time
-and throughput; they do not replace the spawn-heavy acceptance criterion.
+threshold is inconclusive, not a pass. TCP results separately state the effect
+on equal-work wall time and throughput; they do not replace the spawn-heavy
+acceptance criterion.
+
+If any spawn-heavy panel fails, the contingency is per-driver rosters and a
+repeat of every panel with the same sources, work and criterion. A context is
+assigned its owning roster at creation; add and remove touch only that
+driver's roster lock. Context migration changes its executor, not its roster
+ownership, so it adds no roster operation. After establishing all-stuck, the
+reporter locks each roster in turn to protect membership and lifetime while
+reading its slots, retaining the scheduler-counter publication argument.
+Profiles and roster-lock contention evidence distinguish a shared-cache-line
+loss from another cause before attributing the failure. This is a contingency,
+not an implemented runtime change or a measured result.
+
+## Temporary measurement harness
+
+The dispatch-only `.github/workflows/deadlock-sites-cost.yml` owns the
+temporary `.github/deadlock-sites-cost.py` helper. Delete both before the
+branch is ready; retain the uploaded measurement bundle as the evidence for
+this investigation. The helper reuses the candidate revision's unchanged
+`research/experiments/io-completion-bench/netload.c` loopback client, which
+checks every echoed byte. It observes listener readiness without connecting,
+so readiness does not consume one of the server's counted connections.
+TCP wall time includes server startup, client execution and successful server
+shutdown on every side. Short connections use one exchange per connection;
+the fixed-exchange panel uses the recorded exchange count.
+
+An untimed preflight compiles the candidate's unchanged
+`tests/programs/driver_count.wf` with each compiler and requires its reported
+count before and after spawning to match each panel. A host that falls back
+to one driver because its root io_uring is unavailable cannot supply the
+four/eight/sixteen-driver comparisons; the harness stops rather than
+mislabeling that run.
+
+Pilot mode uses three rounds to exercise each rotating order with minimal
+work: one execution per side and panel, 64 TCP connections by default, two
+exchanges for the fixed-exchange workload and one for short connections. It
+reports duration and spread without an acceptance verdict. Full mode uses
+explicitly selected rounds and work after inspecting that pilot. The
+bundle keeps all observations, including failed or partial samples, build
+times, exact source bytes, resolved revisions, toolchain and affinity settings,
+per-round ratios and the recorded rejection criterion. One outer
+`run-check.pl` invocation holds the shared host lock through construction and
+measurement; an occupied lock stops the run and is never automatically
+removed. This manually invoked research harness is not a gate dependency.
 
 ## Correctness evidence and remaining work
 

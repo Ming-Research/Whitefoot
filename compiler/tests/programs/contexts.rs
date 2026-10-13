@@ -293,6 +293,17 @@ fn named_and_unnamed_context_batches_finish_and_reuse_their_storage() {
     }
 }
 
+/// Sixteen contexts pass one startup guard and independently start and join
+/// tiny children. Each publishes only its final sum and completion count.
+#[test]
+fn concurrent_context_starts_preserve_every_workers_sum_and_completion() {
+    let program = build_program(&compile_program("context_starts_concurrent.wf"));
+    for drivers in ["1", "4"] {
+        let output = program.run_with_settings(None, &[("WF_DRIVERS", drivers)]);
+        assert_eq!(output.status.code(), Some(0), "drivers {drivers}: {output:?}");
+    }
+}
+
 const HANDLE_RESULT: &[u8] = b"fn keep(directory: std::fs::DirectoryRead) -> result: std::fs::DirectoryRead pure waits {
   return move directory;
 }
