@@ -1,0 +1,150 @@
+# Temporary: per-call instruction counts of Snowghost's argument-word witness
+# (Snowghost-wf research/investigations/style/witness-argument-words.wf at
+# 637d568), measured as that repository's `scan-param.sh witness` does, for
+# the base compiler (main 9bc6bb7ed) and this branch's compiler, each with the
+# witness's chain functions (step, compound, test, with and without the
+# forwarded table) in the compiler's own calling convention, switched to
+# x86_regcallcc, and switched to preserve_nonecc. Removed before the branch is
+# ready, with .github/tmp-witness-probe.sh.
+name: tmp-witness-probe
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - claude/recursive-shared-env
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tmp-witness-probe-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+  BASE_COMMIT: 9bc6bb7eda51e15037f0b8dbc36385aae3865165
+  SNOWGHOST_COMMIT: 637d568
+
+jobs:
+  measure:
+    name: Measure (${{ matrix.name }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: base
+            ref: 9bc6bb7eda51e15037f0b8dbc36385aae3865165
+          - name: branch
+            ref: ""
+    steps:
+      # The probe's own files come from the pushed commit in every job; the
+      # compiler under test is built from src.
+      - uses: actions/checkout@v4
+        with:
+          path: probe
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref || github.sha }}
+          path: src
+
+      # The same toolchain as gate.yml: the LLVM major the compiler's commit
+      # pins from apt.llvm.org as /usr/bin/clang and ld.lld, which includes
+      # preserve_nonecc (LLVM 19 and later). valgrind is for callgrind.
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < src/.github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo apt-get install -y --no-install-recommends valgrind
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          echo "LLVM_VERSION=$version" >> "$GITHUB_ENV"
+          /usr/bin/clang --version
+          ld.lld --version
+          valgrind --version
+          python3 --version
+          rustup default stable
+          cargo --version
+
+      - name: Build the compiler
+        working-directory: src
+        env:
+          WHITEFOOT_CHECK_TIMEOUT: 2400
+        run: |
+          git log --oneline -1
+          perl .github/run-check.pl witness-probe-build cargo build --manifest-path compiler/Cargo.toml --locked --profile gate --bin whitefootc
+          echo "WHITEFOOTC=$PWD/compiler/target/gate/whitefootc" >> "$GITHUB_ENV"
+
+      # Snowghost's scan-param.sh and scan-cost.py are used as committed, so
+      # the plain variant reproduces its `witness` command exactly.
+      - name: Fetch Snowghost's measurement
+        run: |
+          git clone --quiet https://github.com/Ming-Research/Snowghost-wf.git snowghost
+          git -C snowghost checkout --quiet "$SNOWGHOST_COMMIT"
+          git -C snowghost log --oneline -1
+          ls snowghost/research/investigations/style
+
+      # /usr/bin/clang becomes a wrapper that passes every call to the real
+      # clang, and rewrites the chain functions' calling convention in the
+      # modules the compiler hands it only when WF_CC is set, which the
+      # regcall and preserve_none variants do.
+      - name: Install the clang wrapper
+        run: |
+          sh probe/.github/tmp-witness-probe.sh wrapper "/usr/bin/clang-$LLVM_VERSION" "$RUNNER_TEMP/clang-wrapper"
+          cat "$RUNNER_TEMP/clang-wrapper"
+          sudo ln -sf "$RUNNER_TEMP/clang-wrapper" /usr/bin/clang
+          /usr/bin/clang --version
+
+      - name: Measure the witness, three calling conventions
+        run: |
+          sh probe/.github/tmp-witness-probe.sh measure "$PWD/snowghost" "$WHITEFOOTC" "${{ matrix.name }}" "$PWD/results"
+
+      - name: Tables
+        run: |
+          {
+            echo "## ${{ matrix.name }}"
+            echo '```'
+            sh probe/.github/tmp-witness-probe.sh report "$PWD/results" "${{ matrix.name }}"
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: witness-probe-${{ matrix.name }}
+          path: results
+          if-no-files-found: error
+          retention-days: 14
+
+  compare:
+    name: Base against branch
+    needs: measure
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: witness-probe-*
+          merge-multiple: true
+          path: results
+
+      - name: Tables
+        run: |
+          {
+            echo "## base (main 9bc6bb7ed) against branch ${GITHUB_SHA:0:12}"
+            echo '```'
+            sh .github/tmp-witness-probe.sh report "$PWD/results" base branch
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
