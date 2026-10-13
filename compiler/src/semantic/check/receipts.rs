@@ -30,7 +30,7 @@ use super::{CheckStop, CheckedFunctionInventory, Checker};
 use crate::semantic::entailment::operation_facts::Interval;
 use crate::semantic::entailment::{
     DerivationId, EntailmentCallee, FunctionEntailment, FunctionPostconditionProof,
-    PostconditionAggregate,
+    PostconditionAggregate, PostconditionSchedule,
 };
 use crate::semantic::model::{
     CheckedBodyDisposition, CheckedContractQuery, CheckedFunction, CheckedType, IntegerType,
@@ -886,9 +886,15 @@ impl Checker<'_, '_> {
         recorded
     }
 
-    /// Records the receipt of every function analyzed afresh whose analysis
-    /// no rejection names.
-    pub(super) fn record_receipts(&mut self, functions: &[&CheckedFunction], rejected: &[bool]) {
+    /// Records accepted fresh analyses only after every member of their
+    /// component has verified, including the range judgment [DIAG-2, MOD-8].
+    /// A failed component leaves unrelated components' receipts available.
+    pub(super) fn record_receipts(
+        &mut self,
+        functions: &[&CheckedFunction],
+        rejected: &[bool],
+        schedule: &PostconditionSchedule,
+    ) {
         let Some(store) = self.receipts else {
             return;
         };
@@ -898,6 +904,20 @@ impl Checker<'_, '_> {
         let Ok(items) = self.types.declarations.receipt_items() else {
             return;
         };
+        let mut rejected = rejected.to_vec();
+        for component in &schedule.components {
+            if component
+                .functions
+                .iter()
+                .any(|function| rejected.get(function.0 as usize).copied().unwrap_or(true))
+            {
+                for function in &component.functions {
+                    if let Some(rejected) = rejected.get_mut(function.0 as usize) {
+                        *rejected = true;
+                    }
+                }
+            }
+        }
         for (index, key) in std::mem::take(&mut self.analysis.receipt_keys) {
             if rejected.get(index).copied().unwrap_or(true) {
                 continue;

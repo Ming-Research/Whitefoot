@@ -1,0 +1,15 @@
+struct Cell {
+  value: u64;
+}
+
+fn leave_zero(out: &Cell, depth: u64) -> done: unit writes(out) contract {
+  ensures out^.value == 0_u64;
+} {
+  if depth > 0_u64 {
+    let next = depth - 1_u64;
+    set out^.value = 0_u64;
+    leave_zero(out: out, depth: next);
+    return unit;
+  }
+  return unit;
+}

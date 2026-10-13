@@ -821,9 +821,9 @@ impl Analyzer<'_, '_> {
                     parents.extend(goal_parents);
                     parents.extend(routed_parents);
                     parents.extend(contract_parents.unwrap_or_default());
-                    // A direct call needs an earlier-component verified FN-9
-                    // summary. A bound call needs either those actual
-                    // premises plus its retained FN-4 implication, or a
+                    // A direct call needs an FN-9 summary or a same-component
+                    // induction hypothesis [DIAG-2]. A bound call needs those
+                    // actual premises plus its retained FN-4 implication, or a
                     // zero-premise formal implication. Calls with no
                     // authorized relation retain the pre-S12 kill path.
                     if postconditions.is_empty() {

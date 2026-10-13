@@ -2441,14 +2441,9 @@ fn a_measured_recursive_return_requires_a_named_result_datum() {
 }
 
 #[test]
-fn a_bound_measured_recursive_return_cannot_assume_its_own_summary() {
+fn a_bound_measured_recursive_return_uses_its_callees_hypothesis() {
     let source = measured_recursive_return_source(true);
-    assert_fn9_unproved(source.as_bytes());
-    assert_rule_at(
-        source.as_bytes(),
-        SemanticRule::Fn9,
-        "return move forwarded;",
-    );
+    assert_complete(source.as_bytes());
 }
 
 #[test]
@@ -3323,7 +3318,7 @@ fn right(value: i32) -> result: i32 pure contract {
   ensures result == value;
 } {
   let called = left(value: value);
-  return called;
+  return 0_i32;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -3386,7 +3381,7 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 #[test]
-fn a_seedless_mutual_postcondition_cycle_publishes_no_summary() {
+fn a_nonreturning_mutual_postcondition_cycle_publishes_verified_summaries() {
     let source = br#"fn first(value: i32) -> result: i32 pure contract {
   ensures result == value;
 } {
@@ -3407,7 +3402,7 @@ fn main() -> status: std::process::ExitStatus pure {
 "#;
     with_semantics_dark(source, |outcome| {
         let SemanticOutcome::Complete(checked) = outcome else {
-            panic!("dark seedless cycle must retain dispositions: {outcome:?}");
+            panic!("nonreturning cycle must prove partial correctness: {outcome:?}");
         };
         let component = checked
             .data
@@ -3416,18 +3411,18 @@ fn main() -> status: std::process::ExitStatus pure {
             .iter()
             .find(|component| component.functions.len() == 2)
             .expect("seedless mutual component");
-        assert!(component.summaries.is_empty());
+        assert_eq!(component.summaries.len(), 2);
         for function in component
             .functions
             .iter()
             .map(|id| &checked.data.functions[id.0 as usize])
         {
             let proof = function.entailment.postconditions.first().unwrap();
-            assert!(!proof.aggregate.discharged);
-            assert!(proof.summary.is_none());
+            assert!(proof.aggregate.discharged);
+            assert!(proof.summary.is_some());
         }
     });
-    assert_fn9_unproved(source);
+    assert_complete(source);
 }
 
 #[test]
