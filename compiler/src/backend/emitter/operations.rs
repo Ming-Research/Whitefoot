@@ -192,23 +192,38 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         if internal.is_some() {
             rendered.push(format!("ptr {}", call_entries::ENVIRONMENT));
         }
+        let mut passed = Vec::with_capacity(arguments.len());
         for (index, (argument, parameter)) in arguments.iter().zip(abi.parameters()).enumerate() {
             if self.value_type(*argument) != Some(parameter.ty()) {
                 return Err(BackendFailure::InvalidIr);
             }
             if internal
                 .as_ref()
-                .is_some_and(|internal| internal.packed.get(index) == Some(&true))
+                .is_some_and(|internal| !internal.order.contains(&index))
             {
+                passed.push(None);
                 continue;
             }
             if parameter.is_indirect() {
                 let address = self.value_place(*argument)?;
-                rendered.push(format!("ptr {address}"));
+                passed.push(Some(format!("ptr {address}")));
             } else {
                 let operand = self.value_name(*argument);
-                rendered.push(self.value_argument(*parameter, &operand)?);
+                passed.push(Some(self.value_argument(*parameter, &operand)?));
             }
+        }
+        // The internal form declares its parameters in its own order.
+        match &internal {
+            Some(internal) => {
+                for index in &internal.order {
+                    let argument = passed
+                        .get_mut(*index)
+                        .and_then(Option::take)
+                        .ok_or(BackendFailure::InvalidIr)?;
+                    rendered.push(argument);
+                }
+            }
+            None => rendered.extend(passed.into_iter().flatten()),
         }
         // A call that stays inside a budgeted component carries the caller's
         // remaining levels as the callee variant's trailing parameter, the way

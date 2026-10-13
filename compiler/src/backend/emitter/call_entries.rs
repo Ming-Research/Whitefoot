@@ -77,9 +77,10 @@ pub(super) struct InternalCall {
     /// The calling convention keyword with its trailing space, or empty for
     /// the C convention.
     pub(super) convention: &'static str,
-    /// For each of the callee's parameters, whether the caller passes it
-    /// inside the environment record rather than as itself.
-    pub(super) packed: Vec<bool>,
+    /// The callee's parameters the caller passes as themselves, by index, in
+    /// the order its internal form declares them; every other parameter
+    /// travels inside the environment record.
+    pub(super) order: Vec<usize>,
     /// The call-site attributes, with a leading space, or empty: `noinline`
     /// on a call that closes a cycle of the group.
     pub(super) attributes: &'static str,
@@ -147,6 +148,9 @@ pub(super) struct Member {
     /// For each parameter, its slot in the group's record, or `None` for a
     /// parameter passed as itself.
     parameter_slots: Vec<Option<usize>>,
+    /// The parameters passed as themselves, by index, in the order the
+    /// internal form declares them ([`forwarded_order`]).
+    order: Vec<usize>,
 }
 
 /// The module's recursive groups that pass a shared environment record.
@@ -334,6 +338,7 @@ impl EnvironmentPlan {
                 u32::try_from(callee).map_err(|_| BackendFailure::CounterOverflow)?,
             ));
         }
+        let mut all_slots = Vec::with_capacity(members.len());
         for (member, &ordinal) in members.iter().enumerate() {
             let mut parameter_slots = vec![None; functions[ordinal].parameters().len()];
             for (slot, (_, _, keys)) in slots.iter().enumerate() {
@@ -343,6 +348,10 @@ impl EnvironmentPlan {
                     }
                 }
             }
+            all_slots.push(parameter_slots);
+        }
+        let orders = forwarded_order(program, members, &all_slots);
+        for ((&ordinal, parameter_slots), order) in members.iter().zip(all_slots).zip(orders) {
             let ordinal = u32::try_from(ordinal).map_err(|_| BackendFailure::CounterOverflow)?;
             self.members.insert(
                 ordinal,
@@ -350,11 +359,114 @@ impl EnvironmentPlan {
                     ordinal,
                     group,
                     parameter_slots,
+                    order,
                 },
             );
         }
         Ok(())
     }
+}
+
+/// Each member's parameters outside the record, by index, in the order its
+/// internal form declares them: first those that calls inside the group
+/// forward unchanged, by class in one group-wide order, then the rest in
+/// source order.
+///
+/// A class joins a callee's parameter to the caller's own parameter that a
+/// call inside the group passes into it unchanged, as the slots join, but
+/// without requiring every call or every member to take part. A class that
+/// holds two parameters of one member gives neither a forwarded position.
+/// Classes are ordered by their first member, then that member's parameter
+/// index. Every member that has the parameters of the same classes then
+/// declares them at the same argument positions, so a forwarded value stays
+/// in its argument register across the group: Snowghost's witness test,
+/// whose form was `(env, simple, id, context)`, copied id and context into
+/// step's positions `(env, first, last, id, context)` on every call for the
+/// sake of its rarely taken call of step.
+fn forwarded_order(
+    program: &IrProgram,
+    members: &[usize],
+    parameter_slots: &[Vec<Option<usize>>],
+) -> Vec<Vec<usize>> {
+    let functions = program.functions();
+    let position: HashMap<usize, usize> = members
+        .iter()
+        .enumerate()
+        .map(|(position, ordinal)| (*ordinal, position))
+        .collect();
+    let mut keys = Vec::new();
+    let mut key_of = HashMap::new();
+    for (member, slots) in parameter_slots.iter().enumerate() {
+        for (index, slot) in slots.iter().enumerate() {
+            if slot.is_none() {
+                key_of.insert((member, index), keys.len());
+                keys.push((member, index));
+            }
+        }
+    }
+    let mut parent: Vec<usize> = (0..keys.len()).collect();
+    let mut joined = vec![false; keys.len()];
+    for (member, &ordinal) in members.iter().enumerate() {
+        let caller = &functions[ordinal];
+        let origins = formal_origins(caller);
+        for (callee, arguments) in calls(caller) {
+            let Some(&callee_member) = position.get(&(callee as usize)) else {
+                continue;
+            };
+            for (index, argument) in arguments.iter().enumerate() {
+                let (Some(&key), Some(&source)) = (
+                    key_of.get(&(callee_member, index)),
+                    origins
+                        .get(argument)
+                        .and_then(|formal| key_of.get(&(member, *formal))),
+                ) else {
+                    continue;
+                };
+                if key != source {
+                    union(&mut parent, key, source);
+                    joined[key] = true;
+                    joined[source] = true;
+                }
+            }
+        }
+    }
+    let mut classes: BTreeMap<usize, Vec<(usize, usize)>> = BTreeMap::new();
+    for (key, &parameter) in keys.iter().enumerate() {
+        if joined[key] {
+            let root = find(&mut parent, key);
+            classes.entry(root).or_default().push(parameter);
+        }
+    }
+    let mut forwarded: Vec<Vec<(usize, usize)>> = classes
+        .into_values()
+        .filter(|class| {
+            let mut seen = HashSet::new();
+            class.iter().all(|(member, _)| seen.insert(*member))
+        })
+        .collect();
+    for class in &mut forwarded {
+        class.sort_unstable();
+    }
+    forwarded.sort_unstable_by_key(|class| class.first().copied());
+    let mut orders = Vec::with_capacity(members.len());
+    for (member, slots) in parameter_slots.iter().enumerate() {
+        let mut order: Vec<usize> = forwarded
+            .iter()
+            .filter_map(|class| {
+                class
+                    .iter()
+                    .find(|(owner, _)| *owner == member)
+                    .map(|(_, index)| *index)
+            })
+            .collect();
+        for (index, slot) in slots.iter().enumerate() {
+            if slot.is_none() && !order.contains(&index) {
+                order.push(index);
+            }
+        }
+        orders.push(order);
+    }
+    orders
 }
 
 /// The calls of a group that close its cycles, as `(caller, callee)`
@@ -608,7 +720,7 @@ impl FunctionEmitter<'_, '_> {
         Some(InternalCall {
             symbol: internal_entry_symbol(EntryForm::Environment, target.name()),
             convention: "",
-            packed: callee.parameter_slots.iter().map(Option::is_some).collect(),
+            order: callee.order.clone(),
             attributes: if self
                 .environments
                 .back_edges
@@ -650,17 +762,13 @@ impl FunctionEmitter<'_, '_> {
         let own = self.own_environment()?;
         let mut parameters = vec![self.environment_parameter()?];
         let mut references = References::default();
-        for (index, (((value, _), parameter), slot)) in self
-            .function
-            .parameters()
-            .iter()
-            .zip(abi.parameters())
-            .zip(&own.parameter_slots)
-            .enumerate()
-        {
-            if slot.is_some() {
-                continue;
-            }
+        for &index in &own.order {
+            let (Some((value, _)), Some(parameter)) = (
+                self.function.parameters().get(index),
+                abi.parameters().get(index),
+            ) else {
+                return Err(BackendFailure::InvalidIr);
+            };
             let facts = self.reference_parameter_facts(index, parameter.ty())?;
             parameters.extend(incoming_parameters(
                 self.program,
@@ -685,16 +793,14 @@ impl FunctionEmitter<'_, '_> {
             arguments.push(format!("ptr {RESULT_POINTER}"));
         }
         arguments.push(format!("ptr {ENVIRONMENT}"));
-        for (((value, _), parameter), slot) in self
-            .function
-            .parameters()
-            .iter()
-            .zip(abi.parameters())
-            .zip(&own.parameter_slots)
-        {
-            if slot.is_none() {
-                arguments.push(incoming_parameter(self.program, *value, *parameter, "")?);
-            }
+        for &index in &own.order {
+            let (Some((value, _)), Some(parameter)) = (
+                self.function.parameters().get(index),
+                abi.parameters().get(index),
+            ) else {
+                return Err(BackendFailure::InvalidIr);
+            };
+            arguments.push(incoming_parameter(self.program, *value, *parameter, "")?);
         }
         Ok(arguments.join(", "))
     }

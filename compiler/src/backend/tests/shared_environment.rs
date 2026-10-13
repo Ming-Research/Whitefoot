@@ -236,31 +236,35 @@ fn a_fragment_build_defines_each_internal_form_once() {
 
 /// The selector chain's shape: step calls compound, compound calls probe,
 /// probe calls step again. probe is defined first, as in Snowghost's witness,
-/// and main enters the chain at step.
+/// and main enters the chain at step. As there, each member has parameters
+/// of its own (probe's simple, compound's span, step's first and last)
+/// ahead of id and depth, which every call inside the group forwards.
 const CHAIN: &str = r#"struct Words {
   list: Box<Array<u64>>;
 }
 
-fn probe(rules: &Words, classes: &Words, tags: &Words, table: &[u64], first: u64, last: u64, id: u64, depth: u64) -> result: Bool reads(rules), reads(classes), reads(tags), reads(table) {
-  doc "A leaf probe, except that it negates a nested walk while depth lasts.";
+fn probe(rules: &Words, classes: &Words, tags: &Words, table: &[u64], simple: u64, id: u64, depth: u64) -> result: Bool reads(rules), reads(classes), reads(tags), reads(table) {
+  doc "A leaf probe of one simple selector, except that it negates a nested walk while depth lasts.";
   if depth == 0_u64 {
     if id < tags^.list.inner.len {
       let tag = tags^.list.inner[id];
-      let same = tag == first;
+      let same = tag == simple;
       return same;
     }
     return False();
   }
   let below = depth -wrap 1_u64;
-  let inner = step(rules: rules, classes: classes, tags: tags, table: table, first: first, last: last, id: id, depth: below);
+  let from = simple +wrap 1_u64;
+  let to = from +wrap 1_u64;
+  let inner = step(rules: rules, classes: classes, tags: tags, table: table, first: from, last: to, id: id, depth: below);
   let negated = bnot(inner);
   return negated;
 }
 
-fn compound(rules: &Words, classes: &Words, tags: &Words, table: &[u64], first: u64, last: u64, id: u64, depth: u64) -> result: Bool reads(rules), reads(classes), reads(tags), reads(table) {
-  doc "Every probe of an interval.";
-  for (at in first..last) {
-    let ok = probe(rules: rules, classes: classes, tags: tags, table: table, first: at, last: last, id: id, depth: depth);
+fn compound(rules: &Words, classes: &Words, tags: &Words, table: &[u64], span: u64, id: u64, depth: u64) -> result: Bool reads(rules), reads(classes), reads(tags), reads(table) {
+  doc "Every probe of a span.";
+  for (at in 0_u64..span) {
+    let ok = probe(rules: rules, classes: classes, tags: tags, table: table, simple: at, id: id, depth: depth);
     if ok {
     } else {
       return False();
@@ -276,7 +280,8 @@ fn step(rules: &Words, classes: &Words, tags: &Words, table: &[u64], first: u64,
   } else {
     return False();
   }
-  let subject = compound(rules: rules, classes: classes, tags: tags, table: table, first: first, last: last, id: id, depth: depth);
+  let span = last -wrap first;
+  let subject = compound(rules: rules, classes: classes, tags: tags, table: table, span: span, id: id, depth: depth);
   return subject;
 }
 
@@ -330,4 +335,42 @@ fn only_the_call_that_closes_the_cycle_is_kept_out_of_line() {
         .filter(|line| line.contains(" call ") && line.ends_with(" noinline"))
         .count();
     assert_eq!(marked, 1, "{llvm}");
+}
+
+#[test]
+fn forwarded_parameters_take_the_same_position_in_every_internal_form() {
+    let llvm = compile(CHAIN.as_bytes());
+    // After the record pointer, id then depth, whatever each member declares
+    // before them in source: probe's are its parameters 5 and 6, compound's
+    // 5 and 6, step's 6 and 7.
+    for (name, id, depth, rest) in [
+        ("probe", 5, 6, &["i64 %v4"][..]),
+        ("compound", 5, 6, &["i64 %v4"][..]),
+        ("step", 6, 7, &["i64 %v4", "i64 %v5"][..]),
+    ] {
+        let internal = header(emitted_function(&llvm, &format!("_env_{name}")));
+        let declared = parameters(internal, &format!("wf__env_{name}"));
+        assert!(declared[0].ends_with(" %wf.env"), "{internal}");
+        assert_eq!(declared[1], format!("i64 %v{id}"), "{internal}");
+        assert_eq!(declared[2], format!("i64 %v{depth}"), "{internal}");
+        assert_eq!(&declared[3..], rest, "{internal}");
+    }
+    // The public symbol keeps the source order of the ordinary ABI.
+    let public = header(emitted_function(&llvm, "step"));
+    let declared = parameters(public, "wf_step");
+    assert_eq!(
+        &declared[declared.len() - 4..],
+        &["i64 %v4", "i64 %v5", "i64 %v6", "i64 %v7"],
+        "{public}"
+    );
+    // A call inside the group passes its arguments in the callee's order:
+    // step hands compound its own id and depth right after the record, and
+    // its span after them.
+    let step = emitted_function(&llvm, "_env_step");
+    let calls = calls_to(step, "wf__env_compound");
+    assert_eq!(calls.len(), 1, "{step}");
+    assert!(
+        calls[0].contains("(ptr %wf.env, i64 %v6, i64 %v7, i64 "),
+        "{step}"
+    );
 }

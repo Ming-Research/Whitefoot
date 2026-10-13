@@ -104,7 +104,33 @@ The follow-up keeps the cycle-closing calls of each component out of line
 (compiler/recursive-environment). It is measured against the same
 criterion, on the same witness, against the same base.
 
+## Second measurement
+
+CI run 38336250748 measured the version with the `noinline` cut on cycle-closing calls.
+
+- The with-table and without-table copies again cost the same per call:
+  the gap is 0.
+- Step costs 50.78 instructions per call. On the base it cost 55.05
+  without the table and 59.34 with it.
+- The whole chain costs 76.81 per top-level call, against 77.96 for the
+  base without the table.
+- The without-table test costs 23.23 per call, against 20.37 on the base:
+  2.86 more, past the 2-instruction rejection bound.
+- Attribution, verified in the disassembly:
+  - 2.00 is two register copies at the entry of every call of the internal
+    test. Its form was `(env, simple, id, context)`, while its rarely taken
+    call of step wants `(env, first, last, id, context)`, so the allocator
+    moves id and context into step's positions for the whole function.
+  - 0.88 is the slot loads in the Class and Tag arms, which the record
+    inherently costs.
+
+The follow-up gives the parameters that calls inside the group forward
+unchanged the same position in every member's internal form
+(compiler/recursive-environment). It is measured against the same
+criterion.
+
 ## Status
 
-The first implementation was measured and rejected. The `noinline` cut on
-back edges is implemented and not yet measured.
+The first two versions were measured; each crossed a rejection bound. The
+aligned positions of forwarded parameters are implemented and not yet
+measured.
