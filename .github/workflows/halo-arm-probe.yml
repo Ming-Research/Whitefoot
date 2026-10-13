@@ -1,0 +1,201 @@
+# Temporary research experiment on claude/halo-arm-probe only. This branch
+# has no pull request and never merges; this workflow is not a gate.
+# The prior criteria live in research/investigations/halo-call-path/DESIGN.md.
+name: halo-arm-probe
+
+on:
+  push:
+    branches: [claude/halo-arm-probe]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: halo-arm-probe-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+  HALO_REVISION: c900a68b2f06af0de2adccfd0dd348d49af184de
+  PROBE_REVISION: 14eb8eb181fd5fa57cb9f13382ad31bf858c9ae4
+
+jobs:
+  acquire:
+    if: ${{ github.ref == 'refs/heads/claude/halo-arm-probe' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Initialize scratch inputs and provisional acquisition ceilings
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/halo-arm-probe"
+          target="$RUNNER_TEMP/halo-arm-target"
+          test ! -e "$target"
+          mkdir -p "$out"/{inputs,logs}
+          echo "ARM_PROBE_OUT=$out" >> "$GITHUB_ENV"
+          echo "ARM_HALO_DIR=$RUNNER_TEMP/halo-arm-halo" >> "$GITHUB_ENV"
+          echo "ARM_COMPILER=$target/gate/whitefootc" >> "$GITHUB_ENV"
+          echo "ARM_MEASURE=$out/inputs/measure.py" >> "$GITHUB_ENV"
+          echo "CARGO_TARGET_DIR=$target" >> "$GITHUB_ENV"
+          echo "WHITEFOOT_TIME_BUDGET_FILE=$out/execution-ceilings.txt" >> "$GITHUB_ENV"
+          echo "WHITEFOOT_TIME_BUDGET_RECORD=$out/execution-ceilings-record.txt" >> "$GITHUB_ENV"
+          # Scratch ceilings bound this experiment's acquisition. They are
+          # neither maintained gate budgets nor hosted speed measurements.
+          cat > "$out/execution-ceilings.txt" <<'BUDGETS'
+          label                 linux
+          compiler/build        1800
+          arm/compiler          1800
+          arm/self-test         120
+          arm/build             1800
+          arm/variants          900
+          arm/pilot             480
+          arm/counts            10000
+          BUDGETS
+          printf '%s\n' 'Acquisition has not completed; no arm-probe verdict is available.' > "$out/acquisition-status.txt"
+
+      - name: Install pinned LLVM major, LLD, valgrind and binutils
+        run: |
+          set -euo pipefail
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          test "$version" = 22
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo apt-get install -y -q "llvm-$version" valgrind binutils time
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          sudo ln -sf "/usr/bin/llvm-dis-$version" /usr/local/bin/llvm-dis
+          echo "LLVM_MAJOR=$version" >> "$GITHUB_ENV"
+          rustup default stable
+          {
+            /usr/bin/clang --version
+            ld.lld --version
+            llvm-dis --version
+            "/usr/bin/opt-$version" --version
+            "/usr/bin/llc-$version" --version
+            valgrind --version
+            rustc -vV
+            cargo --version
+            python3 --version
+            uname -a
+            lscpu
+          } > "$ARM_PROBE_OUT/toolchain.txt"
+          cat "$ARM_PROBE_OUT/toolchain.txt"
+
+      - uses: actions/cache@v4
+        with:
+          # Cache dependencies only. The compiler target and all native/IR
+          # products are fresh, outside this cache, on every hosted run.
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-${{ runner.arch }}-halo-arm-cargo-${{ hashFiles('compiler/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-halo-arm-cargo-
+
+      - name: Fetch pinned Halo and historical reduction helper
+        run: |
+          set -euo pipefail
+          git fetch origin "$PROBE_REVISION"
+          test "$(git rev-parse "$PROBE_REVISION^{commit}")" = "$PROBE_REVISION"
+          git show "$PROBE_REVISION:research/investigations/halo-call-path/probe/measure.py" > "$ARM_MEASURE"
+          git clone --quiet https://github.com/Ming-Research/Halo-wf.git "$ARM_HALO_DIR"
+          git -C "$ARM_HALO_DIR" checkout --quiet "$HALO_REVISION"
+          test "$(git -C "$ARM_HALO_DIR" rev-parse HEAD)" = "$HALO_REVISION"
+          cp .github/workflows/halo-arm-probe.yml "$ARM_PROBE_OUT/inputs/"
+          cp .github/halo-arm-probe.py "$ARM_PROBE_OUT/inputs/"
+          cp research/investigations/halo-call-path/probe/sink_initializers.py "$ARM_PROBE_OUT/inputs/"
+          cp research/investigations/halo-call-path/DESIGN.md "$ARM_PROBE_OUT/inputs/DESIGN.md"
+          {
+            echo "compiler=$(git rev-parse HEAD)"
+            echo "halo=$(git -C "$ARM_HALO_DIR" rev-parse HEAD)"
+            echo "probe=$PROBE_REVISION"
+            echo "probe_path=research/investigations/halo-call-path/probe/measure.py"
+            echo "llvm_major=$LLVM_MAJOR"
+            echo "toolchain=toolchain.txt"
+            echo "run=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo "run_attempt=$GITHUB_RUN_ATTEMPT"
+            echo "Halo: full LTO, uncached; original and save-temps guards use the same compiler"
+            echo "Variants: original, V0, V1, V2; four serial fib(32) callgrind runs, 2400 seconds per subprocess"
+            echo "Host-Clang save-temps uses CCC_OVERRIDE_OPTIONS; no compiler CLI flags are added"
+            echo "Counts are instruction evidence only; hosted elapsed times are not speed evidence"
+            echo "Ceilings are provisional acquisition limits, not maintained gate budgets"
+          } > "$ARM_PROBE_OUT/manifest.txt"
+
+      - name: Build this branch's compiler in a clean target
+        env:
+          WHITEFOOT_CHECK_TIMEOUT: "1800"
+        run: |
+          set -euo pipefail
+          cargo fetch --locked --manifest-path compiler/Cargo.toml > "$ARM_PROBE_OUT/logs/compiler-fetch.stdout" 2> "$ARM_PROBE_OUT/logs/compiler-fetch.stderr"
+          status=0
+          perl .github/run-check.pl arm/compiler make -C compiler build > "$ARM_PROBE_OUT/logs/compiler-build.stdout" 2> "$ARM_PROBE_OUT/logs/compiler-build.stderr" || status=$?
+          cat "$ARM_PROBE_OUT/logs/compiler-build.stdout" "$ARM_PROBE_OUT/logs/compiler-build.stderr"
+          exit "$status"
+
+      - name: Check acquisition and reduction guards
+        env:
+          WHITEFOOT_CHECK_TIMEOUT: "120"
+        run: perl .github/run-check.pl arm/self-test python3 .github/halo-arm-probe.py self-test
+
+      - name: Recover full-LTO IR and verify the untouched control
+        env:
+          WHITEFOOT_CHECK_TIMEOUT: "1800"
+        run: perl .github/run-check.pl arm/build python3 .github/halo-arm-probe.py build
+
+      - name: Construct late outlining and initializer-sinking variants
+        env:
+          WHITEFOOT_CHECK_TIMEOUT: "900"
+        run: perl .github/run-check.pl arm/variants python3 .github/halo-arm-probe.py variants
+
+      - name: Run the smallest correctness and count pilot
+        env:
+          WHITEFOOT_CHECK_TIMEOUT: "480"
+        run: perl .github/run-check.pl arm/pilot python3 .github/halo-arm-probe.py pilot
+
+      - name: Acquire four bounded fib instruction counts
+        env:
+          WHITEFOOT_CHECK_TIMEOUT: "10000"
+        run: perl .github/run-check.pl arm/counts python3 .github/halo-arm-probe.py counts
+
+      - name: Publish evidence or unavailable verdict
+        if: always()
+        run: |
+          set -uo pipefail
+          out="${ARM_PROBE_OUT:-$RUNNER_TEMP/halo-arm-probe}"
+          status=0
+          python3 .github/halo-arm-probe.py report || status=$?
+          if [ -s "$out/table.md" ]; then
+            cat "$out/table.md" >> "$GITHUB_STEP_SUMMARY"
+          else
+            printf '%s\n' 'Arm-probe acquisition or reporting failed; no scientific PASS verdict is available. Inspect the job logs and uploaded partial evidence.' >> "$GITHUB_STEP_SUMMARY"
+            status=1
+          fi
+          exit "$status"
+
+      - name: Check provisional acquisition ceilings
+        if: always()
+        run: |
+          set -euo pipefail
+          if [ -z "${WHITEFOOT_TIME_BUDGET_RECORD:-}" ]; then
+            echo 'Acquisition ceiling records are unavailable.' >&2
+            exit 1
+          fi
+          perl .github/run-check.pl --budget-verdict "$WHITEFOOT_TIME_BUDGET_RECORD"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: halo-arm-probe-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/halo-arm-probe/
+          if-no-files-found: error
+          retention-days: 14
