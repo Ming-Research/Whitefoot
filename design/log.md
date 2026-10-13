@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 the owner's agent instructions own the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-13 The unit and corpus groups run as parallel shards, with the whole proof-receipt test on every gate
+
+Nodes: compiler/verification
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve; I write the design-tree change log, mark the pull request ready and run the gate on both platforms, then merge in the coordinator's order; after merging, the next five consecutive gates decide the acceptance 'no more than 6 minutes without queueing'" (translated), on the card "approve the gate sharding decisions that Whitefoot#469 (head commit 258c95b74) adds and changes in the design-tree node 'compiler verification'?" (translated), whose background listed the new decision (unit and corpus groups split into 3 shards on Linux and 2 on macOS by round-robin over sorted test names, each compiling on its own; the two whole-corpus tests split by case; the whole proof-receipt test run once on Linux on every gate; loosened budgets recomputed after 20 sharded runs per CPU model), the changed decision on which jobs the final job requires, and the five refused alternatives. The revision merged here differs from 258c95b74 only by the merge of main.
+
+Summary: The slowest group bounded the gate at about six and a half minutes on Linux, with each group's compile paid once. The unit and corpus groups now run as deterministic round-robin shards over the sorted test names, each compiling on its own because compile then runs in parallel across shards, with a per-shard check that every selected test reported; the two adapter tests that walk every conformance case split their cases the same way, and the proof-receipt test still runs whole on Linux on every gate, about 3 minutes 48 seconds, shorter than a unit shard, so cross-shard cache confusion is caught before merging at no wall-clock cost. The final job now requires every shard Makefile lists green on both platforms plus that receipt job. Refused: running the whole receipt test only after merging, distributing one build through artifacts, caching the compiler build (measured to save nothing because the compiler recompiles on every push), hashing names into shards (less balanced), and cargo-nextest (a new tool that runs each test in its own process).
+
 ## 2026-10-13 The range walk checks every object partition of possibly aliased atomic targets
 
 Nodes: compiler/range-judgment
