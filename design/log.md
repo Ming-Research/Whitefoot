@@ -5,6 +5,13 @@ Newest first. One entry per approved change of the tree: a dated title,
 the owner's agent instructions own the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-13 A release carries the specification and the standard library interfaces of its commit
+
+Nodes: compiler/downstream-releases
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A on Whitefoot-kit's card "how do the specification and the standard library interfaces get into kit: ask Whitefoot to pack them into every release, and kit downloads them with the compiler into the same directory, so the specification always matches the compiler version the project pins?" (translated), whose option A read "Whitefoot adds one package to its release workflow, the specification and the standard library interfaces, also in SHA256SUMS" (translated).
+
+Summary: The provisional decision that a release carries no documents for writers is replaced. A release now also holds `whitefoot-language.tar.gz` with its commit's specification, standard library module table and module interface files at their repository paths, listed in the manifest and the checksums, because downstreams pin different releases while the specification changes almost daily, and an external user has only the release. Refused: a copy of the newest specification in Whitefoot-kit, which differs from what each downstream pins, and fetching the files from this repository at the pinned commit, which ties writers to this repository's layout and access.
 ## 2026-10-13 Linux time budgets are set per CPU model, and macOS overruns are reported only
 
 Nodes: compiler/verification
