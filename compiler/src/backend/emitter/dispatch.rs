@@ -2673,10 +2673,13 @@ fn confined(key: FunctionSlot, across: &BTreeSet<usize>) -> bool {
         // Written by the enclosing function before the loop and read by the
         // parts.
         FunctionSlot::Spill(_) => false,
-        // Never in a split frame: a waiting call's or a context's result
-        // occurs only in a function that waits [WAIT-1, WAIT-3], which is
-        // emitted whole, and the result slot only in a register-returned
-        // definition's public entry, which holds no loop.
+        // Never in a split frame: a waiting call's result occurs only in a
+        // function that waits [WAIT-1] and a context's result only in one
+        // that starts a bound context [WAIT-3], and a function with either
+        // is emitted whole (the `waits` and context-prelude reasons that
+        // keep a loop unsplit); the result slot
+        // occurs only in a register-returned definition's public entry,
+        // which holds no loop.
         FunctionSlot::WaitingResult(_)
         | FunctionSlot::ContextResult(_)
         | FunctionSlot::Result => false,

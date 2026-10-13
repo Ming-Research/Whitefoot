@@ -25,7 +25,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        mutation: [control, everything-local, owned-values-shared, no-header-parameters, no-arm-entries]
+        mutation: [control, everything-local, owned-values-shared, no-header-parameters, no-arm-entries, everything-carried]
     steps:
       - uses: actions/checkout@v4
 
@@ -72,6 +72,10 @@ jobs:
             # The storage plan leaves out the values live on entry to an arm.
             no-arm-entries)
               perl -0pi -e 's/handed\.extend\(entering\[\*successor\]\.iter\(\)\.copied\(\)\)/handed.extend(entering[*successor].iter().copied().filter(|_| false))/ or die "not applied\n"' "$storage" ;;
+            # The storage plan finds every value's allocation crossing, so every
+            # slot is shared.
+            everything-carried)
+              perl -0pi -e 's/(        for successor in &block\.successors \{)/        handed.extend(0..self.values.len());\n$1/ or die "not applied\n"' "$storage" ;;
             *) echo "unknown mutation: $MUTATION"; exit 1 ;;
           esac
           git diff
@@ -127,5 +131,8 @@ jobs:
             no-arm-entries)
               expect_fail "$carried" "the snapshot the arms read is in the shared frame"
               expect_fail "$plan" "a value the header builds crosses into the arm reading it" ;;
+            everything-carried)
+              expect_fail "$join" "the join's Result is the arm's own allocation"
+              expect_fail "$plan" "a value written and read within one arm stays in it" ;;
           esac
           exit $status

@@ -415,7 +415,7 @@ control-flow graph (`allocations_across` in
 Every number is from `callgrind/summary.txt`, which both runs print in their
 logs, divided by fib(32)'s 7,049,155 Lua calls.
 
-| function | executed instructions per Lua call, base (run 38311876567; lower is better) | executed instructions per Lua call, change (run 38317117641; lower is better) | change minus base, instructions per Lua call (R1 predicted -14 in total) |
+| function (the loop's arm by its tag number, or its helper functions) | base: executed instructions per Lua call, the function's callgrind instruction count divided by fib(32)'s 7,049,155 Lua calls, run 38311876567 (this column is the baseline; lower is better, ideal 14 fewer than the whole program's 862.53) | change: the same measure, run 38317117641 (ideal: the base's value, less 7 in each of the `Call` and `Return` arms) | change minus base, instructions per Lua call (baseline 0; R1 predicted -14 in total, which is the ideal) |
 |---|---:|---:|---:|
 | whole program | 862.53 | 841.53 | -21.00 |
 | `Call` arm (63) | 113 | 101 | -12 |
