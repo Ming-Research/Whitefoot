@@ -1,13 +1,211 @@
-# Temporary stub: registers this workflow path so the manual-only
-# acceptance workflow that replaces it in the next commit can be dispatched.
+# Temporary: runs the stage-3 acceptance measurement registered in
+# research/investigations/par-default/DESIGN.md, "Stage-3 acceptance
+# registration", for the default --par demand-splitting branch. Removed
+# before that pull request is marked ready, with the results and run ids
+# copied into the investigation's record.
+#
+#   gh workflow run tmp-par-default-accept.yml --ref claude/par-demand-default -f mode=smoke
+#   gh workflow run tmp-par-default-accept.yml --ref claude/par-demand-default -f mode=pilot
+#   gh workflow run tmp-par-default-accept.yml --ref claude/par-demand-default -f mode=main -f blocks=<even n from the pilot>
+#
+# One job builds current main's compiler (base, default the merge base of
+# origin/main and the dispatched head) and the candidate compiler, then
+# every arm's images with the prototype runner frozen at FROZEN, extracted
+# into the workspace (never committed). Arms: seq (candidate, no --par),
+# par (base --par with base runtime), demand (candidate --par), twin (a byte
+# copy of demand) and three shifted-seq layout controls at one worker.
+#
+# smoke runs on a GitHub-hosted runner: same-source and flag checks, twin
+# bytes, layout shifts, every oracle at every width, the frozen machine-code
+# identity, the reducer's self-test and two unpinned rounds at reduced
+# repetitions. It decides nothing. pilot (six rounds; decides only the
+# decisive round count) and main (`blocks` rounds plus one rerun of each
+# exceeding cell; carries the registered verdict) run only on the 14900K
+# runner and refuse any other host. A verdict is data: the job fails only on
+# a construction, identity or oracle failure or malformed evidence.
+#
+# The heavy steps run under .github/run-check.pl, which holds the host-wide
+# lock. The par-default labels have no row in .github/time-budgets.txt, so
+# the budget comparison is skipped for them; this is not a gate stage.
+#
+# research-boundary: manual-only
+# Explicitly requested measurement; no push or pull-request trigger.
 name: tmp-par-default-accept
 
 on:
-  push:
-    branches: [claude/par-demand-default]
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: smoke checks wiring, oracles and identity on a hosted runner (no verdict); pilot sizes and main measures, both on the 14900K
+        type: choice
+        options: [smoke, pilot, main]
+        default: smoke
+      blocks:
+        description: Rounds of the main run, an even count in 6..30 frozen from the pilot's summary (ignored by smoke, which runs 2, and pilot, which runs 6)
+        type: string
+        default: ""
+      base:
+        description: Full commit of current main's compiler; empty uses the merge base of origin/main and the dispatched head
+        type: string
+        default: ""
+
+defaults:
+  run:
+    shell: bash
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tmp-par-default-accept-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  FROZEN: 73aaab85a92479ada6bf57fa996e17b163e019ed
+  MODE: ${{ inputs.mode }}
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
 
 jobs:
-  register:
-    runs-on: ubuntu-24.04
+  accept:
+    name: accept (${{ inputs.mode }})
+    runs-on: ${{ inputs.mode == 'smoke' && 'ubuntu-24.04' || fromJSON('["self-hosted", "14900k"]') }}
+    timeout-minutes: 180
     steps:
-      - run: echo registered
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Refuse a host or round count the registration does not allow
+        env:
+          BLOCKS: ${{ inputs.blocks }}
+        run: |
+          set -euo pipefail
+          case "$MODE" in
+            smoke) rounds=2 ;;
+            pilot) rounds=6 ;;
+            main)
+              [[ "$BLOCKS" =~ ^[0-9]+$ ]] && (( BLOCKS >= 6 && BLOCKS <= 30 && BLOCKS % 2 == 0 )) || {
+                echo "main needs blocks: an even count in 6..30 frozen from the pilot" >&2; exit 1; }
+              rounds=$BLOCKS ;;
+          esac
+          if [ "$MODE" != smoke ]; then
+            grep -q 'i9-14900K' /proc/cpuinfo || { echo "pilot and main run only on the i9-14900K" >&2; exit 1; }
+          fi
+          echo "ROUNDS=$rounds" >> "$GITHUB_ENV"
+      - name: Check the host tools
+        run: |
+          set -euo pipefail
+          if [ -d "$HOME/.cargo/bin" ]; then
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+          for tool in /usr/bin/clang cargo make python3 git perl nm objdump taskset lscpu tar; do
+            command -v "$tool"
+          done
+          lscpu
+      - name: Resolve the base, extract the frozen runner and check same-source inputs
+        env:
+          BASE_INPUT: ${{ inputs.base }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin '+refs/heads/main:refs/remotes/origin/main'
+          base=${BASE_INPUT:-$(git merge-base origin/main HEAD)}
+          [[ "$base" =~ ^[0-9a-f]{40}$ ]] || { echo "base must be a full commit" >&2; exit 1; }
+          git merge-base --is-ancestor "$base" origin/main || { echo "base is not on main" >&2; exit 1; }
+          git cat-file -e "$FROZEN^{commit}" 2>/dev/null || git fetch --no-tags --depth 1 origin "$FROZEN"
+          base_tree="$RUNNER_TEMP/base-tree"
+          git worktree add --detach "$base_tree" "$base"
+          test ! -e research/experiments/par-demand
+          git archive "$FROZEN" research/experiments/par-demand | tar -x -C "$GITHUB_WORKSPACE"
+          # Kernel sources, host adapters and oracles must be the same bytes in
+          # both trees; the frozen runner compiles each tree's copy.
+          diff -r tests/programs/compute "$base_tree/tests/programs/compute"
+          candidate_flags=$(sed -n 's/^NATIVE_OPTIMIZATION_FLAGS := //p' compiler/runtime.mk)
+          base_flags=$(sed -n 's/^NATIVE_OPTIMIZATION_FLAGS := //p' "$base_tree/compiler/runtime.mk")
+          test -n "$candidate_flags"
+          test "$candidate_flags" = "$base_flags"
+          {
+            printf 'candidate=%s\nbase=%s\nfrozen_runner=%s\nmode=%s rounds=%s\n' "$(git rev-parse HEAD)" "$base" "$FROZEN" "$MODE" "$ROUNDS"
+            printf 'native_optimization_flags=%s\n' "$candidate_flags"
+            rustc -vV; cargo --version; /usr/bin/clang --version; objdump --version; uname -a; lscpu
+            find research/experiments/par-demand -type f -exec sha256sum {} + | sort -k2
+          } > "$RUNNER_TEMP/host.txt"
+          { echo "BASE=$base"; echo "BASE_TREE=$base_tree"; echo "CANDIDATE=$(git rev-parse HEAD)"; } >> "$GITHUB_ENV"
+      - name: Check the reducer and the frozen identity checker with wrong evidence
+        run: |
+          set -euo pipefail
+          python3 -B research/experiments/par-default/accept.py --self-test
+          python3 -B research/experiments/par-demand/identity.py --self-test --clang /usr/bin/clang
+      - name: Build current main's compiler and the candidate compiler
+        run: |
+          set -euo pipefail
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
+          cargo fetch --locked --manifest-path "$BASE_TREE/compiler/Cargo.toml"
+          make -C compiler build
+          make -C "$BASE_TREE/compiler" build
+      - name: Build every arm's images
+        run: |
+          set -euo pipefail
+          build="$RUNNER_TEMP/s3"
+          base_build="$RUNNER_TEMP/s3-base"
+          workloads=(small_constant small_split recursion spine hot_helper large_helper mandelbrot records fir stencil prefix histogram)
+          candidate=() base=()
+          for w in "${workloads[@]}"; do
+            for arm in seq demand twin seq-shift64 seq-shift4160 seq-shift65664; do candidate+=("$build/$arm/$w"); done
+            base+=("$base_build/par/$w")
+          done
+          # The frozen runner's experiment-6 rules give every arm the same
+          # flags; demand takes --par and the ordinary runtime objects.
+          perl .github/run-check.pl par-default/images-candidate \
+            make -C research/experiments/par-demand EXPERIMENT=6 BUILD="$build" \
+              WFC="$GITHUB_WORKSPACE/compiler/target/gate/whitefootc" \
+              flags-demand=--par 'native-demand=$(NATIVE_OBJECTS)' "${candidate[@]}"
+          # ROOT selects main's runtime objects and fixtures; the runner and
+          # oracles are the same frozen files.
+          perl .github/run-check.pl par-default/images-base \
+            make -C research/experiments/par-demand EXPERIMENT=6 BUILD="$base_build" ROOT="$BASE_TREE" \
+              WFC="$BASE_TREE/compiler/target/gate/whitefootc" "${base[@]}"
+          mkdir -p "$build/par"
+          cp -p "$base_build/par/"* "$build/par/"
+          perl .github/run-check.pl par-default/images-programs \
+            python3 -B research/experiments/par-default/accept.py build-programs --root "$GITHUB_WORKSPACE" \
+              --candidate "$GITHUB_WORKSPACE/compiler/target/gate/whitefootc" \
+              --base "$BASE_TREE/compiler/target/gate/whitefootc" --build "$build"
+          for image in "$build"/{seq,demand,par}/*; do
+            if [[ "$(basename "$image")" != *.* && -x "$image" ]]; then objdump -d "$image" > "$image.disassembly"; fi
+          done
+      - name: Require machine-code identity of ordinary and selected cheap computation
+        run: |
+          set -euo pipefail
+          perl .github/run-check.pl par-default/identity \
+            python3 -B research/experiments/par-demand/identity.py \
+              --build "$RUNNER_TEMP/s3" --output "$RUNNER_TEMP/s3/sequential-identity.json"
+      - name: Verify every oracle, then interleave arms, widths and rounds
+        env:
+          WHITEFOOT_CHECK_TIMEOUT: "9000"
+        run: |
+          set -euo pipefail
+          perl .github/run-check.pl par-default/measure \
+            python3 -B research/experiments/par-default/accept.py run --build "$RUNNER_TEMP/s3" \
+              --mode "$MODE" --rounds "$ROUNDS" --candidate-revision "$CANDIDATE" --base-revision "$BASE"
+          { echo '```'; cat "$RUNNER_TEMP/s3/summary.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - name: Retain the evidence, including a failed construction
+        if: always()
+        run: |
+          cp "$RUNNER_TEMP/host.txt" "$RUNNER_TEMP/s3/" 2>/dev/null || true
+          if [ -d "$RUNNER_TEMP/s3" ]; then
+            tar -C "$RUNNER_TEMP" -czf "$RUNNER_TEMP/s3-images.tar.gz" s3
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: par-default-accept-${{ inputs.mode }}
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/s3/measurements.tsv
+            ${{ runner.temp }}/s3/summary.json
+            ${{ runner.temp }}/s3/summary.txt
+            ${{ runner.temp }}/s3/identity.json
+            ${{ runner.temp }}/s3/sequential-identity.json
+            ${{ runner.temp }}/host.txt
+            ${{ runner.temp }}/s3-images.tar.gz

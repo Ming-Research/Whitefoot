@@ -569,3 +569,148 @@ qualification. The two designs' correctness arguments require independent
 review and their listed executable witnesses before implementation can be
 accepted. The owner still rules on the no-clock card, these proposed tree
 decisions, and the handler item's changed byte-preservation criterion.
+
+## Stage-3 acceptance registration
+
+Fixed on 2026-10-13, before any stage-3 timing, at branch head `31c4b8fa6`
+(implementation steps 1--7 done). It turns the bounds of
+[Open qualification and acceptance](#open-qualification-and-acceptance) and the
+indexed and handler criteria above into checkable rules. Nothing below has
+been measured. The harness is
+[`accept.py`](../../experiments/par-default/accept.py), run by the temporary
+workflow `tmp-par-default-accept.yml`. It reuses the prototype runner frozen at
+`73aaab85a92479ada6bf57fa996e17b163e019ed` (`research/experiments/par-demand`:
+native runner and oracles, arm and layout-shift build rules, machine-code
+identity checker, balanced order, P-core placement check and bootstrap
+reducers), extracted at run time and never edited.
+
+### Arms and construction
+
+| Arm | Build | Role |
+| --- | --- | --- |
+| `seq` | candidate compiler, no `--par`, candidate runtime | sequential baseline (the ordinary build) |
+| `par` | current main's compiler with `--par`, main's runtime | separately built current `--par` baseline |
+| `demand` | candidate compiler with `--par`, candidate runtime | the candidate |
+| `twin` | byte copy of `demand` | noise control |
+| `seq-shift64`, `seq-shift4160`, `seq-shift65664` | `seq`'s object relinked after 64, 4160 or 65664 bytes of uncalled padding | layout floor, unified workloads at one worker |
+
+Current main is the merge base of `origin/main` and the measured head unless
+the dispatch names another main commit. Both trees' kernel sources, host
+adapters and oracles must be byte-identical and their native optimization
+flags equal, or construction stops; programs are staged once and compiled by
+both compilers. Every image passes its oracle at every width before timing,
+and every timed call or process is checked again. Machine-code identity of
+the ordinary closure and of every selected cheap region (`seq` against
+`demand`, widths 1/2/4/8) is checked by the frozen identity checker under
+[option D](https://github.com/Ming-Research/Whitefoot/blob/73aaab85a92479ada6bf57fa996e17b163e019ed/research/investigations/par-demand/DESIGN.md#identity-construction-option-d)
+before timing; its failure stops the run.
+
+### Workloads
+
+1. Unified loop/call set, the prior stage's twelve workloads at their frozen
+   inputs and repetitions: `small_constant`, `small_split`, `recursion`,
+   `spine`, `hot_helper`, `large_helper`, `mandelbrot`, `records`, `fir`,
+   `stencil`, `prefix`, `histogram`; widths 1, 2, 4 and 8. The second call's
+   in-process wall and process CPU decide; the first call is reported apart.
+2. Indexed: `prefix` and `histogram` above, plus the 256- and 4096-cell
+   histograms of [indexed-reduction timing](../../experiments/indexed-reduction-timing/README.md)
+   (10^7 keys, K = 20, widths 1/2/4/8). Their decisive quantity is
+   `(process(K=20) - process(K=0)) / 20` for wall and child CPU; the oracle is
+   the ordinary build's checksum at the same K.
+3. Dispatch: the four kernels of the match-dispatch interpreter
+   (`research/experiments/match-dispatch/wf/vm.wf`), widths 1 and 8,
+   whole-process wall and CPU; the oracle is the program's own checksum
+   comparison with `vm.c`.
+
+Visible and held-out: the unified set tuned the earlier stages and is
+visible. The histogram programs and interpreter kernels did not tune any
+stage-3 constant and are held out: no scheduling constant changes after
+their results without a new registration.
+
+Not covered, so a pass here does not close them: the indexed visible sweep
+(iteration count, root length, len/cap ratio, skew, family count, record
+width, nested splits), since no maintained generator exists; a timed program
+that dispatches a handler-bearing enum inside split computation, since no
+maintained program does; downstream Halo, Firn and Snowghost inputs; the
+entry-dispatch boundary of option D; macOS and Windows TLS and protocol
+qualification.
+
+### Placement and order
+
+On the CI i9-14900K only, every arm of a width runs under `taskset` on the
+same list: W1 {2}, W2 {2,4}, W4 {2,4,6,8}, W8 {2,4,6,8,10,12,14,1} (first
+siblings of P-cores, never CPU 0; W8 shares CPU 0's core through CPU 1),
+validated against the host topology, as in experiment 6b. `WF_WORKERS` is
+the width; `WF_SPLIT_WORK` and `WF_SCHED_REPORT` are unset. A round runs
+every cell once with every arm; workloads, widths and arms are rotated and
+reversed by round, so each pair of rounds visits both directions.
+
+### Pilot, rounds and rerun
+
+The pilot runs six rounds and decides only the decisive round count `n`:
+the smallest even count in 6..30 for which every gating rule's six-round
+interval width times `sqrt(6/n)` is at most `max(0.02, |median - bound|)`,
+otherwise 30 (experiment 6b's sizing rule). Pilot rows decide no verdict and
+are never pooled. The main run measures `n` fresh rounds, then exactly one
+rerun of `n` rounds of every cell with an exceeding gating rule, all arms
+interleaved.
+
+### Rules
+
+Each rule uses per-round paired ratios: the median and the 95% bootstrap
+interval of the median, 10,000 draws, seed 20261010.
+
+| Rule | Quantity and threshold | Applies | Source |
+| --- | --- | --- | --- |
+| Void | `twin/demand` wall interval excludes 1: every rule of the cell is void | every cell | twin noise control, [Open qualification](#open-qualification-and-acceptance) |
+| S3-seq | `demand/seq` wall: pass when the upper end is at most 1.00, or the whole interval lies in `[1-r, 1+r]`; exceeds when the lower end is above `1+r`. `r` is the workload's layout floor: the largest `max(|low-1|, |high-1|)` of its three `seq-shift/seq` intervals at W1, applied to all its widths; `r = 0` for programs and void W1 cells | every cell except `small_split` | "wall ratio to sequential ... at most 1.00 or ... inside its separately measured layout floor" |
+| S3-decision | `demand/seq` wall upper end at most `1 + max(0.02, D x 1 ns / median seq wall)`, `D` the call's decisions (1 per repetition) | `small_split`, the only workload with a declared nonhoistable decision | "nonhoistable decision costs at most max(1 ns, 2%) per execution" |
+| S3-par | `demand/par` wall upper end at most 1.05 | cells where the `par/seq` interval lies wholly below 1; otherwise not applicable | "current `--par` speedups are preserved within 5%"; indexed ">5% ... against current parallel ... where it already speeds up" |
+| S3-cpu | `(cpu_demand - 1.1 cpu_seq - 0.1 max(0, wall_seq - wall_demand) W) / cpu_seq` upper end at most 0 | gating where the `demand/seq` wall interval is not wholly below 1; reported where it is | "CPU is at most `1.1 * sequential CPU + 0.1 * saved wall * W` ... reported rather than gating where extra workers still demonstrate speedup" |
+
+A rule exceeding in the first attempt is rerun; it fails when the rerun also
+exceeds and is inconclusive otherwise; a rerun reading differently from the
+first is inconclusive. A nonpositive differenced histogram time makes its
+cell inconclusive. A pass counts only after a post-run inspection of the
+retained disassembly records, for every workload, that its timed work
+survives in the `seq` and `demand` images; until then it reads
+"pass-uninspected".
+
+### Rejection and acceptance
+
+- Construction: an identity failure, a wrong result in any image or call,
+  or a changed comparison extent rejects the construction.
+- Production adoption is rejected by any gating rule's fail, the persistent
+  outcome of two exceeding attempts. On an indexed cell an S3-par fail sends
+  the allocation and price mechanism back for revision or to the owner for a
+  scope ruling; no fixed-budget path is kept silently. On the interpreter
+  kernels a fail rejects the handler representation's adoption.
+- If no indexed cell at W > 1 passes S3-seq, the sequential alternative for
+  indexed reductions returns to the owner.
+- Acceptance needs every gating rule to pass after inspection with no void
+  cell. Any other outcome (void, inconclusive, uninspected) is undecided and
+  goes to the owner with the data; no unregistered rerun is made until it
+  passes.
+
+### Interpretations fixed here
+
+The design text leaves these open; they are chosen before measuring. The
+layout floor is measured at one worker and applied to every width of that
+workload, as experiment 6b measured its controls. "Extra workers still
+demonstrate speedup" is read as the candidate being demonstrably faster
+than the sequential build in that cell. The decision allowance applies only
+where the prior manifest declares a decision (`small_split`); a looser bound
+elsewhere would weaken S3-seq. Interpreter kernels run at widths 1 and 8
+only, to bound the run's duration. Whole-process programs have no layout
+control and so no floor.
+
+### Duration
+
+The prior full qualification's six sizing rounds took 243.8 s for 264 image
+runs per round, about 0.15 s each. This matrix runs 228 unified image runs,
+64 histogram processes and 32 interpreter processes per round, estimated at
+50--65 s. With two compiler builds, image construction, identity and oracle
+checks (about 12--15 minutes), the pilot should take 18--25 minutes and the
+main run, at the maximum 30 rounds, 40--45 minutes, or up to about 70
+minutes if every cell is rerun. The pilot's summary replaces this estimate
+with its measured seconds per round.
