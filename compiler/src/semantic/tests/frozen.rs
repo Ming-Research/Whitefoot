@@ -291,9 +291,18 @@ fn prelude_opaque_handle_repairs_name_their_forming_functions() {
                     panic!("{outcome:?}");
                 };
                 assert_eq!(issue.rule_id(), "TYPE-2");
-                let SemanticIssueKind::ContainerConstruction { mechanical_fix, .. } = issue.kind()
-                else {
-                    panic!("{issue:?}");
+                let mechanical_fix = match issue.kind() {
+                    SemanticIssueKind::ContainerConstruction { mechanical_fix, .. }
+                        if statement.contains("let made") =>
+                    {
+                        mechanical_fix
+                    }
+                    SemanticIssueKind::OpaqueDestructuring { mechanical_fix, .. }
+                        if !statement.contains("let made") =>
+                    {
+                        mechanical_fix
+                    }
+                    _ => panic!("{issue:?}"),
                 };
                 assert!(mechanical_fix.contains(forming), "{mechanical_fix}");
                 assert!(

@@ -463,6 +463,98 @@ fn a_compiler_facing_stop_keeps_its_payload_under_its_category_and_stage() {
 }
 
 #[test]
+fn a_page_length_postcondition_names_the_unsupported_construct() {
+    let source = br#"fn page_width(p: &Paged<u64>, k: u64) -> r: u64 reads(p) contract {
+  requires k < p^.pages.len;
+  ensures r <= p^.pages[k].len;
+} {
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let failure = stop("page-width.wf", source);
+    let rendered = failure.to_string();
+    assert!(
+        rendered.starts_with(
+            "page-width.wf:3:3: unsupported capability in Semantics: PageLengthPostcondition\n"
+        ),
+        "{rendered}"
+    );
+    assert!(
+        rendered.ends_with(
+            "\n  reason: not yet supported: a page's length in a postcondition"
+        ),
+        "{rendered}"
+    );
+    assert!(!rendered.contains("NoSelectedNormalExit"), "{rendered}");
+    assert_eq!(failure.rule_id(), None);
+    assert!(
+        failure
+            .render(DiagnosticFormat::Json)
+            .contains(r#""category":"Unsupported""#)
+    );
+}
+
+#[test]
+fn a_weaker_existing_requirement_does_not_supply_the_missing_bound() {
+    let failure = stop(
+        "weaker-bound.wf",
+        br#"const first_index: u64 = 0_u64;
+
+fn inspect(rows: &[Slots<u8, 4>]) -> result: unit reads(rows) contract {
+  requires rows^[0_u64].len == 0_u64;
+  requires first_index <= rows^.len;
+} {
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+    );
+    let rendered = failure.to_string();
+    assert_eq!(failure.rule_id(), Some("OP-4"));
+    assert!(
+        rendered.contains("mechanical_fix: add `requires 0_u64 < rows^.len;`"),
+        "{rendered}"
+    );
+    assert!(!rendered.contains("move the existing"), "{rendered}");
+}
+
+#[test]
+fn an_implicit_type_invariant_is_not_a_requirement_the_writer_can_move() {
+    let failure = stop(
+        "implicit-bound.wf",
+        br#"struct Rows {
+  cells: Slots<Slots<u8, 4>, 2>;
+  invariant nonempty(r): 0_u64 < r.cells.len;
+}
+
+fn inspect(rows: &Rows) -> result: unit reads(rows) contract {
+  requires rows^.cells[0_u64].len == 0_u64;
+} {
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+    );
+    let rendered = failure.to_string();
+    assert_eq!(failure.rule_id(), Some("OP-4"));
+    assert!(
+        rendered.contains("mechanical_fix: add `requires 0_u64 < rows^.cells.len;`"),
+        "{rendered}"
+    );
+    assert!(!rendered.contains("move the existing"), "{rendered}");
+}
+
+#[test]
 fn a_driver_stop_is_one_sentence_in_text_and_an_envelope_in_json() {
     let message = "cannot read \"missing.wf\": No such file or directory (os error 2)";
     assert_eq!(

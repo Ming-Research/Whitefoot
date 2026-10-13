@@ -167,7 +167,7 @@ impl<'unit> Checker<'_, 'unit> {
             return self.types.declarations.issue_node(
                 SemanticRule::Type2,
                 node,
-                SemanticIssueKind::ContainerConstruction {
+                SemanticIssueKind::OpaqueDestructuring {
                     nominal: written,
                     mechanical_fix,
                 },

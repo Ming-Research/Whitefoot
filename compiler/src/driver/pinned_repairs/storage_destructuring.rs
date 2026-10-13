@@ -59,6 +59,7 @@ fn main() -> status: std::process::ExitStatus pure {
         ),
         rule: "TYPE-2",
         sentences: &[
+            "error[TYPE-2]: OpaqueDestructuring\n",
             "\n  mechanical_fix: storage shapes expose their measures as readonly fields [TYPE-9]: when `values^` is a valid readable place, replace this statement with `let count = values^.len;` and extend the enclosing effect row to cover any reads through reference parameters [EFF-2]; otherwise remove this statement and replace uses of its bindings with the values the program needs\n",
         ],
         repaired: &[
