@@ -24,7 +24,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        rev: [e96f620db, 089f57c16]
+        rev: [e96f620db, 089f57c16, fix]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -32,7 +32,8 @@ jobs:
       - name: Build the compiler at ${{ matrix.rev }} with symbols
         run: |
           rustup default stable
-          git worktree add --detach "$RUNNER_TEMP/main" "${{ matrix.rev }}"
+          rev="${{ matrix.rev }}"; [ "$rev" = fix ] && rev="$GITHUB_SHA"
+          git worktree add --detach "$RUNNER_TEMP/main" "$rev"
           cargo fetch --locked --manifest-path "$RUNNER_TEMP/main/compiler/Cargo.toml"
           CARGO_PROFILE_GATE_DEBUG=line-tables-only CARGO_PROFILE_GATE_STRIP=none \
             cargo build --manifest-path "$RUNNER_TEMP/main/compiler/Cargo.toml" --profile gate --locked --offline
@@ -51,8 +52,11 @@ jobs:
           mkdir -p "$RUNNER_TEMP/out"
           bin="$RUNNER_TEMP/main/compiler/target/gate/whitefootc"
           perf_bin=$(command -v perf || ls /usr/lib/linux-tools/*/perf | head -1)
-          start=$(date +%s.%N)
           set +e
+          s0=$(date +%s.%N)
+          WHITEFOOT_CHECK_WORK="$RUNNER_TEMP/out/work-plain.tsv" timeout 900 "$bin" --graph "$RUNNER_TEMP/snowghost/renderer/modules.wfg" --check-module pkg::oracle::style --report > "$RUNNER_TEMP/out/check-plain.txt" 2>&1
+          printf "PLAIN rev=%s status=%s seconds=%.2f\n" "${{ matrix.rev }}" "$?" "$(echo "$(date +%s.%N) - $s0" | bc)"
+          start=$(date +%s.%N)
           WHITEFOOT_CHECK_WORK="$RUNNER_TEMP/out/work.tsv" timeout 900 "$perf_bin" record -F 199 -g --call-graph dwarf,16384 \
             -o "$RUNNER_TEMP/out/perf.data" -- "$bin" \
             --graph "$RUNNER_TEMP/snowghost/renderer/modules.wfg" --check-module pkg::oracle::style --report \

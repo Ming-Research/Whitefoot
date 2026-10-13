@@ -737,6 +737,25 @@ impl Reasoning<'_, '_, '_> {
             let constant = super::type_constant(measured_type);
             let mut place = source.clone();
             place.path.extend(path.iter().copied());
+            // [MSR-3] an unmentioned measured descendant has only standing
+            // facts, which hold at its destination without transport. Keep
+            // the whole family when any source measure is already a term.
+            if ![
+                CheckedMeasure::Length,
+                CheckedMeasure::Capacity,
+                CheckedMeasure::Head,
+                CheckedMeasure::Pages,
+                CheckedMeasure::Bytes,
+            ]
+            .into_iter()
+            .any(|measure| {
+                self.vocabulary
+                    .terms
+                    .interned(&TermKind::Measure(measure, place.clone()))
+                    .is_some()
+            }) {
+                continue;
+            }
             let event = self
                 .vocabulary
                 .proof_event(FlowEventKind::S5, Some(node_path));
