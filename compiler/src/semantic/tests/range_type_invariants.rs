@@ -586,7 +586,11 @@ fn atomic_alias_cases_retain_one_loop_certificate_with_all_covered_sites() {
     let source = format!(
         "fn update(first: Shared<Array<u64, 2>>, second: Shared<Array<u64, 2>>) -> result: unit pure waits {{
   atomic a = &first, b = &second {{
-    for (k in 0_u64..2_u64, apart(i, j) {{ }}) {{
+    for (
+      k in 0_u64..2_u64,
+      apart(i, j) {{
+      }}
+    ) {{
       let value = b^[k];
       set a^[k] = value;
     }}
