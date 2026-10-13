@@ -1,26 +1,122 @@
-//! A TCP receive releases a context computing without waits inside an atomic
-//! statement. With two drivers, the root submits the receive before running
-//! its single ready child locally; an idle driver may steal that child first.
-//! Sixteen runs alternate this direct receive and a split control that spins
-//! without waiting until the child's independent entry verdict is published.
-//! Every receive must finish within 100 ms. Both placements must occur: zero
-//! aggregate steals proves the same driver, while the split control's entry
-//! spin proves the child ran elsewhere. Placement uses counters present on
-//! main too. Before ring assist, a same-driver run cannot finish: only the
-//! receive can kill the computation, while only the computing driver's
-//! unserved ring can deliver the receive.
+//! A TCP receive releases a context computing without waits inside one atomic
+//! statement. A link-time observer records the submitting ring and the physical
+//! thread that parks the receive, then the thread that enters the computation
+//! after acquiring its shared object. Equal thread IDs prove that this driver
+//! parked the receive before starting the nonwaiting computation. The observer
+//! never services a ring or changes scheduling. Sixteen runs also include a
+//! split control whose source spins until the child publishes entry; that
+//! control must record distinct threads. Both placements must occur, and every
+//! receive must release the computation within 100 ms of the peer's send.
 
 use std::io::Write;
 use std::net::{TcpListener, TcpStream};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use super::support::{build_program, compile_program};
+use super::support::{build_program_with_driver_arguments, compile_program};
 use crate::support::ProgramChild;
 
 const RUNS: usize = 16;
 const START_LIMIT: Duration = Duration::from_secs(3);
 const RECEIVE_LIMIT: Duration = Duration::from_millis(100);
+
+// GNU ld wrapping observes the ordinary runtime entry points on main and on
+// this branch. These calls retain their real behavior; no observer progresses
+// or flushes a ring, makes a context ready, or changes a completion record.
+const PLACEMENT_OBSERVER: &str = r#"
+#define _GNU_SOURCE
+#include "linux_io_uring.h"
+#include "bridge.h"
+#include <fcntl.h>
+#include <inttypes.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+
+static _Thread_local wf_completion_record *receive_record;
+static _Thread_local wf_linux_io_uring_adapter *receive_adapter;
+
+static void trace_event(const char *event, uintptr_t ring) {
+    const char *path = getenv("WF_BUSY_RING_TRACE");
+    char line[128];
+    int length = snprintf(line, sizeof(line), "%s %ld %" PRIxPTR "\n",
+        event, (long)syscall(SYS_gettid), ring);
+    if (path == NULL || length <= 0 || (size_t)length >= sizeof(line)) abort();
+    int descriptor = open(path, O_WRONLY | O_APPEND | O_CLOEXEC);
+    if (descriptor < 0) abort();
+    if (write(descriptor, line, (size_t)length) != length) abort();
+    if (close(descriptor) != 0) abort();
+}
+
+enum wf_linux_io_uring_submit_result __real_wf_linux_io_uring_submit(
+    wf_linux_io_uring_adapter *adapter, wf_completion_record *record);
+
+enum wf_linux_io_uring_submit_result __wrap_wf_linux_io_uring_submit(
+    wf_linux_io_uring_adapter *adapter, wf_completion_record *record) {
+    enum wf_linux_io_uring_submit_result result =
+        __real_wf_linux_io_uring_submit(adapter, record);
+    if (result == WF_LINUX_IO_URING_TARGET_OWNS
+        && record->request.kind == WF_FILE_SOCKET_RECEIVE) {
+        receive_record = record;
+        receive_adapter = adapter;
+    }
+    return result;
+}
+
+int __real_wf__context_wait(void *operation, void *frame);
+int __wrap_wf__context_wait(void *operation, void *frame) {
+    int suspended = __real_wf__context_wait(operation, frame);
+    wf_completion_record *record = operation;
+    if (suspended == 1 && record == receive_record
+        && record->route == WF_COMPLETION_ROUTE_LINUX_IO_URING
+        && record->request.kind == WF_FILE_SOCKET_RECEIVE) {
+        trace_event("parked", (uintptr_t)receive_adapter);
+        receive_record = NULL;
+        receive_adapter = NULL;
+    }
+    return suspended;
+}
+
+uint32_t __real_wf__claim_written(void *cell);
+uint32_t __wrap_wf__claim_written(void *cell) {
+    uint32_t verdict = __real_wf__claim_written(cell);
+    trace_event("computing", 0);
+    return verdict;
+}
+"#;
+
+// Return the park and computation thread IDs only once both complete events
+// have arrived. A partial final line is retried rather than parsed as evidence.
+fn placement(trace: &str) -> Option<(u64, u64)> {
+    if !trace.ends_with('\n') {
+        return None;
+    }
+    let mut parked = None;
+    let mut computing = None;
+    for line in trace.lines() {
+        let fields = line.split_whitespace().collect::<Vec<_>>();
+        assert_eq!(fields.len(), 3, "invalid placement event: {trace}");
+        let thread = fields[1].parse::<u64>().expect("a physical thread ID");
+        assert_ne!(thread, 0, "invalid placement thread: {trace}");
+        let ring = u64::from_str_radix(fields[2], 16).expect("a ring address");
+        match fields[0] {
+            "parked" => {
+                assert_ne!(ring, 0, "the receive must name a native ring: {trace}");
+                assert!(parked.replace(thread).is_none(), "duplicate park: {trace}");
+            }
+            "computing" => {
+                assert_eq!(ring, 0, "invalid computation event: {trace}");
+                assert!(
+                    computing.replace(thread).is_none(),
+                    "duplicate computation: {trace}"
+                );
+            }
+            _ => panic!("unknown placement event: {trace}"),
+        }
+    }
+    Some((parked?, computing?))
+}
 
 fn native_ring_count(child: &ProgramChild) -> usize {
     std::fs::read_dir(format!("/proc/{}/fd", child.id()))
@@ -35,7 +131,20 @@ fn native_ring_count(child: &ProgramChild) -> usize {
 
 #[test]
 fn a_tcp_receive_releases_an_atomic_computation_with_an_idle_driver() {
-    let program = build_program(&compile_program("busy_ring_receive.wf"));
+    let program = build_program_with_driver_arguments(
+        &compile_program("busy_ring_receive.wf"),
+        Some(PLACEMENT_OBSERVER),
+        &[
+            "-std=c11",
+            "-Wall",
+            "-Wextra",
+            "-Werror",
+            "-Wno-override-module",
+            "-Wl,--wrap=wf_linux_io_uring_submit",
+            "-Wl,--wrap=wf__context_wait",
+            "-Wl,--wrap=wf__claim_written",
+        ],
+    );
     let mut same_driver = false;
     let mut split_driver = false;
     for run in 0..RUNS {
@@ -45,6 +154,8 @@ fn a_tcp_receive_releases_an_atomic_computation_with_an_idle_driver() {
             .expect("the reserved loopback address");
         drop(reservation);
         let split = run % 2 != 0;
+        let trace_path = program.working_directory().join(format!("placement-{run}"));
+        std::fs::write(&trace_path, b"").expect("create the placement trace");
         let mut command = Command::new(program.executable());
         command.arg(address.port().to_string());
         if split {
@@ -57,7 +168,8 @@ fn a_tcp_receive_releases_an_atomic_computation_with_an_idle_driver() {
             .env_remove("WF_IO_NO_NATIVE_RING")
             .env_remove("WF_WORKERS")
             .env("WF_DRIVERS", "2")
-            .env("WF_SCHED_REPORT", "2");
+            .env("WF_SCHED_REPORT", "2")
+            .env("WF_BUSY_RING_TRACE", &trace_path);
         let (mut child, ready) = ProgramChild::spawn_signalling_first_output(&mut command)
             .expect("start the busy-ring witness");
         ready.recv_timeout(START_LIMIT).unwrap_or_else(|error| {
@@ -112,15 +224,46 @@ fn a_tcp_receive_releases_an_atomic_computation_with_an_idle_driver() {
             .expect("connect to the witness's TCP listener");
         peer.set_write_timeout(Some(RECEIVE_LIMIT))
             .expect("bound the peer's write");
-        // Let the child enter its atomic statement and the root submit its
-        // receive. Source checks entry independently, so an early send cannot
-        // turn a receive that preceded computation into a successful run.
-        std::thread::sleep(Duration::from_millis(100));
-        assert!(child.try_wait().expect("inspect before sending").is_none());
+        // Send only after observing both the native receive's suspension and
+        // the child's acquired atomic statement. Equal thread IDs also prove
+        // that the native resume which suspended the root returned before the
+        // same driver entered the child's nonwaiting loop.
+        let start = Instant::now();
+        let (park_thread, compute_thread, trace) = loop {
+            let trace = std::fs::read_to_string(&trace_path).expect("read placement evidence");
+            if let Some((park_thread, compute_thread)) = placement(&trace) {
+                break (park_thread, compute_thread, trace);
+            }
+            assert!(
+                child.try_wait().expect("inspect before sending").is_none(),
+                "run {run}: the witness exited before both placement events: {trace}"
+            );
+            assert!(
+                start.elapsed() < START_LIMIT,
+                "run {run}: placement did not become observable: {trace}"
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        };
+        if park_thread == compute_thread {
+            assert!(
+                trace.starts_with("parked "),
+                "run {run}: receive did not park before computation: {trace}"
+            );
+            same_driver = true;
+        }
+        if split {
+            assert_ne!(
+                park_thread, compute_thread,
+                "run {run}: split source spin did not separate the drivers: {trace}"
+            );
+            split_driver = true;
+        }
+        // Distinct threads in a direct run are not placement evidence: a
+        // whole-role handoff can replace a driver's physical thread.
         assert_eq!(
             native_ring_count(&child),
             2,
-            "run {run}: two native driver rings"
+            "run {run}: two native driver rings; placement: {trace}"
         );
         let sent = Instant::now();
         peer.write_all(b"\n")
@@ -128,13 +271,13 @@ fn a_tcp_receive_releases_an_atomic_computation_with_an_idle_driver() {
         while child.try_wait().expect("inspect receive progress").is_none() {
             assert!(
                 sent.elapsed() < RECEIVE_LIMIT,
-                "run {run}: the receive did not release the atomic computation within {RECEIVE_LIMIT:?}"
+                "run {run}: the receive did not release the atomic computation within {RECEIVE_LIMIT:?}; placement: {trace}"
             );
             std::thread::sleep(Duration::from_millis(1));
         }
         assert!(
             sent.elapsed() < RECEIVE_LIMIT,
-            "run {run}: exit exceeded {RECEIVE_LIMIT:?}"
+            "run {run}: exit exceeded {RECEIVE_LIMIT:?}; placement: {trace}"
         );
         drop(peer);
         let output = child
@@ -144,7 +287,6 @@ fn a_tcp_receive_releases_an_atomic_computation_with_an_idle_driver() {
         assert_eq!(output.stdout, b"r", "run {run}: {output:?}");
         let stderr = String::from_utf8(output.stderr).expect("a text driver report");
         let mut drivers = 0;
-        let mut stolen = 0_u64;
         for line in stderr.lines().filter(|line| line.starts_with("driver: ")) {
             let field = |name: &str| {
                 line.split_whitespace()
@@ -154,21 +296,23 @@ fn a_tcp_receive_releases_an_atomic_computation_with_an_idle_driver() {
                     .expect("a driver report count")
             };
             assert_eq!(field("index="), drivers, "run {run}: {stderr}");
-            stolen += field("stolen_contexts=");
             drivers += 1;
         }
         assert_eq!(drivers, 2, "run {run}: {stderr}");
-        // Zero steals is conservative: a later steal excludes a valid same-
-        // driver run rather than falsely counting it. Latency was required
-        // above regardless of how this run's placement is classified.
-        same_driver |= stolen == 0;
-        if split {
-            assert!(
-                stolen > 0,
-                "run {run}: split entry spin had no context steal: {stderr}"
-            );
-            split_driver = true;
-        }
+        let final_trace = std::fs::read_to_string(&trace_path).expect("read the final trace");
+        assert_eq!(
+            placement(&final_trace),
+            Some((park_thread, compute_thread)),
+            "run {run}: placement changed after the peer sent: {final_trace}"
+        );
+        // Keep successful placement evidence in CI output too, after the
+        // timed interval. The temporary trace is removed with the program.
+        writeln!(
+            std::io::stderr().lock(),
+            "busy-ring receive run {run} split={split}: {}",
+            final_trace.trim_end().replace('\n', "; ")
+        )
+        .expect("report native placement evidence");
     }
     assert!(
         same_driver,

@@ -1,13 +1,14 @@
 fn compute_until_killed(state: Shared<DecisionCell>, started: DecisionCell) -> result: unit pure waits {
-  doc "Holds one shared object in one atomic statement, publishing entry through an independent decision cell and reading its verdict without waiting until the receiving context kills it.";
+  doc "Holds one shared object in one atomic statement, reading it to acquire the hold before publishing entry through an independent decision cell, then polling its verdict without waiting until the receiving context kills it.";
   atomic cell = &state {
+    let verdict = decision_cell_read(cell: cell);
     let entered = claim_written(cell: &started);
     let killed = Killed();
     loop @computing {
-      let verdict = decision_cell_read(cell: cell);
       if verdict == killed {
         break @computing;
       }
+      set verdict = decision_cell_read(cell: cell);
     }
   }
   return unit;

@@ -793,4 +793,85 @@ CI, and nothing runs on the Mac.
 - **Kernel posting while the submitter computes** is observed for a pipe read
   (`driver_service_native_test.c`). For a socket receive it is expected to
   work the same way, through signalled task work, but has not yet been
-  observed. The witness's same-driver arm observes it.
+  established by the program witness: its former zero-steal classification
+  did not directly observe the receive's ring or the computing executor.
+
+## 9. Busy-receive witness audit (2026-10-13)
+
+The reported main-only run of `busy_ring_receive.wf` passed all sixteen
+invocations, including invocations classified as same-driver. That result
+does not establish the ring-assist regression. This audit reads code only;
+the replacement observation has not been built or run. The comparison uses
+main `5b7838b328632999712aacf8313717b6dca1ade6` and branch
+`f9f7dc5ee2faaf74a435a6ca05ccde0b32fbb5db`.
+
+The computation already has the required uninterrupted shape. Its one
+atomic statement encloses the loop. Lowering initializes a lazy taken flag
+outside that loop and skips acquisition after the first take; the backedge
+is an ordinary jump. `decision_cell_read` calls a sequentially consistent
+load, not a waiting operation. The 64-pass cooperative boundary occurs
+before acquisition, not on each decision-cell read. Replacing this loop
+with another computation would not explain the reported pass. See the
+[lazy acquisition flag](../../../compiler/src/lowering/builder/atomic.rs),
+[loop backedge](../../../compiler/src/lowering/builder/loops.rs), and
+[main's decision load](https://github.com/Ming-Research/Whitefoot/blob/5b7838b328632999712aacf8313717b6dca1ade6/compiler/src/backend/completion/bridge.c#L3826)
+and [cooperative boundary](https://github.com/Ming-Research/Whitefoot/blob/5b7838b328632999712aacf8313717b6dca1ade6/compiler/src/backend/completion/bridge.c#L2031).
+
+Zero `stolen_contexts` is not a general placement proof. The idle driver's
+service-only borrow can detach a published terminal record or a due sleep
+and resume its context on the borrowing driver without incrementing that
+counter. However, the direct arm has no identified post-spawn operation
+that uses this escape before its receive. This is a hole in the former
+evidence, **not a demonstrated explanation of the reported main pass**.
+The migration is in
+[main's borrow path](https://github.com/Ming-Research/Whitefoot/blob/5b7838b328632999712aacf8313717b6dca1ade6/compiler/src/backend/completion/bridge.c#L4691).
+
+With a native ring, this valid nonempty TCP receive routes to the current
+executor's ring before readiness or helper fallback. Accept provenance does
+not select the later receive's ring. Main's idle peers service only runtime
+records already published or due sleeps; they do not reap another ring.
+Its monitor only hands off for a due deadline, and the witness supplies
+none. Spare threads and the monitor park on private wake endpoints. Ring
+setup does not enable SQPOLL. Thus a pending receive on the computing
+executor's ring cannot complete while that executor remains in this loop.
+The submission may still be staged: main can select the ready child before
+flushing its deferred doorbell. Both staged submissions and unreaped CQEs
+are shapes the branch's ring trigger covers. The relevant main paths are
+[ring selection](https://github.com/Ming-Research/Whitefoot/blob/5b7838b328632999712aacf8313717b6dca1ade6/compiler/src/backend/completion/bridge.c#L354),
+[dispatch](https://github.com/Ming-Research/Whitefoot/blob/5b7838b328632999712aacf8313717b6dca1ade6/compiler/src/backend/completion/bridge.c#L5755),
+[borrow service](https://github.com/Ming-Research/Whitefoot/blob/5b7838b328632999712aacf8313717b6dca1ade6/compiler/src/backend/completion/bridge.c#L4628),
+[deadline handoff](https://github.com/Ming-Research/Whitefoot/blob/5b7838b328632999712aacf8313717b6dca1ade6/compiler/src/backend/completion/bridge.c#L4950),
+[spare parking](https://github.com/Ming-Research/Whitefoot/blob/5b7838b328632999712aacf8313717b6dca1ade6/compiler/src/backend/completion/bridge.c#L5046),
+[ready-child selection](https://github.com/Ming-Research/Whitefoot/blob/5b7838b328632999712aacf8313717b6dca1ade6/compiler/src/backend/completion/bridge.c#L4845), and
+[ring setup and deferred submission](../../../compiler/src/backend/completion/linux_io_uring.c).
+
+The revised harness observes ordinary calls with link-time wrappers. It
+records the receive's actual adapter and the physical thread that returns a
+pending context wait, then records the computation's entry on that thread
+after its first shared-state read. It sends the peer's byte only after both
+records exist. Equal thread IDs, with the wait recorded first, establish
+the required schedule directly; the thread cannot enter the child until
+the root has unwound its wait. Different IDs in the direct arm are left
+unclassified because a role handoff can also change physical threads. The
+explicit split arm retains its independent nonwaiting entry spin. See the
+[observer and harness](../../../compiler/tests/programs/busy_ring_receive.rs)
+and [source witness](../../../tests/programs/busy_ring_receive.wf).
+
+The wrappers do not submit, flush, reap, move a context or release the
+computation. Their trace writes precede the measured peer send and occur
+outside the spinning loop. On main, a directly observed same-thread run
+must miss the receive bound because only that receive can release the
+computation. On this branch, the monitor sees pending ring work in the same
+OUTSIDE epoch, reserves a spare, and binds it to the entire driver role;
+ordinary service then flushes/reaps the receive. The 100 ms bound is a test
+criterion, not an unconditional host scheduling guarantee. See the branch's
+[ring-watch trigger](https://github.com/Ming-Research/Whitefoot/blob/f9f7dc5ee2faaf74a435a6ca05ccde0b32fbb5db/compiler/src/backend/completion/bridge.c#L5050)
+and [whole-role reservation](https://github.com/Ming-Research/Whitefoot/blob/f9f7dc5ee2faaf74a435a6ca05ccde0b32fbb5db/compiler/src/backend/completion/bridge.c#L5004).
+
+Acceptance still requires running the identical revised files against both
+runtimes on the native Linux host: main must fail on the directly observed
+same-thread schedule, the branch must pass, and the explicit split control
+must pass. If main still passes, inspect the direct trace and the native
+build provenance before claiming either that the defect is absent or that
+an alternate delivery path explains it. No main failure or branch success
+for this revision is claimed by this code audit.
