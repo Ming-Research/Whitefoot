@@ -532,6 +532,33 @@ EPYC 7763 hosts against 20 s on 2026-10-12. The stage is its group's only
 labeled stage. The owner approved a raise of 10 s, to 30 s, on the status
 board on 2026-10-12 (card ci-runtime-budget-raise).
 
+**The corpus stage on macOS, raised to 205 s.** On 2026-10-13 three consecutive
+main merges failed the gate only because `compiler/test-corpus` overran its
+185 s on macos-15, with every case passing: 203.5 s (run 38326724649, a
+research-only change), 196.6 s (run 38331202789) and 192.2 s with
+`check/corpus` at 360.4 s of 340 s (run 38332455808). Over the 58 main runs
+from 2026-10-10 to 2026-10-13 the stage took 110.8 to 203.7 s, mean 146.7 s;
+the four runs over 185 s were spread over three days, the ubuntu stage rose
+and fell with it, the runner images did not change, and the ten slowest
+cases were the same in fast and slow runs, so no change of main explains the
+overruns. The rule's 10-s raise would not have covered 203.5 s, so the owner
+set the budget directly, approving a raise of 20 s, to 205 s, with
+`check/corpus` on macOS to 360 s, on the status board on 2026-10-13 (card
+macos-corpus-budget-raise); ubuntu is unchanged.
+
+**The corpus stage on ubuntu, raised to 205 s.** On 2026-10-13 three pull
+requests failed the gate only because `compiler/test-corpus` overran its
+185 s on ubuntu-24.04, every case passing and each re-run passing: 188.4 s on
+a change to gate workflow messages only (#415), 185.4 s on a change adding
+conformance cases (#406, 144.6 s on the round before) and 185.9 s on a
+backend change adding no corpus case (#417, 183.6 s on the same commit
+earlier). Eleven recent ubuntu runs took 137.3 to 185.9 s, a spread of about
+35% for the same work, matching the macOS finding above that no change of
+main explains the overruns. The owner set the budget directly, approving a
+raise of 20 s, to 205 s, with `check/corpus` on ubuntu to 335 s, on the status
+board on 2026-10-13 (card linux-corpus-budget-raise), so both hosts carry the
+same corpus budget.
+
 **The candidate's images, back to 10 s.** `performance-candidate-images`
 builds the five formal kernels with the candidate compiler right after the
 two cold compiler builds. On PRs #278 and #289 it overran its 10-s floor on
