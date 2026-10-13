@@ -1754,25 +1754,23 @@ fn boxed_runtime_ring_wraps_and_releases_each_owner_in_order() {
         "  let ring = box_ring_new::<Box<u64>>(capacity: 3_u64);",
         r#"  let empty = ring_new::<Box<u64>, 3>();
   let ring = box_new::<Ring<Box<u64>, 3>>(value: move empty);
-  let empty_len_code = cvt::<u64, u8>(ring.inner.len);
-  let empty_head_code = cvt::<u64, u8>(ring.inner.head);"#,
+  if ring.inner.len != 0_u64 {
+    return std::process::exit_status(code: 12_u8);
+  }
+  if ring.inner.head != 0_u64 {
+    return std::process::exit_status(code: 13_u8);
+  }"#,
     );
     assert_ne!(fixed, source);
     let (partial, _) = fixed
         .split_once("  let second_owner = take_front(window: &ring.inner);")
         .expect("the original control drains a second element");
-    // The boxed inline ring's two header words, read right after `box_new`
-    // over storage the host fills with 0xa5, must both be 0. Each partial
-    // program returns one of them as its exit status; the stdout channel is
-    // the allocation trace.
-    let partials = ["empty_len_code", "empty_head_code"].map(|code| {
-        format!("{partial}  return std::process::exit_status(code: {code});\n}}\n")
-    });
+    let partial = format!("{partial}  return std::process::exit_status(code: 0_u8);\n}}\n");
     let host = allocation_observer(5, 0).replace(
         "held[id] = allocation;",
         "memset(allocation, 0xa5, size);\n    held[id] = allocation;",
     );
-    for source in [source, partials[0].as_str(), partials[1].as_str()] {
+    for source in [source, partial.as_str()] {
         let module = compile(source.as_bytes());
         let observed = retain_calls(&module)
             .replace("@wf__heap_take(", "@wf_test_allocate(")
