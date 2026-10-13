@@ -60,7 +60,7 @@ use walk::*;
 
 use sources::{bound_place, capture_counted_preheader};
 
-use results::ResultEvidence;
+use results::{ResultDemand, ResultEvidence};
 use sources::{MeasureCarry, ValueImage};
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -1426,6 +1426,7 @@ impl<'check, 'unit> Analyzer<'check, 'unit> {
                         .is_some_and(|callee| callee.range_boundary)
                 }),
                 places: PlaceMap::default(),
+                result_demand: ResultDemand::default(),
                 entry_images: Vec::new(),
                 postcondition_entry_images: Vec::new(),
             },
@@ -1816,6 +1817,8 @@ struct Input<'check, 'unit> {
     range_participant: bool,
     /// [REF-1] place resolution for this function.
     places: PlaceMap,
+    /// Conditional contexts whose binding can reach a route-reading consumer.
+    result_demand: ResultDemand,
     entry_images: Vec<EntryImageRecord>,
     /// Global entry-image indices used by each source-ordered relation. The
     /// flow state tracks invalidation once per structural image, while each
@@ -1973,7 +1976,17 @@ impl<'check, 'unit> Judging<'_, 'check, 'unit> {
 
 impl Input<'_, '_> {
     fn collect_bindings(&mut self) {
-        self.places = PlaceMap::for_function(self.function);
+        let routed_return = self
+            .function
+            .postconditions
+            .iter()
+            .any(|postcondition| postcondition.selector.is_routed());
+        let mut demand = ResultDemand::default();
+        self.places = PlaceMap::for_function_observing(self.function, |statement, receiver| {
+            demand.observe(statement, receiver, routed_return);
+        });
+        demand.finish();
+        self.result_demand = demand;
     }
 }
 

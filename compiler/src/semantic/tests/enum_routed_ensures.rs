@@ -42,9 +42,8 @@ fn separate_fields_retain_distinct_route_identities_and_verified_summaries() {
 
 #[test]
 fn explicit_enum_routes_keep_their_result_ordinals() {
-    let source = include_bytes!(
-        "../../../../tests/conformance/cases/call4-pos-enum-explicit-ordinals.wf"
-    );
+    let source =
+        include_bytes!("../../../../tests/conformance/cases/call4-pos-enum-explicit-ordinals.wf");
     with_semantics_dark(source, |outcome| {
         let SemanticOutcome::Complete(checked) = outcome else {
             panic!("explicit ordinal routes must check: {outcome:?}");
@@ -125,5 +124,156 @@ fn a_nondata_generic_instance_is_refused_at_its_route_and_names_its_request() {
         let request = issue.request.expect("concrete Bool instance requester");
         assert_eq!(request.source(), coordinate.source());
         assert_eq!(cited(request), b"retain::<Bool>(value: flag)");
+    });
+}
+
+#[test]
+fn unread_routed_call_keeps_its_required_conditional_root() {
+    let source = br#"enum Outcome {
+  Some(value: u64);
+  None();
+}
+
+fn make() -> result: Outcome pure contract {
+  ensures when Some(value: n): n <= 7_u64;
+} {
+  return Outcome::Some(value: 7_u64);
+}
+
+fn discard(flag: Bool) -> result: unit pure {
+  let unread = make();
+  if flag {
+    set unread = Outcome::None();
+  }
+  return unit;
+}
+"#;
+    with_semantics_dark(source, |outcome| {
+        let SemanticOutcome::Complete(checked) = outcome else {
+            panic!("unread call must check: {outcome:?}");
+        };
+        let function = checked
+            .data
+            .executable_functions()
+            .find(|function| function.name == "discard")
+            .expect("discard");
+        assert_eq!(function.entailment.derivations.roots.iter().filter(|root| {
+            matches!(root.kind, crate::semantic::entailment::DerivationRootKind::PostconditionConditional { .. })
+        }).count(), 1);
+    });
+}
+
+#[test]
+fn future_match_retains_construction_exclusion_through_copy_and_join() {
+    let source = br#"enum Outcome {
+  Some(value: u64);
+  None();
+}
+
+fn read(value: u64, unknown: Outcome) -> result: u8 pure {
+  let selected = Outcome::None();
+  if value <= 7_u64 {
+    set selected = unknown;
+  }
+  let copied = selected;
+  match copied {
+    Some(value: ignored) => {
+      return cvt::<u64, u8>(value);
+    }
+    None() => {
+      return 0_u8;
+    }
+  }
+}
+"#;
+    with_semantics(source, |outcome| {
+        assert!(
+            matches!(outcome, SemanticOutcome::Complete(_)),
+            "selecting Some must recover value <= 7 from its only possible branch: {outcome:?}"
+        );
+    });
+
+    // A bound covering all u64 values supplies no evidence for narrowing,
+    // even when Some still comes from just one branch of the same join.
+    let unbounded = std::str::from_utf8(source)
+        .expect("UTF-8 witness")
+        .replace("value <= 7_u64", "value <= 18446744073709551615_u64");
+    with_semantics(unbounded.as_bytes(), |outcome| {
+        let SemanticOutcome::SourceIssue { issue } = outcome else {
+            panic!("the unproved narrowing must reject: {outcome:?}");
+        };
+        assert_eq!(issue.rule(), SemanticRule::Op6);
+        let SemanticIssueKind::UndischargedConversionDomainObligation {
+            disposition,
+            residual,
+            ..
+        } = issue.kind()
+        else {
+            panic!("expected the narrowing obligation, got {:?}", issue.kind());
+        };
+        assert_eq!(*disposition, crate::StaticObligationDisposition::Unproved);
+        assert_eq!(residual, "cvt.defined::<u64, u8>(value)");
+        let SemanticLocation::SourceNode(_, coordinate) = issue.location();
+        let start = usize::try_from(coordinate.start().value()).expect("offset fits");
+        let end = usize::try_from(coordinate.end().value()).expect("offset fits");
+        assert_eq!(&unbounded.as_bytes()[start..end], b"cvt::<u64, u8>(value)");
+    });
+}
+
+#[test]
+fn a_call_requirement_retains_its_copied_argument_route() {
+    let source = br#"struct Span {
+  low: u64;
+  high: u64;
+  invariant ordered(span): span.low <= span.high;
+}
+
+fn take(value: Option<Span>) -> result: u64 pure {
+  return 0_u64;
+}
+
+fn caller() -> result: u64 pure {
+  let span = Span(low: 2_u64, high: 9_u64);
+  let made = Some<Span>(value: span);
+  let copied = made;
+  return take(value: copied);
+}
+"#;
+    with_semantics(source, |outcome| {
+        assert!(
+            matches!(outcome, SemanticOutcome::Complete(_)),
+            "the call must receive the copied payload invariant: {outcome:?}"
+        );
+    });
+
+    // Construct a valid Span first, then invalidate it before wrapping and
+    // copying. An unknown Option<Span> parameter would instead establish the
+    // routed invariant at body entry and would not be a negative control.
+    let unordered = std::str::from_utf8(source)
+        .expect("UTF-8 witness")
+        .replace(
+            "  let made = Some<Span>(value: span);",
+            "  set span.low = 10_u64;\n  let made = Some<Span>(value: span);",
+        );
+    with_semantics(unordered.as_bytes(), |outcome| {
+        let SemanticOutcome::SourceIssue { issue } = outcome else {
+            panic!("the invalid copied payload must reject at its call: {outcome:?}");
+        };
+        assert_eq!(issue.rule(), SemanticRule::Fn8);
+        let SemanticIssueKind::UndischargedCallRequirement(detail) = issue.kind() else {
+            panic!("expected the routed call requirement, got {:?}", issue.kind());
+        };
+        assert_eq!(detail.concrete_callee, "take");
+        let cited = |location: &SemanticLocation| {
+            let SemanticLocation::SourceNode(_, coordinate) = location;
+            let start = usize::try_from(coordinate.start().value()).expect("offset fits");
+            let end = usize::try_from(coordinate.end().value()).expect("offset fits");
+            &unordered.as_bytes()[start..end]
+        };
+        assert_eq!(cited(issue.location()), b"take(value: copied)");
+        assert_eq!(
+            cited(&detail.requires_clause),
+            b"invariant ordered(span): span.low <= span.high;"
+        );
     });
 }

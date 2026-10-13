@@ -1419,6 +1419,16 @@ pub(crate) struct PlaceMap {
 
 impl PlaceMap {
     pub(crate) fn for_function(function: &CheckedFunction) -> Self {
+        Self::for_function_observing(function, |_, _| {})
+    }
+
+    /// Collect a consumer's source inventory alongside the existing binding
+    /// inventory. The second argument names the enclosing value initializer,
+    /// whose `give` statements transfer to that binding.
+    pub(crate) fn for_function_observing(
+        function: &CheckedFunction,
+        mut observe: impl FnMut(&CheckedStatement, Option<BindingId>),
+    ) -> Self {
         let mut map = Self::default();
         for parameter in &function.parameters {
             let summary = map.summary_mut(parameter.binding);
@@ -1438,7 +1448,11 @@ impl PlaceMap {
                 summary.reference_paths.clone_from(paths);
             }
         }
-        map.collect_block_bindings(function.body.as_deref().unwrap_or_default());
+        map.collect_block_bindings(
+            function.body.as_deref().unwrap_or_default(),
+            None,
+            &mut observe,
+        );
         for summary in &mut map.bindings {
             summary.reference_unknown = summary.reference && summary.reference_paths.is_empty();
         }
@@ -1523,8 +1537,14 @@ impl PlaceMap {
 
     /// Collects types and reference kinds only. Origin paths come from the
     /// final structural traversal, including every payload and delivery edge.
-    fn collect_block_bindings(&mut self, statements: &[CheckedStatement]) {
+    fn collect_block_bindings(
+        &mut self,
+        statements: &[CheckedStatement],
+        receiver: Option<BindingId>,
+        observe: &mut impl FnMut(&CheckedStatement, Option<BindingId>),
+    ) {
         for statement in statements {
+            observe(statement, receiver);
             match statement {
                 CheckedStatement::Let { binding, value, .. } => {
                     let names_reference = match named_place(value).map(|named| named.form) {
@@ -1556,15 +1576,17 @@ impl PlaceMap {
                     let summary = self.summary_mut(*binding);
                     summary.ty = Some(*result_type);
                     summary.reference |= result_mode.is_reference();
-                    self.collect_arm_bindings(arms);
+                    self.collect_arm_bindings(arms, Some(*binding), observe);
                 }
                 CheckedStatement::Match { arms, .. } => {
-                    self.collect_arm_bindings(arms);
+                    self.collect_arm_bindings(arms, receiver, observe);
                 }
-                CheckedStatement::Loop { body, .. } => self.collect_block_bindings(body),
+                CheckedStatement::Loop { body, .. } => {
+                    self.collect_block_bindings(body, receiver, observe)
+                }
                 CheckedStatement::CountedRange { binder, body, .. } => {
                     self.summary_mut(*binder).ty = Some(CheckedType::Integer(IntegerType::U64));
-                    self.collect_block_bindings(body);
+                    self.collect_block_bindings(body, receiver, observe);
                 }
                 // [SHARE-2] the binding is a reference anchored at the
                 // object's state, as a reference parameter is at itself.
@@ -1580,21 +1602,26 @@ impl PlaceMap {
                             summary.reference_paths = vec![ResolvedPlace::binding(*binding)];
                         }
                     }
-                    self.collect_block_bindings(body);
+                    self.collect_block_bindings(body, receiver, observe);
                 }
                 _ => {}
             }
         }
     }
 
-    fn collect_arm_bindings(&mut self, arms: &[CheckedMatchArm]) {
+    fn collect_arm_bindings(
+        &mut self,
+        arms: &[CheckedMatchArm],
+        receiver: Option<BindingId>,
+        observe: &mut impl FnMut(&CheckedStatement, Option<BindingId>),
+    ) {
         for arm in arms {
             for binder in &arm.binders {
                 let summary = self.summary_mut(binder.binding);
                 summary.ty = Some(binder.ty);
                 summary.reference |= binder.mode.is_reference();
             }
-            self.collect_block_bindings(&arm.body);
+            self.collect_block_bindings(&arm.body, receiver, observe);
         }
     }
 }
