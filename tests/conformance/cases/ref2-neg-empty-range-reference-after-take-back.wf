@@ -1,13 +1,22 @@
 alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
+fn remove_last(window: &Slots<u64, 8>) -> result: unit writes(window.last), writes(window.len) contract {
+  requires window^.len > 0_u64;
+  ensures window^.len + 1_u64 == entry(window)^.len;
+} {
+  doc "Removes one last value and publishes the decreased exit length to its caller.";
+  let taken = take_back(window: window);
+  return unit;
+}
+
 fn probe(window: &Slots<u64, 8>) -> result: u64 writes(window) contract {
   requires window^.len >= 1_u64;
 } {
-  doc "An empty range at the old endpoint still requires that captured endpoint at or below the current length.";
+  doc "A user removal helper's shrinking postcondition violates an empty range's captured endpoint bound; emptiness alone cannot preserve the reference.";
   let end = window^.len;
   let empty = &window^[end..end];
-  let taken = take_back(window: window);
+  remove_last(window: window);
   return empty^.len;
 }
 

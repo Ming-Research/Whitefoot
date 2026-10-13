@@ -1,12 +1,21 @@
 alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
+fn empty_one(window: &Slots<u64, 8>) -> result: unit writes(window.last), writes(window.len) contract {
+  requires window^.len == 1_u64;
+  ensures window^.len == 0_u64;
+} {
+  doc "Removes the only value and publishes that the exit window is empty.";
+  let taken = take_back(window: window);
+  return unit;
+}
+
 fn probe(window: &Slots<u64, 8>) -> result: u64 writes(window) contract {
   requires window^.len == 1_u64;
 } {
-  doc "An emptied slot invalidates its reference immediately; filling that slot again does not revive the old reference.";
+  doc "The user helper's empty exit state invalidates the reference at that call; a later place_back cannot revive it by restoring the bound.";
   let first = &window^[0_u64];
-  let taken = take_back(window: window);
+  empty_one(window: window);
   place_back(window: window, value: 7_u64);
   return first^;
 }

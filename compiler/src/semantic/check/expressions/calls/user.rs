@@ -1848,8 +1848,9 @@ impl<'unit> TypeContext<'unit> {
 
 impl<'unit> TypeContext<'unit> {
     /// [OP-10] retain each potentially affected selection's formation bound
-    /// as a post-call preservation query. Ordinary prefix writes and Ring
-    /// origin shifts remain unconditional invalidations [REF-2].
+    /// as a post-call preservation query where OP-10 permits survival.
+    /// Canonical take_back/remove_at, Ring origin shifts and ordinary
+    /// prefix writes retain their unconditional invalidations [REF-2].
     fn invalidate_window_operation_references(
         &self,
         node: NodeId,
@@ -1898,8 +1899,13 @@ impl<'unit> TypeContext<'unit> {
             };
             let shifts_origin =
                 prelude && matches!(signature.name.as_str(), "place_front" | "take_front");
-            if shifts_origin {
-                Checker::invalidate_window_references(bindings, &window, true);
+            // OP-10 explicitly invalidates selections at these two removal
+            // operations, even if other facts prove their old bound. A source
+            // helper is judged by its own row and published postconditions.
+            let removes_selection =
+                prelude && matches!(signature.name.as_str(), "take_back" | "remove_at");
+            if shifts_origin || removes_selection {
+                Checker::invalidate_window_references(bindings, &window, shifts_origin);
             } else {
                 self.preserve_window_references(site, bindings, &window)?;
             }

@@ -2064,7 +2064,7 @@ impl Reasoning<'_, '_, '_> {
         range: CapturedRange,
         state: &ProofFlowState,
     ) -> Option<ProofResult> {
-        let end = self.captured_value_image(range.end, &state.affine)?;
+        let (_, end) = self.range_endpoint_images(range, &state.affine)?;
         let length = self
             .vocabulary
             .terms

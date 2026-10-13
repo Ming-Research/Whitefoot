@@ -144,8 +144,8 @@ pub(super) enum InvalidationEvent {
     /// reference's bound was formed under [OP-10, REF-4].
     ///
     /// This is not [EFF-5]'s prefix rule: `take_back` writes `r.len`, which
-    /// is no prefix of `r[i]`. Its selected place survives only if the
-    /// post-call facts prove the captured index remains below that length.
+    /// is no prefix of `r[i]`. OP-10 explicitly invalidates selections at
+    /// take_back and remove_at, independently of any surviving bound.
     WindowBoundaryMoved,
 }
 
@@ -737,9 +737,10 @@ impl<'unit> Checker<'_, 'unit> {
         Ok(())
     }
 
-    /// [OP-10, REF-2] invalidate a window's selections when its origin
-    /// shifts, independently of any numeric bound. Boundary-only calls use
-    /// `preserve_window_references` to retain their post-call proof query.
+    /// [OP-10, REF-2] invalidate a window's selections at take_back,
+    /// remove_at or an origin shift, independently of any numeric bound.
+    /// Other boundary calls use `preserve_window_references` to retain their
+    /// post-call proof query.
     pub(super) fn invalidate_window_references(
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         window: &ResolvedPlace,
@@ -750,7 +751,7 @@ impl<'unit> Checker<'_, 'unit> {
                 continue;
             };
             // The subject is a reference *into* the window, formed under a
-            // bound the operation ends: `&r[i]` under `i < r.len` and
+            // selection bound: `&r[i]` under `i < r.len` and
             // `&r[lo..hi]` under `hi <= r.len` [REF-4]. A reference to the
             // window itself names the window whatever its boundary is, and a
             // callee that received one and moved that boundary still holds
@@ -2428,8 +2429,9 @@ impl<'unit> DeclarationInventory<'unit> {
 }
 
 impl<'unit> TypeContext<'unit> {
-    /// [OP-10] a window boundary write preserves a selected place exactly
-    /// when its captured formation bound holds after the call. As with
+    /// [OP-10] outside its explicit removal and origin-shift invalidations,
+    /// a window boundary write preserves a selected place exactly when its
+    /// captured formation bound holds after the call. As with
     /// structural preservation, only a later use demands this question;
     /// copies and loop joins carry it through the existing validity lattice.
     pub(super) fn preserve_window_references(
