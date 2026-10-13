@@ -96,14 +96,14 @@ summarize() {
 	NR > 1 && NF >= 5 {
 		name = $5
 		sub(/[.].*/, "", name)
-		if (name !~ /^wf_(step|compound|test)_with(out)?$/) next
+		if (name !~ /^wf_(_env_)?(step|compound|test)_with(out)?$/) next
 		calls[name] += num($1)
 		excl[name] += num($2)
 		incl[name] += num($3)
 	}
 	END {
 		for (name in calls) {
-			function_name = name; sub(/^wf_/, "", function_name)
+			function_name = name; sub(/^wf_(_env_)?/, "", function_name)
 			copy = (function_name ~ /_without$/) ? "without" : "with"
 			sub(/_with(out)?$/, "", function_name)
 			if (calls[name] > 0) printf "%s\t%s\t%s\t%d\t%.2f\t%.2f\n", variant, function_name, copy, calls[name], excl[name] / calls[name], incl[name] / calls[name]
@@ -118,8 +118,8 @@ summarize() {
 	inmain && $1 == "1,048,576" {
 		n++
 		copy[n] = ""
-		if ($0 ~ /call.*<wf_step_with(\.[^>]*)?>/) copy[n] = "with"
-		if ($0 ~ /call.*<wf_step_without(\.[^>]*)?>/) copy[n] = "without"
+		if ($0 ~ /call.*<wf_(_env_)?step_with(\.[^>]*)?>/) copy[n] = "with"
+		if ($0 ~ /call.*<wf_(_env_)?step_without(\.[^>]*)?>/) copy[n] = "without"
 	}
 	END {
 		for (i = 1; i <= n; i++) {
