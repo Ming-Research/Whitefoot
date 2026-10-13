@@ -26,6 +26,11 @@ impl RangeOperand {
         &self.term
     }
 
+    /// Identity framing is admitted for every type, without equality expansion [RANGE-1].
+    pub(super) fn into_term(self) -> CheckedRangeTerm {
+        self.term
+    }
+
     /// [RANGE-1] `e is V` holds where e's versioned tag equals V's
     /// declaration-order number, and `e is not V` where it differs. The tag
     /// projection is value equality's, so the tag read keeps e's own

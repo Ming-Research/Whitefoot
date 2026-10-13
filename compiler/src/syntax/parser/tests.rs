@@ -1256,7 +1256,7 @@ fn declaration_and_parameter_optionals_report_their_complete_expected_sets() {
 
 #[test]
 fn bare_bool_range_guard_rejects_with_the_is_true_repair() {
-    // [GRAM-5, RANGE-1] a guard is one comparison or one variant relation, so
+    // [GRAM-5, RANGE-1] a guard requires one relation, so
     // a Bool datum written alone stops at its `:`.
     let source = b"fn inspect(nodes: &[Bool]) -> result: unit pure contract {\n  requires forall held(k in 0_u64..nodes^.len) when nodes^[k]: k == k;\n} {\n  return unit;\n}\n".as_slice();
     let outcome = parse_active("bare-guard.wf", source);
@@ -1269,4 +1269,21 @@ fn bare_bool_range_guard_rejects_with_the_is_true_repair() {
         format!("{issue:?}").contains("`is True`"),
         "the diagnostic names the `is True` spelling: {issue:?}"
     );
+}
+
+/// [GRAM-5, RANGE-1] the suffix is parsed in guards and ordinary relations
+/// so the semantic restriction can name RANGE-1 instead of a grammar error.
+#[test]
+fn unchanged_suffixes_parse_for_semantic_admission() {
+    let source = br#"fn preserve(cell: &Array<u64, 1>) -> result: unit writes(cell) contract {
+  requires cell^[0_u64] unchanged;
+  requires forall incoming(k in 0_u64..cell^.len): cell^[k] unchanged;
+  ensures forall preserved(k in 0_u64..entry(cell)^.len): cell^[k] unchanged;
+  ensures forall guarded(k in 0_u64..cell^.len) when cell^[k] unchanged: cell^[k] == k;
+} {
+  return unit;
+}
+"#;
+    let outcome = parse_active("unchanged.wf", source);
+    assert!(matches!(outcome, ParseOutcome::Complete(_)), "{outcome:?}");
 }

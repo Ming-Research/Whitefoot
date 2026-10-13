@@ -136,8 +136,8 @@ fn hash_map_test_scalars() -> result: u64 pure {
   if seen.consumed != 0_u64 {
     hash_map_test_fail(seen: &seen);
   }
-  let unchanged = hash_map_len::<u64, u64, 8>(map: &map);
-  if unchanged != 2_u64 {
+  let preserved_value = hash_map_len::<u64, u64, 8>(map: &map);
+  if preserved_value != 2_u64 {
     hash_map_test_fail(seen: &seen);
   }
   let larger = hash_map_reserve::<HashMapScalarKey, u64, 8>(map: &map, capacity: 4_u64, env: &env);
@@ -946,8 +946,8 @@ fn hash_map_test_units() -> result: u64 pure {
   if seen.visits != 3_u64 {
     hash_map_test_fail(seen: &seen);
   }
-  let unchanged = hash_map_len::<unit, unit, 3>(map: &map);
-  if unchanged != 3_u64 {
+  let preserved_value = hash_map_len::<unit, unit, 3>(map: &map);
+  if preserved_value != 3_u64 {
     hash_map_test_fail(seen: &seen);
   }
   set env.hostile = False();

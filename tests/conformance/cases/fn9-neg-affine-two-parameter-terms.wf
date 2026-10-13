@@ -1,4 +1,4 @@
-fn unchanged(base: u64, limit: u64, spare: u64) -> after: u64 pure contract {
+fn bounded(base: u64, limit: u64, spare: u64) -> after: u64 pure contract {
   ensures after <= base + limit + spare;
 } {
   doc "The extension admits one extra bare parameter term on one side, not an arbitrary sum of three quantities; formation must reject FN-9 before proving the trivial body.";

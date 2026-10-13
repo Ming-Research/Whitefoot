@@ -124,7 +124,7 @@ const ENUM_ORDER: &[&str] = &[
     "range_relation",
     // v0.90 [GRAM-2, MOD-11]: a graph's package bindings.
     "package_decl",
-    // v0.136 [GRAM-5, RANGE-1]: the variant relation `e is V`, `e is not V`.
+    // v0.141 [GRAM-5, RANGE-1]: the variant relation `e is V`, `e is not V`.
     "range_variant",
 ];
 

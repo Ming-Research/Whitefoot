@@ -1,0 +1,17 @@
+struct BoundedSource {
+  values: Box<Array<u32>>;
+  invariant limit(owner): owner.values.inner.len <= 1073741824_u64;
+}
+
+fn make_small(nested: Bool) -> made: BoundedSource pure contract {
+  ensures made.values.inner.len <= 16_u64;
+} {
+  if nested {
+    let no = False();
+    let inner = make_small(nested: no);
+    return move inner;
+  }
+  let values = box_array_filled::<u32>(count: 1_u64, value: 0_u32);
+  let source = BoundedSource(values: move values);
+  return move source;
+}

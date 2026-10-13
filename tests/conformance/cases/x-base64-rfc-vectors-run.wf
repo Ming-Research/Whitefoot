@@ -14,8 +14,8 @@ fn require_index(index: u64, limit: u64) -> result: Result<u64, IndexError> pure
   let nonzero = limit != 0_u64;
   if nonzero {
     let bounded = index % limit;
-    let unchanged = bounded == index;
-    if unchanged {
+    let preserved_value = bounded == index;
+    if preserved_value {
       return Ok<u64, IndexError>(value: bounded);
     }
   }
