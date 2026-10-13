@@ -2289,6 +2289,132 @@ fn reference_match_payload_writes_reach_the_container() {
     }
 }
 
+/// A conformance case's source and its expected verdict: `None` accepts, and
+/// `Some((rule, at))` rejects under `rule` with the diagnostic starting at the
+/// source text `at`.
+type PinnedCase<'a> = (&'a [u8], Option<(SemanticRule, &'a str)>);
+
+/// Checks each conformance case's verdict and pins each rejection to the
+/// source its diagnostic starts at, so a negative fails for its intended
+/// reason rather than an earlier type, effect or reference error. The corpus
+/// owns the verdicts.
+fn pinned_case_verdicts(cases: &[PinnedCase<'_>]) {
+    for &(source, expected) in cases {
+        with_semantics(source, |outcome| match (expected, outcome) {
+            (None, SemanticOutcome::Complete(_)) => {}
+            (Some((rule, at)), SemanticOutcome::SourceIssue { issue, .. }) => {
+                assert_eq!(issue.rule(), rule, "{issue:?}");
+                let crate::SemanticLocation::SourceNode(_, coordinate) = issue.location();
+                let start = usize::try_from(coordinate.start().value()).unwrap();
+                assert!(source[start..].starts_with(at.as_bytes()), "{issue:?}");
+            }
+            (expected, outcome) => panic!("expected {expected:?}: {outcome:?}"),
+        });
+    }
+}
+
+/// [RANGE-1] a payload binder's referent below an element projection is that
+/// element's payload projection in a range goal, at the subscript the match
+/// recorded, through nested matches and `Box` content, and no range term of
+/// a written clause.
+#[test]
+fn payload_binder_referents_are_element_projections() {
+    pinned_case_verdicts(&[
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range1-pos-payload-binder-referent.wf"
+            )
+            .as_slice(),
+            None,
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range1-neg-payload-binder-referent-unproved.wf"
+            )
+            .as_slice(),
+            Some((SemanticRule::Range3, "follow(")),
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range1-neg-payload-binder-referent-written.wf"
+            )
+            .as_slice(),
+            Some((SemanticRule::Fn8, "need_below(value: jump_to^")),
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range1-pos-payload-binder-recorded-index.wf"
+            )
+            .as_slice(),
+            None,
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range1-pos-payload-binder-array-element.wf"
+            )
+            .as_slice(),
+            None,
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range1-pos-payload-binder-nested.wf"
+            )
+            .as_slice(),
+            None,
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range1-pos-payload-binder-box-content.wf"
+            )
+            .as_slice(),
+            None,
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range1-neg-payload-binder-written-clause.wf"
+            )
+            .as_slice(),
+            Some((SemanticRule::Range1, "jump_to^")),
+        ),
+    ]);
+}
+
+/// [RANGE-1, RANGE-3] variant relations over a `Bool` element and an own-mode
+/// enum binding, and a guard `is not V` owed at a call.
+#[test]
+fn variant_relations_reach_their_verdicts() {
+    pinned_case_verdicts(&[
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range1-pos-variant-bool-operand.wf"
+            )
+            .as_slice(),
+            None,
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range1-pos-variant-own-binding.wf"
+            )
+            .as_slice(),
+            None,
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range3-pos-variant-not-guard-owed.wf"
+            )
+            .as_slice(),
+            None,
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range3-neg-variant-not-guard-owed.wf"
+            )
+            .as_slice(),
+            Some((SemanticRule::Range3, "walk(")),
+        ),
+    ]);
+}
+
 #[test]
 fn range_facts_discharge_every_integer_domain_family() {
     for (ty, bound, expression) in [

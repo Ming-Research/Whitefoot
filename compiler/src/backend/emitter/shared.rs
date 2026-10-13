@@ -19,12 +19,12 @@ use std::fmt::Write;
 
 use super::frames::{HANDLE, labels};
 use super::*;
-use crate::{IrRecord, IrRecordKind, IrShared};
+use crate::{IrRecord, IrRecordKind, IrShared, IrWakeTest};
 
 /// The frame storage of one record, by its kind.
 fn record_storage(kind: IrRecordKind) -> String {
     match kind {
-        IrRecordKind::AtomicGroup { count } => format!("[{count} x {{ ptr, ptr }}]"),
+        IrRecordKind::AtomicGroup { count } => format!("[{count} x {{ ptr, ptr, i32 }}]"),
         IrRecordKind::TableEntry => format!("[{} x i8]", crate::backend::TABLE_ENTRY_SIZE),
         IrRecordKind::TableHold => format!("[{} x i8]", crate::backend::TABLE_HOLD_SIZE),
         IrRecordKind::Entries => "{ ptr, i64, i64 }".to_owned(),
@@ -48,10 +48,12 @@ fn key_set_scratch_name(result: IrValueId) -> String {
 }
 
 /// The entry-block lines that reserve every record a function's statements
-/// keep, and the scratch place of each new key set, once per call.
+/// keep, the scratch place of each new key set and the storage of each wake
+/// test, once per call.
 pub(super) fn record_prelude(function: &IrFunction) -> String {
     let mut records = BTreeMap::new();
     let mut scratch = Vec::new();
+    let mut tests = Vec::new();
     for instruction in function
         .blocks()
         .iter()
@@ -70,6 +72,11 @@ pub(super) fn record_prelude(function: &IrFunction) -> String {
         {
             records.insert(record.index(), *record);
         }
+        if let IrOperation::SharedWatch { test: Some(_), .. }
+        | IrOperation::WatchObject { test: Some(_), .. } = operation
+        {
+            tests.push(*result);
+        }
         let record = match operation {
             IrOperation::TableLockEntry { record, .. }
             | IrOperation::TableEntrySlot { record, .. }
@@ -79,6 +86,7 @@ pub(super) fn record_prelude(function: &IrFunction) -> String {
             | IrOperation::TableHoldKeys { record, .. }
             | IrOperation::AtomicGroupTarget { record, .. }
             | IrOperation::AtomicGroupTake { record }
+            | IrOperation::AtomicGroupAcquire { record }
             | IrOperation::AtomicGroupRelease { record, .. }
             | IrOperation::TableHoldRead { record }
             | IrOperation::TableHoldWhole { record }
@@ -134,6 +142,9 @@ pub(super) fn record_prelude(function: &IrFunction) -> String {
             key_set_scratch_name(result)
         ));
     }
+    for result in tests {
+        prelude.push_str(&super::wake::wake_test_storage(result));
+    }
     prelude
 }
 
@@ -145,6 +156,7 @@ impl FunctionEmitter<'_, '_> {
         index: u32,
         object: IrValueId,
         hold: Option<IrRecord>,
+        wrote: bool,
     ) -> Result<(), BackendFailure> {
         let IrRecordKind::AtomicGroup { count } = record.kind() else {
             return Err(BackendFailure::InvalidIr);
@@ -155,6 +167,14 @@ impl FunctionEmitter<'_, '_> {
         let bare = self.bare(result);
         let storage = record_storage(record.kind());
         writeln!(self.output,"  %{bare}.object = getelementptr {storage}, ptr {}, i64 0, i32 {index}, i32 0\n  store ptr {}, ptr %{bare}.object, align 8\n  %{bare}.hold = getelementptr {storage}, ptr {}, i64 0, i32 {index}, i32 1\n  store ptr {}, ptr %{bare}.hold, align 8",record_name(record),self.value_name(object),record_name(record),hold.map(record_name).unwrap_or_else(||"null".to_owned())).map_err(|_|BackendFailure::TextEmission)?;
+        // Whether the group's release gives the object up as written.
+        writeln!(
+            self.output,
+            "  %{bare}.wrote = getelementptr {storage}, ptr {}, i64 0, i32 {index}, i32 2\n  store i32 {}, ptr %{bare}.wrote, align 8",
+            record_name(record),
+            u32::from(wrote)
+        )
+        .map_err(|_| BackendFailure::TextEmission)?;
         self.emit_constant(result, IrType::Unit, IrConstant::Unit)
     }
     pub(super) fn emit_atomic_group_call(
@@ -1066,6 +1086,7 @@ impl FunctionEmitter<'_, '_> {
         object: IrValueId,
         entry: &'static str,
         prefix: &str,
+        extra: &str,
     ) -> Result<(), BackendFailure> {
         if !matches!(self.value_type(object), Some(IrType::Nominal(nominal))
             if matches!(self.nominal(nominal)?.kind(), IrNominalKind::Shared { shape: IrShared::Object, .. }))
@@ -1073,6 +1094,36 @@ impl FunctionEmitter<'_, '_> {
             return Err(BackendFailure::InvalidIr);
         }
         let retries = entry == "wf__shared_acquire";
+        let arguments = format!("ptr {}, i32 1, ptr {HANDLE}{extra}", self.value_name(object));
+        self.emit_parking_call(result, entry, &arguments, prefix, retries)
+    }
+
+    /// A statement's first group: the runtime answers as an acquire does,
+    /// 1 when it has parked the frame on the group's first object, holding
+    /// nothing, and the resumed frame asks again.
+    pub(super) fn emit_atomic_group_acquire(
+        &mut self,
+        result: IrValueId,
+        record: IrRecord,
+    ) -> Result<(), BackendFailure> {
+        let IrRecordKind::AtomicGroup { count } = record.kind() else {
+            return Err(BackendFailure::InvalidIr);
+        };
+        let arguments = format!("ptr {}, i64 {count}, ptr {HANDLE}", record_name(record));
+        self.emit_parking_call(result, "wf__atomic_group_acquire", &arguments, "group", true)
+    }
+
+    /// A call of `entry` that answers 1 when it has parked the frame, which
+    /// then suspends, and 0 otherwise; the resumed frame calls again when
+    /// `retries`, and otherwise continues.
+    fn emit_parking_call(
+        &mut self,
+        result: IrValueId,
+        entry: &'static str,
+        arguments: &str,
+        prefix: &str,
+        retries: bool,
+    ) -> Result<(), BackendFailure> {
         let prefix = labels(prefix, result);
         self.names(&[entry, "llvm.coro.save"]);
         writeln!(
@@ -1080,11 +1131,10 @@ impl FunctionEmitter<'_, '_> {
             "  br label %{prefix}.try\n\
              {prefix}.try:\n  \
              %{prefix}.saved = call token @llvm.coro.save(ptr null)\n  \
-             %{prefix}.parked = call i32 @{entry}(ptr {}, i32 1, ptr {HANDLE})\n  \
+             %{prefix}.parked = call i32 @{entry}({arguments})\n  \
              %{prefix}.suspends = icmp ne i32 %{prefix}.parked, 0\n  \
              br i1 %{prefix}.suspends, label %{prefix}.suspend, label %{prefix}.done\n\
-             {prefix}.suspend:",
-            self.value_name(object)
+             {prefix}.suspend:"
         )
         .map_err(|_| BackendFailure::TextEmission)?;
         let resumed = if retries {
@@ -1119,16 +1169,64 @@ impl FunctionEmitter<'_, '_> {
         self.emit_constant(result, IrType::Unit, IrConstant::Unit)
     }
 
-    /// Gives up this context's hold on the object.
+    /// A guard's watch of its one object, registering the guard's wake test
+    /// when it has one ([`super::wake`]); the runtime evaluates it on the
+    /// state each later write leaves.
+    pub(super) fn emit_shared_watch(
+        &mut self,
+        result: IrValueId,
+        object: IrValueId,
+        test: Option<&IrWakeTest>,
+    ) -> Result<(), BackendFailure> {
+        let test = self.emit_wake_test(result, test)?;
+        self.emit_shared_wait(
+            result,
+            object,
+            "wf__shared_watch",
+            "watch",
+            &format!(", {test}"),
+        )
+    }
+
+    /// Watches one object in a guard's watch of several units, with the
+    /// guard's wake test for that object when it has one.
+    pub(super) fn emit_watch_object(
+        &mut self,
+        result: IrValueId,
+        record: IrRecord,
+        object: IrValueId,
+        test: Option<&IrWakeTest>,
+    ) -> Result<(), BackendFailure> {
+        if record.kind() != IrRecordKind::Watch {
+            return Err(BackendFailure::InvalidIr);
+        }
+        let test = self.emit_wake_test(result, test)?;
+        let arguments = format!(
+            "ptr {}, ptr {}, {test}",
+            record_name(record),
+            self.value_name(object)
+        );
+        self.emit_unit_call(result, "wf__watch_object", &arguments)
+    }
+
+    /// Gives up this context's hold on the object; a statement that wrote no
+    /// part of its state releases it unwritten, which wakes no watch
+    /// [SHARE-3].
     pub(super) fn emit_shared_unlock(
         &mut self,
         result: IrValueId,
         object: IrValueId,
+        wrote: bool,
     ) -> Result<(), BackendFailure> {
-        self.names(&["wf__shared_unlock"]);
+        let entry = if wrote {
+            "wf__shared_unlock"
+        } else {
+            "wf__shared_unlock_unwritten"
+        };
+        self.names(&[entry]);
         writeln!(
             self.output,
-            "  call void @wf__shared_unlock(ptr {}, i32 1)",
+            "  call void @{entry}(ptr {}, i32 1)",
             self.value_name(object)
         )
         .map_err(|_| BackendFailure::TextEmission)?;

@@ -1765,6 +1765,41 @@ fn probe() -> result: unit pure {
     });
 }
 
+/// [RANGE-1] a variant relation's TYPEID names a variant of the tested
+/// value's enum, so resolution defers it to the checker, as it does an arm
+/// label, and never selects a constructor or type of the same spelling.
+#[test]
+fn tested_variants_wait_for_the_tested_enum() {
+    let source = br#"struct Stop {
+}
+
+enum Step {
+  Next();
+  Halt();
+}
+
+fn probe(steps: &[Step]) -> result: unit pure contract {
+  requires forall ends(k in 0_u64..steps^.len): steps^[k] is not Stop;
+} {
+  return unit;
+}
+"#;
+    with_one_resolution(source, |outcome| {
+        let ResolutionOutcome::Complete(resolved) = outcome else {
+            panic!("a tested variant is deferred to the checker: {outcome:?}");
+        };
+        assert!(resolved.deferred_uses().iter().any(|usage| {
+            usage.role() == DeferredUseRole::TestedVariant && usage.spelling() == "Stop"
+        }));
+        assert!(
+            !resolved
+                .lexical_uses()
+                .iter()
+                .any(|usage| usage.spelling() == "Stop")
+        );
+    });
+}
+
 /// The fixture follows the language rather than the assertions moving.
 /// `OperationCallee` is the OPNAME form specifically (`roles.rs` keys it on
 /// `TerminalPredicate::OperationName`), so it rides `iabs.checked`, a dotted

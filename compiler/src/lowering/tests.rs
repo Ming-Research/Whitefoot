@@ -2,7 +2,9 @@
 
 #![allow(clippy::panic)]
 
+mod atomic_groups;
 mod overlap_storage;
+mod wake;
 
 use crate::lexer::{LexLimits, LexOutcome, lex};
 use crate::{
@@ -1969,6 +1971,86 @@ fn third_of(outer: &Outer) -> result: u64 reads(outer) {{
         }
         assert_eq!(field_loads, 1, "one load, of the field itself");
     });
+}
+
+/// Source presentation is optional: removing either an atomic location or
+/// its first-use location must preserve every lowered function and lock.
+#[test]
+fn missing_lock_ledger_locations_preserve_lowering() {
+    let source = br#"fn main() -> status: std::process::ExitStatus pure waits {
+  let counter = shared_new::<u64>(value: 1_u64);
+  atomic cell = &counter {
+    set cell^ = 2_u64;
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let mut expected = with_ir(source, |program| {
+        let ledger = &function(program, "main").lock_ledger;
+        assert_eq!(ledger.len(), 1, "one lazy target group");
+        assert!(
+            ledger[0].contains("targets(cell): u64  on every path; first use test.wf:"),
+            "the witness reaches its lazy acquisition: {ledger:?}"
+        );
+        program.functions().to_vec()
+    });
+    for function in &mut expected {
+        function.lock_ledger.clear();
+    }
+    for (missing_atomic, missing_first_use) in [(true, false), (false, true), (true, true)] {
+        with_checked(source, |mut checked| {
+            let (atomic, first_use) = checked
+                .data
+                .executable_functions()
+                .filter(|function| function.name == "main")
+                .flat_map(|function| function.body.as_deref().unwrap_or_default())
+                .find_map(|statement| {
+                    if let crate::semantic::CheckedStatement::Atomic {
+                        node_path, body, ..
+                    } = statement
+                    {
+                        Some((
+                            node_path.clone(),
+                            body[0].ledger_path().expect("the set has a site").clone(),
+                        ))
+                    } else {
+                        None
+                    }
+                })
+                .expect("the witness contains an atomic statement");
+            let atomic_site = checked.data.lock_ledger_sources[&atomic].clone();
+            let first_use_site = checked.data.lock_ledger_sources[&first_use].clone();
+            if missing_atomic && missing_first_use {
+                checked.data.lock_ledger_sources.clear();
+            } else if missing_atomic {
+                assert!(checked.data.lock_ledger_sources.remove(&atomic).is_some());
+            } else {
+                assert!(checked.data.lock_ledger_sources.remove(&first_use).is_some());
+            }
+            let mut lowered = lower_checked(checked, OverlapLowering::Off)
+                .expect("missing report locations cannot prevent lowering");
+            let atomic_site = if missing_atomic {
+                "<unknown site>"
+            } else {
+                &atomic_site
+            };
+            let first_use_site = if missing_first_use {
+                "<unknown site>"
+            } else {
+                &first_use_site
+            };
+            assert_eq!(
+                function(&lowered, "main").lock_ledger,
+                [format!(
+                    "LOCK main  {atomic_site}  targets(cell): u64  on every path; first use {first_use_site}"
+                )]
+            );
+            for function in &mut lowered.functions {
+                function.lock_ledger.clear();
+            }
+            assert_eq!(lowered.functions(), expected.as_slice());
+        });
+    }
 }
 
 /// Payload writes preserve None; whole writes (including aliases and call

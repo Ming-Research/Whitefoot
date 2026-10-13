@@ -54,7 +54,7 @@ COMPLETION_DEFINES := \
 	-DWF_COMPLETION_GETDENTS64=wf_completion_test_getdents64 \
 	-DWF_COMPLETION_POLL=wf_completion_test_poll
 COMPLETION_BASE_CFLAGS := -std=c11 -O2 -g -Wall -Wextra -Werror -Wpedantic \
-	-pthread
+	-pthread -DWF_GUARD_TEST_HOOKS=1
 COMPLETION_CFLAGS := $(COMPLETION_BASE_CFLAGS) $(COMPLETION_DEFINES)
 # The harness names the WF_IO_NOCACHE application so it can count it. The
 # named function performs the same host call the shipped policy performs, so

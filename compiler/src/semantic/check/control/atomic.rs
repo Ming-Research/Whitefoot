@@ -306,6 +306,12 @@ impl Checker<'_, '_> {
             targets.push(CheckedTarget {
                 lock_order: self.types.atomic_type_order(state)?,
                 node_path: self.types.declarations.tree.path(*place)?.clone(),
+                ledger_name: declaration.spelling().to_owned(),
+                ledger_state: self.types.checked_type_name(state)?,
+                ledger_site: self
+                    .types
+                    .declarations
+                    .lock_ledger_site(declaration.origin().coordinate()),
                 binding,
                 handle: Box::new(target.expression),
                 borrowed,
