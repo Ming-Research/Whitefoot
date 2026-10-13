@@ -11,6 +11,14 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-13 v0.151: swap's equality allowance admits equal-depth slots whose containing paths differ only in index steps
+
+Rules: changed OP-11
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A on the card "when `swap` exchanges elements in two different rows (`rows^[i][k]` and `rows^[j][l]`, the relation of `i` and `j` unknown), change the specification text to acknowledge the checker's reading, or tighten the checker?" (translated); option A reads "change the specification text to state the relation the checker uses: equal-depth slots whose containing paths are identical step for step or differ only in subscripts satisfy 'equal or disjoint'; `exchange` stays accepted, the checker is unchanged, only conformance cases are added" (translated). The amendment was written as v0.150 and renumbered to v0.151 because main reached v0.150 first.
+
+Summary: OP-11 said two equal-depth slots satisfy swap's equality allowance only under one identical array or window, while the checker accepted slots whose containing paths are identical step for step or differ only in index steps, such as `rows^[i][k]` with `rows^[j][l]`. The relation is sound: equal rows give the same slot or disjoint slots, different rows give disjoint slots. OP-11 now states that relation, read as OWN-7 reads paths. Selection ground: the owner's 2026-09-26 ruling settled the analogous range-separation gap by stating the checker's relation.
+
 ## 2026-10-13 v0.150: `match` branches on integer constant values
 
 Rules: added GRAM-12, ENT-3.S17; changed GRAM-4, GRAM-6, TYPE-6, DIAG-1, OWN-13, ERR-2, ENT-1, ENT-2, ENT-3, ENT-4, ENT-5, RANGE-2, RANGE-3
