@@ -552,6 +552,15 @@ The registered verdict is pass, +0.20% against the 2% limit, and the
 every-cell extension is pass, every cell within 0.87% and every twin within
 0.99-1.01, with the same scope as above.
 
+The branch later merged main's handle-count change (an atomic statement
+whose block cannot lose its handle no longer updates the object's handle
+count), which changes the code both overhead programs emit; it was not
+measured again. That change removes the same instructions from base and
+candidate and leaves the take path this rule adds untouched, so it shortens
+the base time per statement without changing the claims' absolute cost:
+were the base to fall from about 45 to 35 ns per statement, the registered
++0.20% would scale to about +0.26%, still far inside the 2% limit.
+
 **Still open.** All trials within B(N) establish only the stated sampled
 bound; the argument for every schedule, both borrowers and parked contexts,
 remains the static progress argument (see Progress argument and scope), so
