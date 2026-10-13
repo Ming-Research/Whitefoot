@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 the owner's agent instructions own the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-13 A fact some arms hold survives their join, and a joined value is free where its join was bypassed
+
+Nodes: compiler/range-judgment, language/checks-and-proofs/range-facts
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the specification revision and design-tree change of Whitefoot#414 at commit cd4851320? It covers two things: keeping a fact that holds in only some arms after a join, and fixing the soundness defect where, when an inner arm returns early, the outer other path is wrongly treated as impossible" (translated).
+
+Summary: Three decisions are added and one is reworded. A fact active at the end of only some arms of a join stays active where one of those arms was taken, instead of being dropped, which refused v2h's slot-move loop, or kept unconditionally, which would accept an index bounded only in one arm. The range judgment carries such a fact under the literals that the join's selector differs from each arm lacking it, and splits a bare selector over arm numbers only, instead of one guarded copy per arm, which multiplies rules, or a split over the arms' full conditions, which asserts an inner join's conditions on paths that bypassed it. A join records the earlier joins some of its arms bypassed, and the choice defining a joined value or version adds one `selector == arm` alternative per bypass, transitively, instead of a choice over the inner arms alone, the soundness defect where an inner returning arm let `251_u8 + v` be accepted, or a free not-reached alternative, which loses the arms' values on paths through the join. The derivation decision now says a joined value is the arm taken's, or no value where a later join bypassed its join.
+
 ## 2026-10-13 A struct's type invariants travel through enum payloads, bare type parameters, recursive calls and branch deliveries
 
 Nodes: language/checks-and-proofs, language/checks-and-proofs/automatic-facts, language/checks-and-proofs/obligation-discharge

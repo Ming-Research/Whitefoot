@@ -75,7 +75,7 @@ fn main() -> status: std::process::ExitStatus pure {
                 ..Query::default()
             };
             assert_eq!(
-                facts::judge(&mut walker.world, &[], &[], &[], query),
+                facts::judge(&mut walker.world, &[], &[], &[], &[], query),
                 Ok(expected)
             );
         }
@@ -267,6 +267,7 @@ fn main() -> status: std::process::ExitStatus pure {
                 assert_eq!(
                     facts::judge(
                         &mut walker.world,
+                        &[],
                         &[],
                         &[],
                         &[],
