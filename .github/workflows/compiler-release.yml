@@ -26,17 +26,16 @@
 #
 #   whitefootc-linux-x86_64.tar.gz  whitefootc built on ubuntu-24.04
 #   whitefootc-macos-arm64.tar.gz   whitefootc built on macos-15
+#   whitefoot-language.tar.gz       the commit's spec/kernel-spec.md,
+#                                   lib/std/modules.wfg and every
+#                                   lib/std/**/module.wfm at their
+#                                   repository paths, which the writers of
+#                                   a project pinning this release read
 #   whitefoot-release.json          tag, full commit, specification version,
 #                                   the gate run that passed it, the LLVM
 #                                   major its Linux compiler is built with,
 #                                   asset names
-#   SHA256SUMS                      the checksums of the three files above
-#
-# It carries no documents yet: a downstream's writers read the
-# specification, the maintained programs and the standard library's
-# interfaces in this repository at the release's commit, until the choice
-# of what a release carries for them is made (status board item
-# coord-wfbl-05-06, "a compiler release carries no documents").
+#   SHA256SUMS                      the checksums of the four files above
 #
 # Each compiler is the `gate` Cargo profile the gate tests. Like the gate's,
 # it builds programs with the host's /usr/bin/clang, and on Linux links them
@@ -277,6 +276,18 @@ jobs:
           merge-multiple: true
           path: release
 
+      - name: Pack the specification and the standard library interfaces
+        run: |
+          set -euo pipefail
+          git ls-files -z spec/kernel-spec.md lib/std/modules.wfg 'lib/std/**/module.wfm' |
+            sort -z |
+            tar --null --files-from=- --owner=0 --group=0 --numeric-owner --mtime='1970-01-01' \
+              -czf release/whitefoot-language.tar.gz
+          tar -tzf release/whitefoot-language.tar.gz
+          tar -tzf release/whitefoot-language.tar.gz | grep -qx 'spec/kernel-spec.md'
+          tar -tzf release/whitefoot-language.tar.gz | grep -qx 'lib/std/modules.wfg'
+          tar -tzf release/whitefoot-language.tar.gz | grep -q '/module\.wfm$'
+
       - name: Write the manifest and checksums
         env:
           TAG: ${{ needs.resolve.outputs.tag }}
@@ -291,10 +302,11 @@ jobs:
             '{tag: $tag, commit: $commit, spec: $spec, gate_run: $gate_run,
               linux_llvm_major: (if $llvm == "" then null else $llvm end),
               assets: {"linux-x86_64": "whitefootc-linux-x86_64.tar.gz",
-                       "macos-arm64": "whitefootc-macos-arm64.tar.gz"}}' > release/whitefoot-release.json
+                       "macos-arm64": "whitefootc-macos-arm64.tar.gz",
+                       "language": "whitefoot-language.tar.gz"}}' > release/whitefoot-release.json
           cd release
           sha256sum whitefootc-linux-x86_64.tar.gz whitefootc-macos-arm64.tar.gz \
-            whitefoot-release.json > SHA256SUMS
+            whitefoot-language.tar.gz whitefoot-release.json > SHA256SUMS
           ls -l
           cat whitefoot-release.json SHA256SUMS
 
