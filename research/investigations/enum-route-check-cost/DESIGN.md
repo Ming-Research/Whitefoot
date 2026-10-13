@@ -87,9 +87,11 @@ Reject the claim that this fix explains the regression if excess snapshot
 work does not decrease, or the fix/before excess remains outside the
 observed twin noise range. Counter reduction without timing recovery supports
 only a partial attribution. Print each round, medians and ratio spread rather
-than treating a hosted runner as a precise performance qualification. A perf
-profile of the after compiler supplies symbol attribution for costs the
-entailment counters cannot distinguish.
+than treating a hosted runner as a precise performance qualification.
+The temporary workflow now uses timings and counters alone: the owner
+requested removal of perf installation and sampling after the hosted kernel
+had no matching installed perf tool. Counter attribution does not measure
+costs outside the instrumented checker paths.
 
 ## First CI result and remaining join work
 
@@ -359,15 +361,71 @@ The cost test's expected failure on the previous implementation and the
 other tests' protected failure modes are source-inspection arguments; no
 new test, including a negative-control run, has executed locally.
 
+## Third-candidate CI and selector-identity repair
+
+The owner reported [run 38411980870](https://github.com/Ming-Research/Whitefoot/actions/runs/38411980870)
+at `d6d48610907cd59061529898d57b3accad56e7b4`: Firn's five interleaved rounds
+gave median paired CPU ratios after/before 1.1321, fix/before 0.9824
+(0.9622..0.9989), and twin/before 0.9885. Firn meets the 1.03 target.
+Halo did not reach timing: the unchanged unused-call root test was rejected
+at its `ensures when Some(value: n)` selector. These numbers and the failure
+are supplied CI results; no new artifact analysis was performed for this run.
+
+That test is valid. TYPE-6 resolves a result-route label against the declared
+result enum. FN-9 requires a variant of that enum and an admitted field type;
+the test has `Outcome::Some(value: u64)`. CALL-4 permits omitting the result
+binder for its sole result ordinal. The resolver instead accepted lexical
+prelude `Some` before inspecting the source result enum, so FN-9 correctly
+refused the wrong `Option::Some` declaration identity. The affected resolver
+code is unchanged between the routed-ensures merge and this CI revision;
+the demand optimization exposed the defect through its new test.
+
+The repair enumerates the declared result owners before allowing a successful
+lexical lookup to preempt a unique contextual source variant. Explicit result
+binders restrict that enumeration. Actual prelude owners are read from the
+existing PRE-1 declaration preorder, without a `Some` name special case.
+An ordinal that can carry the lexical prelude target, a symbolic generic
+ordinal, or conflicting source owners retains its previous lookup behavior.
+FN-9/CALL-4 admission, payload-data checks and proof publication are unchanged.
+
+The five demand tests remain unchanged. Only the unused-call root test writes
+the colliding selector; the others use enum-qualified constructions, match
+labels, or actual `Option` values. The existing root assertion continues to
+require exactly one conditional S12 root for the unread call. A new resolver
+test checks seven identities: an omitted source route, explicit source and
+Option routes, preserved mixed-owner omission, unrelated Result and scalar
+ordinals, and preserved conflicting source owners. The old resolver fails its
+source-identity assertion by inspection. The existing focused test exercises
+the end-to-end rejection; the new resolver test belongs to the ordinary gate
+and is not added to the temporary workflow's filters.
+The older enum-route fixtures were also inspected: `Pair`, `Item` and `Held`
+do not collide with prelude variants. The foreign-variant negative fixture
+intentionally selects `Some` from an enum without that variant; it must still
+receive FN-9, and its assertion is unchanged. The remaining results tests
+exercise numeric states directly rather than selector-name resolution.
+
+Inspection also found a separate unresolved boundary: with distinct result
+enum types that both declare `Some`, an omitted ordinal does not uniquely
+identify the owner. TYPE-6 gives result-owned lookup, while CALL-4's explicit
+ambiguity rule names repeated ordinals of the same enum type. This repair
+does not choose a new rule for distinct owners; it preserves their existing
+behavior. Generic result-type routes likewise retain the existing symbolic
+lookup rather than gaining a new late-resolution mechanism. A separate
+selector audit should settle these cases before extending their behavior;
+no observed conformance result or new language judgment is claimed here.
+No board connector was available to file that follow-up, so this record and
+the report carry the unresolved scope boundary without inventing a board key.
+
 ## Validation and outstanding evidence
 
 No compiler, build, test suite or measurement runs on the workstation.
 Focused internal regression checks and existing enum-route tests are scheduled
 in the temporary workflow; the project gate remains required before delivery.
 No conformance source, verdict, specification or approval log is changed.
-The first two candidates' timings and focused tests are recorded above. The
-third candidate awaits the owner's commit, push and CI results. No new
-acceptance claim uses an earlier candidate's green tests. The temporary
+The candidates' available timings and focused-test evidence are recorded
+above. The selector repair awaits the owner's commit, push and CI results;
+Halo's third-candidate timing remains unavailable. No new acceptance claim
+uses an earlier candidate's green tests. The temporary
 workflow is removed before the branch is ready, after the measurements finish.
 
 For the first candidate, an independent read-only review with `gpt-6.1-sol` covered the complete
@@ -389,7 +447,7 @@ includes the matrix scan. The primary agent verified that correction and the
 numeric-only state invariant, complete-candidate key, local reuse boundary,
 and independent route metadata. Execution and performance were unverified at
 that review; the second CI result above now covers join sharing. The third
-candidate has no execution evidence yet.
+candidate had no execution evidence at that review.
 
 An independent `gpt-6.1-sol` review covered the complete third-candidate diff
 against `541f91903` in all six changed files, affected consumers, ENT-5,
@@ -403,7 +461,17 @@ test. No functional finding remains within scope. The primary agent verified
 the consumer inventory, backward dependencies, call-root preservation,
 return filtering and pre-pruning cost assertion. All five changed Rust files
 remain below 4,000 lines. This source review supplies no execution or timing
-evidence for the third candidate.
+evidence for the third candidate; subsequent supplied CI is recorded above.
+
+An independent `gpt-6.1-sol` review of the selector repair against `d6d486109`
+covered the resolver, its identity test, perf-step removal, relevant language
+and compiler decisions, and applicable checklist groups. It found no
+functional defect within the corrected single-owner scope. Its minor finding
+was an uncited open-work comment in the new test; that comment now states
+only the existing behavior the test preserves, while this record describes
+the unresolved broader boundary. The primary agent inspected the final
+identity selection, PRE-1 ordering premise and unchanged proof consumer.
+Compilation, the new resolver test, the gate and Halo timing remain unverified.
 
 The temporary experiment follows the supplied bisect workflow's unbudgeted
 measurement labels. It changes no maintained budgets and does not replace a

@@ -435,6 +435,85 @@ fn variant_postcondition_selector_preserves_prelude_identity_without_match_roles
 }
 
 #[test]
+fn route_labels_retain_the_declared_enum_when_a_prelude_variant_has_the_same_name() {
+    let source = br#"enum Outcome {
+  Some(value: u64);
+}
+
+fn single() -> result: Outcome pure contract {
+  ensures when Some(value: payload): payload == 7_u64;
+} {
+  return Outcome::Some(value: 7_u64);
+}
+
+fn pair() -> (source: Outcome, builtin: Option<u64>) pure contract {
+  ensures when source is Some(value: payload): payload == 7_u64;
+  ensures when builtin is Some(value: payload): payload == 9_u64;
+  ensures when Some(value: payload): payload == 9_u64;
+} {
+  let source_value = Outcome::Some(value: 7_u64);
+  let builtin_value = Some<u64>(value: 9_u64);
+  return source_value, builtin_value;
+}
+
+fn unrelated() -> (source: Outcome, builtin: Result<u64, u64>) pure contract {
+  ensures when Some(value: payload): payload == 7_u64;
+} {
+  let source_value = Outcome::Some(value: 7_u64);
+  let builtin_value = Ok<u64, u64>(value: 9_u64);
+  return source_value, builtin_value;
+}
+
+fn scalar() -> (source: Outcome, number: u64) pure contract {
+  ensures when Some(value: payload): payload == 7_u64;
+} {
+  let source_value = Outcome::Some(value: 7_u64);
+  return source_value, 9_u64;
+}
+
+enum AnotherOutcome {
+  Some(value: u64);
+}
+
+fn conflicting() -> (first: Outcome, second: AnotherOutcome) pure contract {
+  ensures when Some(value: payload): payload == 7_u64;
+} {
+  let first_value = Outcome::Some(value: 7_u64);
+  let second_value = AnotherOutcome::Some(value: 9_u64);
+  return first_value, second_value;
+}
+"#;
+    with_one_resolution(source, |outcome| {
+        let ResolutionOutcome::Complete(resolved) = outcome else {
+            panic!("result-owned route labels must resolve: {outcome:?}");
+        };
+        let [implicit_source, explicit_source, explicit_prelude, mixed_owners, unrelated, scalar, conflicting] =
+            resolved.postconditions()
+        else {
+            panic!("seven routes are required");
+        };
+        assert!(matches!(
+            implicit_source.variant_target,
+            Some(ResolvedTarget::Source {
+                class: DeclarationClass::EnumVariant,
+                ..
+            })
+        ));
+        assert_eq!(implicit_source.variant_target, explicit_source.variant_target);
+        assert_eq!(implicit_source.variant_target, unrelated.variant_target);
+        assert_eq!(implicit_source.variant_target, scalar.variant_target);
+        assert_eq!(
+            explicit_prelude.variant_target,
+            Some(ResolvedTarget::Prelude(super::BuiltinPreludeId::SOME))
+        );
+        // Preserve the existing lexical choice when multiple result owners
+        // can supply the same omitted label.
+        assert_eq!(mixed_owners.variant_target, explicit_prelude.variant_target);
+        assert_eq!(conflicting.variant_target, explicit_prelude.variant_target);
+    });
+}
+
+#[test]
 fn selector_candidates_use_their_exact_form3_reservation_roles() {
     let plain = br#"fn plain(value: i32) -> cvt: i32 pure contract {
   ensures cvt == value;

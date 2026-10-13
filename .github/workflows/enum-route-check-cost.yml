@@ -208,7 +208,7 @@ jobs:
           for which in ('after', 'fix', 'before-twin'):
               ratios = [values[which] / values['before'] for values in paired.values()]
               lines.append(f'| {which}/before | {statistics.median(ratios):.4f} | {min(ratios):.4f} | {max(ratios):.4f} |')
-          lines += ['', 'CPU is user+sys of the compiler only. Builds, wrapper overhead, counter runs and perf runs are excluded.', 'Before-twin is a byte-identical copy of before; its spread shows observed run-to-run variation, not a precise regression gate.', 'The fix includes the intervening main change after the routed-postcondition merge.']
+          lines += ['', 'CPU is user+sys of the compiler only. Builds, wrapper overhead and counter runs are excluded.', 'Before-twin is a byte-identical copy of before; its spread shows observed run-to-run variation, not a precise regression gate.', 'The fix includes the intervening main change after the routed-postcondition merge.']
           if workload == 'firn' and any(initial):
               lines += ['', f'Full Firn check exit codes: before={initial[0]}, after={initial[1]}, fix={initial[2]}.', 'Fallback comparison covers only the selected module. Full-check diagnostics require review; failures, including different exits, may reflect compatibility issues or a regression and are not classified as unrelated.']
           summary = '\n'.join(lines) + '\n'
@@ -271,70 +271,6 @@ jobs:
           print('Side-by-side work proxy and metric components:\n' + comparison, flush=True)
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as stream:
               stream.write('\n'.join(markdown) + '\n')
-          PY
-      - name: Install profiling tools after timing
-        if: always()
-        run: |
-          perl .github/run-check.pl route-cost-perf-install sudo apt-get update
-          perl .github/run-check.pl route-cost-perf-install sudo apt-get install -y linux-tools-generic
-          perf_bin=$(find /usr/lib/linux-tools -type f -name perf | sort | tail -1)
-          test -n "$perf_bin" || { echo '::error::No Linux perf binary installed'; exit 1; }
-          printf '%s\n' "$perf_bin" > "$RUNNER_TEMP/route-cost/perf-path.txt"
-      - name: Profile after compiler to cover work not distinguished by counters
-        if: always()
-        run: |
-          python3 - <<'PY'
-          import json, os, pathlib, subprocess
-          temp = pathlib.Path(os.environ['RUNNER_TEMP'])
-          out = temp / 'route-cost'
-          selection_path = out / 'selection.json'
-          perf_path = out / 'perf-path.txt'
-          if not selection_path.exists() or not perf_path.exists():
-              print('::error::After profiling unavailable: no accepted workload or perf installation.')
-              raise SystemExit(1)
-          selection = json.loads(selection_path.read_text())
-          perf = perf_path.read_text().strip()
-          wrapper = pathlib.Path(os.environ['GITHUB_WORKSPACE']) / '.github/run-check.pl'
-          env = dict(os.environ)
-          env.pop('WHITEFOOT_CHECK_WORK', None)
-          env.pop('WHITEFOOT_TIME_BUDGET_RECORD', None)
-          # Always collect once after timing: counter equality does not establish
-          # equality of uninstrumented contradiction-refresh or allocator work.
-          record = ['perl', str(wrapper), 'route-cost-perf-record', 'sudo', perf, 'record', '-g',
-                    '--call-graph', 'dwarf', '-e', 'cpu-clock', '-o', str(out / 'after-perf.data'), '--',
-                    str(temp / 'after/compiler/target/gate/whitefootc'), *selection['command']]
-          with (out / 'after-perf-record.log').open('w') as stream:
-              result = subprocess.run(record, cwd=temp / selection['workload'], env=env, stdout=stream, stderr=subprocess.STDOUT)
-          print((out / 'after-perf-record.log').read_text())
-          # sudo perf may create a root-only data file; retain readable stacks
-          # for the ordinary-user artifact upload even when recording fails.
-          if (out / 'after-perf.data').exists():
-              subprocess.run(['sudo', 'chmod', 'a+r', str(out / 'after-perf.data')], check=True)
-          if result.returncode:
-              print(f'::error::perf record failed with exit {result.returncode}; profile attribution unavailable (diagnostics uploaded).')
-              raise SystemExit(result.returncode)
-          report = ['perl', str(wrapper), 'route-cost-perf-report', 'sudo', perf, 'report', '--stdio',
-                    '--no-children', '--call-graph', 'none', '--percent-limit', '0', '-i', str(out / 'after-perf.data')]
-          with (out / 'after-perf-report.txt').open('w') as stream:
-              result = subprocess.run(report, env=env, stdout=stream, stderr=subprocess.STDOUT)
-          text = (out / 'after-perf-report.txt').read_text()
-          # Print the leading profile lines including the first 20 symbol rows;
-          # the complete flat report and recorded stacks remain in the artifact.
-          lines, symbols = [], 0
-          for line in text.splitlines():
-              lines.append(line)
-              if line.lstrip()[:1].isdigit() and '%' in line:
-                  symbols += 1
-              if symbols == 20:
-                  break
-          top = '\n'.join(lines) + '\n'
-          print(top)
-          (out / 'after-perf-top20.txt').write_text(top)
-          if result.returncode or symbols == 0:
-              print('::error::perf report failed or contained no sampled symbols; inspect uploaded diagnostics.')
-              raise SystemExit(result.returncode or 1)
-          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as stream:
-              stream.write('\n### After perf top symbols\n\n```text\n' + top + '```\n')
           PY
       - uses: actions/upload-artifact@v4
         if: always()
