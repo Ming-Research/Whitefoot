@@ -152,6 +152,7 @@ jobs:
       - name: Runtime driver count and busy-ring receive through ordinary entries
         env:
           WF_REQUIRE_LINUX_IO_URING: '1'
+          WF_TRACE_RING_SERVICE: '1'
         run: |
           perl .github/run-check.pl compiler/test-build-corpus \
             cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --test corpus --no-run
