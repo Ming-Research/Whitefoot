@@ -1,0 +1,62 @@
+fn zero<N: Int>(value: N) -> result: unit pure contract {
+  requires value == 0_N;
+} {
+  return unit;
+}
+
+fn one<N: Int>(value: N) -> result: unit pure contract {
+  requires value == 1_N;
+} {
+  return unit;
+}
+
+fn nonzero<N: Int>(value: N) -> result: unit pure contract {
+  requires value != 0_N;
+} {
+  return unit;
+}
+
+fn selected<N: Int>(value: N) -> result: u8 pure {
+  match value {
+    0_N => {
+      zero::<N>(value: value);
+      return 0_u8;
+    }
+    1_N => {
+      one::<N>(value: value);
+      return 1_u8;
+    }
+    else => {
+      nonzero::<N>(value: value);
+      return 2_u8;
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let signed_zero = selected::<i8>(value: 0_i8);
+  if signed_zero != 0_u8 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  let signed_one = selected::<i8>(value: 1_i8);
+  if signed_one != 1_u8 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  let signed_else = selected::<i8>(value: -128_i8);
+  if signed_else != 2_u8 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  let unsigned_zero = selected::<u64>(value: 0_u64);
+  if unsigned_zero != 0_u8 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  let unsigned_one = selected::<u64>(value: 1_u64);
+  if unsigned_one != 1_u8 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  let unsigned_else = selected::<u64>(value: 18446744073709551615_u64);
+  if unsigned_else != 2_u8 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

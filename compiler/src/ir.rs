@@ -1842,6 +1842,23 @@ impl IrMatchTarget {
     }
 }
 
+/// One exact integer constant selection, retaining the scrutinee's integer
+/// representation rather than projecting an enum tag.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct IrIntegerMatchTarget {
+    pub(crate) value: i128,
+    pub(crate) block: IrBlockId,
+}
+
+impl IrIntegerMatchTarget {
+    pub const fn value(self) -> i128 {
+        self.value
+    }
+    pub const fn block(self) -> IrBlockId {
+        self.block
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum IrTerminator {
     /// A checker-proved uninhabited function body. The function keeps its
@@ -1856,6 +1873,12 @@ pub enum IrTerminator {
         scrutinee: IrValueId,
         enum_type: IrEnumType,
         targets: Vec<IrMatchTarget>,
+    },
+    IntegerMatch {
+        scrutinee: IrValueId,
+        targets: Vec<IrIntegerMatchTarget>,
+        /// The checked else arm; None means complete type-domain coverage.
+        default: Option<IrBlockId>,
     },
     Return {
         value: IrValueId,

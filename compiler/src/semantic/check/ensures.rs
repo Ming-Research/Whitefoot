@@ -165,6 +165,7 @@ fn subscript_suffixes(path: &[CheckedPlaceStep]) -> impl Iterator<Item = &crate:
     path.iter().filter_map(|step| match step {
         CheckedPlaceStep::Subscript(subscript) => Some(&subscript.obligation),
         CheckedPlaceStep::Field(_)
+        | CheckedPlaceStep::Payload { .. }
         | CheckedPlaceStep::BoxReferent(_)
         | CheckedPlaceStep::Measure(_) => None,
     })
@@ -1785,7 +1786,7 @@ impl<'unit> DeclarationInventory<'unit> {
                 .direct_token_with(*atom, crate::TerminalPredicate::Literal)?
         {
             let bytes = self.tree.token_bytes(literal)?;
-            if matches!(bytes, b"0_T" | b"1_T") {
+            if crate::syntax::terminal::is_generic_numeric_literal(bytes) {
                 let usage =
                     self.use_at(check_context, *atom, LexicalUseRole::GenericNumericSuffix)?;
                 let ResolvedTarget::Source {
@@ -1797,7 +1798,7 @@ impl<'unit> DeclarationInventory<'unit> {
                 };
                 return Ok(PostconditionConstantOrigin::GenericNumericIdentity {
                     type_parameter: declaration,
-                    one: bytes == b"1_T",
+                    one: bytes.first() == Some(&b'1'),
                 });
             }
         }
@@ -2352,6 +2353,19 @@ impl<'unit> TypeContext<'unit> {
                     };
                     fields
                         .get(*field as usize)
+                        .ok_or(SemanticCompilerFailure::InvalidResolution)?
+                        .ty
+                }
+                CheckedPlaceStep::Payload { variant, field, .. } => {
+                    let CheckedType::Nominal(nominal) = ty else {
+                        return Err(SemanticCompilerFailure::InvalidResolution.into());
+                    };
+                    let CheckedNominalKind::Enum { variants } = &self.nominal(nominal)?.kind else {
+                        return Err(SemanticCompilerFailure::InvalidResolution.into());
+                    };
+                    variants
+                        .get(*variant as usize)
+                        .and_then(|variant| variant.fields.get(*field as usize))
                         .ok_or(SemanticCompilerFailure::InvalidResolution)?
                         .ty
                 }

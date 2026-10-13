@@ -1,0 +1,9 @@
+fn unselected(cell: &Option<u64>) -> result: u64 reads(cell) {
+  doc "An arbitrary Option reference supplies no current Some fact for selecting its payload.";
+  let direct = cell^.Some.value;
+  return direct;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

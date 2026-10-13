@@ -132,7 +132,7 @@ fn recognize_guard(
         scrutinee: CheckedExpression::Binding {
             binding: scrutinee, ..
         },
-        enum_type: CheckedEnumType::Bool,
+        match_type: crate::semantic::CheckedMatchType::Enum(CheckedEnumType::Bool),
         arms,
         ..
     } = guard_match
@@ -319,7 +319,7 @@ fn statement_is_neutral(
         }
         CheckedStatement::Match {
             scrutinee: CheckedExpression::Binding { binding, .. },
-            enum_type: CheckedEnumType::Bool,
+            match_type: crate::semantic::CheckedMatchType::Enum(CheckedEnumType::Bool),
             arms,
             ..
         } => {
@@ -423,7 +423,8 @@ fn outside_binding(
 }
 
 fn bool_arm(arms: &[CheckedMatchArm], tag: u32) -> Option<&CheckedMatchArm> {
-    arms.iter().find(|arm| arm.tag == tag)
+    arms.iter()
+        .find(|arm| arm.selection == crate::semantic::CheckedMatchSelection::Variant(tag))
 }
 
 impl IrBuilder<'_> {
