@@ -3,23 +3,16 @@
 # doubles. This workflow is removed before the branch is ready; its results
 # are copied into the investigation with the run id, because artifacts expire.
 #
-# The `oracle` job runs on dispatch once the file is on the default branch, and
-# on a push to the work branch whose commit message contains [run-oracle]. The
-# driver and the models are research/investigations/float-text/
+# Both jobs run only on an explicit workflow_dispatch. The oracle driver and
+# the models are research/investigations/float-text/
 # redis_double_oracle.py, reference.py and fpconv_reconstruction.py.
 #
 # The `witnesses` job is experiment E2: it builds the compiler and compiles and
 # runs the witness programs under research/investigations/float-text/witnesses/,
-# recording accept or reject per witness with the full diagnostic. It runs on
-# every push that touches this file or that directory.
+# recording accept or reject per witness with the full diagnostic.
 name: float-text-redis
 
 on:
-  push:
-    branches: [claude/float-text]
-    paths:
-      - .github/workflows/float-text-redis.yml
-      - research/investigations/float-text/witnesses/**
   workflow_dispatch:
 
 permissions:
@@ -34,7 +27,6 @@ env:
 
 jobs:
   oracle:
-    if: github.event_name == 'workflow_dispatch' || contains(join(github.event.commits.*.message, ' '), '[run-oracle]')
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:

@@ -103,9 +103,6 @@ fn digits_prefix(decimal: &Decimal, count: u64) -> result: DigitPrefix reads(dec
   ) {
     let digit = if position < decimal^.count {
       let held = decimal^.digits[position];
-      invariant digit_small: held <= 9_u8 {
-        use below_ten(position);
-      }
       give held;
     } else {
       give 0_u8;

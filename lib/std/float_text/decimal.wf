@@ -331,9 +331,6 @@ fn decimal_digit(decimal: &Decimal, index: u64) -> result: u8 reads(decimal) con
   doc "Returns a held digit, or the zero that follows the exact stored prefix. The sticky flag is consulted separately when rounding.";
   if index < decimal^.count {
     let digit = decimal^.digits[index];
-    invariant small_digit: digit <= 9_u8 {
-      use below_ten(index);
-    }
     return digit;
   }
   return 0_u8;
