@@ -1018,15 +1018,11 @@ fn rank_before(link: &Slots<Box<OrderedNode<Rank, unit>>, 1>, key: &Rank, env: &
   set below = below +wrap position;
   let last = position -wrap 1_u64;
   for @whole (index in 0_u64..last) {
-    if index < node^.entries.len {
-      let size = subtree_size(link: &node^.entries[index].after);
-      set below = below +wrap size;
-    }
+    let size = subtree_size(link: &node^.entries[index].after);
+    set below = below +wrap size;
   }
-  if last < node^.entries.len {
-    let partial = rank_before(link: &node^.entries[last].after, key: key, env: env);
-    set below = below +wrap partial;
-  }
+  let partial = rank_before(link: &node^.entries[last].after, key: key, env: env);
+  set below = below +wrap partial;
   return below;
 }
 

@@ -51,6 +51,15 @@ jobs:
           perl .github/run-check.pl op5-build-main \
             cargo build --manifest-path "$RUNNER_TEMP/main/compiler/Cargo.toml" --profile gate --locked
           ls -l compiler/target/gate/whitefootc "$RUNNER_TEMP/main/compiler/target/gate/whitefootc"
+      # Each module is checked on its own, so one run lists the redundant
+      # conditions of every module instead of stopping at the first.
+      - name: List every module's redundant conditions
+        run: |
+          for graph in apps/*/modules.wfg; do
+            echo "== $graph"
+            compiler/target/gate/whitefootc --check-modules --graph "$graph" 2>&1 \
+              | grep -E -A6 'error\[OP-5\]' || true
+          done
       - name: Time and count the three checks
         run: |
           out="$RUNNER_TEMP/op5"
