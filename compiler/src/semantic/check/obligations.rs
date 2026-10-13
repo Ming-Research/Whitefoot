@@ -14,7 +14,7 @@ use super::super::model::{
     CheckedAffineExpressionKind, CheckedAffineRelation, CheckedContainerRoot,
     CheckedConversionMode, CheckedExpression, CheckedFunction, CheckedLoopId, CheckedLoopInvariant,
     CheckedPlaceStep, CheckedProofUseSource, CheckedRangeElementPlace, CheckedRangeSource,
-    CheckedSetTarget, CheckedStatement, FunctionId,
+    CheckedSeparationOccasion, CheckedSetTarget, CheckedStatement, FunctionId,
 };
 use super::super::obligations::{ObligationRecord, ObligationSubject};
 use super::{CheckStop, CheckedFunctionInventory};
@@ -54,18 +54,23 @@ fn obligation_records(
     // syntax, each submitted where its call, set or reference use stands.
     for (query, separation) in function.call_separations.iter().enumerate() {
         let query = u32::try_from(query).expect("separation queries exceed u32");
-        let (rule, site, family) = match &separation.reference_use {
-            Some(use_site) => (
+        let (rule, site, family) = match (&separation.reference_use, &separation.occasion) {
+            (Some(use_site), _) => (
                 SemanticRule::Ref2,
                 use_site.site.clone(),
                 ObligationFamily::ReferencePreservation(query),
             ),
-            None if separation.exchange => (
+            (None, CheckedSeparationOccasion::Exchange) => (
                 SemanticRule::Op11,
                 separation.site.clone(),
                 ObligationFamily::ExchangeSeparation(query),
             ),
-            None => (
+            (None, CheckedSeparationOccasion::AtomicTargets(target)) => (
+                SemanticRule::Share2,
+                target.clone(),
+                ObligationFamily::AtomicTargetSeparation(query),
+            ),
+            (None, CheckedSeparationOccasion::Call) => (
                 SemanticRule::Eff5,
                 separation.site.clone(),
                 ObligationFamily::CallSeparation(query),
@@ -371,6 +376,7 @@ impl Records<'_> {
                 call,
                 arguments,
                 requirements,
+                routed_requirements,
                 ..
             } => {
                 for argument in arguments {
@@ -389,6 +395,17 @@ impl Records<'_> {
                             callee: *function,
                             requires_clause: requirement.requires_clause.clone(),
                             subject: requirement.subject,
+                        },
+                    );
+                }
+                for requirement in routed_requirements {
+                    self.push(
+                        rule,
+                        call.clone(),
+                        ObligationSubject::CallRequirement {
+                            callee: *function,
+                            requires_clause: requirement.clause.clone(),
+                            subject: Some(requirement.subject),
                         },
                     );
                 }

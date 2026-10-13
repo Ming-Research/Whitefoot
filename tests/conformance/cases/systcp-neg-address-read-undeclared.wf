@@ -1,0 +1,15 @@
+alias ExitStatus = std::process::ExitStatus;
+alias SocketAddress = std::net::SocketAddress;
+alias exit_status = std::process::exit_status;
+alias socket_address_port = std::net::socket_address_port;
+
+fn port_of(address: &SocketAddress) -> result: u16 pure {
+  doc "socket_address_port declares reads(address), so this caller exhibits a read through its own reference parameter and its pure row omits it [EFF-2, PRE-2].";
+  let port = socket_address_port(address: address);
+  return port;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "The rejection is in the helper above; this entry point does nothing.";
+  return exit_status(code: 0_u8);
+}

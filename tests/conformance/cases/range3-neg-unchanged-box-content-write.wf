@@ -1,0 +1,15 @@
+struct Pair {
+  left: u64;
+  right: u64;
+}
+
+fn tweak(cells: &Array<Box<Pair>, 1>) -> result: unit writes(cells) contract {
+  ensures forall kept(k in 0_u64..cells^.len): cells^[k] unchanged;
+} {
+  set cells^[0_u64].inner.right = 9_u64;
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

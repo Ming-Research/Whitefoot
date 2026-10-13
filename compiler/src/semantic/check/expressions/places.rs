@@ -1542,6 +1542,77 @@ impl<'unit> TypeContext<'unit> {
         self.readonly_path_member(check_context, path, bindings, true)
     }
 
+    /// [SHARE-2] whether a table subscript selects `Entries<V>`, a run of
+    /// entries, given the step that follows it: a `KeySet` offset selects the
+    /// run and the next step subscripts it, while a key offset selects the
+    /// one `Option` entry and the next step is its payload. The step after
+    /// the subscript is the only place a resolved path records which.
+    fn table_selects_entries(next: Option<&PlaceStep>) -> bool {
+        matches!(next, Some(PlaceStep::Index(_)))
+    }
+    /// [SHARE-2] the `Option` entry type of a table's subscript.
+    fn table_entry_of(&self, ty: Option<CheckedType>) -> Result<Option<CheckedType>, CheckStop> {
+        let Some(CheckedType::Nominal(nominal)) = ty else {
+            return Ok(None);
+        };
+        Ok(match &self.nominal(nominal)?.kind {
+            CheckedNominalKind::Shared {
+                shape: crate::semantic::CheckedShared::Map { entry },
+                ..
+            } => Some(*entry),
+            _ => None,
+        })
+    }
+    /// [SHARE-2, REF-1] indexed atomic roots already carry the selected
+    /// Option/Entries type. Their original self-rooted index is an identity
+    /// prefix, not a second element selection: the number of leading steps
+    /// of `path` that select nothing below the root's own type.
+    fn atomic_index_prefix(
+        &self,
+        local: &LocalBinding,
+        path: &ResolvedPlace,
+    ) -> Result<usize, CheckStop> {
+        let record = self
+            .declarations
+            .resolved
+            .declaration(local.declaration)
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        if record.role() != crate::DeclarationRole::AtomicBinder
+            || !matches!(path.path.first(), Some(PlaceStep::Index(_)))
+        {
+            return Ok(0);
+        }
+        let node = self
+            .declarations
+            .tree
+            .node_with_path(record.origin().node())
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        let ordinal = self
+            .declarations
+            .declarations_at(node, crate::DeclarationRole::AtomicBinder)?
+            .iter()
+            .position(|candidate| candidate.id() == local.declaration)
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        let targets = self
+            .declarations
+            .tree
+            .children_with(node, Production::Place)?;
+        let target = *targets
+            .get(ordinal)
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        let suffixes = self
+            .declarations
+            .tree
+            .children_with(target, Production::Psuffix)?;
+        let subscripted = suffixes
+            .last()
+            .map(|suffix| self.declarations.tree.subscript_offset(*suffix))
+            .transpose()?
+            .flatten()
+            .is_some();
+        Ok(usize::from(subscripted))
+    }
+
     fn readonly_path_member(
         &self,
         check_context: &CheckContext<'_>,
@@ -1567,49 +1638,7 @@ impl<'unit> TypeContext<'unit> {
                     // header validity equation. It has no live type here.
                     return Ok(None);
                 };
-                // [SHARE-2, REF-1] indexed atomic roots already carry the
-                // selected Option/Entries type. Their original self-rooted
-                // index is an identity prefix, not a second element selection.
-                let record = self
-                    .declarations
-                    .resolved
-                    .declaration(local.declaration)
-                    .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                if record.role() == crate::DeclarationRole::AtomicBinder
-                    && matches!(path.path.first(), Some(PlaceStep::Index(_)))
-                {
-                    let node = self
-                        .declarations
-                        .tree
-                        .node_with_path(record.origin().node())
-                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                    let ordinal = self
-                        .declarations
-                        .declarations_at(node, crate::DeclarationRole::AtomicBinder)?
-                        .iter()
-                        .position(|candidate| candidate.id() == local.declaration)
-                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                    let targets = self
-                        .declarations
-                        .tree
-                        .children_with(node, Production::Place)?;
-                    let target = *targets
-                        .get(ordinal)
-                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                    let suffixes = self
-                        .declarations
-                        .tree
-                        .children_with(target, Production::Psuffix)?;
-                    if suffixes
-                        .last()
-                        .map(|suffix| self.declarations.tree.subscript_offset(*suffix))
-                        .transpose()?
-                        .flatten()
-                        .is_some()
-                    {
-                        prefix = 1;
-                    }
-                }
+                prefix = self.atomic_index_prefix(local, path)?;
                 if local.mode.is_range() {
                     PathType::Range(local.ty)
                 } else {
@@ -1623,8 +1652,13 @@ impl<'unit> TypeContext<'unit> {
         for step in &path.path[prefix..] {
             if let PathType::MapSelection(entry) = ty {
                 ty = match step {
-                    PlaceStep::Payload { .. } => PathType::Value(entry),
-                    PlaceStep::Index(_) => PathType::Range(entry),
+                    PlaceStep::Payload { .. } | PlaceStep::Index(_) => {
+                        if Self::table_selects_entries(Some(step)) {
+                            PathType::Range(entry)
+                        } else {
+                            PathType::Value(entry)
+                        }
+                    }
                     // Entries.len is readonly; a checked Option entry cannot
                     // have a measure selection [SHARE-2, OP-15].
                     PlaceStep::Measure(_) | PlaceStep::Descendant(_) => ty,
@@ -1789,18 +1823,23 @@ impl<'unit> TypeContext<'unit> {
     /// This is the one renderer every checker payload naming a resolved place
     /// uses — the [EFF-5] substituted paths, the [OP-12] target and the
     /// [REF-2] preservation pairs — so none of them shows a checker-internal
-    /// binding number or field ordinal.
+    /// binding number or field ordinal. The selected type is kept through
+    /// every step, a window part included [WIN-2], so a field or payload step
+    /// whose type is lost is an internal resolution failure and never an
+    /// ordinal in a repair.
     pub(in crate::semantic::check) fn render_resolved_place(
         &self,
         place: &ResolvedPlace,
         bindings: &HashMap<DeclarationId, LocalBinding>,
     ) -> Result<String, CheckStop> {
         let mut range = false;
+        let mut prefix = 0;
         let (mut rendered, mut ty) = match place.root {
             PlaceRoot::Binding(binding) => {
                 match bindings.values().find(|local| local.binding == binding) {
                     Some(local) => {
                         let name = self.declarations.declaration_spelling(local.declaration)?;
+                        prefix = self.atomic_index_prefix(local, place)?;
                         range = local.mode.is_range();
                         if local.mode.is_reference() {
                             (format!("{name}^"), Some(local.ty))
@@ -1816,7 +1855,7 @@ impl<'unit> TypeContext<'unit> {
                 (constant.name.clone(), Some(constant.declared_type))
             }
         };
-        for step in &place.path {
+        for (position, step) in place.path.iter().enumerate() {
             match *step {
                 PlaceStep::Descendant(target) => {
                     rendered.push_str(".**");
@@ -1824,26 +1863,18 @@ impl<'unit> TypeContext<'unit> {
                     range = target.range;
                 }
                 PlaceStep::Field(field) => {
-                    let selected = match ty {
-                        Some(CheckedType::Nominal(nominal)) => match &self.nominal(nominal)?.kind {
-                            CheckedNominalKind::Struct { fields } => fields
-                                .get(field as usize)
-                                .map(|declared| (declared.name.clone(), declared.ty)),
-                            _ => None,
-                        },
-                        _ => None,
+                    let Some(CheckedType::Nominal(nominal)) = ty else {
+                        return Err(SemanticCompilerFailure::InvalidResolution.into());
                     };
-                    match selected {
-                        Some((name, field_type)) => {
-                            rendered.push('.');
-                            rendered.push_str(&name);
-                            ty = Some(field_type);
-                        }
-                        None => {
-                            rendered.push_str(&format!(".{field}"));
-                            ty = None;
-                        }
-                    }
+                    let CheckedNominalKind::Struct { fields } = &self.nominal(nominal)?.kind else {
+                        return Err(SemanticCompilerFailure::InvalidResolution.into());
+                    };
+                    let declared = fields
+                        .get(field as usize)
+                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                    rendered.push('.');
+                    rendered.push_str(&declared.name);
+                    ty = Some(declared.ty);
                 }
                 PlaceStep::Deref => match ty.map(|ty| self.box_content(ty)).transpose()? {
                     Some(Some(referent)) => {
@@ -1852,33 +1883,34 @@ impl<'unit> TypeContext<'unit> {
                     }
                     _ => {
                         rendered = format!("{rendered}^");
-                        ty = None;
+                        // A borrow keeps its referent's type; a shared
+                        // object's `^` reaches its state [SHARE-1].
+                        if let Some(CheckedType::Nominal(nominal)) = ty
+                            && let CheckedNominalKind::Shared {
+                                state,
+                                shape: crate::semantic::CheckedShared::Object,
+                            } = self.nominal(nominal)?.kind
+                        {
+                            ty = Some(state);
+                        }
                     }
                 },
                 PlaceStep::Payload { variant, field } => {
-                    let selected = match ty {
-                        Some(CheckedType::Nominal(nominal)) => match &self.nominal(nominal)?.kind {
-                            CheckedNominalKind::Enum { variants } => {
-                                variants.get(variant as usize).and_then(|declared| {
-                                    declared.fields.get(field as usize).map(|payload| {
-                                        (declared.name.clone(), payload.name.clone(), payload.ty)
-                                    })
-                                })
-                            }
-                            _ => None,
-                        },
-                        _ => None,
+                    let Some(CheckedType::Nominal(nominal)) = ty else {
+                        return Err(SemanticCompilerFailure::InvalidResolution.into());
                     };
-                    match selected {
-                        Some((variant_name, field_name, payload_type)) => {
-                            rendered.push_str(&format!(".{variant_name}.{field_name}"));
-                            ty = Some(payload_type);
-                        }
-                        None => {
-                            rendered.push_str(&format!(".{variant}.{field}"));
-                            ty = None;
-                        }
-                    }
+                    let CheckedNominalKind::Enum { variants } = &self.nominal(nominal)?.kind else {
+                        return Err(SemanticCompilerFailure::InvalidResolution.into());
+                    };
+                    let declared = variants
+                        .get(variant as usize)
+                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                    let payload = declared
+                        .fields
+                        .get(field as usize)
+                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                    rendered.push_str(&format!(".{}.{}", declared.name, payload.name));
+                    ty = Some(payload.ty);
                 }
                 PlaceStep::Page(offset) => {
                     rendered.push_str(&format!(
@@ -1889,14 +1921,27 @@ impl<'unit> TypeContext<'unit> {
                     range = true;
                 }
                 PlaceStep::Index(offset) => {
+                    // [SHARE-2] an indexed atomic binder's own subscript is
+                    // not in the writer's spelling of the binder.
+                    if position < prefix {
+                        continue;
+                    }
                     rendered.push_str(&format!(
                         "[{}]",
                         self.declarations.render_captured_offset(offset, bindings)?
                     ));
                     // [TYPE-9] a segment is a run of T.
                     let segment = !range && matches!(ty, Some(CheckedType::Segments { .. }));
-                    ty = self.selected_element(ty, range)?;
-                    range = segment;
+                    match self.table_entry_of(ty)? {
+                        Some(entry) if !range => {
+                            ty = Some(entry);
+                            range = Self::table_selects_entries(place.path.get(position + 1));
+                        }
+                        _ => {
+                            ty = self.selected_element(ty, range)?;
+                            range = segment;
+                        }
+                    }
                 }
                 PlaceStep::Range(_)
                     if !range && matches!(ty, Some(CheckedType::Segments { .. })) =>
@@ -1919,7 +1964,8 @@ impl<'unit> TypeContext<'unit> {
                 PlaceStep::Part(part) => {
                     rendered.push('.');
                     rendered.push_str(part.spelling());
-                    ty = None;
+                    ty = self.selected_element(ty, range)?;
+                    range = matches!(part, WindowPart::Filled | WindowPart::Free);
                 }
                 PlaceStep::Measure(measure) => {
                     rendered.push('.');
