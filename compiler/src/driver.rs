@@ -2341,9 +2341,10 @@ pub fn build_module_entry_for_emission(
     );
     // Only a build that composed is recorded, so a recorded module implies
     // that every module verdict of its closure held for these inputs.
-    if let Some(module) = cache
+    if let Some(mut module) = cache
         .and_then(|cache| cache.load(ENTRY_MODULES, &material))
         .and_then(|payload| LlvmModule::decode(&payload))
+        && module.rebind_sources(&selected, Some(graph.modules())).is_some()
     {
         return Ok((module, Vec::new(), true));
     }
@@ -2380,15 +2381,6 @@ fn entry_module_material(
 ) -> Vec<u8> {
     let mut material =
         composition_material(ENTRY_MODULES, graph, selection, inputs, RecordOrder::Read);
-    // Runtime wait descriptions embed the names the writer is shown. Moving
-    // otherwise identical records must rebuild their emitted descriptions,
-    // while source verdicts and proof receipts remain path-independent.
-    for input in inputs.1 {
-        let mut fields = Fields::default();
-        fields.push(input.display_path().as_bytes());
-        material.extend_from_slice(&fields.into_bytes());
-        material.push(b'\n');
-    }
     material.extend_from_slice(
         format!(
             "overlap {overlap:?}\nfragments {}\npreserve-none {}\nno-capture {}\ncoro-end {}\n",
@@ -2936,6 +2928,7 @@ fn lower_selected(
             }
             if let Some(failure) = caller_failure {
                 let mut comment = crate::backend::emission::Module::default();
+                comment.require_source_paths(bundle);
                 comment.text(format!(
                     "\n; Executable caller was not admitted: {failure}\n"
                 ));

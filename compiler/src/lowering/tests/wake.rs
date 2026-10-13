@@ -91,8 +91,8 @@ fn main() -> status: std::process::ExitStatus pure waits {
             )
         };
         assert_eq!(
-            site,
-            &format!(
+            site.to_string(),
+            format!(
                 "waits at {position} to join the context spawned at test.wf:11:5 ({kind})"
             )
         );

@@ -14,7 +14,10 @@
 //! values to the start; the wrapper runs later, in its own context.
 
 use crate::semantic::{BindingId, CheckedExpression, CheckedProjectedDrop, CheckedStatement};
-use crate::{IrConstant, IrOperation, IrTerminator, IrType, IrValueId, LoweringFailure, NodePath};
+use crate::{
+    IrConstant, IrOperation, IrTerminator, IrType, IrValueId, LoweringFailure, NodePath,
+    SourceDescription,
+};
 
 use super::IrBuilder;
 
@@ -83,22 +86,29 @@ impl IrBuilder<'_> {
                 .into_iter()
                 .filter_map(|start| self.wait_report_sources.get(start).cloned())
                 .collect::<Vec<_>>();
-            let contexts = if starts.is_empty() {
-                "source unavailable".to_owned()
-            } else {
-                starts.join(", ")
-            };
             let site = self
                 .wait_report_sources
                 .get(exit)
-                .map_or("<unknown site>", String::as_str);
+                .cloned()
+                .unwrap_or_else(|| SourceDescription::literal("<unknown site>"));
+            let mut description = SourceDescription::literal("waits at ");
+            description.append(&site);
+            description.push_text(
+                " to join contexts (implicit join before leaving this activation; spawn sites in this activation: ",
+            );
+            if starts.is_empty() {
+                description.push_text("source unavailable");
+            }
+            for (index, start) in starts.iter().enumerate() {
+                if index != 0 {
+                    description.push_text(", ");
+                }
+                description.append(start);
+            }
+            description.push_text(")");
             self.define(
                 IrType::Unit,
-                IrOperation::ContextJoin {
-                    site: format!(
-                        "waits at {site} to join contexts (implicit join before leaving this activation; spawn sites in this activation: {contexts})"
-                    ),
-                },
+                IrOperation::ContextJoin { site: description },
             )?;
         }
         Ok(())
@@ -172,7 +182,7 @@ impl IrBuilder<'_> {
                 .get(node_path)
                 .cloned()
                 .unwrap_or_else(|| {
-                    "waits to join a spawned context (source unavailable)".to_owned()
+                    SourceDescription::literal("waits to join a spawned context (source unavailable)")
                 }),
         });
         Ok(())
@@ -297,7 +307,7 @@ pub(super) struct PendingContext {
     /// `None` for the block's end.
     before: Option<usize>,
     /// Presentation retained independently of the join schedule.
-    site: String,
+    site: SourceDescription,
 }
 
 /// The wrapper's symbol stem. `wf_` precedes it and FORM-3 starts no IDENT

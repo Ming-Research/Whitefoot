@@ -234,7 +234,12 @@ static void wait_sites_and_roster(void) {
     wf_context_parked_away = 0;
     wf__watch_begin(&watch);
     wf__watch_unit(&watch, &unit);
+    /* A different writer publishes the early wake. The registering
+     * context's own releases are quiet while its false guard unwinds. */
+    wf_context_current = NULL;
     wf__watch_written(&unit);
+    wf_context_current = &wf_context_root;
+    CHECK(watch.state == WF_GUARD_WOKEN);
     CHECK(wf__watch_park(&watch, &frame, join_site) == 0);
     CHECK(atomic_load(&wf_context_root.wait_site) == guard_site);
     CHECK(wf_run_take(&wf_driver_root) == NULL);

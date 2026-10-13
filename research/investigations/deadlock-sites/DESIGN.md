@@ -37,6 +37,27 @@ Consequently a slot is meaningful for the deadlock report after the detector
 has established that every live context is waiting, rather than a general
 query of what a running context is doing.
 
+The cached printing model retains source descriptions as literal parts and
+position parts identified by qualified module name, logical file, line and
+column. Graph row ordinals are not persistent source identity. A cache
+hit binds those positions to the current invocation's display paths and
+regenerates only the tagged wait constants and developer lock comments;
+emitted functions and their cache key remain independent of path spelling.
+The resulting descriptors are still ordinary read-only static strings, so
+this binding introduces no runtime lookup, allocation or ABI change.
+Canonicalizing display labels is not an alternative source identity: an
+in-memory invocation may name virtual files that do not exist on the host.
+Typed template binding never searches or substitutes arbitrary LLVM text.
+Atomic target-binder descriptions live outside checked function bodies so
+their display bindings cannot enter proof-receipt identity.
+Ledger ordering and deduplication use this logical identity and numeric
+coordinates, so a display-path change cannot reorder a cached comment.
+A valid library module can also contain a refused executable-caller diagnostic
+with source paths in its JSON comment. That recorded diagnostic retains an
+explicit source-reading constraint: reuse requires its original writer paths
+to remain unchanged. Otherwise the normal fresh build renders the diagnostic
+again. No arbitrary JSON or LLVM text is rebound.
+
 The detector first uses the existing atomic all-stuck test, then takes the
 roster lock and repeats that test and the root-completion check before
 traversing. It loads slots with acquire ordering while the lock excludes
@@ -154,3 +175,26 @@ The discrepancy needs its own lowering correction and a witness whose
 unrelated later statement enables the spawned context to finish. It is
 deferred from this diagnostic-only change; the specification already fixes
 the intended schedule, so no language amendment is proposed.
+
+## Cache and fixture corrections from CI
+
+The initial implementation keyed the emitted entry module by display paths.
+The [unit CI run](https://github.com/Ming-Research/Whitefoot/actions/runs/38407483612/job/115330922786)
+rejected this design: the existing same-file path-spelling test missed
+the cache, and relocation of the atomic fixture recorded 67 proofs instead
+of retaining the previous 66. Inspection traced the extra proof to an
+atomic target's lock-ledger display string inside the analyzed body's debug
+rendering. Both issues are addressed by the structured printing-model
+binding above and by keeping target-binder presentation outside proof bodies.
+The relocation check now requires cached-code reuse, unchanged proof counters,
+and complete equality with a fresh emission using the new paths. A separate
+forced frontend check protects proof reuse independently of emitted-module
+reuse. These are correctness checks, not a performance measurement.
+
+The early-watch fixture also initially notified from the registering context,
+whose false-guard unwind deliberately suppresses its own notifications. The
+fixture now simulates a different writer and verifies the watch was actually
+woken before checking the immediate park response and retained site. The
+runtime guard behavior is unchanged. CI verification of these corrections is
+pending; the earlier failed run is evidence of the original faults, not a
+passing result for the corrections.

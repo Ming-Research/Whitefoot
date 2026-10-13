@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use crate::semantic::model::{BindingId, CheckedFunction, CheckedStatement, FunctionId};
-use crate::{NodePath, Production};
+use crate::{NodePath, Production, SourceDescription};
 
 use super::DeclarationInventory;
 
@@ -12,7 +12,7 @@ impl DeclarationInventory<'_> {
         &self,
         functions: &[CheckedFunction],
         executable: &[FunctionId],
-    ) -> HashMap<NodePath, String> {
+    ) -> HashMap<NodePath, SourceDescription> {
         let mut sources = HashMap::new();
         for id in executable {
             let function = &functions[id.0 as usize];
@@ -24,12 +24,11 @@ impl DeclarationInventory<'_> {
                             node_path, body, ..
                         } => {
                             if let Some(site) = self.wait_site(node_path) {
-                                sources.insert(
-                                    node_path.clone(),
-                                    format!(
-                                        "waits for the guard of the atomic statement at {site}"
-                                    ),
+                                let mut description = SourceDescription::literal(
+                                    "waits for the guard of the atomic statement at ",
                                 );
+                                description.append(&site);
+                                sources.insert(node_path.clone(), description);
                             }
                             blocks.push(body);
                         }
@@ -87,12 +86,12 @@ impl DeclarationInventory<'_> {
                                 }
                                 None => "implicit join at the end of this block",
                             };
-                            sources.insert(
-                                node_path.clone(),
-                                format!(
-                                    "waits at {site} to join the context spawned at {spawn} ({kind})"
-                                ),
-                            );
+                            let mut description = SourceDescription::literal("waits at ");
+                            description.append(&site);
+                            description.push_text(" to join the context spawned at ");
+                            description.append(&spawn);
+                            description.push_text(format!(" ({kind})"));
+                            sources.insert(node_path.clone(), description);
                         }
                         _ => {}
                     }
@@ -107,19 +106,25 @@ impl DeclarationInventory<'_> {
                         .any(|plan| &plan.statement == start)
                     && let Some(site) = self.wait_site(start)
                 {
-                    sources.insert(start.clone(), format!("context spawned at {site}"));
+                    let mut description = SourceDescription::literal("context spawned at ");
+                    description.append(&site);
+                    sources.insert(start.clone(), description);
                 }
             }
         }
         sources
     }
 
-    fn wait_site(&self, path: &NodePath) -> Option<String> {
+    fn wait_site(&self, path: &NodePath) -> Option<SourceDescription> {
         let node = self.tree.node_with_path(path)?;
         Some(self.lock_ledger_site(self.tree.coordinate(node).ok()?))
     }
 
-    fn bound_join_site(&self, spawn: &NodePath, before: Option<u32>) -> Option<(String, bool)> {
+    fn bound_join_site(
+        &self,
+        spawn: &NodePath,
+        before: Option<u32>,
+    ) -> Option<(SourceDescription, bool)> {
         let mut statement = self.tree.node_with_path(spawn)?;
         while self.tree.production(statement).ok()? != Production::Stmt {
             statement = self.tree.parent(statement).ok()??;

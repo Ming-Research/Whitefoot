@@ -9,11 +9,11 @@
 //! that rule, so this is not a way to admit unused targets.
 
 use super::BuildingBlock;
-use crate::{IrBlockId, IrTerminator};
+use crate::{IrBlockId, IrTerminator, SourceDescription};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 pub(super) struct AtomicLedger {
-    site: String,
+    site: SourceDescription,
     groups: Vec<GroupLedger>,
     pub(super) body_entry: Option<IrBlockId>,
     pub(super) exits: HashSet<IrBlockId>,
@@ -27,13 +27,13 @@ struct GroupLedger {
 
 struct TakeSite {
     block: IrBlockId,
-    source: String,
+    source: SourceDescription,
     before_guard: bool,
     taken_with: Option<usize>,
 }
 
 impl AtomicLedger {
-    pub(super) fn new(site: String) -> Self {
+    pub(super) fn new(site: SourceDescription) -> Self {
         Self {
             site,
             groups: Vec::new(),
@@ -54,7 +54,7 @@ impl AtomicLedger {
         &mut self,
         index: usize,
         block: IrBlockId,
-        direct: &BTreeMap<usize, String>,
+        direct: &BTreeMap<usize, SourceDescription>,
         before_guard: bool,
     ) {
         // This is the same ordered prefix that take_groups_through emits.
@@ -73,7 +73,7 @@ impl AtomicLedger {
         });
     }
 
-    pub(super) fn render(&self, function: &str, blocks: &[BuildingBlock]) -> Vec<String> {
+    pub(super) fn render(&self, function: &str, blocks: &[BuildingBlock]) -> Vec<SourceDescription> {
         self.groups
             .iter()
             .map(|group| {
@@ -91,35 +91,49 @@ impl AtomicLedger {
                     };
                     (classification, paths.first)
                 };
-                let mut line = format!(
-                    "LOCK {function}  {}  targets({}): {}  {classification}",
-                    self.site, group.names, group.state,
-                );
+                let mut line = SourceDescription::literal(format!("LOCK {function}  "));
+                line.append(&self.site);
+                line.push_text(format!(
+                    "  targets({}): {}  {classification}",
+                    group.names, group.state,
+                ));
                 if !first.is_empty() {
                     let uses = first
                         .iter()
-                        .map(|index| group.requests[*index].source.as_str())
-                        .collect::<BTreeSet<_>>()
-                        .into_iter()
-                        .collect::<Vec<_>>()
-                        .join(" | ");
-                    line.push_str(&format!("; first use {uses}"));
+                        .map(|index| {
+                            let source = &group.requests[*index].source;
+                            (source.identity(), source)
+                        })
+                        .collect::<BTreeMap<_, _>>();
+                    line.push_text("; first use ");
+                    for (index, source) in uses.into_values().enumerate() {
+                        if index != 0 {
+                            line.push_text(" | ");
+                        }
+                        line.append(source);
+                    }
                     let causes = first
                         .iter()
                         .filter_map(|index| {
                             let site = &group.requests[*index];
                             site.taken_with.map(|later| {
-                                format!(
-                                    "targets({}) at {}",
-                                    self.groups[later].names, site.source,
-                                )
+                                let mut cause = SourceDescription::literal(format!(
+                                    "targets({}) at ",
+                                    self.groups[later].names,
+                                ));
+                                cause.append(&site.source);
+                                (cause.identity(), cause)
                             })
                         })
-                        .collect::<BTreeSet<_>>()
-                        .into_iter()
-                        .collect::<Vec<_>>();
+                        .collect::<BTreeMap<_, _>>();
                     if !causes.is_empty() {
-                        line.push_str(&format!("; taken with {}", causes.join(" | ")));
+                        line.push_text("; taken with ");
+                        for (index, cause) in causes.into_values().enumerate() {
+                            if index != 0 {
+                                line.push_text(" | ");
+                            }
+                            line.append(&cause);
+                        }
                     }
                 }
                 line

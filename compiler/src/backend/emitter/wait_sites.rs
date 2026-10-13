@@ -1,6 +1,6 @@
 //! Immutable runtime wait descriptions, retained by each using link fragment.
 
-use super::{FunctionEmitter, Module, llvm_bytes};
+use super::{FunctionEmitter, Module};
 use crate::{IrInstruction, IrOperation, IrProgram, IrValueId};
 
 fn symbol(function: &str, result: IrValueId) -> String {
@@ -27,14 +27,7 @@ pub(super) fn emit_wait_sites(output: &mut Module, program: &IrProgram) {
                 | IrOperation::WatchPark { site, .. } => site,
                 _ => continue,
             };
-            let mut bytes = site.as_bytes().to_vec();
-            bytes.push(0);
-            output.fragment_local_constant(
-                symbol(function.name(), *result),
-                format!("[{} x i8]", bytes.len()),
-                format!("c\"{}\"", llvm_bytes(&bytes)),
-                Some(1),
-            );
+            output.source_constant(symbol(function.name(), *result), site.clone());
         }
     }
 }

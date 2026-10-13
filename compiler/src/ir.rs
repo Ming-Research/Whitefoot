@@ -978,7 +978,7 @@ pub enum IrOperation {
     /// one. Defines `Unit`.
     ContextJoin {
         /// Static presentation only; never a scheduling input.
-        site: String,
+        site: crate::SourceDescription,
     },
     /// [WAIT-3] starts `function`, a synthesized wrapper taking exactly
     /// `arguments` by value and returning the spawned call's result, in a
@@ -995,7 +995,7 @@ pub enum IrOperation {
     ContextAwait {
         start: IrValueId,
         /// Static presentation only; never a scheduling input.
-        site: String,
+        site: crate::SourceDescription,
     },
     Integer {
         operation: IrIntegerOperation,
@@ -1354,7 +1354,7 @@ pub enum IrOperation {
         object: IrValueId,
         test: Option<IrWakeTest>,
         /// Static description of the atomic statement whose guard waits.
-        site: String,
+        site: crate::SourceDescription,
     },
     /// [SHARE-3] gives up this context's hold, after a statement that may
     /// have written the object when `wrote`, and otherwise after one whose
@@ -1588,7 +1588,7 @@ pub enum IrOperation {
     WatchPark {
         record: IrRecord,
         /// Static description of the atomic statement whose guard waits.
-        site: String,
+        site: crate::SourceDescription,
     },
     /// The first-element pointer used only by a synthesized split capture of
     /// a `Box<Array<T>>`. The source Box value remains the allocation-base
@@ -2109,7 +2109,7 @@ pub struct IrFunction {
     /// acquire invented source use or provenance records.
     pub(crate) source_calls: Vec<IrSourceCall>,
     /// Developer-only atomic acquisition lines, recorded during lowering.
-    pub(crate) lock_ledger: Vec<String>,
+    pub(crate) lock_ledger: Vec<crate::SourceDescription>,
     pub(crate) result: IrType,
     pub(crate) values: Vec<IrType>,
     pub(crate) blocks: Vec<IrBlock>,

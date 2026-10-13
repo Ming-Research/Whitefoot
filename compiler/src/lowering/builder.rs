@@ -202,6 +202,7 @@ pub(crate) fn lower_checked_from(
                 function_results: &function_results,
                 synthesis: &synthesis,
                 lock_ledger_sources: &checked.data.lock_ledger_sources,
+                target_ledger_sources: &checked.data.target_ledger_sources,
                 wait_report_sources: &checked.data.wait_report_sources,
             };
             lower_function(
@@ -268,8 +269,9 @@ struct LoweringContext<'program> {
     /// Every physical function's declared IR result, indexed by its IR ordinal.
     function_results: &'program [IrType],
     synthesis: &'program SynthesisCell,
-    lock_ledger_sources: &'program HashMap<NodePath, String>,
-    wait_report_sources: &'program HashMap<NodePath, String>,
+    lock_ledger_sources: &'program HashMap<NodePath, crate::SourceDescription>,
+    target_ledger_sources: &'program HashMap<NodePath, crate::SourceDescription>,
+    wait_report_sources: &'program HashMap<NodePath, crate::SourceDescription>,
 }
 
 fn lower_scalar_constant(value: &CheckedValue) -> Result<IrConstant, LoweringFailure> {
@@ -815,9 +817,10 @@ struct IrBuilder<'program> {
     /// being lowered, innermost last.
     atomics: Vec<atomic::AtomicRegion>,
     /// Source citations and developer lines recorded by atomic lowering.
-    lock_ledger_sources: &'program HashMap<NodePath, String>,
-    wait_report_sources: &'program HashMap<NodePath, String>,
-    lock_ledger: Vec<String>,
+    lock_ledger_sources: &'program HashMap<NodePath, crate::SourceDescription>,
+    target_ledger_sources: &'program HashMap<NodePath, crate::SourceDescription>,
+    wait_report_sources: &'program HashMap<NodePath, crate::SourceDescription>,
+    lock_ledger: Vec<crate::SourceDescription>,
     /// Atomic entry roots whose completed statements permit concurrent readers.
     readonly_atomic_roots: std::collections::HashSet<BindingId>,
     /// Executing split contexts, including enclosing chunks' permissions.
@@ -862,6 +865,7 @@ impl<'program> IrBuilder<'program> {
             function_results,
             synthesis,
             lock_ledger_sources,
+            target_ledger_sources,
             wait_report_sources,
         } = context;
         let mut builder = Self {
@@ -898,6 +902,7 @@ impl<'program> IrBuilder<'program> {
             pending_contexts: Vec::new(),
             atomics: Vec::new(),
             lock_ledger_sources,
+            target_ledger_sources,
             wait_report_sources,
             lock_ledger: Vec::new(),
             readonly_atomic_roots: std::collections::HashSet::new(),
@@ -933,6 +938,7 @@ impl<'program> IrBuilder<'program> {
             function_results: self.function_results,
             synthesis: self.synthesis,
             lock_ledger_sources: self.lock_ledger_sources,
+            target_ledger_sources: self.target_ledger_sources,
             wait_report_sources: self.wait_report_sources,
         }
     }
