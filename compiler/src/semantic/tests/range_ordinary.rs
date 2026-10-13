@@ -1286,7 +1286,7 @@ fn joined_value_is_free_where_its_join_was_bypassed() {
     // else bypasses as well, so each needs the outer join's bypass: the
     // middle join's own bypasses alone ask its selector to be both arms.
     let one = "    if x == 1_u64 {\n      set v = 1_u8;\n    } else if x == 2_u64 {\n      set v = 2_u8;\n    } else {\n      return 100_u8;\n    }";
-    let two = "    if x < 10_u64 {\n      if x == 1_u64 {\n        set v = 1_u8;\n      } else if x == 2_u64 {\n        set v = 2_u8;\n      } else {\n        return 100_u8;\n      }\n    } else {\n      if x == 11_u64 {\n        set v = 3_u8;\n      } else if x == 12_u64 {\n        set v = 4_u8;\n      } else {\n        return 100_u8;\n      }\n    }";
+    let two = "    if x < 10_u64 {\n      if x == 1_u64 {\n        set v = 1_u8;\n      } else if x == 2_u64 {\n        set v = 2_u8;\n      } else {\n        return 100_u8;\n      }\n    } else {\n      set v = 9_u8;\n      if x == 11_u64 {\n        set v = 3_u8;\n      } else if x == 12_u64 {\n        set v = 4_u8;\n      } else {\n        return 100_u8;\n      }\n    }";
     for inner in [one, two] {
         check(&bypassed_join(inner, "5"), Some(SemanticRule::Op2));
         // On the paths through the inner joins their arms still bound `v`.
