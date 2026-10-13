@@ -29,7 +29,7 @@ enum PutOutcome {
 }
 
 struct Progress {
-  held: Slot;
+  observed_state: Slot;
   source_next: u64;
   next_probe: u64;
   phase: u8;
@@ -234,8 +234,8 @@ fn begin(source: Box<Slots<Slot>>, count: u64) -> result: Rehash pure contract {
   doc "Allocation is total, so the migration state is built without a refusal arm; the source cell moves into the state unchanged.";
   let spare = box_slots_new::<Slot>(capacity: count);
   fill_slots(slots: &spare, count: count);
-  let held = Slot::Vacant();
-  let progress = Progress(held: move held, source_next: 0_u64, next_probe: 0_u64, phase: 0_u8);
+  let observed_state = Slot::Vacant();
+  let progress = Progress(observed_state: move observed_state, source_next: 0_u64, next_probe: 0_u64, phase: 0_u8);
   let state = Rehash(source: move source, target: move spare, progress: move progress);
   return move state;
 }
@@ -374,7 +374,7 @@ fn cleanup(state: Rehash) -> result: unit pure {
   return unit;
 }
 
-fn advance(source: &Box<Slots<Slot>>, target: &Box<Slots<Slot>>, progress: &Progress, budget: u64) -> (examined: u64, moved: u64) writes(source), writes(target), writes(progress.held), writes(progress.source_next), writes(progress.next_probe), writes(progress.phase) {
+fn advance(source: &Box<Slots<Slot>>, target: &Box<Slots<Slot>>, progress: &Progress, budget: u64) -> (examined: u64, moved: u64) writes(source), writes(target), writes(progress.observed_state), writes(progress.source_next), writes(progress.next_probe), writes(progress.phase) {
   doc "Each transfer is two exchanges: the source slot's occupant goes into the held field and the held occupant goes into its target slot, so the displaced vacant value is released by the ordinary scope exit.";
   let source_cursor = progress^.source_next;
   let probe_cursor = progress^.next_probe;
@@ -400,7 +400,7 @@ fn advance(source: &Box<Slots<Slot>>, target: &Box<Slots<Slot>>, progress: &Prog
         if full {
           let held_slot = Slot::Deleted();
           swap(first: &source^.inner[index], second: &held_slot);
-          swap(first: &progress^.held, second: &held_slot);
+          swap(first: &progress^.observed_state, second: &held_slot);
           set probe_cursor = 0_u64;
           set phase = 1_u8;
         }
@@ -410,7 +410,7 @@ fn advance(source: &Box<Slots<Slot>>, target: &Box<Slots<Slot>>, progress: &Prog
           set phase = 2_u8;
           break;
         }
-        let key = slot_key(slot: &progress^.held);
+        let key = slot_key(slot: &progress^.observed_state);
         let home = key % count;
         let index = probe_index(home: home, step: probe_cursor, count: count);
         set probe_cursor = probe_cursor + 1_u64;
@@ -418,7 +418,7 @@ fn advance(source: &Box<Slots<Slot>>, target: &Box<Slots<Slot>>, progress: &Prog
         if full {
         } else {
           let held_slot = Slot::Vacant();
-          swap(first: &progress^.held, second: &held_slot);
+          swap(first: &progress^.observed_state, second: &held_slot);
           swap(first: &target^.inner[index], second: &held_slot);
           set transfers = transfers + 1_u64;
           set phase = 0_u8;
@@ -446,8 +446,8 @@ fn rehash_all(slots: &Box<Slots<Slot>>, count: u64) -> (code: u8, examined: u64,
 } {
   doc "A complete migration into a fresh cell, committed over the caller's cell so the ordinary assignment releases the emptied source.";
   let target = box_slots_new::<Slot>(capacity: count);
-  let held = Slot::Vacant();
-  let progress = Progress(held: move held, source_next: 0_u64, next_probe: 0_u64, phase: 0_u8);
+  let observed_state = Slot::Vacant();
+  let progress = Progress(observed_state: move observed_state, source_next: 0_u64, next_probe: 0_u64, phase: 0_u8);
   fill_slots(slots: &target, count: count);
   let (work, moved) = advance(source: slots, target: &target, progress: &progress, budget: 18446744073709551615_u64);
   let phase = progress.phase;
@@ -470,10 +470,10 @@ fn checked_insert(slots: &Box<Slots<Slot>>, key: u64, id: u64, kind: u64, expect
   return verdict;
 }
 
-fn state_hash(state: &Rehash) -> result: u64 reads(state.source), reads(state.target), reads(state.progress.held), reads(state.progress.source_next), reads(state.progress.next_probe), reads(state.progress.phase) {
+fn state_hash(state: &Rehash) -> result: u64 reads(state.source), reads(state.target), reads(state.progress.observed_state), reads(state.progress.source_next), reads(state.progress.next_probe), reads(state.progress.phase) {
   let source = digest(slots: &state^.source);
   let target = digest(slots: &state^.target);
-  let (control, key, id) = read_slot(slot: &state^.progress.held);
+  let (control, key, id) = read_slot(slot: &state^.progress.observed_state);
   let first = source *wrap 131_u64;
   let second = first +wrap target;
   let third = second *wrap 131_u64;

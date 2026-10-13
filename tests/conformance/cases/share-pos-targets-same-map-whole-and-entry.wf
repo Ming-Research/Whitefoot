@@ -9,8 +9,8 @@ fn main() -> status: std::process::ExitStatus pure waits {
   atomic t = &store, e = &other[key] {
     set e^ = Some<u8>(value: 7_u8);
     match t^[key] {
-      Some(value: held) => {
-        set seen = held^;
+      Some(value: observed) => {
+        set seen = observed^;
       }
       None() => {
       }

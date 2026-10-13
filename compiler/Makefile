@@ -92,10 +92,13 @@ COMPLETION_RUNTIME_SOURCES := \
 	$(COMPLETION_DIR)/file_posix.c \
 	$(COMPLETION_DIR)/bridge.c \
 	$(COMPLETION_DIR)/stop_signals.c \
-	$(COMPLETION_DIR)/linux_io_uring.c
+	$(COMPLETION_DIR)/linux_io_uring.c \
+	$(COMPLETION_DIR)/fork_capsule.c \
+	$(COMPLETION_DIR)/snapshot_export.c \
+	src/backend/keyed_table.c
 # ordinary_values.c's map reserve release calls the keyed tables' unit.
 COMPLETION_SOURCES := $(COMPLETION_RUNTIME_SOURCES) \
-	src/backend/wf_floor.c src/backend/keyed_table.c \
+	src/backend/wf_floor.c \
 	src/backend/ordinary_values.c src/backend/ordinary_values_probe.c \
 	src/backend/ordinary_values.ll src/backend/ordinary_values_probe.ll \
 	$(COMPLETION_DIR)/harness.c
@@ -206,7 +209,7 @@ $(COMPLETION_TMP)/$(1): $(patsubst src/backend/%.ll,$(COMPLETION_TMP)/objects/$(
 	$$(CC) $(3) $$^ -o "$$@"
 $(COMPLETION_TMP)/objects/$(1)/%.o: src/backend/%.c $(COMPLETION_HEADERS) Makefile $(COMPLETION_CONFIG)
 	@mkdir -p "$$(dir $$@)"
-	$$(CC) $(3) -c "$$<" -o "$$@"
+	$$(CC) $(3) $$(if $$(filter %/fork_capsule.c %/snapshot_export.c,$$<),-fno-builtin -fno-stack-protector -fno-sanitize=all,) -c "$$<" -o "$$@"
 $(COMPLETION_TMP)/objects/$(1)/%_ir.o: src/backend/%.ll Makefile $(COMPLETION_CONFIG)
 	@mkdir -p "$$(dir $$@)"
 	$$(LLVM_CC) $(filter-out -std=c11 -pthread -D%,$(3)) -Wno-override-module -Wno-unused-command-line-argument -x ir -c "$$<" -o "$$@"
@@ -241,8 +244,16 @@ $(eval $(call completion-image,fork-capsule-no-advice,$(FORK_CAPSULE_SOURCES),$(
 $(eval $(call completion-image,fork-capsule-close-loop,$(FORK_CAPSULE_SOURCES),$(FORK_CAPSULE_CFLAGS) -DWF_FORK_CAPSULE_TEST_NO_CLOSE_RANGE))
 $(eval $(call completion-image,fork-capsule-advice-failure,$(FORK_CAPSULE_SOURCES),$(FORK_CAPSULE_CFLAGS) -DWF_LINUX_IO_URING_MADVISE=wf_fork_test_madvise))
 $(foreach image,$(FORK_CAPSULE_IMAGES),$(COMPLETION_TMP)/objects/$(image)/completion/fork_capsule_test.o): $(SCHED_DIR)/core.c
-completion-fork-capsule-test: $(addprefix $(COMPLETION_TMP)/,$(FORK_CAPSULE_IMAGES))
-	@set -e; for image in $(FORK_CAPSULE_IMAGES); do \
+# The source-export collector uses the already-built ordinary runtime objects;
+# only its independent wire-format oracle is an additional translation unit.
+SNAPSHOT_EXPORT_TEST_OBJECTS := \
+	$(patsubst src/backend/%.c,$(COMPLETION_TMP)/objects/bridge-default-probe/%.o,$(COMPLETION_RUNTIME_SOURCES)) \
+	$(COMPLETION_TMP)/objects/bridge-default-probe/completion/snapshot_export_test.o
+$(COMPLETION_TMP)/snapshot-export: $(SNAPSHOT_EXPORT_TEST_OBJECTS)
+	$(CC) $(COMPLETION_BASE_CFLAGS) $^ -o "$@"
+SNAPSHOT_IMAGES := $(FORK_CAPSULE_IMAGES) snapshot-export
+completion-fork-capsule-test: $(addprefix $(COMPLETION_TMP)/,$(SNAPSHOT_IMAGES))
+	@set -e; for image in $(SNAPSHOT_IMAGES); do \
 		echo "== $$image =="; \
 		status=0; $(NO_CORE_DUMPS) "$(COMPLETION_TMP)/$$image" || status=$$?; \
 		if [ $$status -eq 77 ] && [ "$(REQUIRE_NATIVE)" != 1 ]; then \
@@ -466,7 +477,7 @@ floor-test: $(COMPLETION_TMP)/floor-probe $(COMPLETION_TMP)/floor-probe-hooks
 # includes the keyed tables' unit, and through it the map's source, so that
 # it can drive interleavings through the map's own steps.
 CONCURRENT_MAP_SOURCES := src/backend/concurrent_map.c src/backend/keyed_table.c src/backend/concurrent_map_test.c \
-	src/backend/concurrent_map.h $(COMPLETION_DIR)/bridge.h
+	src/backend/concurrent_map.h src/backend/concurrent_map_layout.h $(COMPLETION_DIR)/bridge.h
 CONCURRENT_MAP_VARIANTS := copy-out locked collide
 concurrent-map-test: $(foreach v,$(CONCURRENT_MAP_VARIANTS),$(COMPLETION_TMP)/concurrent-map-test-$(v)) $(COMPLETION_TMP)/concurrent-map-test-ignore-activity
 	@set -e; for v in $(CONCURRENT_MAP_VARIANTS); do \
@@ -529,7 +540,6 @@ concurrent-map-test-tsan: $(CONCURRENT_MAP_SOURCES) Makefile
 # tables' unit.
 SHARED_OBJECT_TEST_OBJECTS := \
 	$(patsubst src/backend/%.c,$(COMPLETION_TMP)/objects/bridge-default-probe/%.o,$(COMPLETION_RUNTIME_SOURCES)) \
-	$(COMPLETION_TMP)/objects/bridge-default-probe/keyed_table.o \
 	$(COMPLETION_TMP)/objects/bridge-default-probe/completion/shared_object_test.o
 # The keyed tables' unit compiles the map's source in.
 $(COMPLETION_TMP)/objects/bridge-default-probe/keyed_table.o: src/backend/concurrent_map.c
@@ -581,7 +591,6 @@ decision-cell-test: $(COMPLETION_TMP)/decision-cell-test
 # objects are the default-route probe's existing compatible construction.
 CANCEL_TEST_OBJECTS := \
 	$(patsubst src/backend/%.c,$(COMPLETION_TMP)/objects/bridge-default-probe/%.o,$(filter-out $(COMPLETION_DIR)/bridge.c,$(COMPLETION_RUNTIME_SOURCES))) \
-	$(COMPLETION_TMP)/objects/bridge-default-probe/keyed_table.o \
 	$(COMPLETION_TMP)/objects/bridge-default-probe/completion/cancel_test.o
 $(COMPLETION_TMP)/objects/bridge-default-probe/completion/cancel_test.o: $(COMPLETION_DIR)/bridge.c src/backend/ordinary_values.c
 $(COMPLETION_TMP)/cancel-test: $(CANCEL_TEST_OBJECTS)
@@ -597,7 +606,7 @@ cancel-test: $(COMPLETION_TMP)/cancel-test
 # its sanitizer flags. The keyed-table unit exercises distinct physical map
 # users across a transfer. No native-ring availability or timing selects a result.
 DRIVER_SERVICE_TEST_SOURCES := $(filter-out $(COMPLETION_DIR)/bridge.c,$(COMPLETION_RUNTIME_SOURCES)) \
-	src/backend/keyed_table.c $(COMPLETION_DIR)/driver_service_test.c $(COMPLETION_DIR)/driver_service_frames.c
+	$(COMPLETION_DIR)/driver_service_test.c $(COMPLETION_DIR)/driver_service_frames.c
 define driver-service-image
 $(COMPLETION_TMP)/$(1): $(patsubst src/backend/%.c,$(COMPLETION_TMP)/objects/$(2)/%.o,$(DRIVER_SERVICE_TEST_SOURCES))
 	$$(CC) $(3) $$^ -o "$$@"

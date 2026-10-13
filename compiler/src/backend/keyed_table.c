@@ -45,6 +45,7 @@ static _Thread_local void *wf_key_set_spare;
 #define WF_CMAP_SPARE_KEYS() (wf_key_set_spare)
 #include "concurrent_map.c"
 
+
 /* What a statement on one key keeps in its frame: the entry's unlock, the
  * table's user, whether the statement only reads the entry, and whether the
  * user held the whole table when it took the entry. */
