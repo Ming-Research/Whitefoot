@@ -31,7 +31,7 @@ Once every source has passed raw lexical formation and the complete compilation 
 A source forest is not a second `program` node, and a source with no items owns an empty forest.
 That source's canonical bytes are exactly the result of rendering its forest by the following rules.
 The input bytes must equal that rendering byte for byte; checking and compilation never normalize or rewrite input.
-The toolchain's formatting command is a separate writer request outside acceptance: for sources whose compilation unit, or module graph record and its source records, reaches the forests above, it writes exactly each source's rendering, and for any other input it reports the owning lexical or grammar rejection and writes nothing.
+A formatting request that replaces a source with its rendering is a writer tool outside acceptance and changes no verdict.
 A source that has no complete `item*` derivation is rejected by its owning lexical or grammar rule before this forest-format comparison, and no tree or forest is fabricated [DIAG-1].
 A module graph record [MOD-1] is rendered by the same rules over its forest of `package_decl`, `module_row` and `entry_decl` subtrees under its `graph_file` root.
 

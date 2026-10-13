@@ -56,13 +56,45 @@ pub struct FormattedFile {
 ///
 /// Package traversal, graph judgments and source discovery use the ordinary
 /// module-checking path. Graphs are rendered before those judgments so layout
-/// faults do not prevent discovery; graph-rule diagnostics refer to that
-/// canonical rendering, while lexical and grammar diagnostics retain the
-/// original record. Source records are one grammar compilation unit without
-/// semantic checking. The result contains graphs in package order followed by
-/// source records in discovery order, and no partial result escapes a failure.
-/// This function reads files but never rewrites them.
+/// faults do not prevent discovery. Source lexical and grammar rejections use
+/// the original record. For any other failure, the ordinary graph formation
+/// and discovery path runs on the original files, and its failure takes
+/// precedence over the formatting failure. Source records are one grammar
+/// compilation unit without semantic checking. The result contains graphs in
+/// package order followed by source records in discovery order, and no partial
+/// result escapes a failure. This function reads files but never rewrites them.
 pub fn format_module_program(
+    graph_path: &Path,
+    limits: CompilerLimits,
+) -> Result<Vec<FormattedFile>, ModuleProgramFailure> {
+    match compute_module_program_format(graph_path, limits) {
+        Ok(files) => Ok(files),
+        Err(failure) => {
+            if matches!(
+                &failure,
+                ModuleProgramFailure::Compilation(failure)
+                    if failure.kind() == CompilationFailureKind::Source
+                        && matches!(
+                            failure.stage(),
+                            CompilationStage::Lexing
+                                | CompilationStage::TerminalClassification
+                                | CompilationStage::Parsing
+                        )
+            ) {
+                return Err(failure);
+            }
+            // A normalized graph must not change which loading failure the
+            // writer sees. Retry only loading, preserving semantic-free
+            // formatting when every original record can be discovered.
+            let graph = form_module_program_graph(graph_path, limits)?;
+            discover_module_sources(&program_root(graph_path), &graph)?;
+            Err(failure)
+        }
+    }
+}
+
+/// Computes every record before the public wrapper chooses failure priority.
+fn compute_module_program_format(
     graph_path: &Path,
     limits: CompilerLimits,
 ) -> Result<Vec<FormattedFile>, ModuleProgramFailure> {
@@ -392,7 +424,11 @@ fn graph_compiler_failure(failure: crate::GraphCompilerFailure) -> CompilationFa
 
 #[cfg(test)]
 mod formatting_tests {
-    use super::{CompilerLimits, format_module_program};
+    use super::{
+        CompilationFailureKind, CompilationStage, CompilerLimits, FormatGrammar,
+        ModuleProgramFailure, SourceInput, canonical_format, form_module_program_graph,
+        format_module_program,
+    };
     use std::path::PathBuf;
 
     struct Directory(PathBuf);
@@ -420,6 +456,57 @@ mod formatting_tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn original_graph_failure_precedes_a_source_rendering_resource_stop() {
+        let directory = Directory::new("source-rendering-resource");
+        let source = b"fn value()->result:u64 pure{return 0_u64;}\n";
+        let canonical = b"fn value() -> result: u64 pure {\n  return 0_u64;\n}\n";
+        let mut limits = CompilerLimits::default();
+        limits.canonical.max_source_bytes =
+            u64::try_from(canonical.len() - 1).expect("a short source fits its byte ceiling");
+        assert!(source.len() < canonical.len());
+        let resource = canonical_format(
+            &[SourceInput::new("value.wf", source)],
+            FormatGrammar::Program,
+            limits,
+        )
+        .expect_err("the source rendering exceeds the canonical byte ceiling");
+        assert_eq!(resource.stage(), CompilationStage::CanonicalSource);
+        assert_eq!(resource.kind(), CompilationFailureKind::Resource);
+
+        directory.write("modules.wfg", b"pkg:[];\n");
+        directory.write("module.wfm", b"\n");
+        directory.write("value.wf", source);
+        let graph_path = directory.0.join("modules.wfg");
+        let original = match form_module_program_graph(&graph_path, limits) {
+            Err(ModuleProgramFailure::Compilation(failure)) => failure,
+            other => panic!("the original graph has a FORM-2 rejection: {other:?}"),
+        };
+        assert_eq!(original.rule_id(), Some("FORM-2"));
+        let formatted = match format_module_program(&graph_path, limits) {
+            Err(ModuleProgramFailure::Compilation(failure)) => failure,
+            other => panic!("formatting preserves the original loading failure: {other:?}"),
+        };
+        assert_eq!(formatted.to_string(), original.to_string());
+        assert_eq!(
+            std::fs::read(&graph_path).expect("read graph"),
+            b"pkg:[];\n"
+        );
+        assert_eq!(
+            std::fs::read(directory.0.join("value.wf")).expect("read source"),
+            source
+        );
+
+        directory.write("modules.wfg", b"pkg: [];\n");
+        let formatted = match format_module_program(&graph_path, limits) {
+            Err(ModuleProgramFailure::Compilation(failure)) => failure,
+            other => panic!("a loadable graph preserves the resource stop: {other:?}"),
+        };
+        assert_eq!(formatted.stage(), resource.stage());
+        assert_eq!(formatted.kind(), resource.kind());
+        assert_eq!(formatted.rule_id(), None);
     }
 
     #[test]

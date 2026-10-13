@@ -2387,9 +2387,7 @@ fn entry_module_material(
         format!(
             "overlap {overlap:?}\nfragments {}\npreserve-none {}\nno-capture {}\ncoro-end {}\n",
             selection.fragments,
-            toolchain.preserve_none,
-            toolchain.no_capture_attribute,
-            toolchain.coro_end_result,
+            toolchain.preserve_none, toolchain.no_capture_attribute, toolchain.coro_end_result,
         )
         .as_bytes(),
     );
