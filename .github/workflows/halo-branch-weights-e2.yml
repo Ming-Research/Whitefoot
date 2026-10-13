@@ -31,6 +31,9 @@ env:
 
 jobs:
   measure:
+    # A commit whose message contains [14900k] runs only the timing job: the
+    # instruction counts are done.
+    if: ${{ !contains(github.event.head_commit.message, '[14900k]') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
@@ -671,5 +674,128 @@ jobs:
         with:
           name: halo-branch-weights-e2-${{ github.run_id }}
           path: ${{ runner.temp }}/halo-e2/
+          if-no-files-found: error
+          retention-days: 14
+
+  # E2's last step: 14900K timing of C2 against B with a twin of B (the twin is
+  # a byte copy of B's images, as in research/investigations/check-time).
+  # Runs only on a push whose head commit message contains [14900k], and only
+  # on the self-hosted 14900K runner, never on a hosted one.
+  timing:
+    if: ${{ contains(github.event.head_commit.message, '[14900k]') }}
+    runs-on: [self-hosted, 14900k]
+    timeout-minutes: 180
+    env:
+      # Same pinning default as compute-bench.yml's placement experiment.
+      E2T_CPUS: "2"  # one P-core (P-cores are 0-15, 5.0 GHz); the Halo timings pin the same CPU
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Same idle discipline as io-bench.yml: stop what a cancelled run left
+      # behind, remove a stale host lock, record the load, name missing tools.
+      - name: Check the host is idle and has its tools
+        run: |
+          set -uo pipefail
+          ps -eo pid,args | grep -E 'python3 \.github/halo-e2-timing\.py' |
+            grep -v grep | tee "$RUNNER_TEMP/leftover.txt" || true
+          awk '{print $1}' "$RUNNER_TEMP/leftover.txt" | xargs -r kill 2>/dev/null || true
+          sleep 2
+          lock=/tmp/whitefoot-check-$(id -u).lock
+          if [ -e "$lock" ]; then
+            owner=$(head -1 "$lock/pid" 2>/dev/null)
+            if [ -z "$owner" ] || ! kill -0 "$owner" 2>/dev/null; then
+              echo "removing stale lock of $owner"
+              rm -rf "$lock"
+            fi
+          fi
+          if [ -d "$HOME/.cargo/bin" ]; then
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+          missing=
+          for tool in /usr/bin/clang ld.lld cargo make taskset timeout perl python3 git sha256sum; do
+            command -v "$tool" >/dev/null || missing="$missing $tool"
+          done
+          if [ -n "$missing" ]; then
+            echo "missing:$missing"
+            exit 1
+          fi
+          echo "load: $(cat /proc/loadavg)"
+          ps -eo pid,pcpu,args --sort=-pcpu | head -8
+          /usr/bin/clang --version
+          nproc
+          lscpu
+
+      - name: Fetch exact input identities and build the scratch tree
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/halo-e2-timing"
+          rm -rf "$out" "$RUNNER_TEMP"/halo-e2-{base,halo,silverfir,targets,caches}
+          mkdir -p "$out"/{inputs,images,logs,raw}
+          echo "E2T_OUT=$out" >> "$GITHUB_ENV"
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          base=$(git merge-base origin/main HEAD)
+          # A self-hosted runner keeps the checkout, and with it the
+          # registration of a previous run's worktree under a cleaned temp.
+          git worktree prune
+          git worktree add --detach "$RUNNER_TEMP/halo-e2-base" "$base"
+          git clone --quiet https://github.com/Ming-Research/Halo-wf.git "$RUNNER_TEMP/halo-e2-halo"
+          git -C "$RUNNER_TEMP/halo-e2-halo" checkout --quiet "$HALO_REVISION"
+          git clone --quiet https://github.com/mbbill/Silverfir-nano "$RUNNER_TEMP/halo-e2-silverfir"
+          git -C "$RUNNER_TEMP/halo-e2-silverfir" checkout --quiet "$SILVERFIR_REVISION"
+          module=benchmarks/wasi/coremark/coremark.wasm
+          test "$(git -C "$RUNNER_TEMP/halo-e2-silverfir" rev-parse "HEAD:$module")" = "$COREMARK_BLOB"
+          test "$(git hash-object "$RUNNER_TEMP/halo-e2-silverfir/$module")" = "$COREMARK_BLOB"
+          cp research/experiments/match-dispatch/wasm/{gen.py,interp_head.wf,interp_tail.wf,coremark.py} "$out/inputs/"
+          {
+            echo "candidate=$(git rev-parse HEAD)"
+            echo "origin_main=$(git rev-parse origin/main)"
+            echo "base_merge_base=$base"
+            echo "halo=$(git -C "$RUNNER_TEMP/halo-e2-halo" rev-parse HEAD)"
+            echo "silverfir=$(git -C "$RUNNER_TEMP/halo-e2-silverfir" rev-parse HEAD)"
+            echo "coremark_blob=$COREMARK_BLOB"
+            echo "cpus=$E2T_CPUS"
+            echo "run=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo "engines: B = merge-base compiler; twin = byte copy of B's images; C2 = this checkout's compiler with WHITEFOOT_BRANCH_WEIGHTS=C2"
+            uname -a
+            /usr/bin/clang --version | head -1
+            cargo --version
+            echo "load: $(cat /proc/loadavg)"
+          } | tee "$out/manifest.txt"
+
+      - name: Build B and C2 images once and copy B's as the twin
+        env:
+          WHITEFOOT_CHECK_TIMEOUT: "3600"
+        run: perl .github/run-check.pl e2/timing-build python3 .github/halo-e2-timing.py build
+
+      - name: Smallest sample, 1 round each, fib(32) and CoreMark 2000
+        env:
+          WHITEFOOT_CHECK_TIMEOUT: "1800"
+        run: |
+          perl .github/run-check.pl e2/timing-sample python3 .github/halo-e2-timing.py sample
+          cat "$E2T_OUT/sample.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: One warm-up round and seven interleaved rounds, then the verdict
+        env:
+          WHITEFOOT_CHECK_TIMEOUT: "7200"
+        run: |
+          echo "load before: $(cat /proc/loadavg)"
+          perl .github/run-check.pl e2/timing-rounds python3 .github/halo-e2-timing.py rounds
+          echo "load after: $(cat /proc/loadavg)"
+          cat "$E2T_OUT/timing.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: halo-branch-weights-e2-timing-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/halo-e2-timing/raw/
+            ${{ runner.temp }}/halo-e2-timing/logs/
+            ${{ runner.temp }}/halo-e2-timing/manifest.txt
+            ${{ runner.temp }}/halo-e2-timing/images.sha256
+            ${{ runner.temp }}/halo-e2-timing/sample.md
+            ${{ runner.temp }}/halo-e2-timing/timing.md
           if-no-files-found: error
           retention-days: 14
