@@ -263,11 +263,13 @@ refuses a new test that runs its program with `Command::output`, which
 
 The owner ruled on 2026-10-13 that Linux budgets are per CPU model. For each
 stage and model, take the maximum of at least its 20 most recent recorded runs,
-add 10%, round up to 5 s, and apply a 10 s floor. Models with fewer than 20
-recorded runs have no column. An unmapped model uses the stage's largest Linux
-class value, remains held to it, and is named in the printed and recorded note. macOS keeps its
-reference values but reports overruns without failing the verdict. Windows
-rows retain their existing policy. A stage without a row for its host fails
+add 10%, and round up to 5 s. The prior 10 s floor remains; it was not part of
+this ruling. It can affect only stages whose measured maximum is below about
+9 s; larger-stage budgets are unchanged by the floor. Models with fewer than
+20 recorded runs have no column. An unmapped model uses the stage's largest
+Linux class value, remains held to it, and is named in the printed and recorded
+note. macOS keeps its reference values but reports overruns without failing the
+verdict. Windows rows retain their existing policy. A stage without a row for its host fails
 on every host; the wrapper still preserves the command's own exit status.
 
 The per-class numbers live in `.github/time-budgets.txt`; the following sample
@@ -343,6 +345,41 @@ with a note naming the CPU model; they remain held to that budget.
 This is one morning's sample, not evidence of a long-term
 trend or an attribution of compiler cost. Recompute from at least 20 recent
 per-class stage runs when a budget trips or suite growth changes the work.
+
+#### macOS sample on 2026-10-13
+
+A separate supplied extraction covers 44 completed `gate.yml` runs with
+macOS jobs, created from 2026-10-13T04:34:30Z to 2026-10-13T07:18:50Z. Its
+stage samples come from both `== BUDGET` and `== OVER BUDGET` lines; an
+overrun prints only the latter. The extraction summarizes only stages whose
+recorded budget is at least 60 s. The 90th percentile uses linear
+interpolation; all times and budget references below are seconds.
+
+| Stage | Count | Minimum | Median | 90th percentile | Maximum | Recorded budget references | Exceeded |
+|---|---:|---:|---:|---:|---:|---|---:|
+| `check/corpus` | 44 | 207.7 | 290.2 | 350.8 | 380.9 | 340, 360 | 4 |
+| `check/static` | 44 | 32.5 | 78.2 | 98.2 | 105.4 | 125 | 0 |
+| `check/unit` | 44 | 222.4 | 340.4 | 396.3 | 420.2 | 425 | 0 |
+| `compiler/lint` | 43 | 21.4 | 39.4 | 56.4 | 61.4 | 75 | 0 |
+| `compiler/test-build-corpus` | 44 | 87.6 | 129.3 | 154.0 | 170.6 | 175 | 0 |
+| `compiler/test-build-unit` | 44 | 142.5 | 220.7 | 262.4 | 282.7 | 300 | 0 |
+| `compiler/test-corpus` | 44 | 118.9 | 162.0 | 193.8 | 214.1 | 185, 205 | 5 |
+| `compiler/test-unit` | 44 | 79.4 | 122.4 | 136.4 | 149.8 | 175 | 0 |
+
+Recorded references include both older and newer values where budgets changed
+across these runs. The exceedance counts use the line kind, rather than
+comparing rounded seconds: an `== OVER BUDGET` line counts even when its
+printed time equals its budget after rounding. The supplied extraction has
+one such Linux observation, 140.0 s against 140 s.
+
+Every macOS sample reports `Apple M1 (Virtual)`. The corpus group's maximum
+380.9 s is 1.83 times its minimum 207.7 s; the unit group's maximum 420.2 s
+is 1.89 times its minimum 222.4 s. The sample spans multiple revisions on
+main and work branches, so it does not attribute that spread solely to host
+variation or establish a causal performance change. The intended 80 runs
+over three days were not reached: of 996 completed runs in the three-day
+listing, the extraction fetched the newest 140 logs within its API budget,
+and 44 had macOS jobs. This one morning cannot establish a long-term trend.
 
 This rule supersedes the Linux budget size and fixed 10 s raises, and macOS
 enforcement, in the historical account below. It does not change the diagnosis:
