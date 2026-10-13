@@ -84,11 +84,13 @@ void wf_driver_service_test_resume(void *opaque) {
     } else if (frame->kind == FRAME_LAUNCHER) {
         if (frame->stage == 0u) {
             CHECK(wf__driver_index() == 0u);
+            /* Spawning consumes no identity; the first guard/join park assigns it. */
+            uint64_t next_identity = wf_contexts.next_identity;
             service_frame *child = wf__context_prepare(sizeof(*child));
             *child = (service_frame){.kind = FRAME_LAUNCHER_CHILD};
             wf__context_launch(frame->group, child, start_frame);
             CHECK(wf_contexts.head == &wf_context_root);
-            CHECK(wf_contexts.next_identity == 1u);
+            CHECK(wf_contexts.next_identity == next_identity);
             CHECK(wf_executor_count == 2u && atomic_load(&wf_executors[1].ready));
             /* Controlled instant: the loop takes the queued child before
              * its next idle reap, so the timer remains pending in compute. */
