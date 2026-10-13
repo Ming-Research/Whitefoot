@@ -182,6 +182,10 @@ impl Analyzer<'_, '_> {
                 break;
             }
             continues = self.walk_statement(statement, state, frontier);
+            self.reasoning().observe_summary_context(state);
+            for edge in frontier.iter() {
+                self.reasoning().observe_summary_context(&edge.state);
+            }
         }
         if continues {
             let depth = self.frames.scopes.len() - 1;
@@ -521,6 +525,10 @@ impl Analyzer<'_, '_> {
         frontier: &mut Vec<FlowEdge>,
     ) -> bool {
         // Every checked statement is a real source action (docs are erased).
+        self.reasoning().observe_summary_context(state);
+        for edge in frontier.iter() {
+            self.reasoning().observe_summary_context(&edge.state);
+        }
         // Continue and break route the pending inputs to their own sinks.
         if !matches!(
             statement,

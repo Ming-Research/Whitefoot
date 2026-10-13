@@ -1374,10 +1374,10 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             true,
             None,
         )?;
-        let mut functions = function_inventory
+        let (mut functions, binding_names): (Vec<_>, Vec<_>) = function_inventory
             .into_iter()
-            .map(|checked| checked.function)
-            .collect::<Vec<_>>();
+            .map(|checked| (checked.function, checked.binding_names))
+            .unzip();
         for function in &mut functions {
             function.body_disposition = function.entailment.body_disposition;
         }
@@ -1415,6 +1415,11 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                             stop,
                             function,
                             &baseline_functions,
+                            &summary_repairs::SummaryRepairInputs {
+                                callees: &callees,
+                                contract_queries: &self.analysis.contract_queries,
+                                binding_names: &binding_names[index],
+                            },
                         )
                     })
                     .map_err(|stop| self.types.attribute_to_request(function.id, stop))

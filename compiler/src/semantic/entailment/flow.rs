@@ -1284,6 +1284,7 @@ fn analyze_candidate_inner(
 }
 
 struct AnalysisRun {
+    diagnostic_contradiction: bool,
     operation_intervals: BTreeMap<crate::NodePath, Option<Vec<operation_facts::Interval>>>,
     body_disposition: super::super::model::CheckedBodyDisposition,
     obligations: Vec<ObligationOutcome>,
@@ -1300,8 +1301,12 @@ struct AnalysisRun {
 }
 
 fn run(function: &CheckedFunction, context: &EntailmentContext<'_>) -> AnalysisRun {
+    run_analyzer(Analyzer::new(context, function))
+}
+
+fn run_analyzer(mut analyzer: Analyzer<'_, '_>) -> AnalysisRun {
+    let function = analyzer.input.function;
     let _work = super::work::function(&function.name);
-    let mut analyzer = Analyzer::new(context, function);
     analyzer.input.collect_bindings();
     analyzer.input.collect_postcondition_entry_images();
     let mut state = ProofFlowState {
@@ -1380,6 +1385,11 @@ fn run(function: &CheckedFunction, context: &EntailmentContext<'_>) -> AnalysisR
         goals: analyzer.vocabulary.goals.into_inventory(),
     };
     AnalysisRun {
+        diagnostic_contradiction: analyzer
+            .input
+            .restored_summary
+            .as_ref()
+            .is_some_and(|restored| restored.contradiction.get()),
         operation_intervals: analyzer.output.operation_intervals,
         body_disposition,
         obligations: analyzer.output.obligations,
@@ -1410,6 +1420,7 @@ impl<'check, 'unit> Analyzer<'check, 'unit> {
                 places: PlaceMap::default(),
                 entry_images: Vec::new(),
                 postcondition_entry_images: Vec::new(),
+                restored_summary: None,
             },
             vocabulary: Vocabulary {
                 terms: TermTable::new(),
@@ -1803,6 +1814,96 @@ struct Input<'check, 'unit> {
     /// flow state tracks invalidation once per structural image, while each
     /// FN-9 proof consults only the images its own relation references.
     postcondition_entry_images: Vec<Vec<usize>>,
+    /// Populated only by the rejection-only counterfactual query. Neither
+    /// this premise nor any result of that private walk is retained.
+    restored_summary: Option<RestoredSummary>,
+}
+
+struct RestoredSummary {
+    call: super::ConcreteCallOccurrence,
+    postcondition: super::super::postcondition::CheckedPostcondition,
+    /// The schedule's prospective identity for this private hypothesis,
+    /// never an independently verified summary or a retained proof.
+    identity: super::VerifiedPostconditionSummary,
+    contradiction: std::cell::Cell<bool>,
+}
+
+/// Reuse ordinary publication and transfer on a private walk, changing one
+/// declared clause at one call only. No private proof or value identity leaves.
+pub(super) fn unavailable_summary_discharges_call(
+    function: &CheckedFunction,
+    context: &EntailmentContext<'_>,
+    call: &super::ConcreteCallOccurrence,
+    postcondition: &super::super::postcondition::CheckedPostcondition,
+    identity: &super::VerifiedPostconditionSummary,
+    target: &CallGoalOutcome,
+) -> bool {
+    let matches = |outcome: &CallGoalOutcome| {
+        outcome.node_path == target.node_path
+            && outcome.callee == target.callee
+            && outcome.requires_clause == target.requires_clause
+            && outcome.subject == target.subject
+    };
+    let baseline = run(function, context);
+    if !baseline.call_goals.iter().any(|outcome| {
+        matches(outcome) && outcome.disposition == CallGoalDisposition::Unproved
+    }) {
+        return false;
+    }
+    let mut analyzer = Analyzer::new(context, function);
+    analyzer.input.restored_summary = Some(RestoredSummary {
+        call: call.clone(),
+        postcondition: postcondition.clone(),
+        identity: identity.clone(),
+        contradiction: std::cell::Cell::new(false),
+    });
+    let restored = run_analyzer(analyzer);
+    !restored.diagnostic_contradiction
+        && restored.call_goals.iter().any(|outcome| {
+            matches(outcome)
+                && outcome.disposition == CallGoalDisposition::Discharged
+                && !outcome.evidence.contains(&CallGoalEvidence::AllDerivable)
+        })
+}
+
+impl Reasoning<'_, '_, '_> {
+    /// Observe actual flow states, never a proof's temporary negated goal.
+    /// A contradictory predecessor must not disappear at a join and make
+    /// the restored summary appear to prove an unrelated target.
+    fn observe_summary_context(&mut self, state: &ProofFlowState) {
+        let Some(restored) = &self.input.restored_summary else {
+            return;
+        };
+        if restored.contradiction.get() {
+            return;
+        }
+        let Ok(contradiction) = AffineInequality::from_forms(
+            &AffineForm::constant(1),
+            &AffineForm::constant(0),
+            &mut AffineCheckState::new(),
+        ) else {
+            restored.contradiction.set(true);
+            return;
+        };
+        let mut vocabulary = self.vocabulary.clone();
+        let mut query = Reasoning {
+            input: self.input,
+            vocabulary: &mut vocabulary,
+        };
+        if query
+            .prove(
+                ProofContext::new(&state.facts, &state.affine),
+                ProofGoal::Affine {
+                    inequality: &contradiction,
+                    right: None,
+                },
+            )
+            .disposition
+            == ProofDisposition::Proved
+        {
+            restored.contradiction.set(true);
+        }
+    }
 }
 
 /// The terms, goals, affine atoms and derivation ledger every judgment is

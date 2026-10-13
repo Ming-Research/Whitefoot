@@ -1557,6 +1557,22 @@ pub(crate) fn analyze_function_candidate(
     flow::analyze_candidate(function, context)
 }
 
+/// A rejection-only counterfactual: restoring one withheld clause at one
+/// call must discharge this exact requirement without a contradictory state.
+/// The private walk's facts, derivations and summaries are discarded.
+pub(crate) fn unavailable_summary_discharges_call(
+    function: &CheckedFunction,
+    context: &EntailmentContext<'_>,
+    call: &ConcreteCallOccurrence,
+    postcondition: &CheckedPostcondition,
+    identity: &VerifiedPostconditionSummary,
+    target: &CallGoalOutcome,
+) -> bool {
+    flow::unavailable_summary_discharges_call(
+        function, context, call, postcondition, identity, target,
+    )
+}
+
 /// Checks one [FN-4] contract implication in a declaration-only proof
 /// context. The supplied function carries only alpha-renamed contract
 /// variables and the hypothetical premise set; [`flow`] submits both the

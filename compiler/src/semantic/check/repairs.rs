@@ -985,6 +985,18 @@ pub(super) fn unavailable_return_summary(
     )
 }
 
+pub(super) fn unavailable_call_summary(
+    instance: &str,
+    summary: &str,
+    call_line: u64,
+    failed: &str,
+    exit_line: u64,
+) -> String {
+    format!(
+        "the call to `{instance}` at line {call_line} cannot supply its summary `{summary}` because that callee's [FN-9] obligation `{failed}` fails at line {exit_line}; repair that obligation in `{instance}` so it proves the summary needed by this requirement; for a loop-computed bound, carry the needed bound in a loop-header `invariant`"
+    )
+}
+
 /// The indexed row captures the parameter before its body's assignment.
 pub(super) fn rewritten_effect_index(
     row: &str,

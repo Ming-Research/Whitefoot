@@ -1447,6 +1447,11 @@ impl<'unit> Checker<'_, 'unit> {
                         stop,
                         &checked.function,
                         &range_functions,
+                        &super::summary_repairs::SummaryRepairInputs {
+                            callees,
+                            contract_queries: &self.analysis.contract_queries,
+                            binding_names: &checked.binding_names,
+                        },
                     )
                 })?;
         }

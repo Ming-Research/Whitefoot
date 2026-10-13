@@ -166,11 +166,25 @@ impl Input<'_, '_> {
     /// implication needs only its retained query.
     pub(super) fn available_call_postconditions(
         &self,
+        call: &crate::NodePath,
         function: super::super::super::model::FunctionId,
         formal: Option<&super::super::super::model::CheckedCallContract>,
     ) -> Vec<AvailablePostcondition> {
         let Some(formal) = formal else {
-            return self.available_postconditions(function);
+            let mut available = self.available_postconditions(function);
+            if let Some(restored) = &self.restored_summary
+                && restored.call.node_path == *call
+                && restored.call.callee == function
+            {
+                available.push(AvailablePostcondition {
+                    relation: restored.postcondition.relation.clone(),
+                    route: restored.postcondition.selector.route,
+                    authority: super::super::RelationProvenance::Verified(
+                        restored.identity.clone(),
+                    ),
+                });
+            }
+            return available;
         };
         formal
             .postconditions

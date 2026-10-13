@@ -836,7 +836,7 @@ impl Analyzer<'_, '_> {
                         .is_none_or(|_| contract_parents.as_ref().is_some());
                 let postconditions = self
                     .input
-                    .available_call_postconditions(*function, formal_contract.as_deref());
+                    .available_call_postconditions(call, *function, formal_contract.as_deref());
                 let prepared_call = (|| {
                     let mut parents = actual_parents?;
                     if !reached

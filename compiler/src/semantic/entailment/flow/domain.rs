@@ -1370,6 +1370,9 @@ impl Judging<'_, '_, '_> {
     }
 
     pub(super) fn join_flows(&mut self, states: &[ProofFlowState]) -> ProofFlowState {
+        for state in states {
+            self.reasoning().observe_summary_context(state);
+        }
         // Close L0 contradiction before any structural intersection. An
         // unreachable predecessor is neutral: it cannot erase a live affine
         // value, published invariant name, or canonical fact. Keeping all
