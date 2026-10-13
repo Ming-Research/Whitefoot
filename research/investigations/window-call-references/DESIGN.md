@@ -65,10 +65,10 @@ The two final OP-10 sentences are in tension: the first describes a general
 bound criterion, while the second explicitly invalidates references at two
 named operations even when additional caller facts would prove the bound.
 The repair retains the specific named-operation restriction. EFF-5 needs no
-exception or weakened prefix rule. The bystander case's existing explanation
-attributes its rejection to a proper prefix; the rejection is still required,
-but the operative restriction here is OP-10's named-removal sentence. Its
-source, manifest and verdict are left unchanged.
+exception or weakened prefix rule. The bystander case is rejected by OP-10's
+named-removal sentence, not by a proper-prefix write. Its source documentation,
+manifest description and shared Rust test comment state that reason; its
+executable program, rule list and reject verdict remain unchanged.
 
 Append's destination and a user function with a partial window row have no
 corresponding unconditional named-operation restriction. Their postconditions

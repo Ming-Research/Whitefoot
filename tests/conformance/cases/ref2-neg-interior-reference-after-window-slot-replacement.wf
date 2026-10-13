@@ -1,12 +1,12 @@
 alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
-fn clear_first(rows: &Slots<Slots<u8, 8>, 4>) -> result: unit writes(rows) contract {
-  requires rows^.len >= 1_u64;
+fn clear_first(rows: &Slots<Slots<u8, 8>, 4>, index: u64) -> result: unit writes(rows[index]) contract {
+  requires index < rows^.len;
   ensures rows^.len == entry(rows)^.len;
 } {
-  doc "Replaces the first row with an empty window while retaining the outer window's length.";
-  set rows^[0_u64] = slots_new::<u8, 8>();
+  doc "Replaces exactly the selected row with an empty window while retaining the outer window's length.";
+  set rows^[index] = slots_new::<u8, 8>();
   return unit;
 }
 
@@ -16,7 +16,7 @@ fn probe(rows: &Slots<Slots<u8, 8>, 4>) -> result: u8 writes(rows) contract {
 } {
   doc "The outer length postcondition does not preserve an interior reference after its containing row is replaced.";
   let inner = &rows^[0_u64][0_u64];
-  clear_first(rows: rows);
+  clear_first(rows: rows, index: 0_u64);
   return inner^;
 }
 

@@ -1165,9 +1165,11 @@ fn main() -> status: std::process::ExitStatus pure {
     });
 }
 
-/// [EFF-5] clause 3: a live reference outside the call whose path has a proper
-/// prefix among the call's substituted write paths becomes invalid after the
-/// call. The citation is [REF-2]'s, because the rejection is at the later use.
+/// [OP-10] explicitly invalidates window references at a direct remove_at
+/// call, even when the selected slot remains filled. Its filled-part write
+/// changes slot contents and its length word overlaps no slot; neither is
+/// an ordinary proper-prefix replacement. [EFF-5] applies the invalidation,
+/// and the later use is rejected under [REF-2].
 #[test]
 fn a_call_write_invalidates_the_bystander_reference() {
     let source = include_bytes!(
