@@ -3093,7 +3093,10 @@ impl Analyzer<'_, '_> {
         // that names it in `ensures`; the place's one state renders as the
         // place itself, which names that state there.
         let length_text = match (denotation, length) {
-            (PlaceDenotation::EntryImage, Some(length)) => self.reasoning().render_term(length),
+            (PlaceDenotation::EntryImage, Some(length)) => self.reasoning().render_term(
+                length,
+                CheckedType::Integer(super::super::super::model::IntegerType::U64),
+            ),
             _ => plain_length.clone(),
         };
         // [MSR-3] the one state of a parameter can differ from what the body
