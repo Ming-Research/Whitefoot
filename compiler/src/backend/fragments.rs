@@ -15,7 +15,11 @@
 //! linkage. A local definition that more than one group reaches is owned by
 //! a fragment of its own, together with the local definitions it alone
 //! reaches, and becomes `hidden`: it is defined once in the link, and every
-//! user names it across the boundary. Dependency-free immutable constants
+//! user names it across the boundary. A local definition anchored to an
+//! externally visible function, a callee's call entry that inlines the
+//! callee's body (compiler/match-dispatch-lowering), joins that function's
+//! group instead and is `hidden` there, so the body it inlines is in its
+//! fragment whichever fragments call it. Dependency-free immutable constants
 //! marked for private replication instead appear in every using fragment;
 //! [STOR-7] gives them no observable address identity. Ordinary shared data
 //! follows the single-definition policy, as the
@@ -27,7 +31,9 @@
 //! of them are written in name order. A fragment's text is therefore a
 //! function of its own definitions and of the signatures they name. With
 //! stable symbols and type names, an unchanged function keeps the bytes of
-//! its fragment across an edit elsewhere, and with them its cached object.
+//! its fragment across an edit elsewhere, and with them its cached object,
+//! except that an edit which adds or removes the only call to it from a
+//! split dispatch loop's parts adds or removes its anchored call entry.
 //! A missing symbol, type or attribute definition fails the split.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -134,19 +140,29 @@ fn split_emission(
         }
         references.push((entities, declared));
     }
-    // The groups of externally visible functions, by key.
+    // The groups of externally visible functions, by key, each with the
+    // local definitions anchored to one of its members.
+    let key = |name: &str| match granularity {
+        FragmentGranularity::Function => name.to_owned(),
+        FragmentGranularity::Module => fragment_module(name),
+    };
     let mut keys: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+    let mut anchored = BTreeSet::new();
     for (index, entity) in module.entities.iter().enumerate() {
+        let anchor = entity.anchor.as_deref().filter(|anchor| {
+            by_name
+                .get(anchor)
+                .is_some_and(|&named| !module.entities[named].linkage.is_local())
+        });
         if !entity.linkage.is_local() {
-            let key = match granularity {
-                FragmentGranularity::Function => entity.name.clone(),
-                FragmentGranularity::Module => fragment_module(&entity.name),
-            };
-            keys.entry(key).or_default().push(index);
+            keys.entry(key(&entity.name)).or_default().push(index);
+        } else if let Some(anchor) = anchor {
+            keys.entry(key(anchor)).or_default().push(index);
+            anchored.insert(index);
         }
     }
     let groups = keys.into_values().collect::<Vec<_>>();
-    let owners = owners(module, &groups, &references);
+    let owners = owners(module, &groups, &references, &anchored);
     // One fragment per group, then one per shared local definition.
     let mut members = vec![Vec::new(); groups.len()];
     let mut roots: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
@@ -165,7 +181,7 @@ fn split_emission(
     members
         .iter()
         .chain(roots.values())
-        .map(|members| fragment(module, &owners, &references, members))
+        .map(|members| fragment(module, &owners, &references, &anchored, members))
         .collect()
 }
 
@@ -182,13 +198,15 @@ fn owners(
     module: &Module,
     groups: &[Vec<usize>],
     references: &[(BTreeSet<usize>, BTreeSet<String>)],
+    anchored: &BTreeSet<usize>,
 ) -> Vec<Owner> {
-    // Nodes: 0 is the source, then the groups, then the local definitions.
+    // Nodes: 0 is the source, then the groups, then the local definitions
+    // no group holds.
     let locals = module
         .entities
         .iter()
         .enumerate()
-        .filter(|(_, entity)| entity.linkage.is_local())
+        .filter(|(index, entity)| entity.linkage.is_local() && !anchored.contains(index))
         .map(|(index, _)| index)
         .collect::<Vec<_>>();
     let node_of_local = locals
@@ -353,6 +371,7 @@ fn fragment(
     module: &Module,
     owners: &[Owner],
     references: &[(BTreeSet<usize>, BTreeSet<String>)],
+    anchored: &BTreeSet<usize>,
     members: &[usize],
 ) -> Result<String, SplitFailure> {
     let mut inside = members.iter().copied().collect::<BTreeSet<_>>();
@@ -374,10 +393,11 @@ fn fragment(
     for &member in &inside {
         let entity = &module.entities[member];
         dependencies.extend(&entity.references);
-        // A local definition that owns its fragment is named from others.
+        // A local definition that owns its fragment, or that its anchor's
+        // group holds, is named from others.
         let shared = !entity.fragment_local
             && entity.linkage.is_local()
-            && owners[member] == Owner::Root(member);
+            && (owners[member] == Owner::Root(member) || anchored.contains(&member));
         let header = if shared {
             entity.hidden_header.clone()
         } else {
@@ -394,7 +414,10 @@ fn fragment(
                 continue;
             }
             let other = &module.entities[named];
-            if other.linkage.is_local() && owners[named] != Owner::Root(named) {
+            if other.linkage.is_local()
+                && owners[named] != Owner::Root(named)
+                && !anchored.contains(&named)
+            {
                 return Err(failure(format!(
                     "@{} names the local definition @{}, which another fragment owns",
                     entity.name, other.name
@@ -925,6 +948,73 @@ mod tests {
             "{}",
             cycle[0]
         );
+    }
+
+    /// `module` with a call entry of `wf_b.g` that `wf_a.f` calls, anchored
+    /// to `wf_b.g` when `anchored`.
+    fn module_with_entry(anchored: bool) -> Module {
+        let mut module = module("  %v9 = add i32 %v0, 1");
+        let f = module
+            .entities
+            .iter_mut()
+            .find(|entity| entity.name == "wf_a.f")
+            .expect("wf_a.f");
+        f.body = f.body.replace(
+            "  ret i64 %v2\n",
+            "  %v3 = call preserve_mostcc i32 @wf__most_b.g(i32 1)\n  ret i64 %v2\n",
+        );
+        f.references.symbols.insert("wf__most_b.g".to_owned());
+        let mut signature =
+            Signature::new("wf__most_b.g", "i32", vec![Parameter::named("i32", "%v0")]);
+        signature.linkage = Linkage::Internal;
+        signature.convention = "preserve_mostcc ";
+        let mut body = FunctionBody::default();
+        body.open_block("entry".to_owned());
+        body.instructions(
+            "  %wf.entry = call i32 @wf_b.g(i32 %v0) alwaysinline\n  ret i32 %wf.entry\n",
+            &["wf_b.g"],
+        );
+        let mut entity = signature.define(body, "").expect("fixture definition");
+        if anchored {
+            entity.anchor = Some("wf_b.g".to_owned());
+        }
+        module.define(entity);
+        module
+    }
+
+    /// An anchored local definition is defined once, hidden, in the
+    /// fragment of the function it is anchored to, and declared hidden with
+    /// its convention where it is called; unanchored, the same definition
+    /// stays private beside its one caller, away from the body it inlines.
+    #[test]
+    fn an_anchored_entry_is_defined_beside_its_anchor_and_named_from_its_callers() {
+        for granularity in [FragmentGranularity::Function, FragmentGranularity::Module] {
+            let fragments =
+                split_emission(&module_with_entry(true), granularity).expect("the module splits");
+            let entry = defining(&fragments, "define hidden preserve_mostcc i32 @wf__most_b.g(");
+            assert_eq!(entry.len(), 1, "{granularity:?}: {fragments:#?}");
+            assert!(
+                entry[0].contains("\ndefine i32 @wf_b.g("),
+                "the entry is defined beside its anchor: {}",
+                entry[0]
+            );
+            let f = defining(&fragments, "define i64 @wf_a.f(")[0];
+            assert!(
+                f.contains("declare hidden preserve_mostcc i32 @wf__most_b.g(i32) #0\n"),
+                "{granularity:?}: {f}"
+            );
+            assert!(!f.contains("define i32 @wf_b.g("), "{f}");
+            let unanchored =
+                split_emission(&module_with_entry(false), granularity).expect("the module splits");
+            let f = defining(&unanchored, "define i64 @wf_a.f(")[0];
+            assert!(
+                f.contains("define internal preserve_mostcc i32 @wf__most_b.g("),
+                "without its anchor the entry stays beside its one caller: {f}"
+            );
+        }
+        let anchored = module_with_entry(true);
+        let decoded = Module::decode(&anchored.encode()).expect("the model roundtrips");
+        assert_eq!(decoded, anchored, "the anchor survives the cache encoding");
     }
 
     /// A source module's functions share a fragment, and the local

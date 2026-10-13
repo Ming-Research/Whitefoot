@@ -320,10 +320,15 @@ fn assert_no_copy(body: &str) {
     );
 }
 
+/// A split dispatch loop's part calls the classifier through its call entry
+/// (compiler/match-dispatch-lowering), which receives the same operands.
 fn assert_element_argument(body: &str, tag_in_caller: bool) {
     let call = body
         .lines()
-        .find_map(|line| line.split_once("@wf_classify("))
+        .find_map(|line| {
+            line.split_once("@wf_classify(")
+                .or_else(|| line.split_once("@wf__most_classify("))
+        })
         .expect("non-inlined classifier")
         .1;
     let name = call.rsplit_once('%').expect("SSA element address").1;
@@ -371,11 +376,15 @@ fn assert_tag_through(body: &str, address: &str) {
 
 /// Keep the observation boundary without changing a dispatcher's mandatory
 /// alwaysinline contract. This helper only changes test optimization policy.
+/// The classifier's call entry, which a dispatch part calls and which
+/// inlines the classifier whatever its attributes, is kept out of line too.
 fn retain_classifier(module: &str) -> String {
     module
         .lines()
         .map(|line| {
-            if line.starts_with("define ") && line.contains(" @wf_classify(") {
+            if line.starts_with("define ")
+                && (line.contains(" @wf_classify(") || line.contains(" @wf__most_classify("))
+            {
                 format!(
                     "{} noinline {{\n",
                     line.strip_suffix(" {").expect("classifier header")
@@ -757,11 +766,12 @@ fn main() -> status: std::process::ExitStatus pure {
     assert_snapshot_copy(emitted_function(&module, "local.arm.1"), local, false);
     assert_snapshot_copy(emitted_function(&module, "crossing"), crossing, true);
     let optimized = host_optimized_module(&module);
+    let classifier = format!("@{}(", super::match_dispatch::part_callee("classify"));
     for candidate in [&module, &optimized] {
         let body = emitted_function(candidate, "local.arm.1");
         assert_no_copy(body);
         assert_element_argument(body, false);
-        assert!(body.contains("@wf_classify("), "{body}");
+        assert!(body.contains(&classifier), "{body}");
     }
     // Allowing aliases across parts fails crossing's copy assertion;
     // excluding every split function fails local's direct-call assertion.

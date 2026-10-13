@@ -278,6 +278,7 @@ impl Signature {
             linkage: self.linkage,
             global: false,
             fragment_local: false,
+            anchor: None,
             references,
         })
     }
@@ -302,6 +303,12 @@ pub(crate) struct Entity {
     /// Immutable dependency-free data replicated privately in each using
     /// fragment rather than promoted to cross-fragment linkage [STOR-7].
     pub(crate) fragment_local: bool,
+    /// The externally visible function whose link fragment defines this
+    /// local definition, which other fragments then name as a hidden
+    /// symbol: a callee's call entry, defined beside the body it inlines
+    /// (compiler/match-dispatch-lowering). `None` places a local definition
+    /// by its users alone.
+    pub(crate) anchor: Option<String>,
     pub(crate) references: References,
 }
 
@@ -409,6 +416,7 @@ impl Module {
             linkage: Linkage::Private,
             global: true,
             fragment_local: false,
+            anchor: None,
             references,
         });
     }
@@ -509,7 +517,7 @@ impl Write for FunctionBody {
 impl Module {
     pub(crate) fn encode(&self) -> Vec<u8> {
         let mut out = ModelWriter(Vec::new());
-        out.text("whitefoot emission 2");
+        out.text("whitefoot emission 3");
         out.number(self.parts.len());
         for part in &self.parts {
             match part {
@@ -563,6 +571,7 @@ impl Module {
             });
             out.number(usize::from(entity.global));
             out.number(usize::from(entity.fragment_local));
+            out.strings(entity.anchor.iter().map(String::as_str));
             out.references(&entity.references);
             out.references(&entity.declaration_references);
         }
@@ -576,7 +585,7 @@ impl Module {
 
     pub(crate) fn decode(bytes: &[u8]) -> Option<Self> {
         let mut input = ModelReader(bytes);
-        if input.text()? != "whitefoot emission 2" {
+        if input.text()? != "whitefoot emission 3" {
             return None;
         }
         let mut module = Self::default();
@@ -626,6 +635,11 @@ impl Module {
                 1 => true,
                 _ => return None,
             };
+            let mut anchors = input.strings()?;
+            let anchor = anchors.pop();
+            if !anchors.is_empty() || (anchor.is_some() && (global || !linkage.is_local())) {
+                return None;
+            }
             let references = input.references()?;
             let declaration_references = input.references()?;
             if fragment_local
@@ -642,6 +656,7 @@ impl Module {
                 linkage,
                 global,
                 fragment_local,
+                anchor,
                 references,
                 declaration_references,
             });
