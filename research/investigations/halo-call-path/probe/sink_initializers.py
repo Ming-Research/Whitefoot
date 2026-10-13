@@ -6,8 +6,12 @@ optimization. The native LLVM verifier remains mandatory before codegen.
 Supported functions have explicit block labels and an acyclic reachable CFG
 using br/switch/ret/unreachable. A slot has one entry alloca and one entry
 initializer from a function argument; its other uses are direct pointer loads
-or direct call arguments. Initialization moves to first-use blocks only when
-every incoming path is uninitialized. Mixed-state joins are unavailable.
+or direct call arguments. Initialization moves to first-use blocks when every
+incoming path is uninitialized. Before a mixed-state join that can reach a
+consumer, it may instead move to the terminator of each uninitialized incoming
+block, only if that block has the join as its sole successor. Initialized
+incoming paths retain any consumer-written value. No edges/PHIs are rewritten;
+mixed predecessor states and bypass edges needing splitting are unavailable.
 Consequently a call may modify/capture the slot: no path initializes it twice,
 and no alias exists before its first consumer. Unsupported forms fail closed.
 
@@ -136,7 +140,7 @@ def blocks_of(lines):
 
 
 def plan_slot(lines, slot, allocation, blocks, successors, order, entry):
-    report = {'name': slot, 'status': 'unavailable', 'insertion_blocks': []}
+    report = {'name': slot, 'status': 'unavailable', 'insertion_blocks': [], 'insertions': []}
     occurrences = [(block, index, text) for block, body in blocks.items()
                    for index, text in body if token_uses(text, slot)]
     initializers = []
@@ -189,23 +193,62 @@ def plan_slot(lines, slot, allocation, blocks, successors, order, entry):
         return report, None, []
     states = {name: set() for name in order}
     states[entry].add(False)
+    predecessors = {name: [] for name in order}
+    for name in order:
+        for successor in successors[name]:
+            predecessors[successor].append(name)
+    # Do not repair irrelevant merges after the final slot use: in particular,
+    # the real numeric fast path joins an already-loaded result downstream.
+    reaches_consumer = set(consumers)
+    for name in reversed(order):
+        if any(successor in reaches_consumer for successor in successors[name]):
+            reaches_consumer.add(name)
+    outgoing = {}
     insertions = []
     for name in order:
         state = states[name]
+        if len(state) > 1 and name in reaches_consumer:
+            bypasses = []
+            for predecessor in predecessors[name]:
+                previous = outgoing[predecessor]
+                if len(previous) != 1:
+                    raise Unavailable('mixed predecessor state at ' + predecessor + ' -> ' + name)
+                if previous == {False}:
+                    if successors[predecessor] != [name]:
+                        raise Unavailable('uninitialized bypass edge needs splitting at '
+                                          + predecessor + ' -> ' + name)
+                    bypasses.append(predecessor)
+            for predecessor in bypasses:
+                position = next(index for index, text in blocks[predecessor]
+                                if re.match(r'^(br|switch|ret|unreachable)\b', text))
+                insertions.append((position, lines[original]))
+                report['insertion_blocks'].append(predecessor)
+                report['insertions'].append({
+                    'block': predecessor, 'successor': name, 'function_line': position + 1,
+                    'placement': 'before terminator',
+                    'reason': 'initialize only the uninitialized incoming path; preserve consumed paths'})
+                outgoing[predecessor] = {True}
+            state = {True}
         if name in consumers:
             if len(state) != 1:
                 raise Unavailable('initialized/uninitialized paths join at consumer block ' + name)
             if state == {False}:
                 insertions.append((consumers[name], lines[original]))
                 report['insertion_blocks'].append(name)
+                report['insertions'].append({
+                    'block': name, 'function_line': consumers[name] + 1,
+                    'placement': 'before first consumer',
+                    'reason': 'all incoming paths are uninitialized'})
                 state = {True}
+        outgoing[name] = state
         for successor in successors[name]:
             states[successor].update(state)
     if entry in report['insertion_blocks']:
         report.update(status='no-op', reason='entry has a surviving consumer')
         report['insertion_blocks'] = []
+        report['insertions'] = []
         return report, None, []
-    report.update(status='changed', reason='initialize once on each first-use path')
+    report.update(status='changed', reason='initialize once before a first consumer or on its uninitialized bypass')
     return report, original, insertions
 
 
@@ -344,12 +387,61 @@ class Fixtures(unittest.TestCase):
         self.assertEqual(output.count('store ptr %incoming'), 2)
         self.assertNotIn('store ptr', output.split('join:')[1])
 
-    def test_mixed_join_unavailable(self):
+    def test_mixed_diamond_preserves_writing_consumer(self):
+        source = fixture(self.entry + '  br i1 %condition, label %used, label %bypass\n'
+                         'used:\n  call void @consume(ptr %wf.pin.8.1)\n  br label %join\n'
+                         'bypass:\n  br label %join\n'
+                         'join:\n  %choice = phi i1 [ true, %used ], [ false, %bypass ]\n'
+                         '  br label %later\nlater:\n'
+                         '  %p = load ptr, ptr %wf.pin.8.1\n  ret void\n')
+        # The original consumer genuinely writes the slot; no readonly premise
+        # permits an initializer at the join or on its consumed incoming path.
+        source = source.replace('declare void @consume(ptr)\n',
+                                '@replacement = external global i8\n'
+                                'define void @consume(ptr %slot) {\nentry:\n'
+                                '  store ptr @replacement, ptr %slot\n  ret void\n}\n')
+        output, report = transform(source)
+        self.assertEqual(report['status'], 'changed')
+        self.assertEqual(output.count('store ptr %incoming'), 2)
+        self.assertIn('used:\n  store ptr %incoming, ptr %wf.pin.8.1, align 8\n'
+                      '  call void @consume(ptr %wf.pin.8.1)\n  br label %join', output)
+        self.assertIn('bypass:\n  store ptr %incoming, ptr %wf.pin.8.1, align 8\n'
+                      '  br label %join', output)
+        self.assertNotIn('store ptr %incoming', output.split('join:')[1])
+        self.assertEqual(report['functions'][0]['slots'][0]['insertions'][1]['placement'],
+                         'before terminator')
+        self.assertEqual(report['functions'][0]['slots'][0]['insertions'][1]['successor'], 'join')
+
+    def test_mixed_join_critical_bypass_unavailable(self):
         source = fixture(self.entry + '  br i1 %condition, label %used, label %join\nused:\n'
                          '  call void @consume(ptr %wf.pin.8.1)\n  br label %join\njoin:\n'
                          '  %p = load ptr, ptr %wf.pin.8.1\n  ret void\n')
         self.assertEqual(transform(source)[1]['status'], 'unavailable')
+        self.assertIn('uninitialized bypass edge needs splitting at entry -> join',
+                      transform(source)[1]['functions'][0]['reason'])
         self.assertEqual(transform(source)[0], source)
+
+    def test_nested_mixed_predecessor_not_reinitialized(self):
+        source = fixture(self.entry + '  br i1 %condition, label %used, label %mixed\n'
+                         'used:\n  call void @consume(ptr %wf.pin.8.1)\n  br label %mixed\n'
+                         'mixed:\n  br label %join\njoin:\n'
+                         '  %p = load ptr, ptr %wf.pin.8.1\n  ret void\n')
+        output, report = transform(source)
+        # The earliest mixed join is refused. Merely adding a store at its
+        # single-successor descendant would overwrite the used path's value.
+        self.assertEqual(report['status'], 'unavailable')
+        self.assertIn('uninitialized bypass edge needs splitting at entry -> mixed',
+                      report['functions'][0]['reason'])
+        self.assertEqual(output, source)
+
+    def test_mixed_merge_after_final_use_does_not_initialize_bypass(self):
+        source = fixture(self.entry + '  br i1 %condition, label %used, label %bypass\n'
+                         'used:\n  call void @consume(ptr %wf.pin.8.1)\n  br label %join\n'
+                         'bypass:\n  br label %join\njoin:\n  ret void\n')
+        output, report = transform(source)
+        self.assertEqual(report['status'], 'changed')
+        self.assertEqual(output.count('store ptr %incoming'), 1)
+        self.assertNotIn('store ptr %incoming', output.split('bypass:')[1])
 
     def test_quoted_inlined_exit(self):
         # V0 arm.54 bb11.i branches to this quoted, inlined-function exit.
@@ -369,7 +461,7 @@ class Fixtures(unittest.TestCase):
         bypass = source.replace('label %hot, label %bb11.i',
                                 'label %' + exit_name + ', label %bb11.i')
         self.assertEqual(transform(bypass)[1]['status'], 'unavailable')
-        self.assertIn('initialized/uninitialized paths join',
+        self.assertIn('uninitialized bypass edge needs splitting',
                       transform(bypass)[1]['functions'][0]['reason'])
         self.assertEqual(transform(bypass)[0], bypass)
 

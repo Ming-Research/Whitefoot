@@ -1399,9 +1399,11 @@ unsupported join: the path through `slow` first consumes the pointer slot
 at 115468, while the CFG also contains a bypass through 115427–115440 and
 115490–115492 to the same exit load at 115543. The script does not prove
 that bypass infeasible or split mixed initialized/uninitialized paths.
-Reinitializing at the exit could overwrite a consumer's changes; the call's
-slot parameter lacks `readonly`. That conservative refusal remains, and
-no partial SubRK rewrite is counted as V2.
+At this LLVM-only analysis boundary, reinitializing at the exit could
+overwrite a consumer's changes; the call's slot parameter lacks `readonly`.
+That conservative refusal remains in this run, and no partial SubRK rewrite
+is counted as V2. The checked Whitefoot pin invariant, examined below,
+provides stronger information than this LLVM signature.
 
 The run's whole-image shape guard fails despite matching executed counts.
 Its disassembly comparator includes padding outside ELF function extents
@@ -1425,6 +1427,220 @@ CI; the old artifact's formal pin identities stay unverified. The V1 saving
 is a comparison with this reconstructed V0 pipeline, not a wall-time result
 or a retroactive verdict for the original E2 run. The prior preparation
 criterion is unchanged.
+
+##### Pin placement and cold-frame ownership after the third run
+
+**Observed result and scope.** [Run 38379936379](https://github.com/Ming-Research/Whitefoot/actions/runs/38379936379)
+used compiler `0c38f4ecc4a62f4985af18b0402d830c40ac63ea` and Halo
+`c900a68b2f06af0de2adccfd0dd348d49af184de`, full LTO, LLVM 22, hosted
+Ubuntu 24.04 and fib(32). All five named original/V0 and Clang/MIR arm
+guards pass (`table.md:43–49` in the run artifact); the whole-module
+original/V0 guard still fails, so whole-program differences below compare
+the reconstructed V0/V1 pipelines. Unique MIR mappings now identify both
+pin stores in V0 and V1, and both execute on fib. GetUpval retains its hot
+0x80 reservation. V1 repeats the approximately five-instruction saving,
+four in LtJmpRK and one in Return, and fails the preparation criterion.
+This establishes the lowering origin of these two stores, not that every
+remaining machine spill is caused by lowering or that LLVM ignored weights.
+
+Artifact references in this subsection mean paths within that run's
+`halo-arm-probe-38379936379-1` artifact. The exact denominator is
+N = 7,049,155 Lua calls; define q = 7,049,154/N. No elapsed-time gain or
+other-workload result follows from these counts.
+
+**What the pin represents and why it starts at entry.** An ordinary
+`&Box<T>` argument addresses the Box owner word; projecting its referent
+loads the pointer held in that word
+([places.rs:845](../../../compiler/src/backend/emitter/places.rs#L845)).
+Split dispatch hoists this projection into the enclosing function
+([dispatch.rs:1088](../../../compiler/src/backend/emitter/dispatch.rs#L1088))
+and transports its canonical pointer as a part parameter. A callee using
+the ordinary reference ABI still needs an address containing that pointer.
+The part-local `%wf.pin.N` is this surrogate Box owner, not a source local
+with independently changing state.
+
+Pin discovery checks unchanged loop transport and permits calls only when
+the callee is non-waiting and has the retained box-preserving fact
+([dispatch.rs:1732](../../../compiler/src/backend/emitter/dispatch.rs#L1732),
+[1894](../../../compiler/src/backend/emitter/dispatch.rs#L1894)).
+`LoopInvariants::pin` records the canonical projection and reference
+arguments ([417](../../../compiler/src/backend/emitter/dispatch.rs#L417)).
+The part prelude unconditionally emits `alloca ptr` followed by
+`store ptr canonical, ptr slot` for every recorded pin
+([1466–1477](../../../compiler/src/backend/emitter/dispatch.rs#L1466)),
+and calls substitute that slot's address for the original reference
+([1960–1982](../../../compiler/src/backend/emitter/dispatch.rs#L1960),
+[emitter.rs:3306](../../../compiler/src/backend/emitter.rs#L3306)).
+The current plan even keeps the canonical live in parts without consumers
+([dispatch.rs:783](../../../compiler/src/backend/emitter/dispatch.rs#L783)).
+Entry supplies simple dominance of every call and join; the emitter has
+no deferred-materialization analysis. Entry placement is an implementation
+choice, not a source requirement.
+
+Here “code pointer” means the address of the Lua bytecode
+`Slots<Cell>` allocation/header, **not a native function pointer or the
+current instruction cursor**. At the pinned Halo revision,
+`lib/halo/vm/dispatch.wf:4` and `lib/halo/vm/slow.wf:389` declare
+`code: &Box<Slots<Cell>>` with `reads(code)`.
+V0's `%v25` is the canonical allocation pointer; the separate `%v26` is
+the cursor. The post-LTO code loads the length through the allocation
+pointer and indexes cells past its 16-byte header (`ir/V0.ll:115272`,
+`115548–115552`).
+
+**The word after a consumer returns.** Checked lowering records
+`box_keeping_reference_parameters` when every declared write under that
+formal starts below the Box content, or there are no writes
+([builder.rs:527–534](../../../compiler/src/lowering/builder.rs#L527)).
+[ir.rs:2000–2004](../../../compiler/src/ir.rs#L2000) states its meaning:
+the callee cannot replace the Box. This is also the existing
+[dispatch decision](../../../design/compiler/match-dispatch-lowering.md).
+An eligible content writer can change the allocation's contents, but the
+pin word after its return still equals the canonical pointer. Halo's
+`slow` is stronger: `reads(code)` permits neither kind of write.
+Re-storing the same canonical word is therefore unobservable for this
+checked subset, with non-waiting/reference-no-escape boundaries [REF-3];
+it must preserve all pointee changes. This does not authorize the same
+rewrite for an arbitrary mutable pointer slot.
+
+The absence of LLVM `readonly` on `slow`'s first parameter
+(`ir/V0.ll:96682`) explains the textual probe's conservative uncertainty;
+it does not permit a valid Whitefoot consumer to update this pin word.
+The earlier warning about overwriting a post-call value applies to generic
+LLVM, not this stronger checked pin contract. A production optimization
+can retain that fact rather than reconstruct it from callee bodies.
+
+**GetUpval's independent 128 bytes.** V0 MIR reports stackSize 136,
+including eight bytes of saved RBP (`mir/V0.pei.mir:370419–370461`).
+The 128-byte local area is completely accounted for:
+
+| V0 RSP offset | Bytes | Owner/use | Exact V0 GetUpval TSV lines |
+|---|---:|---|---|
+| 0x00 | 8 | PC (`r10`) saved across cold calls | 36, 124, 132, 137 |
+| 0x08 | 8 | Shared-frame pointer (`r11`) saved across cold calls | 37, 85, 133, 138 |
+| 0x10 | 16 | `heap.intern` outputs for mutually exclusive errors, sharing one machine slot | 40–44, 141–146 |
+| 0x20 | 32 | `checked_step` output | 67, 72–77, 117 |
+| 0x40 | 32 | `checked_step` input (`Step`) | 64–68 |
+| 0x60 | 32 | `unwind` output | 57–63 |
+
+Every data instruction in that table has exact Ir=0 on fib, not a rounded
+zero. The IR allocations/calls agree (`ir/V0.ll:102781–102785`,
+`102829`, `102931`, `102943`, `102961`). V1 outlines only the bytecode-error
+interning output (`ir/V1.ll:148193–148214`); the invalid-upvalue output
+remains. Those outputs already overlapped, so removing one does not reduce
+the allocated extent. V1 still needs 16+32+32+32+8+8 = 128 bytes
+(`mir/V1.pei.mir:371870–371887`). GetUpval has no surviving pin slot:
+none of the pin-only options below removes this area.
+
+RBP is a separate hot constraint: exact TSV line 4 puts the allocation
+pointer in it; lines 99, 110, 111 and 115 use it on fib. Its save/restore
+cannot be classified as cold under this allocation. Eliminating all cold
+storage requires a different ownership boundary or a backend capable of
+separating local reservation from this hot save, not simply another
+branch weight.
+
+**General options, not adopted decisions.** All options apply to eligible
+checked references/regions, without naming Halo, an opcode or a benchmark.
+The numeric savings below count specified instructions if all other code
+stays unchanged; net allocator effects require a new measurement.
+
+| Option | Semantics and placement | Direct fib opportunity | Cost and risk |
+|---|---|---:|---|
+| A. Late first-use initialization | Keep the addressable slot; after inlining, initialize before its first surviving consumer on each path. At mixed joins initialize only uninitialized incoming paths, preserving any consumed value. A general pass needs alias/escape, dominance and loop analysis; unsupported cases keep ordinary initialization. | Two stores: 2−1/N = 1.999999858139/call. No GetUpval benefit. | Smallest causal control and no ABI change. Duplicated stores/code on distinct cold paths; critical edges need splitting. Early placement alone is insufficient while hot wrappers still take the address. LLVM may hoist a later store again; inspect codegen. |
+| B. Materialize at each checked box-preserving call, retaining canonical SSA value | Keep a stable local slot address, store the canonical before each eligible call and forward owner-word reloads from that canonical. Reinitialization between consumers is safe by the checked invariant; content mutations remain live. | Same approximately 2/call; no extra hot saving is established for forwarding cold reloads. No GetUpval benefit. | Simpler source-level state than arbitrary mutable-slot sinking, but more stores on kernels executing several consumers. Hot wrapper inlining can again leave entry work unless the fact survives or placement runs late. Exposing owner-word immutability to LLVM needs the complete target-contract audit required by compiler/backend-facts; do not mark all of `slow` read-only. |
+| C. Value-taking private consumer/body | Pass canonical Box contents by value; either use it directly or construct the surrogate owner inside the consumer. A consumer cannot initialize from an uninitialized slot address alone: it needs the canonical as an additional/replacement input. | Caller pin stores: approximately 2/call on fib's unused consumer paths. GetUpval still unchanged. | Changes a compiler-private ABI/body and call-graph propagation. Ordinary `&Box` expects ptr-to-owner: passing contents to that existing signature is wrong. Restrict specialization to proven non-waiting consumers and preserve ordinary boundaries for indirect/external/box-replacing calls. Clones/wrappers, code size and lost inlining can cost more than two instructions. |
+| D. One enclosing owner cell for the invariant pin | Initialize once in the enclosing activation, hand cold consumers its address through the existing shared-frame representation; retain canonical SSA reads in hot parts. | At most the same two named hot stores, before any address-formation/spill cost; no GetUpval benefit. | Existing ordinary ABI, but shared allocation survives the whole dispatch and is less promotable. Extra live address/loads can undo the benefit; address identity, effect scopes and frame lifetime must be preserved. Never put a value that actually changes into an invariant shared cell. |
+| E. Cold continuation owns its locals, combined with A or B | Split a generally identified cold continuation with its interning, unwind, result temporaries and spills into an independent activation. Pass values, not addresses into the hot activation destroyed by `musttail`; resume dispatch/return from the cold part rather than copy results into hot-owned slots. | GetUpval local sub/add: 2−2/N = 1.999999716278/call; with both pin stores, 4−3/N = 3.999999574417. Full frames and RBP removal are separate, unproved opportunities. | Largest lowering/CFG change. Preserve result ownership, errors, unwinding, resumed dispatch, identical guaranteed-tail prototypes and stack lifetime. More call/transfer traffic on workloads taking these paths. Default HotColdSplitting's five small helpers did not establish this ownership boundary. |
+
+The two V0 pin stores have exact Ir 7,049,154 and 7,049,155
+(`probe/V0.arm-SubRK.exact.tsv:7`, `V0.arm-LtJmpRK.exact.tsv:7`).
+GetUpval's local sub/add each have Ir 7,049,154
+(`V0.arm-GetUpval.exact.tsv:3,86`). These observations justify approximately
+two or four named instructions, **not the target of at least 25**.
+Adding that four to V1's observed approximately five would merely estimate
+approximately nine, not demonstrate a combined result. The three V0 arms
+have approximately 32 hot instructions with stack operands/prologue work,
+including real pressure saves and a necessary comparison; that inventory
+is not a deletable pool. Reaching 25 requires substantial additional
+allocation improvements or savings elsewhere.
+
+For every option, other-kernel saving/harm is unmeasured. Consumers that
+fib never executes can be ordinary work elsewhere; B can add repeated
+stores, C/E can add calls and transfers, and D can add live state. Retain
+the prior no-greater-than-1% instruction harm criterion against C2 for
+each of the six other Halo kernels and v2h CoreMark, with declared sizes.
+No wall-time prediction is made.
+
+**Protection and recommendation.** No source acceptance rule changes.
+Retain the backend cases in `compiler/src/backend/tests/match_dispatch.rs`
+for actual Box replacement (1499 and the fixture beginning 1682), content
+writers (1521), pin-aware spill selection (1551) and readonly readers
+(1652), together with tail-call reference/lifetime cases in
+`compiler/src/backend/tests/tail_calls.rs:139` onward. Extend compiler
+execution cases with hot no-use/cold-use branches, both branches consuming,
+a consumer/bypass join followed by a load or second consumer, sequential
+consumers and repeated dispatch, pointee mutation surviving rematerialization,
+and genuine Box replacement excluded from the optimization. Test the
+selected indirect/external/waiting boundary and an inlined wrapper exposing
+the cold-only use. A specifically needs first-use and mixed-join cases;
+B needs sequential consumers with preserved content mutations; C needs
+paired ordinary/specialized-body execution at each admitted boundary.
+D needs repeated transfers with the shared owner live, retaining the
+cross-transfer slot cases at `match_dispatch.rs:3162` onward.
+E additionally needs cold result, error, unwind and
+resumed-dispatch lifetime cases, including joins and guaranteed tails.
+Conformance expectations stay unchanged: retain the existing effect,
+alias and reference-escape witnesses (`eff2-neg-undeclared-exhibited`,
+`eff2-pos-forwarded-storage-effect`, `own12-neg-alias-uniq-args`,
+`own10-neg-dangle-caller`) and boxed-dispatch cases. Run actual Lua
+slow/error/resume oracle cases in CI; fib output alone does not protect
+those paths. New lowering checks must identify the semantic observation,
+not merely require one preferred LLVM text spelling.
+
+Recommend A as the next causal probe, without selecting a production pass.
+For production, B's canonical-value representation is a promising small
+general improvement, while E is the distinct ownership change needed for
+GetUpval. Neither has evidence for the at-least-25 target; do not turn the
+small initializer fix into that performance commitment or adopt E solely
+on these four named instructions. Compare B/E only after the control
+separates their gain from inlining/allocation effects. Confidence is 5/5
+in pin semantics and the frame inventory, 4/5 in the named instruction
+opportunity and restricted edge repair, and 3/5 in net codegen savings.
+Other-kernel performance and a 25-instruction gain remain unverified.
+
+**Extended V2 prior criterion (before its execution).** The restricted
+textual control now normalizes an earliest mixed join only when each
+uninitialized predecessor has that join as its sole successor. Insert
+before that predecessor's terminator; leave already-consumed incoming
+paths untouched. It preserves even a synthetic consumer that replaces
+the slot word, so it needs no Whitefoot/`readonly` assumption. It changes
+no edges or PHIs and ignores merges after the last possible slot use.
+Cycles, mixed predecessor states, critical bypass edges and unsupported
+uses still refuse the whole transaction. CI fixtures distinguish a writing
+diamond, an irrelevant post-use merge, and refused critical/nested bypasses.
+This is a restricted feasible-placement control, not proof of globally
+optimal sinking. Its two LtJmpRK stores may have identical final machine
+forms: the existing base/offset/source mapper then conservatively reports
+UNVERIFIED rather than assigning ambiguous identities. Counts can still
+measure the variant; preparation success needs unique provenance too.
+
+Static inspection predicts SubRK's insertion in `bb133` before its fallback
+(`ir/V0.ll:107683`), and LtJmpRK insertions before `slow` in `bb8.i`
+(`115468`) and before bypass `bb1.i25`'s sole-successor branch (`115431`)
+into `bb7.i21` (`115433`). The post-`slow` `bb14.i` path retains its word.
+No initializer is added at the final mixed exit or at the normal numeric
+fast path's downstream `bb152` merge. GetUpval is unchanged.
+
+Before measuring, require valid LLVM IR, passing writing-consumer and
+refusal controls, and the existing output/shape/provenance guards. The
+causal prediction is both known initializer stores at exact zero fib Ir,
+with approximately two directly removed instructions per Lua call; report
+any other instruction change separately. Reject that placement prediction
+if either initializer remains hot. The original preparation criterion
+still includes absence of GetUpval's hot local allocation, and full-frame
+elimination remains a separate stronger criterion. This V2 alone therefore
+does not predict overall preparation PASS or at least 25 saved instructions.
+No transformation, native verifier, build or measurement of this extension
+ran on the Mac; the first CI result is still pending.
 
 **E3. Profile ceiling (no compiler change).** B built with
 `-fprofile-generate`, trained (a) on fib(32) and (b) on the six other
