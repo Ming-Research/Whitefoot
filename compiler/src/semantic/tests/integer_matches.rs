@@ -186,6 +186,6 @@ fn main() -> status: std::process::ExitStatus pure {
 "#;
     assert_rule_kind(source, SemanticRule::Inv1, |issue| {
         matches!(issue, SemanticIssueKind::InvalidInvariant { reason, .. }
-            if reason == "an affine literal does not have a closed integer type")
+            if *reason == "an affine literal does not have a closed integer type")
     });
 }
