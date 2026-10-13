@@ -54,7 +54,7 @@ COMPLETION_DEFINES := \
 	-DWF_COMPLETION_GETDENTS64=wf_completion_test_getdents64 \
 	-DWF_COMPLETION_POLL=wf_completion_test_poll
 COMPLETION_BASE_CFLAGS := -std=c11 -O2 -g -Wall -Wextra -Werror -Wpedantic \
-	-pthread
+	-pthread -DWF_GUARD_TEST_HOOKS=1
 COMPLETION_CFLAGS := $(COMPLETION_BASE_CFLAGS) $(COMPLETION_DEFINES)
 # The harness names the WF_IO_NOCACHE application so it can count it. The
 # named function performs the same host call the shipped policy performs, so
@@ -273,7 +273,7 @@ $(eval $(call completion-image,core-read-probe-sanitize,$(COMPLETION_CORE_READ_S
 $(eval $(call completion-image,harness-tsan,$(COMPLETION_SOURCES),$(COMPLETION_TSAN_FLAGS) $(COMPLETION_DEFINES) $(COMPLETION_HARNESS_DEFINES)))
 $(eval $(call completion-image,bridge-default-probe-tsan,$(COMPLETION_DEFAULT_ROUTE_SOURCES),$(COMPLETION_TSAN_FLAGS)))
 
-completion-test: $(COMPLETION_TMP)/harness completion-core-read-test completion-default-route-test sched-smoke sched-deque-test sched-policy-test floor-test concurrent-map-test shared-object-test cancel-test driver-service-test driver-service-native-test driver-count-test completion-native-test completion-fork-capsule-test
+completion-test: $(COMPLETION_TMP)/harness completion-core-read-test completion-default-route-test sched-smoke sched-deque-test sched-policy-test floor-test concurrent-map-test shared-object-test decision-cell-test cancel-test driver-service-test driver-service-native-test driver-count-test completion-native-test completion-fork-capsule-test
 	@mkdir -p "$(COMPLETION_TMP)"
 	$(NO_CORE_DUMPS) $(NATIVE_REQUIREMENT) WF_IO_HELPERS=1 "$(COMPLETION_TMP)/harness" "$(COMPLETION_TMP)" all
 	$(NO_CORE_DUMPS) $(NATIVE_REQUIREMENT) WF_IO_HELPERS=0 "$(COMPLETION_TMP)/harness" "$(COMPLETION_TMP)" bridge
@@ -409,7 +409,17 @@ $(COMPLETION_TMP)/cpu-affinity-probe: $(SCHED_PROBE_OBJECT_DIR)/entry.o $(SCHED_
 	$(CC) $(COMPLETION_BASE_CFLAGS) $^ -o "$@"
 .PHONY: cpu-affinity-test
 cpu-affinity-test: $(COMPLETION_TMP)/cpu-affinity-probe $(SCHED_PROBE_OBJECT_DIR)/prim_host.o
-	nm -u "$(SCHED_PROBE_OBJECT_DIR)/prim_host.o" > "$(COMPLETION_TMP)/cpu-affinity-symbols.txt"
+	@# readelf, not nm: a fresh hosted runner's first nm call measured 0.5 to
+	@# 7.9 s, readelf's 0.04 to 0.09 s. The control object proves the listing
+	@# reports an imported allocator.
+	printf '%s\n' '#include <stdlib.h>' 'void *wf_import_control(void) { return malloc(1); }' > "$(COMPLETION_TMP)/cpu-affinity-import-control.c"
+	$(CC) $(COMPLETION_BASE_CFLAGS) -c "$(COMPLETION_TMP)/cpu-affinity-import-control.c" -o "$(COMPLETION_TMP)/cpu-affinity-import-control.o"
+	for object in "$(COMPLETION_TMP)/cpu-affinity-import-control.o" "$(SCHED_PROBE_OBJECT_DIR)/prim_host.o"; do \
+		readelf -sW "$$object" > "$$object.symbols" || exit 1; \
+		awk '$$7 == "UND" && $$8 != "" { print " U " $$8 }' "$$object.symbols" > "$$object.undefined" || exit 1; \
+	done
+	grep -Eq '^ U malloc$$' "$(COMPLETION_TMP)/cpu-affinity-import-control.o.undefined"
+	cp "$(SCHED_PROBE_OBJECT_DIR)/prim_host.o.undefined" "$(COMPLETION_TMP)/cpu-affinity-symbols.txt"
 	@pattern='[[:space:]](malloc|free|calloc|realloc|aligned_alloc|posix_memalign|__sched_cpualloc|__sched_cpufree)(@.*)?$$'; \
 		for symbol in malloc free calloc realloc aligned_alloc posix_memalign __sched_cpualloc __sched_cpufree 'malloc@GLIBC_2.2.5'; do \
 			printf '%s\n' " U $$symbol" > "$(COMPLETION_TMP)/cpu-affinity-symbol-control.txt"; \
@@ -539,6 +549,18 @@ $(COMPLETION_TMP)/shared-object-test: $(SHARED_OBJECT_TEST_OBJECTS)
 	$(CC) $(COMPLETION_BASE_CFLAGS) $^ -o "$@"
 shared-object-test: $(COMPLETION_TMP)/shared-object-test
 	$(NO_CORE_DUMPS) "$(COMPLETION_TMP)/shared-object-test"
+
+# The decision-cell probe uses private driver identities, with the production
+# bridge included in its translation unit and all other runtime objects reused.
+DECISION_CELL_TEST_OBJECTS := \
+	$(patsubst src/backend/%.c,$(COMPLETION_TMP)/objects/bridge-default-probe/%.o,$(filter-out $(COMPLETION_DIR)/bridge.c,$(COMPLETION_RUNTIME_SOURCES))) \
+	$(COMPLETION_TMP)/objects/bridge-default-probe/keyed_table.o \
+	$(COMPLETION_TMP)/objects/bridge-default-probe/completion/decision_cell_test.o
+$(COMPLETION_TMP)/objects/bridge-default-probe/completion/decision_cell_test.o: $(COMPLETION_DIR)/bridge.c
+$(COMPLETION_TMP)/decision-cell-test: $(DECISION_CELL_TEST_OBJECTS)
+	$(CC) $(COMPLETION_BASE_CFLAGS) $^ -o "$@"
+decision-cell-test: $(COMPLETION_TMP)/decision-cell-test
+	$(NO_CORE_DUMPS) "$(COMPLETION_TMP)/decision-cell-test"
 
 # Cancellation runtime probe uses the private bridge/ordinary bodies in its
 # own translation unit to control park/fire interleavings. Other native
@@ -677,7 +699,7 @@ COMPLETION_TEST_IMAGES = $(COMPLETION_TMP)/harness $(COMPLETION_TMP)/core-read-p
 	$(COMPLETION_TMP)/floor-probe $(COMPLETION_TMP)/floor-probe-hooks \
 	$(foreach v,$(CONCURRENT_MAP_VARIANTS),$(COMPLETION_TMP)/concurrent-map-test-$(v)) \
 	$(COMPLETION_TMP)/concurrent-map-test-ignore-activity \
-	$(COMPLETION_TMP)/shared-object-test $(COMPLETION_TMP)/cancel-test $(COMPLETION_TMP)/driver-service-test \
+	$(COMPLETION_TMP)/shared-object-test $(COMPLETION_TMP)/decision-cell-test $(COMPLETION_TMP)/cancel-test $(COMPLETION_TMP)/driver-service-test \
 	$(COMPLETION_TMP)/driver-service-native-test $(COMPLETION_TMP)/driver-service-native-no-reap \
 	$(if $(filter Linux,$(shell uname -s)),$(COMPLETION_TMP)/driver-count-test) \
 	$(if $(filter Linux,$(shell uname -s)),$(COMPLETION_TMP)/cpu-affinity-probe) \
@@ -926,7 +948,7 @@ completion-windows-wine:
 # Their dated evidence and reproduction revision remain in the investigation.
 .PHONY: concurrent-map-test-sanitized concurrent-map-test-tsan
 .PHONY: check _check static _static build test-build test-build-unit test-build-corpus format lint test _test test-unit test-corpus \
-	docs completion-test completion-test-images completion-native-test completion-fork-capsule-test concurrent-map-test shared-object-test \
+	docs completion-test completion-test-images completion-native-test completion-fork-capsule-test concurrent-map-test shared-object-test decision-cell-test \
 	completion-core-read-test \
 	completion-tsan \
 	completion-sanitize \

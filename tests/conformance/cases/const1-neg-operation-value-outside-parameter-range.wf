@@ -1,0 +1,18 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn get<const n: u8>() -> r: u8 pure {
+  doc "Reads the const generic at its written type u8.";
+  return n;
+}
+
+fn next<const m: u8>() -> r: u8 pure {
+  doc "m + 1 names only u8 terms, so it is admitted for the u8 parameter in this template; its value exists only at an instance, which judges it against u8's closed range.";
+  return get::<m + 1>();
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "At this instance m + 1 evaluates to 256, outside u8's range, so the instance is rejected at the const node, as a value outside u64 is.";
+  let v = next::<255>();
+  return exit_status(code: v);
+}

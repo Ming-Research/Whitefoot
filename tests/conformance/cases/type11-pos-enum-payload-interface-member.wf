@@ -1,0 +1,47 @@
+struct Table {
+  slots: Slots<u64, 8>;
+  next: u64;
+  invariant cursor(table): table.next < table.slots.len;
+}
+
+interface Source {
+  fn produce(seed: u64) -> made: Option<Table> pure;
+  fn consume(table: Option<Table>) -> result: u64 pure;
+}
+
+fn make_table(seed: u64) -> made: Option<Table> pure {
+  let slots = slots_new::<u64, 8>();
+  place_back(window: &slots, value: seed);
+  let table = Table(slots: move slots, next: 0_u64);
+  return Some<Table>(value: move table);
+}
+
+fn read_table(table: Option<Table>) -> result: u64 pure {
+  match move table {
+    Some(value: t) => {
+      let at = t.next;
+      let got = t.slots[at];
+      return got;
+    }
+    None() => {
+      return 0_u64;
+    }
+  }
+}
+
+binding Fresh : Source {
+  produce = make_table;
+  consume = read_table;
+}
+
+fn round<interface Source>(seed: u64) -> result: u64 pure {
+  let made = Source::produce(seed: seed);
+  let got = Source::consume(table: move made);
+  return got;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let got = round::<Fresh>(seed: 12_u64);
+  let code = cvt.wrap::<u64, u8>(got);
+  return std::process::exit_status(code: code);
+}

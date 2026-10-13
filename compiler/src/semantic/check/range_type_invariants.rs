@@ -36,6 +36,7 @@ impl Checker<'_, '_> {
             result_list: None,
             effects_node: invariant,
             declared_effects: EffectSet::default(),
+            contract_reads: None,
             waits: false,
             held_parameters: Vec::new(),
             formal_parameter: None,
@@ -65,9 +66,15 @@ impl Checker<'_, '_> {
         .ok_or(SemanticCompilerFailure::InvalidCanonicalTree.into())
     }
 
+    /// [TYPE-11] each parameter's and result ordinal's range type invariants,
+    /// read on its type after the function instance's substitution [FN-2]
+    /// exactly as the affine ones are: a range requirement of each parameter,
+    /// and an unrouted range postcondition over each written reference
+    /// parameter's exit state and each result ordinal [RANGE-2]. A callable
+    /// whose definition the build supplies publishes no postcondition, as no
+    /// body proves one.
     pub(super) fn append_range_type_invariant_contracts(
         &mut self,
-        check_context: &CheckContext<'_>,
         signature: &FunctionSignature,
         parameters: &[CheckedParameter],
     ) -> Result<(), CheckStop> {
@@ -76,25 +83,9 @@ impl Checker<'_, '_> {
         } else {
             Vec::new()
         };
-        let shared_new = matches!(signature.name.as_str(), "shared_new" | "frozen_new")
-            && self
-                .types
-                .declarations
-                .tree
-                .is_prelude_node(signature.node)?;
+        let publishes = !self.supplied_definition(signature)?;
         for (parameter, checked) in signature.parameters.iter().zip(parameters) {
-            let nominal = self.declared_invariant_struct(check_context, parameter)?;
-            // shared_new's T is supplied by its operand rather than written in
-            // its signature. TYPE-11 still owes the argument's invariant.
-            let nominal = nominal.or_else(|| {
-                (shared_new && parameters.first() == Some(checked))
-                    .then_some(parameter.ty)
-                    .and_then(|ty| match ty {
-                        CheckedType::Nominal(id) => Some(id),
-                        _ => None,
-                    })
-            });
-            let Some(nominal) = nominal else {
+            let Some(nominal) = self.declared_invariant_struct(parameter) else {
                 continue;
             };
             let Some(clauses) = self.types.range_type_invariants.get(&nominal) else {
@@ -106,7 +97,8 @@ impl Checker<'_, '_> {
                     parameter.mode == CheckedMode::Reference,
                 );
                 self.body.range_facts.requirements.push(clause.clone());
-                if parameter.mode == CheckedMode::Reference
+                if publishes
+                    && parameter.mode == CheckedMode::Reference
                     && super::ensures::parameter_has_exit_state(signature, parameter)
                 {
                     self.body
@@ -125,22 +117,7 @@ impl Checker<'_, '_> {
             let CheckedType::Nominal(nominal) = result.ty else {
                 continue;
             };
-            if result.mode != CheckedMode::Own {
-                continue;
-            }
-            let Some(ty) = self
-                .types
-                .declarations
-                .tree
-                .first_child_with(result.rtype, Production::Type)?
-            else {
-                continue;
-            };
-            if self
-                .types
-                .written_invariant_struct(check_context, ty, nominal)?
-                .is_none()
-            {
+            if !publishes || result.mode != CheckedMode::Own {
                 continue;
             }
             for clause in self

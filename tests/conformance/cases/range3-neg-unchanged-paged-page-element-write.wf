@@ -1,0 +1,13 @@
+fn through_page(p: &Paged<u64>) -> result: unit writes(p) contract {
+  requires p^.pages.len >= 1_u64;
+  ensures forall kept(k in 0_u64..p^.len): p^[k] unchanged;
+} {
+  if p^.pages[0_u64].len > 0_u64 {
+    set p^.pages[0_u64][0_u64] = 9_u64;
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

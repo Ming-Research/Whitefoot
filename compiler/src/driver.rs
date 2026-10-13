@@ -923,15 +923,17 @@ const MODULE_VERDICTS: &str = "module-verdicts";
 /// interfaces alone, or its interface records alone, and reports its verdict.
 ///
 /// With a cache, a verdict recorded for exactly the same inputs is reused:
-/// the module's selected records and their display names, the interface
-/// records of its dependency closure, the closure's edges, the registered
-/// modules one path component below a closure module, and the compiler
-/// itself. An edit to another module's implementation records changes none
-/// of these, so it never recomputes this verdict, and an edit to an
-/// interface this module reads always does. A rejection is reused only while
-/// the order in which the check reads its records and the whole set of
-/// registered modules are unchanged as well, since they select which of
-/// several defects it reports.
+/// the module's selected records by module, role, logical path and bytes,
+/// the interface records of its dependency closure, the closure's edges, the
+/// registered modules one path component below a closure module, and the
+/// compiler itself. The host paths the invocation names the records by are no
+/// part of that identity. An edit to another module's implementation records
+/// changes none of these, so it never recomputes this verdict, and an edit to
+/// an interface this module reads always does. A rejection is reused only
+/// while the order in which the check reads its records, the whole set of
+/// registered modules and the host paths its diagnostic prints are unchanged
+/// as well, since the first two select which of several defects it reports
+/// and the last is what it prints.
 ///
 /// # Errors
 ///
@@ -2027,8 +2029,12 @@ fn push_graph_facts(
 }
 
 /// What a rejection depends on beyond the key material: every registered
-/// module in row order, and the order in which the check reads its records,
-/// which selects the first of several defects it reports [DIAG-1].
+/// module in row order, the order in which the check reads its records,
+/// which selects the first of several defects it reports [DIAG-1], and the
+/// name each record is shown by, which the rejection prints. An acceptance
+/// prints nothing, so a graph built under another spelling of its paths
+/// reuses it, and a rejection is checked again so that its diagnostic names
+/// the paths this invocation wrote.
 fn rejection_reading(graph: &crate::ModuleGraph, inputs: &[SourceInput<'_>]) -> Vec<u8> {
     let mut reading = b"registered".to_vec();
     for module in graph.modules() {
@@ -2044,7 +2050,8 @@ fn rejection_reading(graph: &crate::ModuleGraph, inputs: &[SourceInput<'_>]) -> 
         let mut fields = Fields::default();
         fields
             .push(module.as_bytes())
-            .push(input.logical_path().as_bytes());
+            .push(input.logical_path().as_bytes())
+            .push(input.display_path().as_bytes());
         reading.extend_from_slice(&fields.into_bytes());
         reading.push(b'\n');
     }
@@ -2062,8 +2069,10 @@ enum RecordOrder {
     Read,
 }
 
-/// Each record a check reads: its module, role, logical and display names,
-/// and bytes.
+/// Each record a check reads: its module, role, logical name and bytes. The
+/// name a diagnostic prints for a record follows the invocation's spelling of
+/// its path, so it is no part of a record's identity; a rejection's reading
+/// carries it [`rejection_reading`].
 fn push_records(
     material: &mut Vec<u8>,
     graph: &crate::ModuleGraph,
@@ -2086,7 +2095,6 @@ fn push_records(
                 .push(module.as_bytes())
                 .push(role.as_bytes())
                 .push(input.logical_path().as_bytes())
-                .push(input.display_path().as_bytes())
                 .push(input.bytes());
             fields.into_bytes()
         })

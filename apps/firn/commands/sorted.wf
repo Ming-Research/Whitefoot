@@ -245,7 +245,7 @@ fn add_ranked(sorted: &Sorted, client: &Client, adding: &Adding) -> result: unit
           let placed = ordered_map_put::<RankOrder, unit, ceiling>(map: &sorted^.order, key: move rank, value: unit, env: &keys);
           set adding^.updated = adding^.updated +wrap 1_u64;
         } else {
-          let unchanged = move member;
+          let retained_member = move member;
         }
       }
     } else if adding^.xx {

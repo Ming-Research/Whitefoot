@@ -242,12 +242,10 @@ fn main() -> status: std::process::ExitStatus pure {{
 }
 
 #[test]
-fn a_callee_relation_over_an_entry_image_is_not_taken_as_a_range_fact() {
-    // `place_back`'s relation `window^.len == entry(window)^.len + 1` names
-    // an entry image, which no range term reads [RANGE-1]. Read as a range
-    // fact over the current length it is `len == len + 1`, a contradiction
-    // after which the caller proved every owed range fact, including this
-    // false one.
+fn a_callee_entry_relation_never_collapses_entry_and_exit_versions() {
+    // [RANGE-1, RANGE-2] `place_back`'s relation reads its recorded entry
+    // version. Collapsing it into the exit version would state
+    // `len == len + 1` and prove every fact, including this false one.
     let source = b"fn need_sevens(xs: &Slots<u64, 8>) -> result: unit pure contract {
   requires forall seven(k in 0_u64..xs^.len): xs^[k] == 7_u64;
 } {
@@ -2291,6 +2289,132 @@ fn reference_match_payload_writes_reach_the_container() {
     }
 }
 
+/// A conformance case's source and its expected verdict: `None` accepts, and
+/// `Some((rule, at))` rejects under `rule` with the diagnostic starting at the
+/// source text `at`.
+type PinnedCase<'a> = (&'a [u8], Option<(SemanticRule, &'a str)>);
+
+/// Checks each conformance case's verdict and pins each rejection to the
+/// source its diagnostic starts at, so a negative fails for its intended
+/// reason rather than an earlier type, effect or reference error. The corpus
+/// owns the verdicts.
+fn pinned_case_verdicts(cases: &[PinnedCase<'_>]) {
+    for &(source, expected) in cases {
+        with_semantics(source, |outcome| match (expected, outcome) {
+            (None, SemanticOutcome::Complete(_)) => {}
+            (Some((rule, at)), SemanticOutcome::SourceIssue { issue, .. }) => {
+                assert_eq!(issue.rule(), rule, "{issue:?}");
+                let crate::SemanticLocation::SourceNode(_, coordinate) = issue.location();
+                let start = usize::try_from(coordinate.start().value()).unwrap();
+                assert!(source[start..].starts_with(at.as_bytes()), "{issue:?}");
+            }
+            (expected, outcome) => panic!("expected {expected:?}: {outcome:?}"),
+        });
+    }
+}
+
+/// [RANGE-1] a payload binder's referent below an element projection is that
+/// element's payload projection in a range goal, at the subscript the match
+/// recorded, through nested matches and `Box` content, and no range term of
+/// a written clause.
+#[test]
+fn payload_binder_referents_are_element_projections() {
+    pinned_case_verdicts(&[
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range1-pos-payload-binder-referent.wf"
+            )
+            .as_slice(),
+            None,
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range1-neg-payload-binder-referent-unproved.wf"
+            )
+            .as_slice(),
+            Some((SemanticRule::Range3, "follow(")),
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range1-neg-payload-binder-referent-written.wf"
+            )
+            .as_slice(),
+            Some((SemanticRule::Fn8, "need_below(value: jump_to^")),
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range1-pos-payload-binder-recorded-index.wf"
+            )
+            .as_slice(),
+            None,
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range1-pos-payload-binder-array-element.wf"
+            )
+            .as_slice(),
+            None,
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range1-pos-payload-binder-nested.wf"
+            )
+            .as_slice(),
+            None,
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range1-pos-payload-binder-box-content.wf"
+            )
+            .as_slice(),
+            None,
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range1-neg-payload-binder-written-clause.wf"
+            )
+            .as_slice(),
+            Some((SemanticRule::Range1, "jump_to^")),
+        ),
+    ]);
+}
+
+/// [RANGE-1, RANGE-3] variant relations over a `Bool` element and an own-mode
+/// enum binding, and a guard `is not V` owed at a call.
+#[test]
+fn variant_relations_reach_their_verdicts() {
+    pinned_case_verdicts(&[
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range1-pos-variant-bool-operand.wf"
+            )
+            .as_slice(),
+            None,
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range1-pos-variant-own-binding.wf"
+            )
+            .as_slice(),
+            None,
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range3-pos-variant-not-guard-owed.wf"
+            )
+            .as_slice(),
+            None,
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range3-neg-variant-not-guard-owed.wf"
+            )
+            .as_slice(),
+            Some((SemanticRule::Range3, "walk(")),
+        ),
+    ]);
+}
+
 #[test]
 fn range_facts_discharge_every_integer_domain_family() {
     for (ty, bound, expression) in [
@@ -3087,4 +3211,124 @@ fn generic_float_struct_equality_exports_no_integer_field_fact() {
         SemanticRule::Range3,
         "need(xs: &xs[0_u64..1_u64], expected: value.index)",
     );
+}
+
+/// [RANGE-1] symbolic and concrete generic frames for copy and affine
+/// elements retain whole-selection identity rather than becoming value equality
+/// or an omitted aggregate clause.
+#[test]
+fn generic_unchanged_forms_entry_identity_without_projection_expansion() {
+    use super::super::model::{CheckedType, type_has_copy_capability};
+    use super::super::range_facts::{
+        CheckedRangeProjection as Projection, CheckedRangeRoot as Root, CheckedRangeTerm as Term,
+        RangeComparison,
+    };
+    for (source, copy) in [
+        (
+            include_bytes!("../../../../tests/conformance/cases/range2-pos-helper-append-frame.wf")
+                .as_slice(),
+            true,
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range2-pos-helper-append-affine-frame.wf"
+            )
+            .as_slice(),
+            false,
+        ),
+    ] {
+        with_semantics(source, |outcome| {
+            let SemanticOutcome::Complete(program) = outcome else {
+                panic!("generic and Block frames must check: {outcome:?}");
+            };
+            let mut symbolic = false;
+            let mut concrete = false;
+            for function in program
+                .data
+                .functions
+                .iter()
+                .filter(|f| f.name == "push_item")
+            {
+                match function.parameters[1].ty {
+                    CheckedType::Generic(_) => symbolic = true,
+                    ty @ CheckedType::Nominal(_) => {
+                        concrete = true;
+                        assert_eq!(
+                            type_has_copy_capability(
+                                ty,
+                                &program.data.nominals,
+                                &program.data.elements,
+                                &|_| None,
+                            ),
+                            Some(copy),
+                            "the concrete fixture retains its intended ownership class"
+                        );
+                    }
+                    other => panic!("unexpected instance element: {other:?}"),
+                }
+                let clause = &function
+                    .range_facts
+                    .postconditions
+                    .iter()
+                    .find(|post| post.clause.name == "preserved")
+                    .unwrap()
+                    .clause;
+                let [relation] = clause.conclusions.as_slice() else {
+                    panic!("one written unchanged remains one identity: {clause:?}");
+                };
+                assert!(!relation.projected);
+                assert_eq!(relation.comparison, RangeComparison::Equal);
+                let Term::Read {
+                    place: exit,
+                    indices,
+                    projection,
+                    ..
+                } = &relation.left
+                else {
+                    panic!("{relation:?}");
+                };
+                let Term::Read {
+                    place: entry,
+                    indices: entry_indices,
+                    projection: entry_projection,
+                    ..
+                } = &relation.right
+                else {
+                    panic!("{relation:?}");
+                };
+                assert_eq!(projection, &[Projection::WholeElement]);
+                assert_eq!(entry_projection, projection);
+                assert_eq!(
+                    entry_indices, indices,
+                    "indices retain their written denotation"
+                );
+                assert_eq!(exit.root, Root::Binding(function.parameters[0].binding));
+                assert_eq!(entry.root, Root::Entry(function.parameters[0].binding));
+                assert_eq!(exit.path, entry.path);
+            }
+            assert!(symbolic && concrete, "both instance scopes were inspected");
+        });
+    }
+}
+
+/// [RANGE-1, DIAG-1] syntactically factored affine operands must still be
+/// single places, and refusals must precede ordinary element-read checking.
+#[test]
+fn unchanged_refusals_name_the_written_relation() {
+    for (contract, offending) in [
+        (
+            "ensures forall preserved(k in 0_u64..cell^.len): cell^[k] + 0_u64 unchanged;",
+            "cell^[k] + 0_u64 unchanged",
+        ),
+        ("ensures cell^[0_u64] unchanged;", "cell^[0_u64] unchanged"),
+        (
+            "ensures forall preserved(k in 0_u64..cell^.len) when cell^[k] unchanged: cell^[k] == k;",
+            "cell^[k] unchanged",
+        ),
+    ] {
+        let source = field_range_program(&format!(
+            "fn preserve(cell: &Array<u64, 1>) -> result: unit writes(cell) contract {{\n  {contract}\n}} {{\n  set cell^[0_u64] = 0_u64;\n  return unit;\n}}\n"
+        ));
+        super::assert_rule_at(&source, SemanticRule::Range1, offending);
+    }
 }

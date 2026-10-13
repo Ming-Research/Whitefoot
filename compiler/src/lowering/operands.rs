@@ -103,10 +103,12 @@ macro_rules! operation_operands {
             | IrOperation::SnapshotAtomicBegin
             | IrOperation::SnapshotAtomicEnd
             | IrOperation::SharedNew { .. }
+            | IrOperation::DecisionCellNew { .. }
             | IrOperation::TableEntrySlot { .. }
             | IrOperation::TableUnlockEntry { .. }
             | IrOperation::TableHoldRead { .. }
             | IrOperation::AtomicGroupTake { .. }
+            | IrOperation::AtomicGroupAcquire { .. }
             | IrOperation::AtomicGroupRelease { .. }
             | IrOperation::TableHoldWhole { .. }
             | IrOperation::TableHoldTake { .. }
@@ -134,10 +136,10 @@ macro_rules! operation_operands {
             | IrOperation::ContextAwait { start: value }
             | IrOperation::SharedState { object: value, .. }
             | IrOperation::SharedRetain { object: value, .. }
+            | IrOperation::DecisionCell { object: value, .. }
             | IrOperation::SharedAcquire { object: value }
-            | IrOperation::SharedWatch { object: value }
             | IrOperation::SharedTake { object: value }
-            | IrOperation::SharedUnlock { object: value }
+            | IrOperation::SharedUnlock { object: value, .. }
             | IrOperation::ConcurrentHashMapNew {
                 capacity: value, ..
             }
@@ -152,8 +154,13 @@ macro_rules! operation_operands {
             }
             | IrOperation::KeySetNew { capacity: value }
             | IrOperation::KeySetBytes { set: value }
-            | IrOperation::WatchObject { object: value, .. }
             | IrOperation::WatchTable { table: value, .. } => vec![$value(value)],
+            // A wake test reads its state, field addresses and captured
+            // operands where the watch registers.
+            IrOperation::SharedWatch { object, test }
+            | IrOperation::WatchObject { object, test, .. } => std::iter::once($value(object))
+                .chain(test.$iter().flat_map(|test| test.values.$iter().map($value)))
+                .collect(),
             IrOperation::ConcurrentHashMapSwap { first, second } => {
                 vec![$value(first), $value(second)]
             }

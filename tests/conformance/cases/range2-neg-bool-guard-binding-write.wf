@@ -6,7 +6,7 @@ fn need_zero(slot: u64) -> result: unit pure contract {
 
 fn inspect(nodes: &[u64], enabled: Bool) -> result: unit reads(nodes) contract {
   requires nodes^.len == 1_u64;
-  requires forall observed(k in 0_u64..nodes^.len) when enabled: nodes^[k] == 0_u64;
+  requires forall observed(k in 0_u64..nodes^.len) when enabled is True: nodes^[k] == 0_u64;
 } {
   set enabled = True();
   if enabled {

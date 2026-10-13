@@ -1,0 +1,24 @@
+struct Span {
+  start: u64;
+  end: u64;
+  invariant ordered(span): span.start <= span.end;
+}
+
+fn count<T: drop>(item: Option<T>) -> result: u64 pure {
+  match move item {
+    Some(value: v) => {
+      return 1_u64;
+    }
+    None() => {
+      return 0_u64;
+    }
+  }
+}
+
+fn caller() -> result: u64 pure {
+  let span = Span(start: 1_u64, end: 2_u64);
+  set span.start = 3_u64;
+  let item = Some<Span>(value: span);
+  let n = count::<Span>(item: item);
+  return n;
+}

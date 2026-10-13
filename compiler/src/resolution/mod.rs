@@ -176,6 +176,10 @@ impl BuiltinPreludeId {
     pub(crate) const NEXT_CURSOR: Self = Self(28);
     pub(crate) const NEEDS: Self = Self(29);
     pub(crate) const NEEDS_BYTES: Self = Self(30);
+    pub(crate) const DECISION_STATE: Self = Self(31);
+    pub(crate) const OPEN: Self = Self(32);
+    pub(crate) const WRITTEN: Self = Self(33);
+    pub(crate) const KILLED: Self = Self(34);
 
     /// Returns the internal built-in record index.
     #[must_use]
@@ -415,6 +419,10 @@ pub enum DeferredUseRole {
     /// [GRAM-5, EFF-1]. Which variant a place's enum type has is the owner
     /// type's judgment, exactly as the paired field name is.
     PayloadVariant,
+    /// The variant TYPEID of a range clause's variant relation, `e is V`
+    /// [GRAM-5, RANGE-1], resolved against the tested value's enum type as
+    /// an arm label is against its scrutinee's.
+    TestedVariant,
     /// The member name on the left side of a named binding.
     FunctionBinding,
     /// The member selected by a qualified group call.

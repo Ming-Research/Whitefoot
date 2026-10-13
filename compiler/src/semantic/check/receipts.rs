@@ -428,7 +428,9 @@ impl ProofReceipt {
         let mut operation_intervals = BTreeMap::new();
         for _ in 0..input.u32()? {
             let item_length = usize::try_from(input.u32()?).ok()?;
-            let item = std::str::from_utf8(input.take(item_length)?).ok()?.to_owned();
+            let item = std::str::from_utf8(input.take(item_length)?)
+                .ok()?
+                .to_owned();
             let mut components = Vec::new();
             for _ in 0..input.u32()? {
                 components.push(input.u32()?);
@@ -569,6 +571,7 @@ fn analyzed_rendering(function: &CheckedFunction) -> String {
         held_parameters,
         held_calls,
         requirement_places,
+        routed_requirements,
         postconditions,
         range_facts,
         body,
@@ -585,7 +588,7 @@ fn analyzed_rendering(function: &CheckedFunction) -> String {
         "{formal_hypothesis:?}\n{id:?}\n{declaration:?}\n{module:?}\n{name:?}\n{symbol:?}\n\
          {function_actuals:?}\n{region_parameters:?}\n{parameters:?}\n{result_mode:?}\n\
          {result:?}\n{declared_state_writes:?}\n{declared_state_reads:?}\n{requirements:?}\n\
-         {requirement_places:?}\n{held_parameters:?}\n{held_calls:?}\n\
+         {requirement_places:?}\n{held_parameters:?}\n{held_calls:?}\n{routed_requirements:?}\n\
          {postconditions:?}\n{range_facts:?}\n{body:?}\n{reference_origins:?}\n\
          {body_disposition:?}\n{call_separations:?}\n{permission_separation_queries:?}\n\
          {waiting:?}"
@@ -613,7 +616,7 @@ fn claims_rendering(function: &CheckedFunction) -> String {
         })
         .collect::<Vec<_>>();
     format!(
-        "{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{postconditions:?}\n{:?}\n{:?}\n{:?}",
+        "{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{postconditions:?}\n{:?}\n{:?}\n{:?}",
         function.formal_hypothesis,
         function.symbol,
         function.module,
@@ -624,6 +627,7 @@ fn claims_rendering(function: &CheckedFunction) -> String {
         function.declared_state_reads,
         function.requirements,
         function.held_parameters,
+        function.routed_requirements,
         function.function_actuals,
         function.range_facts.requirements,
         function.range_facts.postconditions,
@@ -788,8 +792,8 @@ impl Checker<'_, '_> {
                 IdKind::Nominal => {
                     let nominal = self.types.nominals.get(position)?;
                     format!(
-                        "nominal\n{:?}\n{:?} {:?}",
-                        nominal.kind, nominal.linear, nominal.nocopy
+                        "nominal\n{:?}\n{:?} {:?} {:?}",
+                        nominal.kind, nominal.linear, nominal.nocopy, nominal.type_invariant
                     )
                 }
                 IdKind::Element => {
@@ -988,6 +992,7 @@ impl<'unit> DeclarationInventory<'unit> {
                     relation_ordinal: u32::try_from(ordinal).ok()?,
                     summary: None,
                     exits: Vec::new(),
+                    vacuous: postcondition.selector.vacuous_when_unselected(),
                     aggregate: PostconditionAggregate {
                         discharged: true,
                         derivation: None,
@@ -1040,6 +1045,8 @@ impl AnalysisState {
 mod tests {
     use super::{IdKind, ItemSpellings, ProofReceipt, ReceiptNodePath, Spelling, StableText};
     use crate::semantic::entailment::operation_facts::Interval;
+    use crate::semantic::places::CaptureId;
+    use crate::syntax::NodeId;
     use std::collections::BTreeMap;
 
     /// [MOD-8, RANGE-2] reuse retains exact intervals and contradictory
@@ -1098,10 +1105,8 @@ mod tests {
         let spelling = old.spelling(0).expect("old operation item");
         assert_eq!(moved.ordinal(&spelling), Some(1));
         assert_eq!(moved.ordinal("missing"), None);
-        let ambiguous = ItemSpellings::new(vec![
-            Some("target".to_owned()),
-            Some("target".to_owned()),
-        ]);
+        let ambiguous =
+            ItemSpellings::new(vec![Some("target".to_owned()), Some("target".to_owned())]);
         assert_eq!(ambiguous.ordinal(&spelling), None);
     }
 
@@ -1141,13 +1146,20 @@ mod tests {
     }
 
     /// A source coordinate is dropped whole, and a capture's source
-    /// occurrence is spelled as the node it names.
+    /// occurrence or contract-read call is spelled as the node it names.
     #[test]
     fn coordinates_are_dropped_and_captures_spelled_by_node() {
+        let erased = CaptureId::ContractRead {
+            call: NodeId::from_index(88).expect("node index fits"),
+            position: 2,
+        };
         let mut text = StableText::default();
         text.push(
-            "Origin { coordinate: SyntaxCoordinate { source: SourceId(3), start: ByteOffset(120), \
-             end: ByteOffset(125) }, capture: Source(88), constructor: Source(DeclarationId(4)) }",
+            &format!(
+                "Origin {{ coordinate: SyntaxCoordinate {{ source: SourceId(3), \
+                 start: ByteOffset(120), end: ByteOffset(125) }}, capture: Source(88), \
+                 erased: {erased:?}, constructor: Source(DeclarationId(4)) }}"
+            ),
             &mut |kind, value| match kind {
                 IdKind::Node => Some(Spelling::Stable(format!("node{value}"))),
                 IdKind::Declaration => Some(Spelling::Stable(format!("decl{value}"))),
@@ -1158,7 +1170,8 @@ mod tests {
         .expect("every identity is spelled");
         assert_eq!(
             text.into_text(),
-            "Origin { coordinate: SyntaxCoordinate, capture: Source(node88), constructor: \
+            "Origin { coordinate: SyntaxCoordinate, capture: Source(node88), \
+             erased: ContractRead { call: NodeId(node88), position: 2 }, constructor: \
              Source(DeclarationId(decl4)) }"
         );
     }

@@ -1551,69 +1551,13 @@ impl<'unit> TypeContext<'unit> {
                 .children_with(arguments, Production::Targ)?;
             let mut keys = Vec::new();
             for argument in written {
-                if let Some(ty) = self
+                let Some(key) = self
                     .declarations
-                    .tree
-                    .first_child_with(argument, Production::Type)?
-                {
-                    if self.declarations.tree.argument_list(ty)?.is_some() {
-                        return self.declarations.behavior_mismatch(
-                            SemanticRule::Fn3,
-                            node,
-                            "the full application names the declared group binders",
-                        );
-                    }
-                    let usage =
-                        self.declarations
-                            .use_at(check_context, ty, LexicalUseRole::Type)?;
-                    match usage.target() {
-                        ResolvedTarget::Source {
-                            declaration,
-                            class: DeclarationClass::GenericType,
-                        } => keys.push(GenericParameterKey::Source(declaration)),
-                        _ => {
-                            return self.declarations.behavior_mismatch(
-                                SemanticRule::Fn3,
-                                node,
-                                "the full application names the declared group binders",
-                            );
-                        }
-                    }
-                } else if let Some(value) = self
-                    .declarations
-                    .tree
-                    .first_child_with(argument, Production::Const)?
-                {
-                    if !self.declarations.tree.is_single_token(value) {
-                        return self.declarations.behavior_mismatch(
-                            SemanticRule::Fn3,
-                            node,
-                            "the full application names the declared group binders",
-                        );
-                    }
-                    let usage =
-                        self.declarations
-                            .use_at(check_context, value, LexicalUseRole::Const)?;
-                    match usage.target() {
-                        ResolvedTarget::Source {
-                            declaration,
-                            class: DeclarationClass::ConstGeneric,
-                        } => keys.push(GenericParameterKey::Source(declaration)),
-                        _ => {
-                            return self.declarations.behavior_mismatch(
-                                SemanticRule::Fn3,
-                                node,
-                                "the full application names the declared group binders",
-                            );
-                        }
-                    }
-                } else {
-                    return self.declarations.behavior_mismatch(
-                        SemanticRule::Fn3,
-                        node,
-                        "the full application names the declared group binders",
-                    );
-                }
+                    .forwarded_binder(check_context, argument)?
+                else {
+                    return self.declarations.unforwarded_group_application(node);
+                };
+                keys.push(key);
             }
             let mut selected = Vec::new();
             for candidate in candidates {
@@ -1626,6 +1570,9 @@ impl<'unit> TypeContext<'unit> {
                 if candidate_keys == keys {
                     selected.push(candidate);
                 }
+            }
+            if selected.is_empty() {
+                return self.declarations.unforwarded_group_application(node);
             }
             candidates = selected;
         }
@@ -1764,6 +1711,59 @@ impl<'unit> DeclarationInventory<'unit> {
             SemanticIssueKind::type_mismatch(requirement, "a nonmatching behavior argument")
         };
         self.issue_node(rule, node, kind)
+    }
+    /// The binder one written argument of a forwarding interface application
+    /// names [FN-3]: a type binder written as a bare TYPEID, or a const binder
+    /// written as one IDENT. Every other written form names no binder and
+    /// yields `None` before any lookup assumes a name: a literal or a
+    /// primitive type records no lexical use to look up.
+    fn forwarded_binder(
+        &self,
+        check_context: &CheckContext<'_>,
+        argument: NodeId,
+    ) -> Result<Option<GenericParameterKey>, CheckStop> {
+        if let Some(ty) = self.tree.first_child_with(argument, Production::Type)? {
+            if self.tree.argument_list(ty)?.is_some() || !self.tree.names_nominal(ty)? {
+                return Ok(None);
+            }
+            let usage = self.use_at(check_context, ty, LexicalUseRole::Type)?;
+            return Ok(match usage.target() {
+                ResolvedTarget::Source {
+                    declaration,
+                    class: DeclarationClass::GenericType,
+                } => Some(GenericParameterKey::Source(declaration)),
+                _ => None,
+            });
+        }
+        let Some(value) = self.tree.first_child_with(argument, Production::Const)? else {
+            return Ok(None);
+        };
+        if !self.tree.is_single_token(value) {
+            return Ok(None);
+        }
+        let uses = self.uses_at_ordered(check_context, value, LexicalUseRole::Const)?;
+        let [usage] = uses.as_slice() else {
+            return Ok(None);
+        };
+        Ok(match usage.target() {
+            ResolvedTarget::Source {
+                declaration,
+                class: DeclarationClass::ConstGeneric,
+            } => Some(GenericParameterKey::Source(declaration)),
+            _ => None,
+        })
+    }
+    /// [FN-3] an interface application in an argument list forwards, in
+    /// order, the binders one in-scope introduction of its interface
+    /// declares; concrete arguments arrive only through a named binding.
+    fn unforwarded_group_application<T>(&self, application: NodeId) -> Result<T, CheckStop> {
+        self.issue_node(
+            SemanticRule::Fn3,
+            application,
+            SemanticIssueKind::UnforwardedGroupApplication {
+                mechanical_fix: "to forward a group in scope, write in order the binders its `interface` introduction declares; to supply concrete arguments, declare a `binding` for this interface application and write the binding's name in place of the application",
+            },
+        )
     }
     fn application_formal(
         &self,

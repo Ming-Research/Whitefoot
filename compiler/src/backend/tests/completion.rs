@@ -899,6 +899,10 @@ fn frame_record_sizes_are_the_runtime_s_own() {
     );
     assert_eq!(defined("WF_WATCH_SIZE"), crate::backend::WATCH_SIZE);
     assert_eq!(
+        defined("WF_WAKE_TEST_SIZE"),
+        crate::backend::WAKE_TEST_SIZE
+    );
+    assert_eq!(
         defined("WF_SHARED_STATE_OFFSET"),
         crate::backend::SHARED_STATE_OFFSET
     );

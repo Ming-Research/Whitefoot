@@ -1,8 +1,8 @@
 fn narrowed(value: f64) -> result: f32 pure {
   let rounded = cvt.nearest::<f64, f32>(value);
   let widened = cvt::<f32, f64>(rounded);
-  let unchanged = feq(widened, value);
-  if unchanged {
+  let preserved_value = feq(widened, value);
+  if preserved_value {
     return cvt::<f64, f32>(value);
   }
   return rounded;

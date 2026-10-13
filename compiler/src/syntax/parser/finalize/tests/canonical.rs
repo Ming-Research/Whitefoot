@@ -36,16 +36,31 @@ fn exact_empty_and_nonempty_source_forests_publish_canonical_syntax() {
     }
 }
 
-/// [GRAM-5, RANGE-1, FORM-2] a Bool guard and comparison guards share the
-/// comma-separated guard list; the colon still begins relation conclusions.
+/// [GRAM-5, RANGE-1, FORM-2] Bool variant guards and comparison guards share
+/// the comma-separated guard list; the colon still begins relation conclusions.
 #[test]
-fn range_bool_guards_round_trip_with_comparison_guards() {
-    let source = b"fn inspect(nodes: &[Bool], enabled: Bool) -> result: unit pure contract {\n  requires forall observed(k in 0_u64..nodes^.len) when k < nodes^.len, nodes^[k], enabled: k == k;\n} {\n  return unit;\n}\n";
+fn range_bool_variant_guards_round_trip_with_comparison_guards() {
+    let source = b"fn inspect(nodes: &[Bool], enabled: Bool) -> result: unit pure contract {\n  requires forall observed(k in 0_u64..nodes^.len) when k < nodes^.len, nodes^[k] is True, enabled is True: k == k;\n} {\n  return unit;\n}\n";
     assert_eq!(rendered_bytes(source).as_deref(), Some(source.as_slice()));
     audit_source(source, |outcome| {
         assert!(
             matches!(outcome, CanonicalOutcome::Complete(_)),
-            "bare and comparison guards must render canonically: {outcome:?}"
+            "Bool variant and comparison guards must render canonically: {outcome:?}"
+        );
+    });
+}
+
+/// [GRAM-5, RANGE-1, FORM-2] a variant relation, plain and negated, is a
+/// guard and a conclusion: `is` and `not` are spaced words before the
+/// variant's TYPEID, beside comparison guards.
+#[test]
+fn range_variant_relations_round_trip_as_guards_and_conclusions() {
+    let source = b"enum Step {\n  Next();\n  Stop();\n}\n\nfn inspect(steps: &[Step], flags: &[Bool]) -> result: unit pure contract {\n  requires forall observed(k in 0_u64..steps^.len) when k < flags^.len, steps^[k] is not Stop, flags^[k] is True: steps^[k] is Next, k + 1_u64 < steps^.len;\n} {\n  return unit;\n}\n";
+    assert_eq!(rendered_bytes(source).as_deref(), Some(source.as_slice()));
+    audit_source(source, |outcome| {
+        assert!(
+            matches!(outcome, CanonicalOutcome::Complete(_)),
+            "variant relations must render canonically: {outcome:?}"
         );
     });
 }

@@ -329,10 +329,11 @@ impl Checker<'_, '_> {
                         let proof_site = if self.types.declarations.tree.coordinate(*write_node)?.start().value() > self.types.declarations.tree.coordinate(*node)?.start().value() { *write_node } else { *node };
                         self.body.call_separations.push(CheckedCallSeparation {
                             site: self.types.declarations.tree.path(proof_site)?.clone(),
-                            exchange: false,
+                            occasion: super::super::model::CheckedSeparationOccasion::Call,
                             reference_use: None,
                             held_use: Some(CheckedHeldProtectionUse { site: site.clone(), requirement: requirement.clone() }),
                             positions,
+                            contract_indices: Vec::new(),
                             window: None,
                             left_spelling: self.types.render_resolved_place(region, bindings)?,
                             right_spelling: self.types.render_resolved_place(write, bindings)?,

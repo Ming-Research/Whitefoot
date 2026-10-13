@@ -24,6 +24,7 @@ pub(super) fn selected_sites<'a>(
         nominals,
         elements,
         places: PlaceMap::for_function(function),
+        aliases: Aliases::new(),
     };
     for place in function.requirement_places.iter().flatten() {
         selection.expression(place);
@@ -39,7 +40,13 @@ pub(super) struct Selection<'a> {
     nominals: &'a [CheckedNominal],
     elements: &'a [CheckedType],
     places: PlaceMap,
+    /// The reference payload binders whose referent is an element projection
+    /// [RANGE-1]: those a `match` binds below a scrutinee that is one.
+    aliases: Aliases,
 }
+
+/// Bindings whose referent `x^` is an element projection [RANGE-1].
+type Aliases = BTreeSet<BindingId>;
 
 #[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
 enum GoalKind {
@@ -91,7 +98,7 @@ impl Selection<'_> {
     fn path(&mut self, path: &[CheckedPlaceStep], mut admitted: bool, mut below_element: bool) {
         for step in path {
             if let CheckedPlaceStep::Subscript(index) = step {
-                admitted &= term(&index.offset);
+                admitted &= term(&index.offset, &self.aliases);
                 self.goal(&index.obligation, GoalKind::Bounds, admitted);
                 admitted &= element_base(index.base_type, below_element);
                 below_element = true;
@@ -99,8 +106,15 @@ impl Selection<'_> {
         }
     }
 
+    /// A storage path below an aliasing payload binder starts below an
+    /// element [RANGE-1].
+    fn storage(&mut self, root: &CheckedContainerRoot) {
+        let below = aliased(root.root, &self.aliases);
+        self.path(&root.path, true, below);
+    }
+
     fn element(&mut self, place: &CheckedRangeElementPlace) {
-        let admitted = term(&place.offset);
+        let admitted = term(&place.offset, &self.aliases);
         self.goal(&place.obligation, GoalKind::Bounds, admitted);
         self.path(&place.path, admitted, true);
     }
@@ -108,8 +122,10 @@ impl Selection<'_> {
     fn affine(&mut self, relation: &CheckedAffineRelation) -> bool {
         let mut admitted = true;
         for value in relation.left.postorder().chain(relation.right.postorder()) {
-            if let CheckedAffineExpressionKind::Measure(measure) = &value.kind {
-                admitted &= term(measure);
+            if let CheckedAffineExpressionKind::Measure(measure)
+            | CheckedAffineExpressionKind::Field(measure) = &value.kind
+            {
+                admitted &= term(measure, &self.aliases);
                 self.expression(measure);
             }
         }
@@ -141,6 +157,7 @@ impl Selection<'_> {
                         self.nominals,
                         self.elements,
                         &self.places,
+                        &self.aliases,
                     );
                     for (template, requirement) in boundary.iter().zip(requirements) {
                         if terms.goal(&template.template.root) {
@@ -164,7 +181,7 @@ impl Selection<'_> {
                     carrier,
                     GoalKind::IntegerDomain,
                     matches!(operand_type, CheckedType::Integer(_))
-                        && domain(*operation, *operand_type, arguments),
+                        && domain(*operation, *operand_type, arguments, &self.aliases),
                 );
             }
             CheckedExpression::NumericConversion {
@@ -184,13 +201,13 @@ impl Selection<'_> {
                             CheckedNumericType::Integer(_),
                             CheckedNumericType::Integer(_)
                         )
-                    ) && term(value),
+                    ) && term(value, &self.aliases),
                 );
             }
             CheckedExpression::ArrayIndex {
                 obligation, offset, ..
             } => {
-                self.goal(obligation, GoalKind::Bounds, term(offset));
+                self.goal(obligation, GoalKind::Bounds, term(offset, &self.aliases));
             }
             CheckedExpression::BufferIndex {
                 root,
@@ -198,11 +215,12 @@ impl Selection<'_> {
                 offset,
                 ..
             } => {
-                self.path(&root.path, true, false);
+                let below = aliased(PlaceRoot::Binding(root.binding), &self.aliases);
+                self.path(&root.path, true, below);
                 self.goal(
                     obligation,
                     GoalKind::Bounds,
-                    term(offset) && range_path(&root.path, false),
+                    term(offset, &self.aliases) && range_path(&root.path, below, &self.aliases),
                 );
                 for offset in offsets(&root.path) {
                     self.expression(offset);
@@ -210,15 +228,17 @@ impl Selection<'_> {
             }
             CheckedExpression::ContainerMeasure { root, .. }
             | CheckedExpression::ReadStorage { root, .. }
-            | CheckedExpression::BorrowAddressed { root, .. } => self.path(&root.path, true, false),
+            | CheckedExpression::BorrowAddressed { root, .. } => self.storage(root),
             CheckedExpression::BufferMeasure { root, .. } => {
-                self.path(&root.path, true, false);
+                let below = aliased(PlaceRoot::Binding(root.binding), &self.aliases);
+                self.path(&root.path, true, below);
                 for offset in offsets(&root.path) {
                     self.expression(offset);
                 }
             }
-            CheckedExpression::BoxTake { path, .. } => {
-                self.path(path, true, false);
+            CheckedExpression::BoxTake { binding, path, .. } => {
+                let below = aliased(PlaceRoot::Binding(*binding), &self.aliases);
+                self.path(path, true, below);
                 for offset in offsets(path) {
                     self.expression(offset);
                 }
@@ -227,13 +247,13 @@ impl Selection<'_> {
             | CheckedExpression::BorrowRangeIndex { place, .. }
             | CheckedExpression::RangeElementMeasure { place, .. } => self.element(place),
             CheckedExpression::RangeOf { source, .. } => match source {
-                CheckedRangeSource::Storage(root) => self.path(&root.path, true, false),
+                CheckedRangeSource::Storage(root) => self.storage(root),
                 CheckedRangeSource::Element(place) => self.element(place),
                 CheckedRangeSource::Range(_) => {}
             },
             CheckedExpression::BorrowSegment { root, segment, .. } => {
                 match root {
-                    CheckedSegmentSource::Storage(root) => self.path(&root.path, true, false),
+                    CheckedSegmentSource::Storage(root) => self.storage(root),
                     CheckedSegmentSource::Element(place) => self.element(place),
                 }
                 if let CheckedSegmentSelect::One(index) | CheckedSegmentSelect::Page(index) =
@@ -242,7 +262,10 @@ impl Selection<'_> {
                     self.goal(
                         &index.obligation,
                         GoalKind::Bounds,
-                        term(&index.offset) && root.offsets().all(source_offset_term),
+                        term(&index.offset, &self.aliases)
+                            && root
+                                .offsets()
+                                .all(|offset| source_offset_term(offset, &self.aliases)),
                     );
                 }
             }
@@ -272,7 +295,7 @@ impl Selection<'_> {
                             }
                         }
                         CheckedSetTarget::Storage(root) => {
-                            self.path(&root.path, true, false);
+                            self.storage(root);
                             for offset in root.offsets() {
                                 self.expression(offset);
                             }
@@ -288,7 +311,19 @@ impl Selection<'_> {
                     scrutinee, arms, ..
                 } => {
                     self.expression(scrutinee);
+                    // [RANGE-1] below a scrutinee that is an element
+                    // projection, each reference payload binder's referent
+                    // is that projection followed by its payload step.
+                    let aliasing = scrutinee_element(scrutinee, &self.aliases);
                     for arm in arms {
+                        if aliasing {
+                            self.aliases.extend(
+                                arm.binders
+                                    .iter()
+                                    .filter(|binder| binder.mode.is_reference())
+                                    .map(|binder| binder.binding),
+                            );
+                        }
                         self.statements(&arm.body);
                     }
                 }
@@ -372,67 +407,104 @@ fn domain(
     operation: CheckedIntegerOperation,
     ty: CheckedType,
     arguments: &[CheckedExpression],
+    aliases: &Aliases,
 ) -> bool {
     use CheckedIntegerOperation as Op;
     match (operation, arguments) {
-        (Op::AddExact | Op::SubtractExact, [left, right]) => term(left) && term(right),
+        (Op::AddExact | Op::SubtractExact, [left, right]) => {
+            term(left, aliases) && term(right, aliases)
+        }
         (Op::MultiplyExact, [left, right]) => {
-            term(left) && term(right) && (constant(left) || constant(right))
+            term(left, aliases) && term(right, aliases) && (constant(left) || constant(right))
         }
         (Op::DivideExact | Op::RemainderExact, [left, right]) => {
             // With a constant operand the signed corner exclusion reduces
             // to a comparison or true. Two variable operands need a disjunction.
             if matches!(ty, CheckedType::Integer(ty) if !ty.signed()) {
-                term(right)
+                term(right, aliases)
             } else {
-                term(left) && term(right) && (constant(left) || constant(right))
+                term(left, aliases) && term(right, aliases) && (constant(left) || constant(right))
             }
         }
-        (Op::NegateExact | Op::AbsoluteExact, [value]) => term(value),
-        (Op::ShiftLeftExact | Op::ShiftRightExact, [_, amount]) => term(amount),
+        (Op::NegateExact | Op::AbsoluteExact, [value]) => term(value, aliases),
+        (Op::ShiftLeftExact | Op::ShiftRightExact, [_, amount]) => term(amount, aliases),
         _ => false,
     }
 }
 
 /// A direct run contributes its borrow formation to the source operands.
 /// Classify the scalar offsets inside that formation, not its reference value.
-fn source_offset_term(expression: &CheckedExpression) -> bool {
+fn source_offset_term(expression: &CheckedExpression, aliases: &Aliases) -> bool {
     match expression {
         CheckedExpression::BorrowSegment { root, segment, .. } => {
-            root.offsets().all(source_offset_term) && segment.offset().is_none_or(term)
+            root.offsets().all(|offset| source_offset_term(offset, aliases))
+                && segment.offset().is_none_or(|offset| term(offset, aliases))
         }
-        _ => term(expression),
+        _ => term(expression, aliases),
     }
 }
 
-fn element(expression: &CheckedExpression) -> bool {
+/// Whether `root` is a payload binder whose referent is an element
+/// projection, so that a path below it starts below an element [RANGE-1].
+fn aliased(root: PlaceRoot, aliases: &Aliases) -> bool {
+    matches!(root, PlaceRoot::Binding(binding) if aliases.contains(&binding))
+}
+
+/// [RANGE-1] whether a `match` scrutinee is an element projection, so that
+/// each reference payload binder's referent is one too. These are the
+/// scrutinee forms whose selected storage the walk names as an element: a
+/// subscripted place is checked as storage or as a run element, whatever
+/// collection it indexes, and the remaining `ArrayIndex` form is a named
+/// const's element, which a match copies rather than borrows [OWN-13]. A
+/// borrowed scrutinee `&p` matches the storage p names, so it is judged as p.
+fn scrutinee_element(expression: &CheckedExpression, aliases: &Aliases) -> bool {
     match expression {
-        CheckedExpression::ArrayIndex { root, offset, .. } => {
-            matches!(root, CheckedArrayRoot::Binding { .. }) && term(offset)
-        }
-        CheckedExpression::BufferIndex { root, offset, .. } => {
-            term(offset) && range_path(&root.path, false)
-        }
-        CheckedExpression::RangeIndex { place, .. } => {
-            term(&place.offset) && range_path(&place.path, true)
-        }
-        CheckedExpression::ReadStorage { root, .. } => {
-            matches!(root.root, PlaceRoot::Binding(_))
-                && root
-                    .path
-                    .iter()
-                    .any(|step| matches!(step, CheckedPlaceStep::Subscript(_)))
-                && range_path(&root.path, false)
-        }
+        CheckedExpression::ReadStorage { .. }
+        | CheckedExpression::RangeIndex { .. }
+        | CheckedExpression::DerefAddressed { .. } => element(expression, aliases),
+        CheckedExpression::BorrowAddressed { root, .. } => stored_element(root, aliases),
+        CheckedExpression::BorrowRangeIndex { place, .. } => run_element(place, aliases),
         CheckedExpression::ProjectValue { value, .. }
-        | CheckedExpression::BoxDeref { value, .. } => element(value),
+        | CheckedExpression::BoxDeref { value, .. } => scrutinee_element(value, aliases),
         _ => false,
     }
 }
 
+fn element(expression: &CheckedExpression, aliases: &Aliases) -> bool {
+    match expression {
+        CheckedExpression::ArrayIndex { root, offset, .. } => {
+            matches!(root, CheckedArrayRoot::Binding { .. }) && term(offset, aliases)
+        }
+        CheckedExpression::BufferIndex { root, offset, .. } => {
+            let below = aliased(PlaceRoot::Binding(root.binding), aliases);
+            term(offset, aliases) && range_path(&root.path, below, aliases)
+        }
+        CheckedExpression::RangeIndex { place, .. } => run_element(place, aliases),
+        CheckedExpression::ReadStorage { root, .. } => stored_element(root, aliases),
+        CheckedExpression::DerefAddressed { binding, .. } => aliases.contains(binding),
+        CheckedExpression::ProjectValue { value, .. }
+        | CheckedExpression::BoxDeref { value, .. } => element(value, aliases),
+        _ => false,
+    }
+}
+
+fn run_element(place: &CheckedRangeElementPlace, aliases: &Aliases) -> bool {
+    term(&place.offset, aliases) && range_path(&place.path, true, aliases)
+}
+
+fn stored_element(root: &CheckedContainerRoot, aliases: &Aliases) -> bool {
+    matches!(root.root, PlaceRoot::Binding(_))
+        && (aliased(root.root, aliases)
+            || root
+                .path
+                .iter()
+                .any(|step| matches!(step, CheckedPlaceStep::Subscript(_))))
+        && range_path(&root.path, aliased(root.root, aliases), aliases)
+}
+
 /// The written RANGE-1 terms. Binding initializers are deliberately irrelevant:
 /// a scalar binding is a term, and a scalar binding is not a literal coefficient.
-pub(super) fn term(expression: &CheckedExpression) -> bool {
+pub(super) fn term(expression: &CheckedExpression, aliases: &Aliases) -> bool {
     if !matches!(
         expression.ty(),
         CheckedType::Integer(_) | CheckedType::GenericInt(_)
@@ -448,15 +520,18 @@ pub(super) fn term(expression: &CheckedExpression) -> bool {
         }
         CheckedExpression::RangeMeasure { measure, .. } => *measure != CheckedMeasure::Head,
         CheckedExpression::BufferMeasure { measure, root } => {
-            *measure != CheckedMeasure::Head && range_path(&root.path, false)
+            let below = aliased(PlaceRoot::Binding(root.binding), aliases);
+            *measure != CheckedMeasure::Head && range_path(&root.path, below, aliases)
         }
         CheckedExpression::ContainerMeasure { measure, root } => {
             *measure != CheckedMeasure::Head
                 && matches!(root.root, PlaceRoot::Binding(_))
-                && range_path(&root.path, false)
+                && range_path(&root.path, aliased(root.root, aliases), aliases)
         }
         CheckedExpression::RangeElementMeasure { measure, place, .. } => {
-            *measure != CheckedMeasure::Head && term(&place.offset) && range_path(&place.path, true)
+            *measure != CheckedMeasure::Head
+                && term(&place.offset, aliases)
+                && range_path(&place.path, true, aliases)
         }
         CheckedExpression::IntegerOperation {
             operation,
@@ -468,9 +543,9 @@ pub(super) fn term(expression: &CheckedExpression) -> bool {
                 CheckedIntegerOperation::AddExact
                     | CheckedIntegerOperation::SubtractExact
                     | CheckedIntegerOperation::MultiplyExact
-            ) && domain(*operation, expression.ty(), arguments)
+            ) && domain(*operation, expression.ty(), arguments, aliases)
         }
-        _ => element(expression),
+        _ => element(expression, aliases),
     }
 }
 
@@ -503,10 +578,11 @@ fn element_base(ty: CheckedType, below_element: bool) -> bool {
         ))
 }
 
-fn range_path(path: &[CheckedPlaceStep], mut below_element: bool) -> bool {
+fn range_path(path: &[CheckedPlaceStep], mut below_element: bool, aliases: &Aliases) -> bool {
     path.iter().all(|step| match step {
         CheckedPlaceStep::Subscript(index) => {
-            let admitted = element_base(index.base_type, below_element) && term(&index.offset);
+            let admitted =
+                element_base(index.base_type, below_element) && term(&index.offset, aliases);
             below_element = true;
             admitted
         }
@@ -528,6 +604,7 @@ mod tests {
             nominals: &[],
             elements: &[],
             places: PlaceMap::default(),
+            aliases: Aliases::new(),
         }
     }
 

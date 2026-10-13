@@ -99,7 +99,7 @@ impl RecordAnswer {
                 .is_some_and(|outcome| outcome.check.discharged()),
             Self::Postcondition(index) => {
                 entailment.postconditions.get(index).is_some_and(|proof| {
-                    !proof.exits.is_empty()
+                    (proof.vacuous || !proof.exits.is_empty())
                         && proof
                             .exits
                             .iter()
@@ -148,6 +148,7 @@ mod tests {
             held_parameters: Vec::new(),
             held_calls: Vec::new(),
             requirement_places: Vec::new(),
+            routed_requirements: Vec::new(),
             postconditions: Vec::new(),
             range_facts: Default::default(),
             body: body.then(Vec::new),
@@ -210,6 +211,7 @@ mod tests {
             relation_ordinal: 0,
             summary: None,
             exits: Vec::new(),
+            vacuous: false,
             aggregate: PostconditionAggregate {
                 discharged: false,
                 derivation: None,
