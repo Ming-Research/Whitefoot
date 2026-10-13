@@ -153,6 +153,10 @@ the work-branch and merge boundary.
   concurrent module verdicts, closure seeds and implicit-only snapshots that
   removed most of it with unchanged verdicts and LLVM, and the costs that
   remain.
+- [Cold build speed](investigations/cold-build-speed/DESIGN.md): why a cold
+  `--par` build of Snowghost's `layout_oracle` runs on one of four processors
+  for 317 s, the serial loops behind it, proposed fixes with predicted savings
+  and the measurement plan that decides them.
 - [Wide-match checking cost](investigations/check-time/DESIGN.md): the Q140
   attribution, Q155 comparison of join reduction, affine-index reuse and
   backward proof queries, the lazy-index differentials, historical M5 reuse results, and the

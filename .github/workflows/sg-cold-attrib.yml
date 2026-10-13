@@ -1,0 +1,375 @@
+# Temporary: attributes the cold build of Snowghost's `--par` layout_oracle
+# (research/investigations/cold-build-speed/DESIGN.md, "Measurement plan").
+# Removed before any merge; this branch never merges as is.
+#
+# Job `frontend` splits the 192 s front end: per-module check times, the
+# entry check pinned to one processor and on all four, the whole build pinned
+# to one processor, a frame-pointer profile of the build rolled up by phase
+# and by thread, the checker's per-analysis work counters, and the `gate`
+# against the plain `release` Cargo profile of the same commit.
+#
+# Job `backend` runs the build once with a logging wrapper in place of
+# /usr/bin/clang that keeps every fragment and every link object, then
+# replays the 5,400 fragment compiles serially, with 2 and 4 jobs and in
+# batches, and the ThinLTO link with its default and explicit job counts and
+# a time trace. It also builds two external references on the same runner.
+#
+# Every measured compiler is release wf-d837678c6905 (the one Snowghost pins)
+# or commit d837678c6 built here from source; Snowghost-wf is 466e9843.
+name: sg-cold-attrib
+
+on:
+  push:
+    branches: [claude/sg-cold-build]
+    paths: [.github/workflows/sg-cold-attrib.yml]
+  workflow_dispatch:
+
+concurrency:
+  group: sg-cold-attrib-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+  WHITEFOOT_CHECK_TIMEOUT: 2700
+  WF_COMMIT: d837678c6905
+  WF_RELEASE: wf-d837678c6905
+  SG_COMMIT: 466e9843f7a0fe4926022be8718d4ab677cafed1
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  frontend:
+    name: Front-end attribution
+    runs-on: ubuntu-24.04
+    timeout-minutes: 200
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+
+      - name: Install the host toolchain and perf
+        run: |
+          set -euo pipefail
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          rustup default stable
+          sudo apt-get install -y -q "linux-tools-$(uname -r)" linux-tools-common \
+            || sudo apt-get install -y -q linux-tools-azure linux-tools-common
+          sudo sysctl -w kernel.perf_event_paranoid=-1 kernel.kptr_restrict=0
+
+      - name: Fetch the release and build its commit three ways (not timed)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/attrib"; mkdir -p "$out" "$RUNNER_TEMP/bin"
+          gh release download "$WF_RELEASE" -R "$GITHUB_REPOSITORY" \
+            -p whitefootc-linux-x86_64.tar.gz -D "$RUNNER_TEMP/wfc"
+          tar -xzf "$RUNNER_TEMP/wfc/whitefootc-linux-x86_64.tar.gz" -C "$RUNNER_TEMP/wfc"
+          cp "$(find "$RUNNER_TEMP/wfc" -type f -name whitefootc | head -1)" "$RUNNER_TEMP/bin/rel"
+          git worktree add "$RUNNER_TEMP/wfsrc" "$WF_COMMIT"
+          cd "$RUNNER_TEMP/wfsrc"
+          # The release's own profile, built here with this runner's rustc.
+          cargo build --manifest-path compiler/Cargo.toml --locked --profile gate \
+            --bin whitefootc --target-dir "$RUNNER_TEMP/t-gate"
+          cp "$RUNNER_TEMP/t-gate/gate/whitefootc" "$RUNNER_TEMP/bin/gate"
+          # Plain release: no debug assertions, no overflow checks.
+          cargo build --manifest-path compiler/Cargo.toml --locked --release \
+            --bin whitefootc --target-dir "$RUNNER_TEMP/t-release"
+          cp "$RUNNER_TEMP/t-release/release/whitefootc" "$RUNNER_TEMP/bin/release"
+          # Profiling build: the gate profile with frame pointers and line tables.
+          RUSTFLAGS="-C force-frame-pointers=yes" \
+          CARGO_PROFILE_GATE_DEBUG=line-tables-only CARGO_PROFILE_GATE_STRIP=none \
+            cargo build --manifest-path compiler/Cargo.toml --locked --profile gate \
+            --bin whitefootc --target-dir "$RUNNER_TEMP/t-prof"
+          cp "$RUNNER_TEMP/t-prof/gate/whitefootc" "$RUNNER_TEMP/bin/prof"
+          ls -l "$RUNNER_TEMP/bin"
+
+      - name: Check out Snowghost-wf and record the machine
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/attrib"
+          git clone --quiet https://github.com/Ming-Research/Snowghost-wf.git "$RUNNER_TEMP/sg"
+          git -C "$RUNNER_TEMP/sg" checkout --quiet "$SG_COMMIT"
+          git -C "$RUNNER_TEMP/sg" submodule update --quiet --init --recursive
+          { echo "snowghost: $(git -C "$RUNNER_TEMP/sg" rev-parse HEAD)"; nproc; lscpu;
+            grep MemTotal /proc/meminfo; /usr/bin/clang --version | head -1; rustc --version;
+            perf --version; } | tee "$out/machine.txt"
+
+      # E1: the front end decomposed with flags the release supports.
+      - name: E1 per-module checks, entry checks and a pinned build
+        run: |
+          set +e
+          out="$RUNNER_TEMP/attrib"; cd "$RUNNER_TEMP/sg/renderer"
+          wfc="$RUNNER_TEMP/bin/rel"
+          t() { label=$1; shift
+            perl "$GITHUB_WORKSPACE/.github/run-check.pl" "$label" \
+              /usr/bin/time -f "TIME $label wall=%e user=%U sys=%S maxrss_kb=%M" "$@" \
+              > "$out/$label.log" 2>&1
+            echo "$label exit $?" >> "$out/status.txt"; grep '^TIME' "$out/$label.log"; }
+          # The layout_oracle closure, from modules.wfg at this commit.
+          for m in pkg::base::static_atoms pkg::base::atom pkg::dom pkg::text::line_break \
+                   pkg::text::normalization pkg::text::properties pkg::font pkg::css::syntax \
+                   pkg::css::rules pkg::css::color pkg::css::selectors pkg::css::values \
+                   pkg::style pkg::layout::text pkg::layout pkg::html::tokenizer \
+                   pkg::html::tree_builder pkg::oracle::support pkg::oracle::fonts \
+                   pkg::oracle::page pkg::oracle::layout \
+                   std::io std::time std::text std::fs std::process; do
+            t "module-${m//::/_}" "$wfc" --graph modules.wfg --check-module "$m"
+          done
+          rm -rf "$RUNNER_TEMP/c1"
+          t entry-check-1cpu taskset -c 0 "$wfc" --cache "$RUNNER_TEMP/c1" --check \
+            --graph modules.wfg --entry layout_oracle
+          rm -rf "$RUNNER_TEMP/c4"
+          t entry-check-4cpu "$wfc" --cache "$RUNNER_TEMP/c4" --check \
+            --graph modules.wfg --entry layout_oracle
+          rm -rf "$RUNNER_TEMP/cb"
+          t build-1cpu taskset -c 0 "$wfc" --cache "$RUNNER_TEMP/cb" --fragments function \
+            --report --par --graph modules.wfg --entry layout_oracle -o "$RUNNER_TEMP/lo1"
+          grep '^{"build"' "$out/build-1cpu.log"
+          rm -rf "$RUNNER_TEMP/cn"
+          t build-nopar "$wfc" --cache "$RUNNER_TEMP/cn" --fragments function \
+            --report --graph modules.wfg --entry layout_oracle -o "$RUNNER_TEMP/lon"
+          grep '^{"build"' "$out/build-nopar.log"
+
+      # E2: where the front end's samples fall, by phase and by thread.
+      - name: E2 frame-pointer profile of the cold build
+        run: |
+          set +e
+          out="$RUNNER_TEMP/attrib"; cd "$RUNNER_TEMP/sg/renderer"
+          rm -rf "$RUNNER_TEMP/cp"
+          perl "$GITHUB_WORKSPACE/.github/run-check.pl" profile \
+            perf record -F 199 -g --call-graph fp -o "$RUNNER_TEMP/perf.data" -- \
+            "$RUNNER_TEMP/bin/prof" --cache "$RUNNER_TEMP/cp" --fragments function --report \
+            --par --graph modules.wfg --entry layout_oracle -o "$RUNNER_TEMP/lop" \
+            > "$out/profile.log" 2>&1
+          echo "profile exit $?" >> "$out/status.txt"
+          perf report -i "$RUNNER_TEMP/perf.data" --no-children --sort comm,dso --stdio \
+            > "$out/perf-comm.txt" 2>/dev/null
+          perf report -i "$RUNNER_TEMP/perf.data" --no-children --comm whitefootc-driv,whitefootc \
+            --sort sym --stdio 2>/dev/null | head -200 > "$out/perf-self-top.txt"
+          perf script -i "$RUNNER_TEMP/perf.data" -F comm,tid,ip,sym 2>/dev/null \
+            | python3 -I "$GITHUB_WORKSPACE/.github/sg-cold-phases.py" > "$out/perf-phases.txt"
+          cat "$out/perf-phases.txt"
+
+      # E3: which Whitefoot functions carry the proof work (counters, not time).
+      - name: E3 checker work counters
+        run: |
+          set +e
+          out="$RUNNER_TEMP/attrib"; cd "$RUNNER_TEMP/sg/renderer"
+          rm -rf "$RUNNER_TEMP/cw" "$RUNNER_TEMP/work.tsv"
+          WHITEFOOT_CHECK_WORK="$RUNNER_TEMP/work.tsv" "$RUNNER_TEMP/bin/rel" \
+            --cache "$RUNNER_TEMP/cw" --fragments function --par --graph modules.wfg \
+            --entry layout_oracle -o "$RUNNER_TEMP/low" > "$out/work.log" 2>&1
+          echo "work exit $?" >> "$out/status.txt"
+          # function-kind rows: name, metric, value; summed over every run of a name.
+          awk -F'\t' '$4=="function" {s[$3"\t"$6]+=$7; if ($6=="joins") n[$3]++}
+            END {for (k in s) print k"\t"s[k]; for (f in n) print f"\truns\t"n[f]}' \
+            "$RUNNER_TEMP/work.tsv" > "$out/work-by-function.tsv"
+          for metric in runs joins intern_calls affine_attempts; do
+            echo "== top 40 by $metric"
+            awk -F'\t' -v m="$metric" '$2==m' "$out/work-by-function.tsv" | sort -t$'\t' -k3,3nr | head -40
+          done | tee "$out/work-top.txt"
+          awk -F'\t' '$4=="join" && $6=="pairs_evaluated" {p[$3]+=$7} END {for (f in p) print f"\t"p[f]}' \
+            "$RUNNER_TEMP/work.tsv" | sort -t$'\t' -k2,2nr | head -40 > "$out/work-top-pairs.tsv"
+
+      # E6: what the release's debug assertions and overflow checks cost.
+      - name: E6 gate against release profile, interleaved
+        run: |
+          set +e
+          out="$RUNNER_TEMP/attrib"; cd "$RUNNER_TEMP/sg/renderer"
+          for round in 1 2 3; do
+            for profile in gate release; do
+              label="profile-$profile-$round"
+              perl "$GITHUB_WORKSPACE/.github/run-check.pl" "$label" \
+                /usr/bin/time -f "TIME $label wall=%e user=%U sys=%S maxrss_kb=%M" \
+                "$RUNNER_TEMP/bin/$profile" --par --graph modules.wfg --entry layout_oracle \
+                --emit-llvm -o "$RUNNER_TEMP/$profile.ll" > "$out/$label.log" 2>&1
+              echo "$label exit $?" >> "$out/status.txt"; grep '^TIME' "$out/$label.log"
+            done
+          done
+          cmp "$RUNNER_TEMP/gate.ll" "$RUNNER_TEMP/release.ll" && echo "LLVM identical" | tee -a "$out/status.txt"
+
+      - name: Summarize
+        if: always()
+        run: |
+          out="$RUNNER_TEMP/attrib"
+          { echo "## sg-cold-attrib frontend"; echo '```'; cat "$out/status.txt"
+            grep -h '^TIME' "$out"/*.log; grep -h '^{"build"' "$out"/*.log
+            cat "$out/perf-phases.txt" 2>/dev/null; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sg-cold-attrib-frontend
+          path: ${{ runner.temp }}/attrib
+          if-no-files-found: warn
+
+  backend:
+    name: Fragment compile and link replay, external references
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the host toolchain
+        run: |
+          set -euo pipefail
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          echo "LLVM_MAJOR=$version" >> "$GITHUB_ENV"
+          rustup default stable
+
+      - name: Fetch the release and Snowghost-wf
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/attrib"; mkdir -p "$out"
+          gh release download "$WF_RELEASE" -R "$GITHUB_REPOSITORY" \
+            -p whitefootc-linux-x86_64.tar.gz -D "$RUNNER_TEMP/wfc"
+          tar -xzf "$RUNNER_TEMP/wfc/whitefootc-linux-x86_64.tar.gz" -C "$RUNNER_TEMP/wfc"
+          cp "$(find "$RUNNER_TEMP/wfc" -type f -name whitefootc | head -1)" "$RUNNER_TEMP/wfc-bin"
+          git clone --quiet https://github.com/Ming-Research/Snowghost-wf.git "$RUNNER_TEMP/sg"
+          git -C "$RUNNER_TEMP/sg" checkout --quiet "$SG_COMMIT"
+          git -C "$RUNNER_TEMP/sg" submodule update --quiet --init --recursive
+          { nproc; lscpu; } | tee "$out/machine.txt"
+
+      # The wrapper passes every call through to the real clang. It keeps each
+      # fragment's .ll and, at the link, every object, and logs each call's
+      # start and end. Its own cost (a bash start per call) makes this build's
+      # times unusable; only the replays below are timed.
+      - name: Capture the build's clang calls
+        run: |
+          set +e
+          out="$RUNNER_TEMP/attrib"; cap="$RUNNER_TEMP/cap"; mkdir -p "$cap/frag" "$cap/link"
+          sudo tee /usr/local/bin/clang-capture > /dev/null <<EOF
+          #!/bin/bash
+          real=/usr/bin/clang-$LLVM_MAJOR
+          cap=$cap
+          start=\$(date +%s%N)
+          kind=other
+          for a in "\$@"; do case "\$a" in fragment-*.ll) kind=fragment; cp "\$a" "\$cap/frag/";; esac; done
+          case " \$* " in *" -flto=thin "*" -o "*.partial*)
+            case " \$* " in *" -c "*) ;; *) kind=link
+              printf '%s\0' "\$@" > "\$cap/link.argv"
+              for a in "\$@"; do case "\$a" in *.o) cp "\$a" "\$cap/link/";; esac; done;; esac;; esac
+          "\$real" "\$@"; rc=\$?
+          echo "\$start \$(date +%s%N) \$rc \$kind" >> "\$cap/calls.log"
+          exit \$rc
+          EOF
+          sudo chmod +x /usr/local/bin/clang-capture
+          sudo ln -sf /usr/local/bin/clang-capture /usr/bin/clang
+          cd "$RUNNER_TEMP/sg/renderer"
+          "$RUNNER_TEMP/wfc-bin" --cache "$RUNNER_TEMP/capcache" --fragments function --report \
+            --par --graph modules.wfg --entry layout_oracle -o "$RUNNER_TEMP/locap" > "$out/capture.log" 2>&1
+          echo "capture exit $?" >> "$out/status.txt"
+          sudo ln -sf "/usr/bin/clang-$LLVM_MAJOR" /usr/bin/clang
+          ls "$cap/frag" | wc -l; ls "$cap/link" | wc -l
+          # Per-call durations in ms, by kind, wrapper included.
+          awk '{d=($2-$1)/1e6; print $4"\t"d}' "$cap/calls.log" | sort -k1,1 -k2,2n > "$out/calls-ms.tsv"
+          awk -F'\t' '$1=="fragment"{a[n++]=$2; s+=$2} END {print "fragments", n, "sum_ms", s,
+            "p50", a[int(n*0.5)], "p90", a[int(n*0.9)], "p99", a[int(n*0.99)], "max", a[n-1]}' \
+            "$out/calls-ms.tsv" | tee "$out/calls-summary.txt"
+          du -sh "$cap/frag"; ls -S "$cap/frag" | head -5
+
+      # The fragment compiles as whitefootc issues them (whitefootc.rs
+      # link_cached_objects), replayed without the wrapper.
+      - name: Replay the fragment compiles
+        run: |
+          set +e
+          out="$RUNNER_TEMP/attrib"; cc="/usr/bin/clang-$LLVM_MAJOR"
+          args=(-pthread -flto=thin -Wno-override-module -O2 -falign-functions=64 -c)
+          for mode in serial p2 p4 batch-p4 serial-again; do
+            dir="$RUNNER_TEMP/replay-$mode"; rm -rf "$dir"; cp -r "$RUNNER_TEMP/cap/frag" "$dir"; cd "$dir"
+            start=$(date +%s%N)
+            case $mode in
+              serial*) for f in fragment-*.ll; do "$cc" "${args[@]}" -x ir "$f" -o "${f%.ll}.o"; done ;;
+              p2) ls fragment-*.ll | xargs -P2 -I{} "$cc" "${args[@]}" -x ir {} -o {}.o ;;
+              p4) ls fragment-*.ll | xargs -P4 -I{} "$cc" "${args[@]}" -x ir {} -o {}.o ;;
+              # Many inputs per clang process, each written to its own object.
+              batch-p4) ls fragment-*.ll | xargs -P4 -n 100 "$cc" "${args[@]}" -x ir ;;
+            esac
+            echo "REPLAY $mode wall_ms=$(( ($(date +%s%N) - start) / 1000000 )) objects=$(ls *.o | wc -l)" | tee -a "$out/replay.txt"
+          done
+          # Batched objects must equal single-call objects byte for byte.
+          cd "$RUNNER_TEMP/replay-serial"; differ=0
+          for o in fragment-*.o; do cmp -s "$o" "$RUNNER_TEMP/replay-batch-p4/$o" || differ=$((differ+1)); done
+          echo "batched objects differing from single-call objects: $differ" | tee -a "$out/replay.txt"
+          # The fixed cost of one clang process: a one-function module, 200 times.
+          printf 'define i32 @f(i32 %%x) {\n  ret i32 %%x\n}\n' > "$RUNNER_TEMP/tiny.ll"
+          start=$(date +%s%N)
+          for i in $(seq 200); do "$cc" "${args[@]}" -x ir "$RUNNER_TEMP/tiny.ll" -o "$RUNNER_TEMP/tiny.o"; done
+          echo "REPLAY tiny-x200 wall_ms=$(( ($(date +%s%N) - start) / 1000000 ))" | tee -a "$out/replay.txt"
+
+      - name: Replay the ThinLTO link
+        run: |
+          set +e
+          out="$RUNNER_TEMP/attrib"; cc="/usr/bin/clang-$LLVM_MAJOR"
+          mapfile -d '' -t argv < "$RUNNER_TEMP/cap/link.argv"
+          base=()
+          for a in "${argv[@]}"; do
+            case "$a" in
+              *.o) base+=("$RUNNER_TEMP/cap/link/$(basename "$a")") ;;
+              -Wl,--thinlto-cache-dir=*) ;;
+              *.partial) base+=("OUTPUT") ;;
+              *) base+=("$a") ;;
+            esac
+          done
+          for variant in default jobs-all jobs-1 default-again trace; do
+            extra=(); case $variant in
+              jobs-all) extra=(-Wl,--thinlto-jobs=all) ;;
+              jobs-1) extra=(-Wl,--thinlto-jobs=1) ;;
+              trace) extra=(-Wl,--time-trace -Wl,--time-trace-file="$out/link-trace.json") ;;
+            esac
+            cmd=(); for a in "${base[@]}"; do [ "$a" = OUTPUT ] && a="$RUNNER_TEMP/link-$variant"; cmd+=("$a"); done
+            rm -rf "$RUNNER_TEMP/ltocache"
+            /usr/bin/time -f "LINK $variant wall=%e user=%U sys=%S maxrss_kb=%M" \
+              "$cc" "${cmd[@]}" -Wl,--thinlto-cache-dir="$RUNNER_TEMP/ltocache" "${extra[@]}" \
+              2>&1 | tee -a "$out/link.txt"
+          done
+          for v in jobs-all jobs-1 default-again; do
+            cmp -s "$RUNNER_TEMP/link-default" "$RUNNER_TEMP/link-$v" && echo "link-$v identical" || echo "link-$v DIFFERS"
+          done | tee -a "$out/link.txt"
+
+      # External references on the same runner: one large C translation unit
+      # (no parallelism available) and a Rust crate graph at four jobs.
+      - name: External references
+        run: |
+          set +e
+          out="$RUNNER_TEMP/attrib"; cd "$RUNNER_TEMP"
+          curl -fsSLO https://www.sqlite.org/2025/sqlite-amalgamation-3500400.zip && unzip -q sqlite-amalgamation-3500400.zip
+          wc -l sqlite-amalgamation-3500400/sqlite3.c | tee -a "$out/ref.txt"
+          /usr/bin/time -f "REF sqlite-O2 wall=%e user=%U sys=%S" "/usr/bin/clang-$LLVM_MAJOR" -O2 -c \
+            sqlite-amalgamation-3500400/sqlite3.c -o sqlite3.o 2>&1 | tee -a "$out/ref.txt"
+          git clone --quiet --depth 1 --branch 14.1.1 https://github.com/BurntSushi/ripgrep.git rg
+          (cd rg && cargo fetch --locked -q)
+          (cd rg && /usr/bin/time -f "REF ripgrep-release-j4 wall=%e user=%U sys=%S" \
+            cargo build --release --locked -j 4 -q) 2>&1 | tee -a "$out/ref.txt"
+          # Lines of every Rust source the build compiled, from the dep-info files.
+          cat rg/target/release/deps/*.d | tr ' ' '\n' | grep '\.rs$' | sort -u | xargs wc -l | tail -1 \
+            | sed 's/^/REF ripgrep-rust-lines /' | tee -a "$out/ref.txt"
+
+      - name: Summarize
+        if: always()
+        run: |
+          out="$RUNNER_TEMP/attrib"
+          { echo "## sg-cold-attrib backend"; echo '```'; cat "$out"/status.txt "$out"/calls-summary.txt \
+            "$out"/replay.txt "$out"/link.txt "$out"/ref.txt 2>/dev/null; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sg-cold-attrib-backend
+          path: ${{ runner.temp }}/attrib
+          if-no-files-found: warn
