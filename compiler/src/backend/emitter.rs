@@ -294,6 +294,7 @@ fn emit_module(
         if frontiers.grain(ordinal).is_some() {
             functions.append(emit_recursion_budget_entry(
                 program,
+                target,
                 function,
                 &frontiers,
                 &mut thunks,
@@ -869,6 +870,7 @@ fn incoming_range_parts(value: IrValueId) -> (String, String) {
 /// forwards to is emitted once, with the budget as a trailing parameter.
 fn emit_recursion_budget_entry(
     program: &IrProgram,
+    target: TargetLayout,
     function: &IrFunction,
     frontiers: &RecursiveFrontiers,
     thunks: &mut ParallelThunks,
@@ -884,17 +886,31 @@ fn emit_recursion_budget_entry(
     if abi.result().uses_destination() {
         parameters.push(Parameter::named("ptr", RESULT_POINTER));
     }
-    for ((value, _), parameter) in function.parameters().iter().zip(abi.parameters()) {
+    for (index, ((value, _), parameter)) in function
+        .parameters()
+        .iter()
+        .zip(abi.parameters())
+        .enumerate()
+    {
+        let facts = FunctionEmitter::signature_reference_parameter_facts(
+            program,
+            target,
+            function,
+            index,
+            parameter.ty(),
+        )?;
         parameters.extend(incoming_parameters(
             program,
             *value,
             *parameter,
-            "",
+            &facts,
             &mut references,
         )?);
     }
     let mut signature = Signature::new(source_symbol(function.name()), result, parameters);
-    signature.linkage = Linkage::Internal;
+    // This is the ordinary public symbol, not a local variant. Keeping its
+    // linkage and signature facts independent of the body also gives its
+    // source entry a stable owning fragment.
     signature.references = references;
     let mut output = FunctionBody::default();
     output.open_block("entry".to_owned());
@@ -1761,8 +1777,10 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
     /// allocation: element stores use the page pointers loaded from it. Growth
     /// invalidates the Run before replacing the cell. REF-3 supplies the same
     /// no-capture boundary as for ordinary references.
-    fn reference_parameter_facts(
-        &self,
+    fn signature_reference_parameter_facts(
+        program: &IrProgram,
+        target: TargetLayout,
+        function: &IrFunction,
         index: usize,
         ty: IrType,
     ) -> Result<String, BackendFailure> {
@@ -1778,13 +1796,12 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         // referent only until the ramp or start returned, where the frame
         // needs it until the callee finishes (`frames`); the other facts
         // describe the ramp alone, so none is stated.
-        if self.function.waits() {
+        if function.waits() {
             return Ok(String::new());
         }
         // A synthesized function has no source signature, and a fact whose
         // derivation is missing is simply not emitted.
-        if self
-            .function
+        if function
             .source_signature()
             .and_then(|signature| signature.parameters().get(index).copied())
             != Some(mode)
@@ -1792,7 +1809,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             return Ok(String::new());
         }
         let mut facts = String::new();
-        if !matches!(ty, IrType::Run { .. }) && !aliasing_admitted_row(self.function.name()) {
+        if !matches!(ty, IrType::Run { .. }) && !aliasing_admitted_row(function.name()) {
             facts.push_str(" noalias");
         }
         if matches!(ty, IrType::Run { .. }) {
@@ -1805,8 +1822,8 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         // is sure of, which is the direction `dereferenceable` needs.
         if let Some(referent) = referent
             && let Ok(layout) = crate::target::validate_static_storage(
-                self.target,
-                self.program,
+                target,
+                program,
                 &crate::target::TargetStorageType::source(referent.ty()),
             )
             && layout.size() > 0
@@ -1815,6 +1832,20 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 .map_err(|_| BackendFailure::TextEmission)?;
         }
         Ok(facts)
+    }
+
+    fn reference_parameter_facts(
+        &self,
+        index: usize,
+        ty: IrType,
+    ) -> Result<String, BackendFailure> {
+        Self::signature_reference_parameter_facts(
+            self.program,
+            self.target,
+            self.function,
+            index,
+            ty,
+        )
     }
 
     fn is_overlap_join_site(&self, value: IrValueId) -> bool {

@@ -166,12 +166,25 @@ fn read_item_of(holder: &Holder) -> result: u64 reads(holder) {{
   return first +wrap last;
 }}
 
+fn sum_item(item: Item) -> result: u64 pure {{
+  return item.a +wrap item.d;
+}}
+
+fn consume_item_of(holder: &Holder) -> result: u64 reads(holder) {{
+  let item = item_of(holder: holder, n: 1_u64);
+  return sum_item(item: item);
+}}
+
 fn main() -> status: std::process::ExitStatus pure {{
   let item = Item(a: 11_u64, b: 12_u64, c: 13_u64, d: 14_u64);
   let holder = Holder(tag: 9_u64, item: item);
   let observed = read_item_of(holder: &holder);
   if observed != 25_u64 {{
     return std::process::exit_status(code: 1_u8);
+  }}
+  let consumed = consume_item_of(holder: &holder);
+  if consumed != 25_u64 {{
+    return std::process::exit_status(code: 2_u8);
   }}
   return std::process::exit_status(code: 0_u8);
 }}
@@ -224,6 +237,25 @@ fn a_callee_entering_or_leaving_a_budget_family_keeps_its_callers_fragment() {
     // Adding recursion changes only item_of's body, and removing it is the
     // reverse edit. Empty budget parameter facts must not leak into a caller.
     assert_eq!(callers[0], callers[1]);
+    // An own-parameter consumer requires the public destination call. Its
+    // fragment must also keep the callee's signature facts when recursion
+    // changes only the implementation behind the ordinary public symbol.
+    let consumers = modules
+        .iter()
+        .map(|module| defining_fragment(module, "consume_item_of"))
+        .collect::<Vec<_>>();
+    for consumer in &consumers {
+        assert_public_leaf(emitted_function(consumer, "consume_item_of"));
+        assert!(
+            consumer
+                .lines()
+                .any(|line| line.starts_with("declare void @wf_item_of(")
+                    && line.contains("ptr noalias nonnull")
+                    && line.contains("dereferenceable(40)")),
+            "{consumer}"
+        );
+    }
+    assert_eq!(consumers[0], consumers[1]);
     for module in &modules {
         assert_runs(module.as_str());
     }
