@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 the owner's agent instructions own the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-13 The final affine family skips only images proved unable to prove the target
+
+Nodes: compiler/proof-query-context
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve this set of design-tree changes; after the 14900K comparison is in, write the design change log, mark ready and merge through the queue, then tell Halo" (translated), on the card "approve the design-tree decisions of Whitefoot#429's change that lets the final proof step skip known facts that cannot prove the target (head commit 205f0024a)?" (translated), whose background listed the reworded reuse decision, the new skipping decision and the three rejected alternatives.
+
+Summary: AUTO's final L0-image family visits images in their original order but skips an image only when it shares no atom with the target, its interval feasibility is proved, it cannot be an exact-L0 complement raw or GCD-tightened, and the target's checked interval maximum already exceeds its bound; a recorded deduction shows every skipped image fails on every success route, so verdicts and first successful parents are unchanged. Prepared endpoints, measure lookup, residual scratch and interval classifications are shared within one numeric proof and discarded together when the view changes. Failed-query reuse, overlap-only pruning and countermodel certification were rejected. On pinned Halo the check's CPU time fell to 0.600 of its base on hosted runners with identical verdicts.
+
 ## 2026-10-13 A call inside its own call-graph component receives every callee postcondition as an induction hypothesis
 
 Nodes: language, language/checks-and-proofs, language/checks-and-proofs/obligation-discharge
