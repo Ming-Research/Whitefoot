@@ -1973,12 +1973,14 @@ fn main() -> status: std::process::ExitStatus pure {
   len: u64;
 }
 
-fn combine(first: u64, second: u64, third: u64, limits: Box<Bounds>, second_limit: u64, third_limit: u64) -> result: u8 pure contract {
+fn combine(first: u64, second: u64, third: u64, limits: Box<Bounds>, first_limit: u64, second_limit: u64, third_limit: u64) -> result: u8 pure contract {
+  requires first <= first_limit;
   requires second <= second_limit;
   requires third <= third_limit;
 } {
   let length = limits.inner.len;
-  invariant combined: length + second + third <= length + second_limit + third_limit {
+  invariant combined: length + first + second + third <= length + first_limit + second_limit + third_limit {
+    use (first <= first_limit);
     use (second <= second_limit);
     use (third <= third_limit);
   }
@@ -1988,7 +1990,7 @@ fn combine(first: u64, second: u64, third: u64, limits: Box<Bounds>, second_limi
 fn main() -> status: std::process::ExitStatus pure {
   let bounds = Bounds(len: 4_u64);
   let limits = box_new::<Bounds>(value: bounds);
-  let answer = combine(first: 1_u64, second: 2_u64, third: 3_u64, limits: move limits, second_limit: 5_u64, third_limit: 6_u64);
+  let answer = combine(first: 1_u64, second: 2_u64, third: 3_u64, limits: move limits, first_limit: 4_u64, second_limit: 5_u64, third_limit: 6_u64);
   return std::process::exit_status(code: answer);
 }
 "#],
