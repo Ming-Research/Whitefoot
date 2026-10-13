@@ -271,6 +271,7 @@ impl<'unit> Checker<'_, 'unit> {
         // target is a proper prefix of. Writing the storage at the target's
         // own path, or below it, is a content write and invalidates nothing.
         for place in &mutation.place.members {
+            self.record_held_write(node, place);
             self.types.invalidate_references_with_separation(
                 bindings,
                 place,

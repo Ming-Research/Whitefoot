@@ -1,0 +1,5 @@
+fn observe(value: u64) -> result: u64 pure contract {
+  requires held(value);
+} {
+  return value;
+}

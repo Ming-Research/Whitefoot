@@ -20,12 +20,12 @@ fn shift(reading: &Reading, step: i32) -> result: unit writes(reading) contract 
 fn main() -> status: ExitStatus pure {
   doc "Shifts -5 up by 10 and then down by 20 after checking the room each time.";
   let reading = Reading(value: -5_i32);
-  let held = reading.value;
-  if held <= 990_i32 {
+  let kept = reading.value;
+  if kept <= 990_i32 {
   } else {
     return exit_status(code: 1_u8);
   }
-  if -990_i32 <= held {
+  if -990_i32 <= kept {
   } else {
     return exit_status(code: 2_u8);
   }

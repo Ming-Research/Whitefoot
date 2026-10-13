@@ -26,8 +26,8 @@ fn advance(counter: &Counter, delta: u64) -> result: u64 writes(counter) contrac
 fn main() -> status: ExitStatus pure {
   doc "Advances 5 by 7 and checks the value seen before the write and the count after it.";
   let counter = Counter(count: 5_u64);
-  let held = counter.count;
-  if held <= 793_u64 {
+  let kept = counter.count;
+  if kept <= 793_u64 {
   } else {
     return exit_status(code: 1_u8);
   }

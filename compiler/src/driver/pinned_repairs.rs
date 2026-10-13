@@ -18,7 +18,9 @@ mod content_moves;
 mod enum_routed_ensures;
 mod floats;
 mod interface_applications;
+mod postcondition_places;
 mod prelude_opaque;
+mod qualified_constants;
 mod recursive_effects;
 mod selector_scope;
 mod shared_maps;
@@ -3833,6 +3835,7 @@ fn each_pinned_repair_is_carried_out_by_its_programs() {
         .chain(call_separations::CALL_SEPARATIONS)
         .chain(content_moves::CONTENT_MOVES)
         .chain(prelude_opaque::PRELUDE_OPAQUE)
+        .chain(qualified_constants::QUALIFIED_CONSTANTS)
         .chain(recursive_effects::RECURSIVE_EFFECTS)
         .chain(storage_destructuring::STORAGE_DESTRUCTURING)
         .chain(shared_maps::SHARED_MAPS)
@@ -3841,6 +3844,7 @@ fn each_pinned_repair_is_carried_out_by_its_programs() {
         .chain(selector_scope::SELECTOR_SCOPE)
         .chain(enum_routed_ensures::ENUM_ROUTED_ENSURES)
         .chain(collisions_and_killed_facts::COLLISIONS_AND_KILLED_FACTS)
+        .chain(postcondition_places::POSTCONDITION_PLACES)
     {
         let failure = compile(
             &[SourceInput::new(pair.name, pair.rejected)],

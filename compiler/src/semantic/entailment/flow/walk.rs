@@ -815,6 +815,7 @@ impl Analyzer<'_, '_> {
                 // clause, judged over the state that edge leaves with, and of
                 // every route over the `Err` field, judged in the operand's
                 // own context for that field.
+                self.judge_postcondition_places(node_path, state, std::slice::from_ref(&result));
                 self.judging().judge_postcondition_return(
                     node_path,
                     state,
@@ -1226,6 +1227,7 @@ impl Analyzer<'_, '_> {
 
                 // [TYPE-11] a return inside an atomic block leaves it.
                 self.judge_atomic_exit(node_path, state);
+                self.judge_postcondition_places(node_path, state, &results);
                 self.judging().judge_postcondition_return(
                     node_path,
                     state,

@@ -9,8 +9,8 @@ fn main() -> status: ExitStatus pure {
     return exit_status(code: 1_u8);
   }
   place_back(window: &run, value: 3_u8);
-  let held = run.len;
-  if held == 1_u64 {
+  let observed = run.len;
+  if observed == 1_u64 {
   } else {
     return exit_status(code: 2_u8);
   }

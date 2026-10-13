@@ -2029,6 +2029,8 @@ fn probe(flag: Bool) -> result: u64 pure {
             declared_state_writes: Vec::new(),
             declared_state_reads: Vec::new(),
             requirements: Vec::new(),
+            held_parameters: Vec::new(),
+            held_calls: Vec::new(),
             requirement_places: Vec::new(),
             routed_requirements: Vec::new(),
             postconditions: Vec::new(),
