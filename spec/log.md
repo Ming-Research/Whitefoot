@@ -11,6 +11,14 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-12 v0.144: the one-shot DecisionCell
+
+Rules: changed TYPE-2, PROV-6, STOR-3, OP-9, EFF-3, CAP-1, PAR-1, PAR-2, WAIT-2, SHARE-1, SHARE-2, SHARE-3, PRE-1
+
+Owner-approved: On the shared status board on 2026-10-12, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve Ming-Research/Whitefoot#364 (head commit 5991bc527) changing the specification and the design tree to add the one-shot decision cell DecisionCell to the prelude?" (translated), whose background listed the thirteen changed rules, that no existing conformance verdict changes, and the four design-tree nodes with their proposed decisions, including the revised rejection of atomic fields and lock-free cells. The direction was the owner's choice of A on card gran-kill-decision-cell on 2026-10-11. The branch later merged main and only renumbered.
+
+Summary: Firn's SCRIPT KILL (board item firn-req-attempt-publish) needs a long atomic statement that holds shared state and another context's KILL to decide "the script accepted a write" or "the script was killed" in one determined order, without waiting. PRE-1 declares `DecisionCell` (an opaque, nocopy, retaining handle), `DecisionState` (Open, Written, Killed) and `decision_cell_new`, `decision_cell_share`, `decision_cell_read`, `claim_written` and `claim_killed`; both claims move the cell once from Open and return the absorbing winner. SHARE-3 makes each read and claim its own point in the single order of shared effects, separate from the enclosing atomic statement's effect point, and WAIT-2 refers to that complete order. SHARE-1 excludes a DecisionCell at any depth of a frozen object; SHARE-2 requires guard calls to be decision-cell-free; PAR-1, PAR-2 and EFF-3 require a decision-cell-free declared boundary for overlap and equal-call transformation; CAP-1 distinguishes storage interference from those shared-effect exclusions. TYPE-2, PROV-6, STOR-3 and OP-9 add the handle to the opaque construction inventory, the nonempty release leaves, opaque release and the handle-sized (8,8) ceiling. Selection ground: the owner chose a one-shot control verdict visible before the statement ends over publishing it only at statement exit, and over general atomic fields and lock-free cells, which expose interleavings inside an atomic step; the cell is shared explicitly by retaining a handle, since a handle behind the held object would make a competing context wait for that object, and admission uses a declaration-derived cell-free boundary instead of recognizing direct prelude calls or reading bodies.
+
 ## 2026-10-13 v0.143: a range fact can state an element's variant, and each conclusion stands on its own reads
 
 Rules: changed FORM-3, GRAM-5, TYPE-6, DIAG-1, RANGE-1, RANGE-3

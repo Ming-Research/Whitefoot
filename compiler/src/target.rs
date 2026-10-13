@@ -1318,7 +1318,7 @@ fn validate_target_obligation(
         }
         // [SHARE-1] an object is the runtime's header and then its state, in
         // one block the runtime takes from its pool.
-        IrOperation::SharedNew { nominal } => {
+        IrOperation::SharedNew { nominal } | IrOperation::DecisionCellNew { nominal } => {
             if result_type != IrType::Nominal(*nominal) {
                 return Err(TargetLayoutFailure::InvalidIr);
             }
