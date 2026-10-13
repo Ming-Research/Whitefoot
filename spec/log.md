@@ -11,6 +11,14 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-13 v0.136: a program reads the parts of a socket address and a connection's local address
+
+Rules: changed PRE-2
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A on the card "批准 Whitefoot#402（头提交 3cd02e6d4）的规范改动和设计决定", ruling 「选 A：批准 Whitefoot#402（头提交 3cd02e6d4）的规范改动和设计决定，让 Whitefoot 程序能读出套接字地址的各部分和连接本端的地址」.
+
+Summary: A program could build a `SocketAddress` and receive one from `tcp_accept` but could not read its family, components or port, nor ask a connection for its own end. PRE-2's `std::net` record adds the enum `IpAddress` (`Ipv4` with four `u8` octets, `Ipv6` with eight `u16` groups, each in written order), the nonwaiting `socket_address_ip` and `socket_address_port`, which only read the address and read back the arguments of `socket_address_v4` and `socket_address_v6`, and `local_address` on a connection's receiving half, which returns the host's report of the local endpoint of an accepted or a connected connection until `close_receive` consumes the half. The family is the one the host reports (an IPv4 peer reported through an IPv6 listener as an IPv4-mapped address is IPv6), and an IPv6 report keeps neither scope identifier nor flow label. A host refusal of the query returns `Err` with the host's code and the new origin 10, "Socket address query", added to the origin table. Selection ground: the pattern match on `IpAddress` yields family and components with no index or length to prove, and a query on the receiving half serves both kinds of connection and costs a host call only when asked, instead of a local field filled at every accept.
+
 ## 2026-10-12 v0.135: a call separates the places a callee's contract reads
 
 Rules: changed EFF-2, EFF-5
