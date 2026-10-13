@@ -12,7 +12,7 @@ fn build(nested: Bool) -> made: Zeroes pure {
     let no = False();
     let inner = build(nested: no);
     need(z: &inner);
-    return move inner;
+    return inner;
   }
   let cells = array_filled::<u64, 1>(value: 0_u64);
   return Zeroes(cells: cells);
