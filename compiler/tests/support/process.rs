@@ -169,6 +169,17 @@ impl Drop for ProgramChild {
              cleanup may terminate a running child"
         );
         self.terminate();
+        // The readers see EOF shortly after the child exits; give them a
+        // bounded moment so the diagnostics usually carry the output, while a
+        // descendant that still holds a pipe cannot stall cleanup.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
+        while std::time::Instant::now() < deadline
+            && [&self.output, &self.errors]
+                .iter()
+                .any(|reader| reader.as_ref().is_some_and(|thread| !thread.is_finished()))
+        {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
         for (channel, thread) in [("stdout", self.output.take()), ("stderr", self.errors.take())] {
             match thread {
                 None => {
