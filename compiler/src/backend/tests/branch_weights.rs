@@ -537,7 +537,15 @@ fn main() -> status: std::process::ExitStatus pure {{
         );
     with_ir(source.as_bytes(), |program| {
         for calls in [false, true] {
-            let module = emit_mode(program, calls);
+            let mut module = emit_mode(program, calls);
+            // Lowered callable IR needs the same launcher the driver adds
+            // before the floor runtime can enter the source main function.
+            module.push_str(
+                &crate::driver::launcher::render(program, "main")
+                    .expect("the runtime fixture has an ordinary executable entry")
+                    .render(),
+            );
+            assert!(module.contains("define i32 @wf__main_body("));
             assert!(emitted_body(&module, "evaluate").contains("!prof !{!\"branch_weights\""));
             let output = compile_and_run(&module);
             assert_eq!(output.status.code(), Some(0), "calls={calls}: {output:?}");
