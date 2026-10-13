@@ -40,7 +40,7 @@ use crate::{
     PostconditionProofDisposition, ReservedDeclarationRole, ReservedNameClass, ResolutionIssue,
     ResolutionIssueKind, SemanticIssue, SemanticIssueKind, SemanticLocation, SemanticUnsupported,
     SourceIssue, SourceIssueKind, SourceOrigin, SourceProofObligation, StaticObligationDisposition,
-    SyntaxCoordinate, SyntaxIssue, TerminalIssue, UndischargedCallRequirementDetail,
+    SyntaxCoordinate, SyntaxIssue, SyntaxRepair, TerminalIssue, UndischargedCallRequirementDetail,
     UndischargedPostconditionDetail, UnsupportedSemanticFeature,
 };
 
@@ -602,6 +602,18 @@ impl FieldValue for Spelled {
     }
 }
 
+/// A grammar rejection's repair [DIAG-1]; one that names the source's own
+/// spelling reads it from the source the rejection cites.
+impl FieldValue for SyntaxRepair {
+    fn value(&self, bundle: &SourceBundle) -> Option<Value> {
+        let bytes = match self.source() {
+            Some(source) => bundle.file(source)?.bytes(),
+            None => &[],
+        };
+        self.sentence(bytes).map(Value::Text)
+    }
+}
+
 /// A node location's coordinate is the node's complete extent.
 impl FieldValue for SemanticLocation {
     fn value(&self, bundle: &SourceBundle) -> Option<Value> {
@@ -851,7 +863,7 @@ impl Report for SemanticIssueKind {
             ConstEvalOverflow { operation };
             ConstArgumentOutOfRange { parameter_type, value };
             ConstRuntimeArithmeticMode { mechanical_fix };
-            TypeMismatch { expected, found };
+            TypeMismatch { expected, found, mechanical_fix };
             UnadmittedOperandShape { expected, mechanical_fix };
             BehaviorArgumentMismatch { expected, mechanical_fix };
             UnforwardedGroupApplication { mechanical_fix };
@@ -872,11 +884,12 @@ impl Report for SemanticIssueKind {
             ReadonlyWriteTarget { spelling, mechanical_fix };
             FrozenForbiddenPart { part, mechanical_fix };
             FrozenContentConsume { mechanical_fix };
-            MoveOfCopy { mechanical_fix };
-            BareAffineUse { mechanical_fix };
+            MoveOfCopy { binding, ty, reason, mechanical_fix };
+            BareAffineUse { binding, ty, reason, mechanical_fix };
             ContainerConstruction { nominal, mechanical_fix };
             UseAfterMove { mechanical_fix };
             InvalidReferenceUse { binder, event, mechanical_fix };
+            UnestablishedPayloadVariant { place, variant, mechanical_fix };
             ReferenceToReferenceVariable { mechanical_fix };
             EscapingReference { mechanical_fix };
             RangeOverRing { mechanical_fix };
@@ -885,7 +898,7 @@ impl Report for SemanticIssueKind {
             MissingDereference { mechanical_fix };
             RangeReferentUse { mechanical_fix };
             MoveOuterBindingInLoop { binding, mechanical_fix };
-            InvalidOperation;
+            InvalidOperation { operation, operand_types, mechanical_fix };
             InvalidEqualityType { mechanical_fix };
             InvalidPredicateCondition;
             InvalidConditionalForm { mechanical_fix };
@@ -922,6 +935,7 @@ impl Report for SemanticIssueKind {
             AtomicKeyReadsTheState { mechanical_fix };
             AtomicBindingUnused { binding, mechanical_fix };
             AtomicGuardWrites { mechanical_fix };
+            AtomicGuardDecisionCell { mechanical_fix };
             AtomicGuardReadsSelfChanging { handle, mechanical_fix };
             InvalidSpawn { condition };
             InvalidMusttail { condition, subject };
@@ -929,6 +943,8 @@ impl Report for SemanticIssueKind {
             UnreachableStatement;
             FunctionFallthrough;
             InvalidRequires;
+            InvalidHeldContract { reason, mechanical_fix };
+            SnapshotResource { owned_path, mechanical_fix };
             InvalidPostconditionSelector { mechanical_fix };
             AmbiguousResultRoute { mechanical_fix };
             InvalidPostconditionFields { required_fields };
@@ -951,7 +967,7 @@ impl Report for SemanticIssueKind {
             InvalidIntegerMatchArm { reason, mechanical_fix };
             DuplicateIntegerMatchValue { value, earlier, mechanical_fix };
             InvalidIntegerMatchCoverage { integer_type, domain, mechanical_fix };
-            InvalidPropagation;
+            InvalidPropagation { enclosing_return_type, operand_type, mechanical_fix };
             InvalidGive;
             EmptyDeliverySet { binding, mechanical_fix };
             InvalidEffectRow { reason, mechanical_fix };

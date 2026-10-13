@@ -16,7 +16,7 @@ use super::super::super::model::{
     CheckedMatchSelection, CheckedMatchType, CheckedMode, CheckedNominalKind, CheckedProjectedDrop,
     CheckedStatement, CheckedType, CheckedValue,
 };
-use super::super::super::places::PlaceStep;
+use super::super::super::places::{PlaceRoot, PlaceStep};
 use super::super::super::tree::ConditionalAlternative;
 use super::super::references::{ReferenceInfo, RequiredReferent};
 use super::super::{CheckStop, Checker, EffectSet, LocalBinding, RefinementWitness};
@@ -68,7 +68,9 @@ enum ScrutineeSpelling {
     /// `p^` and anything selected below it: the storage a reference
     /// names, reached under the step [REF-1] requires.
     Dereferenced,
-    /// Every other written form: an owned place, a call result, a literal.
+    /// An owned place, whose stored enum may receive a refinement.
+    OwnedPlace,
+    /// A computed expression or literal, whose operands receive no refinement.
     Other,
 }
 
@@ -101,11 +103,13 @@ impl<'unit> Checker<'_, 'unit> {
         // not one of these at v0.60: its content is the ordinary field
         // `inner` [TYPE-9], so a `Box` scrutinee is the ordinary wrong-type
         // judgment [TYPE-5] the descriptor below makes.
-        if (spelling == ScrutineeSpelling::Other
-            || matches!(
-                scrutinee.expression.ty(),
-                CheckedType::Integer(_) | CheckedType::GenericInt(_)
-            ))
+        if (matches!(
+            spelling,
+            ScrutineeSpelling::Other | ScrutineeSpelling::OwnedPlace
+        ) || matches!(
+            scrutinee.expression.ty(),
+            CheckedType::Integer(_) | CheckedType::GenericInt(_)
+        ))
             && scrutinee.reference_value
             && (matches!(
                 scrutinee.expression.ty(),
@@ -119,7 +123,7 @@ impl<'unit> Checker<'_, 'unit> {
                 SemanticRule::Type7,
                 expression_node,
                 SemanticIssueKind::MissingDereference {
-                    mechanical_fix: "write `holder^`",
+                    mechanical_fix: "write `holder^`".to_owned(),
                 },
             );
         }
@@ -155,6 +159,12 @@ impl<'unit> Checker<'_, 'unit> {
                     place,
                 ));
             }
+            reference.selection = Some(self.payload_selection_identity(
+                &scrutinee.expression,
+                &reference.paths,
+                expression_node,
+                bindings,
+            )?);
             scrutinee.mode = CheckedMode::Reference;
             scrutinee.reference = Some(reference);
         }
@@ -221,8 +231,52 @@ impl<'unit> Checker<'_, 'unit> {
                 give_context: local_give_context.as_ref().or(scope.give_context),
             };
             let mut arm_bindings = base_bindings.clone();
+            let origin = self.types.declarations.tree.path(arm_node)?.clone();
             let (binders, covered) =
                 if let (Some(descriptor), Some(variant)) = (&descriptor, &arm.variant) {
+                    // [ENT-3.S15] the arm witnesses its tracked scrutinee, even
+                    // when `..` binds no payload. Keep that occurrence on its root's
+                    // ordinary flow state so writes, aliases and joins share the
+                    // existing witness invalidation machinery.
+                    let places = if let Some(reference) = &scrutinee.reference {
+                        reference.paths.clone()
+                    } else if spelling == ScrutineeSpelling::OwnedPlace {
+                        scrutinee
+                            .accesses
+                            .iter()
+                            .filter(|access| access.selected)
+                            .map(|access| access.place.clone())
+                            .collect()
+                    } else {
+                        Vec::new()
+                    };
+                    let selection = if places.is_empty() {
+                        None
+                    } else {
+                        Some(self.payload_selection_identity(
+                            &scrutinee.expression,
+                            &places,
+                            expression_node,
+                            bindings,
+                        )?)
+                    };
+                    for place in places {
+                        if let PlaceRoot::Binding(root) = place.root
+                            && let Some(local) = arm_bindings
+                                .values_mut()
+                                .find(|local| local.binding == root)
+                        {
+                            local.refinement_witnesses.push(RefinementWitness {
+                                origin: origin.clone(),
+                                selection: selection
+                                    .clone()
+                                    .ok_or(SemanticCompilerFailure::InvalidResolution)?,
+                                place,
+                                variant: variant.tag,
+                                valid: true,
+                            });
+                        }
+                    }
                     let variant_ordinal = descriptor
                         .variants
                         .iter()
@@ -247,6 +301,16 @@ impl<'unit> Checker<'_, 'unit> {
                 .children_with(arm_node, Production::Stmt)?;
             let mut checked =
                 self.check_block(context, &statements, &mut arm_bindings, counters, arm_scope)?;
+            // Arm-local evidence cannot cross any normal, give or loop
+            // transfer edge. A captured payload reference is independent of
+            // the witness and retains its ordinary REF-2 validity.
+            Checker::forget_refinement_occurrence(&mut arm_bindings, &origin);
+            for state in &mut checked.give_states {
+                Checker::forget_refinement_occurrence(state, &origin);
+            }
+            for state in &mut checked.loop_transfers {
+                state.forget_refinement_occurrence(&origin);
+            }
             let leaving = Checker::bindings_leaving_scope(&arm_bindings, &base_keys);
             Checker::invalidate_control_exits(
                 &mut arm_bindings,
@@ -381,7 +445,7 @@ impl<'unit> Checker<'_, 'unit> {
                 SemanticRule::Type7,
                 expression_node,
                 SemanticIssueKind::MissingDereference {
-                    mechanical_fix: "write `holder^`",
+                    mechanical_fix: "write `holder^`".to_owned(),
                 },
             );
         }
@@ -526,6 +590,16 @@ impl<'unit> Checker<'_, 'unit> {
             };
             let label = if variant.tag == 1 {
                 "the `if` branch".to_owned()
+            } else if matches!(blocks.alternative, ConditionalAlternative::Absent) {
+                let mut label =
+                    "the implicit false edge of this `if` (no `else` is written)".to_owned();
+                if matches!(
+                    condition.expression,
+                    CheckedExpression::Constant(super::super::super::model::CheckedValue::Bool(_))
+                ) {
+                    label.push_str("; constant conditions do not remove this structural edge [FN-1]");
+                }
+                label
             } else {
                 "the `else` branch".to_owned()
             };
@@ -559,21 +633,15 @@ impl<'unit> Checker<'_, 'unit> {
                     SemanticIssueKind::InvalidGive,
                 );
             }
-            self.types.declarations.join_states(
-                &base_keys,
-                &give_states,
-                &give_labels,
-                node,
-                bindings,
-            )?;
+            self.types
+                .declarations
+                .join_states(&base_keys, &give_states, &give_labels, node, bindings)
+                .map_err(|stop| self.conditional_join_repair(check_context, &base_bindings, stop))?;
         } else {
-            self.types.declarations.join_states(
-                &base_keys,
-                &normal_states,
-                &normal_labels,
-                node,
-                bindings,
-            )?;
+            self.types
+                .declarations
+                .join_states(&base_keys, &normal_states, &normal_labels, node, bindings)
+                .map_err(|stop| self.conditional_join_repair(check_context, &base_bindings, stop))?;
         }
         Ok(MatchResult {
             scrutinee: condition.expression,
@@ -597,6 +665,38 @@ impl<'unit> Checker<'_, 'unit> {
             },
             loop_transfers,
         })
+    }
+
+    fn conditional_join_repair(
+        &self,
+        context: &CheckContext<'_>,
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+        mut stop: CheckStop,
+    ) -> CheckStop {
+        if let CheckStop::Issue(issue) = &mut stop
+            && let SemanticIssueKind::LivenessJoinDisagreement {
+                binding,
+                mechanical_fix,
+                ..
+            } = &mut issue.kind
+            && let Some(local) = bindings.iter().find_map(|(declaration, local)| {
+                (self
+                    .types
+                    .declarations
+                    .declaration_spelling(*declaration)
+                    .ok()
+                    .as_ref()
+                    == Some(binding))
+                .then_some(local)
+            })
+            && local.mode == CheckedMode::Own
+            && matches!(self.types.is_copy_type(context, local.ty), Ok(false))
+            && matches!(self.types.linear_release_obligation(context, local.ty), Ok(None))
+            && let Ok(ty) = self.types.checked_type_name(local.ty)
+        {
+            *mechanical_fix = super::super::repairs::writer_ownership::join(Some((binding, &ty)));
+        }
+        stop
     }
 
     fn bool_descriptor() -> MatchDescriptor {
@@ -966,25 +1066,6 @@ impl<'unit> Checker<'_, 'unit> {
             } else {
                 None
             };
-            let refinement_witnesses = if mode.is_reference() {
-                let origin = self.types.declarations.tree.path(arm)?.clone();
-                scrutinee
-                    .reference
-                    .as_ref()
-                    .ok_or(SemanticCompilerFailure::InvalidResolution)?
-                    .paths
-                    .iter()
-                    .cloned()
-                    .map(|place| RefinementWitness {
-                        origin: origin.clone(),
-                        place,
-                        variant: variant.tag,
-                        valid: true,
-                    })
-                    .collect()
-            } else {
-                Vec::new()
-            };
             if let Some(reference) = &reference {
                 self.body
                     .record_reference_origins(binding, &reference.paths);
@@ -1002,7 +1083,9 @@ impl<'unit> Checker<'_, 'unit> {
                         compiler_updated: false,
                         read_only_state: false,
                         reference,
-                        refinement_witnesses,
+                        commit_target: None,
+                        refinement_witnesses: Vec::new(),
+                        handle_watch: None,
                         call_value: false,
                     },
                 )
@@ -1062,6 +1145,17 @@ impl<'unit> Checker<'_, 'unit> {
         Ok((binders, releases))
     }
 
+    pub(super) fn forget_refinement_occurrence(
+        bindings: &mut HashMap<DeclarationId, LocalBinding>,
+        origin: &crate::NodePath,
+    ) {
+        for local in bindings.values_mut() {
+            local
+                .refinement_witnesses
+                .retain(|witness| &witness.origin != origin);
+        }
+    }
+
     /// Applies [REF-2]'s two arm/branch-exit events to every state that can
     /// cross that boundary. A normal edge, `give`, and `break` carry separate
     /// ownership maps, while a delivered reference is accumulated separately
@@ -1118,7 +1212,7 @@ impl<'unit> DeclarationInventory<'unit> {
         Ok(if self.tree.place_has_dereference(place)? {
             ScrutineeSpelling::Dereferenced
         } else {
-            ScrutineeSpelling::Other
+            ScrutineeSpelling::OwnedPlace
         })
     }
     /// [GRAM-6] the two `else` spellings the rule refuses, each reported at
@@ -1259,10 +1353,7 @@ impl<'unit> DeclarationInventory<'unit> {
                             binding: self.declaration_spelling(*key)?,
                             live_predecessor: live,
                             dead_predecessor: dead,
-                            mechanical_fix: "every predecessor of a join agrees on a binding's \
-                                             live-or-dead status: consume it on every predecessor, \
-                                             on none, or commit a value back into it before the \
-                                             predecessor that consumed it reaches the join",
+                            mechanical_fix: super::super::repairs::writer_ownership::join(None),
                         },
                     );
                 }
@@ -1273,6 +1364,9 @@ impl<'unit> DeclarationInventory<'unit> {
                     live_predecessor.clone_from(label);
                 }
                 joined.join_from(candidate);
+            }
+            if let Some(reference) = &mut joined.reference {
+                reference.anchor_selection(self.tree.path(node)?, joined.binding);
             }
             *bindings
                 .get_mut(key)

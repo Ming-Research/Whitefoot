@@ -28,9 +28,15 @@ pub(super) struct AtomicRegion {
 }
 #[derive(Clone)]
 struct TargetRegion {
+    binding: BindingId,
     object: IrValueId,
     nominal: IrNominalId,
+    /// The address of the object's state.
+    state: IrValueId,
     owned: bool,
+    /// Whether the statement's block or guard may write the state, so that
+    /// leaving the block releases it as written [SHARE-3].
+    wrote: bool,
     lock: Lock,
 }
 #[derive(Clone)]
@@ -100,6 +106,7 @@ impl IrBuilder<'_> {
                 .push(index);
         }
         let mut guard_roots = Vec::new();
+        self.define(IrType::Unit, IrOperation::SnapshotAtomicBegin)?;
         if let Some(guard) = guard {
             expression_bindings(guard, &mut guard_roots);
         }
@@ -169,7 +176,7 @@ impl IrBuilder<'_> {
                         referent: IrAddressed::Nominal(nominal),
                     },
                 )?;
-                let object = if target.borrowed {
+                let object = if target.kept_by_place {
                     loaded
                 } else {
                     self.define(
@@ -260,9 +267,12 @@ impl IrBuilder<'_> {
                     .insert(target.binding, region.targets.len());
                 members.push(region.targets.len());
                 region.targets.push(TargetRegion {
+                    binding: target.binding,
                     object,
                     nominal,
-                    owned: !target.borrowed,
+                    state: field,
+                    owned: !target.kept_by_place,
+                    wrote: !target.reads,
                     lock,
                 });
             }
@@ -492,10 +502,20 @@ impl IrBuilder<'_> {
                                 .map_err(|_| LoweringFailure::CounterOverflow)?,
                             object: target.object,
                             hold,
+                            wrote: target.wrote,
                         },
                     )?;
                 }
-                self.define(IrType::Unit, IrOperation::AtomicGroupTake { record })?;
+                // The first group holds nothing before it, so it waits
+                // and suspends as a first object's acquire does.
+                self.define(
+                    IrType::Unit,
+                    if index == 0 {
+                        IrOperation::AtomicGroupAcquire { record }
+                    } else {
+                        IrOperation::AtomicGroupTake { record }
+                    },
+                )?;
             } else {
                 let target = &region.targets[group.targets[0]];
                 match &target.lock {
@@ -620,7 +640,14 @@ impl IrBuilder<'_> {
     fn atomic_binding_target(&self, region: &AtomicRegion, binding: BindingId) -> Option<usize> {
         region.target_bindings.get(&binding).copied()
     }
-    fn release_groups(&mut self, region: &AtomicRegion) -> Result<(), LoweringFailure> {
+    /// Gives up every group, last first. After a false guard, `watched`, the
+    /// statement wrote nothing; on leaving its block it releases an object
+    /// as written when the block or guard may write it.
+    fn release_groups(
+        &mut self,
+        region: &AtomicRegion,
+        watched: bool,
+    ) -> Result<(), LoweringFailure> {
         for group in region.groups.iter().rev() {
             let done = group
                 .flag
@@ -643,6 +670,7 @@ impl IrBuilder<'_> {
                             IrType::Unit,
                             IrOperation::SharedUnlock {
                                 object: target.object,
+                                wrote: target.wrote && !watched,
                             },
                         )?;
                     }
@@ -687,6 +715,7 @@ impl IrBuilder<'_> {
                 self.current = Some(done);
             }
         }
+        self.define(IrType::Unit, IrOperation::SnapshotAtomicEnd)?;
         Ok(())
     }
     fn lower_guard(
@@ -714,6 +743,7 @@ impl IrBuilder<'_> {
             drops: Vec::new(),
         })?;
         self.current = Some(acquire);
+        self.define(IrType::Unit, IrOperation::SnapshotAtomicBegin)?;
         if let Some(last) = read.last().copied().max(eager) {
             self.take_groups_through(region, last, &direct, true)?;
         }
@@ -736,11 +766,19 @@ impl IrBuilder<'_> {
             ],
         })?;
         self.current = Some(watch);
+        let targets = region
+            .targets
+            .iter()
+            .map(|target| target.binding)
+            .collect::<Vec<_>>();
         if region.targets.len() == 1 && matches!(region.targets[0].lock, Lock::Object) {
+            let target = &region.targets[0];
+            let test = self.wake_test(guard, target.binding, target.state, &targets)?;
             self.define(
                 IrType::Unit,
                 IrOperation::SharedWatch {
-                    object: region.targets[0].object,
+                    object: target.object,
+                    test,
                 },
             )?;
         } else {
@@ -751,11 +789,14 @@ impl IrBuilder<'_> {
                     let target = &region.targets[*member];
                     match &target.lock {
                         Lock::Object => {
+                            let test =
+                                self.wake_test(guard, target.binding, target.state, &targets)?;
                             self.define(
                                 IrType::Unit,
                                 IrOperation::WatchObject {
                                     record,
                                     object: target.object,
+                                    test,
                                 },
                             )?;
                         }
@@ -771,7 +812,7 @@ impl IrBuilder<'_> {
                     }
                 }
             }
-            self.release_groups(region)?;
+            self.release_groups(region, true)?;
             self.define(IrType::Unit, IrOperation::WatchPark { record })?;
         }
         self.terminate(IrTerminator::Jump {
@@ -852,7 +893,7 @@ impl IrBuilder<'_> {
         if let Some(block) = self.current {
             region.ledger.borrow_mut().exits.insert(block);
         }
-        self.release_groups(region)?;
+        self.release_groups(region, false)?;
         self.append_drops(
             region
                 .targets

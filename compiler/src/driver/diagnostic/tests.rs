@@ -83,6 +83,37 @@ fn the_json_record_is_complete_on_one_line() {
 }
 
 #[test]
+fn propagation_payload_types_and_repair_are_rendered_in_both_formats() {
+    let failure = stop(
+        "propagation.wf",
+        include_bytes!("../../../../tests/conformance/cases/err3-neg-error-type-mismatch.wf"),
+    );
+    let text = failure.to_string();
+    let json = failure.render(DiagnosticFormat::Json);
+    for (label, value) in [
+        ("enclosing_return_type", "Result<i32, ErrB>"),
+        ("operand_type", "Result<i32, ErrA>"),
+    ] {
+        assert!(text.contains(&format!("\n  {label}: {value}")), "{text}");
+        assert!(json.contains(&format!("\"{label}\":\"{value}\"")), "{json}");
+    }
+    assert!(
+        text.contains("\n  mechanical_fix: `propagate` needs"),
+        "{text}"
+    );
+    assert!(
+        json.contains("\"mechanical_fix\":\"`propagate` needs"),
+        "{json}"
+    );
+    assert!(
+        json.contains("\"kind\":\"InvalidPropagation\""),
+        "{json}"
+    );
+    assert_no_internal_identity(&text);
+    assert_no_internal_identity(&json);
+}
+
+#[test]
 fn a_call_requirement_names_the_callee_clause_by_its_position_and_text() {
     let source =
         br#"fn drop_spaces(out: &[u8], src: &[u8]) -> kept: u64 reads(src), writes(out) contract {

@@ -197,9 +197,9 @@ pub(crate) struct Synthesis {
 }
 
 impl Synthesis {
-    /// A run and the adjacent-pair recovery can reach the same boundary.
-    /// Report that source conflict once, also across physical instances.
-    pub(super) fn note_storage_conflict(&mut self, line: String) {
+    /// Report a placement or storage boundary once, including when adjacent
+    /// pair recovery or another physical instance reaches the same boundary.
+    pub(super) fn note_narrowing(&mut self, line: String) {
         if !self.ledger.contains(&line) {
             self.ledger.push(line);
         }
@@ -294,6 +294,28 @@ impl<'program> IrBuilder<'program> {
         let Some(actualization) = permission.actualization else {
             return Ok(false);
         };
+        // IrIndexedRoot retains only struct-field projections. A payload
+        // root uses the complete ordinary CFG until indexed blocks carry
+        // enum projections as well; no source acceptance depends on a split.
+        if permission
+            .indexed
+            .iter()
+            .chain(self.indexed_roots.iter().map(|(family, _, _)| family))
+            .chain(&self.indexed_block_families)
+            .any(|family| {
+                family
+                    .root
+                    .path
+                    .iter()
+                    .any(|step| matches!(step, crate::semantic::CheckedPlaceStep::Payload { .. }))
+            })
+        {
+            self.note(
+                node_path,
+                "declined: indexed private blocks require a struct-field root path",
+            );
+            return Ok(false);
+        }
         let accumulator = match actualization {
             LoopActualization::IndependentMap => None,
             LoopActualization::Reduction { accumulator, .. } => Some(accumulator),

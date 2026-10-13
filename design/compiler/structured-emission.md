@@ -2,6 +2,8 @@ Decision: LLVM emission builds a structured module of function headers, blocks, 
 
 Decision: Integer match has an explicit typed IR switch terminator carrying mathematical constant targets and an optional remaining target, and emission uses one LLVM switch over the once-evaluated scrutinee, because its constants are sparse values of the source integer width rather than enum ordinals and complete coverage needs only an unreachable default, instead of an equality-test chain or reinterpretation as an enum discriminant.
 
+Decision: Identical external declarations share one structured module declaration during registration and composition, while inconsistent declarations stop emission, because independent function builders can reach the same runtime ABI and fragments must retain its one authoritative declaration, instead of printing duplicates, overwriting conflicting signatures or filtering rendered LLVM text.
+
 Rejected:
 - Adopting an LLVM library as part of this change: rejected because the missing contract is between this compiler's emission and fragment construction, and an external IR dependency adds integration work without being required to record it.
 - A second optimization IR in the emitter: rejected because lowering already owns the typed control-flow graph; the emission model only records the target structure and dependencies needed for correct printing and partitioning.

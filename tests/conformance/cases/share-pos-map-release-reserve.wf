@@ -33,8 +33,8 @@ fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure w
     set count = map_count::<Box<u64>>(map: t);
     let entry_b = &t^[b];
     match entry_b^ {
-      Some(value: held) => {
-        set seen = held^.inner;
+      Some(value: observed) => {
+        set seen = observed^.inner;
       }
       None() => {
       }

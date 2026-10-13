@@ -176,6 +176,10 @@ impl BuiltinPreludeId {
     pub(crate) const NEXT_CURSOR: Self = Self(28);
     pub(crate) const NEEDS: Self = Self(29);
     pub(crate) const NEEDS_BYTES: Self = Self(30);
+    pub(crate) const DECISION_STATE: Self = Self(31);
+    pub(crate) const OPEN: Self = Self(32);
+    pub(crate) const WRITTEN: Self = Self(33);
+    pub(crate) const KILLED: Self = Self(34);
 
     /// Returns the internal built-in record index.
     #[must_use]
@@ -427,6 +431,8 @@ pub enum DeferredUseRole {
     FunctionMember,
     /// A statically selected field after an effect-path root.
     EffectField,
+    /// A reference parameter named by its callable held requirement.
+    HeldParameter,
 }
 
 /// Exact source origin of one resolver role.

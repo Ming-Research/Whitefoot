@@ -735,13 +735,14 @@ impl<'program> Walker<'program> {
                 binding,
                 scrutinee,
                 ok_type,
+                error_type,
                 ..
             } => {
                 self.cite = node_path.clone();
-                let _ = self.eval(&mut state, scrutinee);
+                let outcome = self.eval(&mut state, scrutinee);
                 // [FN-9] the `Err` edge returns the propagated error.
                 self.owe_atomic(&state, node_path, true);
-                self.owe_postconditions(&mut state, None, node_path, "a propagated error exit");
+                self.owe_propagated_postconditions(&state, outcome, *error_type, node_path);
                 self.bind(&mut state, *binding, *ok_type, Value::Unknown);
                 Some(state)
             }
@@ -1218,19 +1219,7 @@ impl<'program> Walker<'program> {
                             ));
                         }
                         forked.variants.insert(location.clone(), variant_tag);
-                        let enabled: Vec<(FactId, Vec<Literal>)> = forked
-                            .routed
-                            .iter()
-                            .filter(|(at, variant, ..)| at == location && *variant == variant_tag)
-                            .map(|(_, _, fact, guards)| (*fact, guards.clone()))
-                            .collect();
-                        for (fact, guards) in enabled {
-                            if guards.is_empty() {
-                                forked.facts.push(fact);
-                            } else {
-                                forked.guarded.push(Guarded { fact, guards });
-                            }
-                        }
+                        self.activate_routed_facts(&mut forked, location, variant_tag);
                     }
                     for binder in &arm.binders {
                         let element = match &value {
@@ -1630,6 +1619,23 @@ impl<'program> Walker<'program> {
                 (Target::Location(location), CheckedPlaceStep::Field(field)) => {
                     Target::Location(location.child(Step::Field(*field)))
                 }
+                (
+                    Target::Location(location),
+                    CheckedPlaceStep::Payload {
+                        nominal,
+                        variant,
+                        field,
+                    },
+                ) => match &self.nominals[nominal.0 as usize].kind {
+                    CheckedNominalKind::Enum { variants } => {
+                        Target::Location(location.child(Step::Payload {
+                            variant: *variant,
+                            field: *field,
+                            variants: variants.len() as u32,
+                        }))
+                    }
+                    _ => unreachable!(),
+                },
                 (Target::Location(location), CheckedPlaceStep::BoxReferent(_)) => {
                     Target::Location(location.child(Step::BoxContent))
                 }
@@ -1730,6 +1736,23 @@ impl<'program> Walker<'program> {
             CheckedPlaceStep::Field(field) => {
                 if let Some(path) = projection {
                     path.push(CheckedRangeProjection::Field(*field));
+                }
+            }
+            CheckedPlaceStep::Payload {
+                nominal,
+                variant,
+                field,
+            } => {
+                let CheckedNominalKind::Enum { variants } = &self.nominals[nominal.0 as usize].kind
+                else {
+                    unreachable!();
+                };
+                if let Some(path) = projection {
+                    path.push(CheckedRangeProjection::Payload {
+                        variant: *variant,
+                        field: *field,
+                        variants: variants.len() as u32,
+                    });
                 }
             }
             CheckedPlaceStep::BoxReferent(_) => {

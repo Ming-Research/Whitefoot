@@ -2393,7 +2393,9 @@ impl FunctionEmitter<'_, '_> {
                 edge.predecessor,
             );
         }
-        writeln!(self.output, "\n  br label %{}", block_label(success))?;
+        self.output.push('\n');
+        self.output.terminator();
+        writeln!(self.output, "  br label %{}", block_label(success))?;
         Ok(true)
     }
 
@@ -2446,10 +2448,12 @@ impl FunctionEmitter<'_, '_> {
         let address = self.edge_cursor(&cursor, &[(cursor.index, offset)], true)?;
         writeln!(
             self.output,
-            "  {} = getelementptr i8, ptr {address}, i64 0\n  br label %{}",
+            "  {} = getelementptr i8, ptr {address}, i64 0",
             predecessor_cursor_name(index, block),
-            block_label(target)
         )?;
+        // The join's phis may take a record slot from this edge's exit block.
+        self.output.terminator();
+        writeln!(self.output, "  br label %{}", block_label(target))?;
         Ok(true)
     }
 

@@ -1,0 +1,18 @@
+struct Pair {
+  left: u64;
+  right: u64;
+}
+
+fn observe(left: &u64, right: &u64) -> result: Pair reads(left), reads(right) contract {
+  requires held(left, right);
+} {
+  return Pair(left: left^, right: right^);
+}
+
+fn sample(left: &Shared<u64>, right: &Shared<u64>) -> result: Pair reads(right), writes(left) waits {
+  atomic current_left = &left^, current_right = &right^ {
+    let seen = observe(left: current_left, right: current_right);
+    set current_left^ = 1_u64;
+    return seen;
+  }
+}

@@ -44,6 +44,6 @@ fn retains_each_mode_and_rejects_unsigned_types() {
     assert_rule(
         b"fn main() -> status: std::process::ExitStatus pure {\n  let value = ineg.wrap(1_u8);\n  return std::process::exit_status(code: 0_u8);\n}\n",
         SemanticRule::Op1,
-        SemanticIssueKind::InvalidOperation,
+        SemanticIssueKind::invalid_operation(),
     );
 }

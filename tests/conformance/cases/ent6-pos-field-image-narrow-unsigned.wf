@@ -19,8 +19,8 @@ fn raise(gauge: &Gauge, step: u8) -> result: unit writes(gauge) contract {
 fn main() -> status: ExitStatus pure {
   doc "Raises 50 by 100 after checking the room.";
   let gauge = Gauge(small: 50_u8);
-  let held = gauge.small;
-  if held <= 100_u8 {
+  let kept = gauge.small;
+  if kept <= 100_u8 {
   } else {
     return exit_status(code: 1_u8);
   }

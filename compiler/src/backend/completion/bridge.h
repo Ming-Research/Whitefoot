@@ -83,6 +83,9 @@ void wf__completion_file_close_submit(
     int descriptor,
     void *record
 );
+/* A runtime-owned child completion runs on the closed helper adapter. */
+int wf__completion_snapshot_finish_submit(void *owner, uint32_t abort_requested,
+                                         void *record);
 
 /* One write at the end of a file opened for appending, which waits on the
  * host's storage and never on another party, so it is a kind of its own
@@ -394,18 +397,35 @@ void wf__shared_share(void *object);
 int wf__shared_release(void *object);
 void wf__shared_free(void *object);
 
+/* [PRE-1, SHARE-3] An opaque decision cell retains the ordinary shared
+ * header's handle count; its private state is not an atomic-statement unit.
+ * Share/release/free use the shared-handle functions above. Reading and each
+ * claim have their own sequentially consistent effect point, without taking
+ * a shared hold, registering a guard watch, or waiting for another context. */
+enum { WF_DECISION_OPEN = 0, WF_DECISION_WRITTEN = 1, WF_DECISION_KILLED = 2 };
+void *wf__decision_cell_new(void);
+uint32_t wf__decision_cell_read(void *cell);
+uint32_t wf__claim_written(void *cell);
+uint32_t wf__claim_killed(void *cell);
+
 /* An atomic statement [SHARE-2, SHARE-3]: `wf__shared_acquire` returns zero
  * when the running context now holds the object, for writing when `write` is
  * nonzero and for reading otherwise, and nonzero when it waits, after which
  * the frame suspends and resumes holding it.  `wf__shared_unlock` ends the
- * hold.  `wf__shared_watch`, called holding the object after a guard read
- * false, ends the hold and waits until a statement that writes the object
- * ends: it returns zero when one has ended since it registered the wait, and
- * otherwise nonzero, after which the frame suspends; either way the statement
- * then acquires the object again and re-reads its guard. */
+ * hold of a statement that may have written the object, which wakes the
+ * object's watches; `wf__shared_unlock_unwritten` ends the hold of one whose
+ * block writes nothing through it, which wakes none.  `write` is the hold's
+ * kind in both, as the acquire asked for it.  `wf__shared_watch`, called
+ * holding the object after a guard read false, ends the hold and waits until
+ * a statement that writes the object ends, leaving it in a state where
+ * `test` (a `wf_wake_test` below, or NULL for none) may hold: it returns
+ * zero when one has ended since it registered the wait, and otherwise
+ * nonzero, after which the frame suspends; either way the statement then
+ * acquires the object again and re-reads its guard. */
 int wf__shared_acquire(void *object, uint32_t write, void *frame);
 void wf__shared_unlock(void *object, uint32_t write);
-int wf__shared_watch(void *object, uint32_t write, void *frame);
+void wf__shared_unlock_unwritten(void *object, uint32_t write);
+int wf__shared_watch(void *object, uint32_t write, void *frame, const void *test);
 /* The acquire of a statement that already holds a keyed table's entries,
  * which keeps its driver and never suspends: it returns once the running
  * context holds the object. */
@@ -509,7 +529,16 @@ void wf__table_unlock_entry(struct wf_table_entry *entry, uint32_t present);
  * until the release.  A released hold is empty; one begun and never taken
  * is released too, which gives back its memory. */
 void wf__atomic_group_take(void *record, uint64_t count);
-/* Each group has one entry layout; object-only groups consume no metadata. */
+/* The same take for a statement's first group, which holds nothing yet: it
+ * acquires the group's first object as `wf__shared_acquire` does, answering
+ * nonzero, with nothing held, when the frame must suspend and call again,
+ * and zero once it holds every target. */
+int wf__atomic_group_acquire(void *record, uint64_t count, void *frame);
+/* Each group has one entry layout; object-only groups consume no metadata.
+ * A record's target is its object, its table hold or null, and a 32-bit
+ * flag saying whether the statement may write that ordinary object; the
+ * release gives up an object no target may write as
+ * `wf__shared_unlock_unwritten` does. */
 void wf__atomic_group_release(void *record, uint64_t count, uint64_t tag_offset,
                               uint32_t tag_width, uint64_t none_tag);
 void wf__table_hold_read(void *hold);
@@ -532,11 +561,13 @@ void wf__table_hold_release(void *hold, uint64_t tag_offset, uint32_t tag_width,
  * the context parks, the frame suspends, and once such a statement ends
  * the context resumes and the statement takes its units again.  Either way
  * the watch is then registered nowhere.  A release that follows the
- * statement's own false guard writes nothing and wakes no one. */
-#define WF_WATCH_SIZE 152u
+ * statement's own false guard writes nothing and wakes no one.  The test
+ * `wf__watch_object` and `wf__shared_watch` take stays in the statement's
+ * frame, unchanged, until the watch is registered nowhere. */
+#define WF_WATCH_SIZE 248u
 #define WF_WATCH_ALIGN 8u
 void wf__watch_begin(void *watch);
-void wf__watch_object(void *watch, void *object);
+void wf__watch_object(void *watch, void *object, const void *test);
 void wf__watch_table(void *watch, void *table);
 int wf__watch_park(void *watch, void *frame);
 
@@ -547,7 +578,8 @@ int wf__watch_park(void *watch, void *frame);
  * `wf__watch_unit`, which registers a watch on such a list.  The moments
  * the runtime's tests observe, which they define `wf__watch_seen` to see: a
  * statement that wrote a watched unit wakes its watches, and a park answers
- * at once for a wake that came first. */
+ * at once for a wake that came first; READY observes each detached watch,
+ * including a notification preceding its park. */
 struct wf_watch_link;
 typedef struct wf_watch_list {
     uint32_t count;
@@ -555,8 +587,67 @@ typedef struct wf_watch_list {
 } wf_watch_list;
 void wf__watch_unit(void *watch, wf_watch_list *list);
 void wf__watch_written(wf_watch_list *list);
-enum { WF_WATCH_WRITTEN = 1, WF_WATCH_EARLY };
+enum { WF_WATCH_WRITTEN = 1, WF_WATCH_EARLY, WF_WATCH_READY, WF_WATCH_TESTED };
 void wf__watch_seen(unsigned moment);
+
+/* A wake test [SHARE-3]: a condition over one object's state that the
+ * watching statement's guard implies, so a statement that leaves the object
+ * in a state where the test is false need not wake the watch.  `program` is
+ * the test's first `length` codes in postfix order: code i in 1..4 is the
+ * value of atom i - 1, WF_WAKE_AND and WF_WAKE_OR combine the two values
+ * before them, and the one value left is the test's; length 0 is a test
+ * that always holds.  An atom compares the scalar of `width` bytes (1, 2, 4
+ * or 8) at `offset` in the state, read as signed under WF_WAKE_SIGNED and
+ * as its low bit alone under WF_WAKE_BIT, with the scalar of the same form
+ * at `other` under WF_WAKE_FIELD and otherwise with `value`, which holds
+ * the operand extended to 64 bits as the scalar is.  Unused bytes are zero,
+ * so two waiters' tests of one condition are equal byte for byte through
+ * their last used atom. */
+#define WF_WAKE_ATOMS 4u
+#define WF_WAKE_PROGRAM 7u
+#define WF_WAKE_TEST_SIZE 104u
+enum { WF_WAKE_AND = 8, WF_WAKE_OR = 9 };
+enum { WF_WAKE_EQUAL, WF_WAKE_NOT_EQUAL, WF_WAKE_LESS, WF_WAKE_LESS_EQUAL,
+       WF_WAKE_GREATER, WF_WAKE_GREATER_EQUAL };
+enum { WF_WAKE_SIGNED = 1, WF_WAKE_BIT = 2, WF_WAKE_FIELD = 4 };
+typedef struct wf_wake_atom {
+    uint32_t offset;
+    uint32_t other;
+    uint64_t value;
+    uint8_t width;
+    uint8_t flags;
+    uint8_t comparison;
+    uint8_t unused[5];
+} wf_wake_atom;
+typedef struct wf_wake_test {
+    uint8_t length;
+    uint8_t program[WF_WAKE_PROGRAM];
+    wf_wake_atom atoms[WF_WAKE_ATOMS];
+} wf_wake_test;
+
+/* Diagnostic guard counters, off unless a build defines WF_GUARD_COUNTERS
+ * to 1; a build without them compiles no counter code. */
+#ifndef WF_GUARD_COUNTERS
+#define WF_GUARD_COUNTERS 0
+#endif
+#if WF_GUARD_COUNTERS
+/* Diagnostic callers mark once before the retry label of their next ordinary
+ * wf__shared_acquire. Marks 1,65,... per context sample real monotonic elapsed
+ * time from first acquire entry through successful acquisition, including
+ * spins, parks, resumption and cooperative passes. Never marks shared_take
+ * or native cancellation acquisition; a pending mark cannot be marked again.
+ * The caller supplies the meaning (the guard probe marks return statements);
+ * the runtime does not inspect the object or the source program. */
+void wf__guard_measure_next_acquire(void);
+#endif
+/* The per-watch READY observer is native-test-only, including builds without
+ * LTO. Production and diagnostic counter builds add no test-observer call. */
+#ifndef WF_GUARD_TEST_HOOKS
+#define WF_GUARD_TEST_HOOKS 0
+#endif
+/* Tests may replace the guard-age clock; production reads the platform's
+ * monotonic clock only for registration and object notification sweeps. */
+uint64_t wf__guard_clock_ns(void);
 
 /* Emitted heap storage uses the optional heap.c unit; accounting and reads
  * are always available without allocator references. Resident observation

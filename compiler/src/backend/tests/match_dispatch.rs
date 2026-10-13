@@ -1011,14 +1011,14 @@ fn parity_kind(value: &Parity) -> result: u8 reads(value) {
 fn main() -> status: ExitStatus pure {
   let first = Parity::Even();
   let high = Parity::Odd();
-  let held = array_filled::<Parity, 2>(value: first);
-  set held[1_u64] = high;
-  let kind = parity_kind(value: &held[1_u64]);
+  let observed = array_filled::<Parity, 2>(value: first);
+  set observed[1_u64] = high;
+  let kind = parity_kind(value: &observed[1_u64]);
   if kind != 1_u8 {
     return exit_status(code: 2_u8);
   }
-  let equal = same_parity(left: held[1_u64], right: high);
-  let unequal = different_parity(left: held[0_u64], right: high);
+  let equal = same_parity(left: observed[1_u64], right: high);
+  let unequal = different_parity(left: observed[0_u64], right: high);
   if equal {
   } else {
     return exit_status(code: 3_u8);
@@ -1115,7 +1115,8 @@ fn high_tags_keep_their_bits_through_construction_storage_match_and_dispatch() {
         // Direct IR emission has the callable ABI; executable builds add
         // their selected entry's launcher after emission.
         module.append(crate::driver::launcher::render(&program, "main")
-            .expect("the high-tag fixture's main has an executable launcher"));
+            .expect("the high-tag fixture's main has an executable launcher"))
+            .expect("the launcher module appends");
         let module = module.into_string();
         let slots = usize::try_from(high).unwrap() + 1;
         assert_split_with_table_slots(&module, "wf_run", 2, slots);

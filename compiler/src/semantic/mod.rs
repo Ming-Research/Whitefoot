@@ -37,7 +37,8 @@ pub(crate) use check::check_semantics_arithmetic_obligations;
 #[cfg(test)]
 pub(crate) use check::check_semantics_division_obligations;
 pub(crate) use check::{
-    ProofReceipts, check_semantics_with_receipts, header_invariant_scope_repair,
+    ProofReceipts, check_semantics_with_receipts, executable_caller_repair,
+    executable_runner_repair, header_invariant_scope_repair,
 };
 pub(crate) use entry::{EntryRejection, EntryRequest};
 
@@ -100,6 +101,8 @@ pub enum SemanticRule {
     /// Atomic statements: the target's type, and a guard or block free of
     /// waiting calls, nested atomic statements and guard writes.
     Share2,
+    /// Typed snapshot resource-free owned closure.
+    Snap1,
     /// Type invariants: their formation over a struct's own fields and the
     /// publicity of that struct's fields [TYPE-11].
     Type11,
@@ -197,6 +200,8 @@ pub enum SemanticRule {
     Fn6,
     /// Finite atomic function requirement goal.
     Fn8,
+    /// Ordinary coherent held-reference origin and stability contract.
+    Hold1,
     /// Verified narrow normal-return relation.
     Fn9,
     /// Guaranteed direct self-tail call and activation replacement.
@@ -294,12 +299,14 @@ impl SemanticRule {
             Self::Fn5 => "FN-5",
             Self::Fn6 => "FN-6",
             Self::Fn8 => "FN-8",
+            Self::Hold1 => "HOLD-1",
             Self::Fn9 => "FN-9",
             Self::Fn10 => "FN-10",
             Self::Wait1 => "WAIT-1",
             Self::Wait3 => "WAIT-3",
             Self::Share1 => "SHARE-1",
             Self::Share2 => "SHARE-2",
+            Self::Snap1 => "SNAP-1",
             Self::Call4 => "CALL-4",
             Self::Eff1 => "EFF-1",
             Self::Eff2 => "EFF-2",
@@ -380,7 +387,8 @@ impl SemanticRule {
             Self::Fn4 => Self::Fn5,
             Self::Fn5 => Self::Fn6,
             Self::Fn6 => Self::Fn8,
-            Self::Fn8 => Self::Fn9,
+            Self::Fn8 => Self::Hold1,
+            Self::Hold1 => Self::Fn9,
             Self::Fn9 => Self::Call4,
             Self::Call4 => Self::Fn10,
             Self::Fn10 => Self::Wait1,
@@ -394,7 +402,8 @@ impl SemanticRule {
             Self::Mod6 => Self::Wait3,
             Self::Wait3 => Self::Share1,
             Self::Share1 => Self::Share2,
-            Self::Share2 => Self::Ent2,
+            Self::Share2 => Self::Snap1,
+            Self::Snap1 => Self::Ent2,
             Self::Ent2 => Self::Msr3,
             Self::Msr3 => Self::Call6,
             Self::Call6 => Self::Inv1,
@@ -463,29 +472,31 @@ impl SemanticRule {
             Self::Fn5 => 42,
             Self::Fn6 => 43,
             Self::Fn8 => 44,
-            Self::Fn9 => 45,
-            Self::Call4 => 46,
-            Self::Fn10 => 47,
-            Self::Wait1 => 48,
-            Self::Eff1 => 49,
-            Self::Eff2 => 50,
-            Self::Eff5 => 51,
-            Self::Err2 => 52,
-            Self::Err3 => 53,
-            Self::Mod5 => 54,
-            Self::Mod6 => 55,
-            Self::Wait3 => 56,
-            Self::Share1 => 57,
-            Self::Share2 => 58,
-            Self::Ent2 => 59,
-            Self::Msr3 => 60,
-            Self::Call6 => 61,
-            Self::Inv1 => 62,
-            Self::Prf1 => 63,
-            Self::Range1 => 64,
-            Self::Range3 => 65,
-            Self::Range4 => 66,
-            Self::Range5 => 67,
+            Self::Hold1 => 45,
+            Self::Fn9 => 46,
+            Self::Call4 => 47,
+            Self::Fn10 => 48,
+            Self::Wait1 => 49,
+            Self::Eff1 => 50,
+            Self::Eff2 => 51,
+            Self::Eff5 => 52,
+            Self::Err2 => 53,
+            Self::Err3 => 54,
+            Self::Mod5 => 55,
+            Self::Mod6 => 56,
+            Self::Wait3 => 57,
+            Self::Share1 => 58,
+            Self::Share2 => 59,
+            Self::Snap1 => 60,
+            Self::Ent2 => 61,
+            Self::Msr3 => 62,
+            Self::Call6 => 63,
+            Self::Inv1 => 64,
+            Self::Prf1 => 65,
+            Self::Range1 => 66,
+            Self::Range3 => 67,
+            Self::Range4 => 68,
+            Self::Range5 => 69,
         }
     }
 }
@@ -719,6 +730,8 @@ pub enum SemanticIssueKind {
         expected: String,
         /// The exact type, mode, or written form found there.
         found: String,
+        /// A construct-specific repair when the mismatch identifies one.
+        mechanical_fix: Option<String>,
     },
     /// [OP-10, OP-14] an operand whose shape is outside the operation's
     /// admitted set.
@@ -768,7 +781,7 @@ pub enum SemanticIssueKind {
         /// The nominal whose `linear` declaration created the obligation.
         obligation: String,
         /// Exact restructuring required by PROV-6.
-        mechanical_fix: &'static str,
+        mechanical_fix: String,
     },
     /// [PROV-6] a consume of a proper sub-place of a value linear in this
     /// scope, with no commit reinitializing that sub-place.
@@ -802,7 +815,7 @@ pub enum SemanticIssueKind {
         /// The predecessor that reaches the join with the binding dead.
         dead_predecessor: String,
         /// Exact restructuring required by LIV-1.
-        mechanical_fix: &'static str,
+        mechanical_fix: String,
     },
     /// [WIN-3] an assignment over a place whose final selected type is
     /// linear. Assigning over an owned place releases the old value when it
@@ -896,13 +909,25 @@ pub enum SemanticIssueKind {
     },
     /// `move` was written for a copy value.
     MoveOfCopy {
+        /// The place as written at this use.
+        binding: String,
+        /// Its instantiated source type.
+        ty: String,
+        /// Why the written consume is unavailable for this value.
+        reason: String,
         /// Exact mechanical repair required by OWN-1.
-        mechanical_fix: &'static str,
+        mechanical_fix: String,
     },
     /// An affine value was used without its required consuming spelling.
     BareAffineUse {
+        /// The place as written at this use.
+        binding: String,
+        /// Its instantiated source type.
+        ty: String,
+        /// The first part that makes it non-copy, in declaration order.
+        reason: String,
         /// Exact mechanical repair required by OWN-1.
-        mechanical_fix: &'static str,
+        mechanical_fix: String,
     },
     /// [TYPE-2] a constructor `call` or a destructuring `let_stmt` named an
     /// opaque struct, whose constructor entry exists to be refused.
@@ -933,6 +958,15 @@ pub enum SemanticIssueKind {
         /// The invalidating event [REF-2] names.
         event: &'static str,
         /// Exact restructuring required by REF-2.
+        mechanical_fix: &'static str,
+    },
+    /// [REF-1] a new payload selection lacks its current variant fact.
+    UnestablishedPayloadVariant {
+        /// The enum place whose variant must be established.
+        place: String,
+        /// The variant selected by the source payload suffix.
+        variant: String,
+        /// Exact restructuring required by REF-1.
         mechanical_fix: &'static str,
     },
     /// [REF-1] `&p` where `p` is a reference variable, which is not storage
@@ -967,7 +1001,7 @@ pub enum SemanticIssueKind {
     /// A borrow holder was used without the required explicit dereference.
     MissingDereference {
         /// Exact mechanical repair selected by TYPE-7.
-        mechanical_fix: &'static str,
+        mechanical_fix: String,
     },
     /// [TYPE-7] a range referent was used without an admitted projection.
     RangeReferentUse {
@@ -984,7 +1018,14 @@ pub enum SemanticIssueKind {
         mechanical_fix: &'static str,
     },
     /// The selected operation family has no row for the written arguments.
-    InvalidOperation,
+    InvalidOperation {
+        /// The operation spelling when a concrete repair is available.
+        operation: Option<String>,
+        /// The source types of the operands or conversion endpoints.
+        operand_types: Option<Vec<String>>,
+        /// The source change admitted by this operation's domain.
+        mechanical_fix: Option<String>,
+    },
     /// [OP-16] equality has no row for this type or one of its parts.
     InvalidEqualityType {
         /// The first non-equality part, in declaration order, and its repair.
@@ -1253,6 +1294,11 @@ pub enum SemanticIssueKind {
         /// The repair [DIAG-1].
         mechanical_fix: &'static str,
     },
+    /// A guard calls a boundary that can reach a one-shot decision cell [SHARE-2].
+    AtomicGuardDecisionCell {
+        /// The repair [DIAG-1].
+        mechanical_fix: &'static str,
+    },
     /// An atomic statement's guard whose call reads or writes a path with a
     /// self-changing host handle part [SHARE-2, PRE-2].
     AtomicGuardReadsSelfChanging {
@@ -1292,6 +1338,10 @@ pub enum SemanticIssueKind {
     FunctionFallthrough,
     /// A requirement entry uses a construct outside the admitted FN-8 goal subset.
     InvalidRequires,
+    /// Structural callable requirement failed with ordinary repair guidance.
+    InvalidHeldContract { reason: String, mechanical_fix: &'static str },
+    /// A selected snapshot input closure contains a resource vertex.
+    SnapshotResource { owned_path: String, mechanical_fix: &'static str },
     /// An ensures selector does not match the concrete result class FN-9 admits.
     InvalidPostconditionSelector {
         /// The admitted result data and routes, and how to remove this clause.
@@ -1304,9 +1354,9 @@ pub enum SemanticIssueKind {
         /// route.
         mechanical_fix: String,
     },
-    /// A variant selector does not spell exact `Ok(value: result)`.
+    /// A route does not bind exactly one declared field of its variant.
     InvalidPostconditionFields {
-        /// Exact closed field list required by the admitted selector.
+        /// Declared field names from which one routed field must be selected.
         required_fields: Vec<String>,
     },
     /// The symbolic result candidate conflicts with a live declaration.
@@ -1421,7 +1471,14 @@ pub enum SemanticIssueKind {
         mechanical_fix: String,
     },
     /// A propagation operand or enclosing result has the wrong Result shape.
-    InvalidPropagation,
+    InvalidPropagation {
+        /// The enclosing function's declared return type.
+        enclosing_return_type: String,
+        /// The propagation operand's instantiated type.
+        operand_type: String,
+        /// Handle the operand under this function's return boundary.
+        mechanical_fix: String,
+    },
     /// `give` is absent, misplaced, duplicated, or followed by a statement.
     InvalidGive,
     /// [GIVE-1] no arm or branch of a value initializer supplies a value,
@@ -1437,7 +1494,7 @@ pub enum SemanticIssueKind {
         /// Which EFF-1 condition this row failed.
         reason: &'static str,
         /// Exact repair required by EFF-1 for that condition.
-        mechanical_fix: &'static str,
+        mechanical_fix: String,
     },
     /// A row carries an entry that another of its entries covers, such as
     /// `reads(p)` or `writes(p.x)` beside `writes(p)`, or `reads(p.x)` beside
@@ -1485,6 +1542,15 @@ pub(crate) fn written_count(count: usize, noun: &str) -> String {
 }
 
 impl SemanticIssueKind {
+    /// An operation-domain rejection without a construct-specific repair.
+    pub(crate) fn invalid_operation() -> Self {
+        Self::InvalidOperation {
+            operation: None,
+            operand_types: None,
+            mechanical_fix: None,
+        }
+    }
+
     /// [FN-9] preserves the selector refusal while explaining its admitted
     /// forms. Wording belongs to the shared repair module.
     pub(crate) const fn invalid_postcondition_selector() -> Self {
@@ -1506,6 +1572,7 @@ impl SemanticIssueKind {
         Self::TypeMismatch {
             expected: expected.into(),
             found: found.into(),
+            mechanical_fix: None,
         }
     }
 }

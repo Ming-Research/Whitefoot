@@ -233,7 +233,7 @@ pub(crate) struct EntailmentContext<'check> {
     pub(crate) verified_postconditions: &'check [Vec<&'check CheckedPostcondition>],
     pub(crate) verified_postcondition_proofs: &'check [Vec<&'check FunctionPostconditionProof>],
     /// [FN-9, TYPE-11, DIAG-2] each concrete function's component and, while
-    /// that component is being verified, the type-invariant postconditions
+    /// that component is being verified, all the postconditions
     /// it will publish, indexed by concrete [`FunctionId`]. A call to a
     /// member of the caller's own component receives exactly these, as
     /// induction hypotheses; empty outside the component schedule.
@@ -243,12 +243,12 @@ pub(crate) struct EntailmentContext<'check> {
     pub(crate) binding_names: &'check [String],
 }
 
-/// [DIAG-2] one function's component ordinal and the type-invariant
-/// postconditions [TYPE-11] its component is verifying, each with the
+/// [DIAG-2] one function's component ordinal and all the
+/// postconditions its component is verifying, each with the
 /// summary identity the component's atomic publication gives it.
 pub(crate) struct ComponentPostconditions<'check> {
     pub(crate) component: u32,
-    pub(crate) generated: Vec<(&'check CheckedPostcondition, VerifiedPostconditionSummary)>,
+    pub(crate) hypotheses: Vec<(&'check CheckedPostcondition, VerifiedPostconditionSummary)>,
 }
 
 impl EntailmentContext<'_> {
@@ -303,7 +303,7 @@ impl EntailmentContext<'_> {
     }
 
     /// [DIAG-2] the induction hypotheses a call from `caller` to `callee`
-    /// receives: the callee's type-invariant postconditions when the two
+    /// receives: all of the callee's postconditions when the two
     /// are members of one component being verified, and `None` otherwise.
     pub(crate) fn component_postconditions(
         &self,
@@ -441,6 +441,28 @@ pub(crate) struct ObligationOutcome {
     /// [ENT-5]; its repair names them [DIAG-1]. Every other occurrence
     /// retains none.
     pub(crate) killed_by: Vec<MeasureKillNote>,
+    /// [FN-9] for a subscript of a place a postcondition forms, the selected
+    /// return it was judged at and how its repair reads the bound [DIAG-1].
+    /// Every other occurrence retains none.
+    pub(crate) selected_return: Option<SelectedReturnBound>,
+}
+
+/// [FN-9, DIAG-1] the selected return one subscript of a postcondition place
+/// was judged at, with the bound spelled for its repair.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct SelectedReturnBound {
+    /// The `return_stmt` or propagating `let_stmt` that selects the clause.
+    pub(crate) statement: NodePath,
+    /// The bound spelled as a requirement, where every parameter denotes its
+    /// function-entry state [FN-8].
+    pub(crate) requirement: String,
+    /// The formal offsets, at this subscript or above it, that the body has
+    /// rebound by the return, each spelled as a code span: the place reads
+    /// them at function entry, a value no term names there [FN-9].
+    pub(crate) rebound: Vec<String>,
+    /// The length of a base the place reads at function entry though the
+    /// body may have changed it, spelled as the body spells it [MSR-3].
+    pub(crate) entry_lengths: Vec<String>,
 }
 
 /// [DIAG-1] one write whose kill of a measure's facts an undischarged bounds
@@ -1106,9 +1128,10 @@ impl RelationProvenance {
 }
 
 /// Caller-local reference to one authorized S12 publication. Direct
-/// provenance names an earlier-component verified summary; formal-boundary
-/// provenance additionally names the retained FN-4 query and its verified
-/// actual premises. It carries no callee- or query-local [`DerivationId`].
+/// provenance names a verified summary or same-component induction hypothesis;
+/// formal-boundary provenance additionally names the retained FN-4 query and
+/// its available actual premises. It carries no callee- or query-local
+/// [`DerivationId`].
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct VerifiedPostconditionSummaryRef {
     pub(crate) summary: RelationProvenance,
@@ -1561,10 +1584,9 @@ pub(crate) fn postcondition_schedule<'function>(
     functions: impl IntoIterator<Item = &'function CheckedFunction>,
 ) -> Option<PostconditionSchedule> {
     let functions = functions.into_iter().collect::<Vec<_>>();
-    if !functions
-        .iter()
-        .any(|function| !function.postconditions.is_empty())
-    {
+    if !functions.iter().any(|function| {
+        !function.postconditions.is_empty() || !function.range_facts.postconditions.is_empty()
+    }) {
         return Some(PostconditionSchedule::default());
     }
     let mut graph = vec![Vec::new(); functions.len()];
@@ -1599,10 +1621,10 @@ pub(crate) fn postcondition_schedule<'function>(
     }
     // [FN-9] a caller's component treats an instance of another module's
     // generic callable as calling every function-kind actual supplied to it,
-    // whether or not the instance's body calls them. Components only grow,
-    // so no circular proof is admitted, and an edit to that body cannot
-    // change which summaries the calling module's proofs may use. Within one
-    // module the rule adds nothing.
+    // whether or not the instance's body calls them. Interface-defined edges
+    // keep summary availability independent of edits to that body. Grouped
+    // member verification and return-order induction justify hypotheses in
+    // the resulting component [DIAG-2]. Within one module the rule adds nothing.
     let mut conservative = Vec::new();
     for (caller, callees) in graph.iter().enumerate() {
         for callee in callees {
