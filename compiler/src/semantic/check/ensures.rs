@@ -1375,7 +1375,8 @@ impl<'unit> DeclarationInventory<'unit> {
         Ok(Some((usage.origin.clone(), ty)))
     }
     /// `entry` selects proof state, never an executable place expression.
-    /// Its argument must be the declaration's own exclusive parameter.
+    /// Its argument is a reference parameter the row writes [MSR-3]; range
+    /// postconditions read that same entry storage [RANGE-1].
     pub(super) fn check_entry_formers(
         &self,
         function: &FunctionSignature,

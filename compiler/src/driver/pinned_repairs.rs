@@ -16,6 +16,7 @@ mod call_separations;
 mod collisions_and_killed_facts;
 mod content_moves;
 mod floats;
+mod interface_applications;
 mod prelude_opaque;
 mod recursive_effects;
 mod selector_scope;
@@ -1540,6 +1541,62 @@ fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: v);
 }
 "#],
+    },
+    RepairPair {
+        // [OP-4, FORM-2] a bound over a window inside an enum payload names the variant and its payload field, and the window's own measure follows by name.
+        name: "bounds-below-an-enum-payload-and-field.wf",
+        rejected: br#"struct Holder {
+  items: Slots<u64, 4>;
+  tag: u64;
+}
+
+fn get(h: &Option<Holder>, i: u64) -> result: u64 reads(h) {
+  match &h^ {
+    Some(value: v) => {
+      let x = v^.items[i];
+      return x;
+    }
+    None() => {
+      return 0_u64;
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "OP-4",
+        sentences: &[
+            "\n  residual: i < h^.Some.value.items.len\n",
+            "\n  mechanical_fix: `i < h^.Some.value.items.len` is not proved here: when facts that reach the access imply it, prove it with an `invariant` whose `use` steps name them (a loop's header `invariant` for a value the loop computes); or guard the access with `if i < h^.Some.value.items.len` where skipping it is the intended behavior\n",
+        ],
+        repaired: &[
+            br#"struct Holder {
+  items: Slots<u64, 4>;
+  tag: u64;
+}
+
+fn get(h: &Option<Holder>, i: u64) -> result: u64 reads(h) {
+  match &h^ {
+    Some(value: v) => {
+      if i < v^.items.len {
+        let x = v^.items[i];
+        return x;
+      }
+      return 0_u64;
+    }
+    None() => {
+      return 0_u64;
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        ],
     },
     RepairPair {
         name: "bounds-over-parameters.wf",
@@ -3776,6 +3833,7 @@ fn each_pinned_repair_is_carried_out_by_its_programs() {
         .chain(storage_destructuring::STORAGE_DESTRUCTURING)
         .chain(shared_maps::SHARED_MAPS)
         .chain(floats::FLOATS)
+        .chain(interface_applications::INTERFACE_APPLICATIONS)
         .chain(selector_scope::SELECTOR_SCOPE)
         .chain(collisions_and_killed_facts::COLLISIONS_AND_KILLED_FACTS)
     {
