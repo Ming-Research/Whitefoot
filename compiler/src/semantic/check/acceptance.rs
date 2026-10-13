@@ -21,6 +21,7 @@ use super::super::entailment::{
 use super::super::goal::{GoalExpression, GoalOperation};
 use super::super::model::{CheckedFunction, CheckedNumericType, FunctionId};
 use super::super::obligations::{ObligationRecord, RecordAnswer};
+use super::control::SHARE2_PROVE_THE_HANDLE_PLACES_APART;
 use super::{CheckStop, references, repairs};
 
 /// One position in the causal order in which obligations are decided.
@@ -486,7 +487,8 @@ impl<'unit> TypeContext<'unit> {
                 | SemanticRule::Eff5
                 | SemanticRule::Op11
                 | SemanticRule::Ref2
-                | SemanticRule::Ref4,
+                | SemanticRule::Ref4
+                | SemanticRule::Share2,
                 RecordAnswer::Obligation(index),
             ) => self.undischarged_obligation(function, record.rule, index),
             (
@@ -694,6 +696,12 @@ impl<'unit> TypeContext<'unit> {
                 SemanticIssueKind::UndischargedCallSeparation {
                     residual,
                     mechanical_fix: "prove before the `swap` that the two positions are distinct, or exchange places that are equal or disjoint without an ancestor relation",
+                }
+            }
+            (SemanticRule::Share2, ObligationFamily::AtomicTargetSeparation(_)) => {
+                SemanticIssueKind::UndischargedCallSeparation {
+                    residual,
+                    mechanical_fix: SHARE2_PROVE_THE_HANDLE_PLACES_APART,
                 }
             }
             (SemanticRule::Ref2, ObligationFamily::ReferencePreservation(query)) => {

@@ -2,6 +2,7 @@
 //! judged where the walk reaches it and its outcome is recorded.
 
 use super::*;
+use crate::semantic::model::CheckedSeparationOccasion;
 
 impl Input<'_, '_> {
     /// The [OWN-5] resolved place that root names.
@@ -246,6 +247,40 @@ impl Judging<'_, '_, '_> {
         all_discharged
     }
 
+    /// [SHARE-2, OWN-7] the pairs of one atomic statement's handle places
+    /// whose separation is a proof, judged where the statement begins, after
+    /// its handle places and index atoms are read and before it holds any
+    /// state. Only the statement's own queries are taken: a call or set in
+    /// its block owns the queries below it.
+    pub(super) fn judge_atomic_target_separations(
+        &mut self,
+        site: &crate::NodePath,
+        state: &mut ProofFlowState,
+    ) -> bool {
+        let pending: Vec<_> = self
+            .input
+            .function
+            .call_separations
+            .iter()
+            .enumerate()
+            .filter(|(query, _)| !self.output.judged_separations.contains(query))
+            .filter(|(_, separation)| {
+                separation.site == *site
+                    && matches!(
+                        separation.occasion,
+                        CheckedSeparationOccasion::AtomicTargets(_)
+                    )
+            })
+            .map(|(query, separation)| (query, separation.clone()))
+            .collect();
+        let mut all_discharged = true;
+        for (query, separation) in pending {
+            self.output.judged_separations.insert(query);
+            all_discharged &= self.judge_one_separation(query, &separation, state);
+        }
+        all_discharged
+    }
+
     /// One pair, by an ordered unresolved index candidate or by the four
     /// non-strict orderings [OWN-7] names for two range steps. Either empty-
     /// range ordering suffices because formation already proved start no
@@ -309,20 +344,26 @@ impl Judging<'_, '_, '_> {
                 .add_root(DerivationRootKind::BoundsObligation(ordinal), root);
         }
         self.output.obligations.push(ObligationOutcome {
-            node_path: separation.reference_use.as_ref()
-                .map_or_else(|| separation.site.clone(), |use_site| use_site.site.clone()),
-            family: if separation.reference_use.is_some() {
-                ObligationFamily::ReferencePreservation(
+            node_path: match (&separation.reference_use, &separation.occasion) {
+                (Some(use_site), _) => use_site.site.clone(),
+                (None, CheckedSeparationOccasion::AtomicTargets(target)) => target.clone(),
+                (None, _) => separation.site.clone(),
+            },
+            family: match (&separation.reference_use, &separation.occasion) {
+                (Some(_), _) => ObligationFamily::ReferencePreservation(
                     u32::try_from(query).expect("reference-preservation queries exceed u32"),
-                )
-            } else if separation.exchange {
-                ObligationFamily::ExchangeSeparation(
+                ),
+                (None, CheckedSeparationOccasion::Exchange) => ObligationFamily::ExchangeSeparation(
                     u32::try_from(query).expect("exchange-separation queries exceed u32"),
-                )
-            } else {
-                ObligationFamily::CallSeparation(
+                ),
+                (None, CheckedSeparationOccasion::AtomicTargets(_)) => {
+                    ObligationFamily::AtomicTargetSeparation(
+                        u32::try_from(query).expect("atomic-target separation queries exceed u32"),
+                    )
+                }
+                (None, CheckedSeparationOccasion::Call) => ObligationFamily::CallSeparation(
                     u32::try_from(query).expect("call-separation queries exceed u32"),
-                )
+                ),
             },
             conjunct: 0,
             canonical_goal: None,
