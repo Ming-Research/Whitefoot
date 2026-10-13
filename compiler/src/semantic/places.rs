@@ -1683,7 +1683,8 @@ impl PlaceMap {
 mod tests {
     use super::{
         CaptureId, CapturedRange, CapturedTerm, CapturedValue, DescendantTarget, PlaceMap,
-        PlaceRoot, PlaceStep, ResolvedPlace, SeparationOracle, UnprovedSeparations, WindowPart,
+        PlaceRoot, PlaceStep, ProjectedSelector, ResolvedPlace, SeparationOracle,
+        UnprovedSeparations, WindowPart, places_overlap,
     };
     use crate::semantic::model::{BindingId, CheckedLoopId, CheckedMeasure, CheckedType};
 

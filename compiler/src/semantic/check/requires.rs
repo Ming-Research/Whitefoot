@@ -2137,7 +2137,7 @@ impl<'unit> TypeContext<'unit> {
     /// whose type is its element type [TYPE-8]: its first subscript selects
     /// an element of that type rather than indexing a value of it.
     fn clause_member_projections(
-        &self,
+        &mut self,
         check_context: &CheckContext<'_>,
         suffixes: &[NodeId],
         mut ty: CheckedType,
@@ -2234,7 +2234,7 @@ impl<'unit> TypeContext<'unit> {
     /// ordinary support. Earlier definitions are erased before this judgment.
     /// A written element read or computation cannot be a selector.
     fn clause_subscript_projection(
-        &self,
+        &mut self,
         check_context: &CheckContext<'_>,
         suffix: NodeId,
         base: CheckedType,
@@ -2431,7 +2431,7 @@ impl<'unit> TypeContext<'unit> {
     }
 
     fn build_clause_place(
-        &self,
+        &mut self,
         check_context: &CheckContext<'_>,
         place: NodeId,
         bindings: &HashMap<DeclarationId, LocalBinding>,
@@ -2455,7 +2455,7 @@ impl<'unit> TypeContext<'unit> {
     /// projection [FN-8, CALL-6]; the callee body, where [REF-1] makes the
     /// parameter name the path itself, drops it instead.
     fn build_clause_place_inner(
-        &self,
+        &mut self,
         check_context: &CheckContext<'_>,
         place: NodeId,
         bindings: &HashMap<DeclarationId, LocalBinding>,

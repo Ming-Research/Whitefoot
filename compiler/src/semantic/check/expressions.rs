@@ -73,9 +73,9 @@ impl ResolvedPlaceSet {
         &mut self,
         step: super::super::places::PlaceStep,
     ) {
-        self.identity.path.push(step);
+        self.identity.path.push(step.clone());
         for member in &mut self.members {
-            member.path.push(step);
+            member.path.push(step.clone());
         }
     }
 

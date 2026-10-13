@@ -4,7 +4,7 @@
 
 use super::requires::{ExpandedClauseDatum, ExpandedClauseExpression};
 use super::*;
-use crate::semantic::model::{CheckedEffectStep, CheckedMeasure};
+use crate::semantic::model::{CheckedEffectStep, CheckedMeasure, IntegerType};
 use crate::semantic::places::{CaptureId, CapturedTerm, CapturedValue, PlaceStep};
 use crate::semantic::range_facts::{
     CheckedRangeClause, CheckedRangePlace, CheckedRangeProjection, CheckedRangeRoot,

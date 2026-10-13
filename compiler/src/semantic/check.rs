@@ -53,7 +53,7 @@ use super::model::{
     CheckedFunction, CheckedGenericRequirement, CheckedMode, CheckedNominal, CheckedNominalKind,
     CheckedNumericType, CheckedParameter, CheckedProgramData, CheckedSetTarget, CheckedShared,
     CheckedStatement, CheckedType, CheckedValue, DerivedConst, DerivedConstId, FunctionId,
-    NominalId, ValueInitializerKind, evaluate_const_operation,
+    IntegerType, NominalId, ValueInitializerKind, evaluate_const_operation,
 };
 use super::permission::{PermissionSignature, analyze_permission, plan_permission_separations};
 use super::permission_ledger::{LedgerSource, prepare_storage_ledger, render_ledger};

@@ -2138,8 +2138,8 @@ impl Reasoning<'_, '_, '_> {
     ) -> Option<ProofResult> {
         if query.formations.is_empty() {
             return self.prove_range_separation(
-                query.left,
-                query.right,
+                query.left.clone(),
+                query.right.clone(),
                 &state.facts,
                 &state.affine,
             );
@@ -2157,7 +2157,12 @@ impl Reasoning<'_, '_, '_> {
                 None => affine.ranges.remove(&capture),
             };
         }
-        self.prove_range_separation(query.left, query.right, &state.facts, &affine)
+        self.prove_range_separation(
+            query.left.clone(),
+            query.right.clone(),
+            &state.facts,
+            &affine,
+        )
     }
 
     /// Submit a finite normalization component to the ordinary numeric

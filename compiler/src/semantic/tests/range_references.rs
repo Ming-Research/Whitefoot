@@ -1294,10 +1294,10 @@ fn a_borrow_below_a_direct_page_selector_reuses_the_guarded_length() {
                 1,
                 "direct and borrowed inner.len must share one term"
             );
-            let PlaceStep::Page(offset) = lengths[0].path[1] else {
+            let PlaceStep::Page(offset) = &lengths[0].path[1] else {
                 unreachable!("filtered page step");
             };
-            assert_eq!(offset, offset.goal_identity());
+            assert_eq!(offset, &offset.goal_identity());
         },
     );
 }

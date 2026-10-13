@@ -1779,8 +1779,8 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                     assert!(detail.affine_images.is_none());
                 }
                 DerivationConclusion::IndexSeparation {
-                    left: *left,
-                    right: *right,
+                    left: left.clone(),
+                    right: right.clone(),
                 }
             }
             DerivationNode::BooleanIntroduction {
@@ -2746,7 +2746,7 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                 let DerivationConclusion::RangeSeparation { left, right, .. } = conclusion else {
                     panic!("a discharged PAR-1 range query retains its exact conclusion");
                 };
-                assert_eq!((*left, *right), (proof.query.left, proof.query.right));
+                assert_eq!((left, right), (&proof.query.left, &proof.query.right));
             }
             DerivationRootKind::CountedS11 { occurrence, atom } => {
                 counted_root_order.push((occurrence, atom));

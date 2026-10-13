@@ -2635,7 +2635,7 @@ fn resolve_storage_places(
             .steps
             .iter()
             .chain(&named.suffix)
-            .copied()
+            .cloned()
             .collect::<Vec<_>>();
         into.extend(storage_places_at(places, named.root, &path));
     } else if let Some(binding) = expression.and_then(named_binding) {

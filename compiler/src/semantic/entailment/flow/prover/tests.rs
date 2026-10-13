@@ -118,7 +118,7 @@ fn joined_opaque_views_keep_origin_sign_transport_without_numeric_sources() {
         let expression = |admission| {
             GoalExpression::Datum(GoalDatum::Place {
                 root: BindingId(0),
-                projections: vec![GoalProjection::Subscript(captured)],
+                projections: vec![GoalProjection::Subscript(captured.clone())],
                 ty: CheckedType::Bool,
                 admission,
             })
@@ -127,7 +127,7 @@ fn joined_opaque_views_keep_origin_sign_transport_without_numeric_sources() {
         let mut indexed_admission = GoalAdmission::plain_range(CheckedType::Bool);
         indexed_admission
             .projections
-            .push(GoalProjection::Subscript(captured));
+            .push(GoalProjection::Subscript(captured.clone()));
         let indexed_expression = expression(indexed_admission);
         let plain = analyzer
             .reasoning()
@@ -213,7 +213,7 @@ fn joined_opaque_views_project_a_genuine_ordinary_let_origin() {
         let place = |admission| {
             GoalExpression::Datum(GoalDatum::Place {
                 root: BindingId(0),
-                projections: vec![GoalProjection::Subscript(captured)],
+                projections: vec![GoalProjection::Subscript(captured.clone())],
                 ty,
                 admission,
             })
@@ -238,7 +238,7 @@ fn joined_opaque_views_project_a_genuine_ordinary_let_origin() {
         let mut indexed_admission = GoalAdmission::plain_range(ty);
         indexed_admission
             .projections
-            .push(GoalProjection::Subscript(captured));
+            .push(GoalProjection::Subscript(captured.clone()));
         let indexed_value = place(indexed_admission);
         let indexed = analyzer
             .reasoning()

@@ -754,7 +754,7 @@ impl Reasoning<'_, '_, '_> {
             let place = ResolvedPlace {
                 atomic_aliases: Vec::new(),
                 root: PlaceRoot::Binding(binding),
-                path: step.into_iter().chain(path.iter().cloned()).collect(),
+                path: step.iter().cloned().chain(path.iter().cloned()).collect(),
             };
             let receiver = match measure {
                 None => Some(self.vocabulary.terms.intern(TermKind::Place(place, ty))),

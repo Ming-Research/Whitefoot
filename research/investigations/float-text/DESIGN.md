@@ -781,7 +781,11 @@ so the Stage 1 estimate assumes E2 passes without a gap.
   admits ±2^62 itself (confidence 3). Disposition: E1 settles it, then the
   Firn/Halo item's text.
 
-## Ordinary contracts over integer elements (decision brief, 2026-10-13)
+<a id="ordinary-contracts-over-integer-elements"></a>
+
+## Ordinary contracts over integer elements
+
+Decision brief, written 2026-10-13.
 
 ### Observation and independent witness
 

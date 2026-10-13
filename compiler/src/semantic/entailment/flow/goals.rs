@@ -38,7 +38,7 @@ impl Input<'_, '_> {
             .enumerate()
             .map(|(index, field)| {
                 let projection = GoalProjection::Field(u32::try_from(index).ok()?);
-                let left = left.clone().with_projection(projection, field.ty)?;
+                let left = left.clone().with_projection(projection.clone(), field.ty)?;
                 let right = right.clone().with_projection(projection, field.ty)?;
                 let row = if matches!(
                     field.ty,

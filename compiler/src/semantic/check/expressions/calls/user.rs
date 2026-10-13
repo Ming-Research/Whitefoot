@@ -99,7 +99,8 @@ impl SeparationOracle for EntryPairSeparations<'_> {
     fn index_is_live(&self, window: &ResolvedPlace, index: CapturedValue) -> bool {
         let depth = window.path.len();
         self.entries.iter().all(|entry| {
-            depth < entry.formed || entry.place.path.get(depth) != Some(&PlaceStep::Index(index))
+            depth < entry.formed
+                || entry.place.path.get(depth) != Some(&PlaceStep::Index(index.clone()))
         })
     }
 
@@ -116,7 +117,8 @@ impl SeparationOracle for EntryPairSeparations<'_> {
     fn range_within_length(&self, window: &ResolvedPlace, range: CapturedRange) -> bool {
         let depth = window.path.len();
         self.entries.iter().all(|entry| {
-            depth < entry.formed || entry.place.path.get(depth) != Some(&PlaceStep::Range(range))
+            depth < entry.formed
+                || entry.place.path.get(depth) != Some(&PlaceStep::Range(range.clone()))
         })
     }
 
