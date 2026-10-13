@@ -6,6 +6,163 @@
 use super::*;
 use crate::semantic::postcondition::PayloadRoute;
 
+/// Source inventory collected beside binding types, before any flow proof.
+/// A missing binding has no conditional-state reader in this function, even
+/// through copies, assignments or value-initializer deliveries. All versions
+/// of a demanded binding remain live; this does not guess last use.
+#[derive(Default)]
+pub(super) struct ResultDemand {
+    needed: HashSet<BindingId>,
+    sources: HashMap<BindingId, Vec<BindingId>>,
+}
+
+impl ResultDemand {
+    fn require(&mut self, expression: &CheckedExpression) {
+        if let CheckedExpression::Binding { binding, .. } = expression {
+            self.needed.insert(*binding);
+        }
+    }
+
+    fn transfer(&mut self, receiver: BindingId, expression: &CheckedExpression) {
+        if let CheckedExpression::Binding {
+            binding,
+            ty: CheckedType::Nominal(_),
+            ..
+        } = expression
+        {
+            self.sources.entry(receiver).or_default().push(*binding);
+        }
+    }
+
+    /// Nested calls can read routed argument contexts even when the enclosing
+    /// expression's result is discarded. Ordinary argument passing does not
+    /// transport a caller's private conditional state into the callee.
+    fn expression(&mut self, expression: &CheckedExpression) {
+        if let CheckedExpression::UserCall {
+            arguments,
+            routed_requirements,
+            ..
+        } = expression
+        {
+            for requirement in routed_requirements {
+                if let Some(argument) = arguments.get(requirement.subject as usize) {
+                    self.require(argument);
+                }
+            }
+        }
+        for child in expression_children(expression) {
+            self.expression(child);
+        }
+    }
+
+    pub(super) fn observe(
+        &mut self,
+        statement: &CheckedStatement,
+        receiver: Option<BindingId>,
+        routed_return: bool,
+    ) {
+        match statement {
+            CheckedStatement::Let { binding, value, .. } => {
+                self.transfer(*binding, value);
+                self.expression(value);
+            }
+            CheckedStatement::Set { target, value, .. } => {
+                if let CheckedSetTarget::Place(place) = target
+                    && place.fields.is_empty()
+                {
+                    self.transfer(place.binding, value);
+                }
+                match target {
+                    CheckedSetTarget::Place(_) => {}
+                    CheckedSetTarget::RangeIndex(place) => {
+                        for offset in place.offsets() {
+                            self.expression(offset);
+                        }
+                    }
+                    CheckedSetTarget::Storage(place) => {
+                        for offset in place.offsets() {
+                            self.expression(offset);
+                        }
+                    }
+                }
+                self.expression(value);
+            }
+            CheckedStatement::Give { value, .. } => {
+                if let Some(receiver) = receiver {
+                    self.transfer(receiver, value);
+                }
+                self.expression(value);
+            }
+            CheckedStatement::Return { value, .. } => {
+                if routed_return {
+                    self.require(value);
+                    if let CheckedExpression::ConstructStruct { fields, .. } = value {
+                        // Result-list ordinals are held in this aggregate.
+                        for field in fields {
+                            self.require(field);
+                        }
+                    }
+                }
+                self.expression(value);
+            }
+            CheckedStatement::Match {
+                scrutinee, arms, ..
+            }
+            | CheckedStatement::ValueMatchLet {
+                scrutinee, arms, ..
+            } => {
+                if arms.iter().any(|arm| {
+                    arm.binders
+                        .iter()
+                        .any(|binder| binder.mode == CheckedMode::Own)
+                }) {
+                    self.require(scrutinee);
+                }
+                self.expression(scrutinee);
+            }
+            CheckedStatement::PropagateLet { scrutinee, .. } => {
+                // Both the selected success and a routed Err return may read
+                // the operand's context, independent of the new binder's uses.
+                self.require(scrutinee);
+                self.expression(scrutinee);
+            }
+            CheckedStatement::DestructuringLet { value, .. }
+            | CheckedStatement::Evaluate { value, .. }
+            | CheckedStatement::DropExpression { value, .. } => self.expression(value),
+            CheckedStatement::CountedRange { lower, upper, .. } => {
+                self.expression(lower);
+                self.expression(upper);
+            }
+            CheckedStatement::Atomic { targets, guard, .. } => {
+                for target in targets {
+                    for expression in target.expressions() {
+                        self.expression(expression);
+                    }
+                }
+                if let Some(guard) = guard {
+                    self.expression(guard);
+                }
+            }
+            CheckedStatement::Proof(_)
+            | CheckedStatement::Loop { .. }
+            | CheckedStatement::Break { .. }
+            | CheckedStatement::Continue { .. } => {}
+        }
+    }
+
+    pub(super) fn finish(&mut self) {
+        let mut pending = self.needed.iter().copied().collect::<Vec<_>>();
+        while let Some(receiver) = pending.pop() {
+            for source in self.sources.get(&receiver).into_iter().flatten() {
+                if self.needed.insert(*source) {
+                    pending.push(*source);
+                }
+            }
+        }
+        self.sources.clear();
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(super) struct ResultEvidence {
     /// The routed field's type, which the context's private root is typed
@@ -44,6 +201,26 @@ impl SuccessRoute {
 }
 
 impl Input<'_, '_> {
+    /// Integer Result contexts retain their existing eager policy. Other
+    /// contexts are omitted only if no reader can observe this binding's
+    /// state, including through a later transfer to another local.
+    pub(super) fn needs_result(&self, binding: BindingId, ty: CheckedType) -> bool {
+        self.result_demand.needed.contains(&binding) || self.eager_result(ty)
+    }
+
+    pub(super) fn eager_result(&self, ty: CheckedType) -> bool {
+        self.payload_routes(ty).iter().any(|route| route.eager)
+    }
+
+    pub(super) fn needs_return_result(&self, ty: CheckedType) -> bool {
+        self.eager_result(ty)
+            || self
+                .function
+                .postconditions
+                .iter()
+                .any(|postcondition| postcondition.selector.is_routed())
+    }
+
     /// [ENT-5] the routes of a local own enum value, in variant and then
     /// field order: each field whose type supplies data under [CALL-4] (a
     /// fragment integer, measured type, or aggregate reaching one through
@@ -1138,6 +1315,116 @@ mod tests {
         RelationProvenance, VerifiedPostconditionSummary, VerifiedPostconditionSummaryRef,
     };
     use crate::semantic::model::FunctionId;
+
+    #[test]
+    fn unread_constructions_copies_and_returns_create_no_conditional_work() {
+        let source = br#"
+enum Outcome { Some(value: u64); None(); }
+fn unread() -> result: Outcome pure {
+  let original = Outcome::None();
+  let copied = original;
+  set copied = Outcome::Some(value: 7_u64);
+  return Outcome::Some(value: 8_u64);
+}
+"#;
+        crate::semantic::tests::with_semantics(source, |outcome| {
+            let crate::SemanticOutcome::Complete(checked) = outcome else {
+                panic!("unread enum source must check: {outcome:?}");
+            };
+            let function = checked
+                .data
+                .executable_functions()
+                .find(|function| function.name == "unread")
+                .expect("unread");
+            let constant_ids = HashMap::new();
+            let const_parameter_types = HashMap::new();
+            let context = EntailmentContext {
+                declarations: &[],
+                callees: &[],
+                constants: &[],
+                constant_ids: &constant_ids,
+                const_parameter_types: &const_parameter_types,
+                copy_type_parameters: &[],
+                nominals: &checked.data.nominals,
+                elements: &checked.data.elements,
+                contract_queries: &[],
+                verified_postconditions: &[],
+                verified_postcondition_proofs: &[],
+                component_postconditions: &[],
+                binding_names: &[],
+            };
+            let mut analyzer = Analyzer::new(&context, function);
+            analyzer.input.collect_bindings();
+            let mut state = ProofFlowState::default();
+            analyzer.walk_block(function.body.as_ref().unwrap(), &mut state, &mut Vec::new());
+            // Inspect before ledger pruning: an unused proof node would vanish
+            // from the final receipt but would still have cost checker work.
+            assert!(state.results.is_empty());
+            assert!(!analyzer.vocabulary.derivations.nodes.iter().any(|node| {
+                matches!(
+                    node,
+                    DerivationNode::ResultErr { .. } | DerivationNode::ResultTransport { .. }
+                )
+            }));
+            assert!(!analyzer.vocabulary.terms.ids().any(|term| {
+                matches!(
+                    analyzer.vocabulary.terms.kind(term),
+                    TermKind::ResultPayload { .. }
+                )
+            }));
+        });
+    }
+
+    #[test]
+    fn route_demand_follows_copy_cycles_and_nested_value_deliveries() {
+        let source = br#"
+enum Outcome { Some(value: u64); None(); }
+fn probe(flag: Bool) -> result: u64 pure {
+  let dead = Outcome::None();
+  let dead_copy = dead;
+  let live = Outcome::Some(value: 7_u64);
+  let copied = live;
+  set live = copied;
+  let delivered = if flag {
+    let nested = if flag { give copied; } else { give live; }
+    give nested;
+  } else { give copied; }
+  match delivered {
+    Some(value: n) => { return n; }
+    None() => { return 0_u64; }
+  }
+}
+"#;
+        crate::semantic::tests::with_semantics(source, |outcome| {
+            let crate::SemanticOutcome::Complete(checked) = outcome else {
+                panic!("route-demand source must check: {outcome:?}");
+            };
+            let function = checked
+                .data
+                .executable_functions()
+                .find(|function| function.name == "probe")
+                .expect("probe");
+            let mut demand = ResultDemand::default();
+            let mut bindings = Vec::new();
+            PlaceMap::for_function_observing(function, |statement, receiver| {
+                if let CheckedStatement::Let { binding, .. }
+                | CheckedStatement::ValueMatchLet { binding, .. } = statement
+                {
+                    bindings.push(*binding);
+                }
+                demand.observe(statement, receiver, false);
+            });
+            demand.finish();
+            assert_eq!(bindings.len(), 6);
+            assert_eq!(
+                bindings
+                    .iter()
+                    .map(|binding| demand.needed.contains(binding))
+                    .collect::<Vec<_>>(),
+                [false, false, true, true, true, true]
+            );
+        });
+    }
 
     /// Compare independently live proofs, not only selected bounds, through
     /// destination collisions, refresh imports and later S12 removal.
