@@ -14,9 +14,11 @@ use crate::SourceInput;
 
 mod call_separations;
 mod cell_consumption;
+mod clause_requirements;
 mod collisions_and_killed_facts;
 mod content_moves;
 mod enum_routed_ensures;
+mod entry_formers;
 mod floats;
 mod interface_applications;
 mod postcondition_places;
@@ -3815,8 +3817,10 @@ fn each_pinned_repair_is_carried_out_by_its_programs() {
         .chain(interface_applications::INTERFACE_APPLICATIONS)
         .chain(selector_scope::SELECTOR_SCOPE)
         .chain(enum_routed_ensures::ENUM_ROUTED_ENSURES)
+        .chain(entry_formers::ENTRY_FORMERS)
         .chain(collisions_and_killed_facts::COLLISIONS_AND_KILLED_FACTS)
         .chain(redundant_conditions::REDUNDANT_CONDITIONS)
+        .chain(clause_requirements::CLAUSE_REQUIREMENTS)
         .chain(writer_operations::WRITER_OPERATIONS)
         .chain(writer_ownership::WRITER_OWNERSHIP)
         .chain(writer_references::WRITER_REFERENCES)
@@ -3827,6 +3831,7 @@ fn each_pinned_repair_is_carried_out_by_its_programs() {
             CompilerLimits::default(),
         )
         .expect_err(pair.name);
+        entry_formers::assert_span(pair, &failure);
         assert_eq!(
             failure.kind(),
             CompilationFailureKind::Source,

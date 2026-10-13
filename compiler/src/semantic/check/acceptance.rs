@@ -651,7 +651,16 @@ impl<'unit> TypeContext<'unit> {
                 // postconditions reaching it [ENT-2].
                 let mechanical_fix =
                     if super::obligations::requirement_forms_site(function, &outcome.node_path) {
-                        repairs::clause_bounds(&case, constant_offset)
+                        let existing = self.with_contract_context(function, |context| {
+                            super::super::entailment::matching_requirement(
+                                function, context, outcome,
+                            )
+                        });
+                        let existing = existing
+                            .and_then(|path| self.declarations.tree.node_with_path(&path))
+                            .map(|node| self.declarations.tree.source_spelling(node))
+                            .transpose()?;
+                        repairs::clause_bounds(&case, constant_offset, existing.as_deref())
                     } else if let Some(exit) = &outcome.selected_return {
                         let (_, line) = self.declarations.tree.source_line(&exit.statement)?;
                         // [FORM-2] a requirement is spelled canonically, so
@@ -947,6 +956,25 @@ impl<'unit> TypeContext<'unit> {
         else {
             if !proof.exits.is_empty() {
                 return Err(SemanticCompilerFailure::InvalidResolution.into());
+            }
+            if let Some(postcondition) = function.postconditions.get(index)
+                && !postcondition.selected_returns.is_empty()
+                && postcondition.relation.operands.iter().any(|operand| {
+                    std::iter::once(&operand.datum)
+                        .chain(operand.parameter.iter())
+                        .any(|datum| {
+                            matches!(datum,
+                                super::super::postcondition::RelationDatum::Measure(_, place)
+                                if matches!(place.projections.last(),
+                                    Some(super::super::goal::GoalProjection::Page(_)
+                                        | super::super::goal::GoalProjection::FormalPage { .. })))
+                        })
+                })
+            {
+                return Err(CheckStop::Unsupported(crate::SemanticUnsupported {
+                    feature: crate::UnsupportedSemanticFeature::PageLengthPostcondition,
+                    node: self.declarations.source_location(&proof.block)?,
+                }));
             }
             return Ok(SemanticIssue {
                 rule: SemanticRule::Fn9,

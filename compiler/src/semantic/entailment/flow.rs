@@ -1252,6 +1252,68 @@ pub(super) fn analyze(
     entailment
 }
 
+/// Diagnostic-only comparison with the already expanded requirements. No
+/// facts are established and no acceptance judgment reads this vocabulary.
+pub(crate) fn matching_requirement(
+    function: &CheckedFunction,
+    context: &EntailmentContext<'_>,
+    outcome: &ObligationOutcome,
+) -> Option<crate::NodePath> {
+    fn normalized(
+        left: &TermKind,
+        right: &TermKind,
+        bound: i128,
+    ) -> Option<(TermKind, TermKind, i128)> {
+        let split = |term: &TermKind| match term {
+            TermKind::Constant(value) => Some((TermKind::Zero, *value)),
+            // Dense term IDs belong to their own vocabulary. These compound
+            // terms cannot be compared across the diagnostic copy by ID.
+            TermKind::Sum(..) | TermKind::TargetMeasure { .. } => None,
+            term => Some((term.clone(), 0)),
+        };
+        let (left, left_constant) = split(left)?;
+        let (right, right_constant) = split(right)?;
+        Some((
+            left,
+            right,
+            bound.checked_sub(left_constant)?.checked_add(right_constant)?,
+        ))
+    }
+
+    let [request] = outcome.components.as_slice() else {
+        return None;
+    };
+    if request.distinct {
+        return None;
+    }
+    let terms = &function.entailment.inventory.terms;
+    let wanted = normalized(
+        terms.get(request.left?.0 as usize)?,
+        terms.get(request.right.0 as usize)?,
+        request.bound,
+    )?;
+    let mut analyzer = Analyzer::new(context, function);
+    analyzer.input.collect_bindings();
+    function.requirements.iter().find_map(|requirement| {
+        // An implicit type invariant is not a clause the writer can move.
+        if requirement.subject.is_some() {
+            return None;
+        }
+        let goal = analyzer.input.body_requirement_goal(requirement)?;
+        let Relation::Bound { left, right, bound } =
+            analyzer.reasoning().goal_projection(&goal)?
+        else {
+            return None;
+        };
+        let candidate = normalized(
+            analyzer.vocabulary.terms.kind(left),
+            analyzer.vocabulary.terms.kind(right),
+            bound,
+        )?;
+        (candidate == wanted).then(|| requirement.clause.clone())
+    })
+}
+
 /// Builds one optimistic per-function FN-9 proof batch without pruning or
 /// remapping its derivation ledger. The checker calls [`finish`] after the
 /// component publication decision.
