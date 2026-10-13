@@ -1,9 +1,25 @@
 fn slab_new<T, const ceiling: u64, const generation_limit: u64>(capacity: u64) -> result: Slab<T, ceiling, generation_limit> pure contract {
   requires capacity <= ceiling;
 } {
-  doc "Reserves one backing for at most capacity stable slots, materializing each cell only on its first insertion. The ceiling is the caller's capacity domain, not an allocation refusal. A handle is relative to this slab; its integers do not authenticate another slab. Allocation is total under STOR-8.";
+  doc "Starts with capacity reserved slots and materializes each cell only on its first insertion. slab_reserve can grow the backing up to ceiling without changing existing handles. The free-list end marker is ceiling, outside every permitted slot index even after growth. A handle is relative to this slab; its integers do not authenticate another slab. Allocation is total under STOR-8.";
   let cells = box_slots_new::<SlabCell<T>>(capacity: capacity);
-  return Slab<T, ceiling, generation_limit>(cells: move cells, free_head: capacity);
+  return Slab<T, ceiling, generation_limit>(cells: move cells, free_head: ceiling);
+}
+
+fn slab_reserve<T, const ceiling: u64, const generation_limit: u64>(slab: &Slab<T, ceiling, generation_limit>, capacity: u64) -> result: Result<unit, unit> writes(slab.cells) contract {
+  ensures slab^.cells.inner.len == entry(slab)^.cells.inner.len;
+  ensures slab^.cells.inner.cap >= entry(slab)^.cells.inner.cap;
+} {
+  doc "Raises backing capacity to at least capacity while preserving every materialized cell, its index, generation, vacancy and owned payload, and the free list. Requests above ceiling return Err before mutation; requests at or below current capacity return Ok without shrinking. Growth uses ordinary grow and may relocate payload addresses; existing handles remain valid, but references into the cells cannot survive growth under REF-2. Ok is capacity success, not an allocation-failure outcome.";
+  if capacity > ceiling {
+    return Err<unit, unit>(error: unit);
+  }
+  let current = slab^.cells.inner.cap;
+  if capacity <= current {
+    return Ok<unit, unit>(value: unit);
+  }
+  grow(cell: &slab^.cells, capacity: capacity);
+  return Ok<unit, unit>(value: unit);
 }
 
 fn slab_insert<T, const ceiling: u64, const generation_limit: u64>(slab: &Slab<T, ceiling, generation_limit>, value: T) -> result: Result<SlabHandle, T> writes(slab) contract {

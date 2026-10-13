@@ -228,9 +228,14 @@ fn slab_operations_and_memberships_release_every_owner_in_both_lowering_modes() 
             include_bytes!("../../../tests/programs/containers/slab-program.wf"),
         ),
     ];
-    // Seven total backings, nine operation payloads (four affine and five
-    // nodrop), and three payloads in the two membership protocols.
-    execute_container_program("slab", &sources, 19, false);
+    // Original cases: seven backing/header events, nine operation payloads
+    // (four affine and five nodrop), and three membership payloads: 19.
+    // Growth adds four nodrop payload Boxes and seven backing/header events:
+    // live tickets construct at two and grow to four; the free-list case does
+    // the same; ceiling refusal retains one backing; empty-to-three growth
+    // consumes one shared header and allocates one backing. Equal, smaller and
+    // above-ceiling reserve requests allocate nothing. Total: 19 + 4 + 7 = 30.
+    execute_container_program("slab", &sources, 30, false);
 }
 
 #[test]
