@@ -210,7 +210,7 @@ build time apart from test and program execution.
   tree's form, read through the `design/skill` submodule.
 - `make check`, on the revision to merge: the static group plus the compiler
   build, tests, the conformance adapter and the runtime. Its corpus group
-  compiles documentation example programs under the
+  compiles the example programs in `docs/guide/` and both READMEs under the
   [guide's convention](docs/guide/README.md#writing-examples). `make check-groups`
   lists the groups. `gate.yml` and `io-hosts.yml` check a push to `main`, a
   push to a branch with an open pull request, draft or ready, the opening or

@@ -8,7 +8,9 @@
 ## Writing examples
 
 The gate checks every Markdown file under `docs/guide/`, plus the
-repository's root `README.md` and `README.zh-CN.md`. A `whitefoot` fence holds a complete
+repository's root `README.md` and `README.zh-CN.md`. Articles under
+`docs/articles/` and the essays in `docs/` are not checked: an article states
+its results at the compiler revision it names. A `whitefoot` fence holds a complete
 Whitefoot program in canonical layout. Its info string selects the check:
 
 - `whitefoot`: require the acceptance that `whitefootc --check` reports,
