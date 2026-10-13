@@ -14,19 +14,27 @@ jobs:
   probe:
     runs-on: ubuntu-24.04
     timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        rev: [main, branch]
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Build and check
         env:
           RUST_BACKTRACE: "1"
         run: |
           rustup default stable
+          cp -R .github/i128-unsound-witness "$RUNNER_TEMP/u"
+          if [ "${{ matrix.rev }}" = main ]; then git checkout --quiet origin/main; fi
           cargo build --manifest-path compiler/Cargo.toml --profile gate --locked
-          for f in tests/conformance/cases/inv1-*-i128-minimum.wf tests/conformance/cases/msr5-*.wf tests/conformance/cases/range1-neg-term-product-leaves-i128.wf; do
+          for f in "$RUNNER_TEMP"/u/*.wf tests/conformance/cases/inv1-*-i128-minimum.wf tests/conformance/cases/msr5-*.wf tests/conformance/cases/range1-neg-term-product-leaves-i128.wf; do
             set +e
             compiler/target/gate/whitefootc "$f" -o /tmp/out > out.txt 2>&1
             st=$?
             set -e
-            printf '== %s status=%s\n' "$(basename "$f")" "$st"
+            printf '== %s %s status=%s\n' "${{ matrix.rev }}" "$(basename "$f")" "$st"
             head -c 6000 out.txt; echo
           done
