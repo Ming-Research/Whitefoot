@@ -856,6 +856,7 @@ impl Report for SemanticIssueKind {
             ConstArgumentOutOfRange { parameter_type, value };
             ConstRuntimeArithmeticMode { mechanical_fix };
             TypeMismatch { expected, found };
+            BorrowOfDerivedMeasure { mechanical_fix };
             UnadmittedOperandShape { expected, mechanical_fix };
             BehaviorArgumentMismatch { expected, mechanical_fix };
             UnforwardedGroupApplication { mechanical_fix };

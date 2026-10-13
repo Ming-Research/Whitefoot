@@ -1,4 +1,4 @@
-# Kernel Specification v0.149
+# Kernel Specification v0.150
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -584,7 +584,7 @@ The places a value can take are a binding, a value parameter, a result, a field,
 [TYPE-10] Window parts are names, not declarations.
 `len`, `cap`, and `head` are the readonly fields the prelude declares on the storage shapes, the key set and the entries [PRE-1, MSR-1]; a program reads them as fields [OP-15] and can never assign one [TYPE-2], and they change only through the operations of [OP-10] and [OP-13], the key-set insertions of [SHARE-1], and a replacement [SET-1] or exchange [OP-11] of the whole value that holds them.
 `next`, `last`, `filled`, and `free` are the four window parts [WIN-2]; they are vocabulary for effect rows and the overlap judgment only, selected by the window type of the place they follow, and they occupy no declaration domain and reserve nothing: a binding, a field of another type, or a label may carry the same spelling.
-`pages` following a `Paged` place is a selector, not a field, and occupies no declaration domain. It is admitted only in the measure `p.pages.len` [MSR-1], as the base of a page subscript whose use [OP-4] judges, and in a page-selection effect path [EFF-1]; a different use is a hard error citing TYPE-10 at the complete `place`.
+`pages` following a `Paged` place is a selector, not a field, and occupies no declaration domain. Its measure use `p.pages.len` is judged by [MSR-1], its use as the base of a page subscript by [OP-4], and its page-selection effect path by [EFF-1]; a different use is a hard error citing TYPE-10 at the complete `place`.
 A read of a window part, a `borrow_expr` over one, and a write of one are each a hard error citing TYPE-10 at the complete `place`, with a repair [DIAG-1].
 
 [TYPE-7] Reading through a reference is explicit.
@@ -3517,6 +3517,8 @@ The subscript admission is what makes `table[i].len` a term, so a storage whose 
 Its subscripts and their offsets are those [ENT-2] clause (b) admits.
 
 For an admitted measure place P of type `Paged<T>`, `P.pages.len` is additionally a u64 measure term with value `ceil(P.len / B)`, the number of pages holding initialized elements, using [OP-13]'s B and mathematical arithmetic. It is zero for an empty window and counts no page that holds only free slots. Its support is [MSR-2], and it adds no term relating an element index to a page index.
+
+A `borrow_expr` whose complete `place` selects a measure with no field declaration — the `len` of `&[T]` or `&Run<T>`, a run-selection length, or a `Paged` page count — is a hard error citing MSR-1 at that complete `place`, with a repair [DIAG-1], and the measure is read by value [OP-15].
 
 The table classifies the prelude's readonly measure fields and reference lengths by what each denotes and whether it is *exact* or *bounded*; the page count is the derived measure defined above.
 The rule is that the table exists, gives every measured type a row, and gives every cell exactly one of *exact*, *bounded*, or *absent*.

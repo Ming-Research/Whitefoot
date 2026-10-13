@@ -44,6 +44,11 @@ use super::super::model::{
 use super::super::permission::visit_read_bindings;
 use crate::NodePath;
 
+/// [MSR-1] observe the measure that has no declared field to reference.
+pub(super) fn derived_measure_borrow(place: &str) -> String {
+    format!("read the measure by value with `let n = {place};`")
+}
+
 /// [OP-16] name the first excluded part, without suggesting that copy alone
 /// grants equality or that comparing storage bytes implements value equality.
 pub(super) fn value_equality_repair(ty: &str, part: &str) -> String {

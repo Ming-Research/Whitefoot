@@ -222,6 +222,8 @@ pub enum SemanticRule {
     Err3,
     /// Counted endpoint admission to the closed term-or-constant vocabulary.
     Ent2,
+    /// Borrowing a measure without a field declaration.
+    Msr1,
     /// One denotation per operand position, keyed on the parameter's mode.
     Msr3,
     /// Publication: where a declared relation is instantiated, where it is
@@ -309,6 +311,7 @@ impl SemanticRule {
             Self::Err2 => "ERR-2",
             Self::Err3 => "ERR-3",
             Self::Ent2 => "ENT-2",
+            Self::Msr1 => "MSR-1",
             Self::Msr3 => "MSR-3",
             Self::Call6 => "CALL-6",
             Self::Inv1 => "INV-1",
@@ -398,7 +401,8 @@ impl SemanticRule {
             Self::Share1 => Self::Share2,
             Self::Share2 => Self::Snap1,
             Self::Snap1 => Self::Ent2,
-            Self::Ent2 => Self::Msr3,
+            Self::Ent2 => Self::Msr1,
+            Self::Msr1 => Self::Msr3,
             Self::Msr3 => Self::Call6,
             Self::Call6 => Self::Inv1,
             Self::Inv1 => Self::Prf1,
@@ -482,14 +486,15 @@ impl SemanticRule {
             Self::Share2 => 58,
             Self::Snap1 => 59,
             Self::Ent2 => 60,
-            Self::Msr3 => 61,
-            Self::Call6 => 62,
-            Self::Inv1 => 63,
-            Self::Prf1 => 64,
-            Self::Range1 => 65,
-            Self::Range3 => 66,
-            Self::Range4 => 67,
-            Self::Range5 => 68,
+            Self::Msr1 => 61,
+            Self::Msr3 => 62,
+            Self::Call6 => 63,
+            Self::Inv1 => 64,
+            Self::Prf1 => 65,
+            Self::Range1 => 66,
+            Self::Range3 => 67,
+            Self::Range4 => 68,
+            Self::Range5 => 69,
         }
     }
 }
@@ -723,6 +728,11 @@ pub enum SemanticIssueKind {
         expected: String,
         /// The exact type, mode, or written form found there.
         found: String,
+    },
+    /// [MSR-1] a derived measure has no declared storage field to borrow.
+    BorrowOfDerivedMeasure {
+        /// The by-value observation in the source's own path spelling.
+        mechanical_fix: String,
     },
     /// [OP-10, OP-14] an operand whose shape is outside the operation's
     /// admitted set.

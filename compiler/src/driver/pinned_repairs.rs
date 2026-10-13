@@ -15,6 +15,7 @@ use crate::SourceInput;
 mod call_separations;
 mod collisions_and_killed_facts;
 mod content_moves;
+mod derived_measures;
 mod enum_routed_ensures;
 mod floats;
 mod interface_applications;
@@ -3834,6 +3835,7 @@ fn each_pinned_repair_is_carried_out_by_its_programs() {
         .iter()
         .chain(call_separations::CALL_SEPARATIONS)
         .chain(content_moves::CONTENT_MOVES)
+        .chain(derived_measures::DERIVED_MEASURES)
         .chain(prelude_opaque::PRELUDE_OPAQUE)
         .chain(qualified_constants::QUALIFIED_CONSTANTS)
         .chain(recursive_effects::RECURSIVE_EFFECTS)
