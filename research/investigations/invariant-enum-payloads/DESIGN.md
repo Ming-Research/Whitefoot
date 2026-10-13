@@ -5,6 +5,13 @@ invariants through `Result` at function boundaries, option A). This note
 records the soundness argument written before implementation, the scope
 limits it draws, and the results against its criterion.
 
+Two further changes ship with it, because a recursive producer and a value
+initializer that chooses between producers are the shapes in which a fallible
+producer's struct reaches its callers: [recursion inside a call-graph
+component](#recursion-induction-hypotheses-inside-a-component) and
+[value-carrier delivery](#value-carrier-delivery-through-a-give). Each has its
+own question, direction, soundness argument and cases below.
+
 ## Question
 
 [TYPE-11] makes a struct's type invariant a requirement and a postcondition
@@ -189,6 +196,140 @@ payload still inside its enum overlaps the enum's storage, which removes the
 enum's association with its context [ENT-5]; a later return or call argument
 of that value has an empty context and is refused
 (`type11-neg-enum-payload-borrowed-write`).
+
+## Recursion: induction hypotheses inside a component
+
+### Question
+
+Postconditions publish per call-graph component, so while a component is
+being checked no member can use another member's summary [FN-9, DIAG-2]. A
+recursive producer of an invariant struct therefore cannot use its own
+result's invariant:
+
+```text
+fn make_source(nested: Bool) -> made: Result<BoundedSource, u32> pure {
+  if nested {
+    let no = False();
+    let inner = propagate make_source(nested: no);
+    let length = source_length(source: &inner);
+    ...
+```
+
+The call `source_length(source: &inner)` owes the invariant, and the only
+thing that could prove it is the recursive call's own Ok-routed
+postcondition, withheld until the component publishes. The same holds for a
+producer returning the struct directly and for two producers calling each
+other. Rewriting the recursion as a loop or restating the invariant as a
+written fact would route around the gap.
+
+### Selected direction
+
+The owner chose option A: a call to a member of the caller's own call-graph
+component receives exactly the callee's generated affine [TYPE-11]
+postconditions as induction hypotheses, before the component publishes;
+written postconditions stay withheld. Range type invariants need nothing
+here: [RANGE-2] takes every callee's range postconditions after a call,
+whatever the callee's component.
+
+### Soundness
+
+Claim: for every call of a component member that returns normally, every
+value it hands back or leaves behind satisfies the member's generated
+postconditions.
+
+Strong induction on the order in which calls of the component return. Take
+a call that returns. It returns through a selected return, and the checker
+proved every generated postcondition at every selected return of every
+member from that member's entry facts, its body flow and the hypotheses of
+the calls inside it. Each such inner call returned before this one did, so
+the claim holds of it by the induction hypothesis; the first call to return
+used no hypothesis at all. A call that never returns hands back nothing, so
+the claim says nothing about it. No hypothesis is therefore used for a value
+whose postcondition was not proved at the exit that produced it, once every
+member verifies. If any member fails, the component publishes nothing and
+the program is rejected, so no accepted program relies on a hypothesis a
+failing member could have falsified.
+
+Why only generated postconditions: postcondition verification has no summary
+fixed point, so a written clause could be assumed in a member only by
+bootstrapping it from the summary the same proof is establishing, and a
+written clause is not a standing property of the type. A generated one is
+the same for every function of the instance and is fixed by the callee's
+signature and the struct's declaration alone, which also keeps a module's
+verdict independent of the bodies of another module's members of the
+component [MOD-8]. A requirement of the callee is judged at the call as for
+any call; the hypotheses add facts after it.
+
+### Cases
+
+| Case | Guards | Previous rule | Branch |
+| --- | --- | --- | --- |
+| `type11-pos-recursive-struct-producer` | a struct result's unrouted postcondition at a recursive call | FN-8 at the next call (predicted) | accepted (read) |
+| `type11-pos-recursive-enum-payload-producer` | the Ok-routed postcondition through `propagate` | FN-8 at the next call (predicted) | accepted (read) |
+| `type11-pos-recursive-mutual-producer` | two members of one component, each using the other's | FN-8 at the next call (predicted) | accepted (read) |
+| `type11-pos-recursive-range-invariant-producer` | a range type invariant needs no hypothesis: [RANGE-2] takes it after every call | accepted (predicted) | accepted (read) |
+| `type11-neg-recursive-exit-breaks-invariant` | a hypothesis fact dies at a later field write, so the exit is refused | FN-9 | FN-9 (read) |
+| `fn9-neg-recursive-written-clause-withheld` | a written clause stays withheld inside its component | FN-9 | FN-9 (read) |
+
+## Value-carrier delivery through a give
+
+### Question
+
+A value initializer that chooses between two producers delivers each branch
+through `give`. [ENT-5] delivered relations only for an integer carrier, so a
+struct chosen this way lost its type invariant:
+
+```text
+let chosen = if first {
+  let found = make_source();
+  give move found;
+} else {
+  give make_source();
+}
+let length = source_length(source: &chosen);
+```
+
+Each branch holds the invariant of its value, and `chosen` holds neither, so
+the call is refused. The same happens to a producer's written bound on a
+field. Writers worked around it by duplicating the continuation in each
+branch.
+
+### Selected direction
+
+The owner chose option A: an own `give d;` of any type that is not a
+fragment integer is a value carrier, and its edge binds the receiver exactly
+as `let x = d;` binds its binding, carrying each relation over d's fields,
+nested fields and measures, whether it comes from a type invariant, a
+producer's written postcondition or the branch's own proofs, to the same
+relation over the receiver's. The delivery join runs once per receiver term
+and keeps what every reaching edge carries. A conditional context of a local
+`Result` or `Option` follows the receiver as it follows any binding.
+
+### Soundness
+
+The receiver is a fresh binding holding exactly the value `give` moves or
+copies [OWN-1], so a relation over a place of d holds, renamed, of the same
+place of the receiver; that is what a `let` binding already does for the
+same source. The edge's own scope exits and events then kill the relations
+whose support they end, so d's branch-local lifetime cannot leave a
+relation behind. The join keeps only relations every reaching edge carries,
+so a branch that does not establish a relation prevents the receiver from
+having it. A later write to the receiver kills the delivered relation as it
+kills any other.
+
+### Cases
+
+| Case | Guards | Previous rule | Branch |
+| --- | --- | --- | --- |
+| `ent5-pos-value-carrier-invariant-delivery` | the type invariant reaches the receiver from a moved binding and a call operand | FN-8 at the next call (predicted) | accepted (read) |
+| `ent5-pos-value-carrier-written-postcondition` | a written field bound reaches the receiver the same way | FN-8 at the next call (predicted) | accepted (read) |
+| `ent5-pos-value-carrier-enum-delivery` | the Some-routed context of an `Option` survives the delivery and its join | not predicted | accepted (read) |
+| `ent5-neg-value-carrier-one-branch-unbounded` | the join keeps only what every edge carries | FN-8 | FN-8 (read) |
+| `ent5-neg-value-carrier-field-write-kills` | a field write after delivery kills the delivered relation | FN-8 | FN-8 (read) |
+
+"Previous rule" entries marked predicted come from reading the rule before
+this change, not from a run. "Read" means the branch verdict was derived
+from the specification text and the checker's code, with no run yet.
 
 ## Consequences
 

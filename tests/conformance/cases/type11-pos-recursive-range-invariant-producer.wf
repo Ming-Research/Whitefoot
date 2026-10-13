@@ -1,0 +1,19 @@
+struct Zeroes {
+  cells: Array<u64, 1>;
+  invariant(c): forall zero(k in 0_u64..c^.cells.len): c^.cells[k] == 0_u64;
+}
+
+fn need(z: &Zeroes) -> result: unit pure {
+  return unit;
+}
+
+fn build(nested: Bool) -> made: Zeroes pure {
+  if nested {
+    let no = False();
+    let inner = build(nested: no);
+    need(z: &inner);
+    return move inner;
+  }
+  let cells = array_filled::<u64, 1>(value: 0_u64);
+  return Zeroes(cells: cells);
+}
