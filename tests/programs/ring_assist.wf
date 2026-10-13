@@ -133,7 +133,7 @@ fn serve(connection: TcpConnection, factory: HandleFactory, steps: u64) -> resul
   ) {
     place_back(window: &chunk, value: 0_u8);
   }
-  let held = 64_u64;
+  let expected_bytes = 64_u64;
   let sink = &chunk[0_u64..64_u64];
   let first = 1_u8;
   loop @chunks {
@@ -141,7 +141,7 @@ fn serve(connection: TcpConnection, factory: HandleFactory, steps: u64) -> resul
     let ended = 0_u8;
     let no_deadline = None<std::time::Instant>();
     let wait_cancel_2 = std::time::cancel_never();
-    let wait_outcome_2 = receive_next(receive: &connection.receive, destination: sink, start: 0_u64, end: held, deadline: no_deadline, cancel: &wait_cancel_2);
+    let wait_outcome_2 = receive_next(receive: &connection.receive, destination: sink, start: 0_u64, end: expected_bytes, deadline: no_deadline, cancel: &wait_cancel_2);
     std::time::close_cancel_watch(watch: move wait_cancel_2);
     match wait_outcome_2 {
       Ok(value: endpoint) => {
