@@ -42,7 +42,49 @@ impl WorkerBudget {
     }
 }
 
-static WORKERS: WorkerBudget = WorkerBudget::new();
+/// A processor budget shared by related compiler operations.
+/// Ordinary compiler operations must use [`compiler_worker_budget`]. An
+/// isolated instance permits deterministic budget tests without taking
+/// shares from unrelated operations in the process.
+pub struct CompilerWorkerBudget {
+    workers: WorkerBudget,
+    capacity: Option<usize>,
+}
+
+impl CompilerWorkerBudget {
+    /// Creates an isolated budget for deterministic tests with the given
+    /// processor capacity; ordinary compiler operations use the shared
+    /// [`compiler_worker_budget`] instead.
+    /// Zero still permits each operation's calling thread to make progress.
+    pub const fn new(capacity: usize) -> Self {
+        Self {
+            workers: WorkerBudget::new(),
+            capacity: Some(capacity),
+        }
+    }
+
+    /// Reserves at most `maximum` jobs, passes the granted count to `work`,
+    /// and returns the share when `work` finishes or unwinds. The count
+    /// includes the caller and is at least one.
+    pub fn with_parallelism<R>(&self, maximum: usize, work: impl FnOnce(usize) -> R) -> R {
+        with_budget(&self.workers, self.capacity(), maximum, work)
+    }
+
+    fn capacity(&self) -> usize {
+        self.capacity.unwrap_or_else(capacity)
+    }
+}
+
+static WORKERS: CompilerWorkerBudget = CompilerWorkerBudget {
+    workers: WorkerBudget::new(),
+    capacity: None,
+};
+
+/// Returns the one in-process budget used by ordinary compiler operations.
+/// Its capacity is the host's available processor count.
+pub fn compiler_worker_budget() -> &'static CompilerWorkerBudget {
+    &WORKERS
+}
 
 struct WorkerReservation<'a> {
     budget: &'a WorkerBudget,
@@ -87,7 +129,8 @@ pub fn in_parallel_with_limit<T: Sync, R: Send>(
     maximum: usize,
     work: impl Fn(&T) -> R + Sync,
 ) -> Vec<R> {
-    parallel_with_budget(&WORKERS, capacity(), items, maximum, work)
+    let budget = compiler_worker_budget();
+    parallel_with_budget(&budget.workers, budget.capacity(), items, maximum, work)
 }
 
 /// Reserves the shared compiler budget for an external operation such as a
@@ -95,7 +138,7 @@ pub fn in_parallel_with_limit<T: Sync, R: Send>(
 /// when `work` finishes or unwinds. The count includes the operation's caller
 /// and is at least one, even when no additional workers are free.
 pub fn with_compiler_parallelism<R>(maximum: usize, work: impl FnOnce(usize) -> R) -> R {
-    with_budget(&WORKERS, capacity(), maximum, work)
+    compiler_worker_budget().with_parallelism(maximum, work)
 }
 
 fn with_budget<R>(

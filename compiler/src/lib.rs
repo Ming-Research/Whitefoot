@@ -35,7 +35,10 @@ mod toolchain;
 
 pub use toolchain::clang_executable;
 
-pub use parallelism::{in_parallel, in_parallel_with_limit, with_compiler_parallelism};
+pub use parallelism::{
+    CompilerWorkerBudget, compiler_worker_budget, in_parallel, in_parallel_with_limit,
+    with_compiler_parallelism,
+};
 
 // Unit and integration tests use the same immutable native-object builder.
 // This alias lets the shared test module name the existing exported inputs.

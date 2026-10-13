@@ -1126,11 +1126,52 @@ fn link_cached_objects_with_jobs(
     let linking = std::time::Instant::now();
     // Fragment workers have joined and returned their shares. The link takes
     // a fresh reservation and holds it for its entire subprocess lifetime.
-    let limit = if fragments.is_some() { jobs } else { 1 };
-    let linked = whitefoot::with_compiler_parallelism(limit, |link_jobs| {
+    let linked = with_link_command(
+        cache,
+        &objects,
+        &partial,
+        fragments.is_some(),
+        jobs,
+        whitefoot::compiler_worker_budget(),
+        |mut command, link_jobs| {
+            #[cfg(test)]
+            {
+                report.link_jobs = link_jobs;
+                report.link_arguments = command.get_args().map(std::ffi::OsStr::to_owned).collect();
+            }
+            #[cfg(not(test))]
+            let _ = link_jobs;
+            command
+                .status()
+                .map_err(|error| format!("cannot start {}: {error}", clang_executable()))
+        },
+    );
+    report.link = linking.elapsed();
+    let status = linked?;
+    if !status.success() {
+        let _ = std::fs::remove_file(&partial);
+        return Err(format!("clang exited with {status}"));
+    }
+    std::fs::rename(&partial, output)
+        .map_err(|error| format!("cannot write {}: {error}", output.display()))
+}
+
+/// Constructs the actual object link command under a reservation that stays
+/// held through `work`, including the link subprocess in production.
+fn with_link_command<R>(
+    cache: &BuildCache,
+    objects: &[PathBuf],
+    output: &Path,
+    fragments: bool,
+    requested_jobs: usize,
+    budget: &whitefoot::CompilerWorkerBudget,
+    work: impl FnOnce(Command, usize) -> Result<R, String>,
+) -> Result<R, String> {
+    let limit = if fragments { requested_jobs } else { 1 };
+    budget.with_parallelism(limit, |link_jobs| {
         let mut command = Command::new(clang_executable());
-        object_link_arguments(&mut command, &objects);
-        if fragments.is_some() {
+        object_link_arguments(&mut command, objects);
+        if fragments {
             let optimized = cache
                 .area("thinlto")
                 .map_err(|error| format!("cannot open the ThinLTO cache: {error}"))?;
@@ -1142,24 +1183,9 @@ fn link_cached_objects_with_jobs(
                 .arg(cache_argument)
                 .arg(thin_link_jobs(link_jobs));
         }
-        command.arg("-o").arg(&partial);
-        #[cfg(test)]
-        {
-            report.link_jobs = link_jobs;
-            report.link_arguments = command.get_args().map(std::ffi::OsStr::to_owned).collect();
-        }
-        command
-            .status()
-            .map_err(|error| format!("cannot start {}: {error}", clang_executable()))
-    });
-    report.link = linking.elapsed();
-    let status = linked?;
-    if !status.success() {
-        let _ = std::fs::remove_file(&partial);
-        return Err(format!("clang exited with {status}"));
-    }
-    std::fs::rename(&partial, output)
-        .map_err(|error| format!("cannot write {}: {error}", output.display()))
+        command.arg("-o").arg(output);
+        work(command, link_jobs)
+    })
 }
 
 /// Keeps the selected object's order unchanged in the actual link command.
@@ -2870,6 +2896,62 @@ mod tests {
             );
             assert_eq!(status(), Some(6), "{granularity:?}");
         }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A held share forces the actual link command to receive fewer jobs than
+    /// requested, without depending on host capacity or other tests' workers.
+    #[test]
+    fn thin_link_command_uses_the_granted_budget_share() {
+        let budget = whitefoot::CompilerWorkerBudget::new(3);
+        budget.with_parallelism(3, |granted| {
+            assert_eq!(
+                granted, 3,
+                "the isolated budget initially grants three jobs"
+            );
+        });
+        let root =
+            std::env::temp_dir().join(format!("whitefootc-link-budget-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let cache = super::open_cache(&root).expect("open isolated link cache");
+        let objects = vec![root.join("fragment-0.o"), root.join("fragment-1.o")];
+        let output = root.join("program.partial");
+        budget.with_parallelism(3, |held| {
+            assert_eq!(held, 3, "the outer operation holds both additional workers");
+            super::with_link_command(
+                &cache,
+                &objects,
+                &output,
+                true,
+                3,
+                &budget,
+                |command, granted| {
+                    assert_eq!(granted, 1, "only the link's caller remains available");
+                    let arguments = command
+                        .get_args()
+                        .map(std::ffi::OsStr::to_owned)
+                        .collect::<Vec<_>>();
+                    let granted_argument = std::ffi::OsString::from(super::thin_link_jobs(1));
+                    assert_eq!(
+                        arguments
+                            .iter()
+                            .filter(|arg| arg.as_os_str() == granted_argument.as_os_str())
+                            .count(),
+                        1,
+                        "the actual link command receives exactly the granted one job"
+                    );
+                    assert!(
+                        !arguments.contains(&std::ffi::OsString::from(super::thin_link_jobs(3))),
+                        "the requested count must not replace the granted count"
+                    );
+                    Ok(())
+                },
+            )
+            .expect("construct the actual link command under the held budget");
+        });
+        budget.with_parallelism(3, |granted| {
+            assert_eq!(granted, 3, "both reservations return their shares");
+        });
         let _ = std::fs::remove_dir_all(&root);
     }
 
