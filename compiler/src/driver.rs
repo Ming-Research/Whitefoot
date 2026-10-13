@@ -310,8 +310,6 @@ impl CompilationFailure {
             ty,
             size,
             alignment,
-            maximum_size,
-            maximum_alignment,
             limit,
         } = failure
         else {
@@ -451,11 +449,11 @@ impl CompilationFailure {
             _ => "size or alignment exceeds the u64 layout arithmetic domain".to_owned(),
         };
         let violated = match limit {
-            crate::target::AllocationLimit::Alignment => format!(
-                "required allocation alignment exceeds the selected target allocation alignment limit {maximum_alignment} bytes"
+            crate::target::AllocationLimit::Alignment { maximum } => format!(
+                "required allocation alignment exceeds the selected target allocation alignment limit {maximum} bytes"
             ),
-            crate::target::AllocationLimit::AllocationSize => format!(
-                "complete allocation including its descriptor and padding exceeds the selected target allocation byte limit {maximum_size}"
+            crate::target::AllocationLimit::AllocationSize { maximum } => format!(
+                "complete allocation including its descriptor and padding exceeds the selected target allocation byte limit {maximum}"
             ),
             crate::target::AllocationLimit::AddressDomain { maximum } => format!(
                 "element representation exceeds the selected target address-index byte limit {maximum}"

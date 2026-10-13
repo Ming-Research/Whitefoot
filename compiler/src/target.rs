@@ -43,8 +43,6 @@ pub(crate) enum TargetLayoutFailure {
         ty: IrType,
         size: Option<u64>,
         alignment: Option<u64>,
-        maximum_size: u64,
-        maximum_alignment: u64,
         limit: AllocationLimit,
     },
 }
@@ -52,8 +50,8 @@ pub(crate) enum TargetLayoutFailure {
 /// The domain whose existing qualification rejected an allocation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum AllocationLimit {
-    Alignment,
-    AllocationSize,
+    Alignment { maximum: u64 },
+    AllocationSize { maximum: u64 },
     AddressDomain { maximum: u64 },
     LayoutCeiling(IrLayoutCeiling),
 }
@@ -1339,9 +1337,13 @@ fn validate_located_allocation(
             };
             alignment > maximum_alignment
         }) {
-            AllocationLimit::Alignment
+            AllocationLimit::Alignment {
+                maximum: maximum_alignment,
+            }
         } else {
-            AllocationLimit::AllocationSize
+            AllocationLimit::AllocationSize {
+                maximum: layouts.target.runtime_allocation_max(),
+            }
         };
         let actual = actual.or_else(|| {
             let target = TargetLayout {
@@ -1358,8 +1360,6 @@ fn validate_located_allocation(
             ty: payload,
             size: actual.map(|layout| layout.size),
             alignment: actual.map(|layout| layout.align),
-            maximum_size: layouts.target.runtime_allocation_max(),
-            maximum_alignment,
             limit,
         }
     })

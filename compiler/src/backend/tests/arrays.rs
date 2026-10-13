@@ -1700,11 +1700,9 @@ fn runtime_allocation_headers_qualify_for_zero_and_nonzero_strides() {
                 validate_program(short, program),
                 Err(TargetLayoutFailure::Allocation {
                     alignment: Some(1),
-                    maximum_size,
-                    maximum_alignment: 8,
-                    limit: crate::target::AllocationLimit::AllocationSize,
+                    limit: crate::target::AllocationLimit::AllocationSize { maximum },
                     ..
-                }) if maximum_size == header - 1
+                }) if maximum == header - 1
             ));
             if element == "Empty" {
                 // Narrow only the address domain, retaining enough space for

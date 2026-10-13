@@ -894,8 +894,7 @@ fn a_runtime_window_and_a_cell_must_fit_the_selected_allocator_alignment() {
                     },
                     size: Some(8),
                     alignment: Some(8),
-                    maximum_alignment: 4,
-                    limit: crate::target::AllocationLimit::Alignment,
+                    limit: crate::target::AllocationLimit::Alignment { maximum: 4 },
                     ..
                 })
             ));
@@ -918,8 +917,7 @@ fn a_frozen_payload_reserves_its_complete_runtime_header() {
             Err(TargetLayoutFailure::Allocation {
                 size: Some(8),
                 alignment: Some(8),
-                maximum_size: 23,
-                limit: crate::target::AllocationLimit::AllocationSize,
+                limit: crate::target::AllocationLimit::AllocationSize { maximum: 23 },
                 ..
             })
         ));
