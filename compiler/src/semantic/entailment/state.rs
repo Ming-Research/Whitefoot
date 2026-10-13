@@ -785,7 +785,7 @@ pub(crate) struct IndexCaptureSubstitution {
 }
 
 impl DerivationNode {
-    fn for_each_parent(&self, mut visit: impl FnMut(DerivationId)) {
+    pub(super) fn for_each_parent(&self, mut visit: impl FnMut(DerivationId)) {
         match self {
             Self::OriginTransport {
                 parent, origins, ..

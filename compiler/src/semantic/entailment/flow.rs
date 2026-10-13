@@ -1855,6 +1855,14 @@ pub(super) fn unavailable_summary_discharges_record(
             .map(|answer| answer.discharged(entailment))
     };
     let baseline = entailment_from_run(function, run(function, context));
+    // Temporary test-only evidence; no replay data enters acceptance or keys.
+    #[cfg(test)]
+    eprintln!(
+        "summary-replay baseline: caller={} record={} discharged={:?}",
+        function.name,
+        target,
+        discharged(&baseline)
+    );
     if discharged(&baseline) != Some(false) {
         return false;
     }
@@ -1865,10 +1873,26 @@ pub(super) fn unavailable_summary_discharges_record(
         contradiction: std::cell::Cell::new(false),
     });
     let restored = run_analyzer(analyzer);
+    #[cfg(test)]
+    eprintln!(
+        "summary-replay restored flow: caller={} record={} contradictory={}",
+        function.name,
+        target,
+        restored.diagnostic_contradiction
+    );
     if restored.diagnostic_contradiction {
         return false;
     }
     let restored = entailment_from_run(function, restored);
+    #[cfg(test)]
+    eprintln!(
+        "summary-replay restored target: caller={} record={} discharged={:?} contradictory_ancestry={:?}",
+        function.name,
+        target,
+        discharged(&restored),
+        (discharged(&restored) == Some(true))
+            .then(|| record_uses_contradiction(&restored, target))
+    );
     discharged(&restored) == Some(true) && !record_uses_contradiction(&restored, target)
 }
 
@@ -1933,7 +1957,7 @@ fn record_uses_contradiction(entailment: &FunctionEntailment, target: usize) -> 
         ) {
             return true;
         }
-        parents.extend(node.parent_ids());
+        node.for_each_parent(|parent| parents.push(parent));
     }
     false
 }
