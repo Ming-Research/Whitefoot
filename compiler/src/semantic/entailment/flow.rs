@@ -357,6 +357,9 @@ struct ProofFlowState {
     /// cells on a copy of its state, and when they alone discharge it, the
     /// repair names these writes [ENT-5].
     measure_kills: Vec<MeasureKill>,
+    /// Failed optional header transport, used only after a proof rejection
+    /// to explain a missing premise. No proof judgment reads these records.
+    lost_headers: Vec<LostHeaderRelation>,
     /// The kill events applied on this path since the innermost enclosing
     /// loop head, kept only where debug assertions are on: at the loop's back
     /// edge every one must be an event of the summary its head subtracted
@@ -377,6 +380,19 @@ struct MeasureKill {
     /// would leave `term` alone [EFF-2, DIAG-1]; false for every write that
     /// is not a callee's declared write.
     narrowable: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct LostHeaderRelation {
+    template: SourceLoopInvariantRef,
+    name: String,
+    relation: String,
+    conjunct: String,
+    incoming: crate::NodePath,
+    components: Vec<AffineInequality>,
+    kills: Vec<MeasureKill>,
+    bindings: Vec<BindingId>,
+    support: Vec<TermKind>,
 }
 
 impl ProofFlowState {
@@ -782,6 +798,7 @@ struct AffineL0Index {
 /// FactState::close changes that identity after facts or inventories change.
 /// The index stores no derivation IDs: selected parents still come from this
 /// view and the vocabulary's one ledger at the point of the query.
+#[derive(Clone)]
 struct AffineL0Cache {
     closed: Rc<ClosedState>,
     index: Rc<LazyAffineL0Index>,
@@ -1781,6 +1798,7 @@ struct Input<'check, 'unit> {
 /// The terms, goals, affine atoms and derivation ledger every judgment is
 /// stated in, with the canonical records keyed by them and the ordinals that
 /// number the ledger's retained roots.
+#[derive(Clone)]
 struct Vocabulary {
     terms: TermTable,
     goals: GoalTable,

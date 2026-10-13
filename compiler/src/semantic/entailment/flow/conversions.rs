@@ -199,6 +199,7 @@ impl Judging<'_, '_, '_> {
             range_partitions: Vec::new(),
             written_before: state.written_before(discharged),
             killed_by: Vec::new(),
+            lost_header: None,
         });
     }
 }

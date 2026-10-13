@@ -1100,6 +1100,26 @@ impl Analyzer<'_, '_> {
                     target_refuted,
                 };
 
+                let lost_header = if !certificate_written
+                    && !target_proved
+                    && !target_refuted
+                    && target_failure.is_none()
+                {
+                    let goals = target
+                        .iter()
+                        .map(|target| target_goal(target, target_right))
+                        .chain(
+                            partner.iter().map(|partner| target_goal(partner, partner_right)),
+                        )
+                        .collect::<Vec<_>>();
+                    if goals.is_empty() {
+                        None
+                    } else {
+                        self.reasoning().explain_lost_header(state, &goals)
+                    }
+                } else {
+                    None
+                };
                 // A participating function may defer this target. Publication
                 // follows its own proof point; acceptance still owes the record.
                 if let Some(target) = target
@@ -1131,6 +1151,7 @@ impl Analyzer<'_, '_> {
                     name: proof.name.clone(),
                     certificate_written,
                     check,
+                    lost_header,
                 });
                 true
             }

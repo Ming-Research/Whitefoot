@@ -1423,6 +1423,15 @@ impl Judging<'_, '_, '_> {
                 .flat_map(|state| state.written.iter().copied())
                 .collect(),
             measure_kills: join_measure_kills(&contributing),
+            lost_headers: {
+                let mut losses = Vec::new();
+                for loss in contributing.iter().flat_map(|state| &state.lost_headers) {
+                    if !losses.contains(loss) {
+                        losses.push(loss.clone());
+                    }
+                }
+                losses
+            },
             continuing,
         }
     }

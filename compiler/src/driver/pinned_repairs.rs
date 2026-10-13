@@ -13,16 +13,19 @@ use super::{CompilationFailureKind, CompilerLimits, compile};
 use crate::SourceInput;
 
 mod call_separations;
+mod captured_indices;
 mod collisions_and_killed_facts;
 mod content_moves;
 mod enum_routed_ensures;
 mod floats;
 mod interface_applications;
+mod lost_header_relations;
 mod prelude_opaque;
 mod recursive_effects;
 mod selector_scope;
 mod shared_maps;
 mod storage_destructuring;
+mod unavailable_summaries;
 
 /// One repair [DIAG-1], pinned with the programs it produces: a rejected
 /// source, the rule and the exact repair its rejection carries, and one
@@ -3831,6 +3834,7 @@ fn each_pinned_repair_is_carried_out_by_its_programs() {
     for pair in REPAIRS
         .iter()
         .chain(call_separations::CALL_SEPARATIONS)
+        .chain(captured_indices::CAPTURED_INDICES)
         .chain(content_moves::CONTENT_MOVES)
         .chain(prelude_opaque::PRELUDE_OPAQUE)
         .chain(recursive_effects::RECURSIVE_EFFECTS)
@@ -3838,9 +3842,11 @@ fn each_pinned_repair_is_carried_out_by_its_programs() {
         .chain(shared_maps::SHARED_MAPS)
         .chain(floats::FLOATS)
         .chain(interface_applications::INTERFACE_APPLICATIONS)
+        .chain(lost_header_relations::LOST_HEADER_RELATIONS)
         .chain(selector_scope::SELECTOR_SCOPE)
         .chain(enum_routed_ensures::ENUM_ROUTED_ENSURES)
         .chain(collisions_and_killed_facts::COLLISIONS_AND_KILLED_FACTS)
+        .chain(unavailable_summaries::UNAVAILABLE_SUMMARIES)
     {
         let failure = compile(
             &[SourceInput::new(pair.name, pair.rejected)],

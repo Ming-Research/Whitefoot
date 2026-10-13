@@ -626,7 +626,7 @@ pub struct UndischargedPostconditionDetail {
     /// The exact non-discharged disposition.
     pub disposition: PostconditionProofDisposition,
     /// The repair [DIAG-1], selected by the disposition.
-    pub mechanical_fix: &'static str,
+    pub mechanical_fix: String,
 }
 
 /// Structured reason for one semantic rejection.

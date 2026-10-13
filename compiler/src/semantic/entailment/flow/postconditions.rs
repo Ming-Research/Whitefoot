@@ -2735,6 +2735,21 @@ impl Judging<'_, '_, '_> {
                 &states.affine,
                 unavailable,
             );
+            let lost_header = if complete.disposition == PostconditionDisposition::Unproved
+                && !unavailable
+            {
+                let mut state = states.clone();
+                state.facts = conditional_facts;
+                self.reasoning().explain_lost_header(
+                    &state,
+                    &[ProofGoal::Ordering {
+                        relation: &relation,
+                        affine: affine_target.as_deref(),
+                    }],
+                )
+            } else {
+                None
+            };
             self.output.postconditions[index]
                 .exits
                 .push(PostconditionExit {
@@ -2744,6 +2759,7 @@ impl Judging<'_, '_, '_> {
                     entry_images,
                     disposition: complete.disposition,
                     derivation: complete.derivation,
+                    lost_header,
                 });
         }
     }

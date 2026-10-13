@@ -26,6 +26,7 @@ mod repairs;
 mod requires;
 mod schedule;
 mod spawn;
+mod summary_repairs;
 mod support;
 mod tail_calls;
 mod text_literals;
@@ -1405,6 +1406,13 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                         &ranges[index].discharged,
                         &ranges[index].inconclusive,
                     )
+                    .map_err(|stop| {
+                        self.types.explain_unavailable_summary(
+                            stop,
+                            function,
+                            &baseline_functions,
+                        )
+                    })
                     .map_err(|stop| self.types.attribute_to_request(function.id, stop))
                 {
                     Ok(()) => {}

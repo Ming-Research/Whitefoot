@@ -441,6 +441,18 @@ pub(crate) struct ObligationOutcome {
     /// [ENT-5]; its repair names them [DIAG-1]. Every other occurrence
     /// retains none.
     pub(crate) killed_by: Vec<MeasureKillNote>,
+    /// Explanation only: a header relation withheld at an earlier join
+    /// which would discharge this failed bounds judgment on a private copy.
+    pub(crate) lost_header: Option<LostHeaderRelationNote>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct LostHeaderRelationNote {
+    pub(crate) name: String,
+    pub(crate) relation: String,
+    pub(crate) conjunct: String,
+    pub(crate) incoming: NodePath,
+    pub(crate) calls: Vec<MeasureKillNote>,
 }
 
 /// [DIAG-1] one write whose kill of a measure's facts an undischarged bounds
@@ -960,6 +972,8 @@ pub(crate) struct SourceProofOutcome {
     /// The direct INV-1 AUTO or PRF-1 certificate result in the source fact
     /// context, selected by `certificate_written`.
     pub(crate) check: SourceProofCheck,
+    /// Explanation only for an unproved blockless invariant target.
+    pub(crate) lost_header: Option<LostHeaderRelationNote>,
 }
 
 impl SourceProofOutcome {
@@ -1020,6 +1034,8 @@ pub(crate) struct PostconditionExit {
     pub(crate) entry_images: Vec<PostconditionEntryImageOutcome>,
     pub(crate) disposition: PostconditionDisposition,
     pub(crate) derivation: Option<DerivationId>,
+    /// Explanation only for an unproved return relation.
+    pub(crate) lost_header: Option<LostHeaderRelationNote>,
 }
 
 /// One nonempty all-exit aggregation. A failed aggregate has no derivation.
@@ -1214,6 +1230,8 @@ pub(crate) struct CallGoalOutcome {
     /// call formed at an argument [REF-4], in goal order, for the repair
     /// [DIAG-1]. Discharged calls carry none.
     pub(crate) range_lengths: Vec<RangeLengthReading>,
+    /// Explanation only, computed after an unproved requirement.
+    pub(crate) lost_header: Option<LostHeaderRelationNote>,
 }
 
 /// [REF-4] one range formed at a call whose `len` an unproved requirement

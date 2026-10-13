@@ -65,7 +65,7 @@ impl Analyzer<'_, '_> {
         for template in templates {
             // Output formability reads the ordinary join, before any member
             // is published. Source views share identities, never new facts.
-            let Ok((instance, _)) =
+            let Ok((instance, relation_view)) =
                 self.reasoning()
                     .relation_instance(&template.relation, &output, None)
             else {
@@ -73,24 +73,6 @@ impl Analyzer<'_, '_> {
             };
             let mut evidence = Vec::new();
             let mut proved = true;
-            for (ordinal, input) in inputs.iter().enumerate() {
-                let batch =
-                    self.reasoning()
-                        .prove_relation_instance(&template.relation, input, None);
-                proved &= batch.disposition == TargetDisposition::Proved;
-                evidence.push(HeaderRelationInput {
-                    site: sites
-                        .get(ordinal)
-                        .cloned()
-                        .unwrap_or_else(|| template.relation.node_path.clone()),
-                    instance: batch.evidence.instance,
-                    components: batch.evidence.components,
-                    contradiction: batch.evidence.contradiction,
-                });
-            }
-            if !proved {
-                continue;
-            }
             let source_ordinal = self
                 .frames
                 .loops
@@ -103,6 +85,119 @@ impl Analyzer<'_, '_> {
                         .position(|candidate| candidate.declaration == template.declaration)
                 })
                 .expect("active template has its written ordinal");
+            let mut first_loss = None;
+            for (ordinal, input) in inputs.iter().enumerate() {
+                let batch =
+                    self.reasoning()
+                        .prove_relation_instance(&template.relation, input, None);
+                proved &= batch.disposition == TargetDisposition::Proved;
+                if batch.disposition != TargetDisposition::Proved
+                    && first_loss.is_none()
+                    && let Some(component) = batch.evidence.failing_component
+                {
+                    let leaves = template
+                        .relation
+                        .left
+                        .postorder()
+                        .chain(template.relation.right.postorder())
+                        .filter(|leaf| {
+                            matches!(
+                                leaf.kind,
+                                CheckedAffineExpressionKind::Local { .. }
+                                    | CheckedAffineExpressionKind::Measure(_)
+                                    | CheckedAffineExpressionKind::Field(_)
+                                    | CheckedAffineExpressionKind::Constant { .. }
+                                    | CheckedAffineExpressionKind::ConstGeneric { .. }
+                            )
+                        });
+                    let atoms = relation_view.affine.measure_atoms.borrow();
+                    let mut support_terms = Vec::new();
+                    let mut measures = Vec::new();
+                    for (leaf, image) in leaves.zip(&instance.operands) {
+                        if !matches!(
+                            leaf.kind,
+                            CheckedAffineExpressionKind::Measure(_)
+                                | CheckedAffineExpressionKind::Field(_)
+                        ) {
+                            continue;
+                        }
+                        let mut terms = atoms
+                            .iter()
+                            .filter_map(|(term, value)| (value == image).then_some(*term))
+                            .collect::<Vec<_>>();
+                        terms.sort_unstable();
+                        if let [term] = terms.as_slice() {
+                            measures.push(*term);
+                        }
+                        support_terms.extend(terms);
+                    }
+                    support_terms.sort_unstable();
+                    support_terms.dedup();
+                    measures.sort_unstable();
+                    measures.dedup();
+                    let mut conjunct = template.relation.clone();
+                    conjunct.equality = false;
+                    if component == 1 {
+                        std::mem::swap(&mut conjunct.left, &mut conjunct.right);
+                    }
+                    first_loss = Some(LostHeaderRelation {
+                        template: SourceLoopInvariantRef {
+                            loop_id: template.loop_id,
+                            source_ordinal: source_ordinal as u32,
+                        },
+                        name: template.name.clone(),
+                        relation: self
+                            .input
+                            .render_checked_invariant_relation(&template.relation, None),
+                        conjunct: self.input.render_checked_invariant_relation(&conjunct, None),
+                        incoming: sites
+                            .get(ordinal)
+                            .cloned()
+                            .unwrap_or_else(|| template.relation.node_path.clone()),
+                        components: instance.components.clone(),
+                        bindings: template
+                            .relation
+                            .left
+                            .postorder()
+                            .chain(template.relation.right.postorder())
+                            .filter_map(|expression| match &expression.kind {
+                                CheckedAffineExpressionKind::Local { binding, .. } => Some(*binding),
+                                _ => None,
+                            })
+                            .collect(),
+                        support: support_terms
+                            .into_iter()
+                            .map(|term| self.vocabulary.terms.kind(term).clone())
+                            .collect(),
+                        kills: input
+                            .measure_kills
+                            .iter()
+                            .filter(|kill| {
+                                measures.contains(&kill.term)
+                                    && sites.get(ordinal).is_some_and(|site| {
+                                        kill.source.components().starts_with(site.components())
+                                    })
+                            })
+                            .cloned()
+                            .collect(),
+                    });
+                }
+                evidence.push(HeaderRelationInput {
+                    site: sites
+                        .get(ordinal)
+                        .cloned()
+                        .unwrap_or_else(|| template.relation.node_path.clone()),
+                    instance: batch.evidence.instance,
+                    components: batch.evidence.components,
+                    contradiction: batch.evidence.contradiction,
+                });
+            }
+            if !proved {
+                if let Some(loss) = first_loss {
+                    output.lost_headers.push(loss);
+                }
+                continue;
+            }
             for (component, inequality) in instance.components.iter().enumerate() {
                 let proof =
                     self.vocabulary

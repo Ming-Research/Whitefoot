@@ -42,6 +42,7 @@ use super::super::model::{
     CheckedFunction, CheckedIntegerOperation, CheckedStatement, FunctionId, expression_children,
 };
 use super::super::permission::visit_read_bindings;
+use super::super::places::{CaptureId, CapturedTerm, CapturedValue};
 use crate::NodePath;
 
 /// [OP-16] name the first excluded part, without suggesting that copy alone
@@ -853,6 +854,47 @@ fn range_length_routes(
     }
 }
 
+/// Existing capture provenance selects only diagnostic wording. A computed
+/// opaque index has no such repair: only a written binding's old value or
+/// a loop-carried capture explains these two losses of a source spelling.
+pub(super) fn unnameable_element_index(goal: &GoalExpression) -> Option<CapturedValue> {
+    match goal {
+        GoalExpression::Operation { arguments, .. } => {
+            arguments.iter().find_map(unnameable_element_index)
+        }
+        GoalExpression::Datum(datum) => {
+            let projections = match datum {
+                GoalDatum::Parameter { projections, .. }
+                | GoalDatum::NamedConst { projections, .. }
+                | GoalDatum::Place { projections, .. }
+                | GoalDatum::EvaluatedValue { projections, .. } => projections,
+                GoalDatum::Literal(_) => return None,
+            };
+            projections.iter().find_map(|projection| match projection {
+                GoalProjection::Subscript(index) | GoalProjection::Page(index)
+                    if matches!(index.term, CapturedTerm::Superseded(_))
+                        || matches!(index.capture, CaptureId::LoopHeader { .. }) =>
+                {
+                    Some(*index)
+                }
+                _ => None,
+            })
+        }
+    }
+}
+
+pub(super) fn requirement_after_index_write(goal: &str, index: &str) -> String {
+    format!(
+        "`{goal}` reads an element selected by the old value of `{index}`, which was rewritten after the reference was formed; before forming that reference, save the index in a fresh binding (for example `let {index}0 = {index};`), form the reference through the saved binding, establish the requirement through that reference before the write, and keep the saved binding unchanged so those facts survive the write"
+    )
+}
+
+pub(super) fn requirement_through_loop_capture(goal: &str) -> String {
+    format!(
+        "`{goal}` reads an element selected by a loop-carried reference whose old index has no current spelling; when this call is intended to use the current iteration's element, re-form the reference inside the loop after selecting that element's index, then establish the requirement through that reference before the call"
+    )
+}
+
 /// [FN-8] an ordinary call's requirement. `ranges` are the ranges formed at
 /// the call whose `len` the goal reads, and `shape` is the goal's shape
 /// over them.
@@ -935,6 +977,19 @@ pub(super) fn postcondition(disposition: Disposition, called: bool) -> &'static 
             "the postcondition is not proved where this `return` delivers its value: add a `requires` over the parameters the value is computed from, prove the bound before the return with an `invariant` whose `use` steps name the facts it follows from, or state a postcondition the body proves"
         }
     }
+}
+
+/// An existing callee proof failed, so its result relation was not published.
+pub(super) fn unavailable_return_summary(
+    instance: &str,
+    summary: &str,
+    rule: &str,
+    failed: &str,
+    line: u64,
+) -> String {
+    format!(
+        "the returned value reads the result of `{instance}`, whose summary `{summary}` is unavailable because its [{rule}] obligation `{failed}` fails at line {line}; if this summary supplies the missing return relation, repair that obligation in `{instance}` so it proves the summary before relying on it at this return"
+    )
 }
 
 /// [FN-9, ERR-3] a relation at a propagated error exit, which returns the
@@ -1133,6 +1188,44 @@ pub(super) fn bounds_after_kill(
         "`{}` is not proved here, but facts about `{measure}` that held before the {call} {sites} would prove it, and {rows} {written}, removed them: where {who} {leaves} `{measure}` unchanged, {narrowing}state equality of the entry and exit values of `{measure}` in {its} `ensures`; or {}",
         case.text,
         case.guard("access", SKIP)
+    )
+}
+
+/// [DIAG-1] an optional header transport which the ordinary join withheld.
+pub(super) fn lost_header_relation(
+    note: &crate::semantic::entailment::LostHeaderRelationNote,
+    line: u64,
+    calls: &[KillingCall],
+    clauses: &[Option<String>],
+) -> String {
+    let path = if calls.is_empty() {
+        format!("the incoming path at line {line}")
+    } else {
+        calls
+            .iter()
+            .map(|call| format!("the path through `{}` at line {}", call.callee, call.line))
+            .collect::<Vec<_>>()
+            .join(" and ")
+    };
+    let preservation = calls
+        .iter()
+        .zip(clauses)
+        .map(|(call, clause)| match clause {
+            Some(clause) => format!("where `{}` preserves that measure, state `{clause}` in its contract", call.callee),
+            None => format!("where `{}` preserves the measures in this relation, state their equality to their entry values in its `ensures`", call.callee),
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
+    format!(
+        "header invariant `{}` (`{}`) was not kept at the join: {path} did not prove `{}`; make that path preserve the relation{}",
+        note.name,
+        note.relation,
+        note.conjunct,
+        if preservation.is_empty() {
+            String::new()
+        } else {
+            format!(": {preservation}")
+        },
     )
 }
 
