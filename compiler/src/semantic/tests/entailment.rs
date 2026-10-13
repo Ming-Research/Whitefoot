@@ -6486,6 +6486,44 @@ fn main() -> status: std::process::ExitStatus pure {{
 }
 
 #[test]
+fn a_copied_generic_array_give_preserves_a_later_length_equality() {
+    // No source measure is read before give. The array is copied, so its
+    // source remains available and a later read must still relate it to the
+    // receiver. The symbolic length expression prevents a concrete type
+    // constant from proving the equality without that transport.
+    let source = br#"fn need_equal(left: u64, right: u64) -> result: unit pure contract {
+  requires left == right;
+} {
+  return unit;
+}
+
+fn probe<const n: u64>(original: Array<u8, n + 1>, flag: Bool) -> result: unit pure {
+  let chosen = if flag {
+    give original;
+  } else {
+    give original;
+  }
+  need_equal(left: original.len, right: chosen.len);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let summary = accepted_entailment(source, "probe");
+    validate_derivations(&summary);
+    let [goal] = summary.call_goals.as_slice() else {
+        panic!("the copied array has exactly one later length-equality requirement");
+    };
+    assert_eq!(
+        goal.disposition,
+        CallGoalDisposition::Discharged,
+        "a later length read of the copied source must equal the give receiver's length"
+    );
+}
+
+#[test]
 fn a_local_invariant_does_not_discard_an_unrelated_no_ensures_value_if_delivery() {
     let source = br#"const values: Array<u8, 4> =[0_u8, 0_u8, 0_u8, 0_u8];
 
