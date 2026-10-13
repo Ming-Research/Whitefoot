@@ -480,10 +480,10 @@ impl Reasoning<'_, '_, '_> {
     fn prove_prepared(&mut self, context: ProofContext<'_>, goal: ProofGoal<'_>) -> ProofResult {
         match goal {
             ProofGoal::Affine { inequality, right } => {
-                self.prove_affine(context, inequality, Some(right))
+                self.prove_affine(context, inequality, AffineDisposition::Complete { right })
             }
             ProofGoal::AutomaticAffine { inequality } => {
-                self.prove_affine(context, inequality, None)
+                self.prove_affine(context, inequality, AffineDisposition::AutoOnly)
             }
             ProofGoal::Signed { expression, affine } => {
                 self.prove_signed(context, expression, affine)
@@ -501,14 +501,13 @@ impl Reasoning<'_, '_, '_> {
         }
     }
 
-    /// One affine target. `disposition` carries the right operand of a target
-    /// submitted to MSR-4's complete disposition, whose affine steps run
-    /// through Step 7; `None` is a PRF-1 query, which AUTO alone answers.
+    /// One affine target, answered by AUTO alone for a PRF-1 query and by
+    /// MSR-4's complete disposition, through Step 7, otherwise.
     pub(super) fn prove_affine(
         &mut self,
         context: ProofContext<'_>,
         inequality: &AffineInequality,
-        disposition: Option<Option<TermId>>,
+        disposition: AffineDisposition,
     ) -> ProofResult {
         let closed = context.close(
             &self.vocabulary.terms,
@@ -524,8 +523,10 @@ impl Reasoning<'_, '_, '_> {
             };
         }
         let proof = match disposition {
-            Some(right) => self.numeric_affine_proof(inequality, right, context),
-            None => {
+            AffineDisposition::Complete { right } => {
+                self.numeric_affine_proof(inequality, right, context)
+            }
+            AffineDisposition::AutoOnly => {
                 let assumptions = affine_facts(context.affine);
                 self.affine_target_proof(inequality, &assumptions, context)
             }
@@ -1230,56 +1231,19 @@ impl Reasoning<'_, '_, '_> {
             }
         }
 
-        if let Some(target) = goal.direct_affine {
-            let assumptions = affine_facts(context.affine);
-            if let Some(proof) = self.affine_target_proof(target, &assumptions, context) {
-                let parent =
-                    self.vocabulary
-                        .derivations
-                        .intern(DerivationNode::AffineConsequence {
-                            relation: relation.clone().map(Box::new),
-                            premises: proof.premises.into_boxed_slice(),
-                            parents: proof.parents,
-                        });
-                let derivation =
-                    self.vocabulary
-                        .goal_numeric_derivation(canonical, relation.as_ref(), parent);
-                return ProofResult {
-                    disposition: ProofDisposition::Proved,
-                    route: Some(ProofRoute::Affine),
-                    derivation: Some(derivation),
-                    product_interval: None,
-                };
-            }
+        if let Some(result) = self.bounded_relation_affine_step(
+            AffineStep::Auto,
+            goal,
+            canonical,
+            relation.as_ref(),
+            context,
+        ) {
+            return result;
         }
 
         if let Some(request) = goal.request
             && let Some(left) = request.left
         {
-            if let Some(derivation) = goal.fixed_affine_bridge.and_then(|bridge| {
-                self.fixed_affine_bound_derivation(
-                    bridge,
-                    left,
-                    request.right,
-                    request.bound,
-                    context.affine,
-                    context.facts,
-                    false,
-                )
-            }) {
-                let derivation = self.vocabulary.goal_numeric_derivation(
-                    canonical,
-                    relation.as_ref(),
-                    derivation,
-                );
-                return ProofResult {
-                    disposition: ProofDisposition::Proved,
-                    route: Some(ProofRoute::Affine),
-                    derivation: Some(derivation),
-                    product_interval: None,
-                };
-            }
-
             if let Some(derivation) = goal.affine_left.and_then(|affine_left| {
                 self.affine_bound_via_l0_right(
                     affine_left,
@@ -1304,53 +1268,14 @@ impl Reasoning<'_, '_, '_> {
             }
         }
 
-        // [MSR-4] Step 7 over each proposition the consumer submitted: the
-        // relation's own target, then a fixed array's `offset <= N - 1`
-        // composed with its length bridge.
-        if let Some(target) = goal.direct_affine
-            && let Some(proof) = self.quotient_bound_proof(target, context)
-        {
-            let parent = self
-                .vocabulary
-                .derivations
-                .intern(DerivationNode::AffineConsequence {
-                    relation: relation.clone().map(Box::new),
-                    premises: proof.premises.into_boxed_slice(),
-                    parents: proof.parents,
-                });
-            let derivation =
-                self.vocabulary
-                    .goal_numeric_derivation(canonical, relation.as_ref(), parent);
-            return ProofResult {
-                disposition: ProofDisposition::Proved,
-                route: Some(ProofRoute::Affine),
-                derivation: Some(derivation),
-                product_interval: None,
-            };
-        }
-        if let Some(request) = goal.request
-            && let Some(left) = request.left
-            && let Some(derivation) = goal.fixed_affine_bridge.and_then(|bridge| {
-                self.fixed_affine_bound_derivation(
-                    bridge,
-                    left,
-                    request.right,
-                    request.bound,
-                    context.affine,
-                    context.facts,
-                    true,
-                )
-            })
-        {
-            let derivation =
-                self.vocabulary
-                    .goal_numeric_derivation(canonical, relation.as_ref(), derivation);
-            return ProofResult {
-                disposition: ProofDisposition::Proved,
-                route: Some(ProofRoute::Affine),
-                derivation: Some(derivation),
-                product_interval: None,
-            };
+        if let Some(result) = self.bounded_relation_affine_step(
+            AffineStep::QuotientBound,
+            goal,
+            canonical,
+            relation.as_ref(),
+            context,
+        ) {
+            return result;
         }
 
         ProofResult {
@@ -1359,6 +1284,54 @@ impl Reasoning<'_, '_, '_> {
             derivation: None,
             product_interval: None,
         }
+    }
+
+    /// One affine step over each proposition a bounded-relation consumer
+    /// submitted: the relation's own target, then a fixed array's
+    /// `offset <= N - 1` composed with its length bridge.
+    fn bounded_relation_affine_step(
+        &mut self,
+        step: AffineStep,
+        goal: BoundedRelationGoal<'_>,
+        canonical: Option<GoalId>,
+        relation: Option<&Relation>,
+        context: ProofContext<'_>,
+    ) -> Option<ProofResult> {
+        let derivation = if let Some(target) = goal.direct_affine
+            && let Some(proof) = self.affine_step_proof(step, target, context)
+        {
+            self.vocabulary
+                .derivations
+                .intern(DerivationNode::AffineConsequence {
+                    relation: relation.cloned().map(Box::new),
+                    premises: proof.premises.into_boxed_slice(),
+                    parents: proof.parents,
+                })
+        } else if let Some(request) = goal.request
+            && let Some(left) = request.left
+            && let Some(bridge) = goal.fixed_affine_bridge
+        {
+            self.fixed_affine_bound_derivation(
+                bridge,
+                left,
+                request.right,
+                request.bound,
+                context.affine,
+                context.facts,
+                step,
+            )?
+        } else {
+            return None;
+        };
+        let derivation =
+            self.vocabulary
+                .goal_numeric_derivation(canonical, relation, derivation);
+        Some(ProofResult {
+            disposition: ProofDisposition::Proved,
+            route: Some(ProofRoute::Affine),
+            derivation: Some(derivation),
+            product_interval: None,
+        })
     }
 
     /// Interns one measure term over a place spelled in the compact
@@ -1413,8 +1386,7 @@ impl Reasoning<'_, '_, '_> {
     }
 
     /// The fixed first step `bridge.target` composed with the closed bound
-    /// from its middle term to `right`. The first step is proved by AUTO, or,
-    /// for `quotient_bound`, by MSR-4's Step 7.
+    /// from its middle term to `right`. `step` proves the first step.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn fixed_affine_bound_derivation(
         &mut self,
@@ -1424,7 +1396,7 @@ impl Reasoning<'_, '_, '_> {
         requested: i128,
         affine: &AffineFlowState,
         facts: &FactState,
-        quotient_bound: bool,
+        step: AffineStep,
     ) -> Option<DerivationId> {
         let remaining = requested.checked_sub(bridge.left_to_middle_bound)?;
         let first_relation = Relation::Bound {
@@ -1432,19 +1404,15 @@ impl Reasoning<'_, '_, '_> {
             right: bridge.middle,
             bound: bridge.left_to_middle_bound,
         };
-        let first = if quotient_bound {
-            let proof =
-                self.quotient_bound_proof(bridge.target, ProofContext::new(facts, affine))?;
-            self.vocabulary
-                .derivations
-                .intern(DerivationNode::AffineConsequence {
-                    relation: Some(Box::new(first_relation)),
-                    premises: proof.premises.into_boxed_slice(),
-                    parents: proof.parents,
-                })
-        } else {
-            self.affine_consequence_derivation(bridge.target, Some(first_relation), affine, facts)?
-        };
+        let proof = self.affine_step_proof(step, bridge.target, ProofContext::new(facts, affine))?;
+        let first = self
+            .vocabulary
+            .derivations
+            .intern(DerivationNode::AffineConsequence {
+                relation: Some(Box::new(first_relation)),
+                premises: proof.premises.into_boxed_slice(),
+                parents: proof.parents,
+            });
         let closed = close(
             facts,
             &self.vocabulary.terms,
@@ -1580,15 +1548,35 @@ impl Reasoning<'_, '_, '_> {
         let mut check = AffineCheckState::new();
         let multiple = target.upper().checked_add(1)?;
         let scaled_divisor = division.divisor.scale(multiple, &mut check).ok()?;
-        let rewritten =
-            AffineInequality::from_bounded_forms(&division.dividend, &scaled_divisor, -1, &mut check)
-                .ok()?;
+        let rewritten = AffineInequality::from_bounded_forms(
+            &division.dividend,
+            &scaled_divisor,
+            -1,
+            &mut check,
+        )
+        .ok()?;
         let assumptions = affine_facts(context.affine);
         let mut proof = self.affine_target_proof(&rewritten, &assumptions, context)?;
         proof.parents.push(division.parent);
         proof.parents.sort_unstable_by_key(|parent| parent.0);
         proof.parents.dedup();
         Some(proof)
+    }
+
+    /// The affine proof of `target` by one step of a bounded-relation route.
+    fn affine_step_proof(
+        &mut self,
+        step: AffineStep,
+        target: &AffineInequality,
+        context: ProofContext<'_>,
+    ) -> Option<AffineConsequenceProof> {
+        match step {
+            AffineStep::Auto => {
+                let assumptions = affine_facts(context.affine);
+                self.affine_target_proof(target, &assumptions, context)
+            }
+            AffineStep::QuotientBound => self.quotient_bound_proof(target, context),
+        }
     }
 
     /// [MSR-4] step 6, the affine-left / L0-right bridge over every live

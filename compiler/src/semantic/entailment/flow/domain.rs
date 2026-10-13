@@ -657,8 +657,7 @@ impl Vocabulary {
         let kept_all = |terms: &[AffineCoefficient]| terms.iter().all(|each| kept(each.term()));
         self.product_atoms
             .retain(|product, (left, right)| kept(*product) && kept(*left) && kept(*right));
-        self.handle_images
-            .retain(|handle, image| kept(*handle) && kept_all(image.terms()));
+        self.handle_images.retain(|handle, image| kept(*handle) && kept_all(image.terms()));
         self.power_atoms
             .retain(|(amount, _), power| kept_all(amount.terms()) && kept_all(power.terms()));
         self.unsigned_divisions.retain(|division| {
@@ -721,7 +720,11 @@ impl Vocabulary {
     /// demands it, and the amount is one immutable value, so the interval
     /// holds wherever the atom is named. A constant amount and a signed type
     /// have no power atom.
-    pub(super) fn power_atom(&mut self, amount: &AffineForm, ty: IntegerType) -> Option<AffineForm> {
+    pub(super) fn power_atom(
+        &mut self,
+        amount: &AffineForm,
+        ty: IntegerType,
+    ) -> Option<AffineForm> {
         if amount.terms().is_empty() || ty.signed() {
             return None;
         }

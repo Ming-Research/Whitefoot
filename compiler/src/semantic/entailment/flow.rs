@@ -608,6 +608,24 @@ struct FixedAffineBoundBridge<'a> {
     left_to_middle_bound: i128,
 }
 
+/// Which of MSR-4's affine steps answer one affine target.
+#[derive(Clone, Copy)]
+enum AffineDisposition {
+    /// A PRF-1 query: AUTO alone.
+    AutoOnly,
+    /// A target submitted to MSR-4's complete disposition, whose Step 6
+    /// bridges to `right` when the source normalization retained one.
+    Complete { right: Option<TermId> },
+}
+
+/// The step that proves an affine target the fixed bounded-relation routes
+/// submit: AUTO, or MSR-4's Step 7 quotient bound.
+#[derive(Clone, Copy)]
+enum AffineStep {
+    Auto,
+    QuotientBound,
+}
+
 #[derive(Clone)]
 struct NumericAffineTarget {
     inequality: AffineInequality,

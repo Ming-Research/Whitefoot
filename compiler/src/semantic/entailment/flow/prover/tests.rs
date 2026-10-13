@@ -1620,8 +1620,8 @@ fn offset_extremes_survive_delivery_and_call_term_replacement() {
 /// A judgment window that is rolled back discards the atoms it minted, and the
 /// next atom reuses the first discarded index. A power atom or product record
 /// that survived the rollback would then name that unrelated value; with the
-/// rollback reduced to truncating the atom table, both assertions after it
-/// fail.
+/// rollback reduced to truncating the atom table, the product-record
+/// assertion and the final distinct-atom assertion both fail.
 #[test]
 fn discarded_atoms_leave_no_record_naming_a_reused_index() {
     with_analyzer(|analyzer| {
