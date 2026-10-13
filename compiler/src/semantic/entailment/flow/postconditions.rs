@@ -1508,8 +1508,8 @@ impl Reasoning<'_, '_, '_> {
 
     /// [ENT-2, MSR-6] every occurrence of a symbolic const parameter names
     /// its original declaration and keeps that declaration's written type.
-    /// A storage extent or a differently typed formal does not create another
-    /// constant identity or grant that parameter a different interval.
+    /// Forwarding it to a formal or using it as a storage extent, each of its
+    /// own type [CONST-1], creates no other constant identity or interval.
     pub(super) fn const_parameter_term(&mut self, declaration: crate::DeclarationId) -> TermId {
         let ty = self.input.context.const_parameter_types[&declaration];
         self.vocabulary

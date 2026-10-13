@@ -1,0 +1,137 @@
+alias AcceptedConnection = std::net::AcceptedConnection;
+alias ExitStatus = std::process::ExitStatus;
+alias Inputs = std::process::Inputs;
+alias SocketAddress = std::net::SocketAddress;
+alias TcpConnection = std::net::TcpConnection;
+alias TcpReceive = std::net::TcpReceive;
+alias close_listener = std::net::close_listener;
+alias close_receive = std::net::close_receive;
+alias close_send = std::net::close_send;
+alias exit_status = std::process::exit_status;
+alias local_address = std::net::local_address;
+alias socket_address_ip = std::net::socket_address_ip;
+alias socket_address_port = std::net::socket_address_port;
+alias socket_address_v4 = std::net::socket_address_v4;
+alias tcp_accept = std::net::tcp_accept;
+alias tcp_connect = std::net::tcp_connect;
+alias tcp_listen = std::net::tcp_listen;
+
+fn endpoint_key(address: &SocketAddress) -> result: u64 reads(address) {
+  doc "Packs an IPv4 endpoint into one number, 2^48 plus its four octets and its port in that order, so two IPv4 endpoints are equal exactly when their numbers are; an IPv6 address packs to zero, which no IPv4 endpoint does [PRE-2].";
+  let port = socket_address_port(address: address);
+  let wide_port = cvt::<u16, u64>(port);
+  match socket_address_ip(address: address) {
+    Ipv4(a: first, b: second, c: third, d: fourth) => {
+      let packed = 1_u64;
+      let wide_first = cvt::<u8, u64>(first);
+      set packed = packed *wrap 256_u64;
+      set packed = packed +wrap wide_first;
+      let wide_second = cvt::<u8, u64>(second);
+      set packed = packed *wrap 256_u64;
+      set packed = packed +wrap wide_second;
+      let wide_third = cvt::<u8, u64>(third);
+      set packed = packed *wrap 256_u64;
+      set packed = packed +wrap wide_third;
+      let wide_fourth = cvt::<u8, u64>(fourth);
+      set packed = packed *wrap 256_u64;
+      set packed = packed +wrap wide_fourth;
+      set packed = packed *wrap 65536_u64;
+      set packed = packed +wrap wide_port;
+      return packed;
+    }
+    Ipv6(a: group_a, b: group_b, c: group_c, d: group_d, e: group_e, f: group_f, g: group_g, h: group_h) => {
+      return 0_u64;
+    }
+  }
+}
+
+fn address_mismatch(server: &TcpReceive, client: &TcpReceive, peer: &SocketAddress, listened: &SocketAddress) -> result: u8 reads(server), reads(client), reads(peer), reads(listened) {
+  doc "Returns 0 when the accepted connection's peer is 127.0.0.1 at a port of its own, that peer is the local endpoint the connecting side reports for itself, and the accepted connection's local endpoint is the listened address; otherwise the number of the first check that fails [PRE-2].";
+  let peer_key = endpoint_key(address: peer);
+  let peer_port = socket_address_port(address: peer);
+  if peer_port == 0_u16 {
+    return 1_u8;
+  }
+  let listened_port = socket_address_port(address: listened);
+  if peer_port == listened_port {
+    return 2_u8;
+  }
+  let loopback_peer = socket_address_v4(a: 127_u8, b: 0_u8, c: 0_u8, d: 1_u8, port: peer_port);
+  let expected_peer = endpoint_key(address: &loopback_peer);
+  if peer_key != expected_peer {
+    return 3_u8;
+  }
+  match local_address(receive: client) {
+    Ok(value: client_end) => {
+      let client_key = endpoint_key(address: &client_end);
+      if client_key != peer_key {
+        return 4_u8;
+      }
+    }
+    Err(error: client_problem) => {
+      return 5_u8;
+    }
+  }
+  match local_address(receive: server) {
+    Ok(value: server_end) => {
+      let server_key = endpoint_key(address: &server_end);
+      let listened_key = endpoint_key(address: listened);
+      if server_key != listened_key {
+        return 6_u8;
+      }
+    }
+    Err(error: server_problem) => {
+      return 7_u8;
+    }
+  }
+  return 0_u8;
+}
+
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  doc "Listens on 127.0.0.1 port 9109, connects to it, accepts that connection, and checks both ends' addresses against each other: the accepted peer must be the local endpoint the connecting side reports, and the accepted connection's local endpoint the listened address [PRE-2].";
+  let Inputs(cwd: cwd_directory, handles: handles, ..) = move inputs;
+  let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
+  std::fs::close_directory_write(factory: &handles, directory: move cwd_write);
+  std::fs::close_directory(factory: &handles, directory: move cwd);
+  let listen_at = socket_address_v4(a: 127_u8, b: 0_u8, c: 0_u8, d: 1_u8, port: 9109_u16);
+  let no_deadline = None<std::time::Instant>();
+  match tcp_listen(factory: &handles, address: &listen_at) {
+    Ok(value: listener) => {
+      let connect_cancel = std::time::cancel_never();
+      let connected = tcp_connect(factory: &handles, address: &listen_at, deadline: no_deadline, cancel: &connect_cancel);
+      std::time::close_cancel_watch(watch: move connect_cancel);
+      match move connected {
+        Ok(value: client) => {
+          let accept_cancel = std::time::cancel_never();
+          let accepted = tcp_accept(factory: &handles, listener: &listener, deadline: no_deadline, cancel: &accept_cancel);
+          std::time::close_cancel_watch(watch: move accept_cancel);
+          let outcome = 20_u8;
+          match move accepted {
+            Ok(value: arrival) => {
+              let AcceptedConnection(connection: server, peer: arrived_from) = move arrival;
+              set outcome = address_mismatch(server: &server.receive, client: &client.receive, peer: &arrived_from, listened: &listen_at);
+              let TcpConnection(receive: server_receive, send: server_send) = move server;
+              close_receive(factory: &handles, receive: move server_receive);
+              close_send(factory: &handles, send: move server_send);
+            }
+            Err(error: accept_problem) => {
+              set outcome = 21_u8;
+            }
+          }
+          let TcpConnection(receive: client_receive, send: client_send) = move client;
+          close_receive(factory: &handles, receive: move client_receive);
+          close_send(factory: &handles, send: move client_send);
+          close_listener(factory: &handles, listener: move listener);
+          return exit_status(code: outcome);
+        }
+        Err(error: connect_problem) => {
+          close_listener(factory: &handles, listener: move listener);
+          return exit_status(code: 22_u8);
+        }
+      }
+    }
+    Err(error: listen_problem) => {
+      return exit_status(code: 23_u8);
+    }
+  }
+}

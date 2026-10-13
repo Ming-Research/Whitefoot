@@ -3215,19 +3215,22 @@ pub(crate) struct CheckedContextAwait {
 
 /// One [OWN-7] separation question the checker could not settle by syntax.
 ///
-/// A mandatory call-effect pair [EFF-5] or a write's preservation of a later
-/// reference use [REF-2] requires the positions to be proved distinct.
+/// A mandatory call-effect pair [EFF-5], a write's preservation of a later
+/// reference use [REF-2] or two handle places of one atomic statement
+/// [SHARE-2] requires the positions to be proved distinct.
 /// The checker holds the actual argument spellings and the live
 /// reference state, so it owns the comparison; what it cannot do is discharge
 /// the index or range goal, which is the fixed [ENT-6] families' work under
 /// [MSR-4]'s disposition. This record is that handover, and the diagnostic it
-/// carries cites EFF-5 or OP-11 at the call, or REF-2 at the reference use.
+/// carries cites EFF-5 or OP-11 at the call, SHARE-2 at the target, or REF-2
+/// at the reference use.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CheckedCallSeparation {
-    /// The call or set commit whose pre-write proof context answers the query.
+    /// The call, set commit or atomic statement whose pre-write proof context
+    /// answers the query.
     pub(crate) site: NodePath,
-    /// Exchange's possible ancestry is refused by OP-11, rather than EFF-5.
-    pub(crate) exchange: bool,
+    /// The rule whose separation this is, when no reference use names one.
+    pub(crate) occasion: CheckedSeparationOccasion,
     /// A demanded REF-2 use; the separation is still proved at `site`, before
     /// the invalidating write, and diagnosed at this later use.
     pub(crate) reference_use: Option<CheckedReferencePreservationUse>,
@@ -3245,6 +3248,20 @@ pub(crate) struct CheckedCallSeparation {
     /// Whether one reference argument supplies both paths [EFF-5], so that
     /// passing only one of them is no repair [DIAG-1].
     pub(crate) one_argument: bool,
+}
+
+/// Which judgment asks a [`CheckedCallSeparation`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum CheckedSeparationOccasion {
+    /// Two entries of one call's substituted row [EFF-5].
+    Call,
+    /// Exchange's possible ancestry is refused by OP-11, rather than EFF-5.
+    Exchange,
+    /// Two targets of one atomic statement whose handle places overlap
+    /// unless their positions differ, where one is a whole target [SHARE-2].
+    /// The site is the atomic statement, judged when it begins, and the
+    /// diagnostic cites the later target.
+    AtomicTargets(NodePath),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

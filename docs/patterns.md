@@ -933,6 +933,31 @@ atomic items = &queue when items^.len > 0_u64 {
 }
 ```
 
+A guard is woken only by a write to its targets' states, so it cannot wait
+for a time: a guard that reads a clock or the memory meter is refused
+[SHARE-2, PRE-2]. To wait until a deadline, call `std::time::sleep_until`
+before the statement. To wait for the state or the deadline, whichever comes
+first, spawn a context that sleeps until the deadline and then fires a
+cancellation source, and let the guard read that source's state:
+
+```whitefoot
+fn ready_or_stopped(count: &u64, stop: &std::time::CancelState) -> result: Bool reads(count), reads(stop) {
+  let ready = count^ > 0_u64;
+  let either = bor(ready, stop^.fired);
+  return either;
+}
+```
+
+```whitefoot
+spawn timer(source: move source, deadline: deadline);
+atomic count = &pending, stop = &stopped when ready_or_stopped(count: count, stop: stop) {
+  set timed_out = stop^.fired;
+}
+```
+
+Here `timer` waits with `sleep_until` and then calls `cancel_fire`, and
+`stopped` is the `cancel_state` of a watch on the same source.
+
 A map's entries and accompanying metadata can be held by one statement:
 
 ```whitefoot

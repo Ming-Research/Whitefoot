@@ -69,6 +69,11 @@ impl Checker<'_, '_> {
         check_context: &CheckContext<'_>,
         signature: &FunctionSignature,
     ) -> Result<Vec<ContractReadPath>, CheckStop> {
+        // [MSR-3] admits every entry former before the clauses that contain
+        // it are formed, as the body check and formal contract formation do:
+        // RANGE-1 forms a place from an entry former only once MSR-3 has
+        // admitted it, and [DIAG-1] cites MSR-3, defined first, at the former.
+        self.types.declarations.check_entry_formers(signature)?;
         let check_context = CheckContext {
             writing_module: self
                 .types
@@ -398,7 +403,9 @@ fn range_base(
     signature: &FunctionSignature,
     definitions: &[(BindingId, GoalExpression)],
 ) -> Option<(u32, Vec<ContractReadStep>)> {
-    let CheckedRangeRoot::Binding(binding) = place.root else {
+    // An entry-state root reads the same parameter storage at call entry
+    // [MSR-3, RANGE-1], so it joins the footprint as that parameter's read.
+    let (CheckedRangeRoot::Binding(binding) | CheckedRangeRoot::Entry(binding)) = place.root else {
         return None;
     };
     let (ordinal, mut steps) =
@@ -603,7 +610,9 @@ fn collect_range_projection(
                             field,
                         }))
                     }
-                    CheckedRangeProjection::Tag(_) => break,
+                    // A tag and an `unchanged` whole-selection identity
+                    // read the complete selected element [RANGE-1].
+                    CheckedRangeProjection::Tag(_) | CheckedRangeProjection::WholeElement => break,
                 }
             }
         }
@@ -864,7 +873,8 @@ fn range_owned_projection(
             position,
             pending,
         )?,
-        CheckedRangeProjection::Tag(_) => return None,
+        // A whole-selection identity has no integer image [RANGE-1].
+        CheckedRangeProjection::Tag(_) | CheckedRangeProjection::WholeElement => return None,
     })
 }
 

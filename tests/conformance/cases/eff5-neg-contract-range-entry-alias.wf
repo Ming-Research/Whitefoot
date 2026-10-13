@@ -1,0 +1,19 @@
+struct Frame {
+  marks: Array<u64, 2>;
+  items: Array<u64, 2>;
+}
+
+fn mark_items(keep: &Frame, other: &Frame) -> result: unit writes(keep.marks), writes(other.items) contract {
+  ensures forall marked(k in 0_u64..2_u64): keep^.marks[k] == 0_u64 * entry(keep)^.items[k] + 1_u64;
+} {
+  set keep^.marks[0_u64] = 1_u64;
+  set keep^.marks[1_u64] = 1_u64;
+  set other^.items[0_u64] = 9_u64;
+  return unit;
+}
+
+fn caller(f: &Frame) -> result: unit writes(f) {
+  doc "EFF-5, MSR-3, RANGE-1: the entry-rooted range read entry(keep)^.items[k] widens to f.items, which other writes; the exit read keep^.marks[k] and the rows keep.marks, other.items are disjoint from it.";
+  mark_items(keep: f, other: f);
+  return unit;
+}

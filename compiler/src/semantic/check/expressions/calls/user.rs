@@ -16,8 +16,8 @@ use super::super::super::super::goal::{
 use super::super::super::super::model::{
     BindingId, CheckedCallContract, CheckedCallSeparation, CheckedCallSeparationPositions,
     CheckedEffectStep, CheckedEffects, CheckedExpression, CheckedMode, CheckedNominalKind,
-    CheckedRangeSource, CheckedSegmentSelect, CheckedSegmentSource, CheckedSetTarget,
-    CheckedStatePath, CheckedType,
+    CheckedRangeSource, CheckedSegmentSelect, CheckedSegmentSource, CheckedSeparationOccasion,
+    CheckedSetTarget, CheckedStatePath, CheckedType,
 };
 use super::super::super::super::places::{
     CaptureId, CapturedRange, CapturedTerm, CapturedValue, PlaceRoot, PlaceStep, ResolvedPlace,
@@ -955,7 +955,11 @@ impl<'unit> Checker<'_, 'unit> {
                     }
                     self.body.call_separations.push(CheckedCallSeparation {
                         site: self.types.declarations.tree.path(node)?.clone(),
-                        exchange,
+                        occasion: if exchange {
+                            CheckedSeparationOccasion::Exchange
+                        } else {
+                            CheckedSeparationOccasion::Call
+                        },
                         reference_use: None,
                         positions,
                         contract_indices: left

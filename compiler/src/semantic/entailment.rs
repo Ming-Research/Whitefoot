@@ -351,6 +351,10 @@ pub(crate) enum ObligationFamily {
     /// Disjoint positions exclude proper ancestry at an exchange [OP-11]. The
     /// number is the query's position in the function's call separations.
     ExchangeSeparation(u32),
+    /// Two handle places of one atomic statement, one of a whole target,
+    /// must select different storage [SHARE-2, OWN-7]. The number is the
+    /// query's position in the function's call separations.
+    AtomicTargetSeparation(u32),
     /// A REF-2 use depends on this event-site separation query.
     ReferencePreservation(u32),
 }
