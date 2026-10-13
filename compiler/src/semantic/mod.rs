@@ -1661,6 +1661,9 @@ pub enum UnsupportedSemanticFeature {
     /// written set took more walks to settle, than the checker follows;
     /// RANGE-2 forgets only what the body can write.
     RangeLoopNesting,
+    /// A call's retained formal row has an unresolved index capture, or a
+    /// query needs a reference frame the range walk cannot version precisely.
+    RangeCallFootprint,
     /// A page's length in a postcondition has no return-site measure term yet.
     PageLengthPostcondition,
 }

@@ -1,0 +1,32 @@
+struct Pair {
+  f: u64;
+  g: u64;
+}
+
+fn set_g_at(rows: &[Pair], at: u64) -> result: unit writes(rows[at].g) contract {
+  requires at < rows^.len;
+} {
+  doc "The bare range parameter supplies an element root; its index and field suffix remain part of the substituted write.";
+  set rows^[at].g = 1_u64;
+  return unit;
+}
+
+fn need_small(rows: &[Pair]) -> result: unit pure contract {
+  requires forall small(k in 0_u64..rows^.len): rows^[k].f <= 7_u64;
+} {
+  return unit;
+}
+
+fn probe(rows: &[Pair]) -> result: unit writes(rows) contract {
+  requires forall held_f(k in 0_u64..rows^.len): rows^[k].f <= 7_u64;
+  requires 1_u64 <= rows^.len;
+} {
+  doc "RANGE-2 retains f after writes(rows[at].g) with at zero; the bare rows actual introduces no new slice step before its index.";
+  set_g_at(rows: rows, at: 0_u64);
+  need_small(rows: rows);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

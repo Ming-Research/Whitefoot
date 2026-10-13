@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 the owner's agent instructions own the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-13 A call's range write footprint is bounded by its first captured range, and capability limits are judged per obligation
+
+Nodes: compiler/range-judgment
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the one-sentence specification change and the two range-judgment design decisions in #466 (head 2f5f1d0)?" (translated).
+
+Summary: Two decisions are added. Provisionally, when a call's argument is a formed range, its write footprint is bounded by the first captured range and the full path frame is kept only as diagnostic provenance, because that separates range overlap from read identity without adding equalities to the accepting query, instead of versioning storage by full path, whose correspondence to the fixed derivation rules is unsettled; some same-range sibling-field proofs report an implementation limit until a program needs that precision. A capability limit is judged per failed obligation from its conclusion, quantifier bounds, guards and read domains, instead of replacing every conclusion of a function with an unresolved write, and the counterfactual queries that explain a precision loss serve diagnostics only and never acceptance.
+
 ## 2026-10-13 One release classification decides whether release does work, and key sets and concurrent hash maps release runtime storage
 
 Nodes: compiler/cleanup-traversal, language/ownership/linearity, language/waiting/shared-objects/keyed-tables
