@@ -198,6 +198,9 @@ else
 	$(NO_CORE_DUMPS) $(CHECK_RUN) compiler/test-corpus $(SHARD_RUN) corpus "$(SHARD)" "$(CARGO)"
 endif
 
+test-receipts-whole:
+	$(NO_CORE_DUMPS) $(CHECK_RUN) compiler/test-receipts-whole $(SHARD_RUN) --whole-exact "$(CARGO)" corpus conformance::adapter::a_shared_proof_receipt_cache_reaches_every_declared_source_verdict
+
 docs:
 	RUSTDOCFLAGS="-D warnings" $(CARGO) doc --no-deps --locked --offline
 
@@ -984,7 +987,7 @@ completion-windows-wine:
 # Managed-stack park-on-miss measurements are retired from this runtime.
 # Their dated evidence and reproduction revision remain in the investigation.
 .PHONY: concurrent-map-test-sanitized concurrent-map-test-tsan
-.PHONY: check _check static _static build test-build test-build-unit test-build-corpus format lint test _test test-unit test-corpus \
+.PHONY: check _check static _static build test-build test-build-unit test-build-corpus format lint test _test test-unit test-corpus test-receipts-whole \
 	docs completion-test completion-test-images completion-native-test completion-fork-capsule-test concurrent-map-test shared-object-test decision-cell-test \
 	completion-core-read-test \
 	completion-tsan \

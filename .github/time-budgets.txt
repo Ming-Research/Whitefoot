@@ -49,6 +49,13 @@ check/corpus                    360        320        220        360    -
 compiler/test-build-corpus      135        115        85         175    -
 compiler/test-corpus            235        210        140        205    -
 
+# Main-push Linux-only whole receipt-cache coverage. Uniform bootstrap values,
+# not CPU-class measurements: ceil-to-5(190 * 1.1) = 210 s for the EPYC 7763
+# run; ceil-to-5((135 + 190) * 1.1) = 360 s includes its existing build budget.
+# Replace a class only after at least 20 recorded runs of that stage/model.
+check/receipts-whole            360        360        360        -      -
+compiler/test-receipts-whole    210        210        210        -      -
+
 # gate.yml, runtime group
 check/runtime                   25         25         15         30     -
 

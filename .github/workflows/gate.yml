@@ -28,7 +28,8 @@
 # decides a merge: a push to a branch with an open pull request marked ready,
 # the opening of a ready pull request, the event of marking one ready, main,
 # and a manual run (compiler/verification). The last job then requires every
-# group green on both platforms for the revision.
+# regular group green on both platforms for the revision; a push to main also
+# checks the whole proof-receipt corpus on Linux.
 name: gate
 
 on:
@@ -78,6 +79,7 @@ jobs:
     timeout-minutes: 2
     outputs:
       groups: ${{ steps.select.outputs.groups }}
+      matrix: ${{ steps.select.outputs.matrix }}
       run: ${{ steps.platforms.outputs.run }}
       platforms: ${{ steps.platforms.outputs.platforms }}
       both: ${{ steps.platforms.outputs.both }}
@@ -85,12 +87,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-      - name: Read the canonical group inventory
-        id: select
-        run: |
-          groups=$(make --no-print-directory --silent check-groups)
-          echo "groups=$groups" >> "$GITHUB_OUTPUT"
-          echo "Correctness groups: $groups" >> "$GITHUB_STEP_SUMMARY"
       # Whether this revision is checked, and on which platforms. A failed
       # query fails the run rather than quietly skipping the gate or dropping
       # macOS.
@@ -121,10 +117,23 @@ jobs:
             echo "Gate skipped: $reason" >> "$GITHUB_STEP_SUMMARY"
           fi
 
+      - name: Read the canonical group inventory
+        id: select
+        env:
+          MAIN_PUSH: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          CHECK_PLATFORMS: ${{ steps.platforms.outputs.platforms }}
+        run: |
+          groups=$(make --no-print-directory --silent check-groups MAIN_PUSH="$MAIN_PUSH")
+          matrix=$(jq -cn --argjson groups "$groups" --argjson platforms "$CHECK_PLATFORMS" \
+            '[$groups[] as $group | $platforms[] as $os | select($group.linux_only != true or $os == "ubuntu-24.04") | $group + {os: $os}]')
+          echo "groups=$groups" >> "$GITHUB_OUTPUT"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          echo "Correctness groups: $groups" >> "$GITHUB_STEP_SUMMARY"
+
   gate:
     needs: groups
     if: needs.groups.outputs.run == 'true'
-    name: ${{ matrix.stage.name }} (${{ matrix.os }})
+    name: ${{ matrix.name }} (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     # This bounds a job, never a language verdict. Each shard builds its own
     # targets; phase logs distinguish construction from runs.
@@ -132,8 +141,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON(needs.groups.outputs.platforms) }}
-        stage: ${{ fromJSON(needs.groups.outputs.groups) }}
+        include: ${{ fromJSON(needs.groups.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -172,7 +180,7 @@ jobs:
       # checkout. Work branches use their fork point; manual main runs use
       # the first parent. Missing bases fail instead of skipping the check.
       - name: Select the design review base
-        if: matrix.stage.group == 'static'
+        if: matrix.group == 'static'
         env:
           PUSH_BEFORE: ${{ github.event.before }}
         run: |
@@ -259,11 +267,11 @@ jobs:
       # its output is not a terminal, which arrives at the runner as the whole
       # stage completing in one instant and destroys the timestamps the raw log
       # is read for.
-      - name: ${{ matrix.stage.name }}
+      - name: ${{ matrix.name }}
         env:
           STAGE_LOG: ${{ runner.temp }}/stage.log
-          CHECK_GROUP: ${{ matrix.stage.group }}
-          CHECK_SHARD: ${{ matrix.stage.shard }}
+          CHECK_GROUP: ${{ matrix.group }}
+          CHECK_SHARD: ${{ matrix.shard }}
           WHITEFOOT_CHECK_TIMEOUT: 900
         run: |
           set -o pipefail
@@ -286,12 +294,12 @@ jobs:
       # job it has — a case that goes from milliseconds to minutes closes a
       # minutes-long gap on any host — and it costs no test time, which a real
       # per-case measurement on stable Rust would.
-      - name: Ten largest gaps in ${{ matrix.stage.name }}
+      - name: Ten largest gaps in ${{ matrix.name }}
         if: always()
         run: |
           test -s "$RUNNER_TEMP/stage.log" || exit 0
           {
-            echo "### ${{ matrix.stage.name }} (${{ matrix.os }}) — ten largest completion gaps"
+            echo "### ${{ matrix.name }} (${{ matrix.os }}) — ten largest completion gaps"
             echo
             echo 'Seconds between one case reporting and the previous one, so a lower'
             echo 'bound on the wall of the case that closed the gap.'
@@ -313,7 +321,7 @@ jobs:
         run: |
           if [ -s "$WHITEFOOT_TIME_BUDGET_RECORD" ]; then
             {
-              echo "### ${{ matrix.stage.name }} (${{ matrix.os }}) — time budget reports"
+              echo "### ${{ matrix.name }} (${{ matrix.os }}) — time budget reports"
               echo
               echo '```text'
               cat "$WHITEFOOT_TIME_BUDGET_RECORD"
@@ -323,7 +331,8 @@ jobs:
           perl .github/run-check.pl --budget-verdict "$WHITEFOOT_TIME_BUDGET_RECORD"
 
   # The merge precondition, read from the revision's own check runs rather
-  # than from this run's matrix: every group green on both platforms. Draft
+  # than from this run's matrix: regular groups green on both platforms and
+  # Linux-only groups on Linux. Draft
   # pushes and unchecked revisions skip it, so its success marks a revision
   # that may be merged. A cancelled run skips it too: a later push in its
   # concurrency group supersedes it, and a verdict read from cancelled jobs
@@ -335,14 +344,14 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
-      - name: Require every group green on Linux and macOS
+      - name: Require every group green on its platforms
         env:
           GH_TOKEN: ${{ github.token }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           GATE_GROUPS: ${{ needs.groups.outputs.groups }}
         run: |
           set -euo pipefail
-          groups=$(jq -er '.[].name' <<< "$GATE_GROUPS")
+          groups=$(jq -er '[.[] as $group | ["ubuntu-24.04", "macos-15"][] as $os | select($group.linux_only != true or $os == "ubuntu-24.04") | "\($group.name) (\($os))"][]' <<< "$GATE_GROUPS")
           test -n "$groups"
           # Only jobs of this workflow's runs for the revision count; a job
           # re-run in a later attempt or run supersedes the earlier one.
@@ -354,17 +363,14 @@ jobs:
               --jq '.jobs[] | select(.completed_at != null) | [.completed_at, .name, .conclusion] | @tsv' >> "$RUNNER_TEMP/jobs.tsv"
           done
           missing=0
-          while IFS= read -r group; do
-            for os in ubuntu-24.04 macos-15; do
-              name="$group ($os)"
-              conclusion=$(sort -r "$RUNNER_TEMP/jobs.tsv" | awk -F '\t' -v name="$name" '$2 == name && found == "" { found = $3 } END { print found }')
-              if [ "$conclusion" = success ]; then
-                echo "ok      $name"
-              else
-                echo "MISSING $name: ${conclusion:-no gate job}"
-                missing=1
-              fi
-            done
+          while IFS= read -r name; do
+            conclusion=$(sort -r "$RUNNER_TEMP/jobs.tsv" | awk -F '\t' -v name="$name" '$2 == name && found == "" { found = $3 } END { print found }')
+            if [ "$conclusion" = success ]; then
+              echo "ok      $name"
+            else
+              echo "MISSING $name: ${conclusion:-no gate job}"
+              missing=1
+            fi
           done <<< "$groups"
           if [ "$missing" -ne 0 ]; then
             echo "::error::$HEAD_SHA is not green on both platforms"

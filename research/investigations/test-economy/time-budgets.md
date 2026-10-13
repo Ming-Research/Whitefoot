@@ -860,8 +860,8 @@ The question is whether three independently built unit shards and three corpus
 shards can finish the complete correctness gate within 360 s without runner
 queueing. A trial rejects the scheduling proposal if the gate exceeds 360 s,
 any correctness check fails, or a test's partitions omit or repeat a case
-across shards. The
-comparison keeps the existing compiler profile, cases, verdicts and assertions.
+across shards. The comparison keeps the existing compiler profile, cases,
+verdicts and assertions.
 
 Gate-log measurements collected for this goal summarize the five most recent
 successful main gates on Linux hosted runners before the first sharded trial:
@@ -905,9 +905,51 @@ its reuse assertion. The loader appends case-bearing manifest lines in file
 order, without directory or hash iteration. Source inspection finds 2842
 cases, so the three case subsets should contain 948, 947 and 947 cases for
 each adapter test. The supplied log summary above is the evidence for the
-first trial; the case-sharded revision still needs a complete CI run and the
-360 s check. No case, manifest entry, expected verdict or existing assertion
+first trial. No case, manifest entry, expected verdict or existing assertion
 changes in this comparison.
+
+The [case-sharded trial](https://github.com/Ming-Research/Whitefoot/actions/runs/38449518339)
+at the [case-sharding revision](https://github.com/Ming-Research/Whitefoot/commit/8bffb97d62464176d06aa958cd102672b90e0674)
+was reported to finish in 273 s, meeting the 360 s target with every unit and
+corpus shard green. The static group's repository-invariants stage still
+failed: 26.0 s against its unchanged 25 s budget on AMD EPYC 7763, compared
+with 23.0 s for [main's stage on that CPU model](https://github.com/Ming-Research/Whitefoot/actions/runs/38434594263).
+Its log places the research-input check's completion at 18:47:53.22 and the
+shard self-test's completion at 18:47:56.30, about 3.1 s later. This identifies
+the added self-test work as the cause to remove; the budget is not raised.
+In that run, the receipt-cache test reused 83421, 86156 and 84387 analyses in
+case shards 1/3, 2/3 and 3/3 respectively; reuse within each subset does not
+exercise receipt interactions between cases assigned to different shards.
+
+### Cheap shard self-test
+
+The next change must keep the partition, native parsing, command selection,
+failure and environment-isolation checks while taking well under 0.5 s on a
+hosted runner. A lost property or a self-test above 0.5 s rejects the change.
+The shard-only path has no sleeps: its cost comes from launching the same
+helper, mock Cargo and text utilities for individual assertions. It can
+exercise the shared production functions in one Perl process, retaining
+external commands only to check the real command boundary.
+
+Before the change, the explicitly permitted Mac command
+`time sh .github/test-run-check.sh --shards-only` passed in 2.062 s real,
+1.14 s user and 0.46 s system. A separate counting run found 285 external
+command launches: 161 Perl, 58 grep, 22 cmp, 16 cat, 15 awk, 5 sort, two each
+of wc and tr, and one each of dirname, mktemp, chmod and rm. This counts
+external child PIDs, excluding the entry shell and shell bookkeeping for
+command substitutions. These Mac observations identify and check the local
+cost; the hosted threshold still needs CI evidence.
+
+After the refactor, the same command passed in 0.029 s real, 0.02 s user and
+0.01 s system on the same Mac. Pure parsing, partitioning and invocation
+checks use the production functions and orchestration with in-process Cargo
+replies. Two real pipe children retain argument, streamed-output, exit and
+signal checks. The shard-only entry replaces its shell with Perl before any
+temporary-directory setup: three interpreter launches in total, of which
+only two are child spawns. The ordinary wrapper self-tests remain unchanged.
+This removes repeated startup rather than reducing checked properties; the
+next hosted run must confirm the under-0.5 s self-test and the unchanged
+25 s repository-invariants budget.
 
 ## Daily loop
 

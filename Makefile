@@ -21,6 +21,8 @@ RESEARCH_CARGO_TARGET := $(WHITEFOOT_SCRATCH_ROOT)/whitefoot-research-tests-targ
 # The _check-<group> recipes below own the commands on both paths. CI reads
 # check-groups and invokes check-group; it keeps no second command inventory.
 CHECK_GROUPS := static unit corpus runtime
+CHECK_MAIN_GROUPS := receipts-whole
+CHECK_NAME_receipts-whole := proof receipts, all cases
 CHECK_SHARDS_unit := 3
 CHECK_SHARDS_corpus := 3
 SHARD ?= 1/1
@@ -57,7 +59,7 @@ _check:
 	@echo "== WHITEFOOT ALL TESTS GREEN =="
 
 # JSON is consumed directly by the GitHub Actions matrix. This is a view of
-# CHECK_GROUPS, not generated source or another list to maintain.
+# CHECK_GROUPS, plus main-push-only coverage, not another command inventory.
 check-groups:
 	@printf '['; separator=''; \
 	for entry in $(foreach group,$(CHECK_GROUPS),$(group):$(if $(filter undefined,$(origin CHECK_SHARDS_$(group))),1,$(CHECK_SHARDS_$(group)))); do \
@@ -69,11 +71,17 @@ check-groups:
 				"$$separator" "$$group" "$$shard" "$$count" "$$name"; separator=,; \
 			shard=$$((shard + 1)); \
 		done; \
+	done; \
+	for entry in $(foreach group,$(if $(filter true,$(MAIN_PUSH)),$(CHECK_MAIN_GROUPS)),"$(group)|$(CHECK_NAME_$(group))"); do \
+		group=$${entry%%|*}; name=$${entry#*|}; \
+		printf '%s{"group":"%s","shard":"1/1","name":"%s","linux_only":true}' \
+			"$$separator" "$$group" "$$name"; separator=,; \
 	done; printf ']\n'
 
 check-group:
-	@$(if $(and $(filter 1,$(words $(GROUP))),$(filter $(CHECK_GROUPS),$(GROUP))),:,$(error GROUP must name one correctness group from: $(CHECK_GROUPS)))
+	@$(if $(and $(filter 1,$(words $(GROUP))),$(filter $(CHECK_GROUPS) $(CHECK_MAIN_GROUPS),$(GROUP))),:,$(error GROUP must name one correctness group from: $(CHECK_GROUPS) $(CHECK_MAIN_GROUPS)))
 	@perl .github/shard-tests.pl --validate "$(SHARD)"
+	@$(if $(filter $(CHECK_MAIN_GROUPS),$(GROUP)),test "$(SHARD)" = 1/1 || { echo "main-only groups require SHARD=1/1" >&2; exit 1; },:)
 	@$(CHECK_RUN) "check/$(GROUP)" $(MAKE) --no-print-directory "_check-$(GROUP)"
 
 .PHONY: _check-static
@@ -93,6 +101,12 @@ _check-unit:
 _check-corpus:
 	@$(MAKE) -C compiler test-build-corpus
 	@$(MAKE) -C compiler test-corpus
+
+# Local check already covers this whole test through its unsharded corpus.
+.PHONY: _check-receipts-whole
+_check-receipts-whole:
+	@$(MAKE) -C compiler test-build-corpus
+	@$(MAKE) -C compiler test-receipts-whole SHARD=1/1
 
 .PHONY: _check-runtime
 _check-runtime:

@@ -7,6 +7,66 @@
 # a script that drops either gets the wrong answer. Every call's arguments are
 # logged one per line, to check that a branch name travels as one field.
 set -eu
+test_matrix() {
+    case "$0" in */*) workflow=${0%/*}/workflows/gate.yml ;; *) workflow=workflows/gate.yml ;; esac
+    perl - "$workflow" <<'MATRIX'
+use strict;
+use warnings;
+use JSON::PP qw(decode_json encode_json);
+open my $file, '<', $ARGV[0] or die $!;
+my $workflow = do { local $/; <$file> };
+my ($matrix) = $workflow =~ /matrix=\$\(jq [^\n]*\n\s*'([^']+)'\)/;
+my ($qualify) = $workflow =~ /groups=\$\(jq -er '([^']+)' <<< "\$GATE_GROUPS"\)/;
+defined $matrix && defined $qualify or die "gate matrix: missing workflow jq expressions\n";
+sub jq {
+    open my $output, '-|', 'jq', @_ or die $!;
+    my $text = do { local $/; <$output> };
+    close $output or die "gate matrix: jq failed with status $?\n";
+    return $text;
+}
+sub names_equal {
+    my ($actual, $expected, $name) = @_;
+    join("\n", sort @$actual) eq join("\n", sort @$expected)
+        or die "gate matrix: $name has missing or extra jobs\n";
+}
+my @ordinary = (
+    {group => 'ordinary', shard => '1/3', name => 'ordinary 1/3'},
+    {group => 'stable', shard => '1/1', name => 'stable'},
+);
+my @expected = (
+    'ordinary 1/3 (ubuntu-24.04)', 'ordinary 1/3 (macos-15)',
+    'stable (ubuntu-24.04)', 'stable (macos-15)',
+);
+for my $main (0, 1) {
+    my @groups = @ordinary;
+    my @required = @expected;
+    if ($main) {
+        push @groups, {group => 'whole', shard => '1/1',
+            name => 'proof receipts, all cases', linux_only => JSON::PP::true};
+        push @required, 'proof receipts, all cases (ubuntu-24.04)';
+    }
+    my $jobs = decode_json(jq('-cn', '--argjson', 'groups', encode_json(\@groups),
+        '--argjson', 'platforms', '["ubuntu-24.04","macos-15"]', $matrix));
+    names_equal([map { "$_->{name} ($_->{os})" } @$jobs], \@required, "main=$main matrix");
+    my %groups = map { $_->{group} => $_ } @groups;
+    for my $job (@$jobs) {
+        my $source = $groups{$job->{group}} or die "gate matrix: unknown command group\n";
+        $job->{shard} eq $source->{shard} && $job->{name} eq $source->{name}
+            or die "gate matrix: matrix changed the Make-owned group or shard\n";
+    }
+    my $required = jq('-nr', '--argjson', 'inventory', encode_json(\@groups),
+        '$inventory | ' . $qualify);
+    names_equal([grep { $_ ne '' } split /\n/, $required], \@required, "main=$main qualification");
+}
+my $draft = decode_json(jq('-cn', '--argjson', 'groups', encode_json(\@ordinary),
+    '--argjson', 'platforms', '["ubuntu-24.04"]', $matrix));
+names_equal([map { "$_->{name} ($_->{os})" } @$draft],
+    ['ordinary 1/3 (ubuntu-24.04)', 'stable (ubuntu-24.04)'], 'draft Linux-only matrix');
+print "gate matrix: regular platforms, main-only Linux group and qualification agree\n";
+MATRIX
+}
+test_matrix
+if test "${1:-}" = --matrix-only; then exit 0; fi
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 script=$here/gate-scope.sh
 work=$(mktemp -d "${TMPDIR:-/tmp}/whitefoot-gate-scope.XXXXXX")
