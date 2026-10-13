@@ -1674,9 +1674,6 @@ pub enum UnsupportedSemanticFeature {
     /// written set took more walks to settle, than the checker follows;
     /// RANGE-2 forgets only what the body can write.
     RangeLoopNesting,
-    /// A range walk through atomic targets that may name the same shared object.
-    /// The checker does not yet version these targets with their alias relation.
-    RangeAtomicAliases,
     /// A page's length in a postcondition has no return-site measure term yet.
     PageLengthPostcondition,
 }
