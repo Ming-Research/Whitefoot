@@ -1043,9 +1043,10 @@ The complete [lock_on_use.wf](../tests/programs/lock_on_use.wf) uses a
 `Keyspace` with a map, metadata and a logging flag. Four contexts cover all
 combinations of logging and timed writes. The program checks the held-write
 count, commit sequence and entry updates. These result checks do not measure lock
-timing. A lock-timing ledger is coming.
-TODO(lazy-lock-writer-guidance): The flag for inspecting when each type group
-is taken will be filled in here.
+timing. To see the timing, compile with `whitefootc --lock-ledger`: it
+prints, for each atomic statement, each target group and whether it is taken
+before the guard, on every path or only on some paths, with the first use that
+takes it and any later group that takes it along.
 
 ## P18. Keep a relation between a struct's fields as its type invariant
 
