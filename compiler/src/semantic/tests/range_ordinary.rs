@@ -1221,15 +1221,16 @@ fn arm_fact_survives_nested_joins() {
     );
 }
 
-/// `small` ensures its argument is below ten; `pick` calls it only where
+/// `small` returns its argument and ensures it is below ten; `pick` calls it only where
 /// `guard` holds, then indexes a ten-element-or-longer array at `x`.
 fn arm_guarded(guard: &str) -> String {
     format!(
-        "fn small(n: u64) -> r: unit pure contract {{
+        "fn small(n: u64) -> r: u64 pure contract {{
   requires n < 10_u64;
-  ensures n < 10_u64;
+  ensures r == n;
+  ensures r < 10_u64;
 }} {{
-  return unit;
+  return n;
 }}
 
 fn pick(t: &Box<Array<u64>>, x: u64, flag: Bool) -> r: u64 reads(t) contract {{
@@ -1247,8 +1248,8 @@ fn arm_fact_holds_only_where_its_arm_was_taken() {
     // Keeping `x < 10` after the join without its arm's condition would
     // prove the index on the path that never called `small`.
     for guard in [
-        "  if x < 10_u64 {\n    small(n: x);\n  }",
-        "  if flag {\n    if x < 10_u64 {\n      small(n: x);\n    }\n  }",
+        "  if x < 10_u64 {\n    let kept = small(n: x);\n  }",
+        "  if flag {\n    if x < 10_u64 {\n      let kept = small(n: x);\n    }\n  }",
     ] {
         check(&arm_guarded(guard), Some(SemanticRule::Op4));
     }
