@@ -115,16 +115,16 @@ fn open_files_run(factory: &HandleFactory, output: &OutputStream, root: &Directo
       }
     }
   }
-  let unchanged = 0_u64;
+  let current_soft = 0_u64;
   match std::process::open_files_limit(factory: factory) {
     Ok(value: limits) => {
-      set unchanged = limits.soft;
+      set current_soft = limits.soft;
     }
     Err(error: problem) => {
       return 22_u8;
     }
   }
-  let third = open_files_send(factory: factory, output: output, number: unchanged);
+  let third = open_files_send(factory: factory, output: output, number: current_soft);
   if third != 0_u8 {
     return third;
   }

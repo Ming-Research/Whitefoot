@@ -6,10 +6,10 @@ alias exit_status = std::process::exit_status;
 fn check_limits(factory: &HandleFactory) -> result: u8 writes(factory) {
   match std::process::open_files_limit(factory: factory) {
     Ok(value: limits) => {
-      let unchanged = limits.soft;
-      match std::process::raise_open_files_limit(factory: factory, wanted: unchanged) {
+      let current_soft = limits.soft;
+      match std::process::raise_open_files_limit(factory: factory, wanted: current_soft) {
         Ok(value: after) => {
-          if after.soft != unchanged {
+          if after.soft != current_soft {
             return 1_u8;
           }
           if after.hard != limits.hard {
