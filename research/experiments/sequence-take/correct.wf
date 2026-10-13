@@ -83,7 +83,8 @@ fn sq_check_context(table: Shared<ConcurrentHashMap<u64>>, part: Shared<SqPart>,
       break @run;
     }
     if mine.len < mine.cap {
-      place_back(window: &mine, value: SqRec(key: key, value: stored, number: number, before: before, after: after));
+      let record = SqRec(key: key, value: stored, number: number, before: before, after: after);
+      place_back(window: &mine, value: record);
     }
     set count = count +wrap 1_u64;
     if mine.len >= mine.cap {
