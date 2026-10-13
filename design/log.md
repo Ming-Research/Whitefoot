@@ -9,7 +9,7 @@ a mechanism since retired.
 
 Nodes: language/system-interface/socket-addresses
 
-Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A on the card "批准 Whitefoot#402（头提交 3cd02e6d4）的规范改动和设计决定", ruling 「选 A：批准 Whitefoot#402（头提交 3cd02e6d4）的规范改动和设计决定，让 Whitefoot 程序能读出套接字地址的各部分和连接本端的地址」.
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve Whitefoot#402 (head commit 3cd02e6d4)'s specification change and design decisions, letting a Whitefoot program read the parts of a socket address and the local address of a connection?" (translated).
 
 Summary: A new node records four decisions. The family and components of a `SocketAddress` are read by the nonwaiting `socket_address_ip`, which returns the enum `IpAddress` with the constructors' own components, because a pattern match yields them with no proof, instead of a byte-window copy, a per-byte reader, a fixed 16-byte array or formatted text. The port is read by `socket_address_port`. An IPv6 address keeps only address and port, as a provisional choice reopened when a program must reconnect to or print a link-local peer. The local address is `local_address` on the receiving half, returning `Result<SocketAddress, IoError>` with the new origin 10, instead of a field of `AcceptedConnection`, a query on `TcpConnection` or on each half, or an infallible query, each refused with its reason in the node.
 ## 2026-10-13 A split-dispatch frame slot whose contents never cross a transfer belongs to each part
