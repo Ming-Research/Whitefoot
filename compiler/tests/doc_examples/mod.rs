@@ -642,7 +642,7 @@ fn only_whitefoot_opts_in_and_other_fences_cannot_carry_attributes() {
 
 #[test]
 fn bare_whitefoot_checks_a_library_without_building_an_executable() {
-    let source = include_str!("../../tests/conformance/cases/fn1-pos-library-without-entry.wf");
+    let source = include_str!("../../../tests/conformance/cases/fn1-pos-library-without-entry.wf");
     let text = format!("```whitefoot\n{source}```\n");
     let failures = check_document(Path::new("fixture.md"), &text);
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));
