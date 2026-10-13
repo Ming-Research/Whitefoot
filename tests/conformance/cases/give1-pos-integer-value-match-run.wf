@@ -1,0 +1,32 @@
+const letter: u8 = 'A'_u8;
+
+fn pick(value: u8) -> result: u8 pure {
+  let selected = match value {
+    letter => {
+      give 11_u8;
+    }
+    'B'_u8 => {
+      give 22_u8;
+    }
+    else => {
+      give 33_u8;
+    }
+  }
+  return selected;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let first = pick(value: 65_u8);
+  let second = pick(value: 66_u8);
+  let other = pick(value: 0_u8);
+  if first != 11_u8 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  if second != 22_u8 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  if other != 33_u8 {
+    return std::process::exit_status(code: 3_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

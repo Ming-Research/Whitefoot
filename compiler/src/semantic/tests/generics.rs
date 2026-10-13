@@ -496,7 +496,7 @@ fn main() -> status: std::process::ExitStatus pure {
     assert_rule(
         source,
         SemanticRule::Op1,
-        SemanticIssueKind::InvalidOperation,
+        SemanticIssueKind::invalid_operation(),
     );
 }
 
