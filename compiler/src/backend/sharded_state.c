@@ -8,6 +8,7 @@
 
 #include "sharded_state.h"
 #include "completion/bridge.h"
+#include "sched/prim.h"
 
 typedef struct {
     _Atomic uint64_t handles;
@@ -65,6 +66,16 @@ void wf__shards_free(void *object) {
 
 void wf__shards_wait(void *lock, uint64_t ticket) {
     wf_shard_lock *shard = lock;
-    while (atomic_load_explicit(&shard->serving, memory_order_acquire) != ticket)
-        wf__runtime_yield();
+    unsigned spins = 64u;
+    while (atomic_load_explicit(&shard->serving, memory_order_acquire) != ticket) {
+        if (spins != 0u) {
+            --spins;
+            wf_prim_spin_hint();
+        } else {
+            /* The holder can be descheduled: keep the local pause loop
+             * bounded, then let the host run it before polling again. */
+            wf__runtime_yield();
+            spins = 64u;
+        }
+    }
 }

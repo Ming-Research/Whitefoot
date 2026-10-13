@@ -14,7 +14,24 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "sched/prim.h"
+
+/* Substitute only the existing pause primitive at the included unit's
+ * call site. A fixture releases the ticket at a specified hint or host
+ * yield, so these checks do not depend on thread scheduling or timing. */
+typedef struct {
+    _Atomic uint64_t *serving;
+    uint64_t ticket;
+    unsigned hints;
+    unsigned yields;
+    unsigned release_hint;
+    unsigned release_yield;
+} wait_fixture;
+static _Thread_local wait_fixture *active_wait_fixture;
+static void observed_spin_hint(void);
+#define wf_prim_spin_hint observed_spin_hint
 #include "sharded_state.c"
+#undef wf_prim_spin_hint
 
 enum { WRITERS = 4, ITERATIONS = 4000 };
 static _Atomic int64_t live_bytes;
@@ -27,6 +44,16 @@ static void check(int condition, const char *message) {
     if (!condition) {
         fprintf(stderr, "sharded-state-test: %s\n", message);
         exit(1);
+    }
+}
+
+static void observed_spin_hint(void) {
+    wf_prim_spin_hint();
+    wait_fixture *fixture = active_wait_fixture;
+    if (fixture != NULL) {
+        ++fixture->hints;
+        if (fixture->hints == fixture->release_hint)
+            atomic_store_explicit(fixture->serving, fixture->ticket, memory_order_release);
     }
 }
 
@@ -48,6 +75,15 @@ void wf__runtime_give(void *block, uint64_t bytes) {
     free(block);
 }
 void wf__runtime_yield(void) {
+    wait_fixture *fixture = active_wait_fixture;
+    if (fixture != NULL) {
+        ++fixture->yields;
+        check(fixture->hints == 64u * fixture->yields,
+            "host yield preceded the bounded pause budget");
+        if (fixture->yields == fixture->release_yield)
+            atomic_store_explicit(fixture->serving, fixture->ticket, memory_order_release);
+        return;
+    }
     atomic_fetch_add_explicit(&waits, 1u, memory_order_relaxed);
     sched_yield();
 }
@@ -78,6 +114,35 @@ static void unhold(wf_shards *object) {
 }
 static int last_handle(wf_shards *object) {
     return atomic_fetch_sub_explicit(&object->handles, 1u, memory_order_acq_rel) == 1u;
+}
+
+static void bounded_ticket_wait(void) {
+    wf_shard_lock lock;
+    atomic_init(&lock.next, 2u);
+    atomic_init(&lock.serving, 1u);
+    wait_fixture fixture = {.serving = &lock.serving, .ticket = 1u};
+    active_wait_fixture = &fixture;
+    wf__shards_wait(&lock, fixture.ticket);
+    check(fixture.hints == 0u && fixture.yields == 0u,
+        "ready ticket paused or yielded");
+
+    const unsigned release_hints[] = {1u, 32u, 64u};
+    for (unsigned i = 0; i < sizeof(release_hints) / sizeof(release_hints[0]); ++i) {
+        atomic_store_explicit(&lock.serving, 0u, memory_order_relaxed);
+        fixture.hints = fixture.yields = 0u;
+        fixture.release_hint = release_hints[i];
+        wf__shards_wait(&lock, fixture.ticket);
+        check(fixture.hints == fixture.release_hint && fixture.yields == 0u,
+            "ticket released during pauses still yielded to the host");
+    }
+
+    atomic_store_explicit(&lock.serving, 0u, memory_order_relaxed);
+    fixture.hints = fixture.yields = fixture.release_hint = 0u;
+    fixture.release_yield = 2u;
+    wf__shards_wait(&lock, fixture.ticket);
+    check(fixture.hints == 128u && fixture.yields == 2u,
+        "stalled holder did not get a bounded host-yield opportunity each round");
+    active_wait_fixture = NULL;
 }
 
 /* Reserve the two tickets before starting their waiters in reverse order:
@@ -283,6 +348,7 @@ static void race(unsigned buffers) {
 }
 
 int main(void) {
+    bounded_ticket_wait();
     layout_and_ticket_order();
     race(0);
     race(1);

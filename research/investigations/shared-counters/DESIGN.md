@@ -1495,6 +1495,192 @@ histograms are unavailable evidence, never a zero latency. These new
 percentiles are descriptive; they do not change section 8.7's maximum-read
 acceptance criterion.
 
+### 8.9 Local invocation accounting and continued service (proposed implementation)
+
+**Evidence and scope.** The registered attribution's [14900K run
+38441051550](https://github.com/Ming-Research/Whitefoot/actions/runs/38441051550)
+has six paired blocks and valid twins at every CPU list. At 2 / 4 / 8
+P-cores, W4nmax/W5p is 0.643 / 0.643 / 0.637: the prediction of at least
+0.70 fails, while the below-0.60 falsifier is not met. The attribution is
+unsettled by its registered rule. W4n256 recovers 0.746 / 0.814 / 0.854 of
+the W4-to-W4nmax throughput gap, meeting the at-least-0.50 prediction. The
+modeled cost is 59 / 127 / 134 ns per yield, but taken-switch counts were
+not measured, so the global-counter falsifier remains inconclusive. No
+claim here assigns that whole cost to the three global RMWs. The ordinary
+64-pass boundary and both diagnostic threshold arms remain in place.
+
+W4rd's statement p99 bucket bound is at most 2,048 ns in the 2/4/8 P-core
+cells except the sparse eight-core block 1 (2,783 ns). This is not a bound
+for 16 HT: one cell's p99 bucket bound is 4,194,304 ns and its maximum is
+14,996,182 ns. At eight P-cores, two cells made only 81 and 76 reads in
+five seconds; their maximum statement times were just 2,783 and 1,865 ns.
+The missing elapsed time in those cells therefore lies outside the measured
+whole statement. Its interval starts after sleep returns. Initial arrival
+at the start gate and sleep/wake delay remain alternatives: the harness
+opens the gate after spawning, without waiting for every arrival. The
+summary lacks gate-arrival, requested-deadline-to-resume and ready-queue
+history, so it cannot establish the specific cells' cause. No new timing
+instrument is added in this implementation.
+
+**Question and comparison.** Can ordinary taken rotation avoid writing a
+process-global accounting line while preserving WAIT-2 and reliable stuck
+detection? Keep the 64-pass policy and compare the same W4, W4t, W4rd and
+W5p arms under section 8.7's procedure. Retain the section 8.8 diagnostic
+arms. Failure to improve the ordinary eight-driver path would reject the
+expected practical gain; a false stuck report, lost context, omitted host
+completion or missed persistent deadlock rejects the implementation
+regardless of throughput. Existing acceptance thresholds are unchanged.
+
+**Physical invocation lifetime.** The runtime reserves 128 static slots,
+one 64-byte line each, indexed by the existing physical executor identity.
+Only that executor writes its monotonically increasing sequence. Zero and
+other even values mean no invocation; odd means the executor is inside a
+native resume or has not finished publishing its returned disposition.
+Slots are visible before threads start, never reset on rebinding, and never
+wrap. The limit is the existing maximum of twice 64 logical drivers; there
+is no allocation on the rotation path. Initial driver i uses executor 2i
+(root zero); its initially warm spare uses 2i+1. A physical executor keeps
+that index when it changes roles or borrows service, and unused slots remain
+zero, so no changing roster is needed for the correctness scans.
+
+Before publishing OUTSIDE and resuming a frame, the executor publishes the
+next odd sequence. After native unwind it first either adopts the returned
+context under retained SERVICE or publishes it through ingress, including
+the ingress count and notification. Only then does it publish the next even
+sequence. Both stores and every correctness reader's sequence loads are
+sequentially consistent. The retained path removes the global active-count
+increment/decrement and its invocation-specific global change increment.
+Queue locks, service-token ownership and accounting for cold transfers stay.
+For an uncontended retained fair rotation with no wake, steal or reap, the
+remaining semantic RMWs are two run-queue lock acquisitions and one return
+CAS on the service token. The two SC sequence stores also normally require
+locked instructions on x86-64; they are local cache-line writes, not free
+stores. No disassembly or speedup is claimed here. Cold wake/steal/ingress
+and completion service can still write shared lines; the ordinary rotation
+removes the three process-global accounting RMWs, not that cold coordination.
+
+A spare uses its own slot when it begins a resume. A replacement cannot
+overwrite the displaced executor's activity: both can execute for the same
+logical driver, so per-driver slots would be unsound. Borrowed service runs
+no coroutine and uses the moving count until detached contexts are safely
+requeued; their eventual resumes use the borrowing executor's own slot.
+
+**Snapshot argument.** Stuck detection reads the cold change generation,
+collects all 128 executor sequences, scans every fixed driver-table slot,
+checks moving, collects every executor sequence again, and rereads the cold
+generation. It rejects an odd sequence, any changed sequence or generation,
+an active driver, or nonzero ingress, host-wait, ready or moving count. It
+reads a driver's host-wait count before its ready count. It does not use a
+possibly incomplete published driver count to bound either fixed scan.
+
+In the SC order, equal even reads of one slot exclude any invocation entry
+or exit between those reads, since a generation is never reused. Every
+slot's interval contains the complete driver scan: the common interval
+begins after the last first-collect read and ends before the first
+second-collect read. There is therefore no native invocation in that
+interval. An even sequence acquired in the first collect also publishes
+the disposition's preceding queue or host-wait writes. A single collect or
+a Boolean active flag cannot establish this: an invocation may start and
+finish during the driver scan and leave a Boolean unchanged.
+
+Displaced ingress stays counted until adoption has published its ready,
+host-wait or completion result. A consumer may detach the list while
+adopting it, but it cannot retire that count early. Stealing, borrowing and
+reservation keep moving raised while work or service ownership is between
+representations, and their cold change generation covers a transfer that
+finishes during the scan. These obligations exclude a runnable context
+hidden between a queue, invocation, ingress or host-wait record. A successful
+scan therefore reports stuck only for an execution with no further step;
+root completion is checked separately before reporting a deadlock.
+
+**Persistent deadlock and cold transitions.** Repeated double collection
+alone has no liveness proof: empty timed polls could clear and reannounce
+idle, while unsuccessful assistance repeatedly changes moving. A cold
+quiescence mutex serializes the relevant bookkeeping and snapshot. Logical
+idle persists across empty timed polls and ends before taking actual work.
+The already-active rotation does not acquire this mutex. Wake claims,
+startup publication and idle transitions use it; a failed transfer probe
+finishes its bookkeeping under it. Successful transfers retain moving
+through any unlocked work and retire it under the mutex. Native engines,
+parks and notifications execute outside it, and no callback recursively
+acquires it. An empty driver performs its stuck scan under the mutex.
+
+Assume physical threads receive service and finite runtime operations
+finish. Once every unfinished context persistently waits on a false guard
+or another context, and no host operation remains, all final invocation
+publications and successful transfers finish. Empty polling preserves idle;
+failed probes cannot overlap and invalidate a locked scan. The last driver
+to announce idle, or a later empty-loop scan, observes stable even slots and
+zero work counts. It reports the persistent deadlock. This is eventual
+detection, not a wall-clock bound; it does not assume a fortunate quiet
+interval between independently changing idle announcements.
+
+The displaced return sends one further notification after its even store.
+This is a cold-path liveness requirement: a replacement can consume the
+initial ingress notification, adopt the disposition and observe the old
+executor still odd, then enter an unbounded one-driver park. The final
+even publication must cause a fresh scan. A notification before the even
+store alone cannot guarantee that. Other physical executors are joined
+before wake endpoints are destroyed; executor zero performs cleanup only
+after its own final notification, so this post-even notification retains a
+live endpoint. Retained ordinary rotation needs no extra notification.
+
+Descriptor-only polling collects executor activity before checking ingress
+and validates that collection afterward; an active or changed slot keeps
+the poll finite. Shutdown
+requires all physical slots inactive as well as no moving or ingress work,
+after root completion and monitor shutdown have closed admission. Root
+completion alone cannot authorize destroying a displaced executor's wake or
+an ingress record that has not finished adoption. Slot lifetime extends
+through every executor's final publication and thread exit.
+
+**Fair suspension and pending host work.** A fairness suspension saves its
+frame and returns a distinct ready disposition. It does not register an
+external waker, so it needs no ARMING-to-EARLY CAS or gate exchange. The
+retained owner enqueues it only after native unwind; a displaced owner
+publishes the disposition through ingress. Real join, guard and shared-lock
+registrations retain the external-wake gate because their wakers can win
+before unwind. No publication path accesses a context after handing it to a
+queue or completing its lifetime.
+
+Code inspection found a separate local service defect: the old threshold
+path continued when the ready queue was empty even with a parked host wait.
+A lone busy writer could therefore stop returning to its driver, so the
+64-resumption timer/completion reap never occurred. Idle borrowing or the
+deadline monitor could rescue it, but local rotation supplied no service.
+At the same 64-pass boundary, pending host waits or ingress now also require
+unwind. Only atomic counts are inspected while OUTSIDE; the driver-private
+timer heap cannot be read there. This closes the local service hole without
+changing the source language or relying on a monitor timing bound. It is a
+plausible contributor to the sparse-reader cells, not a trace-based
+attribution of those cells.
+
+**Contended tickets.** A shard waiter makes up to 64 hardware pause hints,
+with an acquire poll before each, before yielding its OS thread; it repeats
+that finite batch until its ticket is served. The uncontended path and
+ticket order are unchanged. This provisional budget avoids an immediate
+scheduler trip for short holds while allowing a preempted holder to run.
+A whole reader can hold earlier shards while waiting for a later one, so
+unbounded spinning would prolong a convoy. The budget is not a latency
+guarantee and adds no measurement counter. Reopen it if the existing reader
+comparison shows that it worsens interference or fails to reduce the tail.
+
+**Validation boundary.** Runtime tests cover sequence changes between two
+collections, displaced and high-numbered physical executors, ingress and
+shutdown publication, pending host work with no ready peer, persistent idle,
+and enqueue only after fairness unwind. The existing early external-wake
+tests remain. Deterministic shard tests distinguish an already-ready ticket,
+release during the pause batch and a holder that needs the OS-yield fallback;
+the existing ticket-order, snapshot and owned-buffer tests stay wired.
+The program witness exercises a sleeping whole reader beside a busy shard
+writer; monitor rescue means its old-code failure is not guaranteed, while
+the no-peer pending-host runtime case directly distinguishes the defect.
+Driver-service and isolated shard tests use their existing ASan/TSan CI
+targets. Sanitizers cannot prove an all-atomic ordering argument; the
+snapshot and liveness arguments require review in addition to those tests.
+No build, test or measurement was run locally for this implementation; CI
+results and the renewed performance comparison remain outstanding.
+
 ## 9. Results: the arms that need no language change
 
 The owner chose, on the board card that asked what Whitefoot should offer for

@@ -536,7 +536,7 @@ concurrent-map-test-tsan: $(CONCURRENT_MAP_SOURCES) Makefile
 # swaps owned buffers out and releases them while writers append, followed
 # by final-handle cleanup. Live-grant accounting checks leaks on both hosts.
 SHARDED_STATE_SOURCES := src/backend/sharded_state.c src/backend/sharded_state.h \
-	src/backend/sharded_state_test.c $(COMPLETION_DIR)/bridge.h
+	src/backend/sharded_state_test.c src/backend/sched/prim.h $(COMPLETION_DIR)/bridge.h
 .PHONY: sharded-state-test sharded-state-test-sanitized sharded-state-test-tsan
 $(COMPLETION_TMP)/sharded-state-test: $(SHARDED_STATE_SOURCES) Makefile
 	@mkdir -p "$(dir $@)"

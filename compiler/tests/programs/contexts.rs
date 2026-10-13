@@ -1,9 +1,9 @@
 //! The context runtime's part of [WAIT-2]'s progress promise: while every
 //! context keeps reaching a wait, a context whose wait has ended proceeds, and
-//! a program that can take no further step is stopped with a report. Each
-//! program here stopped, or ran on without end, on the runtime before the
-//! change that makes it pass, on the route or driver count it names
-//! (`research/investigations/io-model/CONCURRENCY-MODEL.md`, section 10.4).
+//! a program that can take no further step is stopped with a report. Cases
+//! identify the prior failure they distinguish or the additional coverage
+//! they provide; the original progress witnesses are recorded in
+//! `research/investigations/io-model/CONCURRENCY-MODEL.md`, section 10.4.
 //! The last case is a bound spawn's result crossing its join [WAIT-3].
 
 use super::support::{build_program, compile_program, compile_sources};
@@ -87,6 +87,25 @@ fn every_atomic_target_path_lets_a_delayed_stopper_run() {
                 "{target}, drivers {drivers}: {output:?}"
             );
         }
+    }
+}
+
+/// With one driver, each timer park leaves exactly one runnable context.
+/// The writer's atomic boundaries must return to service even with an empty
+/// ready queue so the repeated sleeps can expire and the reader can stop it.
+/// Unlike atomic_progress.wf, no second busy worker drives periodic reaping.
+/// The monitor can rescue the old runtime, so this is end-to-end coverage;
+/// driver_service_test.c isolates the empty-queue service obligation without
+/// a monitor and rejects the old threshold check deterministically.
+#[test]
+fn a_periodic_whole_shard_reader_progresses_beside_one_busy_writer() {
+    let program = build_program(&compile_program("lone_shard_timer.wf"));
+    for settings in [
+        &[("WF_DRIVERS", "1")][..],
+        &[("WF_DRIVERS", "1"), ("WF_IO_NO_NATIVE_RING", "1")][..],
+    ] {
+        let output = program.run_with_settings(None, settings);
+        assert_eq!(output.status.code(), Some(0), "{settings:?}: {output:?}");
     }
 }
 

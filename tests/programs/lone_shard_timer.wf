@@ -1,0 +1,68 @@
+fn timer_shard_zero() -> result: u64 pure {
+  return 0_u64;
+}
+
+fn timer_shard_writer(counter: Shared<Shards<u64>>, started: Shared<Bool>, stop: DecisionCell) -> result: unit pure waits {
+  let mine = any_shard();
+  atomic part = &counter[mine] {
+    set part^ = 1_u64;
+  }
+  atomic ready = &started {
+    set ready^ = True();
+  }
+  let open = Open();
+  loop @write {
+    atomic part = &counter[mine] {
+      set part^ = part^ +sat 1_u64;
+    }
+    if decision_cell_read(cell: &stop) != open {
+      break @write;
+    }
+  }
+  return unit;
+}
+
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
+  let std::process::Inputs(cwd: directory, handles: handles, clock: clock, ..) = move inputs;
+  let std::fs::Directory(read: readable, write: writable) = move directory;
+  std::fs::close_directory_write(factory: &handles, directory: move writable);
+  std::fs::close_directory(factory: &handles, directory: move readable);
+  let counter = shared_shards_new::<u64, fn timer_shard_zero>();
+  let started = shared_new::<Bool>(value: False());
+  let stop = decision_cell_new();
+  let writer_counter = shared_share::<Shards<u64>>(shared: &counter);
+  let writer_started = shared_share::<Bool>(shared: &started);
+  let writer_stop = decision_cell_share(cell: &stop);
+  spawn timer_shard_writer(counter: move writer_counter, started: move writer_started, stop: move writer_stop);
+  atomic ready = &started when ready^ {
+  }
+  let never = std::time::cancel_never();
+  let valid = True();
+  let previous = 0_u64;
+  for @read (turn in 0_u64..16_u64) {
+    let before = std::time::now(clock: &clock);
+    let wake = std::time::instant_after(instant: before, nanoseconds: 1000000_u64);
+    std::time::sleep_until(deadline: wake, cancel: &never);
+    let seen = 0_u64;
+    atomic all = &counter {
+      for @shard (index in 0_u64..all^.len) {
+        set seen = seen +sat all^[index];
+      }
+    }
+    if seen == 0_u64 {
+      set valid = False();
+    }
+    if seen < previous {
+      set valid = False();
+    }
+    set previous = seen;
+  }
+  std::time::close_cancel_watch(watch: move never);
+  atomic ready = &started {
+    let winner = claim_written(cell: &stop);
+  }
+  if valid {
+    return std::process::exit_status(code: 0_u8);
+  }
+  return std::process::exit_status(code: 1_u8);
+}
