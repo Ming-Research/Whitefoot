@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 the owner's agent instructions own the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-13 Every emitted function carries unwind tables and the Linux LTO link keeps code at its file offset, so profilers recover callers
+
+Nodes: compiler/profiler-unwinding
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve two compiler decisions: every generated function carries an unwind table (uwtable), and the Linux LTO link passes -z separate-code to LLD, so that perf can recover callers along Whitefoot call stacks? (Whitefoot#461, head commit 5f99db772)" (translated).
+
+Summary: A new node records two decisions that let a sampling profiler's DWARF unwinder walk Whitefoot call stacks. Every emitted function carries `uwtable`, so a leaf that cannot unwind by exception still has a frame-description entry; and the Linux LTO link passes `-z separate-code` to LLD, so the code segment's virtual address equals its file offset, because perf 6.17 looked up unwind rules 0x1000 off under LLD's default layout and recovered no caller. In the witness, hot samples traced to the resume function and the thread entry rose from 89 percent (and none above resume) to 100 percent, at 992 bytes (1.2 percent) of executable and 208 bytes of `.eh_frame`. Keeping frame pointers and documenting the limitation instead were rejected.
+
 ## 2026-10-13 Conformance rejections pin their byte range, and an out-of-order requirement is moved rather than restated
 
 Nodes: compiler/verification, compiler/diagnostic-repairs
