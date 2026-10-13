@@ -16,7 +16,7 @@ fn activate(node: &Node) -> result: unit writes(node) {
 
 fn inspect(nodes: &Slots<Node, 1>) -> result: unit writes(nodes) contract {
   requires nodes^.len == 1_u64;
-  requires forall held(k in 0_u64..nodes^.len) when nodes^[k].live is True: nodes^[k].slot == 0_u64;
+  requires forall observed(k in 0_u64..nodes^.len) when nodes^[k].live is True: nodes^[k].slot == 0_u64;
 } {
   activate(node: &nodes^[0_u64]);
   if nodes^[0_u64].live {

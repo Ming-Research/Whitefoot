@@ -634,7 +634,7 @@ o: Box<u8>; p: Slots<u8, 4>; public readonly q: Ring<u8, 2 * n>;
 r: pkg::library::Imported; s: library::nested::Pair<u8>;
 }
 enum Choice<T: copy> { doc "choice"; None(); Some(public value: T); }
-nodrop struct Lease { doc "lease"; slot: u8; invariant held(lease): lease.slot <= 4_u8; }
+nodrop struct Lease { doc "lease"; slot: u8; invariant observed(lease): lease.slot <= 4_u8; }
 nodrop enum Ticket { doc "ticket"; Open(value: u8); }
 interface Behavior<T: drop> {
 doc "interface";
@@ -664,6 +664,7 @@ define pre = 0_i32 +wrap 1_i32;
 define post = 0_i32 +wrap 1_i32;
 requires pre;
 requires pre /defined post;
+requires held(shared, part);
 requires forall ordered(k in 0_u64..2_u64, m in k..4_u64) when k < m, run[k] != 0_i32, run[m] is not None: run[k] <= run[m], 0_u64 <= k, run[k] is Some;
 ensures when Some(value: routed): routed;
 ensures 2_i32 * routed + 1_i32 <= post - 1_i32;
@@ -768,7 +769,7 @@ fn main() -> result: unit pure {}
             });
         assert!(present, "fixture omitted {production:?}");
     }
-    assert_eq!(productions().len(), 101);
+    assert_eq!(productions().len(), 102);
     assert_eq!(
         parsed
             .tree
@@ -809,7 +810,7 @@ const RETIRED_TRAPS_EFFECT_ROW: &[u8] = b"fn probe() -> result: unit traps {\n  
 const FREED_SPELLINGS_AS_IDENTIFIERS: &[u8] =
     b"fn external(blocks: unit) -> result: unit pure {\n  return blocks;\n}\n";
 
-const RETIRED_CLAIM_STATEMENT: &[u8] = b"fn probe() -> result: unit pure {\n  let flag = True();\n  claim held: flag because \"retired\";\n  return unit;\n}\n";
+const RETIRED_CLAIM_STATEMENT: &[u8] = b"fn probe() -> result: unit pure {\n  let flag = True();\n  claim observed: flag because \"retired\";\n  return unit;\n}\n";
 
 const RETIRED_SPELLINGS_AS_IDENTIFIERS: &[u8] = b"fn probe(claim: i32, because: i32, deny_claims: i32, traps: i32, trap: i32) -> result: i32 pure {\n  let total = claim +wrap because;\n  let staged = total +wrap deny_claims;\n  let finished = staged +wrap traps;\n  return finished +wrap trap;\n}\n";
 
@@ -820,6 +821,29 @@ const BODY_CHECK_STATEMENT: &[u8] =
     b"fn probe() -> result: unit pure {\n  let flag = True();\n  check flag;\n  return unit;\n}\n";
 
 const UNIFIED_CONTRACT: &[u8] = b"fn probe(value: i32) -> result: i32 pure contract {\n  define admitted = value == value;\n  requires admitted;\n  ensures result == value;\n} {\n  return value;\n}\n";
+
+#[test]
+fn held_requirements_parse_in_declarations_and_function_formals() {
+    for source in [
+        b"fn observe(value: &u64) -> result: u64 reads(value) contract {\n  requires held(value);\n} {\n  return value^;\n}\n".as_slice(),
+        b"fn observe(left: &u64, right: &u64) -> result: u64 reads(left), reads(right) contract {\n  requires held(left, right);\n} {\n  return left^;\n}\n".as_slice(),
+        b"interface Observation {\n  fn observe(value: &u64) -> result: u64 reads(value) contract {\n    requires held(value);\n  };\n}\n".as_slice(),
+    ] {
+        let outcome = parse_active("held.wf", source);
+        assert!(matches!(outcome, ParseOutcome::Complete(_)), "{outcome:?}");
+    }
+}
+
+#[test]
+fn a_held_group_requires_a_nonempty_comma_separated_parameter_list() {
+    for source in [
+        b"fn observe(value: &u64) -> result: u64 reads(value) contract {\n  requires held();\n} {\n  return value^;\n}\n".as_slice(),
+        b"fn observe(value: &u64) -> result: u64 reads(value) contract {\n  requires held(value,);\n} {\n  return value^;\n}\n".as_slice(),
+    ] {
+        let outcome = parse_active("held.wf", source);
+        assert!(matches!(outcome, ParseOutcome::SourceIssue(_)), "{outcome:?}");
+    }
+}
 
 const COUNTED_RANGE_STATEMENT: &[u8] = b"fn probe(lower: u64, upper: u64) -> result: unit pure {\n  for @range (\n    index in lower..upper,\n    invariant limit: index + 1_u64 * (1_u64) <= upper\n  ) {\n    break @range;\n  }\n  return unit;\n}\n";
 
@@ -1447,7 +1471,7 @@ fn a_construction_after_an_infix_operator_is_a_forbidden_atom() {
 fn bare_bool_range_guard_rejects_with_the_is_true_repair() {
     // [GRAM-5, RANGE-1] a guard requires one relation, so
     // a Bool datum written alone stops at its `:`.
-    let source = b"fn inspect(nodes: &[Bool]) -> result: unit pure contract {\n  requires forall held(k in 0_u64..nodes^.len) when nodes^[k]: k == k;\n} {\n  return unit;\n}\n".as_slice();
+    let source = b"fn inspect(nodes: &[Bool]) -> result: unit pure contract {\n  requires forall observed(k in 0_u64..nodes^.len) when nodes^[k]: k == k;\n} {\n  return unit;\n}\n".as_slice();
     let outcome = parse_active("bare-guard.wf", source);
     let ParseOutcome::SourceIssue(issue) = outcome else {
         panic!("a lone expression as a guard must reject: {outcome:?}");

@@ -1140,6 +1140,13 @@ impl<'unit> Checker<'_, 'unit> {
         // call graph by the ordinary effect walk.
         declared_effects.allocates |=
             HEAP_ALLOCATING_PRELUDE_FUNCTIONS.contains(&template.name.as_str());
+        let waits = self.types.declarations.tree.direct_token_with(
+            template.node,
+            crate::TerminalPredicate::Fixed(crate::FixedTerminal::Waits),
+        )?.is_some();
+        let held_parameters = self.form_held_parameters(
+            template.node, &parameters, waits, &declared_effects,
+        )?;
         // [MOD-3] functions of different modules may share a name, so a
         // module other than the root prefixes its path; a source bundle's
         // root-module symbols keep their plain names.
@@ -1164,10 +1171,13 @@ impl<'unit> Checker<'_, 'unit> {
                 .generic_parameters
                 .iter()
                 .all(|parameter| matches!(parameter, GenericParameter::Type { .. }))
-                || !generic_host_abi_type(result_mode, result)
+                || !self.fixed_host_abi_type(result_mode, result)?
                 || parameters
                     .iter()
-                    .any(|parameter| !generic_host_abi_type(parameter.mode, parameter.ty)))
+                    .map(|parameter| self.fixed_host_abi_type(parameter.mode, parameter.ty))
+                    .collect::<Result<Vec<_>, _>>()?
+                    .iter()
+                    .any(|admitted| !admitted))
         {
             return Err(SemanticCompilerFailure::UnsupportedGenericHostAbi.into());
         }
@@ -1208,15 +1218,8 @@ impl<'unit> Checker<'_, 'unit> {
             effects_node: effects,
             declared_effects,
             contract_reads: None,
-            waits: self
-                .types
-                .declarations
-                .tree
-                .direct_token_with(
-                    template.node,
-                    crate::TerminalPredicate::Fixed(crate::FixedTerminal::Waits),
-                )?
-                .is_some(),
+            waits,
+            held_parameters,
             formal_parameter: None,
             substitution,
         })
@@ -2675,7 +2678,7 @@ pub(super) fn summary_entailment(
 /// symbolic instance. Nominal references are pointer slots irrespective of
 /// their fields or type arguments; owned aggregates and generic bare types
 /// need a representation protocol that the host boundary does not yet carry.
-fn generic_host_abi_type(mode: super::super::model::CheckedMode, ty: CheckedType) -> bool {
+pub(super) fn generic_host_abi_type(mode: super::super::model::CheckedMode, ty: CheckedType) -> bool {
     use super::super::model::CheckedMode;
     match mode {
         CheckedMode::Own => matches!(

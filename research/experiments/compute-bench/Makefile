@@ -41,6 +41,8 @@ FLOOR  := $(ROOT)/compiler/src/backend/wf_floor.c
 SCHED  := $(ROOT)/compiler/src/backend/sched
 NATIVE := $(ROOT)/compiler/src/backend
 COMPLETION := $(NATIVE)/completion
+SNAPSHOT_COMPLETION_UNITS := snapshot_export fork_capsule
+SNAPSHOT_CHILD_FLAGS := -fno-builtin -fno-stack-protector -fno-sanitize=all
 NATIVE_HEADERS := $(wildcard $(NATIVE)/*.h $(SCHED)/*.h $(COMPLETION)/*.h)
 CC     := /usr/bin/clang
 CXX    := /usr/bin/clang++
@@ -286,6 +288,15 @@ ifeq ($(WF_B_INTERFACE),ordinary)
 B_REQUIRED += $(addprefix $(WF_B_COMPLETION)/,runtime.c wait_host.c file_adapter.c \
               file_posix.c bridge.c linux_io_uring.c) \
               $(WF_B_NATIVE)/ordinary_values.c $(WF_B_NATIVE)/ordinary_values.ll
+# A historical baseline's own adapter predates the snapshot request. Select
+# its actual source inventory, never this tree's definition for the twin.
+B_SNAPSHOT_UNITS := $(if $(wildcard $(WF_B_COMPLETION)/snapshot_export.c),$(SNAPSHOT_COMPLETION_UNITS),)
+B_STOP_UNIT := $(if $(wildcard $(WF_B_COMPLETION)/stop_signals.c),stop_signals,)
+B_REQUIRED += $(addprefix $(WF_B_COMPLETION)/,$(addsuffix .c,$(B_STOP_UNIT)))
+ifneq ($(B_SNAPSHOT_UNITS),)
+B_REQUIRED += $(addprefix $(WF_B_COMPLETION)/,$(addsuffix .c,$(B_SNAPSHOT_UNITS))) \
+              $(WF_B_NATIVE)/keyed_table.c $(WF_B_NATIVE)/concurrent_map.c $(WF_B_NATIVE)/heap.c
+endif
 B_HASH_INPUTS += $(filter-out $(B_HASH_INPUTS),$(B_REQUIRED)) $(wildcard $(WF_B_COMPLETION)/*.h)
 endif
 
@@ -421,13 +432,18 @@ PARLAY_OBJ := $(if $(wildcard $(DEPS)/parlay-unavailable.txt),,$(BUILD)/backend_
 # only those read WF_RUNTIME_CONTROL_FLAGS or WF_MODULE_CONTROL_FLAGS.
 SHARED_OBJS := $(BUILD)/harness.o $(BUILD)/backend_serial.o $(BUILD)/backend_static.o \
                $(BUILD)/backend_tbb.o $(PARLAY_OBJ) $(BUILD)/backend_rayon.o
-RUNTIME_OBJS   := $(BUILD)/floor.o $(BUILD)/sched_core.o $(BUILD)/sched_prim_host.o \
+RUNTIME_BASE_OBJS := $(BUILD)/floor.o $(BUILD)/sched_core.o $(BUILD)/sched_prim_host.o \
                   $(BUILD)/sched_entry.o $(BUILD)/completion_runtime.o \
                   $(BUILD)/completion_wait_host.o $(BUILD)/completion_file_adapter.o \
                   $(BUILD)/completion_file_posix.o $(BUILD)/completion_bridge.o \
                   $(BUILD)/completion_linux_io_uring.o $(BUILD)/ordinary_values_c.o \
                   $(BUILD)/ordinary_values_ll.o
-RUNTIME_OBJS_B := $(if $(filter ordinary,$(WF_B_INTERFACE)),$(patsubst %.o,%-b.o,$(RUNTIME_OBJS)),$(B_RUNTIME_BASE))
+RUNTIME_OBJS := $(RUNTIME_BASE_OBJS) \
+                $(addprefix $(BUILD)/completion_,$(addsuffix .o,stop_signals $(SNAPSHOT_COMPLETION_UNITS))) \
+                $(BUILD)/keyed_table.o $(BUILD)/heap.a
+RUNTIME_OBJS_B := $(if $(filter ordinary,$(WF_B_INTERFACE)),$(patsubst %.o,%-b.o,$(RUNTIME_BASE_OBJS)) \
+                  $(addprefix $(BUILD)/completion_,$(addsuffix -b.o,$(B_STOP_UNIT) $(B_SNAPSHOT_UNITS))) \
+                  $(if $(B_SNAPSHOT_UNITS),$(BUILD)/keyed_table-b.o $(BUILD)/heap-b.a,),$(B_RUNTIME_BASE))
 COMMON_OBJS := $(SHARED_OBJS) $(RUNTIME_OBJS)
 
 LINK_LIBS := -L$(DEPS)/lib -Wl,-rpath,$(DEPS)/lib -ltbb \
@@ -763,7 +779,15 @@ $(BUILD)/sched_entry.o: $(SCHED)/entry.c $(NATIVE_HEADERS) $(WF_FLAGS_STAMP)
 	$(CC) $(WF_FLAGS) -c $< -o $@
 $(BUILD)/completion_%.o: $(COMPLETION)/%.c $(NATIVE_HEADERS) $(WF_FLAGS_STAMP)
 	@mkdir -p $(BUILD)
+	$(CC) $(WF_FLAGS) $(if $(filter %/snapshot_export.c %/fork_capsule.c,$<),$(SNAPSHOT_CHILD_FLAGS),) -c $< -o $@
+$(BUILD)/keyed_table.o: $(NATIVE)/keyed_table.c $(NATIVE)/concurrent_map.c $(NATIVE_HEADERS) $(WF_FLAGS_STAMP)
+	@mkdir -p $(BUILD)
 	$(CC) $(WF_FLAGS) -c $< -o $@
+$(BUILD)/heap.o: $(NATIVE)/heap.c $(NATIVE_HEADERS) $(WF_FLAGS_STAMP)
+	@mkdir -p $(BUILD)
+	$(CC) $(WF_FLAGS) -c $< -o $@
+$(BUILD)/heap.a: $(BUILD)/heap.o
+	$(AR) rcs $@ $<
 $(BUILD)/ordinary_values_c.o: $(NATIVE)/ordinary_values.c $(NATIVE_HEADERS) $(WF_FLAGS_STAMP)
 	@mkdir -p $(BUILD)
 	$(CC) $(WF_FLAGS) -c $< -o $@
@@ -785,7 +809,13 @@ $(BUILD)/sched_prim_host-b.o: $(WF_B_SCHED_DIR)/prim_host.c $(RUNTIME_CONTROL) $
 $(BUILD)/sched_entry-b.o: $(WF_B_SCHED_DIR)/entry.c $(RUNTIME_CONTROL) $(MODULE_CONTROL) $(BASELINE_STAMP) $(WF_FLAGS_STAMP)
 	$(CC) $(WF_FLAGS) $(WF_MODULE_CONTROL_FLAGS) $(WF_RUNTIME_CONTROL_FLAGS) -c $< -o $@
 $(BUILD)/completion_%-b.o: $(WF_B_COMPLETION)/%.c $(RUNTIME_CONTROL) $(MODULE_CONTROL) $(BASELINE_STAMP) $(WF_FLAGS_STAMP)
+	$(CC) $(WF_FLAGS) $(WF_MODULE_CONTROL_FLAGS) $(WF_RUNTIME_CONTROL_FLAGS) $(if $(filter %/snapshot_export.c %/fork_capsule.c,$<),$(SNAPSHOT_CHILD_FLAGS),) -c $< -o $@
+$(BUILD)/keyed_table-b.o: $(WF_B_NATIVE)/keyed_table.c $(WF_B_NATIVE)/concurrent_map.c $(RUNTIME_CONTROL) $(MODULE_CONTROL) $(BASELINE_STAMP) $(WF_FLAGS_STAMP)
 	$(CC) $(WF_FLAGS) $(WF_MODULE_CONTROL_FLAGS) $(WF_RUNTIME_CONTROL_FLAGS) -c $< -o $@
+$(BUILD)/heap-b.o: $(WF_B_NATIVE)/heap.c $(RUNTIME_CONTROL) $(MODULE_CONTROL) $(BASELINE_STAMP) $(WF_FLAGS_STAMP)
+	$(CC) $(WF_FLAGS) $(WF_MODULE_CONTROL_FLAGS) $(WF_RUNTIME_CONTROL_FLAGS) -c $< -o $@
+$(BUILD)/heap-b.a: $(BUILD)/heap-b.o
+	$(AR) rcs $@ $<
 $(BUILD)/ordinary_values_c-b.o: $(WF_B_NATIVE)/ordinary_values.c $(RUNTIME_CONTROL) $(MODULE_CONTROL) $(BASELINE_STAMP) $(WF_FLAGS_STAMP)
 	$(CC) $(WF_FLAGS) $(WF_MODULE_CONTROL_FLAGS) $(WF_RUNTIME_CONTROL_FLAGS) -c $< -o $@
 $(BUILD)/ordinary_values_ll-b.o: $(WF_B_NATIVE)/ordinary_values.ll $(RUNTIME_CONTROL) $(MODULE_CONTROL) $(BASELINE_STAMP) $(WF_FLAGS_STAMP)

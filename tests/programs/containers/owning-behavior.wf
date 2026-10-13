@@ -48,7 +48,7 @@ enum PutOutcome {
 }
 
 struct Progress<K> {
-  held: Slot<K>;
+  observed_state: Slot<K>;
   source_next: u64;
   next_probe: u64;
   phase: u8;
@@ -289,13 +289,13 @@ fn key_begin<K>(source: Box<Slots<Slot<K>>>, count: u64) -> result: Rehash<K> pu
   requires count <= 2097152_u64;
 } {
   let spare = key_create::<K>(count: count);
-  let held = Slot<K>::Vacant();
-  let progress = Progress<K>(held: move held, source_next: 0_u64, next_probe: 0_u64, phase: 0_u8);
+  let observed_state = Slot<K>::Vacant();
+  let progress = Progress<K>(observed_state: move observed_state, source_next: 0_u64, next_probe: 0_u64, phase: 0_u8);
   let state = Rehash<K>(source: move source, target: move spare, progress: move progress);
   return move state;
 }
 
-fn key_advance<interface Key<K, E>>(source: &Box<Slots<Slot<K>>>, target: &Box<Slots<Slot<K>>>, progress: &Progress<K>, budget: u64, env: &E) -> (examined: u64, moved: u64) reads(env), writes(source), writes(target), writes(progress.held), writes(progress.source_next), writes(progress.next_probe), writes(progress.phase) {
+fn key_advance<interface Key<K, E>>(source: &Box<Slots<Slot<K>>>, target: &Box<Slots<Slot<K>>>, progress: &Progress<K>, budget: u64, env: &E) -> (examined: u64, moved: u64) reads(env), writes(source), writes(target), writes(progress.observed_state), writes(progress.source_next), writes(progress.next_probe), writes(progress.phase) {
   doc "Each transfer is two exchanges: the source slot's occupant goes into the held field and the held occupant goes into its target slot, so the displaced vacant value is released by the ordinary scope exit.";
   let source_cursor = progress^.source_next;
   let probe_cursor = progress^.next_probe;
@@ -321,7 +321,7 @@ fn key_advance<interface Key<K, E>>(source: &Box<Slots<Slot<K>>>, target: &Box<S
         if full {
           let held_slot = Slot<K>::Deleted();
           swap(first: &source^.inner[index], second: &held_slot);
-          swap(first: &progress^.held, second: &held_slot);
+          swap(first: &progress^.observed_state, second: &held_slot);
           set probe_cursor = 0_u64;
           set phase = 1_u8;
         }
@@ -331,7 +331,7 @@ fn key_advance<interface Key<K, E>>(source: &Box<Slots<Slot<K>>>, target: &Box<S
           set phase = 2_u8;
           break;
         }
-        let key = key_slot_hash::<Key<K, E>>(slot: &progress^.held, env: env);
+        let key = key_slot_hash::<Key<K, E>>(slot: &progress^.observed_state, env: env);
         let home = key % count;
         let index = probe_index(home: home, step: probe_cursor, count: count);
         set probe_cursor = probe_cursor + 1_u64;
@@ -339,7 +339,7 @@ fn key_advance<interface Key<K, E>>(source: &Box<Slots<Slot<K>>>, target: &Box<S
         if full {
         } else {
           let held_slot = Slot<K>::Vacant();
-          swap(first: &progress^.held, second: &held_slot);
+          swap(first: &progress^.observed_state, second: &held_slot);
           swap(first: &target^.inner[index], second: &held_slot);
           set transfers = transfers + 1_u64;
           set phase = 0_u8;
@@ -367,8 +367,8 @@ fn key_rehash_all<interface Key<K, E>>(slots: &Box<Slots<Slot<K>>>, count: u64, 
 } {
   doc "A complete migration into a fresh cell, committed over the caller's cell so the ordinary assignment releases the emptied source.";
   let target = key_create::<K>(count: count);
-  let held = Slot<K>::Vacant();
-  let progress = Progress<K>(held: move held, source_next: 0_u64, next_probe: 0_u64, phase: 0_u8);
+  let observed_state = Slot<K>::Vacant();
+  let progress = Progress<K>(observed_state: move observed_state, source_next: 0_u64, next_probe: 0_u64, phase: 0_u8);
   let (work, moved) = key_advance::<Key<K, E>>(source: slots, target: &target, progress: &progress, budget: 18446744073709551615_u64, env: env);
   let phase = progress.phase;
   set slots^ = move target;
@@ -489,7 +489,7 @@ fn begin(source: Box<Slots<Slot<u64>>>, count: u64) -> result: Rehash<u64> pure 
   return key_begin::<u64>(source: move source, count: count);
 }
 
-fn advance(source: &Box<Slots<Slot<u64>>>, target: &Box<Slots<Slot<u64>>>, progress: &Progress<u64>, budget: u64) -> (examined: u64, moved: u64) writes(source), writes(target), writes(progress.held), writes(progress.source_next), writes(progress.next_probe), writes(progress.phase) {
+fn advance(source: &Box<Slots<Slot<u64>>>, target: &Box<Slots<Slot<u64>>>, progress: &Progress<u64>, budget: u64) -> (examined: u64, moved: u64) writes(source), writes(target), writes(progress.observed_state), writes(progress.source_next), writes(progress.next_probe), writes(progress.phase) {
   let env = Empty();
   let (examined, moved) = key_advance::<WordKey>(source: source, target: target, progress: progress, budget: budget, env: &env);
   return examined, moved;
@@ -600,10 +600,10 @@ fn checked_insert(slots: &Box<Slots<Slot<u64>>>, key: u64, id: u64, kind: u64, e
   return verdict;
 }
 
-fn state_hash(state: &Rehash<u64>) -> result: u64 reads(state.source), reads(state.target), reads(state.progress.held), reads(state.progress.source_next), reads(state.progress.next_probe), reads(state.progress.phase) {
+fn state_hash(state: &Rehash<u64>) -> result: u64 reads(state.source), reads(state.target), reads(state.progress.observed_state), reads(state.progress.source_next), reads(state.progress.next_probe), reads(state.progress.phase) {
   let source = digest(slots: &state^.source);
   let target = digest(slots: &state^.target);
-  let (control, key, id) = read_slot(slot: &state^.progress.held);
+  let (control, key, id) = read_slot(slot: &state^.progress.observed_state);
   let first = source *wrap 131_u64;
   let second = first +wrap target;
   let third = second *wrap 131_u64;

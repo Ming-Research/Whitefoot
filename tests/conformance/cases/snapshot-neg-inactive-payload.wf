@@ -1,0 +1,14 @@
+alias Reserve = std::snapshot::Reserve;
+alias Job = std::snapshot::Job;
+alias CreateError = std::snapshot::CreateError;
+
+enum Entry {
+  Empty();
+  Resource(state: Shared<u8>);
+}
+
+fn capture(reserve: Reserve, table: &Shared<ConcurrentHashMap<Entry>>, sequence: &Shared<u64>) -> result: Result<Job, CreateError> reads(table), reads(sequence) waits {
+  atomic held_map = &table^, held_cut = &sequence^ {
+    return std::snapshot::capture_export::<Entry>(reserve: move reserve, map: held_map, cut: held_cut);
+  }
+}

@@ -14,7 +14,7 @@ struct Meta {
   count: u64;
 }
 
-fn lock_run(keys: Shared<ConcurrentHashMap<u8>>, meta: Shared<STATE>, held: Bool) -> result: unit pure waits {
+fn lock_run(keys: Shared<ConcurrentHashMap<u8>>, meta: Shared<STATE>, kept: Bool) -> result: unit pure waits {
   let key = &ledger_names[0_u64..1_u64];
   atomic slot = &keys[key], m = &metaGUARD {
 BODY
@@ -27,8 +27,8 @@ fn main() -> status: std::process::ExitStatus pure waits {
   let keys = shared_map_new::<u8>(capacity: 1_u64);
   let initial = INITIAL;
   let meta = shared_new::<STATE>(value: initial);
-  let held = True();
-  lock_run(keys: move keys, meta: move meta, held: held);
+  let kept = True();
+  lock_run(keys: move keys, meta: move meta, kept: kept);
   return std::process::exit_status(code: 0_u8);
 }
 "#;
@@ -117,7 +117,7 @@ fn lock_ledger_reports_a_metadata_read_on_every_path() {
         "Meta",
         "Meta(count: 1_u64)",
         "",
-        "    let observed = m^.count;\n    set m^.count = observed;\n    if held {\n      set slot^ = Some<u8>(value: 1_u8);\n    }",
+        "    let observed = m^.count;\n    set m^.count = observed;\n    if kept {\n      set slot^ = Some<u8>(value: 1_u8);\n    }",
     );
     let module = compile(source.as_bytes());
     let lines = lock_ledger_lines(&module);
@@ -129,7 +129,7 @@ fn lock_ledger_reports_a_metadata_read_on_every_path() {
     );
 }
 
-/// The metadata group is reached only through the true successor of `held`.
+/// The metadata group is reached only through the true successor of `kept`.
 /// A report that promotes that use to every path must fail this assertion.
 #[test]
 fn lock_ledger_reports_a_metadata_read_on_some_paths() {
@@ -137,7 +137,7 @@ fn lock_ledger_reports_a_metadata_read_on_some_paths() {
         "Meta",
         "Meta(count: 1_u64)",
         "",
-        "    if held {\n      let observed = m^.count;\n      set m^.count = observed;\n    }",
+        "    if kept {\n      let observed = m^.count;\n      set m^.count = observed;\n    }",
     );
     let module = compile(source.as_bytes());
     let lines = lock_ledger_lines(&module);
@@ -157,7 +157,7 @@ fn lock_ledger_names_the_entry_that_takes_an_earlier_primitive_group() {
         "u64",
         "1_u64",
         "",
-        "    if held {\n      let observed = m^;\n      set m^ = observed;\n    }",
+        "    if kept {\n      let observed = m^;\n      set m^ = observed;\n    }",
     );
     let module = compile(source.as_bytes());
     let lines = lock_ledger_lines(&module);
@@ -181,7 +181,7 @@ fn lock_ledger_reports_a_guard_read_before_the_guard() {
         "Meta",
         "Meta(count: 1_u64)",
         " when m^.count != 0_u64",
-        "    if held {\n      let observed = m^.count;\n      set m^.count = observed;\n    }",
+        "    if kept {\n      let observed = m^.count;\n      set m^.count = observed;\n    }",
     );
     let module = compile(source.as_bytes());
     let lines = lock_ledger_lines(&module);
@@ -200,8 +200,8 @@ fn lock_ledger_reports_all_groups_before_a_guard_that_reads_no_target() {
     let source = lock_ledger_source(
         "Meta",
         "Meta(count: 1_u64)",
-        " when held",
-        "    if held {\n      let observed = m^.count;\n      set m^.count = observed;\n    }",
+        " when kept",
+        "    if kept {\n      let observed = m^.count;\n      set m^.count = observed;\n    }",
     );
     let module = compile(source.as_bytes());
     let lines = lock_ledger_lines(&module);
@@ -221,7 +221,7 @@ fn lock_ledger_reports_a_metadata_read_in_both_branches_on_every_path() {
         "Meta",
         "Meta(count: 1_u64)",
         "",
-        "    if held {\n      let observed = m^.count;\n      set m^.count = observed;\n    } else {\n      let other = m^.count;\n      set m^.count = other;\n    }",
+        "    if kept {\n      let observed = m^.count;\n      set m^.count = observed;\n    } else {\n      let other = m^.count;\n      set m^.count = other;\n    }",
     );
     let module = compile(source.as_bytes());
     let lines = lock_ledger_lines(&module);
@@ -249,21 +249,21 @@ fn lock_ledger_names_a_later_lazy_group_that_takes_an_earlier_group() {
         "Meta",
         "Meta(count: 1_u64)",
         "",
-        "    let observed_tail = z^.count;\n    set z^.count = observed_tail;\n    if held {\n      let observed = m^.count;\n      set m^.count = observed;\n    }",
+        "    let observed_tail = z^.count;\n    set z^.count = observed_tail;\n    if kept {\n      let observed = m^.count;\n      set m^.count = observed;\n    }",
     )
     .replace(
         "struct Meta {\n  count: u64;\n}",
         "struct Meta {\n  count: u64;\n}\n\nstruct Zeta {\n  count: u64;\n}",
     )
-    .replace("held: Bool)", "tail: Shared<Zeta>, held: Bool)")
+    .replace("kept: Bool)", "tail: Shared<Zeta>, kept: Bool)")
     .replace("m = &meta", "m = &meta, z = &tail")
     .replace(
-        "  let held = True();",
-        "  let initial_tail = Zeta(count: 1_u64);\n  let tail = shared_new::<Zeta>(value: initial_tail);\n  let held = True();",
+        "  let kept = True();",
+        "  let initial_tail = Zeta(count: 1_u64);\n  let tail = shared_new::<Zeta>(value: initial_tail);\n  let kept = True();",
     )
     .replace(
-        "meta: move meta, held: held",
-        "meta: move meta, tail: move tail, held: held",
+        "meta: move meta, kept: kept",
+        "meta: move meta, tail: move tail, kept: kept",
     );
     let module = compile(source.as_bytes());
     let lines = lock_ledger_lines(&module);

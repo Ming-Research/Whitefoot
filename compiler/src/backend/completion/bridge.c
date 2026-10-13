@@ -4323,6 +4323,19 @@ static int wf_contexts_stuck(const wf_driver *self) {
  * [PRE-2]. */
 #define WF_DEADLINE_RETRY_NS 1000000u
 
+/* Timer ownership covers sleeps and already-expired watched operations. A
+ * sleep reaching its clock is successful; a transfer that never dispatched
+ * must retain the zero-transfer deadline outcome through every service path. */
+static void wf_bridge_timer_result(wf_completion_record *record, int cancelled) {
+    int stopped = cancelled || record->request.kind != WF_FILE_SLEEP;
+    record->result.kind = record->request.kind;
+    record->result.value = stopped ? -1 : 0;
+    record->result.error_code = stopped ? wf_file_cancelled_error() : 0;
+    if (stopped)
+        atomic_store_explicit(&record->deadline, WF_COMPLETION_DEADLINE_FIRED,
+                              memory_order_release);
+}
+
 /* Ends the waits of every context on this driver whose deadline the monotonic
  * clock has reached [PRE-2]: a sleep completes; an operation polled for
  * readiness here completes with nothing transferred, since its transfer is
@@ -4337,12 +4350,7 @@ static int wf_driver_expire_wait(wf_driver *driver, wf_context *context, uint64_
     if (record == NULL || wf_bridge_record_state(record) == WF_COMPLETION_DONE) return 0;
     if (cancelled) record->wait_cancelled = 1;
     if (record->route == WF_COMPLETION_ROUTE_TIMER) {
-        record->result.kind = record->request.kind;
-        record->result.value = cancelled ? -1 : 0;
-        record->result.error_code = cancelled ? wf_file_cancelled_error() : 0;
-        if (cancelled)
-            atomic_store_explicit(&record->deadline, WF_COMPLETION_DEADLINE_FIRED,
-                                  memory_order_release);
+        wf_bridge_timer_result(record, cancelled);
         wf_completion_record_complete(record);
         return 1;
     }
@@ -4423,17 +4431,14 @@ static wf_context *wf_driver_service_only(wf_driver *driver, wf_driver *victim, 
         if (terminal || due || cancelled) {
             if (terminal) atomic_fetch_add_explicit(
                 &wf_driver_stats[driver->index].borrowed_terminals, 1u, memory_order_relaxed);
-            else if (due && !cancelled) atomic_fetch_add_explicit(
-                &wf_driver_stats[driver->index].borrowed_sleeps, 1u, memory_order_relaxed);
+            else if (due && !cancelled && record->request.kind == WF_FILE_SLEEP)
+                atomic_fetch_add_explicit(
+                    &wf_driver_stats[driver->index].borrowed_sleeps, 1u, memory_order_relaxed);
             wf_context_unpark(victim, context);
             context->record = NULL;
             if (!terminal) {
                 record->wait_cancelled = (unsigned)cancelled;
-                record->result.kind = record->request.kind;
-                record->result.value = cancelled ? -1 : 0;
-                record->result.error_code = cancelled ? wf_file_cancelled_error() : 0;
-                if (cancelled) atomic_store_explicit(
-                    &record->deadline, WF_COMPLETION_DEADLINE_FIRED, memory_order_release);
+                wf_bridge_timer_result(record, cancelled);
                 atomic_fetch_add_explicit(&wf_bridge_publications, 1u, memory_order_relaxed);
                 /* This suspended context is the only waiter. Notification
                  * is its detached ready publication after releasing the token. */
@@ -5211,8 +5216,7 @@ static void wf_bridge_join(wf_completion_record *record) {
                 wf_bridge_park(epoch, (uint32_t)left);
             }
         }
-        record->result.kind = record->request.kind;
-        record->result.value = 0;
+        wf_bridge_timer_result(record, 0);
         wf_completion_record_complete(record);
         return;
     }
@@ -5539,6 +5543,30 @@ static void wf_bridge_dispatch_bound(wf_completion_record *record, int bounded,
         wf_bridge_complete_empty(record);
         return;
     }
+    /* A deadline reached before dispatch has already ended the wait. No
+     * engine has produced an outcome yet, so submitting now could transfer
+     * bytes after the required zero-transfer DeadlinePassed outcome. Later
+     * deadline races still preserve an engine's completed transfer. */
+    uint64_t deadline = atomic_load_explicit(&record->deadline, memory_order_relaxed);
+    if (deadline != 0 && wf_file_monotonic_ns() >= deadline) {
+        /* Real watches publish their registration only after native unwind.
+         * Leave that wait intent pending for timer service rather than
+         * bypassing adoption with an inline terminal record. */
+        wf_context *self = wf_context_current;
+        if (self != NULL && self->cancel != NULL
+            && (void *)record == self->operation.bytes) {
+            record->route = WF_COMPLETION_ROUTE_TIMER;
+            return;
+        }
+        atomic_store_explicit(&record->deadline, WF_COMPLETION_DEADLINE_FIRED,
+                              memory_order_release);
+        record->route = WF_COMPLETION_ROUTE_INLINE;
+        record->result.kind = record->request.kind;
+        record->result.value = -1;
+        record->result.error_code = wf_file_cancelled_error();
+        wf_completion_record_complete(record);
+        return;
+    }
     if (wf_bridge_ring_offer(record)) {
         return;
     }
@@ -5781,6 +5809,22 @@ void wf__completion_file_close_submit(
     held->request.kind = WF_FILE_CLOSE;
     held->request.operation.close.descriptor = descriptor;
     wf_bridge_dispatch(held);
+}
+
+int wf__completion_snapshot_finish_submit(void *owner, uint32_t abort_requested,
+                                         void *record) {
+    wf_completion_record *held = wf_bridge_begin(record);
+    if (owner == NULL || abort_requested > 1u) {
+        wf_bridge_fail("a snapshot completion has no owned job");
+    }
+    held->request.kind = WF_FILE_SNAPSHOT_FINISH;
+    held->request.operation.snapshot.owner = owner;
+    held->request.operation.snapshot.abort_requested = abort_requested;
+    /* A child can wait for output capacity. Its collector must run off the
+     * executor so other contexts continue, including the writer being served.
+     * No deadline is invented; finish and abort await confirmed termination. */
+    wf_bridge_dispatch_bound(held, 1, 0);
+    return wf__completion_pending(held) ? 2 : 1;
 }
 
 void wf__completion_file_append_submit(

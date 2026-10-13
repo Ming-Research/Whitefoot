@@ -271,16 +271,16 @@ fn serve(connection: TcpConnection, factory: HandleFactory, store: Keyspace, clo
   let started = std::time::now(clock: &clock);
   let last = nanoseconds_from(earlier: origin, later: started);
   let polled = last;
-  let held = 0_u64;
+  let observed = 0_u64;
   loop @requests {
-    if held >= input.inner.len {
+    if observed >= input.inner.len {
       input_grow(input: &input);
-      if held >= input.inner.len {
+      if observed >= input.inner.len {
         break @requests;
       }
     }
     let ended = False();
-    let received = held;
+    let received = observed;
     let fresh = True();
     loop @receiving {
       let limit = None<Instant>();
@@ -302,7 +302,7 @@ fn serve(connection: TcpConnection, factory: HandleFactory, store: Keyspace, clo
       let window = &input.inner[0_u64..length];
       let waited = False();
       let wait_cancel_2 = std::time::cancel_never();
-      let wait_outcome_2 = receive_next(receive: &connection.receive, destination: window, start: held, end: length, deadline: limit, cancel: &wait_cancel_2);
+      let wait_outcome_2 = receive_next(receive: &connection.receive, destination: window, start: observed, end: length, deadline: limit, cancel: &wait_cancel_2);
       std::time::close_cancel_watch(watch: move wait_cancel_2);
       match wait_outcome_2 {
         Ok(value: next) => {
@@ -337,7 +337,7 @@ fn serve(connection: TcpConnection, factory: HandleFactory, store: Keyspace, clo
     if ended {
       break @requests;
     }
-    set held = received;
+    set observed = received;
     let reading = read_time(wall: &wall);
     let time = reading.time;
     set client.unix_us = reading.unix_us;
@@ -361,7 +361,7 @@ fn serve(connection: TcpConnection, factory: HandleFactory, store: Keyspace, clo
         set client.locked = demanded;
       }
       let locked = client.locked;
-      let parsed = parse_request(input: bytes, start: consumed, held: held, args: &args, locked: locked);
+      let parsed = parse_request(input: bytes, start: consumed, observed: observed, args: &args, locked: locked);
       if parsed.state == 0_u64 {
         break @commands;
       }
@@ -397,7 +397,7 @@ fn serve(connection: TcpConnection, factory: HandleFactory, store: Keyspace, clo
     if stopping {
       break @requests;
     }
-    set held = keep_rest(input: &input, from: consumed, held: held);
+    set observed = keep_rest(input: &input, from: consumed, observed: observed);
   }
   let TcpConnection(receive: closing_receive, send: closing_send) = move connection;
   close_receive(factory: &factory, receive: move closing_receive);

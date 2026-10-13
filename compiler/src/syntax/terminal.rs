@@ -76,6 +76,8 @@ pub enum FixedTerminal {
     Define,
     /// `requires`.
     Requires,
+    /// `held`.
+    Held,
     /// `ensures`.
     Ensures,
     /// `when`.
@@ -245,7 +247,7 @@ pub enum FixedTerminal {
 }
 
 /// Every fixed raw-token predicate in the active specification, in first occurrence order.
-pub const ALL_FIXED_TERMINALS: [FixedTerminal; 110] = [
+pub const ALL_FIXED_TERMINALS: [FixedTerminal; 111] = [
     FixedTerminal::Public,
     FixedTerminal::Alias,
     FixedTerminal::Equal,
@@ -273,6 +275,7 @@ pub const ALL_FIXED_TERMINALS: [FixedTerminal; 110] = [
     FixedTerminal::Contract,
     FixedTerminal::Define,
     FixedTerminal::Requires,
+    FixedTerminal::Held,
     FixedTerminal::Ensures,
     FixedTerminal::When,
     FixedTerminal::Is,
@@ -390,6 +393,7 @@ impl FixedTerminal {
             Self::Define => "define",
             Self::Equal => "=",
             Self::Requires => "requires",
+            Self::Held => "held",
             Self::Ensures => "ensures",
             Self::When => "when",
             Self::Is => "is",
@@ -873,6 +877,8 @@ mod tests {
         // later terminal one slot. v0.136's `unchanged` [RANGE-1] first occurs
         // in `clause_expr`, before the place suffixes. v0.142's `not` first occurs in
         // the variant relation after `forall`, moving the effect atoms one slot.
+        // v0.145's `held` [HOLD-1] first occurs in `held_clause` right after
+        // `requires`, moving every later terminal one slot.
         assert_eq!(FixedTerminal::Alias as u8, 1);
         assert_eq!(FixedTerminal::Equal as u8, 2);
         assert_eq!(FixedTerminal::Pkg as u8, 3);
@@ -887,29 +893,30 @@ mod tests {
         assert_eq!(FixedTerminal::Nodrop as u8, 11);
         assert_eq!(FixedTerminal::Readonly as u8, 15);
         assert_eq!(FixedTerminal::Colon as u8, 16);
-        assert_eq!(FixedTerminal::Ensures as u8, 27);
-        assert_eq!(FixedTerminal::Is as u8, 29);
-        assert_eq!(FixedTerminal::Copy as u8, 36);
-        assert_eq!(FixedTerminal::Drop as u8, 37);
-        assert_eq!(FixedTerminal::Ampersand as u8, 38);
-        assert_eq!(FixedTerminal::Entry as u8, 42);
-        assert_eq!(FixedTerminal::DotDot as u8, 55);
-        assert_eq!(FixedTerminal::For as u8, 63);
-        assert_eq!(FixedTerminal::In as u8, 64);
-        assert_eq!(FixedTerminal::Invariant as u8, 65);
-        assert_eq!(FixedTerminal::Use as u8, 66);
-        assert_eq!(FixedTerminal::Times as u8, 67);
-        assert_eq!(FixedTerminal::Musttail as u8, 100);
-        assert_eq!(FixedTerminal::PercentChecked as u8, 95);
-        assert_eq!(FixedTerminal::Writes as u8, 109);
+        assert_eq!(FixedTerminal::Held as u8, 27);
+        assert_eq!(FixedTerminal::Ensures as u8, 28);
+        assert_eq!(FixedTerminal::Is as u8, 30);
+        assert_eq!(FixedTerminal::Copy as u8, 37);
+        assert_eq!(FixedTerminal::Drop as u8, 38);
+        assert_eq!(FixedTerminal::Ampersand as u8, 39);
+        assert_eq!(FixedTerminal::Entry as u8, 43);
+        assert_eq!(FixedTerminal::DotDot as u8, 56);
+        assert_eq!(FixedTerminal::For as u8, 64);
+        assert_eq!(FixedTerminal::In as u8, 65);
+        assert_eq!(FixedTerminal::Invariant as u8, 66);
+        assert_eq!(FixedTerminal::Use as u8, 67);
+        assert_eq!(FixedTerminal::Times as u8, 68);
+        assert_eq!(FixedTerminal::Musttail as u8, 101);
+        assert_eq!(FixedTerminal::PercentChecked as u8, 96);
+        assert_eq!(FixedTerminal::Writes as u8, 110);
         assert_eq!(FixedTerminal::Waits as u8, 23);
-        assert_eq!(FixedTerminal::Spawn as u8, 101);
-        assert_eq!(FixedTerminal::Apart as u8, 77);
-        assert_eq!(FixedTerminal::Unchanged as u8, 102);
-        assert_eq!(FixedTerminal::Forall as u8, 105);
-        assert_eq!(FixedTerminal::Not as u8, 106);
-        assert_eq!(TerminalPredicate::Identifier.index(), 110);
-        assert_eq!(TerminalPredicate::Digits.index(), 116);
+        assert_eq!(FixedTerminal::Spawn as u8, 102);
+        assert_eq!(FixedTerminal::Apart as u8, 78);
+        assert_eq!(FixedTerminal::Unchanged as u8, 103);
+        assert_eq!(FixedTerminal::Forall as u8, 106);
+        assert_eq!(FixedTerminal::Not as u8, 107);
+        assert_eq!(TerminalPredicate::Identifier.index(), 111);
+        assert_eq!(TerminalPredicate::Digits.index(), 117);
     }
 
     /// The inventory holds every predicate, once.

@@ -163,8 +163,8 @@ fn main() -> status: std::process::ExitStatus pure {
         repaired: &[br#"fn pour(shards: &Array<Shared<u64>, 4>, slot: u64) -> result: unit reads(shards) waits contract {
   requires slot < 4_u64;
 } {
-  atomic held = &shards^[slot] {
-    set held^ = held^ +wrap held^;
+  atomic kept = &shards^[slot] {
+    set kept^ = kept^ +wrap kept^;
   }
   return unit;
 }
