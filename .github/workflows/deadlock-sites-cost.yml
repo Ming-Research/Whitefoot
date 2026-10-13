@@ -1,0 +1,83 @@
+# Temporary manual experiment for research/investigations/deadlock-sites.
+# Remove this workflow and its helper before the diagnostic branch is ready.
+name: deadlock-sites-cost
+
+# Triggered by editing the request file on this branch: a workflow that is
+# not on main cannot be dispatched. Each push that changes the file is one
+# requested run; its KEY=VALUE lines replace the former dispatch inputs.
+# The site-only attribution arm gets its recorded compile-time prefix in a
+# detached scratch tree; the checked-out candidate and request stay unchanged.
+on:
+  push:
+    branches: [claude/diag-deadlock-sites]
+    paths: [.github/deadlock-sites-cost.env]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deadlock-sites-cost-14900k
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  compare:
+    runs-on: [self-hosted, 14900k]
+    timeout-minutes: 100
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_TERM_COLOR: never
+      DEADLOCK_NETLOAD_SOURCE: research/experiments/io-completion-bench/netload.c
+      DEADLOCK_CANDIDATE: ${{ github.sha }}
+      WHITEFOOT_CHECK_TIMEOUT: "5400"
+      # Manual experiments use the wrapper's lock and deadline, not a
+      # correctness-stage budget or a fabricated measured budget row.
+      WHITEFOOT_TIME_BUDGET_RECORD: ""
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Load the requested settings
+        run: grep -E '^DEADLOCK_[A-Z_0-9]+=[^ ]*$' .github/deadlock-sites-cost.env >> "$GITHUB_ENV"
+      - name: Find the installed Rust tools
+        run: |
+          echo "DEADLOCK_OUT=$RUNNER_TEMP/deadlock-sites-cost-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
+          if [ -d "$HOME/.cargo/bin" ]; then
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          fi
+      - name: Build, qualify and compare under the host-wide lock
+        run: |
+          mkdir -p "$DEADLOCK_OUT"
+          perl .github/run-check.pl deadlock-sites/cost \
+            python3 -B .github/deadlock-sites-cost.py
+      - name: Publish even a partial result
+        if: always()
+        run: |
+          if [ -f "$DEADLOCK_OUT/summary.md" ]; then
+            cat "$DEADLOCK_OUT/summary.md" >> "$GITHUB_STEP_SUMMARY"
+            cat "$DEADLOCK_OUT/summary.md"
+          else
+            echo 'Deadlock-sites cost: no valid panel; inspect the lock/tool failure in the job log.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Pack per-sample logs into one archive
+        if: always()
+        run: |
+          if [ -d "$DEADLOCK_OUT/logs" ]; then
+            tar -C "$DEADLOCK_OUT" -czf "$DEADLOCK_OUT/logs.tar.gz" logs
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: deadlock-sites-cost-${{ github.run_id }}
+          if-no-files-found: warn
+          path: |
+            ${{ env.DEADLOCK_OUT }}/*.json
+            ${{ env.DEADLOCK_OUT }}/*.jsonl
+            ${{ env.DEADLOCK_OUT }}/*.tsv
+            ${{ env.DEADLOCK_OUT }}/*.md
+            ${{ env.DEADLOCK_OUT }}/*.log
+            ${{ env.DEADLOCK_OUT }}/bundle/
+            ${{ env.DEADLOCK_OUT }}/logs.tar.gz
