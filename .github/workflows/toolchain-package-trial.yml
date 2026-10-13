@@ -36,18 +36,24 @@ jobs:
     env:
       ASSET: ${{ matrix.asset }}
       PUBLISHED_SHA256: ${{ matrix.sha256 }}
-      ARCHIVE_DIR: ${{ runner.temp }}/llvm-archives
-      TRIAL_DIR: ${{ runner.temp }}/toolchain-trial
-      REPORT_DIR: ${{ runner.temp }}/toolchain-report
     steps:
       - uses: actions/checkout@v4
+
+      # The runner context is not available in job-level env.
+      - name: Set scratch paths
+        run: |
+          {
+            echo "ARCHIVE_DIR=$RUNNER_TEMP/llvm-archives"
+            echo "TRIAL_DIR=$RUNNER_TEMP/toolchain-trial"
+            echo "REPORT_DIR=$RUNNER_TEMP/toolchain-report"
+          } >> "$GITHUB_ENV"
 
       - name: Check the runner architecture
         run: test "$(uname -m)" = "${{ matrix.machine }}"
 
       - uses: actions/cache@v4
         with:
-          path: ${{ env.ARCHIVE_DIR }}/${{ matrix.asset }}
+          path: ${{ runner.temp }}/llvm-archives/${{ matrix.asset }}
           key: official-llvm-${{ matrix.asset }}
 
       - name: Download and verify the official release archive
