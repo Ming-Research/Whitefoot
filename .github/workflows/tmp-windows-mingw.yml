@@ -1,0 +1,425 @@
+# TEMPORARY: removed before claude/windows-pkg is marked ready.
+#
+# Evidence for the proposed single Windows ABI, x86-64 MinGW with the
+# Universal C Runtime linked by LLD (design/compiler/toolchain-resolution.md):
+# the same Windows checks io-hosts.yml's completion-windows job runs today, on
+# the same image, with llvm-mingw's clang as the only clang the job can reach
+# and whitefootc emitting x86_64-w64-windows-gnu. It also compiles the
+# unmerged claude/pid-localtime runtime files with llvm-mingw, and measures a
+# trimmed x86-64-only llvm-mingw tree that a bundled Windows package could
+# carry, using that tree as a packaged toolchain for one program. Nothing is
+# published.
+#
+# whitefootc and the cargo test harness stay MSVC-hosted Rust (the image's
+# default stable toolchain): after this branch the programs whitefootc emits
+# and links no longer depend on the ABI whitefootc itself was built for, so
+# this job judges the emitted ABI alone. The steps mirror completion-windows
+# one for one; the Windows steps there run without run-check.pl, and so do
+# these.
+name: tmp-windows-mingw
+
+on:
+  push:
+    branches: [claude/windows-pkg]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tmp-windows-mingw-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+  LLVM_MINGW_TAG: "20260616"
+  LLVM_MINGW_ASSET: llvm-mingw-20260616-ucrt-x86_64.zip
+  # GitHub's published digest for the release asset
+  # (gh release view 20260616 -R mstorsjo/llvm-mingw --json assets).
+  LLVM_MINGW_SHA256: b9b68a4d276e16fa25802aaba458e4638f64b3884c290aaccdc2d87083b6ca35
+  WF_TRIPLE: x86_64-w64-windows-gnu
+
+jobs:
+  windows-mingw:
+    name: completion-windows under llvm-mingw (windows-latest)
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download, verify and unpack llvm-mingw
+        timeout-minutes: 8
+        run: |
+          set -euo pipefail
+          temp="$(cygpath -u "$RUNNER_TEMP")"
+          archive="$temp/$LLVM_MINGW_ASSET"
+          curl --fail --location --retry 3 --max-time 600 \
+            "https://github.com/mstorsjo/llvm-mingw/releases/download/$LLVM_MINGW_TAG/$LLVM_MINGW_ASSET" \
+            -o "$archive"
+          ls -l "$archive"
+          echo "$LLVM_MINGW_SHA256  $archive" | sha256sum -c -
+          mkdir -p "$temp/llvm-mingw-unpacked"
+          7z x -y -bd -o"$(cygpath -w "$temp/llvm-mingw-unpacked")" "$(cygpath -w "$archive")" > /dev/null
+          root="$temp/llvm-mingw-unpacked/${LLVM_MINGW_ASSET%.zip}"
+          test -x "$root/bin/clang.exe"
+          echo "LLVM_MINGW_ROOT=$root" >> "$GITHUB_ENV"
+          echo "LLVM_MINGW_BIN=$root/bin" >> "$GITHUB_ENV"
+          # Only llvm-mingw's bin goes ahead of everything else on PATH.
+          cygpath -w "$root/bin" >> "$GITHUB_PATH"
+          ls "$root"
+          echo "--- clang configuration files ---"
+          for cfg in "$root"/bin/*.cfg; do echo "== $cfg"; cat "$cfg"; done
+
+      # Every other clang the job could reach by name is renamed away, so a
+      # compile command that does not resolve to llvm-mingw fails instead of
+      # silently using the image's LLVM.
+      - name: Make llvm-mingw's clang the only clang
+        run: |
+          set -euo pipefail
+          echo "--- where clang (before) ---"
+          where.exe clang || true
+          ours="$(cygpath -u "$LLVM_MINGW_BIN")/clang"
+          which -a clang | while IFS= read -r found; do
+            if [ "$found" != "$ours" ] && [ -e "$found.exe" ]; then
+              echo "hiding $found.exe"
+              mv "$found.exe" "$found.exe.hidden-by-tmp-windows-mingw"
+            fi
+          done
+          for image_llvm in "/c/Program Files/LLVM/bin"; do
+            if [ -e "$image_llvm/clang.exe" ]; then
+              echo "hiding $image_llvm/clang.exe"
+              mv "$image_llvm/clang.exe" "$image_llvm/clang.exe.hidden-by-tmp-windows-mingw"
+            fi
+          done
+          echo "--- where clang (after) ---"
+          where.exe clang
+          resolved="$(which -a clang)"
+          if [ "$resolved" != "$ours" ]; then
+            echo "clang resolves to something other than llvm-mingw: $resolved" >&2
+            exit 1
+          fi
+          clang --version | tee "$RUNNER_TEMP/clang-version.txt"
+          grep -F "Target: $WF_TRIPLE" "$RUNNER_TEMP/clang-version.txt"
+          installed="$(sed -n 's/^InstalledDir: //p' "$RUNNER_TEMP/clang-version.txt" | tr -d '\r')"
+          if [ "$(cygpath -u "$installed")" != "$(cygpath -u "$LLVM_MINGW_BIN")" ]; then
+            echo "clang's InstalledDir $installed is not llvm-mingw's bin" >&2
+            exit 1
+          fi
+
+      - name: Record the host
+        run: |
+          clang --version
+          rustc -vV
+          systeminfo | grep -E '^(OS Name|OS Version|System Type|Total Physical Memory)' || true
+
+      - name: Construct Windows native test images once
+        timeout-minutes: 5
+        run: |
+          if ! command -v make > /dev/null; then
+            choco install make --yes --no-progress
+          fi
+          make --version
+          make -C compiler -j2 completion-windows-cross \
+            WINDOWS_CC="clang --target=$WF_TRIPLE" WINDOWS_LLVM_CC="clang --target=$WF_TRIPLE" SHELL=bash \
+            COMPLETION_TMP="$(cygpath -u "$RUNNER_TEMP")/completion"
+
+      # A MinGW UCRT image imports the C runtime through api-ms-win-crt-*
+      # or ucrtbase and never Visual C++'s runtime; an image the Visual
+      # Studio toolchain linked imports VCRUNTIME140.
+      - name: Require the test images to be MinGW UCRT images
+        run: |
+          set -euo pipefail
+          for image in "$(cygpath -u "$RUNNER_TEMP")"/completion/*.exe; do
+            llvm-readobj --coff-imports "$image" | sed -n 's/^ *Name: //p' | tr -d '\r' | sort -u > "$image.imports"
+            echo "--- $(basename "$image") ---"; cat "$image.imports"
+            if grep -i -E '^(vcruntime|msvcp)' "$image.imports"; then
+              echo "$image imports the Visual C++ runtime" >&2; exit 1
+            fi
+            grep -i -E '^(api-ms-win-crt-|ucrtbase)' "$image.imports" > /dev/null
+          done
+
+      - name: Exercise native deque reuse and live counters
+        run: |
+          "$RUNNER_TEMP/completion/windows-sched-deque.exe"
+          "$RUNNER_TEMP/completion/windows-sched-deque-no-stats.exe"
+
+      - name: Native Windows CPU policy and wait integration
+        run: |
+          WF_WORKERS=2 "$RUNNER_TEMP/completion/windows-sched-cpu-levels.exe" host
+          "$RUNNER_TEMP/completion/windows-sched-cpu-levels.exe" wake
+          make -C compiler sched-split-policy-cases WINDOWS_CC="clang --target=$WF_TRIPLE" \
+            WINDOWS_LLVM_CC="clang --target=$WF_TRIPLE" SHELL=bash \
+            COMPLETION_TMP="$(cygpath -u "$RUNNER_TEMP")/completion" \
+            SCHED_POLICY_EXE="$(cygpath -u "$RUNNER_TEMP")/completion/windows-sched-cpu-levels.exe"
+          for mode in fit oversubscribed unknown-count mixed; do
+            WF_WORKERS=4 "$RUNNER_TEMP/completion/windows-sched-cpu-levels.exe" "$mode"
+          done
+
+      - name: Exercise compute startup failures and frame lifetime
+        run: |
+          for mode in normal owner-fail worker-fail partial partial-three startup-delayed startup-partial; do
+            WF_WORKERS=4 "$RUNNER_TEMP/completion/windows-sched-smoke.exe" "$mode"
+          done
+          WF_WORKERS=1 "$RUNNER_TEMP/completion/windows-sched-smoke.exe"
+          set +e
+          WF_WORKERS=invalid "$RUNNER_TEMP/completion/windows-sched-smoke.exe" \
+            > "$RUNNER_TEMP/completion/startup.out" 2> "$RUNNER_TEMP/completion/startup.err"
+          status=$?
+          set -e
+          test "$status" = 1
+          test ! -s "$RUNNER_TEMP/completion/startup.out"
+          tr -d '\r' < "$RUNNER_TEMP/completion/startup.err" > "$RUNNER_TEMP/completion/startup.normalized"
+          printf '%s\n' 'whitefoot scheduler: WF_WORKERS must be an integer from 0 through 64' | \
+            cmp - "$RUNNER_TEMP/completion/startup.normalized"
+
+      - name: Run the Windows default-route probe on both routes
+        run: |
+          show() {
+            echo "--- $1: stdout ---"
+            tr -d $'\r' < "$2" || true
+            echo "--- $1: stderr ---"
+            tr -d $'\r' < "$3" || true
+            echo "--- $1: exit status: $4 ---"
+          }
+          record="$RUNNER_TEMP/completion/windows-default-route"
+          set +e
+          "$RUNNER_TEMP/completion/windows-default-route-probe.exe" \
+            "$RUNNER_TEMP/completion" \
+            > "$record-ring.out" 2> "$record-ring.txt"
+          ring_status=$?
+          set -e
+          show "native ring" "$record-ring.out" "$record-ring.txt" "$ring_status"
+          test "$ring_status" -eq 0 || exit "$ring_status"
+          tr -d $'\r' < "$record-ring.txt" | grep -F 'route=native-ring' > /dev/null
+          set +e
+          WF_IO_NO_NATIVE_RING=1 \
+            "$RUNNER_TEMP/completion/windows-default-route-probe.exe" \
+            "$RUNNER_TEMP/completion" \
+            > "$record-adapter.out" 2> "$record-adapter.txt"
+          adapter_status=$?
+          set -e
+          show "bounded adapter" "$record-adapter.out" "$record-adapter.txt" \
+            "$adapter_status"
+          test "$adapter_status" -eq 0 || exit "$adapter_status"
+          tr -d $'\r' < "$record-adapter.txt" | grep -F 'route=posix-adapter' > /dev/null
+
+      - name: Run the Windows native adapter probe
+        run: |
+          probe_dir="$RUNNER_TEMP/completion"
+          set +e
+          "$probe_dir/windows-adapter-probe.exe" \
+            "$probe_dir/adapter.data" \
+            > "$probe_dir/adapter-probe.out" 2> "$probe_dir/adapter-probe.err"
+          status=$?
+          set -e
+          echo "--- native adapter probe: stdout ---"
+          tr -d $'\r' < "$probe_dir/adapter-probe.out" || true
+          echo "--- native adapter probe: stderr ---"
+          tr -d $'\r' < "$probe_dir/adapter-probe.err" || true
+          echo "--- native adapter probe: exit status: ${status} ---"
+          exit "$status"
+
+      - name: Bound Windows helper sends to a silent peer
+        run: |
+          WF_IO_NO_NATIVE_RING=1 WF_IO_HELPERS=2 \
+            "$RUNNER_TEMP/completion/windows-bounded-send-test.exe"
+
+      - name: Run ordinary values through the production native bodies
+        run: |
+          probe_dir="$RUNNER_TEMP/completion/ordinary-values"
+          mkdir -p "$probe_dir"
+          "$RUNNER_TEMP/completion/windows-ordinary-values-probe.exe" "$probe_dir" text
+          for helpers in 0 2; do
+            for group in file directory tcp; do
+              WF_IO_HELPERS="$helpers" \
+                "$RUNNER_TEMP/completion/windows-ordinary-values-probe.exe" "$probe_dir" "$group"
+            done
+          done
+
+      - name: Require Windows bridge initialization to fail stop
+        run: |
+          fault_dir="$RUNNER_TEMP/completion/windows-bridge-init-fault"
+          mkdir -p "$fault_dir"
+          set +e
+          WF_IO_NO_NATIVE_RING=0 WF_IO_HELPERS=1 \
+            "$RUNNER_TEMP/completion/windows-bridge-init-fail-stop-probe.exe" \
+            > "$fault_dir/stdout.txt" 2> "$fault_dir/stderr.txt"
+          status=$?
+          set -e
+          echo "--- bridge initialization fault: stdout ---"
+          tr -d $'\r' < "$fault_dir/stdout.txt" || true
+          echo "--- bridge initialization fault: stderr ---"
+          tr -d $'\r' < "$fault_dir/stderr.txt" || true
+          echo "--- bridge initialization fault: exit status: ${status} ---"
+          if [ "$status" -ne 86 ]; then
+            echo "bridge initialization fault exited ${status}, expected 86" >&2
+            exit 1
+          fi
+          if [ -s "$fault_dir/stdout.txt" ]; then
+            echo "bridge initialization fault wrote program output" >&2
+            exit 1
+          fi
+          tr -d $'\r' < "$fault_dir/stderr.txt" > "$fault_dir/stderr.normalized"
+          printf '%s\n' 'whitefoot completion: the completion bridge could not initialize' \
+            > "$fault_dir/expected.txt"
+          cmp "$fault_dir/expected.txt" "$fault_dir/stderr.normalized"
+
+      - name: Construct and run shared Windows program cases
+        timeout-minutes: 15
+        env:
+          CARGO_BUILD_JOBS: 2
+          RUST_TEST_THREADS: 2
+          RUST_MIN_STACK: 8388608
+        run: |
+          cargo test --manifest-path compiler/Cargo.toml --profile gate --locked \
+            --test corpus -- programs::windows:: programs::network:: programs::file_replacement:: programs::stop_signals:: programs::driver_count:: conformance::file_replacement:: native_windows::
+
+      # Beyond completion-windows: the driver itself on this target. The
+      # module names the MinGW triple; an ordinary link, a cached ThinLTO link
+      # of function fragments (the MinGW driver's --thinlto-cache-dir) and a
+      # full-LTO link each produce a UCRT image that runs.
+      - name: Drive whitefootc's own links for the MinGW target
+        env:
+          CARGO_BUILD_JOBS: 2
+        run: |
+          set -euo pipefail
+          cargo build --manifest-path compiler/Cargo.toml --profile gate --locked --bin whitefootc
+          wfc=compiler/target/gate/whitefootc.exe
+          out="$(cygpath -u "$RUNNER_TEMP")/driver"
+          mkdir -p "$out"
+          "$wfc" --emit-llvm -o "$out/geometry_vectors.ll" tests/programs/geometry_vectors.wf
+          grep -F "target triple = \"$WF_TRIPLE\"" "$out/geometry_vectors.ll"
+          check_imports() {
+            llvm-readobj --coff-imports "$1" | sed -n 's/^ *Name: //p' | tr -d '\r' | sort -u > "$1.imports"
+            echo "--- $(basename "$1") imports ---"; cat "$1.imports"
+            if grep -i -E '^(vcruntime|msvcp)' "$1.imports"; then
+              echo "$1 imports the Visual C++ runtime" >&2; exit 1
+            fi
+            grep -i -E '^(api-ms-win-crt-|ucrtbase)' "$1.imports" > /dev/null
+          }
+          "$wfc" -o "$out/plain.exe" tests/programs/geometry_vectors.wf
+          "$out/plain.exe"; check_imports "$out/plain.exe"
+          "$wfc" --cache "$out/cache" --fragments function -o "$out/thin.exe" tests/programs/geometry_vectors.wf
+          "$out/thin.exe"; check_imports "$out/thin.exe"
+          test -n "$(ls -A "$out/cache")"
+          "$wfc" --full-lto -o "$out/full.exe" tests/programs/geometry_vectors.wf
+          "$out/full.exe"; check_imports "$out/full.exe"
+
+      # The unmerged claude/pid-localtime runtime (PR #470) uses the UCRT's
+      # _localtime64_s, _dupenv_s and fopen_s; build its ordinary-values
+      # units and probe with its own Makefile recipe and llvm-mingw, -Werror
+      # included.
+      - name: Compile claude/pid-localtime's ordinary values with llvm-mingw
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin claude/pid-localtime
+          pid="$(cygpath -u "$RUNNER_TEMP")/pid-localtime"
+          git worktree add --detach "$pid" FETCH_HEAD
+          git -C "$pid" log -1 --format='%H %s'
+          tmp="$(cygpath -u "$RUNNER_TEMP")/pid-completion"
+          make -C "$pid/compiler" -j2 SHELL=bash \
+            WINDOWS_CC="clang --target=$WF_TRIPLE" WINDOWS_LLVM_CC="clang --target=$WF_TRIPLE" \
+            COMPLETION_TMP="$tmp" \
+            "$tmp/objects/windows/ordinary_values.o" \
+            "$tmp/objects/windows/ordinary_values_probe.o" \
+            "$tmp/windows-ordinary-values-probe.exe"
+          ls -l "$tmp/objects/windows/ordinary_values.o" "$tmp/objects/windows/ordinary_values_probe.o" \
+            "$tmp/windows-ordinary-values-probe.exe"
+
+      # Informative only: the pid branch's own checks belong to its PR.
+      - name: Run claude/pid-localtime's ordinary-values probe (informative)
+        continue-on-error: true
+        run: |
+          tmp="$(cygpath -u "$RUNNER_TEMP")/pid-completion"
+          probe_dir="$tmp/ordinary-values"
+          mkdir -p "$probe_dir"
+          "$tmp/windows-ordinary-values-probe.exe" "$probe_dir" text
+          for helpers in 0 2; do
+            for group in file directory tcp; do
+              WF_IO_HELPERS="$helpers" "$tmp/windows-ordinary-values-probe.exe" "$probe_dir" "$group"
+            done
+          done
+
+      # The tree a bundled Windows package would carry: clang, clang++,
+      # ld.lld, lld and the DLLs they load from bin; the x86-64 MinGW
+      # sysroot and shared headers; clang's resource headers and x86-64
+      # runtime libraries. Then that tree, beside a copy of whitefootc and a
+      # toolchain-manifest.json marker, builds and runs a program with no
+      # other toolchain on PATH.
+      - name: Measure a trimmed x86-64 llvm-mingw and use it as a package
+        run: |
+          set -euo pipefail
+          temp="$(cygpath -u "$RUNNER_TEMP")"
+          src="$(cygpath -u "$LLVM_MINGW_ROOT")"
+          trim="$temp/llvm-mingw-trimmed"
+          rm -rf "$trim"; mkdir -p "$trim/bin"
+          echo "--- top level of the full tree ---"; ls "$src"
+          for tool in clang.exe clang++.exe ld.lld.exe lld.exe; do
+            cp "$src/bin/$tool" "$trim/bin/"
+          done
+          # clang reads its target's configuration (runtime library, unwinder,
+          # default linker) from bin/*.cfg; they are a few bytes each.
+          cp "$src"/bin/*.cfg "$trim/bin/"
+          # DLL closure through bin, including delay-loaded imports.
+          queue=(clang.exe clang++.exe ld.lld.exe lld.exe)
+          seen=" "
+          : > "$temp/dll-closure.txt"
+          while [ "${#queue[@]}" -gt 0 ]; do
+            file="${queue[0]}"; queue=("${queue[@]:1}")
+            while IFS= read -r dll; do
+              [ -n "$dll" ] || continue
+              key="$(printf '%s' "$dll" | tr 'A-Z' 'a-z')"
+              case "$seen" in *" $key "*) continue ;; esac
+              seen="$seen$key "
+              if [ -f "$src/bin/$dll" ]; then
+                echo "bundled  $dll  (from $file)" >> "$temp/dll-closure.txt"
+                cp "$src/bin/$dll" "$trim/bin/"
+                queue+=("$dll")
+              else
+                echo "system   $dll  (from $file)" >> "$temp/dll-closure.txt"
+              fi
+            done < <(llvm-readobj --coff-imports "$src/bin/$file" | sed -n 's/^ *Name: //p' | tr -d '\r')
+          done
+          echo "--- DLL closure ---"; cat "$temp/dll-closure.txt"
+          cp -r "$src/x86_64-w64-mingw32" "$trim/"
+          for shared in include generic-w64-mingw32; do
+            if [ -d "$src/$shared" ]; then cp -r "$src/$shared" "$trim/"; fi
+          done
+          resource="$(cygpath -u "$("$src/bin/clang.exe" -print-resource-dir | tr -d '\r')")"
+          relative="$(realpath --relative-to="$src" "$resource")"
+          echo "resource directory: $relative"
+          mkdir -p "$trim/$relative"
+          cp -r "$resource/include" "$trim/$relative/"
+          (cd "$resource" && find lib -type f -name '*x86_64*' -print) | while IFS= read -r file; do
+            mkdir -p "$trim/$relative/$(dirname "$file")"
+            cp "$resource/$file" "$trim/$relative/$file"
+          done
+          echo "--- largest files in the trimmed tree ---"
+          find "$trim" -type f -printf '%s %P\n' | sort -rn | head -25
+          echo "full tree bytes:    $(du -sb "$src" | cut -f1)"
+          echo "trimmed tree bytes: $(du -sb "$trim" | cut -f1)"
+          echo "trimmed tar.gz -9 bytes: $(tar -C "$trim" -cf - . | gzip -9 | wc -c)"
+          if command -v zstd > /dev/null; then
+            echo "trimmed tar.zst -19 bytes: $(tar -C "$trim" -cf - . | zstd -19 -T0 -c | wc -c)"
+          else
+            echo "zstd is not on this image; no .zst size"
+          fi
+          pkg="$temp/whitefoot-package"
+          rm -rf "$pkg"; cp -r "$trim" "$pkg"
+          printf '{}\n' > "$pkg/toolchain-manifest.json"
+          cp compiler/target/gate/whitefootc.exe "$pkg/bin/"
+          out="$temp/packaged"
+          mkdir -p "$out"
+          # No llvm-mingw, image LLVM or Visual Studio tool on PATH: the
+          # package's own clang and ld.lld are all whitefootc can use.
+          bare="/usr/bin:/c/Windows/system32:/c/Windows"
+          PATH="$bare" "$pkg/bin/whitefootc.exe" -o "$out/geometry_vectors.exe" tests/programs/geometry_vectors.wf
+          PATH="$bare" "$out/geometry_vectors.exe"
+          PATH="$bare" "$pkg/bin/whitefootc.exe" --cache "$out/cache" --fragments function \
+            -o "$out/geometry_vectors_thin.exe" tests/programs/geometry_vectors.wf
+          PATH="$bare" "$out/geometry_vectors_thin.exe"
+          llvm-readobj --coff-imports "$out/geometry_vectors.exe" | sed -n 's/^ *Name: //p' | sort -u
