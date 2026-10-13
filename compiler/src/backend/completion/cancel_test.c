@@ -330,7 +330,7 @@ static void guard_races(void) {
     CHECK(wf__shared_acquire(view, 1u, &frame) == 0);
     CHECK(view->visible_fired == 1u);
     wf__shared_unlock(view, 1u);
-    CHECK(view->shared.reservation == NULL);
+    CHECK(wf_shared_reservation(&view->shared) == NULL);
     wf__body_close_cancel_watch(&watch);
     wf__body_close_cancel_source(&source);
     CHECK(wf__shared_release(view));
@@ -371,13 +371,13 @@ static void guard_races(void) {
      * writes neither unit, passes it to the other, whose retry ends it. */
     CHECK(wf_run_take(&firing_driver) == NULL);
     CHECK(guard.used == 0u && other_guard.used == 2u);
-    CHECK(view->shared.reservation == &wf_context_root);
+    CHECK(wf_shared_reservation(&view->shared) == &wf_context_root);
     CHECK(wf__shared_acquire(view, 1u, &frame) == 0);
     CHECK(wf__shared_acquire(ordinary, 1u, &frame) == 0);
     CHECK(view->visible_fired == 1u);
     wf__shared_unlock_unwritten(ordinary, 1u);
     wf__shared_unlock_unwritten(view, 1u);
-    CHECK(view->shared.reservation == &other);
+    CHECK(wf_shared_reservation(&view->shared) == &other);
     CHECK(wf_run_take(&firing_driver) == &other);
     CHECK(wf_run_take(&firing_driver) == NULL);
     wf_context_current = &other;
@@ -386,7 +386,7 @@ static void guard_races(void) {
     CHECK(wf__shared_acquire(ordinary, 1u, &frame) == 0);
     wf__shared_unlock_unwritten(ordinary, 1u);
     wf__shared_unlock_unwritten(view, 1u);
-    CHECK(view->shared.reservation == NULL && other.shared_turn == NULL);
+    CHECK(wf_shared_reservation(&view->shared) == NULL && other.shared_turn == NULL);
     wf_context_current = &wf_context_root;
     wf_driver_self = &wf_driver_root;
     CHECK(guard.used == 0u && other_guard.used == 0u);
@@ -443,7 +443,7 @@ static void guard_races(void) {
     wf__shared_unlock(ordinary, 1u);
     wf__shared_unlock(view, 1u);
     CHECK(wf_context_root.shared_turn == NULL);
-    CHECK(view->shared.reservation == NULL && ((wf_shared *)ordinary)->reservation == NULL);
+    CHECK(wf_shared_reservation(&view->shared) == NULL && wf_shared_reservation((wf_shared *)ordinary) == NULL);
     wf__body_close_cancel_watch(&watch);
     wf__body_close_cancel_source(&source);
     CHECK(wf__shared_release(view));
@@ -487,7 +487,7 @@ static void guard_races(void) {
         wf_context_current = &wf_context_root;
         wf_driver_self = &wf_driver_root;
         CHECK(wf_run_take(&wf_driver_root) == NULL);
-        CHECK(guard.used == 2u && ((wf_shared *)ordinary)->reservation == NULL);
+        CHECK(guard.used == 2u && wf_shared_reservation((wf_shared *)ordinary) == NULL);
         fire_elsewhere(&source);
         CHECK(wf_run_take(&wf_driver_root) == &wf_context_root);
         CHECK(wf_run_take(&wf_driver_root) == NULL);
@@ -498,7 +498,7 @@ static void guard_races(void) {
         CHECK(view->visible_fired == 1u);
         wf__shared_unlock_unwritten(ordinary, 1u);
         wf__shared_unlock_unwritten(view, 1u);
-        CHECK(view->shared.reservation == NULL && wf_context_root.shared_turn == NULL);
+        CHECK(wf_shared_reservation(&view->shared) == NULL && wf_context_root.shared_turn == NULL);
         wf__body_close_cancel_watch(&watch);
         wf__body_close_cancel_source(&source);
         CHECK(wf__shared_release(view));
