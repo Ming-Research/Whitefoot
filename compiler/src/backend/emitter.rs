@@ -42,7 +42,9 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Write;
 
 use super::abi::{FunctionAbi, ParameterAbi, ResultAbi};
-use super::emission::{DeferredPart, FunctionBody, Linkage, Module, Parameter, References, Signature};
+use super::emission::{
+    DeferredPart, FunctionBody, Linkage, Module, Parameter, References, Signature,
+};
 pub use super::runtime::*;
 use super::storage::{FunctionStoragePlan, IncomingSnapshots, is_stored_aggregate};
 use crate::target::{
@@ -83,6 +85,8 @@ pub enum BackendFailure {
     InvalidIr,
     CounterOverflow,
     TextEmission,
+    /// The selected native toolchain or its required probe environment failed.
+    Toolchain,
 }
 
 impl From<std::fmt::Error> for BackendFailure {
@@ -273,6 +277,7 @@ fn emit_module(
     window_address_facts: WindowAddressFacts,
     dispatch_layout: &handler_words::DispatchLayoutPlan,
 ) -> Result<LlvmModule, BackendFailure> {
+    crate::toolchain::prepare_toolchain().map_err(|_| BackendFailure::Toolchain)?;
     validate_program(target, program).map_err(BackendFailure::TargetLayout)?;
     let mut intrinsics = BTreeSet::new();
     let owner_scopes = storage_alias::OwnerScopePlan::new(program);

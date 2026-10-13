@@ -2,11 +2,11 @@
 # No native tool trims an LLVM release into a relocatable clang/lld subset.
 # Use the platform's dependency inspectors and Python's path/JSON support to
 # retain the original layout, discover its closure, and inventory the result.
-# Usage: trim-llvm.sh EXTRACTED_LLVM EMPTY_OUTPUT SOURCE_ASSET SOURCE_SHA256
+# Usage: trim-llvm.sh EXTRACTED_LLVM EMPTY_OUTPUT SOURCE_ASSET SOURCE_SHA256 LICENSE_DIRECTORY
 # This trial rejects fixed paths instead of rewriting binaries/install names.
 set -euo pipefail
-if [[ $# != 4 ]]; then
-  echo "usage: $0 EXTRACTED_LLVM EMPTY_OUTPUT SOURCE_ASSET SOURCE_SHA256" >&2
+if [[ $# != 5 ]]; then
+  echo "usage: $0 EXTRACTED_LLVM EMPTY_OUTPUT SOURCE_ASSET SOURCE_SHA256 LICENSE_DIRECTORY" >&2
   exit 2
 fi
 exec python3 - "$@" <<'PY'
@@ -27,6 +27,7 @@ def fail(message):
 source = Path(sys.argv[1]).resolve(strict=True)
 output = Path(sys.argv[2]).resolve()
 asset, source_sha256 = sys.argv[3:5]
+license_directory = Path(sys.argv[5]).resolve(strict=True)
 version = "22.1.8"
 if not source.is_dir():
     fail("input must be an extracted LLVM release directory")
@@ -101,12 +102,37 @@ def copy(path):
     kept.add(rel)
 
 
-for rel in ("bin/clang", "bin/lld", "lib/clang/22"):
+for rel in ("bin/clang", "bin/lld", "lib/clang/22/include"):
     copy(source / rel)
 if not (source / "lib/clang/22/include/stddef.h").is_file():
     fail("LLVM 22 builtin stddef.h is missing")
 if not (source / "lib/clang/22/include/stdatomic.h").is_file():
     fail("LLVM 22 builtin stdatomic.h is missing")
+# C runtime compilation needs builtin support and optional CRT start/end
+# objects. Sanitizer, profiling, XRay and other optional runtime suites are
+# outside this package's purpose. Preserve each allowed file's resource path.
+runtime_pattern = re.compile(r"(?:lib)?clang_rt\.crt(?:begin|end)[^/]*\.o$|libclang_rt\.builtins[^/]*\.a$")
+runtime_files = []
+
+
+def retain_runtimes(directory, ancestors=()):
+    real = directory.resolve(strict=True)
+    if not inside(real) or real in ancestors:
+        fail("escaping or cyclic runtime directory: " + str(directory))
+    for path in sorted(directory.iterdir()):
+        if path.is_dir():
+            retain_runtimes(path, ancestors + (real,))
+        elif (runtime_pattern.fullmatch(path.name) or
+              (sys.platform == "darwin" and path.name == "libclang_rt.osx.a")):
+            if not inside(path.resolve(strict=True)):
+                fail("runtime escapes LLVM: " + str(path))
+            copy(path)
+            runtime_files.append(relative(path))
+
+
+retain_runtimes(source / "lib/clang/22/lib")
+if not any("builtins" in rel or rel.endswith("/libclang_rt.osx.a") for rel in runtime_files):
+    fail("archive has no supported compiler-rt builtin library")
 # Some distributions split the frontend or assembler out of the driver.
 for name in ("clang-cc1", "clang-cc1as", "cc1", "cc1as"):
     if (source / "bin" / name).exists():
@@ -126,10 +152,24 @@ for alias in lld_aliases:
 if sys.platform == "darwin":
     copy(source / "lib/libLTO.dylib")
 
-# Preserve every distributed license/notice/copyright, including license
-# directories whose contained filenames do not themselves say "license".
+# The archive may omit component licenses entirely. The caller supplies all
+# four from the exact source release tag; validate them independently here.
 license_name = re.compile(r"license|licence|copyright|notice|copying", re.I)
 licenses = set()
+license_sources = {}
+for component in ("llvm", "clang", "lld", "compiler-rt"):
+    path = license_directory / component / "LICENSE.TXT"
+    if not path.is_file():
+        fail("required component license is missing: " + str(path))
+    content = path.read_text()
+    if not content.strip() or "Apache License" not in content or "LLVM Exceptions" not in content:
+        fail("required component license lacks Apache License and LLVM Exceptions: " + str(path))
+    rel = "share/licenses/" + component + "/LICENSE.TXT"
+    destination = output / rel
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(path, destination)
+    licenses.add(rel)
+    license_sources[rel] = "https://raw.githubusercontent.com/llvm/llvm-project/llvmorg-22.1.8/" + component + "/LICENSE.TXT"
 
 
 def copy_license(path, active=()):
@@ -156,16 +196,6 @@ def copy_license(path, active=()):
         fail("unsupported license member: " + str(rel))
     if not path.is_dir() or path.is_symlink():
         licenses.add(destination.relative_to(output).as_posix())
-
-
-for root, directories, names in os.walk(source, followlinks=False):
-    for name in sorted(names + [name for name in directories if (Path(root) / name).is_symlink()]):
-        path = Path(root) / name
-        rel = path.relative_to(source)
-        if any(license_name.search(part) for part in rel.parts):
-            copy_license(path)
-if not licenses:
-    fail("archive contains no license/notice/copyright files")
 
 
 def binary_kind(path):
@@ -346,8 +376,8 @@ def darwin_dependencies(path, executable, inherited):
     return children
 
 
-# Inspect all retained dynamic resources too, not only the two drivers. The
-# compiler-rt tree can contain loadable runtimes with their own prerequisites.
+# Inspect every retained binary, including CRT objects, and recursively inspect
+# shared libraries required by the drivers and macOS libLTO.
 queue = []
 for rel in sorted(kept, reverse=True):
     path = source / rel
@@ -369,6 +399,25 @@ while queue:
         queue.extend((child, child, context) for child, context in linux_dependencies(path, inherited or None))
     else:
         queue.extend(darwin_dependencies(path, executable, inherited))
+
+
+# Retain archive notices attached to actual selected files or their immediate
+# directories. Never search unrelated development trees, such as include/llvm,
+# or directories belonging only to excluded optional resource runtimes.
+generic_notice = re.compile(r"(?:licenses?|licences?|copyright|notices?|copying)(?:[._-].*)?$", re.I)
+notice_candidates = set()
+for rel in sorted(kept):
+    path = source / rel
+    if not path.is_file():
+        continue
+    if license_name.search(path.name):
+        notice_candidates.add(path)
+    for candidate in path.parent.iterdir():
+        if generic_notice.fullmatch(candidate.name) or (
+                license_name.search(candidate.name) and candidate.name.startswith(path.name + ".")):
+            notice_candidates.add(candidate)
+for path in sorted(notice_candidates):
+    copy_license(path)
 
 
 def digest(path):
@@ -405,13 +454,16 @@ manifest = {
     "hash_semantics": "Regular files hash file bytes; symlinks hash the encoded relative link target, and size is its byte length. Directories are omitted.",
     "files": sorted(files, key=lambda entry: entry["path"]),
     "licenses": sorted(licenses),
+    "license_sources": license_sources,
+    "compiler_rt_allowlist": "libclang_rt.builtins*.a; clang_rt.crtbegin*.o and clang_rt.crtend*.o (including lib-prefixed names); libclang_rt.osx.a on macOS only",
+    "compiler_rt_files": sorted(runtime_files),
     "bundled_dependencies": [dict(needed_by=binary, library=library, resolved_path=resolved)
                              for binary, library, resolved in sorted({(entry["needed_by"], entry["library"], entry["resolved_path"]) for entry in edges})],
     "dependency_scope": "Linux root ldd records the full actual dependency closure (including indirect host prerequisites); child readelf DT_NEEDED edges use the root's resolution context. macOS records direct otool edges through the recursively inspected closure.",
     "host_dependencies": [dict(library=library, resolved_path=resolved, needed_by=sorted(binaries))
                           for (library, resolved), binaries in sorted(host.items())],
     "minimum_glibc_version": minimum_glibc,
-    "minimum_glibc_scope": "Highest GLIBC symbol version required by all retained ELF files, including optional compiler-rt runtimes. This is a symbol requirement, not proof of minimum OS support; clean-host qualification is outstanding.",
+    "minimum_glibc_scope": "Highest GLIBC symbol version required by retained ELF executables, shared libraries and CRT objects. Static builtin archive members are not scanned. This is a symbol requirement, not proof of minimum OS support; clean-host qualification is outstanding.",
     "glibc_requirements_by_file": glibc_by_file,
     "glibc_version_requirements": sorted(glibc_versions, key=lambda value: tuple(map(int, value.split(".")))),
 }

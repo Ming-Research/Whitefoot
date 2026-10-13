@@ -4,7 +4,7 @@ Status: research and proposed implementation plan, written before measurement.
 The owner has committed to bundling clang and lld at the gate's LLVM major and
 to preserving macOS stack probing with upstream LLVM. This document selects
 candidates and rejection checks; it does not claim an implemented or qualified
-package. No compiler, specification, gate, or approval log changes accompany it.
+package.
 
 ## Question and fixed requirements
 
@@ -256,26 +256,30 @@ and Microsoft SDK/CRT redistribution are outside this proposed bundle.
 
 ### Resolution and capability probes
 
-Resolve `current_exe()` once, use its directory's `clang[.exe]`, and carry a
-single resolved toolchain object through native compilation, runtime C builds,
-capability probes, stack reports, full LTO and fragment links. Handle paths as
-OS paths and arguments, not shell strings; test spaces, relocation and an
-invocation through a symlink. A missing bundled clang or lld reports the
-expected path and an incomplete-package error; it must not search PATH or fall
-back to `/usr/bin/clang`. Explicitly select the packaged ELF/COFF linker by
-absolute path so PATH cannot select another major. macOS is the exception
-fixed by the commitment: its selected linker is the system one.
+Resolve `current_exe()` once. A sibling `clang[.exe]` selects packaged mode;
+without one, source builds retain their current defaults, `/usr/bin/clang`
+on Unix and PATH `clang` on Windows. Source-build CI does not need to stage
+a package, and there is no public toolchain override. Carry the selected
+toolchain through native compilation, runtime C builds, capability probes,
+stack reports, full LTO and fragment links. Handle paths as OS paths and
+arguments, not shell strings; test spaces, relocation and invocation through
+a symlink. The selected contract is recorded in
+[toolchain resolution](../../../design/compiler/toolchain-resolution.md).
 
-Source-build CI needs to stage the same layout around the compiler and test
-executables, or use an explicit internal toolchain configuration. Do not make
-an absent package trigger an implicit host fallback just to preserve developer
-convenience. The exact internal API is for implementation, not a public option
-to bypass the release contract.
+Once a sibling clang selects packaged mode, an unusable clang or missing
+required bundled linker reports the expected path and a toolchain error;
+neither condition selects a host replacement. On Linux require bundled lld
+and its `ld.lld` driver alias; pass the absolute alias path by `--ld-path` on
+every ordinary, full-LTO and cached ThinLTO link so its name selects the ELF
+driver and PATH cannot select another major. Packaged macOS uses the discovered
+system linker and SDK as described below. This source-build distinction changes
+no release qualification promise:
+a release archive must contain its sibling clang and complete toolchain.
 
 Bundling makes the three syntax/ABI answers constant **for a particular
 qualified artifact and target**, not automatically constants of the Whitefoot
 binary or LLVM major. Recommendation: retain the existing once-per-process
-probes and point all three at the resolved bundled executable. Cost: three
+probes and point all three at the selected executable in either mode. Cost: three
 small compiler invocations when native emission first needs the facts. The
 alternative is packaging-time generated facts, coupled to a verified artifact
 identity; compare them with live probes on every shipped platform and reject
@@ -288,9 +292,12 @@ as an environment/toolchain failure in the packaged path, distinguished from
 an actually unsupported optional form. Today's conservative fallback on launch
 failure is a related implementation concern, not evidence that the bundled
 toolchain accepts the selected form. Retain source judgment independently.
-Include the exact toolchain identity and relevant SDK/linker selection in
-native-cache identity so changing the bundle or SDK cannot reuse incompatible
-runtime/native products merely because clang's version string stayed equal.
+Include the resolved clang path and first version-output line, explicitly
+selected linker path, and selected macOS SDK path in native-cache identity.
+Selecting a different path, version line, linker or SDK then invalidates reused
+runtime/native products even if clang's version line alone stayed equal.
+These fields do not identify changed toolchain bytes at unchanged paths and
+version strings; release manifests separately record the acquired artifacts.
 
 ## macOS SDK, linker, and host prerequisites
 
@@ -300,7 +307,7 @@ states that CLT contains the macOS SDK and toolchain also shipped with Xcode.
 Upstream clang does not replace SDK headers, `.tbd` system library interfaces,
 or Apple's linker.
 
-Proposed resolution: honor a valid explicit `SDKROOT` for a macOS SDK;
+In packaged mode, honor a valid explicit `SDKROOT` for a macOS SDK;
 otherwise call `/usr/bin/xcrun --sdk macosx --show-sdk-path`. Resolve Apple's
 linker with `/usr/bin/xcrun --sdk macosx --find ld`, respecting the selected
 developer directory. Pass `-isysroot <SDK>` to every relevant C/IR/link command
@@ -389,7 +396,7 @@ another run solely to mark acceptance complete.
 | Linux no clang | In a clean runtime/development container with no clang/LLVM packages or host toolchain mounts, copy only the package and maintained witness. Inventory installed packages; verify no host clang paths exist. Build/link/run; trace executed paths to prove bundled clang/lld handled probes and compilation. Missing resources/dependencies fail. | Reuse the release compiler; one small container per declared baseline. No Rust/LLVM rebuild inside it. |
 | Wrong host major | Repeat with a known different LLVM major, record both toolchain identities, assert the majors differ, set host clang first on PATH, and instrument calls. Host `/usr/bin/clang` must also be different on Linux. Success requires expected program output and zero host-clang invocations, not just a successful build. | A second container image on Linux; use the existing Apple clang on macOS only when its LLVM lineage establishes a different major. Otherwise provision a known different-major upstream host clang; an Apple marketing version or vendor difference alone is insufficient. |
 | macOS host-clang isolation | Retain real CLT SDK/ld, deny host-clang execution using a validated disposable-runner sandbox/fixture, then run the package witness. First prove the denial by an attempted host invocation. Invalid SDKROOT/missing selected SDK or ld must fail with the intended diagnostic. | One hosted macOS job; denial mechanism still needs a feasibility check. If a hosted runner cannot enforce it, report unverified and use an isolated CI VM, not a PATH-only substitute. |
-| Relocation and completeness | Move the unpacked tree to a path containing spaces, invoke through a symlink and from an unrelated cwd. Remove bundled clang, linker, resource input, and macOS libLTO individually in disposable copies; each exercised missing component must fail, never use a host replacement. Inspect dynamic dependency paths. | Small additional invocations reusing artifacts; LTO negative case needed for libLTO. |
+| Relocation and completeness | Move the unpacked tree to a path containing spaces, invoke through a symlink and from an unrelated cwd. In disposable copies, leave an unusable sibling clang or remove the bundled linker, resource input, or macOS libLTO individually; each exercised partial package must fail without a host replacement. Removing the sibling clang entirely selects source-build defaults, so archive inventory independently requires its presence. Inspect dynamic dependency paths. | Small additional invocations reusing artifacts; LTO negative case needed for libLTO. |
 | Final release qualification | Gate the exact implementation revision on both platforms; dry-run the release workflow and qualify its exact archives before publication. Record compiler/package hashes, LLVM patch/major, SDK/linker, selected test cases and exit status. | Existing full gate plus package jobs; publishing remains a later owner action. |
 
 The task calls the witness “await.” In this tree the source form is `waits`
@@ -432,11 +439,12 @@ MacBook or a new 14900K measurement is needed for this design.
    shared dependencies, licenses and macOS libLTO. Deliver archives with
    measured sizes, hashes, exact versions and declared host prerequisites.
    Reject/replace the acquisition candidate if relocation fails.
-5. **Unify compiler toolchain resolution.** Use the sibling clang for every
-   probe and native path, explicit packaged lld where applicable, and explicit
-   macOS SDK/system linker. Retain dynamic capability probes and coherent
-   native-cache identity. Deliver intended diagnostics and no-host-fallback
-   negative cases, including ordinary/full/ThinLTO success.
+5. **Unify compiler toolchain resolution.** Select sibling clang when present
+   for every probe and native path, with explicit packaged lld on Linux and
+   macOS SDK/system linker; retain source-build defaults when no sibling exists.
+   Retain dynamic capability probes and coherent native-cache identity.
+   Deliver partial-package errors without host fallback, unchanged source-build
+   selection, and ordinary/full/ThinLTO success.
 6. **Prove release acceptance with the actual archives.** After steps 3–5,
    run coroutine witnesses in clang-absent and wrong-major environments,
    macOS isolation, relocation and package-completeness checks. Deliver the

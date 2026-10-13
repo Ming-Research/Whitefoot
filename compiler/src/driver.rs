@@ -194,6 +194,8 @@ pub enum CompilationFailureKind {
     TargetLayout,
     /// LLVM emission failed internally.
     Backend,
+    /// The selected native toolchain or its probe environment failed.
+    Toolchain,
 }
 
 /// One compiler stop: its stage, its category, the numbered rule when it is a
@@ -244,6 +246,14 @@ impl fmt::Display for SourceLocation {
 }
 
 impl CompilationFailure {
+    fn toolchain(message: String) -> Self {
+        Self::new(
+            CompilationStage::Backend,
+            CompilationFailureKind::Toolchain,
+            message,
+        )
+    }
+
     fn source_envelope(failure: crate::SourceBundleError) -> Self {
         use crate::{LogicalPathError, SourceBundleError};
 
@@ -2332,6 +2342,7 @@ pub fn build_module_entry_for_emission(
     let mut selection = entry_selection(graph, entry)?;
     selection.fragments = fragments;
     let (modules, selected) = composition_inputs(graph, inputs, selection.module);
+    crate::toolchain::prepare_toolchain().map_err(CompilationFailure::toolchain)?;
     let material = entry_module_material(
         graph,
         &selection,
@@ -2384,7 +2395,9 @@ fn entry_module_material(
         format!(
             "overlap {overlap:?}\nfragments {}\npreserve-none {}\nno-capture {}\ncoro-end {}\n",
             selection.fragments,
-            toolchain.preserve_none, toolchain.no_capture_attribute, toolchain.coro_end_result,
+            toolchain.preserve_none,
+            toolchain.no_capture_attribute,
+            toolchain.coro_end_result,
         )
         .as_bytes(),
     );
@@ -2935,6 +2948,12 @@ fn lower_selected(
             Ok(Reported { module, ledger })
         })
         .map_err(|failure: BackendFailure| {
+            if failure == BackendFailure::Toolchain {
+                return CompilationFailure::toolchain(
+                    crate::toolchain::prepare_toolchain()
+                        .expect_err("Toolchain failure records the settled resolution/probe error"),
+                );
+            }
             let (stage, kind) = match failure {
                 BackendFailure::TargetLayout(_) => (
                     CompilationStage::TargetLayout,
