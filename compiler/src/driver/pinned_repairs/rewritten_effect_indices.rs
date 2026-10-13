@@ -196,7 +196,7 @@ fn main() -> status: std::process::ExitStatus pure {
     },
     RepairPair {
         name: "call-with-two-effects-after-index-write.wf",
-        rejected: br#"fn put(window: &Array<u64, 4>, index: u64, other: u64) -> result: unit writes(window[index], window[other]) contract {
+        rejected: br#"fn put(window: &Array<u64, 4>, index: u64, other: u64) -> result: unit writes(window[index]), writes(window[other]) contract {
   requires index < 4_u64;
   requires other < 4_u64;
 } {
@@ -205,7 +205,7 @@ fn main() -> status: std::process::ExitStatus pure {
   return unit;
 }
 
-fn forward(window: &Array<u64, 4>, index: u64, other: u64) -> result: u64 writes(window[index], window[other]) contract {
+fn forward(window: &Array<u64, 4>, index: u64, other: u64) -> result: u64 writes(window[index]), writes(window[other]) contract {
   requires index < 4_u64;
   requires other < 4_u64;
   requires other > 0_u64;
@@ -222,10 +222,10 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         rule: "EFF-2",
         sentences: &[
-            "\n  found_row: writes(window[index], window[other])\n",
-            "\n  mechanical_fix: the row `writes(window[index], window[other])` uses `index`'s value at the call, but `set index = 0_u64;` at line 16 rewrites it before the call `put(window: window, index: index, other: other)`; where this access is the row mismatch to repair, keep the row by leaving `index` unchanged, binding the new value in a fresh local, and using that local for the work that needs the new value\n",
+            "\n  found_row: writes(window[index]), writes(window[other])\n",
+            "\n  mechanical_fix: the row `writes(window[index]), writes(window[other])` uses `index`'s value at the call, but `set index = 0_u64;` at line 16 rewrites it before the call `put(window: window, index: index, other: other)`; where this access is the row mismatch to repair, keep the row by leaving `index` unchanged, binding the new value in a fresh local, and using that local for the work that needs the new value\n",
         ],
-        repaired: &[br#"fn put(window: &Array<u64, 4>, index: u64, other: u64) -> result: unit writes(window[index], window[other]) contract {
+        repaired: &[br#"fn put(window: &Array<u64, 4>, index: u64, other: u64) -> result: unit writes(window[index]), writes(window[other]) contract {
   requires index < 4_u64;
   requires other < 4_u64;
 } {
@@ -234,7 +234,7 @@ fn main() -> status: std::process::ExitStatus pure {
   return unit;
 }
 
-fn forward(window: &Array<u64, 4>, index: u64, other: u64) -> result: u64 writes(window[index], window[other]) contract {
+fn forward(window: &Array<u64, 4>, index: u64, other: u64) -> result: u64 writes(window[index]), writes(window[other]) contract {
   requires index < 4_u64;
   requires other < 4_u64;
   requires other > 0_u64;
