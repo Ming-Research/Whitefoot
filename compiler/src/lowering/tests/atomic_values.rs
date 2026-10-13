@@ -97,7 +97,8 @@ fn main() -> status: std::process::ExitStatus pure waits {
         return std::process::exit_status(code: 0_u8);
       }
     }
-    None() => {}
+    None() => {
+    }
   }
   return std::process::exit_status(code: 1_u8);
 }

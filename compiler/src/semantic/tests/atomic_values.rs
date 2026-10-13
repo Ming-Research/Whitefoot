@@ -29,8 +29,7 @@ fn check(source: &str, expected: Option<SemanticRule>) {
 #[test]
 fn mutually_exclusive_operations_across_distinct_targets_are_one_per_path() {
     check(
-        r#"
-fn choose(first: &Shared<AtomicValue>, second: &Shared<AtomicValue>, flag: Bool) -> result: unit reads(first), reads(second) waits {
+        r#"fn choose(first: &Shared<AtomicValue>, second: &Shared<AtomicValue>, flag: Bool) -> result: unit reads(first), reads(second) waits {
   atomic a = &first^, b = &second^ {
     if flag {
       atomic_add(cell: a, value: 1_u64);
@@ -48,8 +47,7 @@ fn choose(first: &Shared<AtomicValue>, second: &Shared<AtomicValue>, flag: Bool)
 #[test]
 fn a_returning_arm_does_not_spend_the_continuing_paths_operation() {
     check(
-        r#"
-fn choose(first: &Shared<AtomicValue>, flag: Bool) -> result: unit reads(first) waits {
+        r#"fn choose(first: &Shared<AtomicValue>, flag: Bool) -> result: unit reads(first) waits {
   atomic a = &first^ {
     if flag {
       atomic_add(cell: a, value: 1_u64);
@@ -67,8 +65,7 @@ fn choose(first: &Shared<AtomicValue>, flag: Bool) -> result: unit reads(first) 
 #[test]
 fn atomic_statements_inside_a_loop_get_separate_operation_counts() {
     check(
-        r#"
-fn repeat(first: &Shared<AtomicValue>) -> result: unit reads(first) waits {
+        r#"fn repeat(first: &Shared<AtomicValue>) -> result: unit reads(first) waits {
   for (position in 0_u64..2_u64) {
     atomic a = &first^ {
       atomic_add(cell: a, value: 1_u64);
@@ -84,11 +81,12 @@ fn repeat(first: &Shared<AtomicValue>) -> result: unit reads(first) waits {
 #[test]
 fn a_loop_before_the_operation_keeps_the_fallthrough_path() {
     check(
-        r#"
-fn work(first: &Shared<AtomicValue>, flag: Bool) -> result: unit reads(first) waits {
+        r#"fn work(first: &Shared<AtomicValue>, flag: Bool) -> result: unit reads(first) waits {
   atomic a = &first^ {
     loop {
-      if flag { break; }
+      if flag {
+        break;
+      }
       return unit;
     }
     atomic_load(cell: a);
@@ -103,14 +101,15 @@ fn work(first: &Shared<AtomicValue>, flag: Bool) -> result: unit reads(first) wa
 #[test]
 fn sequential_calls_and_branch_then_call_are_refused() {
     for body in [
-        "atomic_load(cell: a); atomic_add(cell: a, value: 1_u64);",
-        "if flag { atomic_load(cell: a); } atomic_add(cell: a, value: 1_u64);",
+        "atomic_load(cell: a);\n    atomic_add(cell: a, value: 1_u64);",
+        "if flag {\n      atomic_load(cell: a);\n    }\n    atomic_add(cell: a, value: 1_u64);",
     ] {
         check(
             &format!(
-                r#"
-fn work(first: &Shared<AtomicValue>, flag: Bool) -> result: unit reads(first) waits {{
-  atomic a = &first^ {{ {body} }}
+                r#"fn work(first: &Shared<AtomicValue>, flag: Bool) -> result: unit reads(first) waits {{
+  atomic a = &first^ {{
+    {body}
+  }}
   return unit;
 }}
 "#
@@ -123,8 +122,7 @@ fn work(first: &Shared<AtomicValue>, flag: Bool) -> result: unit reads(first) wa
 #[test]
 fn distinct_atomic_targets_share_one_path_count() {
     check(
-        r#"
-fn work(first: &Shared<AtomicValue>, second: &Shared<AtomicValue>) -> result: unit reads(first), reads(second) waits {
+        r#"fn work(first: &Shared<AtomicValue>, second: &Shared<AtomicValue>) -> result: unit reads(first), reads(second) waits {
   atomic a = &first^, b = &second^ {
     atomic_load(cell: a);
     atomic_add(cell: b, value: 1_u64);
@@ -139,8 +137,7 @@ fn work(first: &Shared<AtomicValue>, second: &Shared<AtomicValue>) -> result: un
 #[test]
 fn a_value_initializer_give_keeps_the_operation_for_its_continuation() {
     check(
-        r#"
-fn work(first: &Shared<AtomicValue>, flag: Bool) -> result: unit reads(first) waits {
+        r#"fn work(first: &Shared<AtomicValue>, flag: Bool) -> result: unit reads(first) waits {
   atomic a = &first^ {
     let previous = if flag {
       let value = atomic_load(cell: a);
@@ -160,8 +157,7 @@ fn work(first: &Shared<AtomicValue>, flag: Bool) -> result: unit reads(first) wa
 #[test]
 fn even_a_single_iteration_loop_cannot_contain_an_operation() {
     check(
-        r#"
-fn work(first: &Shared<AtomicValue>) -> result: unit reads(first) waits {
+        r#"fn work(first: &Shared<AtomicValue>) -> result: unit reads(first) waits {
   atomic a = &first^ {
     for (position in 0_u64..1_u64) {
       atomic_load(cell: a);
@@ -177,8 +173,7 @@ fn work(first: &Shared<AtomicValue>) -> result: unit reads(first) waits {
 #[test]
 fn aliases_and_helper_arguments_cannot_hide_an_operation() {
     check(
-        r#"
-fn work(first: &Shared<AtomicValue>) -> result: unit reads(first) waits {
+        r#"fn work(first: &Shared<AtomicValue>) -> result: unit reads(first) waits {
   atomic a = &first^ {
     let alias_value = a;
     atomic_load(cell: alias_value);
@@ -189,8 +184,9 @@ fn work(first: &Shared<AtomicValue>) -> result: unit reads(first) waits {
         Some(SemanticRule::Share2),
     );
     check(
-        r#"
-fn observe(value: &AtomicValue) -> result: unit pure { return unit; }
+        r#"fn observe(value: &AtomicValue) -> result: unit pure {
+  return unit;
+}
 fn work(first: &Shared<AtomicValue>) -> result: unit reads(first) waits {
   atomic a = &first^ {
     observe(value: a);
@@ -205,16 +201,14 @@ fn work(first: &Shared<AtomicValue>) -> result: unit reads(first) waits {
 #[test]
 fn operations_are_refused_in_helpers_and_guards() {
     check(
-        r#"
-fn observe(value: &AtomicValue) -> result: u64 reads(value) {
+        r#"fn observe(value: &AtomicValue) -> result: u64 reads(value) {
   return atomic_load(cell: value);
 }
 "#,
         Some(SemanticRule::Share2),
     );
     check(
-        r#"
-fn atomic_guard(value: &AtomicValue) -> result: Bool pure {
+        r#"fn atomic_guard(value: &AtomicValue) -> result: Bool pure {
   return True();
 }
 fn work(first: &Shared<AtomicValue>) -> result: unit reads(first) waits {
@@ -231,11 +225,14 @@ fn work(first: &Shared<AtomicValue>) -> result: unit reads(first) waits {
 #[test]
 fn scalar_result_contracts_discharge_later_bounded_raises() {
     check(
-        r#"
-fn work(first: &Shared<AtomicValue>, second: &Shared<AtomicValue>) -> result: unit reads(first), reads(second) waits {
+        r#"fn work(first: &Shared<AtomicValue>, second: &Shared<AtomicValue>) -> result: unit reads(first), reads(second) waits {
   let observed = 0_u64;
-  atomic a = &first^ { set observed = atomic_load(cell: a); }
-  atomic b = &second^ { atomic_raise(cell: b, value: observed); }
+  atomic a = &first^ {
+    set observed = atomic_load(cell: a);
+  }
+  atomic b = &second^ {
+    atomic_raise(cell: b, value: observed);
+  }
   return unit;
 }
 "#,
@@ -246,8 +243,7 @@ fn work(first: &Shared<AtomicValue>, second: &Shared<AtomicValue>) -> result: un
 #[test]
 fn arguments_beyond_the_protocol_bounds_are_refused_by_contracts() {
     check(
-        r#"
-fn work() -> result: unit pure {
+        r#"fn work() -> result: unit pure {
   let first = shared_atomic_new(value: 9223372036854775809_u64);
   return unit;
 }
@@ -260,9 +256,10 @@ fn work() -> result: unit pure {
     ] {
         check(
             &format!(
-                r#"
-fn work(first: &Shared<AtomicValue>) -> result: unit reads(first) waits {{
-  atomic a = &first^ {{ {call} }}
+                r#"fn work(first: &Shared<AtomicValue>) -> result: unit reads(first) waits {{
+  atomic a = &first^ {{
+    {call}
+  }}
   return unit;
 }}
 "#
@@ -275,8 +272,9 @@ fn work(first: &Shared<AtomicValue>) -> result: unit reads(first) waits {{
 #[test]
 fn atomic_state_cannot_be_embedded_inline() {
     check(
-        r#"
-struct BadState { cell: AtomicValue; }
+        r#"struct BadState {
+  cell: AtomicValue;
+}
 "#,
         Some(SemanticRule::Type9),
     );
@@ -285,8 +283,7 @@ struct BadState { cell: AtomicValue; }
 #[test]
 fn atomic_value_bindings_are_not_proof_expressions() {
     check(
-        r#"
-fn work(first: &Shared<AtomicValue>) -> result: unit reads(first) waits {
+        r#"fn work(first: &Shared<AtomicValue>) -> result: unit reads(first) waits {
   atomic a = &first^ {
     invariant invalid_state: a == a;
     atomic_load(cell: a);
@@ -302,13 +299,16 @@ fn work(first: &Shared<AtomicValue>) -> result: unit reads(first) waits {
 fn checked_atomic_targets_retain_their_kind_and_ordinary_read_authority() {
     use crate::semantic::model::{CheckedStatement, CheckedTargetKind};
     let source = format!(
-        r#"
-fn observe_shared(first: &SharedRead<AtomicValue>) -> result: unit reads(first) waits {{
-  atomic a = &first^ {{ atomic_load(cell: a); }}
+        r#"fn observe_shared(first: &SharedRead<AtomicValue>) -> result: unit reads(first) waits {{
+  atomic a = &first^ {{
+    atomic_load(cell: a);
+  }}
   return unit;
 }}
 fn update_shared(first: &Shared<AtomicValue>) -> result: unit reads(first) waits {{
-  atomic a = &first^ {{ atomic_add(cell: a, value: 1_u64); }}
+  atomic a = &first^ {{
+    atomic_add(cell: a, value: 1_u64);
+  }}
   return unit;
 }}
 {MAIN}"#
