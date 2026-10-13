@@ -10,7 +10,7 @@ fn slab_reserve<T, const ceiling: u64, const generation_limit: u64>(slab: &Slab<
   ensures slab^.cells.inner.len == entry(slab)^.cells.inner.len;
   ensures slab^.cells.inner.cap >= entry(slab)^.cells.inner.cap;
 } {
-  doc "Raises backing capacity to at least capacity while preserving every materialized cell, its index, generation, vacancy and owned payload, and the free list. Requests above ceiling return Err before mutation; requests at or below current capacity return Ok without shrinking. Growth uses ordinary grow and may relocate payload addresses; existing handles remain valid, but references into the cells cannot survive growth under REF-2. Ok is capacity success, not an allocation-failure outcome.";
+  doc "Raises backing capacity to at least capacity while preserving every materialized cell, its index, generation, vacancy and owned payload, and the free list. Requests above ceiling return Err before mutation; requests at or below current capacity return Ok without shrinking. Growth uses ordinary grow and may relocate payload addresses; existing handles remain valid, but references into the cells cannot survive growth under REF-2. Ok is capacity success, not an allocation-failure outcome. The Ok route publishes no capacity postcondition: FN-9 refuses a route postcondition on a unit payload (board item wf-unit-ok-postcondition).";
   if capacity > ceiling {
     return Err<unit, unit>(error: unit);
   }
