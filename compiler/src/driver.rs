@@ -2747,9 +2747,17 @@ fn canonical_syntax(
     limits: CompilerLimits,
     graph: bool,
 ) -> Result<CanonicalSyntaxUnit, CompilationFailure> {
-    segments::check(bundle, limits, graph)?;
-    let parsed = derive_syntax(bundle, limits, graph, false)?;
-    finish_syntax(bundle, parsed, limits)
+    let parsed = derive_syntax(bundle, limits, graph, false);
+    if !parsed
+        .as_ref()
+        .is_ok_and(|parsed| segments::aligns(bundle, parsed, graph))
+    {
+        // Whole-source success alone cannot establish segment success: a raw
+        // boundary may split a noncanonical declaration. Whole-source failure
+        // likewise cannot select a diagnostic before the independent segments.
+        segments::check(bundle, limits, graph)?;
+    }
+    finish_syntax(bundle, parsed?, limits)
 }
 
 fn derive_syntax(

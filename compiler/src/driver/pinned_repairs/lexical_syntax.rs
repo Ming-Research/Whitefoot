@@ -235,7 +235,7 @@ fn main() -> status: std::process::ExitStatus pure {
   slot: u64;
 }
 
-fn inspect(nodes: &Slots<Node, 1>) -> result: unit reads(nodes) contract {
+fn inspect(nodes: &Slots<Node, 1>) -> result: unit pure contract {
   requires nodes^.len == 1_u64;
   requires forall held(k in 0_u64..nodes^.len) when nodes^[k].live is True || nodes^[k].open is True: nodes^[k].slot == 0_u64;
 } {
@@ -256,7 +256,7 @@ fn main() -> status: std::process::ExitStatus pure {
   slot: u64;
 }
 
-fn inspect(nodes: &Slots<Node, 1>) -> result: unit reads(nodes) contract {
+fn inspect(nodes: &Slots<Node, 1>) -> result: unit pure contract {
   requires nodes^.len == 1_u64;
   requires forall held_live(k in 0_u64..nodes^.len) when nodes^[k].live is True: nodes^[k].slot == 0_u64;
   requires forall held_open(k in 0_u64..nodes^.len) when nodes^[k].open is True: nodes^[k].slot == 0_u64;

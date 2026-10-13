@@ -537,7 +537,7 @@ fn emit(
                 prefixes.push(format!("[{}, {}]", atoms[0], atoms[1]));
             }
         }
-        table(&mut out, name, "[usize; 2]", &ranges, |(start, len)| {
+        static_table(&mut out, name, "[usize; 2]", &ranges, |(start, len)| {
             format!("[{start}, {len}]")
         });
     }

@@ -189,6 +189,29 @@ impl<'classified> Parser<'classified> {
                     _ => None,
                 })
                 .unwrap_or(false),
+            completed_infix_operand: self
+                .elements
+                .windows(2)
+                .rev()
+                .take_while(|pair| {
+                    pair.iter().all(|element| {
+                        matches!(element, DerivationElement::Production { .. })
+                    })
+                })
+                .find_map(|pair| match pair {
+                    [
+                        DerivationElement::Production {
+                            production: Production::Atom,
+                            extent: DerivationExtent::Source { source, start, end },
+                            ..
+                        },
+                        DerivationElement::Production {
+                            production: Production::InfixTail,
+                            ..
+                        },
+                    ] => Some(super::SyntaxCoordinate::new(*source, *start, *end)),
+                    _ => None,
+                }),
             in_expression: self
                 .frames
                 .iter()

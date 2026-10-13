@@ -621,7 +621,7 @@ fn sufficient_limits_produce_identical_derivation_metrics() {
 }
 
 #[test]
-fn complete_fixture_reaches_every_normative_production_kind() {
+fn complete_and_diagnostic_fixtures_reach_every_normative_production_kind() {
     let source = br#"
 program no_heap;
 alias Imported = pkg::library::Imported;
@@ -750,16 +750,46 @@ fn main() -> result: unit pure {}
     ) else {
         panic!("graph fixture must classify");
     };
+    // [GRAM-2, DIAG-1] gives graph diagnostics a separate entry, which is
+    // never a subtree of either complete-record start production.
+    let segment_outcome = super::parse_graph_segment(graph_classified.clone(), PARSE_LIMITS);
+    let ParseOutcome::Complete(segment_parsed) = segment_outcome else {
+        panic!("graph diagnostic fixture must parse: {segment_outcome:?}");
+    };
+    assert!(matches!(
+        segment_parsed.tree.elements.last(),
+        Some(DerivationElement::Production {
+            production: Production::GraphSegment,
+            ..
+        })
+    ));
     let graph_outcome = super::parse_graph(graph_classified, PARSE_LIMITS);
     let ParseOutcome::Complete(graph_parsed) = graph_outcome else {
         panic!("graph fixture must parse: {graph_outcome:?}");
     };
+    assert!(
+        !parsed
+            .tree
+            .elements
+            .iter()
+            .chain(graph_parsed.tree.elements.iter())
+            .any(|element| {
+                matches!(
+                    element,
+                    DerivationElement::Production {
+                        production: Production::GraphSegment,
+                        ..
+                    }
+                )
+            })
+    );
     for production in productions() {
         let present = parsed
             .tree
             .elements
             .iter()
             .chain(graph_parsed.tree.elements.iter())
+            .chain(segment_parsed.tree.elements.iter())
             .any(|element| {
                 matches!(
                     element,

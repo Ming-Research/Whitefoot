@@ -46,23 +46,65 @@ fn outcome_from(source: &[u8], entry: Production) -> ParseOutcome {
 #[test]
 fn nested_infix_operand_uses_gram9_and_spans_its_two_token_start() {
     for operator in ["+wrap", "<"] {
-        let source =
-            format!("fn f() -> r: u32 pure {{ return 0_u32 +wrap 1_u32 {operator} 2_u32; }}");
-        let result = outcome(source.as_bytes(), false);
-        let ParseOutcome::SourceIssue(issue) = result else {
-            panic!("nested operation must reject: {result:?}");
-        };
-        assert_eq!(issue.rule(), SyntaxRule::Gram9);
-        let start = usize::try_from(issue.coordinate().start().value()).expect("small source");
-        let end = usize::try_from(issue.coordinate().end().value()).expect("small source");
-        assert_eq!(&source[start..end], format!("1_u32 {operator}"));
-        assert_eq!(
-            issue.mechanical_fix,
-            Some(
-                "bind each operation with its own preceding `let` and pass the binding as the operand; an expression has one operation over two atoms, with no chaining or parenthesized subexpressions [GRAM-6, GRAM-9]"
-            )
-        );
+        for statement in ["return", "let result ="] {
+            let source = format!(
+                "fn f() -> r: u32 pure {{ {statement} 0_u32 +wrap 1_u32 {operator} 2_u32; }}"
+            );
+            let result = outcome(source.as_bytes(), false);
+            let ParseOutcome::SourceIssue(issue) = result else {
+                panic!("nested operation must reject: {result:?}");
+            };
+            assert_eq!(issue.rule(), SyntaxRule::Gram9);
+            let start = usize::try_from(issue.coordinate().start().value()).expect("small source");
+            let end = usize::try_from(issue.coordinate().end().value()).expect("small source");
+            assert_eq!(&source[start..end], format!("1_u32 {operator}"));
+            assert_eq!(
+                issue.mechanical_fix,
+                Some(
+                    "bind each operation with its own preceding `let` and pass the binding as the operand; an expression has one operation over two atoms, with no chaining or parenthesized subexpressions [GRAM-6, GRAM-9]"
+                )
+            );
+        }
     }
+}
+
+#[test]
+fn completed_infix_operand_keeps_its_contract_repair() {
+    let source = b"fn f() -> r: u32 pure contract { define value = 0_u32 +wrap 1_u32 +wrap 2_u32; } { return 0_u32; }";
+    let result = outcome(source, false);
+    let ParseOutcome::SourceIssue(issue) = result else {
+        panic!("nested contract operation must reject: {result:?}");
+    };
+    assert_eq!(issue.rule(), SyntaxRule::Gram9);
+    assert_eq!(issue_bytes(source, issue), b"1_u32 +wrap");
+    assert_eq!(
+        issue.mechanical_fix,
+        Some(crate::diagnostic_repairs::FLAT_CONTRACT_OPERATION_FIX)
+    );
+}
+
+#[test]
+fn completed_infix_operand_does_not_reach_a_later_statement() {
+    let source = b"fn f() -> r: u32 pure { let value = 0_u32 +wrap 1_u32; return +wrap 2_u32; }";
+    let result = outcome(source, false);
+    let ParseOutcome::SourceIssue(issue) = result else {
+        panic!("missing expression atom must reject: {result:?}");
+    };
+    assert_ne!(issue.rule(), SyntaxRule::Gram9);
+    assert_eq!(issue_bytes(source, issue), b"+wrap");
+}
+
+#[test]
+fn completed_infix_operand_keeps_the_two_token_start_restriction() {
+    let source = b"fn f() -> r: u32 pure { return 0_u32 +wrap value.field +wrap 2_u32; }";
+    let result = outcome(source, false);
+    let ParseOutcome::SourceIssue(issue) = result else {
+        panic!("chained operation must reject: {result:?}");
+    };
+    // Its atom occurrence starts with `value .`, not `value infix_op`, so
+    // DIAG-1 row 2 cannot replace the ordinary frontier's attribution.
+    assert_ne!(issue.rule(), SyntaxRule::Gram9);
+    assert_eq!(issue_bytes(source, issue), b"+wrap");
 }
 
 #[test]

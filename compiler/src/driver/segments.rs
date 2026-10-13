@@ -4,7 +4,7 @@ use core::ops::Range;
 
 use crate::syntax::grammar::{LookaheadPredicate, Production, grammar_prefixes};
 use crate::syntax::terminal::{TerminalPredicate, is_identifier};
-use crate::{ByteOffset, SourceBundle, SourceInput, SyntaxCoordinate};
+use crate::{ByteOffset, ParsedBundle, SourceBundle, SourceInput, SyntaxCoordinate};
 
 use super::{CompilationFailure, CompilationFailureKind, CompilerLimits, derive_syntax};
 
@@ -58,6 +58,34 @@ fn ranges(bytes: &[u8], graph: bool) -> Vec<Range<usize>> {
     starts.windows(2).map(|pair| pair[0]..pair[1]).collect()
 }
 
+/// A successful whole derivation also derives every diagnostic segment when
+/// no raw boundary cuts one of its complete root children. Successful lexing
+/// cannot form a token across LF, so these boundaries preserve lexical and
+/// terminal membership results too. Each resulting source segment is an
+/// `item*`, and each graph segment is a sequence of complete graph rows.
+pub(super) fn aligns(bundle: &SourceBundle, parsed: &ParsedBundle, graph: bool) -> bool {
+    let boundaries: Vec<Vec<usize>> = bundle
+        .iter()
+        .map(|(_, file)| {
+            if file.prelude().is_some() {
+                Vec::new()
+            } else {
+                ranges(file.bytes(), graph)
+                    .into_iter()
+                    .map(|range| range.start)
+                    .collect()
+            }
+        })
+        .collect();
+    parsed.top_level_extents().all(|extent| {
+        let starts = &boundaries[extent.source().ordinal() as usize];
+        let next = starts.partition_point(|offset| *offset as u64 <= extent.start().value());
+        starts
+            .get(next)
+            .is_none_or(|offset| *offset as u64 >= extent.end().value())
+    })
+}
+
 pub(super) fn check(
     bundle: &SourceBundle,
     limits: CompilerLimits,
@@ -104,7 +132,125 @@ pub(super) fn check(
 
 #[cfg(test)]
 mod tests {
-    use super::{ranges, starts_segment};
+    use super::{aligns, check, ranges, starts_segment};
+    use crate::driver::{
+        CompilationFailureKind, CompilerLimits, DiagnosticFormat, canonical_syntax, derive_syntax,
+    };
+    use crate::{SourceBundle, SourceInput};
+
+    #[test]
+    fn complete_root_children_certify_source_and_graph_segments() {
+        let limits = CompilerLimits::default();
+        let inputs = [
+            SourceInput::new(
+                "first.wf",
+                b"alias Value = pkg::Value;\n\nfn first() -> r: unit pure {\n  return unit;\n}\n",
+            ),
+            SourceInput::new(
+                "second.wf",
+                b"interface Reader {\n  fn read() -> r: unit pure;\n}\n",
+            ),
+            SourceInput::new("empty.wf", b"\n"),
+        ];
+        let bundle = SourceBundle::with_limits(&inputs, limits.source).expect("source bundle");
+        let parsed = derive_syntax(&bundle, limits, false, false).expect("whole source derives");
+        assert_eq!(
+            parsed
+                .top_level_extents()
+                .map(|extent| extent.source().ordinal())
+                .collect::<Vec<_>>(),
+            vec![1, 0, 0]
+        );
+        assert!(aligns(&bundle, &parsed, false));
+        check(&bundle, limits, false).expect("the certified segments independently derive");
+        canonical_syntax(&bundle, limits, false).expect("the reused derivation is canonical");
+
+        let graph = SourceBundle::with_limits(
+            &[SourceInput::new(
+                "modules.wfg",
+                b"pkg: [];\nother: [pkg];\n\nentry run = pkg;\n",
+            )],
+            limits.source,
+        )
+        .expect("graph bundle");
+        let parsed = derive_syntax(&graph, limits, true, false).expect("whole graph derives");
+        assert_eq!(parsed.top_level_extents().count(), 3);
+        assert!(aligns(&graph, &parsed, true));
+        check(&graph, limits, true).expect("the certified graph segments independently derive");
+        canonical_syntax(&graph, limits, true).expect("the reused graph derivation is canonical");
+    }
+
+    #[test]
+    fn whole_derivation_does_not_hide_a_boundary_inside_a_declaration_or_graph_row() {
+        let limits = CompilerLimits::default();
+        for (source, graph) in [
+            ("public\nfn f() -> r: unit pure {\n  return unit;\n}\n", false),
+            ("interface Reader {\nfn read() -> r: unit pure;\n}\n", false),
+            ("pkg: [\nother\n];\n", true),
+        ] {
+            let bundle = SourceBundle::with_limits(
+                &[SourceInput::new("split.wf", source.as_bytes())],
+                limits.source,
+            )
+            .expect("bundle");
+            let parsed = derive_syntax(&bundle, limits, graph, false)
+                .expect("the complete token sequence derives");
+            assert!(!aligns(&bundle, &parsed, graph), "{source}");
+            let independent = check(&bundle, limits, graph).expect_err("a raw segment rejects");
+            let actual = canonical_syntax(&bundle, limits, graph)
+                .expect_err("independent syntax failures precede canonical rendering");
+            assert_eq!(
+                actual.render(DiagnosticFormat::Json),
+                independent.render(DiagnosticFormat::Json),
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
+    fn whole_source_failure_keeps_independent_segment_order_and_resource_precedence() {
+        let inputs = [
+            SourceInput::new("first.wf", b"fn first() -> r: unit {\n  return unit;\n}\n"),
+            SourceInput::new(
+                "second.wf",
+                b"fn second() -> r: unit pure {\n  // bad\n}\n",
+            ),
+        ];
+        let limits = CompilerLimits::default();
+        let bundle = SourceBundle::with_limits(&inputs, limits.source).expect("bundle");
+        let independent = check(&bundle, limits, false).expect_err("two independent failures");
+        let actual = canonical_syntax(&bundle, limits, false).expect_err("two failures");
+        assert_eq!(actual.diagnostics().count(), 2);
+        assert_eq!(
+            actual.render(DiagnosticFormat::Json),
+            independent.render(DiagnosticFormat::Json)
+        );
+
+        let mut limits = limits;
+        limits.lexer.max_tokens = 20;
+        let bundle = SourceBundle::with_limits(
+            &[SourceInput::new(
+                "limited.wf",
+                b"fn first() -> r: unit {\n  return unit;\n}\nfn second() -> r: unit pure {\n  return unit;\n}\n",
+            )],
+            limits.source,
+        )
+        .expect("bundle");
+        assert_eq!(
+            derive_syntax(&bundle, limits, false, false)
+                .expect_err("the complete source exceeds the token ceiling")
+                .kind(),
+            CompilationFailureKind::Resource
+        );
+        let independent = check(&bundle, limits, false).expect_err("the first segment rejects");
+        assert_eq!(independent.kind(), CompilationFailureKind::Source);
+        let actual = canonical_syntax(&bundle, limits, false)
+            .expect_err("the source rejection still precedes the whole-source resource failure");
+        assert_eq!(
+            actual.render(DiagnosticFormat::Json),
+            independent.render(DiagnosticFormat::Json)
+        );
+    }
 
     #[test]
     fn declaration_boundaries_are_generated_first_words_at_column_zero() {

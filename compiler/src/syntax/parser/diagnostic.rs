@@ -59,6 +59,11 @@ pub(crate) struct ProbeContext {
     pub(crate) in_range: bool,
     /// The nearest atom-bearing grammar role is an `infix_tail` operand.
     pub(crate) infix_operand: bool,
+    /// The just-completed `infix_tail`'s final `atom` child, when no terminal
+    /// has been consumed since. Strong-LL(2) recognition can finish this atom
+    /// using another caller's continuation before the next frontier rejects;
+    /// DIAG-1 row 2 still attributes that occurrence's two-token infix start.
+    pub(crate) completed_infix_operand: Option<SyntaxCoordinate>,
     /// The preceding completed statement has a value-match initializer.
     pub(crate) after_value_match: bool,
     /// The grammar is inside an expression, including its callee/type arguments.
@@ -359,6 +364,29 @@ fn forbidden_atom_override(
     context: ProbeContext,
     expected: super::ExpectedTerminals,
 ) -> Option<SyntaxIssue> {
+    if let Some(atom) = context.completed_infix_operand
+        && let Some(first) = cursor.checked_sub(1).and_then(|index| tokens.get(index))
+        && let Some(second) = tokens.get(cursor)
+        && atom.source() == source
+        && atom.start() == first.token().id().start()
+        && atom.end() == first.token().id().end()
+        && repairs::is_infix_operator(second)
+    {
+        return Some(SyntaxIssue {
+            rule: SyntaxRule::Gram9,
+            coordinate: SyntaxCoordinate::new(
+                source,
+                first.token().id().start(),
+                second.token().id().end(),
+            ),
+            expected,
+            mechanical_fix: Some(if context.in_contract {
+                FLAT_CONTRACT_OPERATION_FIX
+            } else {
+                FLAT_OPERATION_FIX
+            }),
+        });
+    }
     if !context.atom_only {
         return None;
     }
@@ -986,6 +1014,7 @@ fn probe(
                                 | Production::ForBinding => false,
                                 _ => task_context.infix_operand,
                             },
+                            completed_infix_operand: task_context.completed_infix_operand,
                             after_value_match: task_context.after_value_match,
                             in_expression: task_context.in_expression
                                 || production == Production::Expr,
