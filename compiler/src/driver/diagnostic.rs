@@ -852,7 +852,7 @@ impl Report for SemanticIssueKind {
             ImmutableWrittenArgument { binding, mechanical_fix };
             LinearValueNotConsumed { binding, obligation, mechanical_fix };
             LinearValuePartiallyConsumed { obligation, residual, mechanical_fix };
-            LinearityBoundMismatch { parameter, bound, argument, actual };
+            LinearityBoundMismatch { parameter, bound, argument, actual, mechanical_fix };
             LivenessJoinDisagreement { binding, live_predecessor, dead_predecessor, mechanical_fix };
             LinearAssignmentTarget { target_type, mechanical_fix };
             InvalidRestrictedTypePlacement { spelling, mechanical_fix };
@@ -873,6 +873,7 @@ impl Report for SemanticIssueKind {
             EscapingReference { mechanical_fix };
             RangeOverRing { mechanical_fix };
             RangeOverEntries { mechanical_fix };
+            RangeOverShards { mechanical_fix };
             MoveOutOfSlot { mechanical_fix };
             MissingDereference { mechanical_fix };
             RangeReferentUse { mechanical_fix };
@@ -909,11 +910,13 @@ impl Report for SemanticIssueKind {
             AtomicTargetNotShared { found, mechanical_fix };
             WaitInsideAtomic { construct, mechanical_fix };
             TableOffsetNotKey { mechanical_fix };
+            ShardsOffsetNotIndex { mechanical_fix };
             TableEntriesNotBorrowed { mechanical_fix };
             AtomicKeyNotBytes { found, mechanical_fix };
             AtomicKeyReadsTheState { mechanical_fix };
             AtomicBindingUnused { binding, mechanical_fix };
             AtomicGuardWrites { mechanical_fix };
+            AtomicGuardReadsShards { mechanical_fix };
             AtomicGuardReadsSelfChanging { handle, mechanical_fix };
             InvalidSpawn { condition };
             InvalidMusttail { condition, subject };

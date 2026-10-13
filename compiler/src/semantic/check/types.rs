@@ -468,6 +468,7 @@ impl<'unit> Checker<'_, 'unit> {
             crate::ContainerShape::Paged => "Paged<T>",
             crate::ContainerShape::KeySet => "KeySet with no type argument",
             crate::ContainerShape::Entries => "Entries<V> with one value type",
+            crate::ContainerShape::Shards => "Shards<T> with one shard type",
             crate::ContainerShape::Box => "Box<T> with one referent type",
         };
         let mismatch = |found: &str| -> Result<CheckedType, CheckStop> {
@@ -484,7 +485,11 @@ impl<'unit> Checker<'_, 'unit> {
         // keyed entries name a table's, so the declaration withdraws neither.
         if self.types.declarations.no_heap
             && (shape == crate::ContainerShape::Box
-                || (arguments.len() == 1 && shape != crate::ContainerShape::Entries))
+                || (arguments.len() == 1
+                    && !matches!(
+                        shape,
+                        crate::ContainerShape::Entries | crate::ContainerShape::Shards
+                    )))
             && !self.types.declarations.tree.is_prelude_node(node)?
         {
             return self.types.declarations.issue_node(
@@ -524,6 +529,30 @@ impl<'unit> Checker<'_, 'unit> {
             );
             return Ok(CheckedType::Entries {
                 element: self.types.intern_element(entry)?,
+            });
+        }
+        if shape == crate::ContainerShape::Shards {
+            let [value] = arguments.as_slice() else {
+                return mismatch("a Shards type-argument list of a different length");
+            };
+            let Some(value_node) = self
+                .types
+                .declarations
+                .tree
+                .first_child_with(*value, Production::Type)?
+            else {
+                return mismatch("a const argument in the Shards value position");
+            };
+            let parsed = self.parse_type_with(check_context, value_node, substitution)?;
+            self.types.check_linearity_bound(
+                check_context,
+                "T",
+                super::linearity::LinearityClass::Affine,
+                parsed,
+                *value,
+            )?;
+            return Ok(CheckedType::Shards {
+                element: self.types.intern_element(parsed)?,
             });
         }
         if shape == crate::ContainerShape::Box {
@@ -626,7 +655,8 @@ impl<'unit> Checker<'_, 'unit> {
             (
                 crate::ContainerShape::Box
                 | crate::ContainerShape::KeySet
-                | crate::ContainerShape::Entries,
+                | crate::ContainerShape::Entries
+                | crate::ContainerShape::Shards,
                 _,
             ) => Err(SemanticCompilerFailure::InvalidResolution.into()),
         }
@@ -1658,7 +1688,8 @@ impl<'unit> TypeContext<'unit> {
                 | CheckedType::Buffer { .. }
                 | CheckedType::Segments { .. }
                 | CheckedType::KeySet
-                | CheckedType::Entries { .. } => return Ok(false),
+                | CheckedType::Entries { .. }
+                | CheckedType::Shards { .. } => return Ok(false),
             }
         }
         Ok(true)
@@ -1713,6 +1744,8 @@ impl<'unit> TypeContext<'unit> {
             );
             let map = matches!(ty, CheckedType::Nominal(id) if matches!(cx.nominals[id.0 as usize].kind, CheckedNominalKind::Shared { shape: super::super::model::CheckedShared::Map { .. }, .. }));
             if runtime && !matches!(position, Placement::BoxContent | Placement::Reference)
+                || matches!(ty, CheckedType::Shards { .. })
+                    && !matches!(position, Placement::SharedState | Placement::Reference)
                 || map
                     && !matches!(
                         position,
@@ -1758,7 +1791,8 @@ impl<'unit> TypeContext<'unit> {
                 | CheckedType::Buffer { element }
                 | CheckedType::Segments { element }
                 | CheckedType::Window { element, .. }
-                | CheckedType::Entries { element } => {
+                | CheckedType::Entries { element }
+                | CheckedType::Shards { element } => {
                     visit(cx, cx.elements[element.0 as usize], Placement::Value, seen)
                 }
                 _ => None,
@@ -1828,7 +1862,9 @@ impl<'unit> TypeContext<'unit> {
                 Placement::SharedState => "shared-object state",
                 Placement::Exchange => "the exchange of a `swap`",
             };
-            let repair = if matches!(refused_position, Placement::Exchange) {
+            let repair = if matches!(found, CheckedType::Shards { .. }) {
+                "make a shards state with `shared_shards_new::<T, fn make>()`, pass its `Shared<Shards<T>>` handle or a `&Shards<T>` reference, and exchange individual shard values rather than whole shards states"
+            } else if matches!(refused_position, Placement::Exchange) {
                 "swap the owning `Box` values instead of their contents"
             } else if matches!(found, CheckedType::Nominal(_)) {
                 "make a shared map with `shared_map_new::<V>(capacity: n)`, and pass its handle `Shared<ConcurrentHashMap<V>>` or a reference `&ConcurrentHashMap<V>` instead"
@@ -1839,6 +1875,8 @@ impl<'unit> TypeContext<'unit> {
                 "this type argument would place `{}` as {position}; {repair}",
                 self.checked_type_name(found)?
             )
+        } else if matches!(found, CheckedType::Shards { .. }) {
+            "a `Shards<T>` is only ever the state of a shared object: make `Shared<Shards<T>>` with `shared_shards_new::<T, fn make>()`, reach shards through an atomic target, and exchange individual shard values rather than whole shards states".to_owned()
         } else if matches!(refused_position, Placement::Exchange) {
             "swap the owning `Box` values instead of their contents".to_owned()
         } else if matches!(found, CheckedType::Nominal(_)) {
@@ -1901,7 +1939,8 @@ impl<'unit> TypeContext<'unit> {
             CheckedType::Segments { element } => (14, Some(element)),
             CheckedType::KeySet => (21, None),
             CheckedType::Entries { element } => (22, Some(element)),
-            CheckedType::Bool => (23, None),
+            CheckedType::Shards { element } => (23, Some(element)),
+            CheckedType::Bool => (25, None),
             CheckedType::Nominal(id) => {
                 if let CheckedNominalKind::Box {
                     referent, release, ..
@@ -1927,12 +1966,13 @@ impl<'unit> TypeContext<'unit> {
                         "Shared" => 17,
                         "SharedRead" => 18,
                         "ConcurrentHashMap" => 20,
-                        "Option" => 24,
-                        "Result" => 25,
-                        "Overflow" => 26,
-                        "DivError" => 27,
-                        "NarrowError" => 28,
-                        "ScanStep" => 29,
+                        "AnyShard" => 24,
+                        "Option" => 26,
+                        "Result" => 27,
+                        "Overflow" => 28,
+                        "DivError" => 29,
+                        "NarrowError" => 30,
+                        "ScanStep" => 31,
                         _ => 100,
                     };
                     result.push(format!("{rank:03}"));
@@ -1959,20 +1999,20 @@ impl<'unit> TypeContext<'unit> {
                 }
                 match self.prelude_type(id) {
                     Some(PreludeType::Option(t)) => {
-                        result.push("024".to_owned());
+                        result.push("026".to_owned());
                         result.extend(self.atomic_type_order(t)?);
                         return Ok(result);
                     }
                     Some(PreludeType::Result(a, b)) => {
-                        result.push("025".to_owned());
+                        result.push("027".to_owned());
                         result.extend(self.atomic_type_order(a)?);
                         result.extend(self.atomic_type_order(b)?);
                         return Ok(result);
                     }
-                    Some(PreludeType::Overflow) => (26, None),
-                    Some(PreludeType::DivError) => (27, None),
-                    Some(PreludeType::NarrowError) => (28, None),
-                    Some(PreludeType::ScanStep) => (29, None),
+                    Some(PreludeType::Overflow) => (28, None),
+                    Some(PreludeType::DivError) => (29, None),
+                    Some(PreludeType::NarrowError) => (30, None),
+                    Some(PreludeType::ScanStep) => (31, None),
                     _ => {
                         result.push(self.checked_type_name(ty)?);
                         (100, None)
@@ -2150,6 +2190,10 @@ impl<'unit> TypeContext<'unit> {
                         | (
                             CheckedType::Entries { element: a },
                             CheckedType::Entries { element: b },
+                        )
+                        | (
+                            CheckedType::Shards { element: a },
+                            CheckedType::Shards { element: b },
                         ) => {
                             pending.push((
                                 GenericArgument::Type(self.elements[a.0 as usize]),
@@ -2303,7 +2347,8 @@ impl<'unit> TypeContext<'unit> {
                 GenericArgument::Type(
                     CheckedType::Buffer { element }
                     | CheckedType::Segments { element }
-                    | CheckedType::Entries { element },
+                    | CheckedType::Entries { element }
+                    | CheckedType::Shards { element },
                 ) => pending.push(GenericArgument::Type(self.elements[element.0 as usize])),
                 GenericArgument::Function(FunctionArgument::Source { reference, .. }) => pending
                     .extend(

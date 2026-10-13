@@ -153,7 +153,9 @@ impl<'unit> Checker<'_, 'unit> {
             ResolvedTarget::Container(id) => {
                 let nominal = crate::container_nominal(id)
                     .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                Some(if nominal.shape == crate::ContainerShape::Box {
+                Some(if nominal.shape == crate::ContainerShape::Shards {
+                    "remove this destructuring statement, reach the state through an atomic target over a handle formed by `shared_shards_new`, and borrow or read individual shards by index".to_owned()
+                } else if nominal.shape == crate::ContainerShape::Box {
                     self.types
                         .cell_taken_apart_repair(check_context, node, place, bindings)?
                 } else {

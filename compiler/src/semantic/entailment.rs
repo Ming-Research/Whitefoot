@@ -1586,6 +1586,7 @@ pub(crate) fn postcondition_schedule<'function>(
                 .then_with(|| left.callee.0.cmp(&right.callee.0))
         });
         graph[index].extend(calls[start..].iter().map(|call| call.callee));
+        graph[index].extend(function.supplied_body_calls());
         // [FN-2] an instance taking its canonical instance's outcomes has no
         // checked body; ordering it after that instance (or into its
         // component) lets it copy them before any caller reads its summary.

@@ -140,6 +140,21 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
 "#,
     ),
     (
+        "prelude/Shards.wf",
+        PreludeSource::Opaque,
+        r#"opaque nocopy struct Shards<T: drop> {
+  readonly len: u64;
+}
+"#,
+    ),
+    (
+        "prelude/AnyShard.wf",
+        PreludeSource::Opaque,
+        r#"opaque struct AnyShard {
+}
+"#,
+    ),
+    (
         "prelude/box_new.wf",
         PreludeSource::Function,
         r#"fn box_new<T>(value: T) -> result: Box<T> pure;
@@ -365,6 +380,18 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
         "prelude/shared_map_new.wf",
         PreludeSource::Function,
         r#"fn shared_map_new<V: drop>(capacity: u64) -> result: Shared<ConcurrentHashMap<V>> pure;
+"#,
+    ),
+    (
+        "prelude/shared_shards_new.wf",
+        PreludeSource::Function,
+        r#"fn shared_shards_new<T: drop, fn make() -> made: T pure>() -> result: Shared<Shards<T>> pure;
+"#,
+    ),
+    (
+        "prelude/any_shard.wf",
+        PreludeSource::Function,
+        r#"fn any_shard() -> result: AnyShard pure;
 "#,
     ),
     (

@@ -106,6 +106,11 @@ fn lower_type(erasure: TypeLowering<'_>, value: CheckedType) -> Result<IrType, L
         CheckedType::Entries { element } => IrType::Entries {
             element: lower_element(erasure, element)?,
         },
+        CheckedType::Shards { .. } => {
+            return Err(LoweringFailure::UnimplementedPreludeRow(
+                "Shards storage lowering (phase 2)",
+            ));
+        }
         CheckedType::Window {
             shape,
             element,

@@ -658,6 +658,107 @@ fn a_restricted_type_argument_is_refused_at_its_argument() {
     ));
 }
 
+/// [TYPE-9] shards may be shared state or a reference referent, but are no
+/// inline value and have no exchange home.
+#[test]
+fn shards_placement_matches_the_specification_table() {
+    for source in [
+        include_bytes!("../../../../tests/conformance/cases/type9-neg-shards-parameter.wf").as_slice(),
+        include_bytes!("../../../../tests/conformance/cases/type9-neg-shards-swapped.wf").as_slice(),
+    ] {
+        assert_rule_kind(source, SemanticRule::Type9, |kind| {
+            matches!(kind, SemanticIssueKind::InvalidRestrictedTypePlacement { .. })
+        });
+    }
+    assert_accepts(include_bytes!(
+        "../../../../tests/conformance/cases/share-pos-shards-whole-to-callee.wf"
+    ));
+}
+
+/// [PRE-1, PROV-6] the Shards element bound applies to a type spelling
+/// behind a reference as well as to the constructor's type argument.
+#[test]
+fn shards_type_arguments_require_drop_and_forward_a_drop_bound() {
+    assert_rule_kind(
+        br#"nodrop struct Token {
+}
+
+fn held(parts: &Shards<Token>) -> result: unit pure {
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        SemanticRule::Prov6,
+        |kind| {
+            matches!(kind, SemanticIssueKind::LinearityBoundMismatch { mechanical_fix, .. }
+                if mechanical_fix.contains("no owned `nodrop` part"))
+        },
+    );
+    assert_accepts(br#"fn count<T: drop>(parts: &Shards<T>) -> result: u64 reads(parts) {
+  return parts^.len;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#);
+}
+
+/// [MSR-2] nonemptiness is a standing fact even at a reference parameter;
+/// it proves index zero but says nothing that would prove index one.
+#[test]
+fn shards_nonemptiness_proves_only_the_first_unconditional_index() {
+    assert_accepts(br#"fn first(parts: &Shards<u8>) -> value: u8 reads(parts) {
+  return parts^[0_u64];
+}
+
+fn replace_first(parts: &Shards<u8>) -> value: u8 writes(parts) {
+  set parts^[0_u64] = 7_u8;
+  return parts^[0_u64];
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#);
+    assert_rule_kind(
+        include_bytes!("../../../../tests/conformance/cases/op4-neg-shards-past-the-first.wf"),
+        SemanticRule::Op4,
+        |kind| matches!(kind, SemanticIssueKind::UndischargedBoundsObligation { .. }),
+    );
+}
+
+/// [OP-4, REF-4] neither the target selector nor a range selects a shard
+/// through an ordinary whole-state subscript.
+#[test]
+fn whole_shards_subscripts_refuse_selectors_and_ranges_with_repairs() {
+    assert_rule_kind(
+        br#"fn selected(parts: &Shards<u8>, index: &u64) -> value: u8 reads(parts), reads(index) {
+  return parts^[index];
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        SemanticRule::Type7,
+        |kind| matches!(kind, SemanticIssueKind::MissingDereference { .. }),
+    );
+    assert_rule_kind(
+        include_bytes!("../../../../tests/conformance/cases/op4-neg-shards-selector-as-subscript.wf"),
+        SemanticRule::Op4,
+        |kind| matches!(kind, SemanticIssueKind::ShardsOffsetNotIndex { .. }),
+    );
+    assert_rule_kind(
+        include_bytes!("../../../../tests/conformance/cases/ref4-neg-shards-as-a-range.wf"),
+        SemanticRule::Ref4,
+        |kind| matches!(kind, SemanticIssueKind::RangeOverShards { .. }),
+    );
+}
+
 /// [TYPE-2] each shape is one of the prelude's opaque structs now, and an
 /// opaque struct's constructor entry exists to be refused: a shape is built by
 /// a construction function [OP-13], never by a constructor `call`.

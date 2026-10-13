@@ -589,7 +589,7 @@ fn measure_rows() -> Vec<MeasureRow> {
 #[test]
 fn the_wf_measures_table_and_the_compilers_measure_table_agree() {
     let rows = measure_rows();
-    // [MSR-1]'s ten rows are ten identities: the two placements of one
+    // [MSR-1]'s rows have distinct identities: the two placements of one
     // shape answer `cap` differently, so a constant-capacity row and a
     // runtime-capacity row of the same shape are two rows and two kinds
     // [TYPE-9].
@@ -604,6 +604,7 @@ fn the_wf_measures_table_and_the_compilers_measure_table_agree() {
         (MeasuredKind::Segments, "Segments<T>"),
         (MeasuredKind::KeySet, "KeySet"),
         (MeasuredKind::Entries, "Entries<V>"),
+        (MeasuredKind::Shards, "Shards<T>"),
         (MeasuredKind::Range, "&[T]"),
         (MeasuredKind::Range, "&Run<T>"),
     ];
@@ -660,6 +661,7 @@ fn the_wf_measures_table_and_the_compilers_measure_table_agree() {
                             | "slots taken"
                             | "segments"
                             | "named entries"
+                            | "shards"
                             | "range elements"
                     ),
                     "{name}'s {} cell is a runtime quantity of the block, written {written}",

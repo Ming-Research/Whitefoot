@@ -190,6 +190,8 @@ pub(crate) struct TermId(pub(crate) u32);
 pub(crate) enum MeasureBound {
     Constant(i128),
     Equal(TermId),
+    /// [MSR-2] a standing lower bound, independent of descriptor writes.
+    Minimum(i128),
 }
 
 /// The zero term is always interned first.

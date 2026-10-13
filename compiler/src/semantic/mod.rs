@@ -785,6 +785,8 @@ pub enum SemanticIssueKind {
         argument: String,
         /// The argument's actual class.
         actual: &'static str,
+        /// Select an argument with the capability the formal requires.
+        mechanical_fix: &'static str,
     },
     /// [LIV-1] two predecessors of one join disagree about whether a binding
     /// is live there.
@@ -951,6 +953,10 @@ pub enum SemanticIssueKind {
     /// binding names, which are entries of a table and no run of storage.
     RangeOverEntries {
         /// Exact restructuring required by REF-4.
+        mechanical_fix: &'static str,
+    },
+    /// [REF-4] shards are held apart and form no contiguous range.
+    RangeOverShards {
         mechanical_fix: &'static str,
     },
     /// [WIN-3] a move out of a window slot or an array element.
@@ -1209,6 +1215,10 @@ pub enum SemanticIssueKind {
     TableOffsetNotKey {
         mechanical_fix: &'static str,
     },
+    /// [OP-4] whole shards access uses a logical u64 index, never a selector.
+    ShardsOffsetNotIndex {
+        mechanical_fix: &'static str,
+    },
     TableEntriesNotBorrowed {
         mechanical_fix: &'static str,
     },
@@ -1245,6 +1255,10 @@ pub enum SemanticIssueKind {
     /// An atomic statement's guard whose footprint writes a path [SHARE-2].
     AtomicGuardWrites {
         /// The repair [DIAG-1].
+        mechanical_fix: &'static str,
+    },
+    /// A guard reads a path rooted at a shards state [SHARE-2].
+    AtomicGuardReadsShards {
         mechanical_fix: &'static str,
     },
     /// An atomic statement's guard whose call reads or writes a path with a

@@ -1350,6 +1350,18 @@ fn ring_map() -> result: u64 pure {
     assert_eq!(ring.actualization, None);
 }
 
+/// [PAR-2] a whole-state shards writer checks its ordinary bounds but is
+/// no element map: Shards is absent from the closed list of admitted bases.
+#[test]
+fn a_shards_subscript_is_not_an_affine_element_map() {
+    let table = permission_of(include_bytes!(
+        "../../../../tests/conformance/cases/share-pos-shards-whole-to-callee.wf"
+    ));
+    let reset = only_loop(&table, "reset");
+    assert!(matches!(denial(reset, 2), LoopDenial::SharedWrite { .. }));
+    assert_eq!(reset.actualization, None);
+}
+
 /// Permission consumes the offset's exact checked value rather than its
 /// spelling. Copying the binder and applying one proved affine transform keeps
 /// the nonzero coefficient, so distinct iterations still select distinct

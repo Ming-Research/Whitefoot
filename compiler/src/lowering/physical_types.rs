@@ -83,7 +83,8 @@ pub(super) fn base_elements(
         | CheckedType::Window { element, .. }
         | CheckedType::Buffer { element }
         | CheckedType::Segments { element }
-        | CheckedType::Entries { element } = ty
+        | CheckedType::Entries { element }
+        | CheckedType::Shards { element } = ty
             && needed.insert(element.index())
         {
             pending.push(
@@ -319,6 +320,11 @@ impl<'a> PhysicalTypes<'a> {
                 return Ok(IrType::Entries {
                     element: self.element(element)?,
                 });
+            }
+            CheckedType::Shards { .. } => {
+                return Err(LoweringFailure::UnimplementedPreludeRow(
+                    "Shards storage lowering (phase 2)",
+                ));
             }
             CheckedType::Array { element, length } => {
                 return Ok(IrType::Array {

@@ -1017,7 +1017,8 @@ impl<'unit> TypeContext<'unit> {
             CheckedType::Array { element, length } => (Some(element), Some(length)),
             CheckedType::Buffer { element }
             | CheckedType::Segments { element }
-            | CheckedType::Entries { element } => (Some(element), None),
+            | CheckedType::Entries { element }
+            | CheckedType::Shards { element } => (Some(element), None),
             // [SHARE-1] a key set's keys are no element type of the program.
             CheckedType::KeySet => (None, None),
             _ => return Err(SemanticCompilerFailure::InvalidResolution.into()),
@@ -1943,7 +1944,8 @@ impl<'unit> TypeContext<'unit> {
             CheckedType::Buffer { element } => self.element_type(element)?,
             CheckedType::Array { element, .. }
             | CheckedType::Window { element, .. }
-            | CheckedType::Segments { element } => self.element_type(element)?,
+            | CheckedType::Segments { element }
+            | CheckedType::Shards { element } => self.element_type(element)?,
             _ => {
                 return self
                     .declarations

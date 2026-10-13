@@ -3032,6 +3032,14 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                     regions,
                 )?,
             },
+            CheckedType::Shards { element } => CheckedType::Shards {
+                element: self.instantiate_goal_element(
+                    check_context,
+                    element,
+                    signature,
+                    regions,
+                )?,
+            },
             CheckedType::Nominal(id) => {
                 self.instantiate_goal_nominal(check_context, id, signature, regions)?
             }
@@ -3338,6 +3346,7 @@ impl<'unit> TypeContext<'unit> {
             for callee in calls
                 .iter()
                 .map(|call| call.callee)
+                .chain(checked.function.supplied_body_calls().iter().copied())
                 .chain(checked.function.summary_source)
             {
                 let Some(callee_callers) = callers.get_mut(callee.0 as usize) else {

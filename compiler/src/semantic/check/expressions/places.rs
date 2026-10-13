@@ -71,13 +71,13 @@ impl PlaceMember {
 /// — the `^` step has already been replaced by the path the reference
 /// names [REF-1].
 #[derive(Clone)]
-pub(super) struct ElaboratedPlace {
+pub(in crate::semantic::check) struct ElaboratedPlace {
     /// The source declaration the *written* base names. For a `^` path
     /// that is the reference binding, whose [REF-2] validity the caller
     /// rechecks; `resolved` below is rooted at what that reference names.
     pub(super) declaration: DeclarationId,
-    pub(super) ty: CheckedType,
-    pub(super) mode: CheckedMode,
+    pub(in crate::semantic::check) ty: CheckedType,
+    pub(in crate::semantic::check) mode: CheckedMode,
     pub(super) expression: CheckedExpression,
     pub(super) resolved: ResolvedPlaceSet,
     /// [OP-15, MSR-1] the measure a trailing `.len`, `.cap` or
@@ -383,7 +383,7 @@ impl<'unit> Checker<'_, 'unit> {
 
     /// [GRAM-5, REF-1] the complete written `place`, with every `^` step
     /// already replaced by the path the reference it names names.
-    pub(super) fn elaborate_value_place(
+    pub(in crate::semantic::check) fn elaborate_value_place(
         &mut self,
         check_context: &CheckContext<'_>,
         carrier: NodeId,
@@ -1093,7 +1093,8 @@ impl<'unit> TypeContext<'unit> {
                     } else {
                         match ty {
                             CheckedType::Array { element, .. }
-                            | CheckedType::Window { element, .. } => {
+                            | CheckedType::Window { element, .. }
+                            | CheckedType::Shards { element } => {
                                 (self.element_type(element)?, false)
                             }
                             CheckedType::Buffer { element } => (self.element_type(element)?, false),
@@ -1659,7 +1660,8 @@ impl<'unit> TypeContext<'unit> {
                             CheckedType::Array { element, .. }
                             | CheckedType::Window { element, .. }
                             | CheckedType::Buffer { element }
-                            | CheckedType::Entries { element } => {
+                            | CheckedType::Entries { element }
+                            | CheckedType::Shards { element } => {
                                 (self.element_type(element)?, false)
                             }
                             CheckedType::Segments { element } => {

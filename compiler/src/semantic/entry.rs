@@ -127,8 +127,8 @@ impl CheckedProgram {
 
     /// [STOR-8, MOD-9] the functions one run of `function` can call next:
     /// every callee its checked concrete body names, in every branch. An
-    /// instance's body names the function-kind actuals it calls; erased proof
-    /// annotations call nothing.
+    /// instance's body names the function-kind actuals it calls, including
+    /// a supplied PRE-1 body's maker; erased proof annotations call nothing.
     fn closure_successors(&self, function: FunctionId) -> Vec<FunctionId> {
         let mut calls = Vec::new();
         if let Some(body) = self
@@ -139,7 +139,17 @@ impl CheckedProgram {
         {
             entailment::collect_statement_calls(function, body, &mut calls);
         }
-        calls.into_iter().map(|call| call.callee).collect()
+        calls
+            .into_iter()
+            .map(|call| call.callee)
+            .chain(
+                self.data
+                    .functions
+                    .get(function.0 as usize)
+                    .into_iter()
+                    .flat_map(|checked| checked.supplied_body_calls().iter().copied()),
+            )
+            .collect()
     }
 
     /// [MOD-9, STOR-8] an entry's execution closure, in breadth-first order
@@ -305,7 +315,9 @@ fn type_holds_heap(
         // [SHARE-1], and keyed entries are an entry binding's referent, never
         // a value of their own [SHARE-2].
         CheckedType::KeySet | CheckedType::Entries { .. } => false,
-        CheckedType::Array { element, .. } | CheckedType::Window { element, .. } => program
+        CheckedType::Array { element, .. }
+        | CheckedType::Window { element, .. }
+        | CheckedType::Shards { element } => program
             .elements
             .get(element.index())
             .is_some_and(|element| type_holds_heap(program, *element, visited)),
@@ -344,5 +356,43 @@ fn type_holds_heap(
         | CheckedType::Generic(_)
         | CheckedType::GenericInt(_)
         | CheckedType::GenericFloat(_) => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::SemanticOutcome;
+
+    use super::super::tests::with_semantics;
+
+    #[test]
+    fn a_supplied_shards_body_keeps_its_maker_in_the_execution_closure() {
+        let source =
+            include_bytes!("../../../tests/conformance/cases/share-pos-shards-owned-buffers.wf");
+        with_semantics(source, |outcome| {
+            let SemanticOutcome::Complete(checked) = outcome else {
+                panic!("the owned-shard fixture must check: {outcome:?}");
+            };
+            let constructor = checked
+                .data
+                .executable_functions()
+                .find(|function| function.name == "shared_shards_new")
+                .expect("the shards constructor is instantiated");
+            let maker = checked
+                .data
+                .executable_functions()
+                .find(|function| function.name == "part_new")
+                .expect("the maker is instantiated");
+            assert_eq!(constructor.supplied_body_calls(), &[maker.id]);
+            assert!(checked.execution_closure(constructor.id).contains(&maker.id));
+            assert_eq!(
+                checked.heap_introducer(constructor.id),
+                Some(vec![constructor.id, maker.id])
+            );
+            assert!(
+                constructor.allocates,
+                "the maker's allocation reaches its caller"
+            );
+        });
     }
 }

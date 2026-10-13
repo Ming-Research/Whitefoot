@@ -413,7 +413,9 @@ impl Input<'_, '_> {
 
     fn integer_projection_element_type(&self, ty: CheckedType) -> Option<CheckedType> {
         match ty {
-            CheckedType::Segments { element } | CheckedType::Entries { element } => {
+            CheckedType::Segments { element }
+            | CheckedType::Entries { element }
+            | CheckedType::Shards { element } => {
                 self.context.elements.get(element.index()).copied()
             }
             _ => element_type(ty, self.context.elements),

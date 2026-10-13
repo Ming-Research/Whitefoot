@@ -946,6 +946,61 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 #[test]
+fn a_shards_maker_uses_the_ordinary_function_argument_instance() {
+    let source = br#"fn zero() -> made: u8 pure {
+  return 0_u8;
+}
+
+fn factory<T: drop, fn create() -> made: T pure>() -> result: Shared<Shards<T>> pure {
+  return shared_shards_new::<T, fn create>();
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let counts = factory::<u8, fn zero>();
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    with_semantics(source, |outcome| {
+        let SemanticOutcome::Complete(checked) = outcome else {
+            panic!("the prelude maker follows source function arguments: {outcome:?}");
+        };
+        let maker = checked
+            .data
+            .executable_functions()
+            .find(|function| function.name == "zero")
+            .expect("the supplied maker is an ordinary executable instance");
+        let constructor = checked
+            .data
+            .executable_functions()
+            .find(|function| function.name == "shared_shards_new")
+            .expect("the forwarded maker selects a constructor instance");
+        assert_eq!(constructor.function_actuals, vec![maker.id]);
+        assert!(!maker.formal_hypothesis);
+    });
+}
+
+#[test]
+fn a_shards_maker_mismatch_is_refused_at_its_written_argument() {
+    assert_behavior_site(
+        include_str!("../../../../tests/conformance/cases/fn4-neg-shards-maker-waits.wf"),
+        SemanticRule::Fn4,
+        "fn waited_zero",
+    );
+    let effectful = r#"fn read(input: &u8) -> made: u8 reads(input) {
+  return input^;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let counts = shared_shards_new::<u8, fn read>();
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    // EFF-1 roots a nonempty row at a reference parameter, so an effectful
+    // maker necessarily also differs from the nullary formal's signature.
+    assert_behavior_site(effectful, SemanticRule::Fn4, "fn read");
+}
+
+#[test]
 fn a_nominal_only_function_argument_must_match_its_signature() {
     let source = r#"struct Holder<fn pick(value: u64) -> result: u64 pure> {
   marker: u64;

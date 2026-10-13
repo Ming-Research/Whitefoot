@@ -81,7 +81,9 @@ impl<'unit> TypeContext<'unit> {
         visited: &mut HashSet<NominalId>,
     ) -> Result<bool, CheckStop> {
         match ty {
-            CheckedType::Buffer { element } | CheckedType::Segments { element } => {
+            CheckedType::Buffer { element }
+            | CheckedType::Segments { element }
+            | CheckedType::Shards { element } => {
                 self.loan_bearing_with(self.element_type(element)?, visited)
             }
             CheckedType::Array { element, .. } | CheckedType::Window { element, .. } => {
@@ -153,7 +155,9 @@ impl<'unit> TypeContext<'unit> {
                 nodes.push(current);
             }
             match current {
-                CheckedType::Buffer { element } | CheckedType::Segments { element } => {
+                CheckedType::Buffer { element }
+                | CheckedType::Segments { element }
+                | CheckedType::Shards { element } => {
                     pending.push(self.element_type(element)?);
                 }
                 // A run owns the elements of its window [BLK-1], so its
@@ -251,7 +255,9 @@ impl<'unit> TypeContext<'unit> {
                 } if capacity.and_then(super::super::model::CheckedConst::value) != Some(0) => {
                     pending.push(self.element_type(element)?);
                 }
-                CheckedType::Buffer { element } | CheckedType::Segments { element } => {
+                CheckedType::Buffer { element }
+                | CheckedType::Segments { element }
+                | CheckedType::Shards { element } => {
                     pending.push(self.element_type(element)?);
                 }
                 _ => {}
@@ -503,6 +509,7 @@ impl<'unit> TypeContext<'unit> {
                 bound: bound.bound_spelling(),
                 argument,
                 actual: actual.spelling(),
+                mechanical_fix: "supply a type that satisfies the parameter's written capability bound; a `drop` parameter requires a type with no owned `nodrop` part",
             },
         )?;
         Ok(())

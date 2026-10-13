@@ -101,7 +101,7 @@ impl Vocabulary {
             match self.terms.measure_bound(anchor) {
                 Some(MeasureBound::Constant(value)) => return AffineForm::constant(value),
                 Some(MeasureBound::Equal(other)) => anchor = other,
-                None => break,
+                Some(MeasureBound::Minimum(_)) | None => break,
             }
         }
         if let Some(atom) = state.measure_atoms.borrow().get(&anchor) {
@@ -338,6 +338,11 @@ impl Reasoning<'_, '_, '_> {
             if let Some(bound) = bound {
                 self.vocabulary.terms.set_measure_bound(term, bound);
             }
+        }
+        if measured == MeasuredKind::Shards {
+            self.vocabulary
+                .terms
+                .set_measure_bound(extent, MeasureBound::Minimum(1));
         }
         self.vocabulary.intern_measure(measure, &path)
     }
@@ -1425,7 +1430,7 @@ impl Reasoning<'_, '_, '_> {
                         break;
                     }
                     Some(MeasureBound::Equal(other)) => anchor = other,
-                    None => break,
+                    Some(MeasureBound::Minimum(_)) | None => break,
                 }
             }
             if let Some(value) =
