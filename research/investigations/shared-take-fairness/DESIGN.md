@@ -7,12 +7,14 @@ holding a map entry, or an earlier object, can be overtaken indefinitely at
 its later ordinary-object acquisition, and the claim mechanism that bounds
 it. It retains the question, protocol and evidence that chose that
 mechanism. Supersede this protocol in place as the mechanism changes,
-retaining dated results as evidence; remove the temporary workflows and the
-research sweep runner when the hosted comparison, the mutant run and the
-14900K cost comparison are complete; keep the required native regression,
-its maintained count checker and the cost comparison's bundle
-(`research/experiments/shared-take-overhead/`) as the record of its
-procedure. The native witness belongs under `compiler/src/backend/completion/`
+retaining dated results as evidence. The three temporary workflows (the
+hosted count sweep, the mutant run and the 14900K cost comparison) and the
+sweep driver `run.py` are retired; they are cited at revision `f4299910e`
+and their runs are the evidence under
+[Results and remaining evidence](#results-and-remaining-evidence). The
+required native regression, its maintained count checker and the cost
+comparison's bundle (`research/experiments/shared-take-overhead/`) remain as
+the record of the procedure. The native witness belongs under `compiler/src/backend/completion/`
 and joins runtime checks without a dependency on research inputs.
 
 The owner selected option B: escalation to nonparking handoff claims after
@@ -157,10 +159,11 @@ Omitting or corrupting the first-failure observation prevents a contested
 trial from producing valid evidence; an incorrect subtraction, total,
 verdict or exit code fails the caller's independent count checks.
 
-The phase-1 dispatch-only `.github/workflows/tmp-shared-take-witness.yml` ran on
+The phase-1 dispatch-only `.github/workflows/tmp-shared-take-witness.yml`
+(retired; read at revision `f4299910e`) ran on
 `ubuntu-24.04` and `macos-15`. It built only this image, ran the evidence
 reader's boundary and invalid-input controls, then invoked this directory's
-`run.py` for the control, pilots and full grid. The runner retains stdout,
+`run.py` (retired, same revision) for the control, pilots and full grid. The runner retains stdout,
 stderr, raw child exit codes, per-invocation arguments, pilot elapsed-time
 spread, aggregate counts and a verdict; the workflow also uploads the exact
 git revision, tool versions and build log. This Python caller is for
@@ -172,18 +175,25 @@ runner records such a result as XFAIL and succeeds so the investigation
 does not break the gate. An all-pass sample is reported as sampled pass,
 not forced to fail because starvation was suspected. Any crash, timeout,
 missing row, wrong count or nonzero control result fails the workflow.
-`run.py --self-test` includes the exact boundary (64 passes; 65 exceeds for
+`run.py --self-test` included the exact boundary (64 passes; 65 exceeds for
 N = 1), reversed exit codes, runtime errors, missing/duplicate rows, absent
-probe observations and corrupted counts. These controls are wired into CI;
-none was executed locally. Phase 2 uses `--require-bound` to fail on any
-count violation and promotes the native witness to required runtime ownership,
-while retaining the temporary sweep for the hosted comparison.
+probe observations and corrupted counts; the workflow ran it in CI and none
+was executed locally. Phase 2 used `--require-bound` to fail on any
+count violation and promoted the native witness to required runtime ownership,
+keeping the temporary sweep for the hosted comparison.
 
-The two `run-check.pl` stage labels have provisional Linux/macOS ceilings
-in `.github/time-budgets.txt`. These are initial CI resource limits, explicitly
-unmeasured, and neither change the count criterion nor classify watchdogs
-as fairness evidence. Revisit them using the first hosted sample; this phase
-does not raise an existing budget.
+The two `run-check.pl` stage labels, `shared-take-witness-build` and
+`shared-take-witness-counts`, had provisional ceilings in `.github/time-budgets.txt`
+(the build row `60 90 -`, the counts row `180 180 -`), initial CI resource
+limits and not measured budgets; they changed neither the count criterion nor
+the classification of watchdogs as fairness evidence. The rows are retired
+with the workflow. In the claim-arbitration sweep the stages took 8.71 s and
+6.52 s on `ubuntu-24.04` (against a read Linux ceiling of 90 s and 180 s)
+and 2.53 s and 9.72 s on `macos-15`; the macOS job's budget verdict still
+failed, because the three-column rows did not match the budget table's
+current columns, which name Linux CPU classes, macOS and Windows ("needs
+seconds or - for macos"). That failure was a malformed table and not an
+overrun.
 
 ## Four progress shapes
 
@@ -439,6 +449,94 @@ bound: host scheduling also contributes to the observed interval. The
 uncontended control passed on both. These are the owner's recorded results;
 this phase has not retrieved the raw artifacts or run a new measurement.
 
+### Claim-arbitration design, revision `f4299910e`
+
+The three runs below measured the claim-arbitration implementation at
+revision `f4299910e`. The workflows that produced them are retired and read
+at that revision: `.github/workflows/tmp-shared-take-witness.yml`,
+`.github/workflows/tmp-shared-take-mutants.yml`,
+`.github/workflows/tmp-shared-take-overhead.yml`, the sweep driver
+`research/investigations/shared-take-fairness/run.py` and the two stage rows
+in `.github/time-budgets.txt`.
+
+**Hosted count sweep** (run 38382784632, 2026-10-13; the workflow built the
+witness with `make -C compiler shared-take-witness-build`, ran the verdict
+controls `run.py --self-test`, the fixed gate inventory
+`make -C compiler shared-take-witness`, then `run.py --require-bound` for
+the control, two N = 1, cap 256 pilots and the full grid of five trials per
+cell). `ubuntu-24.04` (x86-64, clang 18.1.3, Python 3.12.3) and `macos-15`
+(arm64, Apple clang 17.0.0, Python 3.14.7) each ran 48 trials: the control,
+two pilots and 45 grid trials.
+
+| N | B(N) = 64 x N | Trials per host | Max overtakes, Linux | Max overtakes, macOS | Over B(N) |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 64 | 17 (2 pilots, 15 grid) | 1 | 1 | 0 |
+| 2 | 128 | 15 | 1 | 1 | 0 |
+| 8 | 512 | 15 | 1 | 1 | 0 |
+| control | 0 | 1 | 0 | 0 | 0 |
+
+Every trial had one overtake, against 43 of 47 macOS trials above the bound
+in the first hosted run of the old design. Failed probes ranged over 20-256
+on Linux and 256-1,969 on macOS, so X attempted acquisition repeatedly in
+every contested trial on both hosts. Both hosts printed the verdict
+"SAMPLED PASS: every valid trial met B(N)=64*N; unbounded schedules remain
+open." The fixed gate inventory also passed on both: the four arbitration
+cases, the scheduled N = 1, cap 65 trial (1 overtake against bound 64) and
+the disabled-escalation image, which gave 65 overtakes against bound 64 and
+was reported `bound_exceeded` as the negative control requires. The
+witness stages exited 0 on both hosts. The macOS job was marked failed only
+by its budget verdict (a malformed budget table, described under Phase-1
+construction), not by any count or exit. Against the registered criterion,
+parts 1 and 2 hold on the sampled schedules.
+
+**Mutant run** (run 38378677089, push to the branch at `f4299910e`, success):
+5 controls passed unmutated (the four arbitration cases and the scheduled
+N = 1, cap 65 trial) and 14 mutants ran, 15 case checks in all (the no-claim
+mutant is checked by two cases); each case failed with its own named message
+and none failed for another reason. The table in
+[Required regression and pending evidence](#required-regression-and-pending-evidence)
+lists each mutant, its case and message.
+
+**Uncontended cost on the 14900K** (run 38381067726, mode `main`, 6 blocks,
+base `5dd90db14` (main at the merge of the guard-fairness work) against
+candidate `f4299910e`; Intel Core i9-14900K, Linux 7.0.0, governor
+`performance`, clang 22.1.8). The run's dispatch input named base
+`5dd90db14` and not the base `96520e70e` registered in part 3; the
+`compiler/` and `lib/` difference between that base and the candidate is
+five files (`compiler/Makefile`, `bridge.c`, `cancel_test.c`,
+`shared_take_check.py`, `shared_take_witness.c`), the claims' change alone.
+Both programs' emitted LLVM was identical between base and candidate, so the
+difference is in the runtime. Each candidate-to-base time ratio t and
+twin-to-base ratio w (registered limits: t at most 1.02, w within
+0.99-1.01) was:
+
+| Program | Drivers | t | Overhead | w | ns per statement (base) | Reading |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| take | 1 | 1.0004 | +0.04% | 1.0000 | 44.77 | pass |
+| take | 2 | 1.0019 | +0.19% | 0.9990 | 45.67 | pass |
+| take | 4 | 1.0046 | +0.46% | 1.0003 | 45.29 | pass |
+| take | 8 | 1.0024 | +0.24% | 1.0018 | 45.28 | pass |
+| own | 1 | 1.0073 | +0.73% | 1.0030 | 21.70 | pass |
+| own | 2 | 1.0077 | +0.77% | 0.9999 | 21.68 | pass |
+| own | 4 | 1.0077 | +0.77% | 1.0000 | 21.67 | pass |
+| own | 8 | 1.0082 | +0.82% | 0.9998 | 21.74 | pass |
+
+The registered verdict, the take program at one driver, is pass: +0.04%
+against the 2% limit, with the twin at 1.0000. The every-cell extension is
+pass: all eight cells are within 0.82% of the base and every twin ratio lies
+within 0.99-1.01, so no cell is inconclusive. Part 3 holds for this
+compiler pair, one machine and one workload shape; the scope limits of the
+[Uncontended-cost procedure](#uncontended-cost-procedure) apply.
+
+**Still open.** All trials within B(N) establish only the stated sampled
+bound; the argument for every schedule, both borrowers and parked contexts,
+remains the static progress argument (see Progress argument and scope), so
+unbounded schedules remain open. The sweep measured the protocol under hosted
+schedules and not latency or throughput. The contended path, the claim
+queue's cost when claims wait and guard reservations are unmeasured.
+Sanitizer results for the concurrent map and the runtime come from the
+gate's `map-sanitizers.yml` and runtime jobs and not from these runs.
+
 ## Registered criterion
 
 Registered before the integrated implementation's first hosted or 14900K
@@ -446,7 +544,8 @@ run. All three parts must hold; any one failing rejects the integrated
 implementation as it stands.
 
 1. **Bound.** On `ubuntu-24.04` and `macos-15`, the dispatch-only sweep
-   (`tmp-shared-take-witness.yml`, `run.py --require-bound`) runs the
+   (`tmp-shared-take-witness.yml`, `run.py --require-bound`, both retired and
+   cited at revision `f4299910e`) runs the
    uncontended control, two N = 1, cap 256 pilots and the full grid of
    N = 1, 2, 8 by cap 256, 4,096, 65,536, five trials per cell. Every valid
    trial must have at most 64 × N overtakes. One count above 64 × N rejects;
@@ -480,8 +579,14 @@ evidence, separate from this criterion.
 
 Written 2026-10-12, before any run, for part 3 of the registered
 criterion. The bundle is `research/experiments/shared-take-overhead/`
-(`run.sh` documents its interface) and the dispatch-only workflow is
-`.github/workflows/tmp-shared-take-overhead.yml` on the 14900K.
+(`run.sh` documents its interface) and the dispatch-only workflow was
+`.github/workflows/tmp-shared-take-overhead.yml` on the 14900K (retired; read
+at revision `f4299910e`). The workflow checked the host's tools and that
+the host was idle, ran `summarize.py --self-test`, built the whitefootc
+compiler at the base and at the candidate with `cargo build --profile gate`,
+built the images with `run.sh --build-only`, rechecked idleness, ran the
+cells with `run.sh --run` and printed the summary; its inputs were `mode`
+(`pilot` or `main`), `blocks` (default 6) and `base`.
 
 **What the change adds to an uncontended statement.** Read from the diff
 of `bridge.c` between the base and the candidate: `wf__shared_take` now
@@ -624,14 +729,15 @@ The fixed gate inventory contains:
   false child verdicts, runtime errors, missing/duplicate rows, incorrect raw
   subtraction, incomplete Y work and the negative control's intended count.
 
-The dispatch-only `tmp-shared-take-witness.yml` keeps the repeated sweep on
-`ubuntu-24.04` and `macos-15` (part 1 of the criterion) and runs the fixed
-gate inventory; it uploads raw counts, exits and construction logs even on
-failure. Its two `run-check.pl` stage labels have provisional ceilings in
-`.github/time-budgets.txt`. The dispatch-only `tmp-shared-take-mutants.yml`
-applies one source mutant at a time to `bridge.c`, rebuilds the witness and
-requires the named case to fail with its own message, after every case
-passes unmutated:
+The retired `tmp-shared-take-witness.yml` (read at revision `f4299910e`)
+ran the repeated sweep on `ubuntu-24.04` and `macos-15` (part 1 of the
+criterion) and the fixed gate inventory, and uploaded raw counts, exits and
+construction logs even on failure. The retired `tmp-shared-take-mutants.yml`
+(same revision) applied one source mutant at a time to `bridge.c` with
+`perl`, rebuilt the witness with `make -C compiler` on `ubuntu-24.04` and
+required the named case to fail with its own message, after every case
+passed unmutated. Its results are under
+[Results and remaining evidence](#claim-arbitration-design-revision-f4299910e):
 
 | Mutant | Rule it breaks | Case and message |
 | --- | --- | --- |
@@ -642,6 +748,8 @@ passes unmutated:
 | reader | a claim refuses a reader that parks | `order`: "a reader overtook a waiting claim" |
 | no-alternation | a parked handoff yields the next free unlock to a claim | `order`: "a parked context was handed the object again while a claim waited" |
 | claims-first | the parked head gets its due handoff first | `order`: "a claim was granted ahead of the parked head's due hand-off" |
+| grant-keeps-turn | a grant gives the next turn to the parked head | `order`: "claims took the object twice in a row while a parked context was due" |
+| no-turn-after-handoff | a hand-off while claims wait gives the claims the next turn | `order`: "a parked context was handed the object again while a claim waited" |
 | no-borrow | a take borrows a handed hold | `borrow`: "a take did not borrow the hold handed to a parked context" |
 | no-claim-borrow | the oldest claim borrows a handed hold | `borrow`: "the oldest claim did not borrow the hold handed to a parked context" |
 | any-claim-borrows | only the oldest claim borrows | `borrow`: "a later claim borrowed ahead of the oldest" |
@@ -653,8 +761,12 @@ unlock that frees O grants the oldest claim in the same critical section, so
 a writer never finds O free while a claim waits, and only a reader (the
 `reader` mutant) can observe the refusal.
 
-Remove both temporary workflows and the sweep driver when the hosted
-comparison and the mutant run are complete; keep the native regression and
-maintained checker. Native compilation, execution, sanitizer results,
-mutant results and counts for this integration are unverified until the
-owner runs CI. There is no local runtime measurement.
+The evidence above came from CI on revision `f4299910e`: the sweep, the
+mutant run and the 14900K comparison, each with the retired machinery cited
+there, and no local runtime measurement. The native regression and
+maintained checker stay in the gate. Verified: the sampled bound and the
+negative control on both hosts, each mutant failing its named case, and the
+uncontended cost against its limit. Open: the unbounded-schedule argument,
+the contended and guard-reservation costs, and any host or compiler pair
+beyond those measured; sanitizer results come from the gate's map and
+runtime jobs on the revision to merge.

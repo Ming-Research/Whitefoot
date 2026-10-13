@@ -62,8 +62,8 @@ static pthread_t watchdog_thread;
     fflush(stderr); exit(1); \
 } } while (0)
 
-/* A broken arbitration rule, named by its message; the temporary mutant
- * workflow matches these messages. */
+/* A broken arbitration rule, named by its message; the mutant table in
+ * research/investigations/shared-take-fairness/DESIGN.md lists these. */
 #define REQUIRE(test, message) do { if (!(test)) { \
     fprintf(stderr, "shared-take-witness: %s\n", message); \
     fflush(stderr); exit(1); \

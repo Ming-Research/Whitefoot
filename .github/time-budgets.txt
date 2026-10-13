@@ -52,13 +52,6 @@ compiler/test-corpus            235        210        140        205    -
 # gate.yml, runtime group
 check/runtime                   25         25         15         30     -
 
-# tmp-shared-take-witness.yml, dispatch only. Provisional ceilings for the
-# first CI sample, not measured budgets or performance acceptance criteria.
-# The sweep records two small pilots before expanding; retire these rows
-# with the temporary workflow, or replace them from its hosted evidence.
-shared-take-witness-build        60     90     -
-shared-take-witness-counts       180    180    -
-
 # io-hosts.yml, completion-linux
 linux-runtime                   50         50         50         -      -
 linux-asan-ubsan                20         20         20         -      -
