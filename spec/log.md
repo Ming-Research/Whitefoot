@@ -11,6 +11,14 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-13 v0.149: a postcondition's subscripts are judged at each selected return, and a formal offset is substituted on both sides of a call
+
+Rules: changed FN-9, ENT-2
+
+Owner-approved: On the shared status board on 2026-10-12, written in Chinese, the owner chose option A, "approve the specification revision (v0.134 to v0.135) and design-tree change for postcondition formal subscripts, exactly the content at commit 1e1e19ee3" (translated), on the card "approve the specification revision (v0.134 to v0.135) and design-tree change of Whitefoot#380 at commit 1e1e19ee3?" (translated); it carries out the owner's 2026-09-25 ruling that a postcondition's subscripts are checked at each return the clause applies to, as a precondition's are at entry. The revision merged here differs from 1e1e19ee3 by the merge of main (adapting place formation to main's per-variant payload evidence, with two added conformance cases for a forwarded success route), and the renumbering of the specification from v0.135 to v0.149.
+
+Summary: Nothing judged a postcondition place's subscripts, so `ensures r <= rows^[i].len` with `i` unbounded was accepted, a promise about an element that need not exist; and a formal written as a subscript offset became one shared unknown index in the body, at the caller and in call data, so the body could not prove its own clause, a caller of `width(rows: rows, i: 2_u64)` learned nothing about element 2, and the offsets of two calls collided. FN-9 now makes such a formal a referenced parameter datum denoting its function-entry image: a selected return reads it under entry-image stability and a call substitutes its actual, so a literal or named-const actual yields that call's element and a rebound offset leaves the relation unproved. ENT-2 forms a postcondition's places, including those its definitions reach, at each selected return in the context that return proves the clause in, and judges each subscript over what FN-9 makes its operands denote: an offset at its entry value, an entry datum's base against its entry length, an exit term's base against its length at the return. Selection ground: the owner's 2026-09-25 ruling applies the precondition principle (subscripts are judged where the clause is established) to postconditions. Refused: forming the places at body entry, leaving their subscripts unjudged, judging on the offset's current binding and the base's exit length, and reading a rebound offset through an entry datum.
+
 ## 2026-10-13 v0.148: a copied range reference is identified through its source, and a qualified constant is cited at its path with the alias repair
 
 Rules: changed ENT-2, MOD-5, DIAG-1

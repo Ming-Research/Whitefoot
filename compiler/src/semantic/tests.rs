@@ -63,6 +63,7 @@ mod ordinary_effects;
 mod originating_acceptance;
 mod owned_places;
 mod permission;
+mod postcondition_places;
 mod postconditions;
 mod range_facts;
 mod range_ordinary;

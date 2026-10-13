@@ -18,6 +18,7 @@ mod content_moves;
 mod enum_routed_ensures;
 mod floats;
 mod interface_applications;
+mod postcondition_places;
 mod prelude_opaque;
 mod qualified_constants;
 mod recursive_effects;
@@ -3843,6 +3844,7 @@ fn each_pinned_repair_is_carried_out_by_its_programs() {
         .chain(selector_scope::SELECTOR_SCOPE)
         .chain(enum_routed_ensures::ENUM_ROUTED_ENSURES)
         .chain(collisions_and_killed_facts::COLLISIONS_AND_KILLED_FACTS)
+        .chain(postcondition_places::POSTCONDITION_PLACES)
     {
         let failure = compile(
             &[SourceInput::new(pair.name, pair.rejected)],
