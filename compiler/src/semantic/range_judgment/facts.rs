@@ -13,8 +13,12 @@
 //! already selects through one of the fact's own reads (its triggers), then
 //! once more at the reads those first instances add. Second-round instances
 //! form none. Written certificate instances join the completed two rounds.
+//! A fact active only under join-arm guards forms the same instances, each
+//! asserting its conclusions only where those guards also hold.
 
 use std::collections::{BTreeMap, BTreeSet};
+
+mod unchanged;
 
 use super::super::model::CheckedMeasure;
 use super::super::range_facts::{
@@ -25,7 +29,8 @@ use super::solver::{
     AtomId, AtomKind, Capacity, Linear, Literal, Problem, Relation, Rule, Verdict,
 };
 use super::world::{
-    AtomDef, ContainerId, FactId, Stored, VersionDef, VersionId, World, projections_overlap,
+    AtomDef, ContainerId, FactId, Guarded, Stored, VersionDef, VersionId, World,
+    projections_overlap,
 };
 
 /// What one place of a clause denotes in a frame.
@@ -539,6 +544,9 @@ struct Trigger {
     /// Only an overflowing template uses the original aggregate prefix. It
     /// must still report capacity when a later, unmaterialized field is read.
     descendants: bool,
+    /// An unchanged selection triggers at every read at or below it,
+    /// including measures and the whole-element identity itself [RANGE-3].
+    unchanged: bool,
 }
 
 fn collect_triggers(term: &CheckedRangeTerm, out: &mut Vec<Trigger>, overflowing: bool) {
@@ -552,8 +560,9 @@ fn collect_triggers(term: &CheckedRangeTerm, out: &mut Vec<Trigger>, overflowing
             guarded_from,
             ..
         } => {
-            let descendants = overflowing && guarded_from.is_some();
-            let count = if descendants {
+            let unchanged = projection.last() == Some(&CheckedRangeProjection::WholeElement);
+            let descendants = unchanged || (overflowing && guarded_from.is_some());
+            let count = if descendants && !unchanged {
                 implicit_indices
                     .first()
                     .map_or(indices.len(), |at| *at as usize)
@@ -572,12 +581,15 @@ fn collect_triggers(term: &CheckedRangeTerm, out: &mut Vec<Trigger>, overflowing
                     place: place.clone(),
                     shape: *shape,
                     positions,
-                    projection: if descendants {
+                    projection: if unchanged {
+                        projection[..projection.len() - 1].to_vec()
+                    } else if descendants {
                         projection[..guarded_from.unwrap()].to_vec()
                     } else {
                         projection.clone()
                     },
                     descendants,
+                    unchanged,
                 });
             }
             for index in indices {
@@ -619,6 +631,9 @@ pub(super) struct Query {
     pub(super) units: Vec<Literal>,
     pub(super) choices: Vec<Vec<Vec<Literal>>>,
     pub(super) rules: Vec<Rule>,
+    /// Imported frame instances contribute step-2 definitions, not a round
+    /// of automatic instantiation [RANGE-3].
+    pub(super) frames: unchanged::Definitions,
 }
 
 impl Query {
@@ -626,6 +641,7 @@ impl Query {
         &mut self,
         world: &mut World,
         fact: &Fact,
+        guards: &[Literal],
         binders: &[Linear],
         iterations: &[Linear],
         atoms: &mut BTreeSet<AtomId>,
@@ -640,6 +656,8 @@ impl Query {
         }
         for mut conclusion in formed.conclusions {
             conclusion.guards.extend(formed.premises.iter().cloned());
+            conclusion.guards.extend(guards.iter().cloned());
+            self.frames.record(world, &conclusion, &formed.conditions);
             for literal in
                 conclusion
                     .guards
@@ -686,15 +704,40 @@ fn conditional_instance(conclusion: &Rule, conditions: &[Rule]) -> Vec<Vec<Liter
     alternatives
 }
 
-/// Judges one query with the given facts active and the given written
-/// instances, by the fixed procedure of [`super::solver`].
+/// Judges one query with the given facts active, unconditionally or under
+/// join-arm guards, and the given written instances, by the fixed procedure
+/// of [`super::solver`].
 pub(super) fn judge(
     world: &mut World,
     facts: &[Fact],
     active: &[FactId],
+    guarded: &[Guarded],
     written: &[(FactId, Vec<Linear>, Vec<Linear>)],
     mut query: Query,
 ) -> Result<Verdict, Capacity> {
+    // Each active fact once, with the guard sets it holds under; an
+    // unconditional activation subsumes every guarded one. A tuple is one
+    // instance of its fact whatever the number of its guard sets [RANGE-3].
+    let mut entries: Vec<(FactId, Vec<Vec<Literal>>)> = Vec::new();
+    for (fact, guards) in active.iter().map(|fact| (*fact, &[] as &[Literal])).chain(
+        guarded
+            .iter()
+            .map(|entry| (entry.fact, entry.guards.as_slice())),
+    ) {
+        match entries.iter_mut().find(|(held, _)| *held == fact) {
+            Some((_, sets)) => {
+                if sets.iter().any(Vec::is_empty) {
+                    continue;
+                }
+                if guards.is_empty() {
+                    *sets = vec![Vec::new()];
+                } else if !sets.iter().any(|set| set == guards) {
+                    sets.push(guards.to_vec());
+                }
+            }
+            None => entries.push((fact, vec![guards.to_vec()])),
+        }
+    }
     let mut atoms: BTreeSet<AtomId> = BTreeSet::new();
     let mut expanded: BTreeSet<AtomId> = BTreeSet::new();
     for literal in query
@@ -731,7 +774,7 @@ pub(super) fn judge(
             })
             .collect();
         let mut instances = Vec::new();
-        for fact_id in active {
+        for (fact_id, _) in &entries {
             let fact = &facts[*fact_id as usize];
             let mut triggers = Vec::new();
             if vacuous(world, &fact.clause, &fact.frame) {
@@ -791,7 +834,9 @@ pub(super) fn judge(
                         }
                         _ => trigger.projection.clone(),
                     };
-                    let matches = if trigger.descendants {
+                    let matches = if trigger.unchanged {
+                        projection.starts_with(&expected)
+                    } else if trigger.descendants {
                         projection.len() > expected.len()
                             && projection.starts_with(&expected)
                             && !matches!(
@@ -837,7 +882,14 @@ pub(super) fn judge(
         }
         for (fact_id, binders) in instances {
             let fact = &facts[fact_id as usize];
-            query.add_instance(world, fact, &binders, &[], &mut atoms);
+            let sets = entries
+                .iter()
+                .find(|(held, _)| *held == fact_id)
+                .map(|(_, sets)| sets.as_slice())
+                .unwrap_or_default();
+            for guards in sets {
+                query.add_instance(world, fact, guards, &binders, &[], &mut atoms);
+            }
         }
         expand(world, &mut atoms, &mut expanded, &mut query)?;
     }
@@ -849,7 +901,7 @@ pub(super) fn judge(
             && seen.insert((*fact_id, binders.clone(), iterations.clone()))
         {
             count_instance(&mut counts, *fact_id)?;
-            query.add_instance(world, fact, binders, iterations, &mut atoms);
+            query.add_instance(world, fact, &[], binders, iterations, &mut atoms);
         }
     }
     expand(world, &mut atoms, &mut expanded, &mut query)?;
@@ -952,6 +1004,12 @@ fn expand(
 ) -> Result<(), Capacity> {
     loop {
         let Some(atom) = atoms.iter().copied().find(|atom| !expanded.contains(atom)) else {
+            // Frame definitions also apply to reads introduced by ordinary
+            // version definitions and second-round instances. They add no
+            // tuple instances, and share this step-2 closure's atom ceiling.
+            if unchanged::expand(world, atoms, query)? {
+                continue;
+            }
             return Ok(());
         };
         expanded.insert(atom);
@@ -987,7 +1045,9 @@ fn expand(
                 }
                 match world.versions[version as usize].def.clone() {
                     VersionDef::Initial | VersionDef::Fresh => {}
-                    VersionDef::Copied { source, arity } => {
+                    VersionDef::Copied { source, arity }
+                        if projection.last() != Some(&CheckedRangeProjection::WholeElement) =>
+                    {
                         let mut path = source.projection;
                         path.extend((0..arity).map(|position| {
                             CheckedRangeProjection::Index((source.indices.len() + position) as u32)
@@ -1009,6 +1069,10 @@ fn expand(
                             selected,
                         )]);
                     }
+                    // [RANGE-2] Copying preserves values, not storage
+                    // identity, including collections materialized lazily
+                    // from an aggregate's Slot::Read source.
+                    VersionDef::Copied { .. } => {}
                     VersionDef::Forget {
                         previous,
                         projections,
@@ -1043,7 +1107,8 @@ fn expand(
                         // replacement overlaps every descendant, measures included.
                         if !projections_overlap(&projection, &footprint) {
                             hit.push(Literal::new(value.clone(), Relation::Equal, old.clone()));
-                        } else if let Some(relative) = projection.strip_prefix(footprint.as_slice())
+                        } else if projection.last() != Some(&CheckedRangeProjection::WholeElement)
+                            && let Some(relative) = projection.strip_prefix(footprint.as_slice())
                         {
                             for length in (0..=relative.len()).rev() {
                                 if let Some(stored) = stored.get(&relative[..length]) {
@@ -1153,15 +1218,53 @@ fn expand(
                             ));
                             alternatives.push(alternative);
                         }
+                        alternatives.extend(world.not_reached(join));
                     }
                 }
             }
+            // [RANGE-3] A joined value is the one of the arm taken where its
+            // join was reached; elsewhere a later join took an arm that
+            // bypassed it, and the value is unconstrained.
             AtomDef::Joined { join, values } => {
                 let arms = world.joins[join as usize].clone();
                 for (arm, selected) in arms.iter().zip(values) {
                     let mut alternative = arm.clone();
                     alternative.push(Literal::new(value.clone(), Relation::Equal, selected));
                     alternatives.push(alternative);
+                }
+                alternatives.extend(world.not_reached(join));
+            }
+            // [RANGE-3] A guard names a join's selector: the join took one of
+            // its arms. Every choice over the join's arms already fixes the
+            // selector, so the bare split is added only where none is in the
+            // problem; a choice over the join's arms has an alternative
+            // beginning with each arm's number, while a bypass names a few.
+            // It names no arm's conditions, which hold only on paths through
+            // the join, and a guard reaching past a later join one of whose
+            // arms bypassed this one carries that join's guard too.
+            AtomDef::Selector { arms } => {
+                let split = query.choices.iter().any(|choice| {
+                    (0..arms).all(|arm| {
+                        let taken = Literal::new(
+                            value.clone(),
+                            Relation::Equal,
+                            Linear::constant(i128::from(arm)),
+                        );
+                        choice
+                            .iter()
+                            .any(|alternative| alternative.first() == Some(&taken))
+                    })
+                });
+                if !split {
+                    alternatives = (0..arms)
+                        .map(|arm| {
+                            vec![Literal::new(
+                                value.clone(),
+                                Relation::Equal,
+                                Linear::constant(i128::from(arm)),
+                            )]
+                        })
+                        .collect();
                 }
             }
         }
@@ -1315,6 +1418,7 @@ mod aggregate_tests {
         Fact {
             frame,
             clause: CheckedRangeClause {
+                contract_reads: Vec::new(),
                 declaration: crate::DeclarationId::from_index(0).unwrap(),
                 name: "projected".to_owned(),
                 node: node.clone(),
@@ -1343,7 +1447,7 @@ mod aggregate_tests {
         let mut world = World::default();
         let fact = projected_fact(&mut world, MAX_INSTANCES + 1);
         assert_eq!(
-            judge(&mut world, &[fact], &[0], &[], Query::default()),
+            judge(&mut world, &[fact], &[0], &[], &[], Query::default()),
             Ok(Verdict::Open)
         );
     }
@@ -1426,7 +1530,7 @@ mod aggregate_tests {
         // The owed clause and distinct instances share the descriptor fact.
         // Every instance still contributes every projection and its atoms.
         for binder in [k, world.opaque(None)] {
-            query.add_instance(&mut world, &fact, &[binder], &[], &mut atoms);
+            query.add_instance(&mut world, &fact, &[], &[binder], &[], &mut atoms);
         }
         assert_eq!(query.type_facts, expected);
         assert_eq!(query.rules.len(), 2 * fact.clause.conclusions.len());
@@ -1577,7 +1681,7 @@ mod aggregate_tests {
                 .map(|index| (0, vec![Linear::constant(index as i128)], Vec::new()))
                 .collect();
             assert_eq!(
-                judge(&mut world, &[fact], &[], &written, Query::default()),
+                judge(&mut world, &[fact], &[], &[], &written, Query::default()),
                 if count == MAX_INSTANCES {
                     Ok(Verdict::Open)
                 } else {
@@ -1600,7 +1704,7 @@ mod aggregate_tests {
             .map(|index| (0, vec![Linear::constant(index as i128)], Vec::new()))
             .collect();
         assert_eq!(
-            judge(&mut world, &[fact], &[0], &written, Query::default()),
+            judge(&mut world, &[fact], &[0], &[], &written, Query::default()),
             Ok(Verdict::Open)
         );
         assert!(
@@ -1627,7 +1731,7 @@ mod aggregate_tests {
             }
             let fact = projected_fact(&mut world, count);
             assert_eq!(
-                judge(&mut world, &[fact], &[0], &[], query),
+                judge(&mut world, &[fact], &[0], &[], &[], query),
                 if count == 1 {
                     Ok(Verdict::Open)
                 } else {
@@ -1707,7 +1811,7 @@ mod aggregate_tests {
                 ..Query::default()
             };
             assert_eq!(
-                judge(&mut world, &[fact.clone()], &[0], &[], query),
+                judge(&mut world, &[fact.clone()], &[0], &[], &[], query),
                 expected
             );
         }

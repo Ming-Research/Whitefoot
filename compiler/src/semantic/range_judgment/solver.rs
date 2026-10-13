@@ -1,7 +1,7 @@
 //! [RANGE-3] the fixed quantifier-free judgment of range proofs.
 //!
 //! A query is a finite problem over integer atoms: unit literals that hold,
-//! choices of which exactly one alternative holds, and rules whose
+//! choices of which at least one alternative holds, and rules whose
 //! conclusions hold once their guards do. The judgment asks whether the
 //! problem has no model, and it runs to completion:
 //!
@@ -320,7 +320,7 @@ pub(crate) struct Rule {
 pub(crate) struct Problem {
     pub(crate) atoms: Vec<AtomKind>,
     pub(crate) units: Vec<Literal>,
-    /// Each choice: exactly one alternative, a conjunction, holds.
+    /// Each choice: at least one alternative, a conjunction, holds.
     pub(crate) choices: Vec<Vec<Vec<Literal>>>,
     pub(crate) rules: Vec<Rule>,
 }

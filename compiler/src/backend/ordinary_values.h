@@ -67,6 +67,19 @@ typedef struct { uint8_t tag; uint64_t required; } wf_copy_error;
 typedef struct { uint8_t tag; wf_io_error error; } wf_read_stop;
 typedef struct { wf_value receive; wf_value send; } wf_connection;
 typedef struct { wf_connection connection; wf_value peer; } wf_accepted_connection;
+/* `IpAddress` [PRE-2] has two payload-carrying variants whose product, the
+ * tag followed by four u8 and eight u16 leaves, would not return in
+ * registers, so it is a union of its two views (compiler/payload-enum-layout):
+ * the one-byte tag and `Ipv4`'s four octets, or the tag and `Ipv6`'s eight
+ * groups from offset 2. Its tags number the variants in the order
+ * `net/module.wfm` declares them. */
+typedef union {
+    uint8_t tag;
+    struct { uint8_t tag; uint8_t octets[4]; } v4;
+    struct { uint8_t tag; uint16_t groups[8]; } v6;
+} wf_ip_address;
+#define WF_IP_ADDRESS_V4 0u
+#define WF_IP_ADDRESS_V6 1u
 #define WF_RESULT_UNION(name, ok_type, error_type) \
     typedef union { \
         uint8_t tag; \
@@ -108,7 +121,9 @@ _Static_assert(sizeof(wf_sleep_result) == 3, "ordinary sleep Result layout");
 /* `Inputs`, its fields in declaration order; `cwd` is the two halves of a
  * `Directory`. */
 typedef struct {
-    wf_value args, cwd_read, cwd_write, out, err, handles, in, clock, wall_clock, stops, memory_meter;
+    wf_value args;
+    uint64_t drivers;
+    wf_value cwd_read, cwd_write, out, err, handles, in, clock, wall_clock, stops, memory_meter;
 } wf_inputs;
 
 _Static_assert(sizeof(wf_value) == 32 && _Alignof(wf_value) == 16, "ordinary opaque layout");
@@ -128,9 +143,15 @@ _Static_assert(sizeof(wf_accepted_connection) == 96, "ordinary AcceptedConnectio
 _Static_assert(offsetof(wf_accept_result, ok.value) == 16 &&
                offsetof(wf_accept_result, err.error) == 4 &&
                sizeof(wf_accept_result) == 112, "ordinary accept Result layout");
+_Static_assert(sizeof(wf_ip_address) == 18 && _Alignof(wf_ip_address) == 2 &&
+               offsetof(wf_ip_address, v4.tag) == 0 && offsetof(wf_ip_address, v4.octets) == 1 &&
+               offsetof(wf_ip_address, v6.tag) == 0 && offsetof(wf_ip_address, v6.groups) == 2,
+               "ordinary IpAddress layout");
 _Static_assert(offsetof(wf_deadline, value) == 8 && sizeof(wf_deadline) == 16,
                "ordinary Option<Instant> layout");
-_Static_assert(sizeof(wf_inputs) == 352, "ordinary Inputs layout");
+_Static_assert(offsetof(wf_inputs, drivers) == 32 &&
+               offsetof(wf_inputs, cwd_read) == 48 &&
+               sizeof(wf_inputs) == 368, "ordinary Inputs layout");
 _Static_assert(offsetof(wf_optional_bytes, value) == 8 && sizeof(wf_optional_bytes) == 16,
                "ordinary Option<u64> layout");
 
@@ -190,6 +211,7 @@ void wf__body_host_copy_bytes(wf_copy_result *result, const wf_value *value, wf_
 /* DescriptionError has CopyError's layout: tag 0 carries required, tag 1
  * denotes an unavailable description. Result shares wf_copy_result's layout. */
 void wf__body_error_copy_description(wf_copy_result *result, const wf_io_error *error, wf_view *destination, uint64_t start, uint64_t end);
+void wf__body_error_copy_class_description(wf_copy_result *result, const wf_io_error *error, wf_view *destination, uint64_t start, uint64_t end);
 void wf__body_host_utf8_len(wf_utf8_result *result, const wf_value *value);
 void wf__body_host_copy_utf8(wf_copy_result *result, const wf_value *value, wf_view *destination, uint64_t start, uint64_t end);
 void wf__body_relative_path(wf_value_result *result, const wf_value *value);
@@ -208,6 +230,10 @@ void wf__body_close_directory_source(wf_close_result *result, wf_value *factory,
 void wf__body_read_next(wf_read_result *result, wf_value *factory, wf_value *input, wf_view *destination, uint64_t start, uint64_t end, const wf_deadline *deadline, const wf_cancel_handle *cancel);
 void wf__body_socket_address_v4(wf_value *result, uint8_t a, uint8_t b, uint8_t c, uint8_t d, uint16_t port);
 void wf__body_socket_address_v6(wf_value *result, uint16_t a, uint16_t b, uint16_t c, uint16_t d, uint16_t e, uint16_t f, uint16_t g, uint16_t h, uint16_t port);
+void wf__body_socket_address_ip(wf_ip_address *result, const wf_value *address);
+uint16_t wf__body_socket_address_port(const wf_value *address);
+/* Result<SocketAddress, IoError> shares wf_open_result's layout. */
+void wf__body_local_address(wf_open_result *result, const wf_value *receive);
 void wf__body_tcp_listen(wf_open_result *result, wf_value *factory, const wf_value *address);
 void wf__body_tcp_accept(wf_accept_result *result, wf_value *factory, wf_value *listener, const wf_deadline *deadline, const wf_cancel_handle *cancel);
 void wf__body_tcp_connect(wf_connect_result *result, wf_value *factory, const wf_value *address, const wf_deadline *deadline, const wf_cancel_handle *cancel);

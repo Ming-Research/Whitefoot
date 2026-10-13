@@ -221,6 +221,113 @@ fn a_loopback_echo_preserves_all_bytes_and_half_close_on_both_routes() {
     }
 }
 
+/// [PRE-2] An accepted connection reports its peer and its own end:
+/// `tcp_addresses.wf` reads the peer `tcp_accept` returned and the local
+/// address `local_address` reports, spells both as Redis's CLIENT LIST spells
+/// `addr` and `laddr`, and sends that line back. This side's own view of the
+/// same connection is the independent oracle: its local address is the
+/// program's peer, and its peer address is the program's own end, the port
+/// the harness chose.
+#[test]
+fn an_accepted_connection_reports_its_peer_and_its_own_end_on_both_routes() {
+    let llvm = compile_program("tcp_addresses.wf");
+    let program = build_program(&llvm);
+    for native_ring in [true, false] {
+        let port = free_port();
+        let text = port.to_string();
+        let child = program.spawn_on_route(native_ring, &[text.as_bytes()]);
+        let mut stream = connect_when_ready(port);
+        let local = stream.local_addr().expect("this side's own address");
+        let peer = stream.peer_addr().expect("the program's address");
+        let mut reported = String::new();
+        stream
+            .read_to_string(&mut reported)
+            .expect("read the reported endpoints");
+        drop(stream);
+        let (status, _) = finished(child);
+        assert_eq!(status, 0, "native ring: {native_ring}");
+        assert_eq!(
+            peer,
+            SocketAddr::from(([127, 0, 0, 1], port)),
+            "native ring: {native_ring}"
+        );
+        assert_ne!(local.port(), port, "native ring: {native_ring}");
+        assert_eq!(
+            reported,
+            format!("addr={local} laddr={peer}\n"),
+            "native ring: {native_ring}"
+        );
+    }
+}
+
+/// One port the host is not using on the IPv6 loopback, or `None` when the
+/// host has no IPv6 loopback to bind.
+fn free_port_v6() -> Option<u16> {
+    let listener = TcpListener::bind("[::1]:0").ok()?;
+    Some(listener.local_addr().ok()?.port())
+}
+
+/// One endpoint spelled as `tcp_addresses_v6.wf` spells it: the eight groups
+/// of an IPv6 address in decimal, then the port, joined by colons.
+fn v6_endpoint_line(address: SocketAddr) -> String {
+    match address {
+        SocketAddr::V6(v6) => {
+            let mut text = String::new();
+            for group in v6.ip().segments() {
+                text.push_str(&format!("{group}:"));
+            }
+            text.push_str(&v6.port().to_string());
+            text
+        }
+        SocketAddr::V4(_) => "?".to_string(),
+    }
+}
+
+/// [PRE-2] An accepted IPv6 connection reports its peer and its own end:
+/// `tcp_addresses_v6.wf` listens on `::1`, reads the peer `tcp_accept`
+/// returned through `socket_address_ip` and `socket_address_port`, reads the
+/// local address `local_address` reports the same way, and sends both back as
+/// decimal groups. This side's own view of the same connection is the
+/// independent oracle, spelled by the standard library's `Ipv6Addr::segments`.
+/// A host without an IPv6 loopback skips the case, since the program could
+/// not listen there.
+#[test]
+fn an_accepted_ipv6_connection_reports_its_peer_and_its_own_end_on_both_routes() {
+    if free_port_v6().is_none() {
+        eprintln!("skipped: this host has no IPv6 loopback to bind");
+        return;
+    }
+    let llvm = compile_program("tcp_addresses_v6.wf");
+    let program = build_program(&llvm);
+    for native_ring in [true, false] {
+        let port = free_port_v6().expect("reserve an IPv6 loopback port");
+        let text = port.to_string();
+        let child = program.spawn_on_route(native_ring, &[text.as_bytes()]);
+        let expected = SocketAddr::new(std::net::Ipv6Addr::LOCALHOST.into(), port);
+        let mut stream = connect_to_when_ready(expected);
+        let local = stream.local_addr().expect("this side's own address");
+        let peer = stream.peer_addr().expect("the program's address");
+        let mut reported = String::new();
+        stream
+            .read_to_string(&mut reported)
+            .expect("read the reported endpoints");
+        drop(stream);
+        let (status, _) = finished(child);
+        assert_eq!(status, 0, "native ring: {native_ring}");
+        assert_eq!(peer, expected, "native ring: {native_ring}");
+        assert_ne!(local.port(), port, "native ring: {native_ring}");
+        assert_eq!(
+            reported,
+            format!(
+                "addr={} laddr={}\n",
+                v6_endpoint_line(local),
+                v6_endpoint_line(peer)
+            ),
+            "native ring: {native_ring}"
+        );
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn a_peer_that_resets_reaches_the_program_as_its_own_outcome_on_both_routes() {
@@ -812,7 +919,7 @@ fn exercise(factory: &std::io::HandleFactory, address: &std::net::SocketAddress)
 }
 
 fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
-  let std::process::Inputs(args: args, cwd: cwd_directory, stdout: out, stderr: err, handles: handles, stdin: input, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let std::process::Inputs(args: args, drivers: unused_driver_count, cwd: cwd_directory, stdout: out, stderr: err, handles: handles, stdin: input, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   std::fs::close_directory_write(factory: &handles, directory: move cwd_write);
   let address = std::net::socket_address_v4(a: 127_u8, b: 0_u8, c: 0_u8, d: 1_u8, port: 49151_u16);

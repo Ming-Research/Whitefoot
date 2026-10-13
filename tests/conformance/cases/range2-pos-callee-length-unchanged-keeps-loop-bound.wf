@@ -1,0 +1,46 @@
+struct Target {
+  t: u32;
+  s: u32;
+  d: u32;
+  k: u32;
+}
+
+fn move_slot(stack: &Box<Array<u64>>, fp: u64, s: u64, d: u64) -> r: unit writes(stack.inner) contract {
+  requires fp + 65536_u64 <= stack^.inner.len;
+  requires s < 65536_u64;
+  requires d < 65536_u64;
+  ensures stack^.inner.len == entry(stack)^.inner.len;
+} {
+  let st = fp + s;
+  let dt = fp + d;
+  let v = stack^.inner[st];
+  set stack^.inner[dt] = v;
+  return unit;
+}
+
+fn run(brtab: &Box<Slots<Target>>, stack: &Box<Array<u64>>, fp0: u64) -> r: unit reads(brtab), writes(stack) contract {
+  requires fp0 + 65536_u64 <= stack^.inner.len;
+  requires forall move_bounds(j in 0_u64..brtab^.inner.len) when brtab^.inner[j].k != 0_u32: brtab^.inner[j].s < 65536_u64, brtab^.inner[j].d < 65536_u64;
+} {
+  let fp = fp0;
+  let at = 0_u64;
+  loop (
+    invariant frame_bound: fp + 65536_u64 <= stack^.inner.len
+  ) {
+    if at >= brtab^.inner.len {
+      return unit;
+    }
+    let slot = brtab^.inner[at];
+    let si = cvt::<u32, u64>(slot.s);
+    let di = cvt::<u32, u64>(slot.d);
+    if slot.k != 0_u32 {
+      move_slot(stack: stack, fp: fp, s: si, d: di);
+    }
+    set at = at + 1_u64;
+    continue;
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

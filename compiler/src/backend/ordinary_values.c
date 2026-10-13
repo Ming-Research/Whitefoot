@@ -114,6 +114,10 @@ static void wf_description_copy(wf_copy_result *result, const char *text,
     result->ok.value = start + length;
 }
 
+static void wf_host_code_description(wf_copy_result *result, uint32_t code,
+                                     wf_view *destination,
+                                     uint64_t start, uint64_t end);
+
 void wf__body_error_copy_description(wf_copy_result *result,
                                      const wf_io_error *error,
                                      wf_view *destination,
@@ -143,6 +147,90 @@ void wf__body_error_copy_description(wf_copy_result *result,
                             destination, start, end);
         return;
     }
+    wf_host_code_description(result, code, destination, start, end);
+}
+
+/* [PRE-2] each IoError class's code on this host, indexed by tag; zero is a
+ * class with no code here, which has no description. */
+static const uint32_t wf_class_codes[WF_IO_OTHER + 1] = {
+#if defined(_WIN32)
+    [WF_IO_NOT_FOUND] = ERROR_FILE_NOT_FOUND,
+    [WF_IO_PERMISSION_DENIED] = ERROR_ACCESS_DENIED,
+    [WF_IO_ALREADY_EXISTS] = ERROR_ALREADY_EXISTS,
+    [WF_IO_NOT_DIRECTORY] = ERROR_DIRECTORY,
+    [WF_IO_DIRECTORY_NOT_EMPTY] = ERROR_DIR_NOT_EMPTY,
+    [WF_IO_READ_ONLY] = ERROR_WRITE_PROTECT,
+    [WF_IO_RESOURCE_BUSY] = ERROR_BUSY,
+    [WF_IO_INVALID_INPUT] = ERROR_INVALID_PARAMETER,
+    [WF_IO_INVALID_PATH] = ERROR_INVALID_NAME,
+    [WF_IO_UNSUPPORTED] = ERROR_NOT_SUPPORTED,
+    [WF_IO_TIMED_OUT] = ERROR_SEM_TIMEOUT,
+    [WF_IO_BROKEN_PIPE] = ERROR_BROKEN_PIPE,
+    [WF_IO_CONNECTION_REFUSED] = ERROR_CONNECTION_REFUSED,
+    [WF_IO_CONNECTION_RESET] = ERROR_NETNAME_DELETED,
+    [WF_IO_CONNECTION_ABORTED] = ERROR_REQUEST_ABORTED,
+    [WF_IO_NOT_CONNECTED] = ERROR_NOT_CONNECTED,
+    [WF_IO_ADDRESS_IN_USE] = 10048, /* WSAEADDRINUSE. */
+    [WF_IO_ADDRESS_UNAVAILABLE] = 10049, /* WSAEADDRNOTAVAIL. */
+    [WF_IO_RESOURCE_EXHAUSTED] = ERROR_TOO_MANY_OPEN_FILES,
+    [WF_IO_FILE_TOO_LARGE] = ERROR_FILE_TOO_LARGE,
+    [WF_IO_NO_SPACE] = ERROR_DISK_FULL,
+    [WF_IO_QUOTA_EXCEEDED] = ERROR_NOT_ENOUGH_QUOTA,
+    [WF_IO_CROSS_DEVICE] = ERROR_NOT_SAME_DEVICE,
+    [WF_IO_DEVICE_FAILURE] = ERROR_IO_DEVICE,
+#else
+    [WF_IO_NOT_FOUND] = ENOENT,
+    [WF_IO_PERMISSION_DENIED] = EACCES,
+    [WF_IO_ALREADY_EXISTS] = EEXIST,
+    [WF_IO_NOT_DIRECTORY] = ENOTDIR,
+    [WF_IO_IS_DIRECTORY] = EISDIR,
+    [WF_IO_DIRECTORY_NOT_EMPTY] = ENOTEMPTY,
+    [WF_IO_READ_ONLY] = EROFS,
+    [WF_IO_RESOURCE_BUSY] = EBUSY,
+    [WF_IO_INVALID_INPUT] = EINVAL,
+    [WF_IO_INVALID_PATH] = ENAMETOOLONG,
+    [WF_IO_UNSUPPORTED] = ENOTSUP,
+    [WF_IO_TIMED_OUT] = ETIMEDOUT,
+    [WF_IO_BROKEN_PIPE] = EPIPE,
+    [WF_IO_CONNECTION_REFUSED] = ECONNREFUSED,
+    [WF_IO_CONNECTION_RESET] = ECONNRESET,
+    [WF_IO_CONNECTION_ABORTED] = ECONNABORTED,
+    [WF_IO_NOT_CONNECTED] = ENOTCONN,
+    [WF_IO_ADDRESS_IN_USE] = EADDRINUSE,
+    [WF_IO_ADDRESS_UNAVAILABLE] = EADDRNOTAVAIL,
+    [WF_IO_RESOURCE_EXHAUSTED] = EMFILE,
+    [WF_IO_FILE_TOO_LARGE] = EFBIG,
+    [WF_IO_NO_SPACE] = ENOSPC,
+#ifdef EDQUOT
+    [WF_IO_QUOTA_EXCEEDED] = EDQUOT,
+#endif
+    [WF_IO_CROSS_DEVICE] = EXDEV,
+    [WF_IO_DEVICE_FAILURE] = EIO,
+#endif
+};
+
+/* The class's description is the host text of its code, the same text
+ * error_copy_description gives a variant carrying that code; the error's own
+ * code and origin are not read. */
+void wf__body_error_copy_class_description(wf_copy_result *result,
+                                           const wf_io_error *error,
+                                           wf_view *destination,
+                                           uint64_t start, uint64_t end) {
+    memset(result, 0, sizeof(*result));
+    result->tag = 1;
+    result->err.error.tag = 1;
+    if (error->tag > WF_IO_OTHER) return;
+    const uint32_t code = wf_class_codes[error->tag];
+    if (code == 0) return;
+    wf_host_code_description(result, code, destination, start, end);
+}
+
+/* The host's message for a nonzero code, copied under the description window
+ * contract. The caller has set result to DescriptionUnavailable, which every
+ * failure before the final copy keeps. */
+static void wf_host_code_description(wf_copy_result *result, uint32_t code,
+                                     wf_view *destination,
+                                     uint64_t start, uint64_t end) {
 #if defined(_WIN32)
     WCHAR local_wide[128];
     WCHAR *wide = local_wide;
@@ -364,6 +452,38 @@ void wf__body_socket_address_v6(wf_value *result, uint16_t a, uint16_t b, uint16
             | ((uint64_t)(groups[index] & 255) << (shift + 8));
     }
     result->words[2] = (uint64_t)port | WF_SOCKET_FAMILY_V6;
+}
+
+/* Byte `index` of an address's sixteen, by the rule the two constructors
+ * above write them with and `completion/contract.h` states: byte `i` occupies
+ * bits `8 * (i % 8)` of word `i / 8`, the IPv4 octets are bytes 0 to 3 and an
+ * IPv6 group is its high byte followed by its low byte. */
+static unsigned wf_address_byte(const wf_value *address, unsigned index) {
+    return (unsigned)((address->words[index / 8u] >> (8u * (index % 8u))) & 0xffu);
+}
+
+/* [PRE-2] the family and components the constructors took, read back by the
+ * same layout rule, so every address reads as the call that built it. */
+void wf__body_socket_address_ip(wf_ip_address *result, const wf_value *address) {
+    unsigned index;
+    memset(result, 0, sizeof(*result));
+    if ((address->words[2] & WF_SOCKET_FAMILY_V6) != 0) {
+        result->tag = WF_IP_ADDRESS_V6;
+        for (index = 0; index < 8u; index++) {
+            result->v6.groups[index] =
+                (uint16_t)((wf_address_byte(address, 2u * index) << 8)
+                           | wf_address_byte(address, 2u * index + 1u));
+        }
+    } else {
+        result->tag = WF_IP_ADDRESS_V4;
+        for (index = 0; index < 4u; index++) {
+            result->v4.octets[index] = (uint8_t)wf_address_byte(address, index);
+        }
+    }
+}
+
+uint16_t wf__body_socket_address_port(const wf_value *address) {
+    return (uint16_t)(address->words[2] & WF_SOCKET_PORT_MASK);
 }
 
 static int wf_descriptor(const wf_value *value) { return (int)value->words[0]; }
@@ -1648,6 +1768,25 @@ void wf__body_tcp_accept(wf_accept_result *result, wf_value *factory, wf_value *
         wf__body_tcp_accept_finish(result, factory, listener, deadline, cancel, &operation);
 }
 
+/* [PRE-2] the host's report of the connection's own endpoint. Both halves of
+ * one connection carry its one descriptor, which stays open until the second
+ * half-close, so a live receiving half always names an open socket. The query
+ * spends no handle credit and changes neither half. */
+void wf__body_local_address(wf_open_result *result, const wf_value *receive) {
+    uint64_t low, high;
+    uint32_t tag;
+    int error = wf__completion_socket_local_address(wf_descriptor(receive), &low, &high, &tag);
+    memset(result, 0, sizeof(*result));
+    if (error != 0) {
+        result->tag = 1;
+        wf_error(&result->err.error, error, 10);
+        return;
+    }
+    result->ok.value.words[0] = low;
+    result->ok.value.words[1] = high;
+    result->ok.value.words[2] = tag;
+}
+
 void wf__body_cancel_source(wf_cancel_handle *result) {
     result->state = wf__cancel_new();
 }
@@ -1786,6 +1925,7 @@ int wf__ordinary_inputs(wf_inputs *inputs, int argc, void *argv) {
     int cwd;
     uint64_t capacity;
     memset(inputs, 0, sizeof(*inputs));
+    inputs->drivers = wf__context_driver_count();
     if (wf__stop_initialize() != 0) return 0;
 #if defined(_WIN32)
     /* The build launcher has an ordinary narrow-argv main. Recover Windows'

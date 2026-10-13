@@ -108,7 +108,9 @@ impl Selection<'_> {
     fn affine(&mut self, relation: &CheckedAffineRelation) -> bool {
         let mut admitted = true;
         for value in relation.left.postorder().chain(relation.right.postorder()) {
-            if let CheckedAffineExpressionKind::Measure(measure) = &value.kind {
+            if let CheckedAffineExpressionKind::Measure(measure)
+            | CheckedAffineExpressionKind::Field(measure) = &value.kind
+            {
                 admitted &= term(measure);
                 self.expression(measure);
             }

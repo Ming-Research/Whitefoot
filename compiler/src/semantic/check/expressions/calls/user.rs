@@ -16,13 +16,14 @@ use super::super::super::super::goal::{
 use super::super::super::super::model::{
     BindingId, CheckedCallContract, CheckedCallSeparation, CheckedCallSeparationPositions,
     CheckedEffectStep, CheckedEffects, CheckedExpression, CheckedMode, CheckedNominalKind,
-    CheckedRangeSource, CheckedSegmentSelect, CheckedSegmentSource, CheckedSetTarget,
-    CheckedStatePath, CheckedType,
+    CheckedRangeSource, CheckedSegmentSelect, CheckedSegmentSource, CheckedSeparationOccasion,
+    CheckedSetTarget, CheckedStatePath, CheckedType,
 };
 use super::super::super::super::places::{
     CaptureId, CapturedRange, CapturedTerm, CapturedValue, PlaceRoot, PlaceStep, ResolvedPlace,
     SeparationOracle, UnprovedSeparations, WindowPart, overlaps_at_every_position, places_overlap,
 };
+use super::super::super::contract_reads::{ContractReadStep, range_term_goal};
 use super::super::super::generics::{
     GenericArgument, GenericParameterKey, HEAP_ALLOCATING_PRELUDE_FUNCTIONS,
 };
@@ -40,7 +41,11 @@ use super::super::super::{
 /// (`move`) or a read (copy) of its own place to the same comparison, which
 /// is why an entry carries a resolved place and a category and nothing about
 /// how it was spelled.
+#[derive(Clone)]
 struct SubstitutedEntry {
+    /// A proof-only contract observation; compared only across arguments.
+    contract_read: bool,
+    contract_indices: Vec<(CapturedValue, GoalExpression)>,
     place: ResolvedPlace,
     /// Whether this entry writes, replaces, moves out of, or frees the
     /// storage at its path and everything below it [EFF-1].
@@ -525,7 +530,98 @@ impl<'unit> Checker<'_, 'unit> {
         // [EFF-5] would otherwise report against that row.
         let atomic_target =
             self.check_atomic_update_row(node, &actual_paths, &substituted, bindings)?;
-        self.check_call_pairwise_disjointness(node, signature, &substituted, bindings)?;
+        let contract_reads = self.contract_read_footprint(check_context, signature)?;
+        let mut compared = substituted.clone();
+        let origin_start = substituted
+            .iter()
+            .map(|entry| entry.origin)
+            .max()
+            .map_or(Some(0), |origin| origin.checked_add(1))
+            .ok_or(SemanticCompilerFailure::CounterOverflow)?;
+        let mut contract_position = 0_u32;
+        for (ordinal, read) in contract_reads.iter().enumerate() {
+            let argument = signature
+                .parameters
+                .iter()
+                .position(|parameter| parameter.declaration == read.root)
+                .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+            let mut suffix = Vec::new();
+            let mut contract_indices = Vec::new();
+            for step in &read.steps {
+                match step {
+                    ContractReadStep::Row(step) => {
+                        suffix.extend(Checker::substitute_effect_steps(
+                            signature,
+                            &CheckedStatePath {
+                                root: read.root,
+                                steps: vec![*step],
+                            },
+                            &actual_captures,
+                        )?);
+                    }
+                    ContractReadStep::Captured(step) => suffix.push(*step),
+                    ContractReadStep::Computed(term, definitions) => {
+                        let mut pending = Vec::new();
+                        let goal = range_term_goal(
+                            term,
+                            signature,
+                            definitions,
+                            node,
+                            &mut contract_position,
+                            &mut pending,
+                        )
+                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                        for (capture, template) in pending {
+                            let image = self.instantiate_goal_expression(
+                                check_context,
+                                &template,
+                                signature,
+                                &signature.region_parameters,
+                                &goal_arguments,
+                            )?;
+                            contract_indices.push((capture, image));
+                        }
+                        let goal = self.instantiate_goal_expression(
+                            check_context,
+                            &goal,
+                            signature,
+                            &signature.region_parameters,
+                            &goal_arguments,
+                        )?;
+                        let captured = CapturedValue::new(
+                            CaptureId::ContractRead {
+                                call: node,
+                                position: contract_position,
+                            },
+                            CapturedTerm::Opaque,
+                        );
+                        contract_position = contract_position
+                            .checked_add(1)
+                            .ok_or(SemanticCompilerFailure::CounterOverflow)?;
+                        suffix.push(PlaceStep::Index(captured));
+                        contract_indices.push((captured, goal));
+                    }
+                }
+            }
+            for actual in actual_paths.get(argument).into_iter().flatten() {
+                let mut place = actual.clone();
+                let formed = place.path.len();
+                place.path.extend(suffix.iter().copied());
+                compared.push(SubstitutedEntry {
+                    contract_read: true,
+                    contract_indices: contract_indices.clone(),
+                    place,
+                    formed,
+                    write: false,
+                    consuming: false,
+                    argument,
+                    origin: origin_start
+                        .checked_add(ordinal)
+                        .ok_or(SemanticCompilerFailure::CounterOverflow)?,
+                });
+            }
+        }
+        self.check_call_pairwise_disjointness(node, signature, &compared, bindings)?;
         self.types.invalidate_call_references(
             node,
             &substituted,
@@ -603,6 +699,7 @@ impl<'unit> Checker<'_, 'unit> {
                 goal_arguments,
                 goal_regions: Vec::new(),
                 requirements: Vec::new(),
+                routed_requirements: Vec::new(),
                 result,
                 result_borrow: None,
             },
@@ -785,6 +882,9 @@ impl<'unit> Checker<'_, 'unit> {
         let formal = Checker::formal_row_places(signature)?;
         for (index, left) in entries.iter().enumerate() {
             for right in entries.iter().skip(index + 1) {
+                if (left.contract_read || right.contract_read) && left.argument == right.argument {
+                    continue;
+                }
                 if left.origin == right.origin || !(left.write || right.write) {
                     continue;
                 }
@@ -807,10 +907,30 @@ impl<'unit> Checker<'_, 'unit> {
                 // A pair whose only unseparated steps are index or range
                 // positions, or an index beside a window part, is the fixed
                 // families' question; every other overlap is refused here and
-                // now.
-                if let Some((positions, window)) =
-                    Checker::separable_by_position(&left.place, &right.place)
-                {
+                // now. A position whose value no fact names is no question
+                // the families can answer, so a pair separable only there is
+                // one no position separates.
+                let separable = Checker::separable_by_position(&left.place, &right.place);
+                let named = separable.as_ref().and_then(|(positions, window)| {
+                    let positions = positions
+                        .iter()
+                        .copied()
+                        .filter(|candidate| candidate.names_its_values())
+                        .collect::<Vec<_>>();
+                    // The window is read only by a position beside its part.
+                    let window = window.clone().filter(|_| {
+                        positions.iter().any(|candidate| {
+                            matches!(
+                                candidate,
+                                CheckedCallSeparationPositions::Live(_)
+                                    | CheckedCallSeparationPositions::RangeWithinLength(_)
+                            )
+                        })
+                    });
+                    (!positions.is_empty()).then_some((positions, window))
+                });
+                let unnamed_positions = separable.is_some() && named.is_none();
+                if let Some((positions, window)) = named {
                     // [OWN-7] positions below different range frames are
                     // relative to those frames. Name the range pair the
                     // proof actually compares, rather than descendant runs
@@ -835,9 +955,19 @@ impl<'unit> Checker<'_, 'unit> {
                     }
                     self.body.call_separations.push(CheckedCallSeparation {
                         site: self.types.declarations.tree.path(node)?.clone(),
-                        exchange,
+                        occasion: if exchange {
+                            CheckedSeparationOccasion::Exchange
+                        } else {
+                            CheckedSeparationOccasion::Call
+                        },
                         reference_use: None,
                         positions,
+                        contract_indices: left
+                            .contract_indices
+                            .iter()
+                            .chain(&right.contract_indices)
+                            .cloned()
+                            .collect(),
                         window,
                         left_spelling: self
                             .types
@@ -866,11 +996,13 @@ impl<'unit> Checker<'_, 'unit> {
                         // the same values over one place the argument names,
                         // or because no family this checker poses at a call
                         // separates the steps at which the two paths differ,
-                        // as for two places a joined argument may name. Only
-                        // the first is repaired at the call's positions.
+                        // as for two places a joined argument may name, or
+                        // whose positions there no fact names. Only the first
+                        // is repaired at the call's positions.
                         mechanical_fix: if exchange {
                             "exchange equal or disjoint places without an ancestor relation"
                         } else if left.argument == right.argument
+                            && !unnamed_positions
                             && left.place.root == right.place.root
                             && left.place.path.get(..left.formed)
                                 == right.place.path.get(..right.formed)
@@ -879,6 +1011,8 @@ impl<'unit> Checker<'_, 'unit> {
                             && Checker::separable_by_position(left_formal, right_formal).is_some()
                         {
                             "this call gives these two entries of the callee's row the same positions: pass positions this call proves do not overlap, or replace the callee's row entries at or below their common path with one `writes` entry of that path"
+                        } else if left.argument == right.argument && unnamed_positions {
+                            "these two entries of the callee's row may reach overlapping places through one argument, and no fact names the positions this call passes for them: replace the callee's row entries at or below their common path with one `writes` entry of that path"
                         } else if left.argument == right.argument {
                             "these two entries of the callee's row may reach overlapping places through one argument, and no position this call passes separates them: replace the callee's row entries at or below their common path with one `writes` entry of that path"
                         } else {
@@ -1063,6 +1197,8 @@ impl<'unit> TypeContext<'unit> {
                     let mut place = base.clone();
                     place.path.extend_from_slice(&steps);
                     entries.push(SubstitutedEntry {
+                        contract_read: false,
+                        contract_indices: Vec::new(),
                         formed: base.path.len(),
                         place,
                         write,
@@ -1088,6 +1224,8 @@ impl<'unit> TypeContext<'unit> {
                     .is_copy_place_type(check_context, signature, index)
                     .is_none_or(|copy| !copy);
                 entries.push(SubstitutedEntry {
+                    contract_read: false,
+                    contract_indices: Vec::new(),
                     formed: place.path.len(),
                     place: place.clone(),
                     // A `move` empties the place, which [EFF-1] classes with

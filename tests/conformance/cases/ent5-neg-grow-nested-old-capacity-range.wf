@@ -2,7 +2,7 @@ fn reserve(rows: &Slots<Box<Slots<u64>>, 2>, selected: u64, capacity: u64) -> re
   requires selected < rows^.len;
   requires capacity >= rows^[selected].inner.cap;
   requires forall capacities(r in 0_u64..rows^.len): rows^[r].inner.cap == 1_u64;
-  ensures forall unchanged(r in 0_u64..rows^.len): rows^[r].inner.cap == 1_u64;
+  ensures forall preserved_value(r in 0_u64..rows^.len): rows^[r].inner.cap == 1_u64;
 } {
   grow(cell: &rows^[selected], capacity: capacity);
   return unit;

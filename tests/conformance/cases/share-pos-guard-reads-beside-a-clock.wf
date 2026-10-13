@@ -1,0 +1,29 @@
+struct Progress {
+  n: u64;
+}
+
+struct Schedule {
+  wall: std::time::WallClock;
+  limit: u64;
+}
+
+fn reached(progress: &Progress, schedule: &Schedule) -> result: Bool reads(progress), reads(schedule.limit) {
+  doc "Reports whether progress has reached the schedule's limit, reading no clock.";
+  let done = progress^.n >= schedule^.limit;
+  return done;
+}
+
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
+  doc "A guard may read a field of a struct that also holds a wall clock, since the path its row reads has no clock part.";
+  let std::process::Inputs(cwd: directory, handles: factory, wall_clock: wall, ..) = move inputs;
+  let std::fs::Directory(read: directory_read, write: directory_write) = move directory;
+  std::fs::close_directory_write(factory: &factory, directory: move directory_write);
+  std::fs::close_directory(factory: &factory, directory: move directory_read);
+  let schedule = Schedule(wall: move wall, limit: 0_u64);
+  let initial = Progress(n: 0_u64);
+  let state = shared_new::<Progress>(value: initial);
+  atomic g = &state when reached(progress: g, schedule: &schedule) {
+    set g^.n = 1_u64;
+  }
+  return std::process::exit_status(code: 0_u8);
+}

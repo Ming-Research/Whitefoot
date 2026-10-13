@@ -131,6 +131,10 @@ pub(super) enum InvalidationEvent {
     PrefixWritten,
     /// The path or a prefix of it was moved out of [OWN-1, WIN-3].
     PrefixMoved,
+    /// The path or a prefix of it was released by a compiler-derived release
+    /// [STOR-3]: a move out of a field releases the owner's other affine
+    /// parts at the move [WIN-3].
+    PrefixReleased,
     /// A call's substituted row writes a proper prefix of the path
     /// [EFF-5 clause 3].
     CallWrite,
@@ -154,6 +158,7 @@ impl InvalidationEvent {
         match self {
             Self::PrefixWritten => "a proper prefix of the reference's path was written",
             Self::PrefixMoved => "the reference's path or a prefix of it was moved out of",
+            Self::PrefixReleased => "the reference's path or a prefix of it was released",
             Self::CallWrite => "a call wrote a proper prefix of the reference's path",
             Self::RootScopeEnded => "the scope of the local variable the path starts at ended",
             Self::WindowBoundaryMoved => {
@@ -2603,7 +2608,10 @@ impl<'unit> TypeContext<'unit> {
                 local.call_value = false;
             }
         }
-        let include_equal = matches!(event, InvalidationEvent::PrefixMoved);
+        let include_equal = matches!(
+            event,
+            InvalidationEvent::PrefixMoved | InvalidationEvent::PrefixReleased
+        );
         let primitive_write = !include_equal
             && !matches!(
                 written.path.last(),
@@ -2668,13 +2676,14 @@ impl<'unit> TypeContext<'unit> {
         for (declaration, site, positions, window, path) in preserved {
             let query = CheckedCallSeparation {
                 site: site.clone(),
-                exchange: false,
+                occasion: super::super::model::CheckedSeparationOccasion::Call,
                 reference_use: Some(super::super::model::CheckedReferencePreservationUse {
                     site: site.clone(),
                     binder: String::new(),
                     event: event.phrase(),
                 }),
                 positions,
+                contract_indices: Vec::new(),
                 window,
                 left_spelling: self.render_resolved_place(written, bindings)?,
                 right_spelling: self.render_resolved_place(&path, bindings)?,
@@ -2923,6 +2932,7 @@ mod tests {
         let events = [
             InvalidationEvent::PrefixWritten,
             InvalidationEvent::PrefixMoved,
+            InvalidationEvent::PrefixReleased,
             InvalidationEvent::CallWrite,
             InvalidationEvent::RootScopeEnded,
             InvalidationEvent::WindowBoundaryMoved,

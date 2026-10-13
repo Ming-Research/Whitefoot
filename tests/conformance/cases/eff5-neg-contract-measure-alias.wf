@@ -1,0 +1,22 @@
+struct Holder {
+  marker: u64;
+  items: Slots<Box<u64>, 4>;
+}
+
+fn helper(frame: &Holder, other: &Holder) -> result: unit writes(frame.marker), writes(other.items) contract {
+  requires frame^.items.len >= 1_u64;
+  requires other^.items.len >= 1_u64;
+  ensures frame^.items.len >= 1_u64;
+} {
+  set frame^.marker = 1_u64;
+  let taken = take_back(window: &other^.items);
+  return unit;
+}
+
+fn caller(f: &Holder) -> result: unit writes(f) contract {
+  requires f^.items.len == 1_u64;
+} {
+  doc "EFF-5: f.items.len is a contract read reached through frame and a descendant of other writes(f.items).";
+  helper(frame: f, other: f);
+  return unit;
+}

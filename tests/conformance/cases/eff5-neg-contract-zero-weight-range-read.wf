@@ -1,0 +1,14 @@
+fn helper(source: &[u64], target: &[u64], j: u64) -> result: unit writes(target[j]) contract {
+  requires target^.len == 1_u64;
+  requires j == 0_u64;
+  requires forall ok(k in 0_u64..1_u64): 0_u64 * source^[k] == 0_u64;
+} {
+  set target^[j] = 1_u64;
+  return unit;
+}
+
+fn caller() -> result: unit pure {
+  let values = array_filled::<u64, 1>(value: 0_u64);
+  helper(source: &values[0_u64..1_u64], target: &values[0_u64..1_u64], j: 0_u64);
+  return unit;
+}
