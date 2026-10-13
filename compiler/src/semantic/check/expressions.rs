@@ -772,10 +772,12 @@ impl<'unit> Checker<'_, 'unit> {
             .direct_token_with(node, TerminalPredicate::Literal)?
         {
             let bytes = self.types.declarations.tree.token_bytes(literal)?;
-            if matches!(bytes, b"0_T" | b"1_T") {
-                return self
-                    .types
-                    .check_generic_numeric_identity(context, node, bytes == b"1_T");
+            if crate::syntax::terminal::is_generic_numeric_literal(bytes) {
+                return self.types.check_generic_numeric_identity(
+                    context,
+                    node,
+                    bytes.first() == Some(&b'1'),
+                );
             }
             return Ok(TypedExpression::owned(
                 CheckedExpression::Constant(self.types.declarations.parse_literal(node, literal)?),
@@ -2442,7 +2444,7 @@ impl<'unit> TypeContext<'unit> {
         }
         Ok((fields, ty))
     }
-    fn check_generic_numeric_identity(
+    pub(in crate::semantic::check) fn check_generic_numeric_identity(
         &self,
         context: FunctionContext<'_, '_>,
         node: NodeId,

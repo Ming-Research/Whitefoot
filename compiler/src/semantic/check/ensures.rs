@@ -1786,7 +1786,7 @@ impl<'unit> DeclarationInventory<'unit> {
                 .direct_token_with(*atom, crate::TerminalPredicate::Literal)?
         {
             let bytes = self.tree.token_bytes(literal)?;
-            if matches!(bytes, b"0_T" | b"1_T") {
+            if crate::syntax::terminal::is_generic_numeric_literal(bytes) {
                 let usage =
                     self.use_at(check_context, *atom, LexicalUseRole::GenericNumericSuffix)?;
                 let ResolvedTarget::Source {
@@ -1798,7 +1798,7 @@ impl<'unit> DeclarationInventory<'unit> {
                 };
                 return Ok(PostconditionConstantOrigin::GenericNumericIdentity {
                     type_parameter: declaration,
-                    one: bytes == b"1_T",
+                    one: bytes.first() == Some(&b'1'),
                 });
             }
         }
