@@ -146,3 +146,23 @@ of its blocks had a twin deviation above 0.03, leaving 5, so it was void under
 the rules above (its kept blocks read V/R 0.971 and BV/PRR 0.590). The block
 count was then raised to 36 with every rule unchanged; each arm-run lasts
 about one second, which is where the twin spread comes from.
+
+### Re-run after main's lock-path changes
+
+The run above measured `aec381cec`. The branch then merged main's lazy
+locking and guard-fairness changes, which rewrote atomic-statement lowering
+and the shared-object runtime that this workload exercises, so the comparison
+was repeated on the merged head with every rule unchanged:
+run [38394439243](https://github.com/Ming-Research/Whitefoot/actions/runs/38394439243),
+same machine and settings, 36 blocks, pull request compiler `92b223503`, base
+compiler `3fabe3cde`.
+
+| Reading | Value | Criterion |
+|---|---|---|
+| Structural check: `wf__shared_share` calls, PR V / PR R / base V / base R | 3 / 3 / 4 / 3 | holds |
+| Twin deviation \|PRR2/PRR - 1\|, median and largest | 0.036 and 0.104 | a block above 0.03 is void |
+| Blocks kept | 17 of 36 | at least 6 |
+| Falsifier BV/PRR, median over kept blocks | 0.569 | at most 0.95 |
+| V/R = PRV/PRR, median over kept blocks | 1.024, 95% interval [1.012, 1.047] | at least 0.95 |
+
+Verdict: **PASS**, with the same scope as above.
