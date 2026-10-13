@@ -332,7 +332,9 @@ impl Input<'_, '_> {
         for step in steps {
             ty = match step {
                 CheckedPlaceStep::Subscript(index) => index.element_type,
-                CheckedPlaceStep::BoxReferent(_) | CheckedPlaceStep::Field(_) => {
+                CheckedPlaceStep::BoxReferent(_)
+                | CheckedPlaceStep::Field(_)
+                | CheckedPlaceStep::Payload { .. } => {
                     self.owned_path_type(ty, &[step.place_step()])?
                 }
                 CheckedPlaceStep::Measure(_) => return None,

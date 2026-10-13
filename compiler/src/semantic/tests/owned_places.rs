@@ -412,3 +412,101 @@ fn main() -> status: std::process::ExitStatus pure {
         assert!(releases.iter().any(Vec::is_empty));
     });
 }
+
+/// [OWN-1, WIN-3] permits taking the affine payload and killing its own
+/// enum root. Until active-variant residual release is implemented, that
+/// specified form is a compiler capability stop, never an element-move rule.
+#[test]
+fn owned_enum_payload_consume_reports_the_unimplemented_release_path() {
+    super::assert_unsupported(
+        br#"fn main() -> status: std::process::ExitStatus pure {
+  let value = box_new::<u64>(value: 7_u64);
+  let cell = Some<Box<u64>>(value: move value);
+  match &cell {
+    None() => {
+      return std::process::exit_status(code: 0_u8);
+    }
+    Some(..) => {
+      let extracted = move cell.Some.value;
+      return std::process::exit_status(code: 0_u8);
+    }
+  }
+}
+"#,
+        crate::UnsupportedSemanticFeature::CompositeValues,
+    );
+}
+
+/// The same missing enum release path applies when the selected affine
+/// value is Box content below its payload, not only the payload field itself.
+#[test]
+fn owned_enum_payload_box_content_consume_reports_the_same_capability() {
+    super::assert_unsupported(
+        br#"fn main() -> status: std::process::ExitStatus pure {
+  let inner = box_new::<u64>(value: 7_u64);
+  let outer = box_new::<Box<u64>>(value: move inner);
+  let cell = Some<Box<Box<u64>>>(value: move outer);
+  match &cell {
+    None() => {
+      return std::process::exit_status(code: 0_u8);
+    }
+    Some(..) => {
+      let extracted = move cell.Some.value.inner;
+      return std::process::exit_status(code: 0_u8);
+    }
+  }
+}
+"#,
+        crate::UnsupportedSemanticFeature::CompositeValues,
+    );
+}
+
+/// A written reference step still owns its [OWN-1] source rejection before
+/// the unsupported own-root enum cleanup path can be considered.
+#[test]
+fn referenced_enum_payload_consume_remains_an_own1_source_rejection() {
+    assert_rule_kind(
+        br#"fn take_referenced(cell: &Option<Box<u64>>) -> result: unit reads(cell) {
+  match &cell^ {
+    None() => {
+      return unit;
+    }
+    Some(..) => {
+      let extracted = move cell^.Some.value;
+      return unit;
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        SemanticRule::Own1,
+        |kind| matches!(kind, SemanticIssueKind::MoveThroughReference { .. }),
+    );
+}
+
+/// [TYPE-9]'s runtime-capacity placement refusal precedes the missing enum
+/// consume implementation: a Box's raw Slots content is not an owned value.
+#[test]
+fn runtime_box_content_below_an_enum_payload_remains_a_type9_rejection() {
+    assert_rule_kind(
+        br#"fn main() -> status: std::process::ExitStatus pure {
+  let values = box_slots_new::<u64>(capacity: 4_u64);
+  let cell = Some<Box<Slots<u64>>>(value: move values);
+  match &cell {
+    None() => {
+      return std::process::exit_status(code: 0_u8);
+    }
+    Some(..) => {
+      let extracted = move cell.Some.value.inner;
+      return std::process::exit_status(code: 0_u8);
+    }
+  }
+}
+"#,
+        SemanticRule::Type9,
+        |kind| matches!(kind, SemanticIssueKind::InvalidRestrictedTypePlacement { .. }),
+    );
+}

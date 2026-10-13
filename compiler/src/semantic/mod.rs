@@ -954,6 +954,15 @@ pub enum SemanticIssueKind {
         /// Exact restructuring required by REF-2.
         mechanical_fix: &'static str,
     },
+    /// [REF-1] a new payload selection lacks its current variant fact.
+    UnestablishedPayloadVariant {
+        /// The enum place whose variant must be established.
+        place: String,
+        /// The variant selected by the source payload suffix.
+        variant: String,
+        /// Exact restructuring required by REF-1.
+        mechanical_fix: &'static str,
+    },
     /// [REF-1] `&p` where `p` is a reference variable, which is not storage
     /// of its own.
     ReferenceToReferenceVariable {

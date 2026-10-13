@@ -165,6 +165,7 @@ fn subscript_suffixes(path: &[CheckedPlaceStep]) -> impl Iterator<Item = &crate:
     path.iter().filter_map(|step| match step {
         CheckedPlaceStep::Subscript(subscript) => Some(&subscript.obligation),
         CheckedPlaceStep::Field(_)
+        | CheckedPlaceStep::Payload { .. }
         | CheckedPlaceStep::BoxReferent(_)
         | CheckedPlaceStep::Measure(_) => None,
     })
@@ -2352,6 +2353,19 @@ impl<'unit> TypeContext<'unit> {
                     };
                     fields
                         .get(*field as usize)
+                        .ok_or(SemanticCompilerFailure::InvalidResolution)?
+                        .ty
+                }
+                CheckedPlaceStep::Payload { variant, field, .. } => {
+                    let CheckedType::Nominal(nominal) = ty else {
+                        return Err(SemanticCompilerFailure::InvalidResolution.into());
+                    };
+                    let CheckedNominalKind::Enum { variants } = &self.nominal(nominal)?.kind else {
+                        return Err(SemanticCompilerFailure::InvalidResolution.into());
+                    };
+                    variants
+                        .get(*variant as usize)
+                        .and_then(|variant| variant.fields.get(*field as usize))
                         .ok_or(SemanticCompilerFailure::InvalidResolution)?
                         .ty
                 }

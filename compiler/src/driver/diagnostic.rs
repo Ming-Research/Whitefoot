@@ -881,6 +881,7 @@ impl Report for SemanticIssueKind {
             ContainerConstruction { nominal, mechanical_fix };
             UseAfterMove { mechanical_fix };
             InvalidReferenceUse { binder, event, mechanical_fix };
+            UnestablishedPayloadVariant { place, variant, mechanical_fix };
             ReferenceToReferenceVariable { mechanical_fix };
             EscapingReference { mechanical_fix };
             RangeOverRing { mechanical_fix };
