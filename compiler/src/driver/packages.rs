@@ -5,15 +5,16 @@
 use std::path::{Path, PathBuf};
 
 use super::{
-    Anchor, CompilationFailure, CompilationFailureKind, CompilationStage, CompilerLimits, Place,
-    SourceBundle, SourceInput, canonical_syntax,
+    Anchor, CompilationFailure, CompilationFailureKind, CompilationStage, CompilerLimits,
+    FormatGrammar, Place, SourceBundle, SourceInput, canonical_format, canonical_syntax,
 };
 use crate::graph::{
     BoundPackages, FormedPackage, GraphIssue, GraphIssueKind, WrittenBinding, assemble_graph,
     form_package_graph, graph_bindings, registered_paths,
 };
 use crate::{
-    CanonicalSyntaxUnit, DiscoveryFailure, GRAPH_FILE_NAME, ModuleGraph, Package, read_graph_record,
+    CanonicalSyntaxUnit, DiscoveryFailure, GRAPH_FILE_NAME, ModuleGraph, Package,
+    discover_module_sources, read_graph_record,
 };
 
 /// Why a module program's packages cannot be formed: a rejection of one of
@@ -38,6 +39,65 @@ impl From<DiscoveryFailure> for ModuleProgramFailure {
     }
 }
 
+/// One module-program record and the canonical bytes computed for it.
+/// No write is performed while constructing these records.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FormattedFile {
+    /// The host path from which this record was read.
+    pub path: PathBuf,
+    /// The exact bytes read before formatting.
+    pub original: Vec<u8>,
+    /// The exact FORM-2 rendering of the record's derivation.
+    pub bytes: Vec<u8>,
+}
+
+/// Computes canonical bytes for a module program's graph records, including
+/// bound packages, and every registered interface and implementation record.
+///
+/// Package traversal, graph judgments and source discovery use the ordinary
+/// module-checking path. Graphs are rendered before those judgments so layout
+/// faults do not prevent discovery; graph-rule diagnostics refer to that
+/// canonical rendering, while lexical and grammar diagnostics retain the
+/// original record. Source records are one grammar compilation unit without
+/// semantic checking. The result contains graphs in package order followed by
+/// source records in discovery order, and no partial result escapes a failure.
+/// This function reads files but never rewrites them.
+pub fn format_module_program(
+    graph_path: &Path,
+    limits: CompilerLimits,
+) -> Result<Vec<FormattedFile>, ModuleProgramFailure> {
+    let (graph, mut files) = load_module_program_graph(graph_path, limits, true)?;
+    let root = program_root(graph_path);
+    let sources = discover_module_sources(&root, &graph)?;
+    let inputs = sources
+        .iter()
+        .map(|source| {
+            SourceInput::from_host_path(&source.logical_path, &source.display_path, &source.bytes)
+                .in_module(source.module, source.role)
+        })
+        .collect::<Vec<_>>();
+    let rendered = canonical_format(&inputs, FormatGrammar::Program, limits)?;
+    files.extend(
+        sources
+            .into_iter()
+            .zip(rendered)
+            .map(|(source, rendered)| FormattedFile {
+                path: PathBuf::from(source.display_path),
+                original: source.bytes,
+                bytes: rendered.bytes,
+            }),
+    );
+    Ok(files)
+}
+
+fn program_root(graph_path: &Path) -> PathBuf {
+    graph_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."))
+        .to_path_buf()
+}
+
 /// One package read from its directory: its graph record's bundle and
 /// canonical unit, its bindings as written and as reached.
 struct LoadedPackage {
@@ -53,6 +113,8 @@ struct LoadedPackage {
     written: Vec<WrittenBinding>,
     /// Each binding's name with the bound package's place in package order.
     bound: Vec<(String, usize)>,
+    /// Present only for a formatting request, retaining the original bytes.
+    formatted: Option<FormattedFile>,
 }
 
 /// Forms the module graph of the program whose graph record is
@@ -66,23 +128,29 @@ pub fn form_module_program_graph(
     graph_path: &Path,
     limits: CompilerLimits,
 ) -> Result<ModuleGraph, ModuleProgramFailure> {
-    let root = graph_path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or(Path::new("."))
-        .to_path_buf();
+    load_module_program_graph(graph_path, limits, false).map(|(graph, _)| graph)
+}
+
+/// The package walk and graph judgments shared by checking and formatting.
+fn load_module_program_graph(
+    graph_path: &Path,
+    limits: CompilerLimits,
+    formatting: bool,
+) -> Result<(ModuleGraph, Vec<FormattedFile>), ModuleProgramFailure> {
+    let root = program_root(graph_path);
     let bytes = read_graph_record(graph_path)?;
     let identity = identity_of(&root)?;
     let mut packages = vec![load(
         root,
         identity,
         String::new(),
-        &graph_path.display().to_string(),
+        graph_path,
         &bytes,
         limits,
+        formatting,
     )?];
     let mut walking = vec![0];
-    walk(&mut packages, 0, &mut walking, limits)?;
+    walk(&mut packages, 0, &mut walking, limits, formatting)?;
     assign_labels(&mut packages);
 
     let registered = packages
@@ -126,7 +194,11 @@ pub fn form_module_program_graph(
     let mut graph = assemble_graph(formed, Some(&library)).map_err(graph_compiler_failure)?;
     let program = &packages[0].bundle;
     graph.locate_entries(|coordinate| Place::resolve(program, coordinate, Anchor::Start));
-    Ok(graph)
+    let files = packages
+        .into_iter()
+        .filter_map(|package| package.formatted)
+        .collect();
+    Ok((graph, files))
 }
 
 /// Reads the bindings of `packages[place]` in written order, reaching each
@@ -137,6 +209,7 @@ fn walk(
     place: usize,
     walking: &mut Vec<usize>,
     limits: CompilerLimits,
+    formatting: bool,
 ) -> Result<(), ModuleProgramFailure> {
     let written = packages[place].written.clone();
     for binding in written {
@@ -196,13 +269,14 @@ fn walk(
                 reached,
                 identity,
                 String::new(),
-                &graph_path.display().to_string(),
+                &graph_path,
                 &bytes,
                 limits,
+                formatting,
             )?;
             packages.push(loaded);
             walking.push(target);
-            walk(packages, target, walking, limits)?;
+            walk(packages, target, walking, limits, formatting)?;
             walking.pop();
         }
     }
@@ -243,11 +317,33 @@ fn load(
     root: PathBuf,
     identity: PathBuf,
     label: String,
-    display: &str,
+    graph_path: &Path,
     bytes: &[u8],
     limits: CompilerLimits,
+    formatting: bool,
 ) -> Result<LoadedPackage, ModuleProgramFailure> {
-    let input = SourceInput::from_host_path(GRAPH_FILE_NAME, display, bytes);
+    let display = graph_path.display().to_string();
+    let input = SourceInput::from_host_path(GRAPH_FILE_NAME, &display, bytes);
+    let formatted = if formatting {
+        let rendered = canonical_format(&[input], FormatGrammar::Graph, limits)?;
+        let rendered = rendered.into_iter().next().ok_or_else(|| {
+            CompilationFailure::new(
+                CompilationStage::CanonicalSource,
+                CompilationFailureKind::Compiler,
+                "one graph record rendered no source",
+            )
+        })?;
+        Some(FormattedFile {
+            path: graph_path.to_path_buf(),
+            original: bytes.to_vec(),
+            bytes: rendered.bytes,
+        })
+    } else {
+        None
+    };
+    let input = formatted
+        .as_ref()
+        .map_or(input, |file| input.with_bytes(&file.bytes));
     let bundle = SourceBundle::with_limits(&[input], limits.source)
         .map_err(CompilationFailure::source_envelope)?;
     let canonical = canonical_syntax(&bundle, limits, true)?;
@@ -262,6 +358,7 @@ fn load(
         canonical,
         written,
         bound: Vec::new(),
+        formatted,
     })
 }
 
@@ -291,4 +388,83 @@ fn graph_compiler_failure(failure: crate::GraphCompilerFailure) -> CompilationFa
         CompilationFailureKind::Compiler,
         failure,
     )
+}
+
+#[cfg(test)]
+mod formatting_tests {
+    use super::{CompilerLimits, format_module_program};
+    use std::path::PathBuf;
+
+    struct Directory(PathBuf);
+
+    impl Directory {
+        fn new(name: &str) -> Self {
+            let root = std::env::temp_dir().join(format!(
+                "whitefoot-format-packages-{}-{name}",
+                std::process::id()
+            ));
+            let _ = std::fs::remove_dir_all(&root);
+            std::fs::create_dir_all(&root).expect("create the test package");
+            Self(root)
+        }
+
+        fn write(&self, name: &str, bytes: &[u8]) {
+            let path = self.0.join(name);
+            std::fs::create_dir_all(path.parent().expect("a record has a parent"))
+                .expect("create the record directory");
+            std::fs::write(path, bytes).expect("write the record");
+        }
+    }
+
+    impl Drop for Directory {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn module_formatting_reads_bound_graphs_interfaces_and_implementations() {
+        let directory = Directory::new("bound");
+        let root_graph = b"package lib=\"bound\";\npkg:[];\n";
+        let bound_graph = b"pkg:[];\n";
+        let interface = b"public const amount:u64=1_u64;\n";
+        let implementation = b"fn wrong()->result:u8 pure {\n    return 7_u64;  \n}\n";
+        directory.write("modules.wfg", root_graph);
+        directory.write("module.wfm", b"\n");
+        directory.write("bound/modules.wfg", bound_graph);
+        directory.write("bound/module.wfm", interface);
+        directory.write("bound/wrong.wf", implementation);
+        let files =
+            format_module_program(&directory.0.join("modules.wfg"), CompilerLimits::default())
+                .expect("graphs and source records format despite semantic errors");
+        let expected: &[(&str, &[u8], &[u8])] = &[
+            (
+                "modules.wfg",
+                root_graph,
+                b"package lib = \"bound\";\n\npkg: [];\n",
+            ),
+            ("bound/modules.wfg", bound_graph, b"pkg: [];\n"),
+            ("module.wfm", b"\n", b"\n"),
+            (
+                "bound/module.wfm",
+                interface,
+                b"public const amount: u64 = 1_u64;\n",
+            ),
+            (
+                "bound/wrong.wf",
+                implementation,
+                b"fn wrong() -> result: u8 pure {\n  return 7_u64;\n}\n",
+            ),
+        ];
+        assert_eq!(files.len(), expected.len());
+        for (file, (path, original, bytes)) in files.iter().zip(expected) {
+            assert_eq!(file.path, directory.0.join(path));
+            assert_eq!(file.original, *original);
+            assert_eq!(file.bytes, *bytes);
+            assert_eq!(
+                std::fs::read(&file.path).expect("read the original"),
+                *original
+            );
+        }
+    }
 }
