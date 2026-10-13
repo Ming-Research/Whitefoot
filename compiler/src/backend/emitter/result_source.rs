@@ -3,22 +3,24 @@
 //! compiler/result-registers, proposed; its facts follow
 //! compiler/backend-facts).
 //!
-//! Every WF-defined or linked definition whose result uses a caller
-//! destination has an internal entry with the same parameters that returns
-//! the address holding its result. A body whose storage plan selected a
+//! Every synchronous WF definition whose result uses a caller destination
+//! supplies an ordinary-world entry with the same parameters that returns
+//! the address holding its result; linked and budget entries are emitted
+//! only when called. Waiting definitions have no entry, and clone and grain
+//! worlds neither define nor call source entries. A body whose plan selected a
 //! source on some return path is emitted as that entry, and its public
 //! symbol keeps today's destination ABI by calling it and transferring from
 //! the returned address unless that address is the destination. Any other
 //! body keeps its public symbol, and its entry calls it and returns the
-//! destination, as a linked definition's does. Whether the entry exists
-//! therefore depends on the signature alone, and so does a caller's choice
-//! to call it (`storage::result_sources`).
+//! destination, as a linked definition's does. Whether the entry is
+//! available therefore depends on the signature alone, and so does a
+//! caller's choice to call it (`storage::result_sources`).
 //!
 //! The returned address is `nonnull` and aligned to the result type, never
 //! `noalias`, because it aliases the source, and never `dereferenceable`,
 //! because a caller may release the source after its last use. A reference
 //! parameter whose own referent a return may address is captured through
-//! the return; the host spelling for that is probed once with the
+//! the return; its exact host spelling is probed independently of the
 //! no-capture spelling, and a host without the return-only form gets no
 //! capture attribute on it.
 
@@ -42,16 +44,16 @@ pub(super) fn result_source_name(call: IrValueId) -> String {
 }
 
 /// The return-only capture spelling of a reference parameter whose referent
-/// a source entry may return, or no attribute where the probed host has
-/// only the legacy `nocapture` spelling, which has no return-only form.
+/// a source entry may return, or no attribute where the probed host does not
+/// accept the exact return-only spelling.
 fn returned_capture(facts: &str) -> String {
-    let none = crate::toolchain::facts().no_capture_attribute;
-    let returned = if none == "captures(none)" {
-        " captures(ret: address, provenance)"
+    let toolchain = crate::toolchain::facts();
+    let returned = if toolchain.returned_capture_attribute.is_empty() {
+        String::new()
     } else {
-        ""
+        format!(" {}", toolchain.returned_capture_attribute)
     };
-    facts.replace(&format!(" {none}"), returned)
+    facts.replace(&format!(" {}", toolchain.no_capture_attribute), &returned)
 }
 
 /// The `nonnull`, aligned `ptr` a source entry returns.
@@ -117,45 +119,6 @@ fn transfer_frame(
         slots,
         ordered,
     })
-}
-
-/// A budgeted component member's source entry: its public symbol is the
-/// budget entry, which always builds, so this entry calls it and returns the
-/// destination. It states no parameter facts, as that entry states none.
-/// Like a linked definition's, it is defined only where a call names it.
-pub(super) fn bare_source_entry(
-    program: &IrProgram,
-    target: TargetLayout,
-    function: &IrFunction,
-) -> Result<Module, BackendFailure> {
-    let abi = FunctionAbi::build(program, function)?;
-    let mut module = Module::default();
-    if !abi.result().uses_destination() || function.waits() {
-        return Ok(module);
-    }
-    let mut references = References::default();
-    let mut parameters = vec![Parameter::named("ptr", RESULT_POINTER)];
-    for ((value, _), parameter) in function.parameters().iter().zip(abi.parameters()) {
-        parameters.extend(incoming_parameters(
-            program,
-            *value,
-            *parameter,
-            "",
-            &mut references,
-        )?);
-    }
-    let symbol = source_symbol(function.name());
-    let mut signature = Signature::new(
-        result_source_symbol(&symbol),
-        source_result_type(target, program, abi.result().ty())?,
-        parameters,
-    );
-    signature.linkage = Linkage::Internal;
-    signature.references = references;
-    let arguments = ordinary_call_arguments(program, function, &abi)?;
-    module.define(signature.define(built_body(&symbol, &arguments)?, "")?);
-    module.text("\n");
-    Ok(module)
 }
 
 /// The source entries the module's calls name.
@@ -281,9 +244,11 @@ impl FunctionEmitter<'_, '_> {
         Ok(module)
     }
 
-    /// A linked definition's source entry: its C body builds the result in
-    /// the destination, which the entry returns.
-    pub(super) fn linked_source_entry(&self) -> Result<Module, BackendFailure> {
+    /// A linked definition or budget family's source entry: its public body
+    /// builds the result in the destination, which the entry returns. Both
+    /// use the ordinary signature-only declaration, so entering or leaving
+    /// a budget family cannot change a caller's fragment attributes.
+    pub(super) fn destination_source_entry(&self) -> Result<Module, BackendFailure> {
         let public = FunctionAbi::build(self.program, self.function)?;
         self.built_source_entry(&source_symbol(self.function.name()), &public)
     }

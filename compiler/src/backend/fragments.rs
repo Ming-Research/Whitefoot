@@ -33,8 +33,9 @@
 //! A definition's `<symbol>.source` entry is local in the whole module but
 //! is a member of its public symbol's group, `hidden` so that other groups
 //! can name it: its callers' fragments declare it from its signature, and
-//! the callee's fragment holds it whether or not any caller names it, so a
-//! callee's fragment does not depend on its callers either.
+//! an ordinary WF definition's fragment holds it whether or not any caller
+//! names it. Linked and budget-family entries are emitted on demand and
+//! remain anchored to the same public symbol when present.
 
 use std::collections::{BTreeMap, BTreeSet};
 

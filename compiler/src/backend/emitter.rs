@@ -407,9 +407,7 @@ fn emit_module(
         {
             continue;
         }
-        if frontiers.grain(ordinal).is_some() {
-            functions.append(result_source::bare_source_entry(program, target, function)?);
-        } else if function.blocks().is_empty() {
+        if frontiers.grain(ordinal).is_some() || function.blocks().is_empty() {
             functions.append(
                 FunctionEmitter::new(
                     program,
@@ -427,7 +425,7 @@ fn emit_module(
                         dispatch_layout,
                     },
                 )?
-                .linked_source_entry()?,
+                .destination_source_entry()?,
             );
         }
     }
@@ -1666,14 +1664,12 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             .collect();
         let mut storage =
             FunctionStoragePlan::build_in_world(program, function, sequential_clones.is_some())?;
-        // Only the plain world defines `<symbol>.source`; clones and budget
-        // variants keep their destination entries.
-        storage.select_result_sources(
-            program,
-            function,
-            sequential_clones.is_some(),
-            sequential_clones.is_none() && grain.is_none(),
-        )?;
+        // Only the plain world selects source calls or source returns.
+        // A clone or budget member can call an ordinary leaf, so the
+        // callee's symbol alone cannot establish this exclusion.
+        if sequential_clones.is_none() && grain.is_none() {
+            storage.select_result_sources(program, function)?;
+        }
         let result_slot = places::returned_storage_slot(function, &storage);
         let frame = FunctionFramePlan::build(
             target,

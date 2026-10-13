@@ -25,6 +25,7 @@ pub const fn clang_executable() -> &'static str {
 pub(crate) struct ToolchainFacts {
     pub(crate) preserve_none: bool,
     pub(crate) no_capture_attribute: &'static str,
+    pub(crate) returned_capture_attribute: &'static str,
     pub(crate) coro_end_result: &'static str,
 }
 
@@ -43,18 +44,20 @@ impl ToolchainFacts {
             return Self {
                 preserve_none: false,
                 no_capture_attribute: "nocapture",
+                returned_capture_attribute: "",
                 coro_end_result: "i1",
             };
         };
         Self {
             preserve_none: preserve_none_supported(&directory.0),
             no_capture_attribute: no_capture_attribute(&directory.0),
+            returned_capture_attribute: returned_capture_attribute(&directory.0),
             coro_end_result: coro_end_result(&directory.0),
         }
     }
 }
 
-/// Lazily probes all three facts once per process; concurrent emitters wait
+/// Lazily probes all facts once per process; concurrent emitters wait
 /// for the same value, including conservative fallbacks when clang cannot run.
 pub(crate) fn facts() -> &'static ToolchainFacts {
     static FACTS: OnceLock<ToolchainFacts> = OnceLock::new();
@@ -186,6 +189,29 @@ fn no_capture_attribute(directory: &Path) -> &'static str {
     if accepted { NEW } else { OLD }
 }
 
+/// The exact return-only capture spelling accepted by this host, independently
+/// of its no-capture spelling. A host that cannot assemble it gets no capture
+/// attribute: `nocapture` would forbid returning the argument's provenance.
+fn returned_capture_attribute(directory: &Path) -> &'static str {
+    const ATTRIBUTE: &str = "captures(ret: address, provenance)";
+    let probe = directory.join("returned_captures_probe.ll");
+    if fs::write(
+        &probe,
+        format!("define ptr @p(ptr {ATTRIBUTE} %v) {{\n  ret ptr %v\n}}\n"),
+    )
+    .is_err()
+    {
+        return "";
+    }
+    let accepted = Command::new(clang_executable())
+        .args(["-x", "ir", "-c", "-o"])
+        .arg(directory.join("returned_captures_probe.o"))
+        .arg(&probe)
+        .output()
+        .is_ok_and(|output| output.status.success());
+    if accepted { ATTRIBUTE } else { "" }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -218,6 +244,45 @@ mod tests {
             .arg(directory.join(format!("{name}.verified.ll")))
             .arg(input)
             .output()
+    }
+
+    #[test]
+    fn returned_capture_fact_matches_the_exact_host_spelling() {
+        let directory = ProbeDirectory::new().expect("create verification directory");
+        let exact = verify(
+            &directory.0,
+            "returned_capture_exact",
+            "define ptr @check(ptr captures(ret: address, provenance) %argument) {\n  \
+             ret ptr %argument\n}\n",
+        )
+        .expect("run clang to check the exact return-only capture spelling");
+        let chosen = facts().returned_capture_attribute;
+        assert_eq!(
+            chosen,
+            if exact.status.success() {
+                "captures(ret: address, provenance)"
+            } else {
+                ""
+            },
+            "the return-only fact must agree with its own probe: {}",
+            String::from_utf8_lossy(&exact.stderr)
+        );
+        let module =
+            format!("define ptr @check(ptr {chosen} %argument) {{\n  ret ptr %argument\n}}\n");
+        let accepted = verify(&directory.0, "returned_capture_chosen", &module)
+            .expect("run clang after checking the exact spelling");
+        assert!(
+            accepted.status.success(),
+            "the selected return-only attribute must verify: {module}\n{}",
+            String::from_utf8_lossy(&accepted.stderr)
+        );
+    }
+
+    #[test]
+    fn returned_capture_probe_failure_omits_the_attribute() {
+        let directory = ProbeDirectory::new().expect("create verification directory");
+        // The missing parent makes the probe unwritable without invoking clang.
+        assert_eq!(returned_capture_attribute(&directory.0.join("missing")), "");
     }
 
     #[test]

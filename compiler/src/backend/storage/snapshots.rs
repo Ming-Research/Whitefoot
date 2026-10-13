@@ -35,6 +35,9 @@ pub(super) struct SnapshotFacts<'a> {
     /// recursion cannot recursively invoke this analysis.
     immutable: BTreeMap<u32, BTreeSet<usize>>,
     sequential: bool,
+    /// Load snapshots retain their existing consumer-body analysis. Call
+    /// result sources may read only declarations, including for barriers.
+    declarations_only: bool,
 }
 
 impl FunctionStoragePlan {
@@ -359,6 +362,16 @@ fn incoming_capture_sites(
 }
 
 impl<'a> SnapshotFacts<'a> {
+    pub(super) fn from_declarations(
+        program: &'a IrProgram,
+        function: &'a IrFunction,
+        origins: &'a [Option<usize>],
+    ) -> Self {
+        let mut facts = Self::new(program, function, origins, false);
+        facts.declarations_only = true;
+        facts
+    }
+
     pub(super) fn new(
         program: &'a IrProgram,
         function: &'a IrFunction,
@@ -386,6 +399,7 @@ impl<'a> SnapshotFacts<'a> {
             roots: vec![None; origins.len()],
             immutable: BTreeMap::new(),
             sequential,
+            declarations_only: false,
         };
         for value in 0..origins.len() {
             facts.roots[value] = facts.root(value, &mut BTreeSet::new());
@@ -534,6 +548,12 @@ impl<'a> SnapshotFacts<'a> {
         callee: u32,
         position: usize,
     ) -> Result<bool, BackendFailure> {
+        // The own-parameter declaration does not promise that its body
+        // reads the argument in place. Result-source callers therefore
+        // keep the public result copy for every by-value consumer.
+        if self.declarations_only {
+            return Ok(false);
+        }
         if let Some(positions) = self.immutable.get(&callee) {
             return Ok(positions.contains(&position));
         }
@@ -856,7 +876,16 @@ impl<'a> SnapshotFacts<'a> {
                     let Some(signature) = callee.source_signature() else {
                         return Ok(true);
                     };
-                    if callee.waits() || (!self.sequential && !callee.overlaps().is_empty()) {
+                    // An ordinary synchronous caller has no outstanding
+                    // overlap group, and a synchronous callee joins its own
+                    // work before returning. Its declared writes suffice
+                    // here; consulting its overlap annotations would make
+                    // result-source selection depend on its body.
+                    if callee.waits()
+                        || (!self.declarations_only
+                            && !self.sequential
+                            && !callee.overlaps().is_empty())
+                    {
                         return Ok(true);
                     }
                     for (position, argument) in arguments.iter().enumerate() {

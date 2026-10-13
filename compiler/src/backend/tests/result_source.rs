@@ -430,13 +430,16 @@ fn a_callers_fragment_depends_only_on_its_callees_signature() {
     // declaration can keep the caller's fragment the same.
     let whole = modules[0].as_str();
     let entry = header(emitted_function(whole, "item_of.source"));
-    if crate::toolchain::facts().no_capture_attribute == "captures(none)" {
+    if !crate::toolchain::facts()
+        .returned_capture_attribute
+        .is_empty()
+    {
         assert!(
             entry.contains("captures(ret: address, provenance)"),
             "{entry}"
         );
     } else {
-        assert!(!entry.contains("nocapture"), "{entry}");
+        assert!(!entry.contains("capture"), "{entry}");
     }
     assert!(
         entry.starts_with("define internal nonnull align 8 ptr @wf_item_of.source("),

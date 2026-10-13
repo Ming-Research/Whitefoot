@@ -1,8 +1,8 @@
 //! Call results read at the storage they copy (compiler/storage-placement,
 //! proposed).
 //!
-//! A definition whose result uses a caller destination also has an internal
-//! `<symbol>.source` entry with the same parameters, which returns the
+//! A synchronous definition whose result uses a caller destination supplies
+//! an internal `<symbol>.source` entry with the same parameters, returning the
 //! address holding its result. On a path whose result is a by-value Load
 //! snapshot of a place under one of its reference parameters, that place
 //! stays unchanged from the read through the activation's exit, cleanup
@@ -12,8 +12,8 @@
 //! the destination and returns the destination.
 //!
 //! A caller reads a call's result through the address its source entry
-//! returns only when every use of the result reads it in place, as a Load
-//! snapshot's read-through uses do, and the snapshot's invalidating events
+//! returns only when every use reads it in place without consulting any
+//! consumer body, and the snapshot's invalidating events
 //! prove every place the callee's reference and range arguments supply
 //! unchanged and valid from the call through each use. The callee's row names
 //! only places under those arguments [EFF-2], so this covers what its
@@ -23,6 +23,9 @@
 //! function's body, so a caller's choice depends on its callee's signature
 //! alone. The logical value is still the value at the return; this changes
 //! placement, not a language rule.
+//! By-value call consumers keep the public copy because an own-parameter
+//! declaration does not establish the consumer's in-place read behavior.
+//! Clone, grain, waiting, overlapping and split worlds keep public calls.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -102,32 +105,25 @@ impl FunctionStoragePlan {
         self.result_sources.returned_referents.contains(&position)
     }
 
-    /// Select the call results read at their source and, when `entry` says
-    /// this emission defines the plain `<symbol>.source` entry, that entry's
-    /// source returns. Waiting definitions, overlapping execution and
+    /// Select call results and source returns in the ordinary world only.
+    /// Waiting definitions, overlapping execution and
     /// possible split dispatch parts keep the Load snapshot's exclusions.
     pub(in crate::backend) fn select_result_sources(
         &mut self,
         program: &IrProgram,
         function: &IrFunction,
-        sequential: bool,
-        entry: bool,
     ) -> Result<(), BackendFailure> {
-        if function.blocks().is_empty()
-            || function.waits()
-            || (!sequential && !function.overlaps().is_empty())
-        {
+        if function.blocks().is_empty() || function.waits() || !function.overlaps().is_empty() {
             return Ok(());
         }
         let parts = crate::backend::emitter::dispatch::storage_parts(function)?;
         if parts.iter().any(|part| *part != Some(0)) {
             return Ok(());
         }
-        let returns = entry
-            && FunctionAbi::build(program, function)?
-                .result()
-                .uses_destination();
-        let graph = FlowGraph::from_function(program, function, sequential)?;
+        let returns = FunctionAbi::build(program, function)?
+            .result()
+            .uses_destination();
+        let graph = FlowGraph::from_function(program, function, false)?;
         let entering = graph.live_in();
         let selected = {
             let plan: &Self = self;
@@ -137,7 +133,7 @@ impl FunctionStoragePlan {
                 graph,
                 entering,
                 parts,
-                facts: SnapshotFacts::new(program, function, &plan.origins, sequential),
+                facts: SnapshotFacts::from_declarations(program, function, &plan.origins),
                 returns,
                 forwarding_slot: if returns {
                     returned_storage_slot(function, plan)
