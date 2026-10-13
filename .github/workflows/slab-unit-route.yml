@@ -1,0 +1,49 @@
+# TEMPORARY: compiles the unit-payload route witness for the slab_reserve
+# postcondition gap. Remove before this branch is ready.
+name: slab-unit-route
+
+on:
+  push:
+    branches: [claude/slab-reserve]
+
+permissions:
+  contents: read
+
+jobs:
+  witness:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile the witness with the branch compiler
+        shell: bash
+        run: |
+          set -uo pipefail
+          cargo build --manifest-path compiler/Cargo.toml --profile gate --bin whitefootc --locked
+          cat > "$RUNNER_TEMP/witness.wf" <<'WF'
+          alias ExitStatus = std::process::ExitStatus;
+          alias exit_status = std::process::exit_status;
+          
+          struct Store {
+            cap: u64;
+          }
+          
+          fn reserve(store: &Store, capacity: u64) -> result: Result<unit, unit> writes(store) contract {
+            ensures when Ok(value: reserved): store^.cap >= capacity;
+          } {
+            if capacity > 100_u64 {
+              return Err<unit, unit>(error: unit);
+            }
+            if store^.cap < capacity {
+              set store^.cap = capacity;
+            }
+            return Ok<unit, unit>(value: unit);
+          }
+          
+          fn main() -> status: ExitStatus pure {
+            return exit_status(code: 0_u8);
+          }
+          WF
+          sed -i 's/^          //' "$RUNNER_TEMP/witness.wf"
+          compiler/target/gate/whitefootc "$RUNNER_TEMP/witness.wf" -o "$RUNNER_TEMP/witness"
+          echo "witness status $?"

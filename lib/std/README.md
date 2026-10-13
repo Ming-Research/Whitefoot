@@ -32,9 +32,9 @@ for comparison evidence and remaining interface limits. These evolving libraries
 do not claim native parity for every operation.
 
 `slab_new` chooses an initial backing capacity within the type's ceiling.
-`slab_reserve(slab: &slab, capacity: total)` returns `Ok` after ensuring at least
-`total` reserved slots, including a no-op when capacity already suffices, or
-`Err` without mutation when `total` exceeds the ceiling. Existing cells retain
+`slab_reserve` returns `Ok` after ensuring at least `capacity` reserved slots,
+including a no-op when the backing already suffices, or `Err` without mutation
+when `capacity` exceeds the ceiling. Existing cells retain
 their indices, generations, occupancy and payloads, so handles still select the
 same values after growth. The free-list end marker is the ceiling rather than
 the initial capacity, so reuse can still reach every newly reserved slot.
