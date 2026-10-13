@@ -68,7 +68,7 @@ jobs:
           # variable name. Rename that identifier in the probe copy so both
           # compilers check the same meaning (measurement input only).
           find "$bundle/snowghost/renderer/oracle" -name "*.wf" -exec perl -pi -e "s/\\bheld\\b/held_value/g" {} +
-          if grep -rqw held "$bundle/snowghost/renderer/oracle"; then echo "held remains in oracle sources"; exit 1; fi
+          if grep -rqw --include="*.wf" held "$bundle/snowghost/renderer/oracle"; then echo "held remains in oracle sources"; exit 1; fi
           python3 - <<'PY'
           import os, pathlib
           root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'op5-inputs'
