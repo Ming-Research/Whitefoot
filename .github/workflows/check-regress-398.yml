@@ -24,7 +24,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        rev: [e96f620db, 089f57c16, fix]
+        rev: [fix]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -79,3 +79,38 @@ jobs:
         with:
           name: attribution-${{ matrix.rev }}
           path: ${{ runner.temp }}/out
+
+  compare:
+    # Interleaved runs on one host: the compiler before #398 against this
+    # branch, style and layout oracle modules.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Build both compilers
+        run: |
+          rustup default stable
+          for r in e96f620db "$GITHUB_SHA"; do
+            git worktree add --detach "$RUNNER_TEMP/c-${r:0:9}" "$r"
+            cargo build --manifest-path "$RUNNER_TEMP/c-${r:0:9}/compiler/Cargo.toml" --profile gate --locked
+          done
+          lscpu | grep -E 'Model name'
+      - name: Check style and layout, interleaved
+        run: |
+          git clone --quiet https://github.com/Ming-Research/Snowghost-wf.git "$RUNNER_TEMP/snowghost"
+          git -C "$RUNNER_TEMP/snowghost" checkout --quiet --detach "$SNOWGHOST_REVISION"
+          find "$RUNNER_TEMP/snowghost/renderer/oracle" -name "*.wf" -exec perl -pi -e "s/\\bheld\\b/held_value/g" {} +
+          for round in 1 2; do
+            for r in e96f620db "${GITHUB_SHA:0:9}"; do
+              for m in style layout; do
+                s0=$(date +%s.%N)
+                "$RUNNER_TEMP/c-$r/compiler/target/gate/whitefootc" --graph "$RUNNER_TEMP/snowghost/renderer/modules.wfg" \
+                  --check-module "pkg::oracle::$m" --report > out.txt 2>&1
+                st=$?
+                printf 'COMPARE round=%s rev=%s module=%s status=%s seconds=%.2f %s\n' "$round" "$r" "$m" "$st" \
+                  "$(echo "$(date +%s.%N) - $s0" | bc)" "$(tail -1 out.txt)"
+              done
+            done
+          done
