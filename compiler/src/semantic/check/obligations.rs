@@ -356,7 +356,8 @@ impl Records<'_> {
         for side in [&relation.left, &relation.right] {
             for expression in side.postorder() {
                 match &expression.kind {
-                    CheckedAffineExpressionKind::Measure(measure) => self.expression(measure),
+                    CheckedAffineExpressionKind::Measure(measure)
+                    | CheckedAffineExpressionKind::Field(measure) => self.expression(measure),
                     CheckedAffineExpressionKind::Constant { .. }
                     | CheckedAffineExpressionKind::Local { .. }
                     | CheckedAffineExpressionKind::ConstGeneric { .. }
@@ -375,6 +376,7 @@ impl Records<'_> {
                 call,
                 arguments,
                 requirements,
+                routed_requirements,
                 ..
             } => {
                 for argument in arguments {
@@ -393,6 +395,17 @@ impl Records<'_> {
                             callee: *function,
                             requires_clause: requirement.requires_clause.clone(),
                             subject: requirement.subject,
+                        },
+                    );
+                }
+                for requirement in routed_requirements {
+                    self.push(
+                        rule,
+                        call.clone(),
+                        ObligationSubject::CallRequirement {
+                            callee: *function,
+                            requires_clause: requirement.clause.clone(),
+                            subject: Some(requirement.subject),
                         },
                     );
                 }

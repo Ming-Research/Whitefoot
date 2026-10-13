@@ -335,8 +335,8 @@ fn parked_receive(server: &TcpConnection, clock: &Clock) -> result: Bool reads(c
   let outcome = receive_next(receive: &server^.receive, destination: &bytes[0_u64..1_u64], start: 0_u64, end: 1_u64, deadline: unlimited, cancel: &watch);
   std::time::close_cancel_watch(watch: move watch);
   let cancelled = cancelled_read(outcome: outcome);
-  let unchanged = bytes[0_u64] == 204_u8;
-  let host_correct = band(cancelled, unchanged);
+  let bytes_preserved = bytes[0_u64] == 204_u8;
+  let host_correct = band(cancelled, bytes_preserved);
   return band(host_correct, guarded);
 }
 

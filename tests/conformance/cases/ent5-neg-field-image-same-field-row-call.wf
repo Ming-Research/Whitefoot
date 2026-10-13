@@ -1,0 +1,29 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Counter {
+  doc "A count and a tag.";
+  count: u64;
+  tag: u64;
+}
+
+fn reset(counter: &Counter, value: u64) -> result: unit writes(counter.count) {
+  doc "Writes only the count.";
+  set counter^.count = value;
+  return unit;
+}
+
+fn advance(counter: &Counter, delta: u64, wild: u64) -> result: unit writes(counter) contract {
+  requires counter^.count + delta <= 800_u64;
+} {
+  doc "The callee's row projects to exactly the count field, which kills the count's entry image, so the count read after the call is unbounded and the sum may overflow.";
+  reset(counter: counter, value: wild);
+  let count = counter^.count;
+  let total = count + delta;
+  set counter^.count = total;
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

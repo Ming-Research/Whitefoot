@@ -1,0 +1,18 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn widen<const n: u8>() -> r: u64 pure {
+  doc "Reads the const generic at its written type u8.";
+  return cvt::<u8, u64>(n);
+}
+
+fn forward<const m: u64>() -> r: u64 pure {
+  doc "An IDENT term must be declared with exactly its parameter's type; m is u64 and the parameter is u8.";
+  return widen::<m>();
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "The rejection is the forwarding argument's own, whatever value any instance supplies.";
+  let v = forward::<255>();
+  return exit_status(code: 0_u8);
+}

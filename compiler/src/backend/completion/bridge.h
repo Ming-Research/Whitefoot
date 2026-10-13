@@ -235,6 +235,19 @@ void wf__completion_socket_shutdown_submit(
     void *record
 );
 
+/* The local endpoint of one connected socket (`local_address` [PRE-2]), as
+ * the three scalars an emitted `SocketAddress` value is.  It is a query the
+ * host answers at once, so it takes no record and makes its one host call on
+ * the calling thread, whichever route the connection's transfers use.
+ * Returns 0 with the three scalars written, or the host's own nonzero
+ * refusal code with all three zero. */
+int wf__completion_socket_local_address(
+    int descriptor,
+    uint64_t *address_low,
+    uint64_t *address_high,
+    uint32_t *port_and_family
+);
+
 /* A shutdown's joined value is zero for the first half and one for the
  * descriptor-close attempt on its last half. Its error code independently
  * reports the close outcome. The ordinary linked close uses that private

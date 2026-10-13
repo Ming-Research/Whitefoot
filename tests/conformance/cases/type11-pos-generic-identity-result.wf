@@ -1,0 +1,19 @@
+struct Span {
+  start: u64;
+  end: u64;
+  invariant ordered(span): span.start <= span.end;
+}
+
+fn same<T: drop>(item: T) -> result: T pure {
+  return move item;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let span = Span(start: 2_u64, end: 9_u64);
+  let back = same::<Span>(item: span);
+  let a = back.start;
+  let b = back.end;
+  let d = b - a;
+  let code = cvt.wrap::<u64, u8>(d);
+  return std::process::exit_status(code: code);
+}

@@ -257,6 +257,20 @@ fn relation_has_bare_binding(
     })
 }
 
+/// Whether a term is a tracked place or measure rooted at `binding`: the
+/// receiver terms a value carrier's delivery relates [ENT-5].
+fn term_rooted_at(
+    summary: &FunctionEntailment,
+    term: TermId,
+    binding: super::super::BindingId,
+) -> bool {
+    matches!(
+        retained_term(summary, term),
+        TermKind::Place(place, _) | TermKind::Measure(_, place)
+            if place.root == PlaceRoot::Binding(binding)
+    )
+}
+
 fn retained_conclusion(
     conclusions: &[DerivationConclusion],
     id: DerivationId,
@@ -2134,53 +2148,62 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                 else {
                     panic!("a reachable give relation has one exact source relation");
                 };
-                // The receiver replaced exactly the carrier term: the given
-                // atom, or the evaluated value whose equality to the carrier
-                // closed into the edge state [ENT-5].
-                assert!(matches!(
-                    retained_term(summary, *carrier),
-                    TermKind::Place(..) | TermKind::CommitValue { .. }
-                ));
-                assert!(source.terms().contains(carrier));
-                assert!(!relation_has_bare_binding(summary, source, *receiver));
-                assert!(!relation.terms().contains(carrier));
-                assert!(relation_has_bare_binding(summary, relation, *receiver));
-                if let Relation::Distinct {
-                    left,
-                    right,
-                    difference,
-                } = source
-                {
-                    let receiver_term = relation.terms().into_iter().find(|term| matches!(
-                        retained_term(summary, *term),
-                        TermKind::Place(place, _) if place.root == PlaceRoot::Binding(*receiver)
-                            && place.path.is_empty()
-                    )).expect("the delivered relation contains its receiver");
-                    let replace = |term| {
-                        if term == *carrier {
-                            receiver_term
+                if term_rooted_at(summary, *carrier, *receiver) {
+                    // A value carrier's receiver stands for its fresh carrier,
+                    // so its Give node substitutes nothing: the relation names
+                    // the same terms as its source, its carrier among them
+                    // [ENT-5].
+                    assert_eq!(source.terms(), relation.terms());
+                    assert!(relation.terms().contains(carrier));
+                } else {
+                    // The receiver replaced exactly the carrier term: the given
+                    // atom, or the evaluated value whose equality to the carrier
+                    // closed into the edge state [ENT-5].
+                    assert!(matches!(
+                        retained_term(summary, *carrier),
+                        TermKind::Place(..) | TermKind::CommitValue { .. }
+                    ));
+                    assert!(source.terms().contains(carrier));
+                    assert!(!relation_has_bare_binding(summary, source, *receiver));
+                    assert!(!relation.terms().contains(carrier));
+                    assert!(relation_has_bare_binding(summary, relation, *receiver));
+                    if let Relation::Distinct {
+                        left,
+                        right,
+                        difference,
+                    } = source
+                    {
+                        let receiver_term = relation.terms().into_iter().find(|term| matches!(
+                            retained_term(summary, *term),
+                            TermKind::Place(place, _) if place.root == PlaceRoot::Binding(*receiver)
+                                && place.path.is_empty()
+                        )).expect("the delivered relation contains its receiver");
+                        let replace = |term| {
+                            if term == *carrier {
+                                receiver_term
+                            } else {
+                                term
+                            }
+                        };
+                        let (left, right) = (replace(*left), replace(*right));
+                        let expected = if left <= right {
+                            Relation::Distinct {
+                                left,
+                                right,
+                                difference: *difference,
+                            }
                         } else {
-                            term
-                        }
-                    };
-                    let (left, right) = (replace(*left), replace(*right));
-                    let expected = if left <= right {
-                        Relation::Distinct {
-                            left,
-                            right,
-                            difference: *difference,
-                        }
-                    } else {
-                        Relation::Distinct {
-                            left: right,
-                            right: left,
-                            difference: -*difference,
-                        }
-                    };
-                    assert_eq!(
-                        relation, &expected,
-                        "delivery preserves the excluded offset"
-                    );
+                            Relation::Distinct {
+                                left: right,
+                                right: left,
+                                difference: -*difference,
+                            }
+                        };
+                        assert_eq!(
+                            relation, &expected,
+                            "delivery preserves the excluded offset"
+                        );
+                    }
                 }
                 let retained = retained_event(summary, *event);
                 used_events[event.0 as usize] = true;
@@ -2250,7 +2273,14 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                     parents,
                 } = detail.as_ref();
                 assert_relation_terms_resolve(summary, relation);
-                assert!(relation_has_bare_binding(summary, relation, *receiver));
+                // The receiving binding itself for an integer carrier, a
+                // place or measure below it for a value carrier [ENT-5].
+                assert!(
+                    relation
+                        .terms()
+                        .into_iter()
+                        .any(|term| term_rooted_at(summary, term, *receiver))
+                );
                 assert!(!parents.is_empty());
                 let mut prior_edge: Option<&crate::NodePath> = None;
                 for (ordinal, parent) in parents.iter().enumerate() {
@@ -5732,25 +5762,26 @@ fn main() -> status: std::process::ExitStatus pure {
     );
 }
 
-/// A capacity's implicit component keeps its const parameter's narrower
-/// type. Equal explicit witnesses before give must not create a redundant
-/// delivery root, and the receiving invariant still sees the closed fact.
+/// A length reaches its upper bound only through its capacity: the implicit
+/// component joins the length to the closed capacity 255. Equal explicit
+/// witnesses before give must not create a redundant delivery root, and the
+/// receiving invariant still sees the closed fact through that component.
 #[test]
 fn delivery_implicit_omission_uses_the_closed_const_capacity_component() {
-    let source = br#"fn probe<const n: u8>(values: &Slots<u8, n>, x: u64, a: Bool, b: Bool) -> result: u64 reads(values.cap) {
+    let source = br#"fn probe(values: &Slots<u8, 255>, x: u64, a: Bool, b: Bool) -> result: u64 reads(values.len) {
   let picked = if a {
-    let capacity = values^.cap;
+    let length = values^.len;
     let d = x;
     if b {
-      invariant one: values^.cap <= d + 255_u64;
+      invariant one: values^.len <= d + 255_u64;
     } else {
-      invariant two: values^.cap <= d + 255_u64;
+      invariant two: values^.len <= d + 255_u64;
     }
     give d;
   } else {
     return x;
   }
-  invariant received: values^.cap <= picked + 255_u64;
+  invariant received: values^.len <= picked + 255_u64;
   return picked;
 }
 
@@ -5779,10 +5810,10 @@ fn main() -> status: std::process::ExitStatus pure {
             !matches!(
                 relation,
                 Relation::Bound { left, bound: 255, .. }
-                    if matches!(retained_term(&summary, *left), TermKind::Measure(CheckedMeasure::Capacity, _))
+                    if matches!(retained_term(&summary, *left), TermKind::Measure(CheckedMeasure::Length, _))
             )
         }),
-        "the capacity's implicit upper bound needs no delivery root"
+        "the length's implicit upper bound through its capacity needs no delivery root"
     );
 }
 
