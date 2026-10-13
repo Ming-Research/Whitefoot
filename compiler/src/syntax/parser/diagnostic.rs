@@ -81,7 +81,7 @@ const RANGE1_BARE_BOOL_FIX: &str = "a guard or conclusion of a range clause is o
 const fn production_fix(production: Production) -> Option<&'static str> {
     match production {
         Production::ContractBlock => Some(GRAM2_CONTRACT_ORDER_FIX),
-        Production::RangeGuard | Production::RangeRelation => Some(RANGE1_BARE_BOOL_FIX),
+        Production::RangeRelation => Some(RANGE1_BARE_BOOL_FIX),
         _ => None,
     }
 }

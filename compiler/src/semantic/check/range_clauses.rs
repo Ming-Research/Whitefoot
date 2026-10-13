@@ -150,23 +150,25 @@ impl Checker<'_, '_> {
                 "state the fact over at most two bound variables, or split it into facts over fewer",
             );
         }
-        let mut guards = Vec::new();
-        for guard in self
-            .types
-            .declarations
-            .tree
-            .children_with(clause, Production::RangeGuard)?
-        {
-            guards.extend(self.range_relation(context, guard, bindings, &names)?);
+        let tree = &self.types.declarations.tree;
+        let colon = tree
+            .direct_token_with(clause, TerminalPredicate::Fixed(FixedTerminal::Colon))?
+            .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
+        let colon_start = usize::try_from(tree.token_subcoordinate(colon, 0, 1)?.start().value())
+            .map_err(|_| SemanticCompilerFailure::CounterOverflow)?;
+        let mut relations = Vec::new();
+        for relation in tree.children_with(clause, Production::RangeRelation)? {
+            relations.push((relation, tree.byte_range(relation)?.0 < colon_start));
         }
+        let mut guards = Vec::new();
         let mut conclusions = Vec::new();
-        for relation in self
-            .types
-            .declarations
-            .tree
-            .children_with(clause, Production::RangeRelation)?
-        {
-            conclusions.extend(self.range_relation(context, relation, bindings, &names)?);
+        for (relation, is_guard) in relations {
+            let formed = self.range_relation(context, relation, bindings, &names)?;
+            if is_guard {
+                guards.extend(formed);
+            } else {
+                conclusions.extend(formed);
+            }
         }
         if names.unformed.get() {
             self.body.unformed_range_facts.insert(declaration);
