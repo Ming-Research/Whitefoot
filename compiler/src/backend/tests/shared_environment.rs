@@ -395,6 +395,87 @@ fn forwarded_parameters_take_the_same_position_in_every_internal_form() {
     );
 }
 
+#[test]
+fn full_forwarded_classes_precede_classes_missing_from_a_member() {
+    let source = br#"struct Words {
+  list: Box<Array<u64>>;
+}
+
+fn first(left: &Words, right: &Words, scale: &[u64], x: u64, id: u64, depth: u64) -> result: u64 reads(left), reads(right), reads(scale) {
+  doc "Forward x and id to the second member.";
+  if depth == 0_u64 {
+    let total = x +wrap id;
+    return total;
+  }
+  let below = depth -wrap 1_u64;
+  let result = second(left: left, right: right, scale: scale, x: x, id: id, depth: below);
+  return result;
+}
+
+fn second(left: &Words, right: &Words, scale: &[u64], x: u64, id: u64, depth: u64) -> result: u64 reads(left), reads(right), reads(scale) {
+  doc "Only id reaches the third member.";
+  if depth == 0_u64 {
+    let total = x +wrap id;
+    return total;
+  }
+  let below = depth -wrap 1_u64;
+  let result = third(left: left, right: right, scale: scale, id: id, depth: below);
+  return result;
+}
+
+fn third(left: &Words, right: &Words, scale: &[u64], id: u64, depth: u64) -> result: u64 reads(left), reads(right), reads(scale) {
+  doc "Close the cycle with a fresh x and the same id.";
+  if depth == 0_u64 {
+    return id;
+  }
+  let below = depth -wrap 1_u64;
+  let result = first(left: left, right: right, scale: scale, x: 0_u64, id: id, depth: below);
+  return result;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let list = box_array_filled::<u64>(count: 1_u64, value: 0_u64);
+  let words = Words(list: move list);
+  let values = array_filled::<u64, 1>(value: 0_u64);
+  let walked = first(left: &words, right: &words, scale: &values[0_u64..1_u64], x: 7_u64, id: 9_u64, depth: 2_u64);
+  if walked != 9_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let llvm = compile(source);
+    // x's partial class starts at first's parameter 3, before id's full
+    // class at parameter 4. Ordering solely by that index puts id second
+    // after the record in first and second, but first in third. Full
+    // classes must come first so id always immediately follows the record.
+    for (name, id, rest) in [
+        ("first", 4, &["i64 %v3", "i64 %v5"][..]),
+        ("second", 4, &["i64 %v3", "i64 %v5"][..]),
+        ("third", 3, &["i64 %v4"][..]),
+    ] {
+        let internal = header(emitted_function(&llvm, &format!("_env_{name}")));
+        let declared = parameters(internal, &format!("wf__env_{name}"));
+        assert!(declared[0].ends_with(" %wf.env"), "{internal}");
+        assert_eq!(declared[1], format!("i64 %v{id}"), "{internal}");
+        assert_eq!(&declared[2..], rest, "{internal}");
+    }
+    // Both a call with x and a call without it keep id in that first
+    // position, while first passes x in second's partial-class position.
+    for (caller, callee, count) in [("first", "second", 4), ("second", "third", 3)] {
+        let function = emitted_function(&llvm, &format!("_env_{caller}"));
+        let calls = calls_to(function, &format!("wf__env_{callee}"));
+        assert_eq!(calls.len(), 1, "{function}");
+        let arguments = call_operands(calls[0]);
+        assert_eq!(arguments.len(), count, "{function}");
+        assert_eq!(arguments[0], "%wf.env", "{function}");
+        assert_eq!(traced(function, arguments[1]), "%v4", "{function}");
+        if caller == "first" {
+            assert_eq!(traced(function, arguments[2]), "%v3", "{function}");
+        }
+    }
+}
+
 /// The operand names one call line passes, without their types.
 fn call_operands(line: &str) -> Vec<&str> {
     let start = line.find('(').expect("a call has arguments") + 1;

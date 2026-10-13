@@ -369,17 +369,19 @@ impl EnvironmentPlan {
 
 /// Each member's parameters outside the record, by index, in the order its
 /// internal form declares them: first those that calls inside the group
-/// forward unchanged, by class in one group-wide order, then the rest in
-/// source order.
+/// forward unchanged, by class in one group-wide order with classes every
+/// member has before partial classes, then the rest in source order.
 ///
 /// A class joins a callee's parameter to the caller's own parameter that a
 /// call inside the group passes into it unchanged, as the slots join, but
 /// without requiring every call or every member to take part. A class that
 /// holds two parameters of one member gives neither a forwarded position.
-/// Classes are ordered by their first member, then that member's parameter
-/// index. Every member that has the parameters of the same classes then
-/// declares them at the same argument positions, so a forwarded value stays
-/// in its argument register across the group: Snowghost's witness test,
+/// Within each group of full or partial classes, classes are ordered by
+/// their first member, then that member's parameter index. Full classes
+/// therefore occupy the same argument positions in every member; partial
+/// classes omit absent parameters without padding and need not align. An
+/// aligned forwarded value can stay in its argument register across the
+/// group: Snowghost's witness test,
 /// whose form was `(env, simple, id, context)`, copied id and context into
 /// step's positions `(env, first, last, id, context)` on every call for the
 /// sake of its rarely taken call of step.
@@ -447,7 +449,9 @@ fn forwarded_order(
     for class in &mut forwarded {
         class.sort_unstable();
     }
-    forwarded.sort_unstable_by_key(|class| class.first().copied());
+    forwarded.sort_unstable_by_key(|class| {
+        (class.len() != members.len(), class.first().copied())
+    });
     let mut orders = Vec::with_capacity(members.len());
     for (member, slots) in parameter_slots.iter().enumerate() {
         let mut order: Vec<usize> = forwarded

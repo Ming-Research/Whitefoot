@@ -73,10 +73,10 @@ slots. On AArch64, with eight registers, only the with-table chain does.
 ## Later downstream check
 
 Snowghost's renderer has a function whose 36 arms each read a different
-borrowed input. Its scan entry with the table against without it is today
-0.9047 in Snowghost's timing ratio; after this change is adopted downstream
-the target is at least 0.98. This check runs in Snowghost-wf with a released
-compiler and is not part of this record's decision.
+borrowed input. Its base scan entry with the table against without it has
+a timing ratio of 0.9047; after this change is adopted downstream the target
+is at least 0.98. This check is pending. It runs in Snowghost-wf with a
+released compiler and is not part of this record's decision.
 
 ## First measurement
 
@@ -129,8 +129,37 @@ unchanged the same position in every member's internal form
 (compiler/recursive-environment). It is measured against the same
 criterion.
 
+## Third measurement — 2026-10-12
+
+[CI run 38336959343](https://github.com/Ming-Research/Whitefoot/actions/runs/38336959343)
+measured the compiler at the
+[aligned-order commit](https://github.com/Ming-Research/Whitefoot/commit/cd604275955f02ccd5fd4b9c59c60d7876c7c589).
+The values below are instructions per call of step and test, and per
+top-level call for the whole chain. Both branch copies were identical.
+
+| Compiler and copy | Step | Test | Whole chain |
+| --- | ---: | ---: | ---: |
+| Base with table | 59.34 | 24.55 | 86.89 |
+| Base without table | 55.05 | 20.37 | 77.96 |
+| Branch with table | 50.78 | 21.23 | 74.60 |
+| Branch without table | 50.78 | 21.23 | 74.60 |
+
+- The with-table minus without-table gap is 0 for both step and test,
+  meeting the bound of at most 1 instruction per call.
+- Without-table step costs 50.78, no more than the base's 55.05, meeting
+  its acceptance condition.
+- Without-table test costs 21.23, which is 0.86 more than the base's 20.37.
+  It does not meet the condition of costing no more than the base, but the
+  increase is below the rejection bound of 2 instructions per call.
+  The result is therefore in the undecided band, not a pass.
+- Attribution: the remaining 0.86 is the record load in each arm that uses
+  a borrowed parameter, inherent to passing one pointer. The base's
+  without-table test passed all 6 words in registers and needed no such
+  record load.
+
 ## Status
 
-The first two versions were measured; each crossed a rejection bound. The
-aligned positions of forwarded parameters are implemented and not yet
-measured.
+The first two versions crossed a rejection bound. The third, with aligned
+positions, is in the undecided band under the pre-registered criteria; the
+decision on that band goes to the owner. The
+[Snowghost renderer check](#later-downstream-check) remains pending.
