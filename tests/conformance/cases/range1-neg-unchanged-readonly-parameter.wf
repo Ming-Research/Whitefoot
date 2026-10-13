@@ -1,0 +1,9 @@
+fn invalid(cell: &Array<u64, 1>) -> result: u64 pure contract {
+  ensures forall preserved(k in 0_u64..cell^.len): cell^[k] unchanged;
+} {
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

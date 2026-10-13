@@ -5,6 +5,21 @@ Newest first. One entry per approved change of the tree: a dated title,
 the owner's agent instructions own the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-12 The gate runs for revisions that can merge
+
+Nodes: compiler/verification
+
+Owner-approved: On the shared status board on 2026-10-12, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve Whitefoot#399 (head commit b8f67f29a423)'s changes to the design tree and the repository guidance, which make the gate run only for branches with an open PR, the main line and manual runs?" (translated), whose background listed the changed trigger decision, the opening and reopening runs' own concurrency group, the final job skipping on cancellation, the failed-query rule and the unchanged Linux and macOS scope.
+
+Summary: The gate and the I/O host checks run for a push to the main line, a push to a branch with an open pull request created no later than the push's run, a pull request's opening or reopening, the event of marking one ready (the gate only) and a manual run, and one deciding job skips every other push, because the merge precondition needs only the gate of a revision that can merge, instead of every push, skipping branches by name, or pull request events alone, which GitHub does not send for a conflicting branch. An opening or reopening has a concurrency group of its own so it cannot cancel the run of a push that follows it; an opening skips when the branch has already moved, while a reopening always runs because pushes made while the pull request was closed were skipped. The final both-platforms job runs on `!cancelled()` so a superseded run leaves no red result beside its replacement, and a failed GitHub query fails the run instead of silently skipping checks or dropping macOS.
+## 2026-10-13 A range postcondition states that an element is unchanged and reads entry versions
+
+Nodes: compiler/range-judgment, language/checks-and-proofs, language/checks-and-proofs/range-facts
+
+Owner-approved: On the shared status board on 2026-10-12, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the specification revision and design-tree change of Whitefoot#395 at commit 26f62c5fd?" (translated), including `unchanged` becoming a reserved word; the rule text is unchanged since that commit, only renumbered from v0.136 to v0.138 because main reached v0.137 first.
+
+Summary: A range postcondition may read a written reference parameter's entry version through `entry(p)`, and the new one-sided `P unchanged` proposition says an element position at exit is the version it had at entry, for any element type and without an equality operator. A whole-element read identifies a storage version and a copy is a fresh version keeping only value projections, which closes the copy-back hole the first review found. Callers expand a callee's `unchanged` only for reads already present, inside the existing two-round instantiation bound. It is motivated by Snowghost's growth and append helpers, whose callers lost every fact about old elements, including type invariants of elements that own a Box.
+
 ## 2026-10-13 A const argument is judged where it is written; a symbolic integer constant keeps its exact type
 
 Nodes: language/generics, compiler/checker-facts
