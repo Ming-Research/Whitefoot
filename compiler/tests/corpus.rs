@@ -47,6 +47,8 @@ mod programs {
     // The trigger watches a kernel ring, and only Linux runs two drivers.
     #[cfg(target_os = "linux")]
     mod ring_assist;
+    #[cfg(target_os = "linux")]
+    mod busy_ring_receive;
     #[cfg(unix)]
     mod runs;
     #[cfg(unix)]

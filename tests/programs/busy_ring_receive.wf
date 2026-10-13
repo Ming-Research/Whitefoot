@@ -1,0 +1,91 @@
+fn compute_until_killed(state: Shared<DecisionCell>, started: DecisionCell) -> result: unit pure waits {
+  doc "Holds one shared object in one atomic statement, publishing entry through an independent decision cell and reading its verdict without waiting until the receiving context kills it.";
+  atomic cell = &state {
+    let entered = claim_written(cell: &started);
+    let killed = Killed();
+    loop @computing {
+      let verdict = decision_cell_read(cell: cell);
+      if verdict == killed {
+        break @computing;
+      }
+    }
+  }
+  return unit;
+}
+
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
+  doc "Starts a context that computes inside one atomic statement, receives one newline on standard input and kills that computation. The receive must finish before the computation can finish. With an argument, a finite recurrence before the receive leaves the child ready for the idle driver to take. Status 77 means this host has no second driver; status zero also verifies that the atomic statement had begun before the receive finished.";
+  let std::process::Inputs(args: args, drivers: drivers, cwd: directory, stdout: output, handles: factory, stdin: input, ..) = move inputs;
+  let std::fs::Directory(read: read_directory, write: write_directory) = move directory;
+  std::fs::close_directory_write(factory: &factory, directory: move write_directory);
+  std::fs::close_directory(factory: &factory, directory: move read_directory);
+  if drivers != 2_u64 {
+    return std::process::exit_status(code: 77_u8);
+  }
+  let bytes = array_filled::<u8, 1>(value: 114_u8);
+  let window = &bytes[0_u64..1_u64];
+  let no_deadline = None<std::time::Instant>();
+  let readiness_cancel = std::time::cancel_never();
+  let readiness = std::io::write_once(factory: &factory, output: &output, source: window, start: 0_u64, end: 1_u64, deadline: no_deadline, cancel: &readiness_cancel);
+  std::time::close_cancel_watch(watch: move readiness_cancel);
+  match readiness {
+    Ok(value: endpoint) => {
+      if endpoint != 1_u64 {
+        return std::process::exit_status(code: 1_u8);
+      }
+    }
+    Err(error: problem) => {
+      return std::process::exit_status(code: 2_u8);
+    }
+  }
+  let verdict = decision_cell_new();
+  let killer = decision_cell_share(cell: &verdict);
+  let state = shared_new::<DecisionCell>(value: move verdict);
+  let started = decision_cell_new();
+  let observer = decision_cell_share(cell: &started);
+  spawn compute_until_killed(state: move state, started: move started);
+  let setup_state = 7_u64;
+  let arguments = std::text::args_count(args: &args);
+  if arguments > 1_u64 {
+    let step = 0_u64;
+    loop @placement {
+      if step >= 20000000_u64 {
+        break @placement;
+      }
+      let scaled = setup_state *wrap 6364136223846793005_u64;
+      set setup_state = scaled +wrap 1442695040888963407_u64;
+      set step = step +wrap 1_u64;
+    }
+  }
+  let receive_cancel = std::time::cancel_never();
+  let received = std::io::read_next(factory: &factory, input: &input, destination: window, start: 0_u64, end: 1_u64, deadline: no_deadline, cancel: &receive_cancel);
+  std::time::close_cancel_watch(watch: move receive_cancel);
+  let code = 0_u8;
+  match received {
+    Ok(value: endpoint) => {
+      if endpoint != 1_u64 {
+        set code = 3_u8;
+      }
+    }
+    Err(error: problem) => {
+      set code = 4_u8;
+    }
+  }
+  if bytes[0_u64] != 10_u8 {
+    set code = 5_u8;
+  }
+  let written = Written();
+  let entered = decision_cell_read(cell: &observer);
+  if entered != written {
+    set code = 6_u8;
+  }
+  let killed = Killed();
+  let winner = claim_killed(cell: &killer);
+  if winner != killed {
+    set code = 7_u8;
+  }
+  if setup_state == 0_u64 {
+    set code = 8_u8;
+  }
+  return std::process::exit_status(code: code);
+}
