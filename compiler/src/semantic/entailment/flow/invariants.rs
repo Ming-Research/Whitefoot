@@ -49,6 +49,15 @@ impl Reasoning<'_, '_, '_> {
                             .ok_or(AffineCheckError::CoefficientMismatch)?;
                         values.push(self.vocabulary.measure_atom(term, state));
                     }
+                    // [INV-1, ENT-6] a reference field place factor reads that
+                    // place's current image, retargeted by exactly the events
+                    // that kill the place, as a measure factor's is.
+                    CheckedAffineExpressionKind::Field(field) => {
+                        let value = self
+                            .reference_field_image(field, state)
+                            .ok_or(AffineCheckError::CoefficientMismatch)?;
+                        values.push(value);
+                    }
                     // [INV-1, MSR-6, ENT-2] a const generic at the symbolic
                     // instance is the declaration-anchored constant term, and
                     // no [ENT-5] event kills it, so its image is one
@@ -389,6 +398,7 @@ impl Reasoning<'_, '_, '_> {
                         AffineForm::term(AffineTermId::from_index(index))
                     }
                     CheckedAffineExpressionKind::Measure(_)
+                    | CheckedAffineExpressionKind::Field(_)
                     | CheckedAffineExpressionKind::ConstGeneric { .. } => {
                         let term = *measures.get(*visited)?;
                         *visited = visited.checked_add(1)?;
@@ -541,7 +551,8 @@ impl Judging<'_, '_, '_> {
                             CheckedAffineExpressionKind::Local { binding, .. } => {
                                 admitted(*binding)
                             }
-                            CheckedAffineExpressionKind::Measure(value) => {
+                            CheckedAffineExpressionKind::Measure(value)
+                            | CheckedAffineExpressionKind::Field(value) => {
                                 let mut in_scope = true;
                                 crate::semantic::permission::visit_read_bindings(
                                     value,

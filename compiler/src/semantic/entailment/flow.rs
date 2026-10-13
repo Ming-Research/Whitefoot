@@ -1364,6 +1364,12 @@ impl<'check, 'unit> Analyzer<'check, 'unit> {
                 invariant_targets: HashMap::new(),
                 unsigned_divisions: Vec::new(),
                 power_atoms: HashMap::new(),
+                reference_parameters: function
+                    .parameters
+                    .iter()
+                    .filter(|parameter| parameter.mode == CheckedMode::Reference)
+                    .map(|parameter| parameter.binding)
+                    .collect(),
                 encountered_counted: 0,
                 completed_counted_roots: 0,
                 s12_roots: 0,
@@ -1794,6 +1800,14 @@ struct Vocabulary {
     /// a right shift by the same amount image at one type name the same atom
     /// wherever either occurs.
     power_atoms: HashMap<(AffineForm, IntegerType), AffineForm>,
+    /// [ENT-6] the `&T` reference parameters of this function. A field place
+    /// rooted at one of them, reached through field selections only, is a
+    /// reference field place: its current image lives beside the measure
+    /// images in the per-state `measure_atoms` map, so it is cloned, killed,
+    /// joined and discarded with the state that holds it. This set is fixed
+    /// for the walk and names no atom, so no rollback of `affine_atoms`
+    /// touches it.
+    reference_parameters: HashSet<BindingId>,
     encountered_counted: u32,
     completed_counted_roots: u32,
     s12_roots: u32,

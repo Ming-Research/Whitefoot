@@ -1914,8 +1914,10 @@ fn main() -> status: std::process::ExitStatus pure {
 "#],
     },
     RepairPair {
-        name: "cap-field-in-reference-factor.wf",
-        rejected: include_bytes!("../../../tests/conformance/cases/inv1-neg-cap-field-factor.wf"),
+        name: "cap-field-through-reference-variable-factor.wf",
+        rejected: include_bytes!(
+            "../../../tests/conformance/cases/inv1-neg-reference-variable-field-factor.wf"
+        ),
         rule: "INV-1",
         sentences: &[
             "\n  reason: an affine factor selects a field or an element of a place\n",
@@ -1926,14 +1928,13 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 fn inspect(limits: &Bounds) -> result: u32 reads(limits.cap) {
-  let capacity = limits^.cap;
+  let view = &limits^;
+  let capacity = view^.cap;
   invariant bounded: 0_u32 <= capacity;
-  return limits^.cap;
+  return capacity;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
-  let limits = Bounds(cap: 4_u32);
-  let capacity = inspect(limits: &limits);
   return std::process::exit_status(code: 0_u8);
 }
 "#],

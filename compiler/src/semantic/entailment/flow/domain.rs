@@ -608,6 +608,11 @@ impl Vocabulary {
             | TermKind::EntryDatum { .. }
             | TermKind::MeasureDatum { .. }
             | TermKind::CallDatum { .. } => Some(self.measure_atom(term, state)),
+            // [ENT-6] a reference field place carries its current image as a
+            // measure does.
+            TermKind::Place(_, _) if self.is_reference_field_place(term) => {
+                Some(self.measure_atom(term, state))
+            }
             TermKind::Place(_, _)
             | TermKind::CountedCapture { .. }
             | TermKind::IndexCapture { .. }
@@ -737,6 +742,21 @@ impl Reasoning<'_, '_, '_> {
             let value = self.vocabulary.new_affine_atom(ty);
             state.values.insert(binding, value);
         }
+    }
+
+    /// [ENT-6] a copy read of a reference field place reads that place's
+    /// current image, minted on first demand; any other expression reads
+    /// none here.
+    pub(super) fn reference_field_image(
+        &mut self,
+        expression: &CheckedExpression,
+        state: &AffineFlowState,
+    ) -> Option<AffineForm> {
+        let term = self.read_operand(expression)?;
+        if !self.vocabulary.is_reference_field_place(term) {
+            return None;
+        }
+        Some(self.vocabulary.measure_atom(term, state))
     }
 
     /// Reads an expression as a term or constant [ENT-2]; anything else is
@@ -1023,6 +1043,7 @@ impl Reasoning<'_, '_, '_> {
                 value,
                 ..
             } => self.affine_pure_expression_form(value, state),
+            CheckedExpression::ProjectValue { .. } => self.reference_field_image(expression, state),
             CheckedExpression::IntegerOperation {
                 operation,
                 arguments,

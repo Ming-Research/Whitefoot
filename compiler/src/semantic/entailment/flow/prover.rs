@@ -77,12 +77,34 @@ impl Vocabulary {
     pub(super) fn measure_term_root(&self, term: TermId) -> Option<BindingId> {
         let root = match self.terms.kind(term) {
             TermKind::Measure(_, place) => place.root,
+            TermKind::Place(place, _) if self.is_reference_field_place(term) => place.root,
             _ => return None,
         };
         match root {
             PlaceRoot::Binding(binding) => Some(binding),
             PlaceRoot::Constant(_) => None,
         }
+    }
+
+    /// [ENT-6] whether one term is a reference field place: a tracked integer
+    /// place whose proof path is a `&T` reference parameter followed by one
+    /// or more field selections and nothing else. Such a place carries a
+    /// current image exactly as a measure does: minted on first demand,
+    /// replaced by a [SET-1] commit to it, removed by every [ENT-5] event
+    /// that kills the term, and retained by a join only when identical.
+    pub(super) fn is_reference_field_place(&self, term: TermId) -> bool {
+        let TermKind::Place(place, _) = self.terms.kind(term) else {
+            return false;
+        };
+        let PlaceRoot::Binding(root) = place.root else {
+            return false;
+        };
+        self.reference_parameters.contains(&root)
+            && !place.path.is_empty()
+            && place
+                .path
+                .iter()
+                .all(|step| matches!(step, PlaceStep::Field(_)))
     }
 
     /// The image this program point holds for one measure or const-generic term.
@@ -200,7 +222,8 @@ impl Vocabulary {
                     | TermKind::CallDatum { .. }
                     | TermKind::EntryDatum { .. }
                     | TermKind::MeasureDatum { .. }
-            ) {
+            ) || self.is_reference_field_place(id)
+            {
                 self.measure_terms_seen.push(id);
             }
         }
@@ -2868,6 +2891,7 @@ impl Reasoning<'_, '_, '_> {
                 value,
                 ..
             } => self.affine_pre_domain_form(value, state),
+            CheckedExpression::ProjectValue { .. } => self.reference_field_image(expression, state),
             CheckedExpression::IntegerOperation {
                 operation,
                 arguments,
@@ -3039,6 +3063,9 @@ impl Reasoning<'_, '_, '_> {
                 | CheckedAffineExpressionKind::MultiplyByConstant { .. } => {}
                 CheckedAffineExpressionKind::Measure(measure) => {
                     out.push(self.checked_measure_term(measure)?);
+                }
+                CheckedAffineExpressionKind::Field(field) => {
+                    out.push(self.read_operand(field)?);
                 }
                 CheckedAffineExpressionKind::ConstGeneric { declaration, .. } => {
                     out.push(self.const_parameter_term(*declaration));

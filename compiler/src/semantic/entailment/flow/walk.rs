@@ -467,6 +467,15 @@ impl Analyzer<'_, '_> {
             {
                 committed_affine = Some(value.clone());
                 state.affine.values.insert(place.binding, value);
+            } else if let Some(term) = self.vocabulary.commit_target_term(target)
+                && self.vocabulary.is_reference_field_place(term)
+                && let Some(value) = affine_value
+            {
+                // [ENT-6, SET-1] a commit to a reference field place makes
+                // it denote the committed value's image, after the target
+                // kill above removed its former image.
+                committed_affine = Some(value.clone());
+                state.affine.measure_atoms.get_mut().insert(term, value);
             }
             // The scaled quotient image binds the committed value to the
             // dividend image read before the kill [ENT-3.S7].
