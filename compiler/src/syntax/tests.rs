@@ -114,6 +114,28 @@ fn every_external_shape_is_classified_context_free() {
 }
 
 #[test]
+fn generic_numeric_suffixes_classify_without_declared_type_or_bound_context() {
+    // N and Float are simply TYPEID-shaped suffixes here: Int/Float bounds
+    // and integer-match admission belong to later semantic judgments.
+    let source = b"0_N 1_N 0_Number2 1_Float";
+    let inputs = [SourceInput::new("generic-identities.wf", source)];
+    let bundle = source_bundle(&inputs).expect("generic identity source must be constructible");
+    let lexed = lexed(&bundle).expect("generic identities must remain complete numeric tokens");
+    let TerminalOutcome::Complete(classified) = classify_terminals(
+        &lexed,
+        ACTIVE_KERNEL_SPEC_HASH,
+        TerminalLimits { max_tokens: 4 },
+    ) else {
+        panic!("generic identities must classify without inspecting declarations");
+    };
+    assert_eq!(classified.tokens().len(), 4);
+    for token in classified.tokens() {
+        assert_eq!(token.terminals().len(), 1);
+        assert!(token.terminals().contains(TerminalPredicate::Literal));
+    }
+}
+
+#[test]
 fn retired_statement_spellings_are_ordinary_identifiers() {
     // v0.60 releases eleven more spellings back to IDENT: the region and
     // permission markers, the two retired statements, the retired effect

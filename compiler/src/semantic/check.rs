@@ -22,7 +22,7 @@ mod range_clauses;
 mod range_type_invariants;
 mod receipts;
 mod references;
-mod repairs;
+pub(in crate::semantic) mod repairs;
 mod requires;
 mod schedule;
 mod spawn;
@@ -34,7 +34,10 @@ mod type_regions;
 mod types;
 
 pub(crate) use receipts::ProofReceipts;
-pub(crate) use repairs::{header_invariant_scope_repair, postcondition_selector_repair};
+pub(crate) use repairs::{
+    executable_caller_repair, executable_runner_repair, header_invariant_scope_repair,
+    postcondition_selector_repair,
+};
 
 use std::collections::{HashMap, HashSet};
 
@@ -60,13 +63,13 @@ use super::model::{
 use super::permission::{PermissionSignature, analyze_permission, plan_permission_separations};
 use super::permission_ledger::{LedgerSource, prepare_storage_ledger, render_ledger};
 use super::places::ResolvedPlace;
-use super::postcondition::CheckedPostconditionSelector;
+use super::postcondition::{CheckedPostcondition, CheckedPostconditionSelector};
 use super::tree::TreeView;
 use super::{CheckStop, CheckedProgram};
 use control::{ControlCounters, ControlScope};
 use generics::{GenericParameter, GenericSubstitution};
 use inventory::InventoryView;
-use references::ReferenceInfo;
+use references::{ReferenceInfo, ReferenceSelection};
 
 /// The syntax tree, as the permission ledger's citations reach it.
 struct PermissionLedgerSource<'view, 'unit> {
@@ -278,11 +281,19 @@ struct LocalBinding {
     /// was the loan apparatus's way of stating what [REF-2] now states
     /// directly as a validity fact.
     reference: Option<ReferenceInfo>,
-    /// [REF-2, ENT-3.S15] the borrowed-match refinement occurrences this
-    /// binding witnesses. The occurrence identity is immutable even when a
+    /// A set target's newly selected payload storage and later storage
+    /// selections while its RHS is checked, excluding trailing inline fields.
+    /// It uses the same REF-2 validity and preservation rules as a reference.
+    commit_target: Option<ReferenceInfo>,
+    /// [REF-2, ENT-3.S15] the match refinement occurrences rooted at this
+    /// binding. The occurrence identity is immutable even when a
     /// reference binding is rebound; only its flow-sensitive validity meets
     /// at joins.
     refinement_witnesses: Vec<RefinementWitness>,
+    /// [SHARE-2] on an atomic statement's binding, the places its handle was
+    /// read from, which every write and move checked in the statement marks
+    /// when it may overlap one of them. Every copy of this state shares it.
+    handle_watch: Option<std::rc::Rc<references::HandleWatch>>,
     /// [EFF-1] whether this binding is a parameter holding the value its call
     /// passed on every path to here. An index names a row's index parameter
     /// only while it does, since a row evaluates that parameter once at the
@@ -294,6 +305,8 @@ struct LocalBinding {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct RefinementWitness {
     origin: NodePath,
+    /// The selected target, distinct from the possible storage supports.
+    selection: ReferenceSelection,
     place: ResolvedPlace,
     variant: u32,
     valid: bool,
@@ -301,7 +314,10 @@ struct RefinementWitness {
 
 impl RefinementWitness {
     fn same_occurrence(&self, other: &Self) -> bool {
-        self.origin == other.origin && self.place == other.place && self.variant == other.variant
+        self.origin == other.origin
+            && self.selection == other.selection
+            && self.place == other.place
+            && self.variant == other.variant
     }
 }
 
@@ -362,12 +378,11 @@ impl LocalBinding {
             }
     }
 
-    /// A loop header is checked once rather than materialized by `join_from`.
-    /// Its reference validity has a separate finite equation, but every
-    /// non-reference refinement witness must therefore still agree exactly
-    /// with the backedge as it did before loop-header widening.
+    /// Loop-header reference validity uses its finite equations, and variant
+    /// witnesses use the same structural retry's entry/backedge meet. Their
+    /// flow validity is therefore excluded from this structural comparison.
     fn loop_agrees_with(&self, other: &Self) -> bool {
-        self.agrees_with(other) && self.refinement_witnesses == other.refinement_witnesses
+        self.agrees_with(other)
     }
 }
 
@@ -657,6 +672,11 @@ struct BodyChecker {
     /// retries, and a new member restarts the walk, as a new loop-header
     /// summary path does.
     loop_superseded_bindings: HashMap<super::model::CheckedLoopId, HashSet<BindingId>>,
+    /// [ENT-3.S15, ENT-5] enclosing match occurrences whose variant fact
+    /// does not survive every executable backedge of this loop. Each newly
+    /// recorded occurrence restarts the existing structural walk; header
+    /// formation applies the kills before checking any iteration's body.
+    loop_invalidated_refinements: HashMap<super::model::CheckedLoopId, Vec<RefinementWitness>>,
     /// [EFF-1] the index and range-endpoint captures that read a parameter
     /// while it held its call value on every path to their formation, which
     /// name the row's index parameter whatever later writes and joins do.
@@ -690,6 +710,10 @@ struct BodyChecker {
     /// [ENT-2] the rebound reference parameters and `atomic` binders, whose
     /// own binding roots the path they name; no exact path starts at one.
     rebound_anchors: HashSet<BindingId>,
+    /// [ENT-2] each range alias, `let q = r;` with neither variable rebound,
+    /// to the variable its places are identified through: the source's own
+    /// entry when the source is itself a range alias, else the source.
+    range_alias_sources: HashMap<BindingId, BindingId>,
 }
 
 /// Program-wide judgments and reuse records, published after checking succeeds.
@@ -1831,6 +1855,9 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                         loop_superseded_bindings: std::mem::take(
                             &mut body.loop_superseded_bindings,
                         ),
+                        loop_invalidated_refinements: std::mem::take(
+                            &mut body.loop_invalidated_refinements,
+                        ),
                         ..BodyChecker::default()
                     };
                 }
@@ -1989,9 +2016,10 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             .declarations
             .relation_postcondition_selectors(postcondition_selectors)?;
         let mut postcondition_relations = Vec::with_capacity(postcondition_selectors.len());
+        let mut postcondition_places = Vec::with_capacity(postcondition_selectors.len());
         for selector in &postcondition_selectors {
             let mut postcondition_bindings = parameter_bindings.clone();
-            postcondition_relations.push(self.check_postcondition_clause(
+            let (relation, places) = self.check_postcondition_clause(
                 FunctionContext {
                     check_context,
                     function: signature,
@@ -1999,7 +2027,9 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 selector,
                 &mut postcondition_bindings,
                 &mut counters,
-            )?);
+            )?;
+            postcondition_relations.push(relation);
+            postcondition_places.push(places);
         }
         self.types
             .declarations
@@ -2179,8 +2209,9 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             let mut postconditions = postcondition_selectors
                 .into_iter()
                 .zip(postcondition_relations)
-                .map(|(selector, relation)| {
-                    self.types.build_checked_postcondition(
+                .zip(postcondition_places)
+                .map(|((selector, relation), places)| {
+                    let mut postcondition = self.types.build_checked_postcondition(
                         FunctionContext {
                             check_context,
                             function: signature,
@@ -2189,7 +2220,9 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                         selector,
                         relation,
                         &checked.statements,
-                    )
+                    )?;
+                    postcondition.places = places;
+                    Ok::<_, CheckStop>(postcondition)
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             postconditions.extend(self.type_invariant_postconditions(
@@ -2207,9 +2240,10 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 .cloned();
             let mut admitted = Vec::new();
             let mut postconditions = Vec::new();
-            for (position, (selector, relation)) in postcondition_selectors
+            for (position, ((selector, relation), places)) in postcondition_selectors
                 .into_iter()
                 .zip(postcondition_relations)
+                .zip(postcondition_places)
                 .enumerate()
             {
                 if source_admitted
@@ -2229,7 +2263,10 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                     &checked.statements,
                 )? {
                     admitted.push(position);
-                    postconditions.push(postcondition);
+                    postconditions.push(CheckedPostcondition {
+                        places,
+                        ..postcondition
+                    });
                 }
             }
             if self
@@ -2376,7 +2413,9 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                     ResolvedPlace::binding(binding),
                 )
             }),
+            commit_target: None,
             refinement_witnesses: Vec::new(),
+            handle_watch: None,
             call_value: true,
         })
     }
@@ -2723,10 +2762,10 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                     // over is the value that argument names here.
                     let projection = match projection {
                         GoalProjection::FormalSubscript { ordinal } => GoalProjection::Subscript(
-                            Checker::goal_argument_offset(arguments.get(*ordinal as usize))?,
+                            self.goal_argument_offset(arguments.get(*ordinal as usize))?,
                         ),
                         GoalProjection::FormalPage { ordinal } => GoalProjection::Page(
-                            Checker::goal_argument_offset(arguments.get(*ordinal as usize))?,
+                            self.goal_argument_offset(arguments.get(*ordinal as usize))?,
                         ),
                         other => *other,
                     };
@@ -2794,33 +2833,26 @@ impl<'check, 'unit> Checker<'check, 'unit> {
     /// The offset one actual supplies to a formal-valued subscript [MSR-1].
     ///
     /// [ENT-2] decides a place's identity by its canonical spelling, so an
-    /// argument that names a literal, a named or generic const, or a live
-    /// binding supplies exactly that, and an argument that names none of
-    /// them supplies the unknown offset, which no admitted family separates
-    /// -- the conservative reading in both directions [OWN-7].
+    /// argument [`super::goal::actual_offset`] names supplies exactly that,
+    /// and an argument it names no offset for supplies the unknown offset,
+    /// which no admitted family separates -- the conservative reading in
+    /// both directions [OWN-7].
     fn goal_argument_offset(
+        &self,
         argument: Option<&GoalExpression>,
     ) -> Result<super::places::CapturedValue, CheckStop> {
-        use super::places::{CapturedTerm, CapturedValue};
-        let unknown = CapturedValue::unknown();
-        let Some(GoalExpression::Datum(datum)) = argument else {
-            return Ok(unknown);
+        let named = |declaration| {
+            let constant = self
+                .types
+                .constant(*self.types.constants.get(&declaration)?);
+            match constant.ok()?.value {
+                CheckedValue::Integer { bits, .. } => Some(bits),
+                _ => None,
+            }
         };
-        Ok(match datum {
-            GoalDatum::Literal(CheckedValue::Integer { bits, .. }) => {
-                CapturedValue::new(unknown.capture, CapturedTerm::Literal(*bits))
-            }
-            GoalDatum::Literal(CheckedValue::ConstGeneric { declaration, .. }) => {
-                CapturedValue::new(unknown.capture, CapturedTerm::Const(*declaration))
-            }
-            GoalDatum::Place {
-                root, projections, ..
-            } if projections.is_empty() => {
-                CapturedValue::new(unknown.capture, CapturedTerm::Binding(*root))
-            }
-            _ => return Ok(unknown),
-        }
-        .goal_identity())
+        Ok(argument
+            .and_then(|argument| super::goal::actual_offset(argument, &named))
+            .unwrap_or_else(super::places::CapturedValue::unknown))
     }
 
     fn instantiate_goal_operation(

@@ -365,22 +365,6 @@ impl<'unit> DeclarationInventory<'unit> {
             request: None,
         })
     }
-    /// Whether a node lies in a `requires_clause` or a `contract_define`,
-    /// whose places a requirement forms at body entry and which evaluate
-    /// nothing [FN-8].
-    fn in_requirement(&self, path: &NodePath) -> Result<bool, CheckStop> {
-        let mut node = self.tree.node_with_path(path);
-        while let Some(current) = node {
-            if matches!(
-                self.tree.production(current)?,
-                Production::RequiresClause | Production::ContractDefine
-            ) {
-                return Ok(true);
-            }
-            node = self.tree.parent(current)?;
-        }
-        Ok(false)
-    }
 }
 
 impl<'unit> TypeContext<'unit> {
@@ -621,20 +605,42 @@ impl<'unit> TypeContext<'unit> {
                     Some(TermRead::Constant)
                 );
                 let calls = self.killing_calls(function, &outcome.killed_by)?;
-                let mechanical_fix = if self.declarations.in_requirement(&outcome.node_path)? {
-                    let existing = self.with_contract_context(function, |context| {
-                        super::super::entailment::matching_requirement(function, context, outcome)
-                    });
-                    let existing = existing
-                        .and_then(|path| self.declarations.tree.node_with_path(&path))
-                        .map(|node| self.declarations.tree.source_spelling(node))
-                        .transpose()?;
-                    repairs::clause_bounds(&case, constant_offset, existing.as_deref())
-                } else if let (Some(note), false) = (outcome.killed_by.first(), calls.is_empty()) {
-                    repairs::bounds_after_kill(&case, &note.measure, &calls)
-                } else {
-                    repairs::bounds(&case, constant_offset)
-                };
+                // A definition's place is formed by the first requirement
+                // reaching it, and otherwise at the returns of the
+                // postconditions reaching it [ENT-2].
+                let mechanical_fix =
+                    if super::obligations::requirement_forms_site(function, &outcome.node_path) {
+                        let existing = self.with_contract_context(function, |context| {
+                            super::super::entailment::matching_requirement(
+                                function, context, outcome,
+                            )
+                        });
+                        let existing = existing
+                            .and_then(|path| self.declarations.tree.node_with_path(&path))
+                            .map(|node| self.declarations.tree.source_spelling(node))
+                            .transpose()?;
+                        repairs::clause_bounds(&case, constant_offset, existing.as_deref())
+                    } else if let Some(exit) = &outcome.selected_return {
+                        let (_, line) = self.declarations.tree.source_line(&exit.statement)?;
+                        // [FORM-2] a requirement is spelled canonically, so
+                        // one the contract already writes has this spelling.
+                        let required = format!("requires {};", exit.requirement);
+                        let held = function.requirements.iter().any(|requirement| {
+                            requirement.subject.is_none()
+                                && self
+                                    .declarations
+                                    .tree
+                                    .path_spelling(&requirement.clause)
+                                    .is_ok_and(|spelling| spelling == required)
+                        });
+                        repairs::postcondition_bounds(&case, constant_offset, line, exit, held)
+                    } else if let (Some(note), false) =
+                        (outcome.killed_by.first(), calls.is_empty())
+                    {
+                        repairs::bounds_after_kill(&case, &note.measure, &calls)
+                    } else {
+                        repairs::bounds(&case, constant_offset)
+                    };
                 SemanticIssueKind::UndischargedBoundsObligation {
                     mechanical_fix,
                     residual,
