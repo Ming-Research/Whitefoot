@@ -1,0 +1,241 @@
+# Temporary: measure field-image checking growth for PR #406.
+# Remove this workflow before the PR is ready.
+name: field-image-scale
+
+on:
+  push:
+    branches: [claude/float-proof-gaps]
+  workflow_dispatch:
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: field-image-scale-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  scale:
+    name: Field-image checking growth
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+      - name: Prepare and identify both compiler inputs
+        run: |
+          rustup default stable
+          git fetch --no-tags origin '+refs/heads/main:refs/remotes/origin/main'
+          base=$(git merge-base HEAD origin/main)
+          out="$RUNNER_TEMP/field-image-scale"
+          mkdir -p "$out"
+          git worktree add --detach "$out/main" "$base"
+          echo "FIELD_IMAGE_OUT=$out" >> "$GITHUB_ENV"
+          echo "MAIN_COMPILER=$out/main-target/gate/whitefootc" >> "$GITHUB_ENV"
+          echo "BRANCH_COMPILER=$out/branch-target/gate/whitefootc" >> "$GITHUB_ENV"
+          {
+            echo "branch revision: $(git rev-parse HEAD)"
+            echo "main baseline (merge base): $base"
+            echo "origin/main: $(git rev-parse origin/main)"
+            echo 'compiler profile: gate; CARGO_INCREMENTAL=0'
+            echo 'check command: whitefootc --diagnostic-format json --check SOURCE'
+            uname -a
+            lscpu
+            rustc -vV
+            cargo --version
+          } > "$out/inputs.txt"
+          cat "$out/inputs.txt"
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
+          cargo fetch --locked --manifest-path "$out/main/compiler/Cargo.toml"
+      - name: Build both gate-profile compilers
+        run: |
+          CARGO_TARGET_DIR="$FIELD_IMAGE_OUT/branch-target" \
+            perl .github/run-check.pl field-image-build-branch \
+            cargo build --manifest-path compiler/Cargo.toml --profile gate --locked --offline
+          CARGO_TARGET_DIR="$FIELD_IMAGE_OUT/main-target" \
+            perl .github/run-check.pl field-image-build-main \
+            cargo build --manifest-path "$FIELD_IMAGE_OUT/main/compiler/Cargo.toml" \
+            --profile gate --locked --offline
+          test -x "$BRANCH_COMPILER"
+          test -x "$MAIN_COMPILER"
+      - name: Generate scratch programs and measure interleaved checks
+        run: |
+          cat > "$FIELD_IMAGE_OUT/scale.py" <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import statistics
+          import subprocess
+          import time
+
+          out = Path(os.environ["FIELD_IMAGE_OUT"])
+          sizes = (50, 200, 800)
+          compilers = {name: os.environ[f"{name.upper()}_COMPILER"]
+                       for name in ("main", "branch")}
+
+          def program(n, control=False):
+              lines = ["alias ExitStatus = std::process::ExitStatus;",
+                       "alias exit_status = std::process::exit_status;", "",
+                       "struct Big {", '  doc "Integer fields for checking-cost scaling.";']
+              lines += [f"  f_{i}: u64;" for i in range(n)]
+              lines += ["}", ""]
+              signature = "fn check_fields(s: &Big) -> result: unit reads(s)"
+              if control:
+                  lines += [signature + " {"]
+              else:
+                  lines += [signature + " contract {"]
+                  lines += [f"  requires s^.f_{i} <= 1000_u64;" for i in range(n)]
+                  lines += ["} {"]
+              lines += ['  doc "Reads each field and proves one exact addition per field.";']
+              for i in range(n):
+                  if control:
+                      lines += [f"  let observed_{i} = s^.f_{i};",
+                                f"  let a_{i} = 0_u64;"]
+                  else:
+                      lines += [f"  let a_{i} = s^.f_{i};"]
+                  lines += [f"  let b_{i} = a_{i} + 1_u64;"]
+              lines += ["  return unit;", "}", "",
+                        "fn main() -> status: ExitStatus pure {",
+                        '  doc "Checks the field bounds and calls the measured function.";']
+              fields = ", ".join(f"f_{i}: 0_u64" for i in range(n))
+              lines += [f"  let s = Big({fields});"]
+              # Direct field guards establish the call's requirements without
+              # needing the new field-to-local images in the baseline compiler.
+              # Keep the same caller in the control to isolate its function body.
+              for i in range(n):
+                  lines += [f"  if s.f_{i} <= 1000_u64 {{", "  } else {",
+                            "    return exit_status(code: 1_u8);", "  }"]
+              lines += ["  check_fields(s: &s);",
+                        "  return exit_status(code: 0_u8);", "}"]
+              return "\n".join(lines) + "\n"
+
+          for variant in ("field", "control"):
+              for n in sizes:
+                  (out / f"{variant}-{n}.wf").write_text(
+                      program(n, control=variant == "control"))
+          example = program(2)
+          (out / "field-2.wf").write_text(example)
+          print("Generated field program, N=2:\n" + example, flush=True)
+          criterion = ("Predeclared criterion: branch field median at N=800 <= "
+                       "2 * branch field median at N=200 * 4 (at most 8x growth; "
+                       "linear is 4x, quadratic is 16x).")
+          print(criterion, flush=True)
+          print("Control: no requires; reads each field into observed_i, then "
+                "a_i = 0_u64; b_i = a_i + 1_u64. Same struct and caller.", flush=True)
+          print("Main field may exit 1 with a Source OP-2 rejection. Rejection "
+                "time is a baseline, not full-check cost; crashes/stops are invalid.", flush=True)
+          print("Smallest workload N=50 first; report all three samples and "
+                "their spread before continuing to larger workloads.", flush=True)
+
+          rows = []
+          errors = []
+          for n in sizes:
+              for variant in ("field", "control"):
+                  samples = {name: [] for name in compilers}
+                  for repeat in range(3):
+                      order = ("main", "branch") if repeat % 2 == 0 else ("branch", "main")
+                      for name in order:
+                          label = f"{variant}-{n}-{name}-{repeat + 1}"
+                          command = [compilers[name], "--diagnostic-format", "json",
+                                     "--check", str(out / f"{variant}-{n}.wf")]
+                          with (out / f"{label}.stdout").open("wb") as stdout, \
+                               (out / f"{label}.stderr").open("wb") as stderr:
+                              started = time.perf_counter()
+                              result = subprocess.run(command, stdout=stdout, stderr=stderr,
+                                                      stdin=subprocess.DEVNULL)
+                              elapsed = time.perf_counter() - started
+                          diagnostic = None
+                          if result.returncode != 0:
+                              try:
+                                  diagnostic = json.loads((out / f"{label}.stderr").read_text())
+                              except (ValueError, UnicodeError):
+                                  pass
+                          expected_reject = (name == "main" and variant == "field"
+                                             and result.returncode == 1
+                                             and isinstance(diagnostic, dict)
+                                             and diagnostic.get("category") == "Source"
+                                             and diagnostic.get("rule") == "OP-2")
+                          valid = result.returncode == 0 or expected_reject
+                          if not valid:
+                              errors.append(f"{label}: invalid check, exit {result.returncode}; see stderr")
+                          row = dict(variant=variant, n=n, compiler=name, run=repeat + 1,
+                                     seconds=elapsed, exit_status=result.returncode,
+                                     diagnostic=diagnostic, valid=valid)
+                          rows.append(row)
+                          samples[name].append(elapsed)
+                          with (out / "samples.jsonl").open("a") as record:
+                              record.write(json.dumps(row) + "\n")
+                          print(f"{label}: {elapsed:.6f}s, exit {result.returncode}, "
+                                f"valid={valid}", flush=True)
+                  for name, values in samples.items():
+                      print(f"{variant} N={n} {name}: min={min(values):.6f}s "
+                            f"max={max(values):.6f}s spread={max(values)/min(values):.3f}x",
+                            flush=True)
+
+          medians = {}
+          summary = [criterion, "", "Times in seconds; ratio = branch / main."]
+          for variant in ("field", "control"):
+              summary += ["", f"{variant}: N | main median | branch median | ratio | main exits | branch exits"]
+              for n in sizes:
+                  statuses = {}
+                  for name in compilers:
+                      group = [row for row in rows if (row["variant"], row["n"], row["compiler"])
+                               == (variant, n, name)]
+                      medians[variant, n, name] = statistics.median(row["seconds"] for row in group)
+                      statuses[name] = ",".join(str(row["exit_status"]) for row in group)
+                      if len({row["exit_status"] for row in group}) != 1:
+                          errors.append(f"{variant} N={n} {name}: inconsistent exit statuses")
+                  main = medians[variant, n, "main"]
+                  branch = medians[variant, n, "branch"]
+                  summary += [f"{n} | {main:.6f} | {branch:.6f} | {branch/main:.3f}x | "
+                              f"{statuses['main']} | {statuses['branch']}"]
+          small = medians["field", 200, "branch"]
+          large = medians["field", 800, "branch"]
+          passed = not errors and large <= 8 * small
+          summary += ["", f"{'PASS' if passed else 'FAIL'}: branch field median800={large:.6f}s; "
+                      f"median200={small:.6f}s; limit=8*median200={8*small:.6f}s; "
+                      f"growth={large/small:.3f}x."]
+          summary += errors
+          summary += ["", "Whole-file check times include contracts and main. "
+                      "A passing growth criterion does not isolate a particular checker routine."]
+          (out / "summary.txt").write_text("\n".join(summary) + "\n")
+          print("\n".join(summary), flush=True)
+          raise SystemExit(0 if passed else 1)
+          PY
+          # The wrapper owns the lock/deadline once. Each sample times only the
+          # compiler process; wrapper polling is outside every measured interval.
+          perl .github/run-check.pl field-image-scale \
+            python3 -u "$FIELD_IMAGE_OUT/scale.py"
+      - name: Publish the measurement summary
+        if: always()
+        run: |
+          out="$RUNNER_TEMP/field-image-scale"
+          for file in inputs.txt summary.txt; do
+            if [ -f "$out/$file" ]; then
+              { echo '```'; cat "$out/$file"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: field-image-scale
+          path: |
+            ${{ runner.temp }}/field-image-scale/*.wf
+            ${{ runner.temp }}/field-image-scale/*.py
+            ${{ runner.temp }}/field-image-scale/*.txt
+            ${{ runner.temp }}/field-image-scale/*.jsonl
+            ${{ runner.temp }}/field-image-scale/*.stdout
+            ${{ runner.temp }}/field-image-scale/*.stderr
+      - name: Remove the temporary baseline worktree
+        if: always()
+        run: |
+          if [ -d "$RUNNER_TEMP/field-image-scale/main" ]; then
+            git worktree remove --force "$RUNNER_TEMP/field-image-scale/main"
+          fi
