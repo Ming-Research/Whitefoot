@@ -2,7 +2,7 @@
 //!
 //! Construction functions [OP-13], window operations [OP-10],
 //! `swap` [OP-11], `free_empty` [OP-14], the shared-object functions and
-//! the map's five and key set's four [SHARE-1] are declared body-less
+//! the map's five, shards' two and key set's four [SHARE-1] are declared body-less
 //! exactly as a host function is [PRE-2], but no trusted-base object defines
 //! them: the compiler emits
 //! their bodies. Each body is built here, at the row's own physical function
@@ -43,6 +43,7 @@ impl IrBuilder<'_> {
         &mut self,
         name: &str,
         element: Option<crate::semantic::CheckedElement>,
+        supplied_body_calls: &[u32],
     ) -> Result<(), LoweringFailure> {
         match name {
             "box_new" | "frozen_new" => self.row_box_new(),
@@ -71,6 +72,8 @@ impl IrBuilder<'_> {
                 self.row_shared_share()
             }
             "shared_map_new" => self.row_shared_map_new(),
+            "shared_shards_new" => self.row_shared_shards_new(supplied_body_calls),
+            "any_shard" => self.row_any_shard(),
             "map_count" => self.row_map_count(),
             "map_scan" => self.row_map_scan(),
             "map_scan_within" => self.row_map_scan_within(),
@@ -192,6 +195,136 @@ impl IrBuilder<'_> {
             IrOperation::ConcurrentHashMapNew { nominal, capacity },
         )?;
         self.return_value(table)
+    }
+
+    fn row_any_shard(&mut self) -> Result<(), LoweringFailure> {
+        let [] = self.row_parameters()?;
+        let IrType::Nominal(nominal) = self.result else {
+            return Err(LoweringFailure::InvalidCheckedProgram);
+        };
+        let value = self.define(
+            self.result,
+            IrOperation::ConstructStruct {
+                nominal,
+                fields: Vec::new(),
+            },
+        )?;
+        self.return_value(value)
+    }
+
+    fn row_shared_shards_new(&mut self, makers: &[u32]) -> Result<(), LoweringFailure> {
+        let [] = self.row_parameters()?;
+        let [maker] = makers else {
+            return Err(LoweringFailure::InvalidCheckedProgram);
+        };
+        let IrType::Nominal(nominal) = self.result else {
+            return Err(LoweringFailure::InvalidCheckedProgram);
+        };
+        let IrNominalKind::Shared {
+            state: IrType::Shards { element },
+            ..
+        } = self.nominals[nominal.index()].kind
+        else {
+            return Err(LoweringFailure::InvalidCheckedProgram);
+        };
+        let element_type = self.element_type(element)?;
+        if self.function_results.get(*maker as usize) != Some(&element_type) {
+            return Err(LoweringFailure::InvalidCheckedProgram);
+        }
+        let referent =
+            IrAddressed::of(element_type).ok_or(LoweringFailure::InvalidCheckedProgram)?;
+        let object = self.define(self.result, IrOperation::ShardsNew { nominal })?;
+        let state = self.define(
+            IrType::Address(IrAddressed::Shards { element }),
+            IrOperation::SharedState { nominal, object },
+        )?;
+        let length_address = self.define(
+            IrType::Address(IrAddressed::Integer {
+                width: 64,
+                signed: false,
+            }),
+            IrOperation::ProjectAddress {
+                address: state,
+                projection: IrPlaceStep::Measure {
+                    measure: IrMeasure::Length,
+                },
+            },
+        )?;
+        let length = self.define(
+            U64,
+            IrOperation::Load {
+                address: length_address,
+                referent: IrAddressed::Integer {
+                    width: 64,
+                    signed: false,
+                },
+            },
+        )?;
+        let zero = self.define(
+            U64,
+            IrOperation::Constant(IrConstant::Integer { ty: U64, bits: 0 }),
+        )?;
+        let (header, parameters) = self.new_block(&[U64])?;
+        let body = self.new_block(&[])?.0;
+        let done = self.new_block(&[])?.0;
+        self.terminate(IrTerminator::Jump {
+            target: header,
+            arguments: vec![zero],
+            drops: Vec::new(),
+        })?;
+        self.current = Some(header);
+        let index = parameters[0];
+        let below = self.define(
+            IrType::Bool,
+            IrOperation::Integer {
+                operation: IrIntegerOperation::Less,
+                operand_type: U64,
+                arguments: vec![index, length],
+            },
+        )?;
+        self.terminate(IrTerminator::Match {
+            scrutinee: below,
+            enum_type: lower_enum_type(self.erasure, crate::semantic::CheckedEnumType::Bool)?,
+            targets: vec![
+                IrMatchTarget { tag: 1, block: body },
+                IrMatchTarget { tag: 0, block: done },
+            ],
+        })?;
+        self.current = Some(body);
+        let value = self.define(
+            element_type,
+            IrOperation::Call {
+                function: *maker,
+                arguments: Vec::new(),
+            },
+        )?;
+        let slot = self.define(
+            IrType::Address(referent),
+            IrOperation::ProjectAddress {
+                address: state,
+                projection: IrPlaceStep::ShardElement { offset: index },
+            },
+        )?;
+        self.store_addressed(slot, value, referent)?;
+        let one = self.define(
+            U64,
+            IrOperation::Constant(IrConstant::Integer { ty: U64, bits: 1 }),
+        )?;
+        let next = self.define(
+            U64,
+            IrOperation::Integer {
+                operation: IrIntegerOperation::AddExact,
+                operand_type: U64,
+                arguments: vec![index, one],
+            },
+        )?;
+        self.terminate(IrTerminator::Jump {
+            target: header,
+            arguments: vec![next],
+            drops: Vec::new(),
+        })?;
+        self.current = Some(done);
+        self.return_value(object)
     }
 
     /// `map_count<V>(map: &ConcurrentHashMap<V>) -> u64`: how many entries
@@ -818,6 +951,7 @@ fn ceiling_pair(
         // entry binding names are the statement's record [SHARE-1, SHARE-2].
         IrType::KeySet => (Finite(16), 8),
         IrType::Entries { .. } => (Finite(24), 8),
+        IrType::Shards { .. } => (Finite(8), 8),
         IrType::Address(_) => (Finite(8), 8),
         // This compiler-only task capture has no source layout ceiling.
         IrType::RuntimeBoxPayload { .. } => return None,

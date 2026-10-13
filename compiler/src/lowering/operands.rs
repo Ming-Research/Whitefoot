@@ -101,6 +101,9 @@ macro_rules! operation_operands {
             | IrOperation::Window
             | IrOperation::ContextJoin
             | IrOperation::SharedNew { .. }
+            | IrOperation::ShardsNew { .. }
+            | IrOperation::ShardsGroupTake { .. }
+            | IrOperation::ShardsGroupRelease { .. }
             | IrOperation::TableEntrySlot { .. }
             | IrOperation::TableUnlockEntry { .. }
             | IrOperation::TableHoldRead { .. }
@@ -131,6 +134,10 @@ macro_rules! operation_operands {
             | IrOperation::AddressOf { value, .. }
             | IrOperation::ContextAwait { start: value }
             | IrOperation::SharedState { object: value, .. }
+            | IrOperation::ShardsSelect { object: value, .. }
+            | IrOperation::ShardsTake { object: value, .. }
+            | IrOperation::ShardsRelease { object: value, .. }
+            | IrOperation::ShardsGroupTarget { object: value, .. }
             | IrOperation::SharedRetain { object: value, .. }
             | IrOperation::SharedAcquire { object: value }
             | IrOperation::SharedWatch { object: value }
@@ -285,7 +292,8 @@ macro_rules! operation_operands {
                 super::IrPlaceStep::RunElement { offset, .. }
                 | super::IrPlaceStep::ArrayElement { offset, .. }
                 | super::IrPlaceStep::BufferElement { offset, .. }
-                | super::IrPlaceStep::EntriesElement { offset } => {
+                | super::IrPlaceStep::EntriesElement { offset }
+                | super::IrPlaceStep::ShardElement { offset } => {
                     vec![$value(address), $value(offset)]
                 }
             },

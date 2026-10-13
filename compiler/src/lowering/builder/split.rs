@@ -1638,7 +1638,10 @@ fn frame_bytes(ty: IrType) -> u64 {
         IrType::Address(_) | IrType::RuntimeBoxPayload { .. } => FRAME_FIELD_ALIGN,
         // Aggregates trigger capture selection and the final exact-layout
         // query; a conservative fit retains its established capture interface.
-        IrType::Nominal(_) | IrType::Array { .. } | IrType::Window { .. } => LANE_FRAME_BYTES,
+        IrType::Nominal(_)
+        | IrType::Array { .. }
+        | IrType::Window { .. }
+        | IrType::Shards { .. } => LANE_FRAME_BYTES,
     };
     raw.div_ceil(FRAME_FIELD_ALIGN) * FRAME_FIELD_ALIGN
 }

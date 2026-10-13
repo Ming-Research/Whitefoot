@@ -327,6 +327,8 @@ fn the_compiler_owned_c_units_compile_in_the_default_dialect() {
         ("concurrent_map.h", crate::CONCURRENT_MAP_HEADER),
         ("concurrent_map.c", crate::CONCURRENT_MAP_SOURCE),
         ("keyed_table.c", crate::KEYED_TABLE_SOURCE),
+        ("sharded_state.h", crate::SHARDED_STATE_HEADER),
+        ("sharded_state.c", crate::SHARDED_STATE_SOURCE),
     ];
     for staged in ["completion", "sched"] {
         std::fs::create_dir_all(directory.join(staged)).expect("stage runtime directory");
@@ -336,7 +338,7 @@ fn the_compiler_owned_c_units_compile_in_the_default_dialect() {
     }
     for (name, _) in units {
         // `keyed_table.c` compiles the concurrent map in, as its host.
-        if !name.ends_with(".c") || name == "concurrent_map.c" {
+        if !name.ends_with(".c") || name == "concurrent_map.c" || name == "sharded_state.c" {
             continue;
         }
         let checked = Command::new(crate::clang_executable())
@@ -819,6 +821,8 @@ fn linked_c_units_avoid_identifiers_the_host_compiler_predefines() {
         ("stop_signals.c", crate::COMPLETION_STOP_SIGNALS_SOURCE),
         ("concurrent_map.c", crate::CONCURRENT_MAP_SOURCE),
         ("keyed_table.c", crate::KEYED_TABLE_SOURCE),
+        ("sharded_state.c", crate::SHARDED_STATE_SOURCE),
+        ("sharded_state.h", crate::SHARDED_STATE_HEADER),
         ("concurrent_map.h", crate::CONCURRENT_MAP_HEADER),
         ("runtime.c", crate::COMPLETION_RUNTIME_SOURCE),
         ("wait_host.c", crate::COMPLETION_WAIT_HOST_SOURCE),

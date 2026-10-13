@@ -29,6 +29,7 @@ pub(super) mod places;
 mod reinterpret;
 mod runs;
 mod segments;
+mod shards;
 mod shared;
 mod slice;
 mod storage_alias;
@@ -2718,6 +2719,38 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 self.emit_box_new(result, ty, *nominal, *value)
             }
             IrOperation::SharedNew { nominal } => self.emit_shared_new(result, ty, *nominal),
+            IrOperation::ShardsNew { nominal } => self.emit_shards_new(result, ty, *nominal),
+            IrOperation::ShardsSelect { object, element } => {
+                self.emit_shards_select(result, ty, *object, *element)
+            }
+            IrOperation::ShardsTake {
+                object,
+                element,
+                whole,
+            } => {
+                self.emit_shards_hold(result, *object, *element, *whole, true)
+            }
+            IrOperation::ShardsRelease {
+                object,
+                element,
+                whole,
+            } => {
+                self.emit_shards_hold(result, *object, *element, *whole, false)
+            }
+            IrOperation::ShardsGroupTarget {
+                record,
+                index,
+                object,
+                whole,
+            } => {
+                self.emit_shards_group_target(result, *record, *index, *object, *whole)
+            }
+            IrOperation::ShardsGroupTake { record, element } => {
+                self.emit_shards_group(result, *record, *element, true)
+            }
+            IrOperation::ShardsGroupRelease { record, element } => {
+                self.emit_shards_group(result, *record, *element, false)
+            }
             IrOperation::SharedState { nominal, object } => {
                 self.emit_shared_state(result, ty, *nominal, *object)
             }
@@ -3367,6 +3400,7 @@ pub(super) fn llvm_type_with_references(
         // the set's count [SHARE-2].
         IrType::KeySet => Ok("{ i64, ptr }".to_owned()),
         IrType::Entries { .. } => Ok("{ ptr, i64, i64 }".to_owned()),
+        IrType::Shards { .. } => Ok("{ i64 }".to_owned()),
         // compiler/storage-representation: a runtime-capacity `Array<T>` is
         // one block `[len | elements]`, header first, exactly as a boxed
         // window block is. An `Array`'s `len` equals its `cap` [WIN-1], so

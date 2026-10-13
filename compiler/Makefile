@@ -190,7 +190,9 @@ docs:
 # targets always rerun assertions. Distinct hook/sanitizer flags name distinct
 # objects. The stamp prevents a shared scratch root reusing another checkout
 # or compiler/flag configuration, without caching a previous test verdict.
-COMPLETION_HEADERS := $(wildcard src/backend/*.h $(SCHED_DIR)/*.h $(COMPLETION_DIR)/*.h)
+# bridge.c includes the shards implementation, so changes to that include
+# must also rebuild probes that compile the bridge into their own unit.
+COMPLETION_HEADERS := $(wildcard src/backend/*.h $(SCHED_DIR)/*.h $(COMPLETION_DIR)/*.h) src/backend/sharded_state.c
 COMPLETION_CONFIG := $(COMPLETION_TMP)/configuration.txt
 .PHONY: completion-configuration-force
 completion-configuration-force:
@@ -262,7 +264,7 @@ $(eval $(call completion-image,core-read-probe-sanitize,$(COMPLETION_CORE_READ_S
 $(eval $(call completion-image,harness-tsan,$(COMPLETION_SOURCES),$(COMPLETION_TSAN_FLAGS) $(COMPLETION_DEFINES) $(COMPLETION_HARNESS_DEFINES)))
 $(eval $(call completion-image,bridge-default-probe-tsan,$(COMPLETION_DEFAULT_ROUTE_SOURCES),$(COMPLETION_TSAN_FLAGS)))
 
-completion-test: $(COMPLETION_TMP)/harness completion-core-read-test completion-default-route-test sched-smoke sched-deque-test sched-policy-test floor-test concurrent-map-test shared-object-test cancel-test driver-service-test driver-service-native-test driver-count-test completion-native-test completion-fork-capsule-test
+completion-test: $(COMPLETION_TMP)/harness completion-core-read-test completion-default-route-test sched-smoke sched-deque-test sched-policy-test floor-test concurrent-map-test sharded-state-test shared-object-test cancel-test driver-service-test driver-service-native-test driver-count-test completion-native-test completion-fork-capsule-test
 	@mkdir -p "$(COMPLETION_TMP)"
 	$(NO_CORE_DUMPS) $(NATIVE_REQUIREMENT) WF_IO_HELPERS=1 "$(COMPLETION_TMP)/harness" "$(COMPLETION_TMP)" all
 	$(NO_CORE_DUMPS) $(NATIVE_REQUIREMENT) WF_IO_HELPERS=0 "$(COMPLETION_TMP)/harness" "$(COMPLETION_TMP)" bridge
@@ -466,7 +468,7 @@ floor-test: $(COMPLETION_TMP)/floor-probe $(COMPLETION_TMP)/floor-probe-hooks
 # includes the keyed tables' unit, and through it the map's source, so that
 # it can drive interleavings through the map's own steps.
 CONCURRENT_MAP_SOURCES := src/backend/concurrent_map.c src/backend/keyed_table.c src/backend/concurrent_map_test.c \
-	src/backend/concurrent_map.h $(COMPLETION_DIR)/bridge.h
+	src/backend/concurrent_map.h src/backend/sharded_state.h $(COMPLETION_DIR)/bridge.h
 CONCURRENT_MAP_VARIANTS := copy-out locked collide
 concurrent-map-test: $(foreach v,$(CONCURRENT_MAP_VARIANTS),$(COMPLETION_TMP)/concurrent-map-test-$(v)) $(COMPLETION_TMP)/concurrent-map-test-ignore-activity
 	@set -e; for v in $(CONCURRENT_MAP_VARIANTS); do \
@@ -518,6 +520,28 @@ concurrent-map-test-tsan: $(CONCURRENT_MAP_SOURCES) Makefile
 	$(CC) $(COMPLETION_BASE_CFLAGS) -fsanitize=thread \
 		src/backend/concurrent_map_test.c -o "$(COMPLETION_TMP)/concurrent-map-test-tsan"
 	TSAN_OPTIONS=halt_on_error=1 "$(COMPLETION_TMP)/concurrent-map-test-tsan"
+
+# Shared shards: exact whole snapshots race shard writers; a second trial
+# swaps owned buffers out and releases them while writers append, followed
+# by final-handle cleanup. Live-grant accounting checks leaks on both hosts.
+SHARDED_STATE_SOURCES := src/backend/sharded_state.c src/backend/sharded_state.h \
+	src/backend/sharded_state_test.c $(COMPLETION_DIR)/bridge.h
+.PHONY: sharded-state-test sharded-state-test-sanitized sharded-state-test-tsan
+$(COMPLETION_TMP)/sharded-state-test: $(SHARDED_STATE_SOURCES) Makefile
+	@mkdir -p "$(dir $@)"
+	$(CC) $(COMPLETION_BASE_CFLAGS) src/backend/sharded_state_test.c -o "$@"
+sharded-state-test: $(COMPLETION_TMP)/sharded-state-test
+	"$(COMPLETION_TMP)/sharded-state-test"
+sharded-state-test-sanitized: $(SHARDED_STATE_SOURCES) Makefile
+	@mkdir -p "$(COMPLETION_TMP)"
+	$(CC) $(COMPLETION_BASE_CFLAGS) -fsanitize=address,undefined -fno-sanitize-recover=undefined \
+		src/backend/sharded_state_test.c -o "$(COMPLETION_TMP)/sharded-state-test-sanitized"
+	ASAN_OPTIONS=detect_leaks=0 "$(COMPLETION_TMP)/sharded-state-test-sanitized"
+sharded-state-test-tsan: $(SHARDED_STATE_SOURCES) Makefile
+	@mkdir -p "$(COMPLETION_TMP)"
+	$(CC) $(COMPLETION_BASE_CFLAGS) -fsanitize=thread \
+		src/backend/sharded_state_test.c -o "$(COMPLETION_TMP)/sharded-state-test-tsan"
+	TSAN_OPTIONS=halt_on_error=1 "$(COMPLETION_TMP)/sharded-state-test-tsan"
 
 # The shared-object runtime's waits, with contexts whose frames the test
 # writes and the moments the runtime lets it observe (shared_object_test.c),

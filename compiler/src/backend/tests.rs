@@ -73,6 +73,7 @@ mod requires;
 mod resource_enums;
 mod result_abi;
 mod shared_maps;
+mod shards;
 mod stack_ledger;
 mod storage_alias;
 mod system;
@@ -429,6 +430,8 @@ fn append_runtime_units_with_library_defines(
         ("concurrent_map.h", crate::CONCURRENT_MAP_HEADER),
         ("concurrent_map.c", crate::CONCURRENT_MAP_SOURCE),
         ("keyed_table.c", crate::KEYED_TABLE_SOURCE),
+        ("sharded_state.h", crate::SHARDED_STATE_HEADER),
+        ("sharded_state.c", crate::SHARDED_STATE_SOURCE),
     ];
     std::fs::create_dir_all(directory.join("completion")).expect("stage completion directory");
     std::fs::create_dir_all(directory.join("sched")).expect("stage scheduler directory");
@@ -449,6 +452,7 @@ fn append_runtime_units_with_library_defines(
         // `keyed_table.c` compiles the concurrent map in, as its host.
         if name.ends_with(".h")
             || name == "concurrent_map.c"
+            || name == "sharded_state.c"
             || (name == "heap.c" && !needs_heap)
             || (name == "ordinary_values.c" && custom_library)
         {

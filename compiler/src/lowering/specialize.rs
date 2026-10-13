@@ -17,6 +17,7 @@ use super::LoweringFailure;
 pub(super) struct PhysicalVariant {
     pub(super) source: FunctionId,
     pub(super) calls: Vec<(NodePath, u32)>,
+    pub(super) supplied_body_calls: Vec<u32>,
 }
 
 #[derive(Debug)]
@@ -87,11 +88,22 @@ impl PhysicalFunctions {
             }
         }
         while let Some(function) = pending.pop() {
-            for call in &dependencies[function.0 as usize].calls {
-                let slot = &mut emitted[call.callee.0 as usize];
+            for callee in dependencies[function.0 as usize]
+                .calls
+                .iter()
+                .map(|call| call.callee)
+                .chain(
+                    program.functions[function.0 as usize]
+                        .supplied_body_calls()
+                        .iter()
+                        .copied(),
+                )
+            {
+                source_function(program, callee)?;
+                let slot = &mut emitted[callee.0 as usize];
                 if !*slot {
                     *slot = true;
-                    pending.push(call.callee);
+                    pending.push(callee);
                 }
             }
         }
@@ -138,6 +150,14 @@ impl PhysicalFunctions {
                 Ok(PhysicalVariant {
                     source: function.id,
                     calls,
+                    supplied_body_calls: function
+                        .supplied_body_calls()
+                        .iter()
+                        .map(|callee| {
+                            ordinals[callee.0 as usize]
+                                .ok_or(LoweringFailure::InvalidCheckedProgram)
+                        })
+                        .collect::<Result<Vec<_>, _>>()?,
                 })
             })
             .collect::<Result<Vec<_>, LoweringFailure>>()?;

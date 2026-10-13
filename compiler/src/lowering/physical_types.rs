@@ -321,10 +321,10 @@ impl<'a> PhysicalTypes<'a> {
                     element: self.element(element)?,
                 });
             }
-            CheckedType::Shards { .. } => {
-                return Err(LoweringFailure::UnimplementedPreludeRow(
-                    "Shards storage lowering (phase 2)",
-                ));
+            CheckedType::Shards { element } => {
+                return Ok(IrType::Shards {
+                    element: self.element(element)?,
+                });
             }
             CheckedType::Array { element, length } => {
                 return Ok(IrType::Array {

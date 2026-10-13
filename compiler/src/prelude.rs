@@ -561,12 +561,14 @@ mod tests {
         signatures.sort_unstable();
         // [PRE-1] keeps no host record: the host signatures are the standard
         // library's [PRE-2], which this unit names none of. Of the
-        // compiler-owned rows only the key set's four functions [SHARE-1]
-        // take no type parameter, so each is one ordinary checked function;
+        // compiler-owned rows the key set's four functions and the shard
+        // selector `any_shard` [SHARE-1] take no type parameter, so each is
+        // one ordinary checked function;
         // every other row is generic, and [FN-2] gives it a checked function
         // only per concrete instance, of which this unit, calling none of
         // them, has none.
         let ungeneric = [
+            "any_shard",
             "key_set_bytes",
             "key_set_insert",
             "key_set_new",

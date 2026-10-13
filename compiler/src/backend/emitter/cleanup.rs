@@ -149,7 +149,15 @@ fn emit_shared_drop_helper(
     } else {
         "wf__shared_release"
     };
-    let free = if frozen {
+    let shards_element = match state {
+        IrType::Shards { element } if !frozen => {
+            Some(program.element(element).ok_or(BackendFailure::InvalidIr)?)
+        }
+        _ => None,
+    };
+    let free = if shards_element.is_some() {
+        "wf__shards_free"
+    } else if frozen {
         "wf__frozen_free"
     } else {
         "wf__shared_free"
@@ -158,7 +166,29 @@ fn emit_shared_drop_helper(
     writeln!(output, "  %last = call i32 @{release}(ptr %value)\n  %is.last = icmp ne i32 %last, 0\n  br i1 %is.last, label %state, label %done")
         .map_err(|_| BackendFailure::TextEmission)?;
     output.open_block("state".to_owned());
-    if type_requires_cleanup(program, state)? {
+    if let Some(element) = shards_element {
+        if type_requires_cleanup(program, element)? {
+            writeln!(output, "  %shards.len.ptr = getelementptr inbounds i8, ptr %value, i64 8\n  %shards.len = load i64, ptr %shards.len.ptr, align 8\n  %shards.stride.ptr = getelementptr inbounds i8, ptr %value, i64 24\n  %shards.stride = load i64, ptr %shards.stride.ptr, align 8\n  br label %shards.walk")?;
+            output.open_block("shards.walk".to_owned());
+            writeln!(output, "  %shards.index = phi i64 [ 0, %state ], [ %shards.next, %shards.step ]\n  %shards.more = icmp ult i64 %shards.index, %shards.len\n  br i1 %shards.more, label %shards.body, label %shards.done")?;
+            output.open_block("shards.body".to_owned());
+            writeln!(output, "  %shards.offset = mul i64 %shards.index, %shards.stride\n  %shards.value.offset = add i64 %shards.offset, 80\n  %shards.value = getelementptr inbounds i8, ptr %value, i64 %shards.value.offset")?;
+            let mut temporary = 0_u32;
+            emit_cleanup_jobs(
+                program,
+                &mut output,
+                &mut temporary,
+                vec![CleanupJob::Place {
+                    ty: element,
+                    address: "%shards.value".to_owned(),
+                }],
+            )?;
+            writeln!(output, "  br label %shards.step")?;
+            output.open_block("shards.step".to_owned());
+            writeln!(output, "  %shards.next = add i64 %shards.index, 1\n  br label %shards.walk")?;
+            output.open_block("shards.done".to_owned());
+        }
+    } else if type_requires_cleanup(program, state)? {
         writeln!(
             output,
             "  %state.address = getelementptr inbounds i8, ptr %value, i64 {}",
@@ -198,7 +228,7 @@ fn emit_shared_drop_helper(
 /// table or a key set [SHARE-1], and so names the runtime's entries for them.
 pub(super) fn program_uses_shared(program: &IrProgram) -> Result<bool, BackendFailure> {
     Ok(program_types(program)?.into_iter().any(|ty| match ty {
-        IrType::KeySet | IrType::Entries { .. } => true,
+        IrType::KeySet | IrType::Entries { .. } | IrType::Shards { .. } => true,
         IrType::Nominal(id) => program.nominal(id).is_some_and(|nominal| {
             matches!(
                 nominal.kind(),
@@ -216,7 +246,11 @@ pub(super) fn program_uses_shared(program: &IrProgram) -> Result<bool, BackendFa
 /// The runtime's shared-object entries (`completion/bridge.h`).
 pub(super) fn shared_runtime_declarations() -> Module {
     let mut module = Module::default();
-    let declarations: [(&str, &str, &[&str]); 43] = [
+    module.declare_thread_local("wf__map_user".to_owned(), "i32", 4);
+    let declarations: [(&str, &str, &[&str]); 46] = [
+        ("wf__shards_new", "ptr", &["i64"]),
+        ("wf__shards_free", "void", &["ptr"]),
+        ("wf__shards_wait", "void", &["ptr", "i64"]),
         ("wf__frozen_new", "ptr", &["i64"]),
         ("wf__frozen_share", "void", &["ptr"]),
         ("wf__frozen_release", "i32", &["ptr"]),
@@ -569,6 +603,7 @@ fn stable_type_spelling(program: &IrProgram, ty: IrType) -> Result<String, Backe
         IrType::Range { element: held } => format!("range<{}>", element(held)?),
         IrType::KeySet => "keyset".to_owned(),
         IrType::Entries { element: held } => format!("entries<{}>", element(held)?),
+        IrType::Shards { element: held } => format!("shards<{}>", element(held)?),
         IrType::RuntimeBoxPayload { nominal } => format!(
             "payload<{}>",
             program
@@ -644,7 +679,10 @@ fn reachable_types(program: &IrProgram, seeds: Vec<IrType>) -> Result<Vec<IrType
             IrType::Buffer { element } | IrType::Segments { element } => {
                 pending.push(program.element(element).ok_or(BackendFailure::InvalidIr)?)
             }
-            IrType::Range { element } | IrType::Run { element } | IrType::Entries { element } => {
+            IrType::Range { element }
+            | IrType::Run { element }
+            | IrType::Entries { element }
+            | IrType::Shards { element } => {
                 pending.push(program.element(element).ok_or(BackendFailure::InvalidIr)?);
             }
             IrType::RuntimeBoxPayload { .. } | IrType::KeySet => {}
@@ -920,7 +958,10 @@ fn emit_cleanup_jobs(
                 // mean a value of a type no storage can hold.
                 // The entries an entry binding names are its statement's
                 // record and own nothing [SHARE-2].
-                IrType::Buffer { .. } | IrType::Segments { .. } | IrType::Entries { .. } => {
+                IrType::Buffer { .. }
+                | IrType::Segments { .. }
+                | IrType::Entries { .. }
+                | IrType::Shards { .. } => {
                     return Err(BackendFailure::InvalidIr);
                 }
                 IrType::Nominal(id) => {

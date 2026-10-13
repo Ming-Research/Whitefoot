@@ -220,6 +220,221 @@ fn with_ir<ResultValue>(source: &[u8], run: impl FnOnce(&IrProgram) -> ResultVal
 }
 
 #[test]
+fn any_shard_representation_preserves_unrelated_qualified_host_opaques() {
+    let source = br#"
+fn inspect(meter: &std::process::MemoryMeter) -> result: unit reads(meter) {
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let mine = any_shard();
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    with_checked(source, |mut checked| {
+        // Model a host manifest with the same short name while retaining the
+        // ordinary checked opaque identity and all its references.
+        let host = checked
+            .data
+            .nominal_spellings
+            .iter()
+            .position(|spelling| spelling.as_deref() == Some("std.process.MemoryMeter"))
+            .expect("the referenced host opaque must be checked");
+        assert!(matches!(
+            checked.data.nominals[host].kind,
+            crate::semantic::CheckedNominalKind::Opaque
+        ));
+        checked.data.nominals[host].name = "AnyShard".to_owned();
+        checked.data.nominal_spellings[host] = Some("std.example.AnyShard".to_owned());
+        let program = lower_checked(checked, OverlapLowering::Off)
+            .expect("an unrelated qualified opaque must preserve its ordinary representation");
+        let host = program
+            .nominals()
+            .iter()
+            .find(|nominal| nominal.stable_spelling() == Some("std.example.AnyShard"))
+            .expect("the host opaque retains its qualified identity");
+        assert!(matches!(host.kind(), IrNominalKind::Opaque));
+        let selector = program
+            .nominals()
+            .iter()
+            .find(|nominal| nominal.stable_spelling() == Some("AnyShard"))
+            .expect("the prelude selector retains its own identity");
+        assert!(matches!(selector.kind(), IrNominalKind::Struct { fields } if fields.is_empty()));
+    });
+}
+
+#[test]
+fn shards_run_cases_lower_constructor_calls_and_addressed_elements() {
+    let cases: [&[u8]; 6] = [
+        include_bytes!("../../../tests/conformance/cases/share-pos-shards-count.wf"),
+        include_bytes!("../../../tests/conformance/cases/share-pos-shards-start-from-maker.wf"),
+        include_bytes!("../../../tests/conformance/cases/share-pos-shards-owned-buffers.wf"),
+        include_bytes!("../../../tests/conformance/cases/share-pos-shards-maximum.wf"),
+        include_bytes!("../../../tests/conformance/cases/share-pos-shards-beside-map-entry.wf"),
+        include_bytes!("../../../tests/conformance/cases/share-pos-shards-whole-to-callee.wf"),
+    ];
+    for source in cases {
+        with_ir(source, |program| {
+            let constructor = program
+                .functions()
+                .iter()
+                .find(|function| {
+                    function
+                        .blocks()
+                        .iter()
+                        .flat_map(IrBlock::instructions)
+                        .any(|instruction| {
+                            matches!(
+                                instruction,
+                                IrInstruction::Define {
+                                    operation: IrOperation::ShardsNew { .. },
+                                    ..
+                                }
+                            )
+                        })
+                })
+                .expect("the reached shards constructor must have an emitted body");
+            let instructions = constructor
+                .blocks()
+                .iter()
+                .flat_map(IrBlock::instructions)
+                .collect::<Vec<_>>();
+            assert!(
+                instructions.iter().any(|instruction| {
+                    matches!(instruction, IrInstruction::Define {
+                        operation: IrOperation::Call { function, arguments }, ..
+                    } if arguments.is_empty()
+                        && !program.functions()[*function as usize].blocks().is_empty())
+                }),
+                "the constructor must call its reached concrete maker"
+            );
+            assert!(
+                instructions.iter().any(|instruction| {
+                    matches!(
+                        instruction,
+                        IrInstruction::Define {
+                            operation: IrOperation::ProjectAddress {
+                                projection: crate::IrPlaceStep::ShardElement { .. },
+                                ..
+                            },
+                            ..
+                        }
+                    )
+                }),
+                "maker values must be stored through individual shard addresses"
+            );
+            let selector = program
+                .nominals()
+                .iter()
+                .find(|nominal| nominal.name() == "AnyShard")
+                .expect("the selector nominal must retain its identity");
+            assert!(
+                matches!(selector.kind(), IrNominalKind::Struct { fields } if fields.is_empty())
+            );
+            assert!(
+                program
+                    .functions()
+                    .iter()
+                    .flat_map(IrFunction::blocks)
+                    .flat_map(IrBlock::instructions)
+                    .any(|instruction| {
+                        matches!(
+                            instruction,
+                            IrInstruction::Define {
+                                operation: IrOperation::ShardsTake { .. },
+                                ..
+                            }
+                        )
+                    })
+            );
+        });
+    }
+}
+
+#[test]
+fn shard_aliases_use_one_identity_ordered_group_with_whole_absorption() {
+    let source = br#"
+fn zero() -> value: u64 pure {
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let parts = shared_shards_new::<u64, fn zero>();
+  let other = shared_share::<Shards<u64>>(shared: &parts);
+  let mine = any_shard();
+  atomic selected = &parts[mine], all = &other {
+    set selected^ = 3_u64;
+    set all^[0_u64] = 7_u64;
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    with_ir(source, |program| {
+        let operations = function(program, "main")
+            .blocks()
+            .iter()
+            .flat_map(IrBlock::instructions)
+            .filter_map(|instruction| match instruction {
+                IrInstruction::Define { operation, .. } => Some(operation),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let targets = operations
+            .iter()
+            .filter_map(|operation| match operation {
+                IrOperation::ShardsGroupTarget { record, whole, .. } => Some((*record, *whole)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(targets.len(), 2);
+        assert_eq!(targets[0].0, targets[1].0);
+        assert_eq!((targets[0].1, targets[1].1), (false, true));
+        assert!(matches!(targets[0].0.kind(), crate::IrRecordKind::ShardsGroup { count: 2 }));
+        assert!(operations.iter().any(|operation| {
+            matches!(operation, IrOperation::ShardsGroupTake { record, .. } if *record == targets[0].0)
+        }));
+        assert!(operations.iter().any(|operation| {
+            matches!(operation, IrOperation::ShardsGroupRelease { record, .. } if *record == targets[0].0)
+        }));
+        assert!(!operations.iter().any(|operation| {
+            matches!(operation, IrOperation::ShardsTake { .. } | IrOperation::SharedAcquire { .. })
+        }));
+    });
+}
+
+#[test]
+fn shards_maker_is_reachable_from_the_constructor_supplied_body() {
+    with_checked(
+        include_bytes!("../../../tests/conformance/cases/share-pos-shards-owned-buffers.wf"),
+        |checked| {
+            let main = checked
+                .data
+                .functions
+                .iter()
+                .find(|function| function.name == "main")
+                .expect("fixture entry exists")
+                .id;
+            let plan = super::specialize::PhysicalFunctions::build_from(&checked.data, Some(&[main]))
+                .expect("the entry's reached physical calls must close");
+            let constructor = plan
+                .variants
+                .iter()
+                .find(|variant| {
+                    checked.data.functions[variant.source.0 as usize].name == "shared_shards_new"
+                })
+                .expect("the entry reaches its constructor instance");
+            let [maker] = constructor.supplied_body_calls.as_slice() else {
+                panic!("the supplied constructor body calls exactly its actual maker");
+            };
+            assert_eq!(
+                plan.variants[*maker as usize].source,
+                checked.data.functions[constructor.source.0 as usize].function_actuals[0]
+            );
+        },
+    );
+}
+
+#[test]
 fn runtime_work_keeps_data_dependent_inner_extents_static() {
     let source = br#"fn count_work(upper: u64) -> result: u64 pure {
   let total = 0_u64;

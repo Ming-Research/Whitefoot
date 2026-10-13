@@ -2,6 +2,7 @@
 #define WHITEFOOT_COMPLETION_BRIDGE_H
 
 #include <stdint.h>
+#include "../sharded_state.h"
 
 #if defined(__cplusplus)
 extern "C" {

@@ -188,6 +188,7 @@ pub(crate) fn lower_checked_from(
             };
             lower_function(
                 function,
+                &variant.supplied_body_calls,
                 index,
                 &symbols[index],
                 context,
@@ -419,6 +420,16 @@ fn lower_nominals(
                         },
                     },
                 },
+                CheckedNominalKind::Opaque
+                    if nominal.name == "AnyShard"
+                        && data
+                            .nominal_spellings
+                            .get(source.0 as usize)
+                            .and_then(Option::as_deref)
+                            == Some("AnyShard") =>
+                {
+                    IrNominalKind::Struct { fields: Vec::new() }
+                }
                 CheckedNominalKind::Opaque => IrNominalKind::Opaque,
             };
             Ok(IrNominal {
@@ -441,6 +452,7 @@ fn lower_nominals(
 
 fn lower_function<'program>(
     function: &crate::semantic::CheckedFunction,
+    supplied_body_calls: &[u32],
     physical_index: usize,
     symbol: &'program str,
     context: LoweringContext<'program>,
@@ -570,7 +582,11 @@ fn lower_function<'program>(
             builder.lower_statements(body, None)?;
         }
     } else if compiler_owned {
-        builder.lower_prelude_row(&function.name, function.prelude_element)?;
+        builder.lower_prelude_row(
+            &function.name,
+            function.prelude_element,
+            supplied_body_calls,
+        )?;
     } else {
         builder.blocks.clear();
         builder.current = None;

@@ -331,7 +331,8 @@ fn contained_nominals(
             | IrType::Segments { element }
             | IrType::Range { element }
             | IrType::Run { element }
-            | IrType::Entries { element } => {
+            | IrType::Entries { element }
+            | IrType::Shards { element } => {
                 pending.push(program.element(element).ok_or(BackendFailure::InvalidIr)?);
             }
             IrType::RuntimeBoxPayload { nominal } => pending.push(IrType::Nominal(nominal)),
