@@ -1,0 +1,18 @@
+fn observe(value: &u64) -> result: u64 reads(value) contract {
+  requires held(value);
+} {
+  return value^;
+}
+
+fn sample(state: &Shared<Slots<u64, 2>>) -> result: u64 reads(state) waits {
+  atomic current = &state^ {
+    for (i in 0_u64..2_u64) {
+      if current^.len == 0_u64 {
+        place_back(window: current, value: 7_u64);
+        continue;
+      }
+      return observe(value: &current^[0_u64]);
+    }
+    return 0_u64;
+  }
+}

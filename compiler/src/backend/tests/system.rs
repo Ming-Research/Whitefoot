@@ -379,7 +379,7 @@ fn key_set_byte_measure_uses_the_runtime_account() {
   return keys^.bytes;
 }
 
-fn held(keys: KeySet) -> result: u64 pure {
+fn observed(keys: KeySet) -> result: u64 pure {
   doc "An owned descriptor reads the same retained storage account.";
   return keys.bytes;
 }

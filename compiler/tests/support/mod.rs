@@ -17,10 +17,10 @@ use whitefoot::{
     COMPLETION_BRIDGE_HEADER, COMPLETION_BRIDGE_SOURCE, COMPLETION_CONTRACT_HEADER,
     COMPLETION_FILE_ADAPTER_HEADER, COMPLETION_FILE_ADAPTER_SOURCE, COMPLETION_FILE_POSIX_HEADER,
     COMPLETION_LINUX_IO_URING_HEADER, COMPLETION_RUNTIME_SOURCE, COMPLETION_SOCKET_ADDRESS_HEADER,
-    COMPLETION_STOP_SIGNALS_SOURCE, COMPLETION_WINDOWS_IOCP_HEADER, CONCURRENT_MAP_HEADER, CONCURRENT_MAP_SOURCE,
-    HOST_OPTIMIZATION_ARGUMENTS, KEYED_TABLE_SOURCE, ORDINARY_VALUES_HEADER, ORDINARY_VALUES_LLVM,
-    ORDINARY_VALUES_SOURCE, SCHED_CORE_HEADER, SCHED_CORE_SOURCE, SCHED_ENTRY_HEADER,
-    SCHED_ENTRY_SOURCE, SCHED_PRIM_HEADER, WINDOWS_RUNTIME_HEADER,
+    COMPLETION_STOP_SIGNALS_SOURCE, COMPLETION_WINDOWS_IOCP_HEADER, CONCURRENT_MAP_HEADER,
+    CONCURRENT_MAP_SOURCE, HOST_OPTIMIZATION_ARGUMENTS, KEYED_TABLE_SOURCE, ORDINARY_VALUES_HEADER,
+    ORDINARY_VALUES_LLVM, ORDINARY_VALUES_SOURCE, SCHED_CORE_HEADER, SCHED_CORE_SOURCE,
+    SCHED_ENTRY_HEADER, SCHED_ENTRY_SOURCE, SCHED_PRIM_HEADER, WINDOWS_RUNTIME_HEADER,
 };
 
 #[cfg(unix)]
@@ -110,6 +110,16 @@ const SOURCES: &[(&str, &str)] = &[
     ("completion/contract.h", COMPLETION_CONTRACT_HEADER),
     ("completion/file_adapter.h", COMPLETION_FILE_ADAPTER_HEADER),
     ("completion/bridge.h", COMPLETION_BRIDGE_HEADER),
+    (
+        "completion/snapshot_export.h",
+        whitefoot::SNAPSHOT_EXPORT_HEADER,
+    ),
+    ("completion/fork_capsule.h", whitefoot::FORK_CAPSULE_HEADER),
+    (
+        "completion/snapshot_export.c",
+        whitefoot::SNAPSHOT_EXPORT_SOURCE,
+    ),
+    ("completion/fork_capsule.c", whitefoot::FORK_CAPSULE_SOURCE),
     ("completion/file_posix.h", COMPLETION_FILE_POSIX_HEADER),
     (
         "completion/socket_address.h",
@@ -131,6 +141,10 @@ const SOURCES: &[(&str, &str)] = &[
     ("completion/stop_signals.c", COMPLETION_STOP_SIGNALS_SOURCE),
     ("completion/linux_io_uring.c", NATIVE_SOURCE),
     ("concurrent_map.h", CONCURRENT_MAP_HEADER),
+    (
+        "concurrent_map_layout.h",
+        whitefoot::CONCURRENT_MAP_LAYOUT_HEADER,
+    ),
     ("concurrent_map.c", CONCURRENT_MAP_SOURCE),
     ("keyed_table.c", KEYED_TABLE_SOURCE),
 ];
@@ -148,6 +162,8 @@ const UNITS: &[&str] = &[
     "completion/file_adapter.c",
     "completion/file_posix.c",
     "completion/completion_bridge.c",
+    "completion/snapshot_export.c",
+    "completion/fork_capsule.c",
     "completion/stop_signals.c",
     "completion/linux_io_uring.c",
     "keyed_table.c",
@@ -188,6 +204,12 @@ fn compile_objects(c_standard: Option<&str>) -> Vec<Vec<u8>> {
             let mut command = Command::new(CLANG);
             if let Some(standard) = c_standard {
                 command.arg(format!("-std={standard}"));
+            }
+            if matches!(
+                *name,
+                "completion/snapshot_export.c" | "completion/fork_capsule.c"
+            ) {
+                command.args(whitefoot::RESTRICTED_CHILD_COMPILE_ARGUMENTS);
             }
             command
                 .args(COMPILE_ARGUMENTS)

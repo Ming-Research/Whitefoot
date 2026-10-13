@@ -1,0 +1,29 @@
+struct Node {
+  value: u64;
+  next: Option<Box<Node>>;
+}
+
+fn observe(value: &u64) -> result: u64 reads(value) contract {
+  requires held(value);
+} {
+  return value^;
+}
+
+fn sample(state: &Shared<Node>) -> result: unit reads(state) waits {
+  atomic current = &state^ {
+    let cursor = current;
+    for (i in 0_u64..2_u64) {
+      let seen = observe(value: &cursor^.value);
+      match cursor^.next {
+        Some(value: child) => {
+          set child^.inner.value = 7_u64;
+          set cursor = &child^.inner;
+        }
+        None() => {
+          break;
+        }
+      }
+    }
+  }
+  return unit;
+}

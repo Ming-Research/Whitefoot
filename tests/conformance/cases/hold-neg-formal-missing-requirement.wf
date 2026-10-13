@@ -1,0 +1,13 @@
+interface OrdinaryRead {
+  fn read(value: &u64) -> result: u64 reads(value);
+}
+
+fn restricted(input: &u64) -> result: u64 reads(input) contract {
+  requires held(input);
+} {
+  return input^;
+}
+
+binding Reader : OrdinaryRead {
+  read = restricted;
+}

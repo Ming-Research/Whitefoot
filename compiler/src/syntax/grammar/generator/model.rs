@@ -78,6 +78,7 @@ pub fn fixed_terminal(spelling: &str) -> Pred {
         ("fn", "Fn"),
         ("->", "ThinArrow"),
         ("requires", "Requires"),
+        ("held", "Held"),
         ("ensures", "Ensures"),
         ("contract", "Contract"),
         ("define", "Define"),
@@ -117,6 +118,8 @@ pub fn fixed_terminal(spelling: &str) -> Pred {
         ("atomic", "Atomic"),
         ("apart", "Apart"),
         ("forall", "Forall"),
+        // v0.142 [GRAM-5, RANGE-1]: the negated variant relation.
+        ("not", "Not"),
         ("unchanged", "Unchanged"),
         ("match", "Match"),
         ("=>", "FatArrow"),

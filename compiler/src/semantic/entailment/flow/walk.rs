@@ -791,8 +791,8 @@ impl Analyzer<'_, '_> {
                 self.judge_atomic_exit(node_path, state);
                 // [FN-9] and it is a selected return of every unrouted
                 // clause, judged over the state that edge leaves with, and of
-                // every route a type invariant generates over the `Err`
-                // field, judged in the operand's own context for that field.
+                // every route over the `Err` field, judged in the operand's
+                // own context for that field.
                 self.judge_postcondition_places(node_path, state, std::slice::from_ref(&result));
                 self.judging().judge_postcondition_return(
                     node_path,

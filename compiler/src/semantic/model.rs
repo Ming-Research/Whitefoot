@@ -1062,6 +1062,11 @@ pub(crate) enum CheckedNominalKind {
 pub(crate) struct CheckedTarget {
     pub(crate) lock_order: Vec<String>,
     pub(crate) node_path: NodePath,
+    /// Source presentation for the non-normative lowering lock ledger.
+    pub(crate) ledger_name: String,
+    pub(crate) ledger_state: String,
+    /// The target binder's exact one-based `path:line:column` location.
+    pub(crate) ledger_site: String,
     pub(crate) binding: BindingId,
     pub(crate) handle: Box<CheckedExpression>,
     pub(crate) borrowed: bool,
@@ -1738,6 +1743,10 @@ pub(crate) struct CheckedRangeRoot {
     /// The same type carried directly for expression typing, which is
     /// context-free and cannot dereference the program-owned element table.
     pub(crate) element_type: CheckedType,
+    /// The [ENT-2] proof base where `binding` is a range alias: the
+    /// source variable its places are identified through. `None` identifies
+    /// them through `binding`.
+    pub(crate) proof_base: Option<super::places::ResolvedPlace>,
 }
 
 impl CheckedRangeRoot {
@@ -1771,7 +1780,11 @@ impl CheckedRangeRoot {
                 });
                 place
             }
-            _ => super::places::ResolvedPlace::binding(self.binding),
+            _ => proof_place_below(
+                self.proof_base.as_ref(),
+                super::places::PlaceRoot::Binding(self.binding),
+                Vec::new(),
+            ),
         }
     }
 }
@@ -2942,6 +2955,8 @@ pub(crate) enum CheckedStatement {
         drops: Vec<CheckedDrop>,
     },
     Match {
+        /// The complete written `match` or `if`, including a chained `else if`.
+        node_path: NodePath,
         scrutinee: CheckedExpression,
         enum_type: CheckedEnumType,
         arms: Vec<CheckedMatchArm>,
@@ -3029,6 +3044,31 @@ pub(crate) enum CheckedStatement {
     },
 }
 
+impl CheckedStatement {
+    /// Source presentation for the non-normative lowering lock ledger.
+    /// Proof statements are erased and have no executable first-use site.
+    pub(crate) fn ledger_path(&self) -> Option<&NodePath> {
+        match self {
+            Self::Let { node_path, .. }
+            | Self::DestructuringLet { node_path, .. }
+            | Self::PropagateLet { node_path, .. }
+            | Self::Set { node_path, .. }
+            | Self::Evaluate { node_path, .. }
+            | Self::DropExpression { node_path, .. }
+            | Self::Return { node_path, .. }
+            | Self::Match { node_path, .. }
+            | Self::ValueMatchLet { node_path, .. }
+            | Self::Give { node_path, .. }
+            | Self::Loop { node_path, .. }
+            | Self::CountedRange { node_path, .. }
+            | Self::Break { node_path, .. }
+            | Self::Continue { node_path, .. }
+            | Self::Atomic { node_path, .. } => Some(node_path),
+            Self::Proof(_) => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CheckedParameter {
     pub(crate) name: String,
@@ -3099,6 +3139,15 @@ pub(crate) enum CheckedEffectStep {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CheckedHeldCall {
+    pub(crate) site: NodePath,
+    pub(crate) requirement: NodePath,
+    /// None denotes the enclosing callable's symbolic caller statement.
+    pub(crate) atomic: Option<NodePath>,
+    pub(crate) protected: Vec<super::places::ResolvedPlace>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CheckedFunction {
     /// A function-kind hypothesis belongs to symbolic template checking.
     /// The ordinary view and lowering contain none.
@@ -3135,6 +3184,9 @@ pub(crate) struct CheckedFunction {
     pub(crate) declared_state_reads: Vec<CheckedStatePath>,
     /// Callable-boundary predicates in `requires_clause` source order.
     pub(crate) requirements: Vec<super::goal::CheckedRequirement>,
+    /// [HOLD-1] normalized callable requirement and accepted call judgments.
+    pub(crate) held_parameters: Vec<u32>,
+    pub(crate) held_calls: Vec<CheckedHeldCall>,
     /// [ENT-2, FN-8] the clause (b) places each requirement forms, index-
     /// aligned with `requirements`: its own, and those of every definition
     /// whose expansion it is the first requirement to reach. Each is formed
@@ -3241,6 +3293,8 @@ pub(crate) struct CheckedCallSeparation {
     /// A demanded REF-2 use; the separation is still proved at `site`, before
     /// the invalidating write, and diagnosed at this later use.
     pub(crate) reference_use: Option<CheckedReferencePreservationUse>,
+    /// HOLD-1 uses the same position families, retaining its call diagnostic.
+    pub(crate) held_use: Option<CheckedHeldProtectionUse>,
     pub(crate) positions: Vec<CheckedCallSeparationPositions>,
     /// Erased index expressions instantiated in this call's entry state.
     /// Their captures serve only this separation, never runtime evaluation.
@@ -3276,6 +3330,12 @@ pub(crate) struct CheckedReferencePreservationUse {
     pub(crate) site: NodePath,
     pub(crate) binder: String,
     pub(crate) event: &'static str,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CheckedHeldProtectionUse {
+    pub(crate) site: NodePath,
+    pub(crate) requirement: NodePath,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -3436,6 +3496,11 @@ pub(crate) struct CheckedProgramData {
     /// compile, and no mandatory record, no normative output, and no lowering
     /// decision reads it.
     pub(crate) permission_ledger: Vec<super::permission_ledger::LedgerLine>,
+    /// Source nodes beneath executable atomic statements, including statement
+    /// and expression carriers, rendered as one-based `path:line:column`.
+    /// Lowering uses these only to present its non-normative lock ledger;
+    /// they retain no lock timing, permission or acceptance judgment.
+    pub(crate) lock_ledger_sources: std::collections::HashMap<NodePath, String>,
 }
 
 impl CheckedProgramData {
@@ -3466,6 +3531,7 @@ pub(crate) struct CheckedContractQuery {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CheckedCallContract {
     pub(crate) requirements: Vec<super::goal::CheckedRequirement>,
+    pub(crate) held_parameters: Vec<u32>,
     /// One accepted formal-requires => actual-requires implication for every
     /// actual requirement, in that declaration's source order.
     pub(crate) requirement_queries: Vec<ContractQueryId>,

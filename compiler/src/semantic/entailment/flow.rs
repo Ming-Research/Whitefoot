@@ -1007,8 +1007,6 @@ struct ExpressionJudgment {
 #[derive(Clone, Debug)]
 struct AvailablePostcondition {
     relation: RelationTemplate,
-    variant: Option<crate::BuiltinPreludeId>,
-    field: Option<crate::BuiltinPreludeId>,
     /// The variant field a routed relation is restricted to [FN-9, TYPE-11].
     route: Option<super::super::postcondition::PayloadRoute>,
     authority: super::RelationProvenance,
@@ -1016,9 +1014,9 @@ struct AvailablePostcondition {
 
 impl AvailablePostcondition {
     /// Whether the relation is restricted to one variant field of its
-    /// result, a written success route or a generated one.
+    /// result, a written variant-field route or a generated one.
     const fn routed(&self) -> bool {
-        self.variant.is_some() || self.route.is_some()
+        self.route.is_some()
     }
 }
 
@@ -2085,6 +2083,8 @@ mod indexed_goal_kill_tests {
             declared_state_writes: Vec::new(),
             declared_state_reads: Vec::new(),
             requirements: Vec::new(),
+            held_parameters: Vec::new(),
+            held_calls: Vec::new(),
             requirement_places: Vec::new(),
             routed_requirements: Vec::new(),
             postconditions: Vec::new(),
@@ -2283,6 +2283,7 @@ mod range_argument_kill_tests {
             binding: VIEW,
             element: CheckedElement(0),
             element_type: CheckedType::Integer(IntegerType::U64),
+            proof_base: None,
         })
     }
 
@@ -2326,6 +2327,8 @@ mod range_argument_kill_tests {
             declared_state_writes: Vec::new(),
             declared_state_reads: Vec::new(),
             requirements: Vec::new(),
+            held_parameters: Vec::new(),
+            held_calls: Vec::new(),
             requirement_places: Vec::new(),
             routed_requirements: Vec::new(),
             postconditions: Vec::new(),

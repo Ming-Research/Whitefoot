@@ -363,6 +363,7 @@ impl<'unit> Checker<'_, 'unit> {
                 let matched = self.check_if(context, node, bindings, counters, scope, false)?;
                 Ok(StatementResult {
                     statement: CheckedStatement::Match {
+                        node_path: self.types.declarations.tree.path(node)?.clone(),
                         scrutinee: matched.scrutinee,
                         enum_type: matched.enum_type,
                         arms: matched.arms,
@@ -380,6 +381,7 @@ impl<'unit> Checker<'_, 'unit> {
                 let matched = self.check_match(context, node, bindings, counters, scope, false)?;
                 Ok(StatementResult {
                     statement: CheckedStatement::Match {
+                        node_path: self.types.declarations.tree.path(node)?.clone(),
                         scrutinee: matched.scrutinee,
                         enum_type: matched.enum_type,
                         arms: matched.arms,
@@ -707,25 +709,30 @@ impl<'unit> Checker<'_, 'unit> {
             self.body
                 .record_reference_origins(binding, &reference.paths);
         }
-        if bindings
-            .insert(
-                declaration_id,
-                LocalBinding {
-                    binding,
-                    declaration: declaration_id,
-                    mode,
-                    ty: expected,
-                    live: true,
-                    loop_depth: scope.loops.len(),
-                    compiler_updated: false,
-                    read_only_state: false,
-                    reference,
-                    refinement_witnesses: Vec::new(),
-                    call_value: false,
-                },
-            )
-            .is_some()
+        let local = LocalBinding {
+            binding,
+            declaration: declaration_id,
+            mode,
+            ty: expected,
+            live: true,
+            loop_depth: scope.loops.len(),
+            compiler_updated: false,
+            read_only_state: false,
+            reference,
+            refinement_witnesses: Vec::new(),
+            call_value: false,
+        };
+        // [ENT-2] a range-reference variable bound to a bare range-reference
+        // variable is a range alias identified through that source.
+        if !contract_definition
+            && let CheckedExpression::Binding {
+                binding: source, ..
+            } = &value.expression
+            && let Some(source) = bindings.values().find(|local| local.binding == *source)
         {
+            self.body.note_range_alias(&local, source);
+        }
+        if bindings.insert(declaration_id, local).is_some() {
             return Err(SemanticCompilerFailure::InvalidResolution.into());
         }
         Ok(Checker::continuing_statement(

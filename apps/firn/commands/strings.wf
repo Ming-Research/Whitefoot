@@ -194,8 +194,8 @@ fn run_get(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   set client^.state = state_absent;
   atomic slot = &store^.keys[key] {
     match slot^ {
-      Some(value: held) => {
-        let kind = text_value(env: client, value: held);
+      Some(value: observed) => {
+        let kind = text_value(env: client, value: observed);
       }
       None() => {
       }
@@ -327,8 +327,8 @@ fn string_deadline(input: &[u8], span: Span, flags: u64, unix_ms: u64) -> deadli
 fn held_expiry(slot: &Option<Entry>) -> expires: u64 reads(slot) {
   doc "The expiry an entry's value holds, zero for none and for an absent entry.";
   match slot^ {
-    Some(value: held) => {
-      return held^.expires;
+    Some(value: observed) => {
+      return observed^.expires;
     }
     None() => {
       return 0_u64;
@@ -339,8 +339,8 @@ fn held_expiry(slot: &Option<Entry>) -> expires: u64 reads(slot) {
 fn hold_expiry(slot: &Option<Entry>, expires: u64) -> result: unit writes(slot) {
   doc "Gives an entry's value the expiry, zero for none; an absent entry stays absent.";
   match slot^ {
-    Some(value: held) => {
-      set held^.expires = expires;
+    Some(value: observed) => {
+      set observed^.expires = expires;
     }
     None() => {
     }
@@ -351,8 +351,8 @@ fn hold_expiry(slot: &Option<Entry>, expires: u64) -> result: unit writes(slot) 
 fn reply_held_text(slot: &Option<Entry>, client: &Client) -> result: unit reads(slot), writes(client) {
   doc "Writes the string a live entry holds as a bulk string reply, as text_value writes it; another kind and an absent entry write nothing.";
   match slot^ {
-    Some(value: held) => {
-      let kind = text_value(env: client, value: held);
+    Some(value: observed) => {
+      let kind = text_value(env: client, value: observed);
     }
     None() => {
     }
@@ -704,8 +704,8 @@ fn run_getex(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &C
 fn held_lapsed(slot: &Option<Entry>, now: u64) -> lapsed: Bool reads(slot) {
   doc "Whether an entry holds a value whose expiry has passed at now.";
   match slot^ {
-    Some(value: held) => {
-      let reached = expired(expires: held^.expires, now: now);
+    Some(value: observed) => {
+      let reached = expired(expires: observed^.expires, now: now);
       return reached;
     }
     None() => {
@@ -811,8 +811,8 @@ fn run_incr(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   atomic slot = &store^.keys[key], m = &store^.meta {
     let fresh_needed = True();
     match slot^ {
-      Some(value: held) => {
-        let outcome = bump_value(env: &counted, value: held);
+      Some(value: observed) => {
+        let outcome = bump_value(env: &counted, value: observed);
         set fresh_needed = False();
       }
       None() => {
@@ -985,8 +985,8 @@ fn text_write(text: &Bytes, input: &[u8], span: Span, offset: u64) -> length: u6
 fn held_text_length(slot: &Option<Entry>) -> length: u64 reads(slot) {
   doc "The length of the string a live entry holds, zero for another kind and for an absent entry.";
   match slot^ {
-    Some(value: held) => {
-      match held^.value {
+    Some(value: observed) => {
+      match observed^.value {
         Text(bytes: stored) => {
           let length = bytes_length(bytes: stored);
           return length;
@@ -1014,8 +1014,8 @@ fn held_text_length(slot: &Option<Entry>) -> length: u64 reads(slot) {
 fn held_text_write(slot: &Option<Entry>, input: &[u8], span: Span, offset: u64) -> length: u64 reads(input), writes(slot) {
   doc "Writes into the string a live entry holds as text_write does, keeping its expiry, and returns the new length; another kind and an absent entry are left as they are, answering zero.";
   match slot^ {
-    Some(value: held) => {
-      match held^.value {
+    Some(value: observed) => {
+      match observed^.value {
         Text(bytes: stored) => {
           let length = text_write(text: stored, input: input, span: span, offset: offset);
           return length;
@@ -1099,8 +1099,8 @@ fn reply_text_range(client: &Client, text: &Bytes, start: i64, end: i64) -> resu
 fn reply_held_range(slot: &Option<Entry>, client: &Client, start: i64, end: i64) -> result: unit reads(slot), writes(client) {
   doc "Writes a range of the string a live entry holds as reply_text_range writes it; another kind and an absent entry write nothing.";
   match slot^ {
-    Some(value: held) => {
-      match held^.value {
+    Some(value: observed) => {
+      match observed^.value {
         Text(bytes: stored) => {
           reply_text_range(client: client, text: stored, start: start, end: end);
         }
@@ -1142,12 +1142,12 @@ fn run_append(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
       set length = value_span.length;
       set outcome = state_done;
     } else if kind == 1_u64 {
-      let held = held_text_length(slot: slot);
-      let total = held +wrap value_span.length;
+      let observed = held_text_length(slot: slot);
+      let total = observed +wrap value_span.length;
       if total > string_limit {
         set outcome = state_long;
       } else {
-        set length = held_text_write(slot: slot, input: input, span: value_span, offset: held);
+        set length = held_text_write(slot: slot, input: input, span: value_span, offset: observed);
         set outcome = state_done;
       }
     } else {
@@ -1500,8 +1500,8 @@ fn run_incrbyfloat(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, clie
   atomic slot = &store^.keys[key], m = &store^.meta {
     let fresh_needed = True();
     match slot^ {
-      Some(value: held) => {
-        let outcome = float_value(env: &summed, value: held);
+      Some(value: observed) => {
+        let outcome = float_value(env: &summed, value: observed);
         set fresh_needed = False();
       }
       None() => {

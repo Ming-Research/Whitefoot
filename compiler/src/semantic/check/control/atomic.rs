@@ -217,6 +217,7 @@ impl Checker<'_, '_> {
                                 self.types.declarations.tree.path(*place)?.clone(),
                             ),
                             reference_use: None,
+                            held_use: None,
                             positions,
                             window,
                             left_spelling: self.types.render_resolved_place(a, &block_bindings)?,
@@ -306,6 +307,12 @@ impl Checker<'_, '_> {
             targets.push(CheckedTarget {
                 lock_order: self.types.atomic_type_order(state)?,
                 node_path: self.types.declarations.tree.path(*place)?.clone(),
+                ledger_name: declaration.spelling().to_owned(),
+                ledger_state: self.types.checked_type_name(state)?,
+                ledger_site: self
+                    .types
+                    .declarations
+                    .lock_ledger_site(declaration.origin().coordinate()),
                 binding,
                 handle: Box::new(target.expression),
                 borrowed,
@@ -354,9 +361,20 @@ impl Checker<'_, '_> {
             })
             .collect::<Vec<_>>();
         self.body.atomic_depth += 1;
+        self.body.held_atomic_roots = targets.iter().map(|target| target.binding).collect();
+        self.body.held_atomic_node = Some(node_path.clone());
+        let held_call_start = self.body.held_calls.len();
+        let held_write_start = self.body.held_writes.len();
         let checked = self.check_atomic_parts(context, node, &mut block_bindings, counters, scope);
         self.body.atomic_depth -= 1;
+        self.body.held_atomic_roots.clear();
+        self.body.held_atomic_node = None;
         let (mut guard, mut checked) = checked?;
+        let held_calls = self.body.held_calls[held_call_start..].to_vec();
+        let held_writes = self.body.held_writes[held_write_start..].to_vec();
+        self.check_held_protection(&held_writes, &block_bindings, &held_calls)?;
+        self.body.held_calls.truncate(held_call_start);
+        self.body.held_writes.truncate(held_write_start);
         for ((target, place), aliases) in targets.iter_mut().zip(&places).zip(&header_aliases) {
             if !guard
                 .as_ref()
@@ -464,6 +482,9 @@ impl Checker<'_, '_> {
         let CheckedType::Nominal(nominal) = ty else {
             return Ok(None);
         };
+        if self.types.is_decision_cell(nominal)? {
+            return Ok(None);
+        }
         let CheckedNominalKind::Shared {
             state,
             shape: CheckedShared::Object,
@@ -724,8 +745,20 @@ impl Checker<'_, '_> {
             .first_child_with(node, Production::Expr)?
         {
             Some(expression_node) => {
+                self.body.held_guard = true;
                 let condition =
-                    self.check_condition(context, expression_node, bindings, scope.loops.len())?;
+                    self.check_condition(context, expression_node, bindings, scope.loops.len());
+                self.body.held_guard = false;
+                let condition = condition?;
+                if self.guard_has_decision_cell(&condition.expression)? {
+                    return self.types.declarations.issue_node(
+                        SemanticRule::Share2,
+                        expression_node,
+                        SemanticIssueKind::AtomicGuardDecisionCell {
+                            mechanical_fix: "read or claim the decision cell in the atomic body; use ordinary shared state for a waiting guard dependency",
+                        },
+                    );
+                }
                 if let Some((call, handle)) =
                     self.guard_self_changing_part(&condition.expression)?
                 {
@@ -857,6 +890,20 @@ impl Checker<'_, '_> {
         expression_children(expression)
             .into_iter()
             .any(|child| self.guard_writes(child))
+    }
+
+    fn guard_has_decision_cell(&self, expression: &CheckedExpression) -> Result<bool, CheckStop> {
+        if let CheckedExpression::UserCall { function, .. } = expression
+            && self.types.decision_cell_boundary(*function)?
+        {
+            return Ok(true);
+        }
+        for child in expression_children(expression) {
+            if self.guard_has_decision_cell(child)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 }
 

@@ -318,6 +318,16 @@ fn classify_node(
             roles,
             complete_counts,
         )?,
+        // [RANGE-1] a variant relation's TYPEID names a variant of the tested
+        // value's enum type, which only the checker knows.
+        Production::RangeVariant => add_single(
+            classified,
+            owner,
+            &names,
+            RawRoleKind::DeferredUse(DeferredUseRole::TestedVariant),
+            roles,
+            complete_counts,
+        )?,
         // [RANGE-5] a cross-iteration certificate's two direct IDENTs name
         // its two iterations.
         Production::ApartClause => {
@@ -977,6 +987,14 @@ fn classify_node(
         // type [DIAG-1]; the subscript alternative owns only bracket
         // punctuation, its offset and endpoint atoms classifying through the
         // `atom` productions below it.
+        Production::HeldClause => add_all(
+            classified,
+            owner,
+            &names,
+            RawRoleKind::DeferredUse(DeferredUseRole::HeldParameter),
+            roles,
+            complete_counts,
+        )?,
         Production::Psuffix if !names.is_empty() => classify_projection_names(
             classified,
             owner,

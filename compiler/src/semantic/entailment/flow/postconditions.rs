@@ -126,8 +126,8 @@ impl Input<'_, '_> {
 
     /// The relations a direct call of `function` may publish [FN-9]: its
     /// published summaries, or, while its component is being verified and
-    /// the caller is a member of it, exactly its type-invariant
-    /// postconditions as induction hypotheses [DIAG-2, TYPE-11].
+    /// the caller is a member of it, all of its postconditions as
+    /// induction hypotheses [DIAG-2].
     pub(super) fn available_postconditions(
         &self,
         function: super::super::super::model::FunctionId,
@@ -137,12 +137,6 @@ impl Input<'_, '_> {
             AvailablePostcondition {
                 relation: postcondition.relation.clone(),
                 route: postcondition.selector.route,
-                variant: postcondition.selector.variant,
-                field: postcondition
-                    .selector
-                    .field
-                    .as_ref()
-                    .map(|field| field.declaration),
                 authority: super::super::RelationProvenance::Verified(summary),
             }
         };
@@ -151,7 +145,7 @@ impl Input<'_, '_> {
             .component_postconditions(self.function.id, function)
         {
             return component
-                .generated
+                .hypotheses
                 .iter()
                 .map(|(postcondition, summary)| available(postcondition, summary.clone()))
                 .collect();
@@ -169,8 +163,9 @@ impl Input<'_, '_> {
     /// The relations one exact call may publish [FN-5]. A direct call uses
     /// its actual's verified FN-9 surface. A bound call uses the retained
     /// formal surface only when its exact FN-4 query is discharged and every
-    /// actual premise selected by that query has an earlier-component FN-9
-    /// summary. A zero-premise implication needs only its retained query.
+    /// actual premise selected by that query has an FN-9 summary or a
+    /// same-component induction hypothesis [DIAG-2]. A zero-premise
+    /// implication needs only its retained query.
     pub(super) fn available_call_postconditions(
         &self,
         function: super::super::super::model::FunctionId,
@@ -200,9 +195,20 @@ impl Input<'_, '_> {
                     .iter()
                     .zip(&query.premises)
                     .map(|(ordinal, clause)| {
-                        let (postcondition, proof) =
-                            self.context.verified_postcondition(function, *ordinal)?;
-                        let summary = proof.summary.as_ref()?;
+                        let (postcondition, summary) = if let Some(component) = self
+                            .context
+                            .component_postconditions(self.function.id, function)
+                        {
+                            component
+                                .hypotheses
+                                .iter()
+                                .find(|(_, summary)| summary.relation_ordinal == *ordinal)
+                                .map(|(postcondition, summary)| (*postcondition, summary))?
+                        } else {
+                            let (postcondition, proof) =
+                                self.context.verified_postcondition(function, *ordinal)?;
+                            (postcondition, proof.summary.as_ref()?)
+                        };
                         (postcondition.selector.block == *clause
                             && summary.function == function
                             && summary.relation_ordinal == *ordinal)
@@ -212,12 +218,6 @@ impl Input<'_, '_> {
                 Some(AvailablePostcondition {
                     relation: boundary.relation.clone(),
                     route: boundary.selector.route,
-                    variant: boundary.selector.variant,
-                    field: boundary
-                        .selector
-                        .field
-                        .as_ref()
-                        .map(|field| field.declaration),
                     authority: super::super::RelationProvenance::FormalBoundary {
                         query: boundary.query,
                         actual: function,
@@ -2686,8 +2686,8 @@ impl Judging<'_, '_, '_> {
                 continue;
             };
             // [FN-9, TYPE-11] the forwarded value's context for the route
-            // this clause is restricted to: its written success variant, or
-            // the variant field a type invariant's route names.
+            // this clause is restricted to, whether written or generated
+            // by a type invariant.
             let forwarded = forwarded_return(postcondition, forwarded);
             if conditional_return(&selected)
                 && forwarded.is_some_and(|result| result.definitely_err)

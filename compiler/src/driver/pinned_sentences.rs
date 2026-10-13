@@ -208,6 +208,45 @@ fn main() -> status: std::process::ExitStatus pure {
         ],
     },
     // -------------------------------------------------------------------
+    // [MOD-5] a qualified const written where a value stands: cited at the
+    // path itself with the alias that names it [DIAG-1], and in an atom
+    // position kept as [GRAM-9]'s forbidden call start with the same repair.
+    // The alias alternative is carried out by the conformance case
+    // `mod4-pos-const-alias-in-set-and-let`, which needs a second module.
+    // -------------------------------------------------------------------
+    Probe {
+        name: "qualified-const-in-a-set.wf",
+        source: br#"fn main() -> status: std::process::ExitStatus pure {
+  let holder = Holder(value: 0_u32, other: 0_u32);
+  set holder.value = pkg::qualified_source::marker;
+  set holder.other = 1_u32;
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "MOD-5",
+        sentences: &[
+            "qualified-const-in-a-set.wf:3:22: error[MOD-5]: UnexpectedToken\n",
+            "\n  marker:                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  expected: [\"::\", \"(\"]\n  found: \"pkg::qualified_source::marker\"\n  mechanical_fix: a qualified path names only a callee, type, construction or destructuring target, never a value [MOD-5]: to read the const `marker` here, add `alias marker = pkg::qualified_source::marker;` to this record's alias header and write `marker` in place of `pkg::qualified_source::marker` [MOD-4]; a const of this record's own module is written `marker` with no alias\n",
+        ],
+    },
+    Probe {
+        name: "qualified-const-as-an-argument.wf",
+        source: br#"fn take(value: u32) -> result: u32 pure {
+  return value;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let taken = take(value: pkg::qualified_source::marker);
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "GRAM-9",
+        sentences: &[
+            "qualified-const-as-an-argument.wf:6:27: error[GRAM-9]: UnexpectedToken\n",
+            "\n  found: \"pkg::\"\n  mechanical_fix: a qualified path names only a callee, type, construction or destructuring target, never a value [MOD-5]: to read the const `marker` here, add `alias marker = pkg::qualified_source::marker;` to this record's alias header and write `marker` in place of `pkg::qualified_source::marker` [MOD-4]; a const of this record's own module is written `marker` with no alias\n",
+        ],
+    },
+    // -------------------------------------------------------------------
     // [MSR-3] and [CALL-6]: the two judgments the fact machinery adds.
     // -------------------------------------------------------------------
     Probe {

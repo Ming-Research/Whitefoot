@@ -4,14 +4,17 @@
 //!
 //! A range term is formed here from its syntax and resolved names alone. No
 //! read below is executed and no subscript owes [OP-4] where it is written:
-//! an instance of a range clause claims its relations only where every read
-//! it forms selects an existing element, and every user of an instance proves
-//! that where it uses one [RANGE-3].
+//! an instance of a range clause claims each conclusion only where every read
+//! that conclusion depends on is defined, its own reads and those of the
+//! clause's ranges and guards, each selecting an existing element and each
+//! payload step the variant its enum holds; every user of an instance proves
+//! that where it uses the conclusion [RANGE-1, RANGE-3].
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
 mod aggregate;
+mod vacuous;
 use aggregate::RangeOperand;
 
 use crate::syntax::NodeId;
@@ -147,28 +150,45 @@ impl Checker<'_, '_> {
                 "state the fact over at most two bound variables, or split it into facts over fewer",
             );
         }
-        let mut guards = Vec::new();
-        for guard in self
-            .types
-            .declarations
-            .tree
-            .children_with(clause, Production::RangeGuard)?
-        {
-            guards.extend(self.range_guard(context, guard, bindings, &names)?);
+        let tree = &self.types.declarations.tree;
+        let colon = tree
+            .direct_token_with(clause, TerminalPredicate::Fixed(FixedTerminal::Colon))?
+            .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
+        let colon_start = usize::try_from(tree.token_subcoordinate(colon, 0, 1)?.start().value())
+            .map_err(|_| SemanticCompilerFailure::CounterOverflow)?;
+        let mut relations = Vec::new();
+        for relation in tree.children_with(clause, Production::RangeRelation)? {
+            relations.push((relation, tree.byte_range(relation)?.0 < colon_start));
         }
+        let mut guards = Vec::new();
         let mut conclusions = Vec::new();
-        for relation in self
-            .types
-            .declarations
-            .tree
-            .children_with(clause, Production::RangeRelation)?
-        {
-            conclusions.extend(self.range_relation(context, relation, bindings, &names)?);
+        for (relation, is_guard) in relations {
+            if is_guard
+                && self
+                    .types
+                    .declarations
+                    .tree
+                    .has_fixed(relation, FixedTerminal::Unchanged)?
+            {
+                return self.invalid_range(
+                    SemanticRule::Range1,
+                    relation,
+                    "unchanged occurs in a range guard",
+                    "state unchanged as a range postcondition conclusion",
+                );
+            }
+            let formed = self.range_relation(context, relation, bindings, &names)?;
+            if is_guard {
+                guards.extend(formed);
+            } else {
+                conclusions.extend(formed);
+            }
         }
         if names.unformed.get() {
             self.body.unformed_range_facts.insert(declaration);
             return Ok(None);
         }
+        self.reject_vacuous_conclusions(&guards, &conclusions)?;
         Ok(Some(CheckedRangeClause {
             declaration,
             name,
@@ -231,16 +251,10 @@ impl Checker<'_, '_> {
             } else {
                 Vec::new()
             };
-            // [FN-9] the success variant a route names, by its tag.
-            let tag = match selector.variant {
-                None => None,
-                Some(crate::BuiltinPreludeId::SOME) => Some(1),
-                Some(crate::BuiltinPreludeId::OK) => Some(0),
-                Some(_) => return Err(SemanticCompilerFailure::InvalidResolution.into()),
-            };
-            let route = tag.map(|tag| CheckedRangeRoute {
+            let route = selector.route.map(|route| CheckedRangeRoute {
                 ordinal: selector.ordinal,
-                tag,
+                tag: route.tag,
+                field: route.field,
                 payload: selector.result_type,
             });
             if let Some(range) = self
@@ -706,47 +720,8 @@ impl Checker<'_, '_> {
         )
     }
 
-    /// [RANGE-1] a comparison guard is a relation; a bare Bool datum holds
-    /// where its versioned declaration-order tag is True's tag.
-    fn range_guard(
-        &mut self,
-        context: FunctionContext<'_, '_>,
-        node: NodeId,
-        bindings: &HashMap<DeclarationId, LocalBinding>,
-        names: &RangeNames,
-    ) -> Result<Vec<CheckedRangeRelation>, CheckStop> {
-        if self
-            .types
-            .declarations
-            .tree
-            .has_fixed(node, FixedTerminal::Unchanged)?
-        {
-            return self.invalid_range(
-                SemanticRule::Range1,
-                node,
-                "unchanged occurs in a range guard",
-                "state unchanged as a range postcondition conclusion",
-            );
-        }
-        if self
-            .types
-            .declarations
-            .tree
-            .first_child_with(node, Production::CompareOp)?
-            .is_some()
-        {
-            return self.range_comparison(context, node, node, bindings, names);
-        }
-        let expression = self
-            .types
-            .declarations
-            .tree
-            .first_child_with(node, Production::AffineExpr)?
-            .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-        let operand = self.range_expression(context, expression, bindings, names)?;
-        operand.bool_guard(self, expression)
-    }
-
+    /// [RANGE-1] a guard and a conclusion are each one comparison or one
+    /// variant relation; an unchanged relation is a postcondition conclusion.
     fn range_relation(
         &mut self,
         context: FunctionContext<'_, '_>,
@@ -754,6 +729,14 @@ impl Checker<'_, '_> {
         bindings: &HashMap<DeclarationId, LocalBinding>,
         names: &RangeNames,
     ) -> Result<Vec<CheckedRangeRelation>, CheckStop> {
+        if let Some(variant) = self
+            .types
+            .declarations
+            .tree
+            .first_child_with(node, Production::RangeVariant)?
+        {
+            return self.range_variant(context, node, variant, bindings, names);
+        }
         if self
             .types
             .declarations
@@ -763,6 +746,37 @@ impl Checker<'_, '_> {
             return self.range_unchanged(context, node, bindings, names);
         }
         self.range_comparison(context, node, node, bindings, names)
+    }
+
+    /// [RANGE-1] `e is V` or `e is not V` in the guard or conclusion `node`:
+    /// e's versioned tag [RANGE-2] compared with V's declaration-order number.
+    fn range_variant(
+        &mut self,
+        context: FunctionContext<'_, '_>,
+        node: NodeId,
+        variant: NodeId,
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+        names: &RangeNames,
+    ) -> Result<Vec<CheckedRangeRelation>, CheckStop> {
+        let expression = self
+            .types
+            .declarations
+            .tree
+            .first_child_with(node, Production::AffineExpr)?
+            .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
+        let operand = self.range_expression(context, expression, bindings, names)?;
+        let negated = self
+            .types
+            .declarations
+            .tree
+            .has_fixed(variant, FixedTerminal::Not)?;
+        let name = self
+            .types
+            .declarations
+            .deferred_use_at(variant, crate::DeferredUseRole::TestedVariant)?
+            .spelling()
+            .to_owned();
+        operand.variant_relation(self, node, &name, negated)
     }
 
     /// [RANGE-1] form opaque identity of one exit selection and its entry selection.
