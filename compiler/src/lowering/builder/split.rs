@@ -1300,10 +1300,12 @@ impl<'program> IrBuilder<'program> {
         // Two ways to reach the leaf: the allowance is spent, or the range is
         // too thin to halve into two nonempty halves.
         builder.current = Some(nonempty);
+        // The incoming guard established lower < upper, so this unsigned
+        // difference lies in 1..=u64::MAX and cannot underflow.
         let width = builder.define(
             U64,
             IrOperation::Integer {
-                operation: IrIntegerOperation::SubtractWrap,
+                operation: IrIntegerOperation::SubtractExact,
                 operand_type: U64,
                 arguments: vec![upper, lower],
             },
@@ -1374,18 +1376,22 @@ impl<'program> IrBuilder<'program> {
                 arguments: vec![width, one_bit],
             },
         )?;
+        // Here width = upper - lower > 1, and half = floor(width / 2),
+        // so lower < lower + half < upper <= u64::MAX. The midpoint is exact.
         let middle = builder.define(
             U64,
             IrOperation::Integer {
-                operation: IrIntegerOperation::AddWrap,
+                operation: IrIntegerOperation::AddExact,
                 operand_type: U64,
                 arguments: vec![lower, half],
             },
         )?;
+        // The same true splittable guard established 0 < budget, so removing
+        // one level cannot underflow.
         let remaining = builder.define(
             U64,
             IrOperation::Integer {
-                operation: IrIntegerOperation::SubtractWrap,
+                operation: IrIntegerOperation::SubtractExact,
                 operand_type: U64,
                 arguments: vec![budget, one],
             },

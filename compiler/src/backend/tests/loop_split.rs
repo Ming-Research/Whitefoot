@@ -760,6 +760,16 @@ fn a_permitted_loop_is_outlined_split_and_joined() {
     let splitter_symbol = synthesized(&module, "@wf__par_split_");
     let chunk_symbol = synthesized(&module, "@wf__par_chunk_");
     let splitter = function_body(&module, &splitter_symbol);
+    assert_eq!(
+        splitter.matches("= sub nuw i64").count(),
+        2,
+        "the guarded range width and positive budget decrement are exact:\n{splitter}"
+    );
+    assert_eq!(
+        splitter.matches("= add nuw i64").count(),
+        1,
+        "the midpoint carries its bounded unsigned domain:\n{splitter}"
+    );
     for step in [
         "call ptr @wf__par_acquire_lane(",
         "call void @wf__par_publish(",
@@ -782,6 +792,16 @@ fn a_permitted_loop_is_outlined_split_and_joined() {
     assert!(
         chunk.contains("icmp ult i64") && chunk.matches("phi ").count() > 0,
         "the chunk must be the counted loop itself:\n{chunk}"
+    );
+    assert_eq!(
+        chunk.matches("= add nuw i64").count(),
+        1,
+        "the chunk's hidden counted update is exact:\n{chunk}"
+    );
+    assert_eq!(
+        chunk.matches("= add i64").count(),
+        1,
+        "the source +wrap accumulation stays wrapping in the chunk:\n{chunk}"
     );
     let (_, chunk_body) = chunk.split_once('\n').expect("a definition has a body");
     assert!(

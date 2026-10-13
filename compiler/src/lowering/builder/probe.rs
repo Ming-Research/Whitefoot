@@ -561,10 +561,14 @@ impl IrBuilder<'_> {
             ],
         })?;
         self.current = Some(advance);
+        // BufferProbeSkip returns at most 16 and is nonzero only when
+        // index + 16 <= min(limit, length). This block requires skip > 0,
+        // so index + skip <= min(limit, length) <= u64::MAX is exact.
+        // The recognized source increment remains its original wrapping add.
         let next = self.define(
             U64,
             IrOperation::Integer {
-                operation: IrIntegerOperation::AddWrap,
+                operation: IrIntegerOperation::AddExact,
                 operand_type: U64,
                 arguments: vec![index, skip],
             },
