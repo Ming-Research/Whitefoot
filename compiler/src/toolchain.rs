@@ -129,8 +129,22 @@ pub fn prepare_toolchain() -> Result<(), String> {
     probed_facts().map(|_| ())
 }
 
-/// Internal emission invariant: public emission entries first call
-/// prepare_toolchain, so packaged failures never reach this accessor.
+/// Internal invariant: every production path prepares before reading facts.
+///
+/// `backend::emitter::emit_module` prepares before its stack attributes and
+/// the private `FunctionEmitter` read reference/environment attributes or
+/// coroutine forms. `frames::frame_runtime_declarations` is visible only to
+/// that emitter module and is called only from `emit_module`.
+/// `handler_words::prepare_dispatch_layout` prepares before its private
+/// `census` constructs a `FunctionEmitter` and calls `plan_dispatch`, which
+/// reaches the private `dispatch::convention`. `FunctionEmitter::new` is
+/// private to the emitter and has no other production construction path.
+///
+/// `driver::build_module_entry_for_emission` prepares before reading facts for
+/// the entry-module cache key. The driver's `compile_selected` reaches the
+/// two prepared backend entries above; target-neutral lowering reads no facts.
+/// Each preparation propagates failure before these reads, and the shared
+/// `OnceLock` retains that result, so packaged failures never reach the expect.
 pub(crate) fn facts() -> &'static ToolchainFacts {
     probed_facts().expect("emission must check prepare_toolchain before accessing LLVM facts")
 }
@@ -315,7 +329,21 @@ mod tests {
 
     #[test]
     fn runtime_facts_match_host_clang() {
+        prepare_toolchain().expect("prepare host toolchain before reading emission facts");
         let facts = facts();
+        #[cfg(target_os = "macos")]
+        {
+            let toolchain = resolved_toolchain().expect("prepared source-build toolchain");
+            assert!(!toolchain.packaged, "native tests use the source-build default");
+            assert_eq!(toolchain.clang(), Path::new("/usr/bin/clang"));
+            // Apple clang's native large-frame lowering supports its helper.
+            // This also rejects an always-false capability probe: matching
+            // emitter text to the same false fact would not expose that bug.
+            assert!(
+                facts.darwin_stack_probe_helper,
+                "the macOS source-build default /usr/bin/clang must lower __chkstk_darwin"
+            );
+        }
         let directory = ProbeDirectory::new().expect("create verification directory");
         let chosen = coroutine_module(facts.coro_end_result, facts.no_capture_attribute);
         // The probes' own fallback stands where clang cannot run; this test

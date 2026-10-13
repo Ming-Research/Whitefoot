@@ -1,6 +1,9 @@
 # Qualify exact bundled archives before compiler-release publishes them, or
 # qualify an existing release by tag. Failed checks and unverified macOS host
 # isolation both leave the reusable workflow's qualified output false.
+# The workflow revision supplies the maintained runner and witness, even when
+# the candidate predates them; unsupported witness behavior fails qualification
+# without changing expectations. Candidate bytes and manifest identity stay fixed.
 name: Bundled package acceptance
 
 on:
@@ -141,11 +144,12 @@ jobs:
       matrix:
         mode: [linux-absent, linux-wrong-major]
     steps:
-      # Read the maintained witness and acceptance runner from the package's
-      # own commit. A newer fixture cannot establish an older compiler's result.
+      # github.workflow_sha is the caller's workflow revision for workflow_call,
+      # or this dispatch's workflow revision. It owns the maintained runner and
+      # witness; prepare's verified commit identifies only the candidate bytes.
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.prepare.outputs.commit }}
+          ref: ${{ github.workflow_sha }}
 
       - uses: actions/download-artifact@v4
         with:
@@ -210,9 +214,11 @@ jobs:
     outputs:
       isolation: ${{ steps.check.outputs.isolation }}
     steps:
+      # Use the same maintained runner and witness revision as Linux, rather
+      # than requiring those acceptance files to exist in the candidate commit.
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.prepare.outputs.commit }}
+          ref: ${{ github.workflow_sha }}
 
       - uses: actions/download-artifact@v4
         with:

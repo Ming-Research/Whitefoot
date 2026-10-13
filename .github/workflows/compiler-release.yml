@@ -24,7 +24,11 @@
 # LLVM source pins live in .github/toolchain/llvm-assets.json.
 # Bundled candidates are retained as workflow artifacts and must pass reusable
 # exact-archive acceptance before publication, including macOS host-clang
-# isolation. Only Linux x86-64 and macOS arm64 are offered; no Windows lane exists.
+# isolation. The workflow revision supplies the maintained acceptance runner and
+# witness; the source commit still owns the archived compiler/language bytes and
+# manifest identity. Unsupported witness behavior fails qualification without
+# changing expectations. Only Linux x86-64 and macOS arm64 are offered;
+# no Windows lane exists.
 # Bundled Linux qualification uses Ubuntu 24.04, with host prerequisites from
 # `sudo apt-get install libc6-dev libgcc-13-dev libstdc++6 zlib1g libxml2 libicu74 liblzma5`.
 # This test host does not establish a minimum supported Linux distribution.
@@ -546,6 +550,8 @@ jobs:
     name: Qualify the exact bundled candidate
     needs: [resolve, assemble]
     if: needs.resolve.outputs.bundle == 'true'
+    # This local call and its runner/witness checkout use the caller workflow
+    # revision; source_commit verifies the unchanged candidate's manifest identity.
     uses: ./.github/workflows/package-acceptance.yml
     with:
       release_tag: ${{ needs.resolve.outputs.tag }}
