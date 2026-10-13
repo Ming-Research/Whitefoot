@@ -4,8 +4,6 @@
 name: op5-cost
 
 on:
-  push:
-    branches: [claude/redundant-test-r1]
   workflow_dispatch:
 
 concurrency:

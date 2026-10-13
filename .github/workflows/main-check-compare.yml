@@ -1,0 +1,64 @@
+# Temporary: did main's check time for the two pinned Snowghost oracle modules
+# change between 58743a931 and 8c5b07c360c9? Both main compilers check the same
+# renamed input on one host, interleaved. Remove before this branch is ready.
+name: main-check-compare
+
+on:
+  push:
+    branches: [claude/redundant-test-r1]
+
+concurrency:
+  group: main-check-compare-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+  WHITEFOOT_CHECK_TIMEOUT: 900
+  OLD_MAIN: 58743a931
+  NEW_MAIN: 8c5b07c360c9
+  SNOWGHOST_REVISION: 466e9843f7a0fe4926022be8718d4ab677cafed1
+
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Build both main compilers
+        run: |
+          rustup default stable
+          for rev in "$OLD_MAIN" "$NEW_MAIN"; do
+            git worktree add --detach "$RUNNER_TEMP/$rev" "$rev"
+            cargo fetch --locked --manifest-path "$RUNNER_TEMP/$rev/compiler/Cargo.toml"
+            perl .github/run-check.pl "compare-build-$rev" \
+              cargo build --manifest-path "$RUNNER_TEMP/$rev/compiler/Cargo.toml" --profile gate --locked --offline
+          done
+          lscpu | grep -E 'Model name|^CPU\(s\)'
+      - name: Pinned Snowghost with the held rename
+        run: |
+          git clone --quiet https://github.com/Ming-Research/Snowghost-wf.git "$RUNNER_TEMP/snowghost"
+          git -C "$RUNNER_TEMP/snowghost" checkout --quiet --detach "$SNOWGHOST_REVISION"
+          find "$RUNNER_TEMP/snowghost/renderer/oracle" -name "*.wf" -exec perl -pi -e "s/\\bheld\\b/held_value/g" {} +
+          if grep -rqw --include="*.wf" held "$RUNNER_TEMP/snowghost/renderer/oracle"; then echo "held remains"; exit 1; fi
+      - name: Check each module with old and new main, interleaved, twice
+        run: |
+          for round in 1 2; do
+            for module in pkg::oracle::style pkg::oracle::layout; do
+              for rev in "$OLD_MAIN" "$NEW_MAIN"; do
+                start=$(date +%s.%N)
+                set +e
+                timeout 900 "$RUNNER_TEMP/$rev/compiler/target/gate/whitefootc" \
+                  --graph "$RUNNER_TEMP/snowghost/renderer/modules.wfg" --check-module "$module" --report \
+                  > "$RUNNER_TEMP/out.txt" 2>&1
+                status=$?
+                set -e
+                end=$(date +%s.%N)
+                printf 'RESULT round=%s module=%s main=%s status=%s seconds=%.2f\n' \
+                  "$round" "$module" "$rev" "$status" "$(echo "$end - $start" | bc)"
+                tail -3 "$RUNNER_TEMP/out.txt"
+              done
+            done
+          done
