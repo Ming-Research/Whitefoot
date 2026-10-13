@@ -2435,14 +2435,14 @@ fn halves(values: &Array<u8, 4>, split: u64) -> result: u64 writes(values) contr
 /// does not join the `let` that formed the reference in a run.
 #[test]
 fn a_set_through_a_reference_reads_the_let_that_formed_it() {
-    let source = br#"fn clear(values: &Array<u8, 4>) -> result: unit writes(values) {
+    let source = br#"fn wipe(values: &Array<u8, 4>) -> result: unit writes(values) {
   let head = &values^[0_u64..2_u64];
   set head^[0_u64] = 0_u8;
   return unit;
 }
 "#;
     let table = permission_of(source);
-    let permissions = function_table(&table, "clear");
+    let permissions = function_table(&table, "wipe");
     assert!(
         !permissions.runs.iter().any(|run| {
             run.sites

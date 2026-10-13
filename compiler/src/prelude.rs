@@ -357,6 +357,15 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
 "#,
     ),
     (
+        "prelude/clear.wf",
+        PreludeSource::Function,
+        r#"fn clear<W, T: drop>(window: &W) -> result: unit writes(window.filled), writes(window.len) contract {
+  ensures window^.len == 0_u64;
+  ensures window^.cap == entry(window)^.cap;
+};
+"#,
+    ),
+    (
         "prelude/swap.wf",
         PreludeSource::Function,
         r#"fn swap<T>(first: &T, second: &T) -> result: unit writes(first), writes(second);

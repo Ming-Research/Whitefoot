@@ -221,7 +221,9 @@ macro_rules! operation_operands {
             IrOperation::RunBoundary { run, value, .. } => std::iter::once($value(run))
                 .chain(value.$iter().map($value))
                 .collect(),
-            IrOperation::RunTaken { run, .. } | IrOperation::SliceFromRun { run } => {
+            IrOperation::RunTaken { run, .. }
+            | IrOperation::RunClear { run }
+            | IrOperation::SliceFromRun { run } => {
                 vec![$value(run)]
             }
             IrOperation::RunShift { run, index, .. } => vec![$value(run), $value(index)],

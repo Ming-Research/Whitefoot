@@ -19,6 +19,7 @@ mod lexer;
 mod library;
 mod lowering;
 mod prelude;
+mod release;
 mod resolution;
 mod semantic;
 mod source;

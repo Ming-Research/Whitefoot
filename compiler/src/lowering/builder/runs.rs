@@ -8,9 +8,9 @@
 //! or a compile-time constant and every subscript is one address
 //! computation.
 //!
-//! The nine window operations [OP-10], `swap` [OP-11] and `free_empty`
-//! [OP-14] are ordinary [PRE-1] records and reach lowering as ordinary
-//! calls; their bodies are synthesized in `windows.rs`.
+//! The window operations [OP-10], `swap` [OP-11] and `free_empty` [OP-14]
+//! are ordinary [PRE-1] records and reach lowering as ordinary calls; their
+//! bodies are synthesized in `prelude.rs`.
 
 use crate::IrMeasure;
 use crate::semantic::{
