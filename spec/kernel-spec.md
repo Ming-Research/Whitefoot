@@ -1,4 +1,4 @@
-# Kernel Specification v0.138
+# Kernel Specification v0.139
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -2625,6 +2625,8 @@ A file open through a `WriteFile` or `ReadFile` keeps its bytes and remains usab
 A name given with a root to a `std::fs` operation denotes an entry directly below that root exactly when it is one nonempty path component other than `.` and `..`; an operation given a name that denotes no such entry returns `InvalidPath`.
 Factories that `factory_share` relates draw on one budget, so whether an acquisition through one of them finds a credit depends on what the others hold; within one context their operations are ordered only as [HOST-1] orders them.
 `TcpConnection`, `AcceptedConnection`, `Directory` and `Inputs` have ordinary public constructors, fields, partial-move and destructuring rules. Their linearity follows their fields. No relation between two fields is implied by constructing a struct.
+A `SocketAddress` is one IPv4 address or one IPv6 address together with a port. `socket_address_v4` gives the IPv4 address whose four octets in written order are `a` to `d`, `socket_address_v6` gives the IPv6 address whose eight 16-bit groups in written order are `a` to `h`, and each gives `port` as its port. The peer `tcp_accept` returns and the address `local_address` returns are the host's report of one endpoint in that same form: its family is the family the host reports, so an IPv4 peer that the host reports through an IPv6 listener as an IPv4-mapped address is an IPv6 address, and an IPv6 report keeps its address and port without its scope identifier or flow label. `socket_address_ip` returns `Ipv4` carrying the four octets of an IPv4 address, or `Ipv6` carrying the eight groups of an IPv6 address, in written order, and `socket_address_port` returns the port. For all arguments, `socket_address_ip` of `socket_address_v4(a: a, b: b, c: c, d: d, port: p)` returns `Ipv4(a: a, b: b, c: c, d: d)`, `socket_address_ip` of `socket_address_v6` returns `Ipv6` with that call's eight groups in the same order, and `socket_address_port` of either returns `p`. Reading an address reads only that value.
+`local_address` returns the host's report of the local endpoint of the connection whose receiving half `receive` is: for a connection `tcp_accept` returned, the address and port its peer reached; for a connection `tcp_connect` opened, the address and port the host gave its own end. A receiving half denotes its connection until `close_receive` consumes it, whether or not the sending half has been closed. The query transfers no byte and leaves the connection's state unchanged. A host refusal of the query returns `Err` carrying the host's code and origin 10.
 When the invocation [PROG-3] supplies `Inputs`, its `drivers` field holds the number of drivers the runtime uses to execute contexts [WAIT-2], after applying the runtime's configuration and host rules. That count is fixed before the entry runs, remains fixed for the whole execution, and is at least one. Driver threads may start on first need; their later start must establish that same number of drivers. A runtime unable to establish it stops with a report under [SCOPE-3]. These guarantees describe the invocation-supplied value; source construction and assignment retain the ordinary field rules [TYPE-2, SET-1].
 On an embedded, single-threaded or single-driver target the count is one. On a target supporting multiple drivers, the runtime first selects a requested count by the following table, then uses one on a host without a kernel completion ring and otherwise clamps the selected count to at least one and at most its driver upper bound. The available CPU count is the number of CPUs on which the process may run.
 
@@ -2648,6 +2650,7 @@ A runtime-produced `IoError` with a nonzero `code` carries the failed condition'
 | 7 | Connect |
 | 8 | Close |
 | 9 | Synchronization, truncation or namespace operation |
+| 10 | Socket address query |
 
 `error_copy_description` selects a description by the following table. Its selection ignores `origin`. The host text is host-version dependent.
 
@@ -3080,9 +3083,18 @@ public struct AcceptedConnection {
   public peer: SocketAddress;
 }
 
+public enum IpAddress {
+  Ipv4(public a: u8, public b: u8, public c: u8, public d: u8);
+  Ipv6(public a: u16, public b: u16, public c: u16, public d: u16, public e: u16, public f: u16, public g: u16, public h: u16);
+}
+
 public fn socket_address_v4(a: u8, b: u8, c: u8, d: u8, port: u16) -> result: SocketAddress pure doc "Returns the IPv4 socket address a.b.c.d with port.";
 
 public fn socket_address_v6(a: u16, b: u16, c: u16, d: u16, e: u16, f: u16, g: u16, h: u16, port: u16) -> result: SocketAddress pure doc "Returns the IPv6 socket address whose eight groups are a to h, with port.";
+
+public fn socket_address_ip(address: &SocketAddress) -> result: IpAddress reads(address) doc "Returns the family and the address of address: Ipv4 with its four octets, or Ipv6 with its eight groups, each in written order [PRE-2].";
+
+public fn socket_address_port(address: &SocketAddress) -> result: u16 reads(address) doc "Returns the port of address [PRE-2].";
 
 public fn tcp_listen(factory: &HandleFactory, address: &SocketAddress) -> result: Result<TcpListener, IoError> reads(address), writes(factory) waits doc "Opens a TCP listener bound to address.";
 
@@ -3103,6 +3115,8 @@ public fn send_once(send: &TcpSend, source: &[u8], start: u64, end: u64, deadlin
   ensures when Ok(value: next): start <= next;
   ensures when Ok(value: next): next <= end;
 } doc "Sends bytes of source from start toward end with one host send; Ok carries the index after the last byte sent, and DeadlinePassed or Cancelled reports that the wait ended with no byte sent.";
+
+public fn local_address(receive: &TcpReceive) -> result: Result<SocketAddress, IoError> reads(receive) doc "Returns the address of this end of the connection whose receiving half is receive, as the host reports it [PRE-2].";
 
 public fn close_listener(factory: &HandleFactory, listener: TcpListener) -> result: Result<unit, IoError> writes(factory) waits doc "Closes listener.";
 
