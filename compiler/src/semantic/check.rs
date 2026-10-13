@@ -34,6 +34,8 @@ mod type_invariants;
 mod type_regions;
 mod types;
 
+#[cfg(test)]
+pub(super) use match_diagnostics::capture_match_sites;
 pub(crate) use receipts::ProofReceipts;
 pub(crate) use repairs::{header_invariant_scope_repair, postcondition_selector_repair};
 

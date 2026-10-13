@@ -85,6 +85,74 @@ fn one_check_lists_both_functions_in_order_and_variants_in_declaration_order() {
 }
 
 #[test]
+fn a_loop_summary_retry_keeps_each_settled_match_site_once_in_order() {
+    let source = r#"enum Shade {
+  Red(value: u64);
+  Blue(value: u64);
+}
+
+fn earlier(shade: Shade) -> result: u64 pure {
+  match shade {
+    Red(value: first) => {
+      return first;
+    }
+  }
+}
+
+fn repeated(shade: Shade, count: u64) -> result: u64 pure {
+  for (i in 0_u64..2_u64) {
+    match shade {
+      Red(value: current) => {
+      }
+    }
+    set count = 0_u64;
+  }
+  return count;
+}
+
+fn later(shade: Shade) -> result: u64 pure {
+  match shade {
+    Blue(value: last) => {
+      return last;
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let earlier = "match shade {\n    Red(value: first) => {\n      return first;\n    }\n  }";
+    let repeated = "match shade {\n      Red(value: current) => {\n      }\n    }";
+    let later = "match shade {\n    Blue(value: last) => {\n      return last;\n    }\n  }";
+    let recorded = super::super::check::capture_match_sites(|| {
+        assert_sites(
+            source,
+            "Shade",
+            &[
+                (earlier, &["Blue"]),
+                (repeated, &["Blue"]),
+                (later, &["Red"]),
+            ],
+        );
+    });
+    // The backedge changes count from its incoming call value, forcing a
+    // ReferenceSummaryChanged retry. Rollback must let the loop site be
+    // inserted again; without it, node deduplication hides the stale event
+    // in the final payload but leaves only one insertion in this trace.
+    let written = recorded
+        .iter()
+        .map(|location| {
+            let SemanticLocation::SourceNode(_, coordinate) = location;
+            let start = usize::try_from(coordinate.start().value()).expect("source offset");
+            let end = usize::try_from(coordinate.end().value()).expect("source offset");
+            &source[start..end]
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(written, [earlier, repeated, repeated, later]);
+}
+
+#[test]
 fn a_used_value_match_binding_keeps_its_derived_type_for_the_next_match() {
     let source = r#"enum Shape {
   Circle(radius: u64);

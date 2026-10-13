@@ -87,7 +87,51 @@ impl Checker<'_, '_> {
         let CheckStop::Issue(issue) = stop else {
             return Err(stop);
         };
+        #[cfg(test)]
+        let recorded_location = site.location.clone();
         self.analysis.match_diagnostics.events.push((*issue, site));
+        #[cfg(test)]
+        recorded_sites::record(recorded_location);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+pub(in crate::semantic) use recorded_sites::capture_match_sites;
+
+/// Observe actual insertions, after source-node deduplication. The final
+/// payload alone cannot distinguish retry rollback from deduplication.
+#[cfg(test)]
+mod recorded_sites {
+    use std::cell::RefCell;
+
+    use crate::SemanticLocation;
+
+    thread_local! {
+        static SITES: RefCell<Option<Vec<SemanticLocation>>> = const { RefCell::new(None) };
+    }
+
+    pub(super) fn record(location: SemanticLocation) {
+        SITES.with_borrow_mut(|sites| {
+            if let Some(sites) = sites {
+                sites.push(location);
+            }
+        });
+    }
+
+    pub(in crate::semantic) fn capture_match_sites(run: impl FnOnce()) -> Vec<SemanticLocation> {
+        struct Restore(Option<Vec<SemanticLocation>>);
+
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                SITES.set(self.0.take());
+            }
+        }
+
+        let restore = Restore(SITES.replace(Some(Vec::new())));
+        run();
+        let sites = SITES.take().unwrap_or_default();
+        drop(restore);
+        sites
     }
 }
