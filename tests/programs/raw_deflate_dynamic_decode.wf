@@ -23,8 +23,8 @@ fn store_dynamic_length(literal_lengths: &[u8], distance_lengths: &[u8], literal
 
 fn ordered_code_symbol(index: u64) -> result: Result<u64, InflateError> pure {
   let bounded = index % 19_u64;
-  let unchanged = bounded == index;
-  if unchanged {
+  let preserved_value = bounded == index;
+  if preserved_value {
   } else {
     let error = InflateError::InvalidHuffmanTree();
     return Err<u64, InflateError>(error: error);

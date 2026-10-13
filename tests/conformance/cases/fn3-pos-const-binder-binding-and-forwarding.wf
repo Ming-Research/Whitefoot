@@ -1,0 +1,30 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+interface Sized<const n: u8> {
+}
+
+binding Hundred : Sized<100> {
+}
+
+fn inner<interface Sized<j>>() -> r: u64 pure {
+  doc "Reads the interface's const binder at its header type u8.";
+  return cvt::<u8, u64>(j);
+}
+
+fn outer<interface Sized<k>>() -> r: u64 pure {
+  doc "Forwards the already declared binder k as the complete application Sized<k>.";
+  return inner::<Sized<k>>();
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "A binding supplies the concrete const argument, directly and through a forwarding generic.";
+  let direct = inner::<Hundred>();
+  let forwarded = outer::<Hundred>();
+  if direct == 100_u64 {
+    if forwarded == 100_u64 {
+      return exit_status(code: 0_u8);
+    }
+  }
+  return exit_status(code: 1_u8);
+}

@@ -5212,6 +5212,26 @@ void wf__completion_socket_shutdown_submit(
     wf_bridge_dispatch(held);
 }
 
+int wf__completion_socket_local_address(
+    int descriptor,
+    uint64_t *address_low,
+    uint64_t *address_high,
+    uint32_t *port_and_family
+) {
+    wf_socket_address address;
+    int refusal;
+    if (address_low == NULL || address_high == NULL || port_and_family == NULL) {
+        wf_bridge_fail(
+            "a local-address query was given no place to publish its result"
+        );
+    }
+    refusal = wf_file_socket_local_address(descriptor, &address);
+    *address_low = address.words[0];
+    *address_high = address.words[1];
+    *port_and_family = address.port_and_family;
+    return refusal;
+}
+
 void wf__completion_directory_next_submit(
     int descriptor,
     void *buffer,

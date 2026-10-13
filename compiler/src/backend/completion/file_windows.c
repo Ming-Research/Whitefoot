@@ -991,3 +991,23 @@ int wf_file_transfer_now(const wf_file_request *request, wf_file_result *result)
     (void)result;
     return 0;
 }
+
+/* `getsockname` on the Winsock object behind the descriptor.  An accepted
+ * socket here came from plain `accept`, and a connected one has had
+ * SO_UPDATE_CONNECT_CONTEXT set when its `ConnectEx` completed
+ * (`windows_iocp.c`), so both report the endpoint the connection uses. */
+int wf_file_socket_local_address(int descriptor, wf_socket_address *address) {
+    wf_socket_native_address native;
+    int length = (int)sizeof(native.bytes);
+    SOCKET connection = wf_file_windows_socket(descriptor);
+    memset(&native, 0, sizeof(native));
+    memset(address, 0, sizeof(*address));
+    if (connection == INVALID_SOCKET) {
+        return (int)ERROR_INVALID_HANDLE;
+    }
+    if (getsockname(connection, (struct sockaddr *)native.bytes, &length) != 0) {
+        return wf_file_windows_socket_error();
+    }
+    wf_socket_address_from_native(&native, (unsigned)length, address);
+    return 0;
+}

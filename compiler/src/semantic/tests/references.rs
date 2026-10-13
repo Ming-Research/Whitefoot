@@ -376,6 +376,37 @@ fn a_move_of_the_root_does_not_re_root_its_references() {
     });
 }
 
+/// [REF-2, WIN-3, STOR-3] a move out of one field releases the owner's other
+/// affine parts, and the use of a reference to a released part names that
+/// release as its invalidating event rather than the sibling's move.
+#[test]
+fn a_sibling_move_releases_the_referenced_field() {
+    let source = include_bytes!(
+        "../../../../tests/conformance/cases/ref2-neg-reference-after-sibling-move-releases-it.wf"
+    );
+    assert_rule_kind(source, SemanticRule::Ref2, |kind| {
+        matches!(
+            kind,
+            SemanticIssueKind::InvalidReferenceUse { event, .. } if event.contains("was released")
+        )
+    });
+}
+
+/// [REF-2, WIN-3] a move out of one field consumes the whole owner, so a
+/// reference to the owner is invalid through its moved prefix.
+#[test]
+fn a_field_move_invalidates_a_reference_to_its_owner() {
+    let source = include_bytes!(
+        "../../../../tests/conformance/cases/ref2-neg-owner-reference-after-field-move.wf"
+    );
+    assert_rule_kind(source, SemanticRule::Ref2, |kind| {
+        matches!(
+            kind,
+            SemanticIssueKind::InvalidReferenceUse { event, .. } if event.contains("moved out of")
+        )
+    });
+}
+
 /// [REF-2] compares evaluated index steps. Replacing the same dynamically
 /// indexed owner is a proper-prefix write even though the step came from a
 /// binding rather than a literal.
@@ -915,7 +946,10 @@ fn an_undischarged_call_separation_names_ranges_formed_at_the_call() {
 
 /// [EFF-5] substitutes the scalar values of index actuals, not the storage
 /// paths from which those values were read. Distinct array elements can both
-/// contain zero and therefore select the same written window element.
+/// contain zero and therefore select the same written window element. An
+/// element read names no captured value, so no fact separates the two
+/// positions and the call is refused at once, without a proof question
+/// [DIAG-1].
 #[test]
 fn substituted_index_values_do_not_inherit_their_actual_storage_separation() {
     let source = br#"fn write_two(window: &Slots<u8, 2>, first: u64, second: u64) -> result: unit reads(window.len), writes(window[first]), writes(window[second]) {
@@ -940,8 +974,8 @@ fn main() -> status: std::process::ExitStatus pure {
     assert_rule_kind(source, SemanticRule::Eff5, |kind| {
         matches!(
             kind,
-            SemanticIssueKind::UndischargedCallSeparation { residual, .. }
-                if residual.contains("captured indices to be distinct")
+            SemanticIssueKind::OverlappingCallEffects { mechanical_fix, .. }
+                if mechanical_fix.starts_with("these two entries of the callee's row may reach overlapping places through one argument, and no fact names the positions this call passes for them")
         )
     });
 }

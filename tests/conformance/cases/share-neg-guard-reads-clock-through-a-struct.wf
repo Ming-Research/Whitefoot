@@ -1,0 +1,32 @@
+struct Progress {
+  n: u64;
+}
+
+struct Schedule {
+  wall: std::time::WallClock;
+  deadline: i64;
+}
+
+fn due(schedule: &Schedule) -> result: Bool reads(schedule) {
+  doc "Reports whether the schedule's calendar time has reached its deadline.";
+  let reading = std::time::unix_nanoseconds(clock: &schedule^.wall);
+  let reached = reading >= schedule^.deadline;
+  return reached;
+}
+
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
+  doc "A guard whose call reads a struct that holds a wall clock reads that clock.";
+  let std::process::Inputs(cwd: directory, handles: factory, wall_clock: wall, ..) = move inputs;
+  let std::fs::Directory(read: directory_read, write: directory_write) = move directory;
+  std::fs::close_directory_write(factory: &factory, directory: move directory_write);
+  std::fs::close_directory(factory: &factory, directory: move directory_read);
+  let start = std::time::unix_nanoseconds(clock: &wall);
+  let deadline = start +sat 1000000_i64;
+  let schedule = Schedule(wall: move wall, deadline: deadline);
+  let initial = Progress(n: 0_u64);
+  let state = shared_new::<Progress>(value: initial);
+  atomic g = &state when due(schedule: &schedule) {
+    set g^.n = 1_u64;
+  }
+  return std::process::exit_status(code: 0_u8);
+}

@@ -256,7 +256,7 @@ impl<'unit> Checker<'_, 'unit> {
                 requires: Vec::new(),
                 ensures: Vec::new(),
             };
-            self.append_type_invariant_contracts(check_context, signature, &mut contracts)?;
+            self.append_type_invariant_contracts(signature, &mut contracts)?;
             return Ok(contracts);
         };
         let mut bindings = HashMap::new();
@@ -390,7 +390,7 @@ impl<'unit> Checker<'_, 'unit> {
             .declarations
             .check_published_relation_consistency(signature, &selectors, &relations)?;
         let mut contracts = InterfaceContracts { requires, ensures };
-        self.append_type_invariant_contracts(check_context, signature, &mut contracts)?;
+        self.append_type_invariant_contracts(signature, &mut contracts)?;
         Ok(contracts)
     }
 
@@ -400,11 +400,10 @@ impl<'unit> Checker<'_, 'unit> {
     /// compares them like written clauses.
     fn append_type_invariant_contracts(
         &mut self,
-        check_context: &CheckContext<'_>,
         signature: &FunctionSignature,
         contracts: &mut InterfaceContracts,
     ) -> Result<(), CheckStop> {
-        for requirement in self.implicit_type_invariant_requirements(check_context, signature)? {
+        for requirement in self.implicit_type_invariant_requirements(signature)? {
             contracts.requires.push(InterfaceRequirement {
                 clause: requirement.clause,
                 template: requirement.template,
@@ -415,7 +414,7 @@ impl<'unit> Checker<'_, 'unit> {
         let mut relation_ordinal = u32::try_from(contracts.ensures.len())
             .map_err(|_| SemanticCompilerFailure::CounterOverflow)?;
         for (invariant, subject, selector) in
-            self.type_invariant_postcondition_selectors(check_context, signature)?
+            self.type_invariant_postcondition_selectors(signature)?
         {
             contracts.ensures.push(InterfaceEnsures {
                 clause: invariant.clause.clone(),
@@ -448,13 +447,17 @@ fn contract_query_discharged(proof: &FunctionEntailment) -> bool {
 /// unrouted actual clause holds on every normal return, including an Ok route;
 /// a routed clause holds only on that exact result ordinal and route.
 fn ensures_available_on_route(published: &InterfaceEnsures, promised: &InterfaceEnsures) -> bool {
-    match (published.variant, promised.variant) {
-        (None, _) => true,
-        (Some(_), None) => false,
-        (Some(published_variant), Some(promised_variant)) => {
+    match (
+        published.selector.is_routed(),
+        promised.selector.is_routed(),
+    ) {
+        (false, _) => true,
+        (true, false) => false,
+        (true, true) => {
             published.ordinal == promised.ordinal
-                && published_variant == promised_variant
+                && published.variant == promised.variant
                 && published.field == promised.field
+                && published.selector.route == promised.selector.route
         }
     }
 }
@@ -480,7 +483,7 @@ fn contract_postcondition_variables(
                     mode: result.mode,
                     // A routed ordinal's datum is the Ok payload, not the
                     // whole Result value declared at that ordinal [FN-9].
-                    ty: if selector.variant.is_some()
+                    ty: if selector.selector.is_routed()
                         && usize::try_from(selector.ordinal).ok() == Some(ordinal)
                     {
                         selector.result_type
@@ -648,6 +651,7 @@ impl<'unit> DeclarationInventory<'unit> {
             declared_state_reads: Vec::new(),
             requirements,
             requirement_places,
+            routed_requirements: Vec::new(),
             postconditions: Vec::new(),
             range_facts: Default::default(),
             body: None,
@@ -770,6 +774,7 @@ impl<'unit> TypeContext<'unit> {
             contract_queries: &[],
             verified_postconditions: &[],
             verified_postcondition_proofs: &[],
+            component_postconditions: &[],
             binding_names: &binding_names,
         };
         query(&context)
