@@ -1,0 +1,27 @@
+nocopy struct Row {
+  left: u64;
+  right: u64;
+}
+
+fn exchange(rows: &Slots<Slots<Row, 2>, 2>, i: u64, j: u64, k: u64, l: u64) -> result: unit writes(rows) contract {
+  requires i < rows^.len;
+  requires j < rows^.len;
+  requires k < rows^[i].len;
+  requires l < rows^[j].len;
+} {
+  doc "OP-11: equal-depth slots whose containing paths differ only in index steps admit swap without proving either the row indices or the slot indices distinct.";
+  swap(first: &rows^[i][k], second: &rows^[j][l]);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let inner = slots_new::<Row, 2>();
+  let first = Row(left: 1_u64, right: 2_u64);
+  place_back(window: &inner, value: move first);
+  let second = Row(left: 3_u64, right: 4_u64);
+  place_back(window: &inner, value: move second);
+  let rows = slots_new::<Slots<Row, 2>, 2>();
+  place_back(window: &rows, value: move inner);
+  exchange(rows: &rows, i: 0_u64, j: 0_u64, k: 0_u64, l: 1_u64);
+  return std::process::exit_status(code: 0_u8);
+}
