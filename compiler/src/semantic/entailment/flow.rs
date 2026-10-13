@@ -2280,6 +2280,7 @@ mod range_argument_kill_tests {
             binding: VIEW,
             element: CheckedElement(0),
             element_type: CheckedType::Integer(IntegerType::U64),
+            proof_base: None,
         })
     }
 

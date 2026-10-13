@@ -1264,6 +1264,7 @@ impl<'unit> Checker<'_, 'unit> {
                     binding: local.binding,
                     element: self.types.intern_element(local.ty)?,
                     element_type: local.ty,
+                    proof_base: self.body.exact_description(local),
                 },
                 local
                     .reference
@@ -1810,6 +1811,7 @@ impl<'unit> Checker<'_, 'unit> {
                     binding: local.binding,
                     element: self.types.intern_element(local.ty)?,
                     element_type: local.ty,
+                    proof_base: self.body.exact_description(local),
                 },
                 local
                     .reference
@@ -1921,6 +1923,7 @@ impl<'unit> Checker<'_, 'unit> {
                     binding: local.binding,
                     element,
                     element_type: local.ty,
+                    proof_base: self.body.exact_description(local),
                 }),
                 named,
                 local.ty,
@@ -2314,11 +2317,14 @@ impl<'unit> Checker<'_, 'unit> {
 /// [ENT-2] which reference variables and paths are exact in the function
 /// being checked: the declarations some `set` of its body rebinds, reachable
 /// or not, and among them the self-anchored reference variables, parameters
-/// and `atomic` binders, whose own binding is the root of the path they name.
+/// and `atomic` binders, whose own binding is the root of the path they name;
+/// and the range aliases, each with the variable its places are
+/// identified through.
 #[derive(Clone, Copy)]
 pub(super) struct Exactness<'body> {
     rebound_declarations: &'body std::collections::HashSet<DeclarationId>,
     rebound_anchors: &'body std::collections::HashSet<BindingId>,
+    range_alias_sources: &'body HashMap<BindingId, BindingId>,
 }
 
 impl Exactness<'_> {
@@ -2350,6 +2356,16 @@ impl Exactness<'_> {
             && self.is_exact_path(path))
         .then_some(path)
     }
+
+    /// The variable a place written through `binding` is identified through
+    /// [ENT-2]: a range alias's source, and otherwise the variable
+    /// itself.
+    pub(super) fn proof_binding(self, binding: BindingId) -> BindingId {
+        self.range_alias_sources
+            .get(&binding)
+            .copied()
+            .unwrap_or(binding)
+    }
 }
 
 impl BodyChecker {
@@ -2357,13 +2373,22 @@ impl BodyChecker {
         Exactness {
             rebound_declarations: &self.rebound_declarations,
             rebound_anchors: &self.rebound_anchors,
+            range_alias_sources: &self.range_alias_sources,
         }
     }
 
     /// The proof base of every place written through `local` at this point
-    /// [ENT-2]: its exact path. A reference parameter that names itself needs
-    /// none, its spelling being that path already.
+    /// [ENT-2]: its exact path, or for a range alias its source
+    /// variable. A reference parameter that names itself needs none, its
+    /// spelling being that path already, and neither does a range-reference
+    /// variable that is no range alias.
     pub(super) fn exact_description(&self, local: &LocalBinding) -> Option<ResolvedPlace> {
+        if local.mode.is_range() {
+            return self
+                .range_alias_sources
+                .get(&local.binding)
+                .map(|source| ResolvedPlace::binding(*source));
+        }
         let path = self.exactness().exact_path(local)?;
         let itself = path.root == PlaceRoot::Binding(local.binding) && path.path.is_empty();
         (!itself).then(|| ResolvedPlace {
@@ -2373,6 +2398,23 @@ impl BodyChecker {
             root: path.root,
             path: path.path.clone(),
         })
+    }
+
+    /// [ENT-2] records `alias`, bound by `let` to the bare range-reference
+    /// variable `source`, as a range alias identified through `source`'s own
+    /// identifying variable when no `set` of the body rebinds either of them,
+    /// reachable or not. An alias forms no range, so it holds the one
+    /// formation, and with it the `len`, its never-rebound source holds
+    /// throughout the alias's scope.
+    pub(super) fn note_range_alias(&mut self, alias: &LocalBinding, source: &LocalBinding) {
+        if alias.mode.is_range()
+            && source.mode.is_range()
+            && !self.rebound_declarations.contains(&alias.declaration)
+            && !self.rebound_declarations.contains(&source.declaration)
+        {
+            let identity = self.exactness().proof_binding(source.binding);
+            self.range_alias_sources.insert(alias.binding, identity);
+        }
     }
 
     /// Records an `atomic` binder that some `set` of the body rebinds as a

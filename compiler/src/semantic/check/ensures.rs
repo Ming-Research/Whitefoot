@@ -19,6 +19,7 @@ use super::super::model::{
     CheckedNominalKind, CheckedParameter, CheckedPlaceStep, CheckedStatement, CheckedType,
     CheckedValue, FunctionId, IntegerType,
 };
+use super::super::places::{PlaceRoot, ResolvedPlace};
 use super::super::postcondition::{
     CheckedPostcondition, CheckedPostconditionSelector, NormalizedRelation, ParameterDenotation,
     PayloadRoute, PostconditionConstantOrigin, PostconditionFieldIdentity, PostconditionPlace,
@@ -2298,14 +2299,26 @@ impl<'unit> TypeContext<'unit> {
             place.range_referent = true;
             return Ok(Some(place));
         }
-        let Some(info) = binding_info.get(&root.binding) else {
+        // [ENT-2] a range alias's places are its source's.
+        let ResolvedPlace {
+            root: PlaceRoot::Binding(binding),
+            path,
+            ..
+        } = root.proof_place()
+        else {
+            return Err(SemanticCompilerFailure::InvalidResolution.into());
+        };
+        if !path.is_empty() {
+            return Err(SemanticCompilerFailure::InvalidResolution.into());
+        }
+        let Some(info) = binding_info.get(&binding) else {
             return Ok(None);
         };
         if info.ty != root.element_type {
             return Err(SemanticCompilerFailure::InvalidResolution.into());
         }
         Ok(Some(PostconditionReturnPlace {
-            root: PostconditionReturnPlaceRoot::Binding(root.binding),
+            root: PostconditionReturnPlaceRoot::Binding(binding),
             projections: Vec::new(),
             ty: root.element_type,
             range_referent: true,

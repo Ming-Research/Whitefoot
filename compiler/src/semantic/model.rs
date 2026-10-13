@@ -1747,6 +1747,10 @@ pub(crate) struct CheckedRangeRoot {
     /// The same type carried directly for expression typing, which is
     /// context-free and cannot dereference the program-owned element table.
     pub(crate) element_type: CheckedType,
+    /// The [ENT-2] proof base where `binding` is a range alias: the
+    /// source variable its places are identified through. `None` identifies
+    /// them through `binding`.
+    pub(crate) proof_base: Option<super::places::ResolvedPlace>,
 }
 
 impl CheckedRangeRoot {
@@ -1780,7 +1784,11 @@ impl CheckedRangeRoot {
                 });
                 place
             }
-            _ => super::places::ResolvedPlace::binding(self.binding),
+            _ => proof_place_below(
+                self.proof_base.as_ref(),
+                super::places::PlaceRoot::Binding(self.binding),
+                Vec::new(),
+            ),
         }
     }
 }

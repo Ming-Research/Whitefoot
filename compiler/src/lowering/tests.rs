@@ -2565,9 +2565,9 @@ fn replaced_through_alias() -> result: u64 pure waits {
   let cell = shared_new::<u64>(value: 1_u64);
   let seen = 0_u64;
   atomic state = &cell {
-    let held = &cell;
+    let other = &cell;
     let fresh = shared_new::<u64>(value: 2_u64);
-    set held^ = move fresh;
+    set other^ = move fresh;
     set seen = state^;
   }
   return seen;
