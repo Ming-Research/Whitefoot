@@ -44,12 +44,12 @@ decisions are owner-approved; the specification change is recorded as
 v0.143 in `spec/log.md` ([section 10](#10-specification-changes)). The
 checker, lowering and runtime are implemented on this branch
 ([section 12](#12-implementation-plan)); the conformance cases reached their
-verdicts and unit tests passed in CI at `8cf048252`. The lean shard path,
-with no handle-count write on a shard statement, waits for PR #409 (skip
-handle count). The 14900K acceptance measurement has not run. The registered comparison
+verdicts and unit tests passed in CI at `8cf048252`. PR #409 (skip handle count), merged into this branch with main, gives the
+lean shard path: a shard statement whose block neither moves nor writes the
+handle place writes no handle count. The 14900K acceptance measurement has not run. The registered comparison
 that could still reject the change after its implementation, the sharded
 state at most 1.25 times the array's rate at every CPU count (R2), waits for
-the lean path and its acceptance measurement. The criteria the implementation must meet, and a C model
+the acceptance measurement. The criteria the implementation must meet, and a C model
 that gates it, were registered on 2026-10-12 before any implementation or
 C-model measurement, replacing the earlier prediction P1
 ([section 8.5](#85-criteria-for-the-implementation-registered-2026-10-12)),
@@ -1690,9 +1690,9 @@ Owner-approved on the work branch, as recorded in `design/log.md`:
 The checker, lowering and runtime are implemented on this branch. The
 conformance cases reached their verdicts and unit tests passed in CI at
 `8cf048252`. The end-to-end contention program completes the program-test
-coverage below. The lean shard path still waits for PR #409 (skip handle
-count), and the 14900K acceptance measurement has not run. The bullets
-below describe the implementation obligations, including that prerequisite.
+coverage below. PR #409 (skip handle count) is merged into this branch, and the 14900K
+acceptance measurement has not run. The bullets below describe the
+implementation obligations, including that prerequisite.
 
 **Gate before any of it.** The C model of section 8.5 (W7) runs first, under
 the procedure and decision rule of section 8.6; below 0.5 × W5p the plan
@@ -1704,7 +1704,8 @@ every statement through a value handle counts the handle on the header
 back on every update. The board item "an atomic statement through a value
 handle does not change the handle count" (gran-skip-handle-count: skip the
 count when the block neither moves nor writes the handle place) is PR #409,
-not yet merged here; the lean shard path of section 8.5 depends on it.
+merged into this branch with main; the lean shard path of section 8.5 uses
+it through the same skip every target takes.
 W4r in section 8.2 separates the two if it is not.
 
 **Checker.**
@@ -1751,8 +1752,8 @@ W4r in section 8.2 separates the two if it is not.
 - A shard target lowers to the address of the running thread's shard, its
   lock taken and released by a fast path inlined in the generated code, with
   the runtime called only when a whole target holds the lock; the binding is
-  that address. It changes no holder count; omitting the handle-count write
-  on a shard statement waits for PR #409 (section 8.5). The statement's lock-order group is the object's type,
+  that address. It changes no holder count; PR #409 omits the handle-count write
+  on a shard statement whose block keeps the handle place (section 8.5). The statement's lock-order group is the object's type,
   as for any target (state-locks, second decision).
 - A whole target over a shards state takes every shard's lock in index order
   and binds the object's shard array; `all^.len` reads the header word and
