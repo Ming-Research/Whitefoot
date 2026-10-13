@@ -3,6 +3,9 @@
 name: tmp-fir-attr
 on:
   workflow_dispatch:
+  push:
+    branches: [claude/par-demand-default]
+    paths: [.github/workflows/tmp-fir-attr.yml]
 defaults:
   run:
     shell: bash
