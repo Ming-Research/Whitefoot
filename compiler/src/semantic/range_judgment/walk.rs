@@ -540,8 +540,10 @@ impl<'program> Walker<'program> {
             .iter()
             .map(|_| self.world.opaque(None))
             .collect();
-        let Some(formed) = facts::form(&mut self.world, clause, frame, &binders, &[]) else {
-            return Ok(Some(None));
+        let formed = match facts::form(&mut self.world, clause, frame, &binders, &[]) {
+            Ok(formed) => formed,
+            Err(facts::Unformed::Unviewed) => return Ok(Some(None)),
+            Err(facts::Unformed::Arithmetic) => return Err(Capacity::Arithmetic),
         };
         for (position, conclusion) in formed.conclusions.iter().enumerate() {
             let (units, choices) = state.premises(&self.world);
@@ -3180,13 +3182,14 @@ impl<'program> Walker<'program> {
             let _ = clause;
             for argument in &step.arguments {
                 match self.certificate_term(entry, &frame, argument, &iterations) {
-                    Some(value) => arguments.push(value),
-                    None => {
+                    Ok(value) => arguments.push(value),
+                    Err(facts::Unformed::Unviewed) => {
                         failure.get_or_insert(ApartFailure::Use {
                             step: step.node.clone(),
                             reason: "an argument names a place the judgment cannot view",
                         });
                     }
+                    Err(facts::Unformed::Arithmetic) => beyond_arithmetic = true,
                 }
             }
             written_instances.push((fact, arguments, iterations.to_vec()));
@@ -3292,7 +3295,7 @@ impl<'program> Walker<'program> {
         frame: &Frame,
         term: &CheckedRangeTerm,
         iterations: &[Linear],
-    ) -> Option<Linear> {
+    ) -> Result<Linear, facts::Unformed> {
         // A certificate argument names the loop's own state: form it in a
         // frame over the entry state, its iterations bound.
         let clause = CheckedRangeClause {
@@ -3318,6 +3321,7 @@ impl<'program> Walker<'program> {
             .conclusions
             .first()
             .map(|conclusion| conclusion.conclusions[0].left.clone())
+            .ok_or(facts::Unformed::Unviewed)
     }
 
     // ----- affine relations -----

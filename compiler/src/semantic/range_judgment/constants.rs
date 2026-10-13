@@ -110,8 +110,15 @@ pub(crate) fn judge(
         relation,
         capacity,
     };
-    let Some(formed) = facts::form(&mut world, clause, &frame, &binders, &[]) else {
-        return Some(failure(None, None));
+    let formed = match facts::form(&mut world, clause, &frame, &binders, &[]) {
+        Ok(formed) => formed,
+        Err(facts::Unformed::Unviewed) => return Some(failure(None, None)),
+        Err(facts::Unformed::Arithmetic) => {
+            return Some(RangeIssue::Unsupported {
+                node: node.clone(),
+                feature: super::super::UnsupportedSemanticFeature::RangeArithmetic,
+            });
+        }
     };
     for (position, conclusion) in formed.conclusions.iter().enumerate() {
         let (mut units, choices) = state.premises(&world);

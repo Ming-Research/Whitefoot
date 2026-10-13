@@ -632,6 +632,66 @@ fn main() -> status: std::process::ExitStatus pure {
     });
 }
 
+/// A postcondition `result <relation> <bound>` of a function that returns
+/// 2^64 - 1, over a range with one tuple.
+fn largest_bound(relation: &str, bound: &str) -> Vec<u8> {
+    format!(
+        "fn largest() -> result: u64 pure contract {{
+  ensures forall huge(k in 0_u64..1_u64): result {relation} {bound};
+}} {{
+  return 18446744073709551615_u64;
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  let value = largest();
+  return std::process::exit_status(code: 0_u8);
+}}
+"
+    )
+    .into_bytes()
+}
+
+#[test]
+fn a_term_whose_product_passes_i128_is_judged_at_its_exact_value() {
+    // (2^64 - 1)^2 passes i128 and the side, (2^64 - 1)(2^63 - 1), fits.
+    // Clamping the product at i128::MAX read the bound as 2^63 - 1, below
+    // the result, which accepted `>=` and rejected `<=` [RANGE-1].
+    let bound = "18446744073709551615_u64 *(18446744073709551615_u64 * 1_u64) - 18446744073709551615_u64 *(9223372036854775808_u64 * 1_u64)";
+    with_semantics(&largest_bound("<=", bound), |outcome| {
+        assert!(
+            matches!(outcome, SemanticOutcome::Complete(_)),
+            "every u64 result is below the bound: {outcome:?}"
+        );
+    });
+    with_semantics(&largest_bound(">=", bound), |outcome| {
+        let SemanticOutcome::SourceIssue { issue, .. } = outcome else {
+            panic!("expected a RANGE-3 rejection, got {outcome:?}");
+        };
+        assert_eq!(issue.rule(), SemanticRule::Range3);
+    });
+}
+
+#[test]
+fn a_term_whose_value_passes_i128_is_unsupported_not_clamped() {
+    // A constant clamped at i128::MAX accepted the first clause, and a
+    // coefficient clamped at i128::MAX rejected the second under RANGE-3;
+    // each value is exact and has no bound, so the limit is the checker's.
+    for bound in [
+        "18446744073709551615_u64 *(18446744073709551615_u64 * 1_u64)",
+        "18446744073709551615_u64 *(18446744073709551615_u64 * k)",
+    ] {
+        with_semantics(&largest_bound("<=", bound), |outcome| {
+            let SemanticOutcome::Unsupported { unsupported, .. } = outcome else {
+                panic!("expected an unsupported capability for {bound}, got {outcome:?}");
+            };
+            assert_eq!(
+                unsupported.feature(),
+                crate::UnsupportedSemanticFeature::RangeArithmetic
+            );
+        });
+    }
+}
+
 /// A loop whose write to `cells` waits behind a chain of `flags` flags,
 /// each set an iteration after the one before, so each dry walk of the
 /// header reaches one more of them. `header` opens the loop; an ordinary
