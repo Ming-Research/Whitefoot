@@ -2,6 +2,7 @@
 
 mod canonical_corpus;
 mod checker_work;
+mod doc_examples;
 #[cfg(windows)]
 mod native_windows;
 mod support;
