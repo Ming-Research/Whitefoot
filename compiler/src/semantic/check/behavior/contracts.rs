@@ -227,6 +227,7 @@ impl<'unit> Checker<'_, 'unit> {
             )
             .collect();
         Ok(CheckedCallContract {
+            held_parameters: formal.checked_held_parameters()?,
             requirements: formal_contracts
                 .requires
                 .into_iter()
@@ -353,7 +354,7 @@ impl<'unit> Checker<'_, 'unit> {
         }
         let mut relations = Vec::with_capacity(selectors.len());
         for (relation_ordinal, selector) in selectors.iter().enumerate() {
-            let relation = self.check_postcondition_clause(
+            let (relation, _) = self.check_postcondition_clause(
                 FunctionContext {
                     check_context,
                     function: signature,
@@ -363,7 +364,7 @@ impl<'unit> Checker<'_, 'unit> {
                 &mut counters,
             )?;
             relations.push(relation.clone());
-            let mut expression = self.expand_postcondition_clause(
+            let (mut expression, _) = self.expand_postcondition_clause(
                 FunctionContext {
                     check_context,
                     function: signature,
@@ -657,6 +658,8 @@ impl<'unit> DeclarationInventory<'unit> {
             declared_state_writes: Vec::new(),
             declared_state_reads: Vec::new(),
             requirements,
+            held_parameters: signature.checked_held_parameters()?,
+            held_calls: Vec::new(),
             requirement_places,
             routed_requirements: Vec::new(),
             postconditions: Vec::new(),

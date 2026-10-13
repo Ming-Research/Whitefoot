@@ -371,9 +371,14 @@ impl<'unit> Checker<'_, 'unit> {
             return self.types.declarations.issue_node(
                 SemanticRule::Own1,
                 node,
-                SemanticIssueKind::MoveOfCopy {
-                    mechanical_fix: "read the measure without `move`",
-                },
+                self.ownership_issue(
+                    check_context,
+                    node,
+                    CheckedType::Integer(IntegerType::U64),
+                    true,
+                    None,
+                    Some("read the measure without `move`".to_owned()),
+                )?,
             );
         }
         Ok(TypedExpression {
@@ -602,9 +607,14 @@ impl<'unit> Checker<'_, 'unit> {
                 return self.types.declarations.issue_node(
                     SemanticRule::Own1,
                     use_node,
-                    SemanticIssueKind::MoveOfCopy {
-                        mechanical_fix: "read the measure without `move`",
-                    },
+                    self.ownership_issue(
+                        check_context,
+                        place,
+                        CheckedType::Integer(IntegerType::U64),
+                        true,
+                        None,
+                        Some("read the measure without `move`".to_owned()),
+                    )?,
                 );
             }
             let mut effects = range.offsets.effects;
@@ -691,9 +701,14 @@ impl<'unit> Checker<'_, 'unit> {
                     return self.types.declarations.issue_node(
                         SemanticRule::Own1,
                         use_node,
-                        SemanticIssueKind::MoveOfCopy {
-                            mechanical_fix: "read the measure without `move`",
-                        },
+                        self.ownership_issue(
+                            check_context,
+                            place,
+                            CheckedType::Integer(IntegerType::U64),
+                            true,
+                            None,
+                            Some("read the measure without `move`".to_owned()),
+                        )?,
                     );
                 }
                 let mut resolved = range.resolved;
@@ -809,9 +824,14 @@ impl<'unit> Checker<'_, 'unit> {
             return self.types.declarations.issue_node(
                 SemanticRule::Own1,
                 use_node,
-                SemanticIssueKind::MoveOfCopy {
-                    mechanical_fix: "read the measure without `move`",
-                },
+                self.ownership_issue(
+                    check_context,
+                    place,
+                    CheckedType::Integer(IntegerType::U64),
+                    true,
+                    None,
+                    Some("read the measure without `move`".to_owned()),
+                )?,
             );
         }
         for member in &container.resolved.members {
@@ -896,9 +916,14 @@ impl<'unit> Checker<'_, 'unit> {
             return self.types.declarations.issue_node(
                 SemanticRule::Own1,
                 node,
-                SemanticIssueKind::MoveOfCopy {
-                    mechanical_fix: "read the constant's copy scalar without `move`",
-                },
+                self.ownership_issue(
+                    check_context,
+                    node,
+                    place.root.ty,
+                    true,
+                    None,
+                    Some("read the constant's copy scalar without `move`".to_owned()),
+                )?,
             );
         }
         self.check_storage_read(check_context, node, node, place, bindings, options)
@@ -979,19 +1004,28 @@ impl<'unit> Checker<'_, 'unit> {
             return self.types.declarations.issue_node(
                 SemanticRule::Own1,
                 node,
-                SemanticIssueKind::BareAffineUse {
-                    mechanical_fix: "move the element out with take_back or remove_at, or \
-                                     exchange it with swap [OP-10, OP-11]",
-                },
+                self.ownership_issue(
+                    check_context,
+                    source_place,
+                    place.root.ty,
+                    false,
+                    None,
+                    Some("move the element out with take_back or remove_at, or exchange it with swap [OP-10, OP-11]".to_owned()),
+                )?,
             );
         }
         if copy && options.explicit_move && Checker::judges_class_spelling(check_context) {
             return self.types.declarations.issue_node(
                 SemanticRule::Own1,
                 node,
-                SemanticIssueKind::MoveOfCopy {
-                    mechanical_fix: "use the indexed copy place without `move`",
-                },
+                self.ownership_issue(
+                    check_context,
+                    source_place,
+                    place.root.ty,
+                    true,
+                    None,
+                    Some("use the indexed copy place without `move`".to_owned()),
+                )?,
             );
         }
         let mut effects = place.offsets.effects;
@@ -1169,10 +1203,14 @@ impl<'unit> Checker<'_, 'unit> {
             return self.types.declarations.issue_node(
                 SemanticRule::Own1,
                 use_node,
-                SemanticIssueKind::BareAffineUse {
-                    mechanical_fix: "move the element out with take_back or remove_at, or \
-                                     exchange it with swap [OP-10, OP-11]",
-                },
+                self.ownership_issue(
+                    check_context,
+                    place,
+                    selected_type,
+                    false,
+                    None,
+                    Some("move the element out with take_back or remove_at, or exchange it with swap [OP-10, OP-11]".to_owned()),
+                )?,
             );
         }
         if !element_read_out
@@ -1182,9 +1220,14 @@ impl<'unit> Checker<'_, 'unit> {
             return self.types.declarations.issue_node(
                 SemanticRule::Own1,
                 use_node,
-                SemanticIssueKind::MoveOfCopy {
-                    mechanical_fix: "use the indexed copy place without `move`",
-                },
+                self.ownership_issue(
+                    check_context,
+                    place,
+                    selected_type,
+                    true,
+                    None,
+                    Some("use the indexed copy place without `move`".to_owned()),
+                )?,
             );
         }
         if matches!(indexed, CheckedIndexedPlace::Container(_)) {
@@ -1622,6 +1665,58 @@ impl<'unit> Checker<'_, 'unit> {
                 let member = self
                     .types
                     .elaborate_place_member(check_context, suffix, ty)?;
+                if let super::places::PlaceMember::Payload { variant, .. } = member {
+                    // This resolver knows the selected type but not its root.
+                    // Reuse ordinary borrow formation for the strictly shorter
+                    // written prefix; its captures keep the source identities,
+                    // and only the original path is emitted or contributes effects.
+                    let place = self
+                        .types
+                        .declarations
+                        .tree
+                        .parent(suffix)?
+                        .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
+                    let written = self
+                        .types
+                        .declarations
+                        .tree
+                        .children_with(place, Production::Psuffix)?;
+                    let position = written
+                        .iter()
+                        .position(|node| *node == suffix)
+                        .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
+                    let prefix = self.check_place_borrow_through(
+                        context,
+                        place,
+                        place,
+                        place,
+                        bindings,
+                        loop_depth,
+                        false,
+                        Some(&written[..position]),
+                        LexicalUseRole::PlaceBase,
+                    )?;
+                    let reference = prefix
+                        .reference
+                        .as_ref()
+                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                    let named = super::super::super::places::named_place(&prefix.expression)
+                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                    let mut written = ResolvedPlace {
+                        root: named.root,
+                        path: named.steps,
+                        atomic_aliases: Vec::new(),
+                    };
+                    written.path.extend(named.suffix);
+                    self.require_payload_variant(
+                        suffix,
+                        variant,
+                        &prefix.expression,
+                        &written,
+                        &reference.paths,
+                        bindings,
+                    )?;
+                }
                 path.push(member.storage_step());
                 ty = member.ty();
                 continue;
@@ -1913,7 +2008,7 @@ impl<'unit> Checker<'_, 'unit> {
                     .declarations
                     .unsupported(UnsupportedSemanticFeature::CompositeValues, node);
             }
-            let (binding, path, _) = self
+            let (binding, path, proof_base) = self
                 .types
                 .declarations
                 .explicit_container_path(&place.expression, node)?;
@@ -1927,6 +2022,7 @@ impl<'unit> Checker<'_, 'unit> {
                     binding,
                     element,
                     element_type: place.ty,
+                    proof_base,
                 },
                 declaration: place.declaration,
                 element_type: place.ty,
@@ -2084,8 +2180,8 @@ impl<'unit> Checker<'_, 'unit> {
                         pages = false;
                     }
                 }
-                crate::syntax::views::PlaceSuffix::Member(_) => {
-                    if range {
+                crate::syntax::views::PlaceSuffix::Member(member) => {
+                    if member.variant.is_some() || range {
                         return Ok(None);
                     }
                     let name = self
@@ -2235,6 +2331,7 @@ impl<'unit> Checker<'_, 'unit> {
                 formation: Some(Box::new(formed.expression)),
                 element,
                 element_type,
+                proof_base: None,
             },
             declaration,
             element_type,
@@ -2366,7 +2463,7 @@ impl<'unit> Checker<'_, 'unit> {
                         SemanticRule::Type7,
                         node,
                         SemanticIssueKind::MissingDereference {
-                            mechanical_fix: "write `holder^`",
+                            mechanical_fix: "write `holder^`".to_owned(),
                         },
                     );
                 }
@@ -2531,6 +2628,7 @@ fn field_prefix(path: &[CheckedPlaceStep]) -> Option<Vec<u32>> {
         .map(|step| match step {
             CheckedPlaceStep::Field(field) => Some(*field),
             CheckedPlaceStep::BoxReferent(_)
+            | CheckedPlaceStep::Payload { .. }
             | CheckedPlaceStep::Subscript(_)
             | CheckedPlaceStep::Measure(_) => None,
         })
@@ -2666,6 +2764,12 @@ impl<'unit> DeclarationInventory<'unit> {
     ) -> Result<ExplicitContainerPath, CheckStop> {
         match expression {
             CheckedExpression::Binding { binding, .. } => Ok((*binding, Vec::new(), None)),
+            CheckedExpression::ReadStorage { root, .. } => Ok((
+                root.binding()
+                    .ok_or(SemanticCompilerFailure::InvalidResolution)?,
+                root.path.clone(),
+                root.proof_base.clone(),
+            )),
             CheckedExpression::DerefAddressed { binding, proof, .. } => {
                 Ok((*binding, Vec::new(), proof.clone()))
             }

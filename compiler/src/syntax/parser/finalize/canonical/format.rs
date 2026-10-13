@@ -331,7 +331,9 @@ pub(super) fn build_gap_styles(
             // break after the close is suppressed exactly there. The last
             // block of a construct always breaks.
             let joins_a_continuation = matches!(record.production, Production::ContractBlock)
-                || (index == 0 && record.has_else);
+                || (index == 0
+                    && matches!(record.production, Production::IfStmt | Production::ValueIf)
+                    && record.has_else);
             if !joins_a_continuation {
                 let after_close = close
                     .checked_add(1)

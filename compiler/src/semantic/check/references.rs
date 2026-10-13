@@ -42,7 +42,7 @@ use super::super::model::{
 };
 use super::super::places::{
     CapturedRange, CapturedTerm, CapturedValue, DescendantTarget, PlaceRoot, PlaceStep,
-    ResolvedPlace, UnprovedSeparations,
+    ResolvedPlace, UnprovedSeparations, places_overlap,
 };
 use super::{
     CheckStop, Checker, EffectPath, EffectSet, LocalBinding, PlaceAccess, TypedExpression,
@@ -168,12 +168,124 @@ impl InvalidationEvent {
     }
 }
 
+/// [SHARE-1, SHARE-2] the places an atomic statement read one target's
+/// handle from, and whether a write, move or release checked while the
+/// statement's binding is in scope may overlap one of them [OWN-7].
+///
+/// The binding carries it through the same walk that carries [REF-2]
+/// validity, so it sees every event that walk enumerates: a statement's
+/// write or move, a call's substituted row [EFF-5] and a window operation.
+/// A move out of a field also releases the rest of its owner [WIN-3], which
+/// that walk does not enumerate; the consume reports each released part
+/// here itself.
+/// Unlike validity it is shared by every copy of the binding's state and is
+/// never restored by a join, so an event on a path that leaves the block by
+/// an edge marks it as well as one that falls through.
+#[derive(Debug, Eq, PartialEq)]
+pub(super) struct HandleWatch {
+    places: Vec<ResolvedPlace>,
+    disturbed: std::cell::Cell<bool>,
+}
+
+impl HandleWatch {
+    pub(super) const fn new(places: Vec<ResolvedPlace>) -> Self {
+        Self {
+            places,
+            disturbed: std::cell::Cell::new(false),
+        }
+    }
+
+    /// Whether some event may have written, moved or released a watched
+    /// place.
+    pub(super) fn disturbed(&self) -> bool {
+        self.disturbed.get()
+    }
+
+    /// Marks every watch in scope whose places `written` may overlap. A
+    /// handle is opaque, so nothing is written below a watched place, and
+    /// overlap in either direction marks.
+    pub(super) fn observe(
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+        written: &ResolvedPlace,
+    ) {
+        for watch in bindings
+            .values()
+            .filter_map(|local| local.handle_watch.as_deref())
+        {
+            if watch
+                .places
+                .iter()
+                .any(|place| places_overlap(&UnprovedSeparations, written, place))
+            {
+                watch.disturbed.set(true);
+            }
+        }
+    }
+}
+
 /// [REF-2] "p is valid" is a fact like any other.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum ReferenceValidity {
     Valid,
     /// Re-established only by forming the reference again.
     Invalid(InvalidationEvent),
+}
+
+/// [REF-1] the selected target of a reference value, separately from its
+/// possible storage supports. Aliases copy this identity; equal candidate
+/// sets do not establish equal choices. Captured selectors identify their
+/// original evaluations; this identity supplies no numeric or effect facts.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum ReferenceSelection {
+    Exact(ResolvedPlace),
+    Choice {
+        origin: ReferenceSelectionOrigin,
+        suffix: Vec<PlaceStep>,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum ReferenceSelectionOrigin {
+    Occurrence(crate::NodePath, BindingId),
+    Loop(LoopReferenceToken),
+}
+
+impl ReferenceSelection {
+    pub(super) fn extend(&mut self, step: PlaceStep) {
+        match self {
+            Self::Exact(place) => place.path.push(step),
+            Self::Choice { suffix, .. } => suffix.push(step),
+        }
+    }
+
+    /// Reuse the path comparison on relative suffixes of one choice. Its
+    /// origin holder need not remain in scope and is never a display path.
+    fn comparison_place(&self) -> ResolvedPlace {
+        match self {
+            Self::Exact(place) => place.clone(),
+            Self::Choice { origin, suffix } => {
+                let owner = match origin {
+                    ReferenceSelectionOrigin::Occurrence(_, owner) => *owner,
+                    ReferenceSelectionOrigin::Loop(token) => token.owner,
+                };
+                let mut place = ResolvedPlace::binding(owner);
+                place.path.clone_from(suffix);
+                place
+            }
+        }
+    }
+
+    pub(super) fn same_target(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Exact(_), Self::Exact(_)) => {}
+            (Self::Choice { origin: left, .. }, Self::Choice { origin: right, .. })
+                if left == right => {}
+            _ => return false,
+        }
+        let left = self.comparison_place();
+        let right = other.comparison_place();
+        left.root == right.root && left.contains(&right) && right.contains(&left)
+    }
 }
 
 /// What one reference binding names [REF-1].
@@ -184,6 +296,9 @@ pub(super) struct ReferenceInfo {
     /// join, where [REF-1] takes the union of the incoming edges' sets and
     /// every check must hold for every member.
     pub(super) paths: Vec<ResolvedPlace>,
+    /// Formations and receiving joins establish this before a source
+    /// reference is used. Address-validity-only guards do not consume it.
+    pub(super) selection: Option<ReferenceSelection>,
     /// Places a write or move of which invalidates the reference as one of
     /// its paths would, though the reference names nothing of them: the key
     /// set an entry binder's entries follow [SHARE-2], whose elements a write
@@ -216,14 +331,30 @@ impl ReferenceInfo {
     /// One freshly formed reference naming every path a joined base may
     /// select at run time [REF-1]. No member is representative: validity,
     /// overlap and effect judgments must retain the complete union.
-    fn formed_paths(kind: ReferenceKind, paths: Vec<ResolvedPlace>) -> Self {
+    pub(super) fn formed_paths(kind: ReferenceKind, paths: Vec<ResolvedPlace>) -> Self {
+        let selection = match paths.as_slice() {
+            [place] => Some(ReferenceSelection::Exact(place.clone())),
+            _ => None,
+        };
         Self {
             kind,
             paths,
+            selection,
             anchors: Vec::new(),
             validity: ReferenceValidity::Valid,
             loop_dependencies: Vec::new(),
             preservations: Vec::new(),
+        }
+    }
+
+    /// Give a newly joined choice a stable identity for this occurrence.
+    /// Existing selections, including an alias's snapshot, keep theirs.
+    pub(super) fn anchor_selection(&mut self, node: &crate::NodePath, binding: BindingId) {
+        if self.selection.is_none() {
+            self.selection = Some(ReferenceSelection::Choice {
+                origin: ReferenceSelectionOrigin::Occurrence(node.clone(), binding),
+                suffix: Vec::new(),
+            });
         }
     }
 
@@ -238,6 +369,9 @@ impl ReferenceInfo {
     /// The selection is checked under the current refinement [ENT-3.S15];
     /// its existing place does not depend on that fact's lexical extent.
     pub(super) fn extend(&mut self, step: PlaceStep) {
+        if let Some(selection) = &mut self.selection {
+            selection.extend(step);
+        }
         for path in &mut self.paths {
             path.path.push(step);
         }
@@ -259,6 +393,14 @@ impl ReferenceInfo {
     /// An index one edge superseded is superseded after the join too, so the
     /// same capture on both edges stays one member rather than two.
     pub(super) fn join(&mut self, other: &Self) {
+        if !self
+            .selection
+            .as_ref()
+            .zip(other.selection.as_ref())
+            .is_some_and(|(left, right)| left.same_target(right))
+        {
+            self.selection = None;
+        }
         for path in &other.paths {
             if !self.paths.contains(path) {
                 self.paths.push(path.clone());
@@ -315,6 +457,10 @@ impl ReferenceInfo {
         if !widen_captures {
             return Ok(None);
         }
+        self.selection = Some(ReferenceSelection::Choice {
+            origin: ReferenceSelectionOrigin::Loop(token),
+            suffix: Vec::new(),
+        });
         let mut widened = Vec::with_capacity(self.paths.len());
         for (ordinal, path) in self.paths.iter().enumerate() {
             widened.push(path.loop_carried(
@@ -680,15 +826,21 @@ impl<'unit> Checker<'_, 'unit> {
         let Some(reference) = &local.reference else {
             return Ok(());
         };
+        self.check_reference_info_valid(local.declaration, reference, node)
+    }
+
+    pub(super) fn check_reference_info_valid(
+        &mut self,
+        declaration: DeclarationId,
+        reference: &ReferenceInfo,
+        node: NodeId,
+    ) -> Result<(), CheckStop> {
         match &reference.validity {
             ReferenceValidity::Invalid(event) => self.types.declarations.issue_node(
                 SemanticRule::Ref2,
                 node,
                 SemanticIssueKind::InvalidReferenceUse {
-                    binder: self
-                        .types
-                        .declarations
-                        .declaration_spelling(local.declaration)?,
+                    binder: self.types.declarations.declaration_spelling(declaration)?,
                     event: event.phrase(),
                     mechanical_fix: REF2_FORM_AGAIN,
                 },
@@ -704,17 +856,15 @@ impl<'unit> Checker<'_, 'unit> {
                     .deferred_loop_reference_uses
                     .push(DeferredLoopReferenceUse {
                         node,
-                        declaration: local.declaration,
+                        declaration,
                         dependencies: reference.loop_dependencies().to_vec(),
                         preservations: reference.preservations.clone(),
                     });
                 Ok(())
             }
-            ReferenceValidity::Valid => self.demand_reference_preservations(
-                node,
-                local.declaration,
-                &reference.preservations,
-            ),
+            ReferenceValidity::Valid => {
+                self.demand_reference_preservations(node, declaration, &reference.preservations)
+            }
         }
     }
 
@@ -753,10 +903,13 @@ impl<'unit> Checker<'_, 'unit> {
         window: &ResolvedPlace,
         shifts_origin: bool,
     ) {
-        for local in bindings.values_mut() {
-            let Some(reference) = &mut local.reference else {
-                continue;
-            };
+        HandleWatch::observe(bindings, window);
+        for reference in bindings.values_mut().flat_map(|local| {
+            local
+                .reference
+                .iter_mut()
+                .chain(local.commit_target.iter_mut())
+        }) {
             // The subject is a reference *into* the window, formed under a
             // bound the operation ends: `&r[i]` under `i < r.len` and
             // `&r[lo..hi]` under `hi <= r.len` [REF-4]. A reference to the
@@ -785,10 +938,12 @@ impl<'unit> Checker<'_, 'unit> {
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         leaving: &[BindingId],
     ) {
-        for local in bindings.values_mut() {
-            let Some(reference) = &mut local.reference else {
-                continue;
-            };
+        for reference in bindings.values_mut().flat_map(|local| {
+            local
+                .reference
+                .iter_mut()
+                .chain(local.commit_target.iter_mut())
+        }) {
             if reference
                 .paths
                 .iter()
@@ -1030,7 +1185,7 @@ impl<'unit> Checker<'_, 'unit> {
                 SemanticRule::Type7,
                 place_node,
                 SemanticIssueKind::MissingDereference {
-                    mechanical_fix: "write `p^` before selecting a member or element",
+                    mechanical_fix: "write `p^` before selecting a member or element".to_owned(),
                 },
             );
         }
@@ -1043,7 +1198,7 @@ impl<'unit> Checker<'_, 'unit> {
                 SemanticRule::Type7,
                 place_node,
                 SemanticIssueKind::MissingDereference {
-                    mechanical_fix: "apply `^` only to a reference; name an owned place as itself",
+                    mechanical_fix: "apply `^` only to a reference; name an owned place as itself".to_owned(),
                 },
             );
         }
@@ -1208,6 +1363,7 @@ impl<'unit> Checker<'_, 'unit> {
                     binding: local.binding,
                     element: self.types.intern_element(local.ty)?,
                     element_type: local.ty,
+                    proof_base: self.body.exact_description(local),
                 },
                 local
                     .reference
@@ -1295,10 +1451,13 @@ impl<'unit> Checker<'_, 'unit> {
                 place,
                 selected: true,
             }));
+            let mut reference = ReferenceInfo::formed_paths(ReferenceKind::Single, places.clone());
+            reference.selection =
+                Some(self.payload_selection_identity(&expression, &places, carrier, bindings)?);
             return Ok(TypedExpression {
                 expression,
                 mode: CheckedMode::Reference,
-                reference: Some(ReferenceInfo::formed_paths(ReferenceKind::Single, places)),
+                reference: Some(reference),
                 reference_value: true,
                 effects,
                 accesses,
@@ -1392,6 +1551,8 @@ impl<'unit> Checker<'_, 'unit> {
             writable,
             write_places: places.clone(),
         };
+        reference.selection =
+            Some(self.payload_selection_identity(&expression, &places, carrier, bindings)?);
         let mut accesses = carried
             .accesses
             .into_iter()
@@ -1673,10 +1834,13 @@ impl<'unit> Checker<'_, 'unit> {
             place,
             selected: true,
         }));
+        let mut reference = ReferenceInfo::formed_paths(ReferenceKind::Range, places.clone());
+        reference.selection =
+            Some(self.payload_selection_identity(&expression, &places, carrier, bindings)?);
         Ok(TypedExpression {
             expression,
             mode: CheckedMode::Range,
-            reference: Some(ReferenceInfo::formed_paths(ReferenceKind::Range, places)),
+            reference: Some(reference),
             reference_value: true,
             effects: carried.effects,
             accesses,
@@ -1754,6 +1918,7 @@ impl<'unit> Checker<'_, 'unit> {
                     binding: local.binding,
                     element: self.types.intern_element(local.ty)?,
                     element_type: local.ty,
+                    proof_base: self.body.exact_description(local),
                 },
                 local
                     .reference
@@ -1865,6 +2030,7 @@ impl<'unit> Checker<'_, 'unit> {
                     binding: local.binding,
                     element,
                     element_type: local.ty,
+                    proof_base: self.body.exact_description(local),
                 }),
                 named,
                 local.ty,
@@ -2045,6 +2211,9 @@ impl<'unit> Checker<'_, 'unit> {
             place,
             selected: true,
         }));
+        let mut reference = ReferenceInfo::formed_paths(ReferenceKind::Range, places.clone());
+        reference.selection =
+            Some(self.payload_selection_identity(&expression, &places, carrier, bindings)?);
         Ok(TypedExpression {
             expression,
             mode: if run {
@@ -2052,7 +2221,7 @@ impl<'unit> Checker<'_, 'unit> {
             } else {
                 CheckedMode::Range
             },
-            reference: Some(ReferenceInfo::formed_paths(ReferenceKind::Range, places)),
+            reference: Some(reference),
             reference_value: true,
             effects: carried.effects,
             accesses,
@@ -2258,11 +2427,14 @@ impl<'unit> Checker<'_, 'unit> {
 /// [ENT-2] which reference variables and paths are exact in the function
 /// being checked: the declarations some `set` of its body rebinds, reachable
 /// or not, and among them the self-anchored reference variables, parameters
-/// and `atomic` binders, whose own binding is the root of the path they name.
+/// and `atomic` binders, whose own binding is the root of the path they name;
+/// and the range aliases, each with the variable its places are
+/// identified through.
 #[derive(Clone, Copy)]
 pub(super) struct Exactness<'body> {
     rebound_declarations: &'body std::collections::HashSet<DeclarationId>,
     rebound_anchors: &'body std::collections::HashSet<BindingId>,
+    range_alias_sources: &'body HashMap<BindingId, BindingId>,
 }
 
 impl Exactness<'_> {
@@ -2294,6 +2466,16 @@ impl Exactness<'_> {
             && self.is_exact_path(path))
         .then_some(path)
     }
+
+    /// The variable a place written through `binding` is identified through
+    /// [ENT-2]: a range alias's source, and otherwise the variable
+    /// itself.
+    pub(super) fn proof_binding(self, binding: BindingId) -> BindingId {
+        self.range_alias_sources
+            .get(&binding)
+            .copied()
+            .unwrap_or(binding)
+    }
 }
 
 impl BodyChecker {
@@ -2301,13 +2483,22 @@ impl BodyChecker {
         Exactness {
             rebound_declarations: &self.rebound_declarations,
             rebound_anchors: &self.rebound_anchors,
+            range_alias_sources: &self.range_alias_sources,
         }
     }
 
     /// The proof base of every place written through `local` at this point
-    /// [ENT-2]: its exact path. A reference parameter that names itself needs
-    /// none, its spelling being that path already.
+    /// [ENT-2]: its exact path, or for a range alias its source
+    /// variable. A reference parameter that names itself needs none, its
+    /// spelling being that path already, and neither does a range-reference
+    /// variable that is no range alias.
     pub(super) fn exact_description(&self, local: &LocalBinding) -> Option<ResolvedPlace> {
+        if local.mode.is_range() {
+            return self
+                .range_alias_sources
+                .get(&local.binding)
+                .map(|source| ResolvedPlace::binding(*source));
+        }
         let path = self.exactness().exact_path(local)?;
         let itself = path.root == PlaceRoot::Binding(local.binding) && path.path.is_empty();
         (!itself).then(|| ResolvedPlace {
@@ -2317,6 +2508,23 @@ impl BodyChecker {
             root: path.root,
             path: path.path.clone(),
         })
+    }
+
+    /// [ENT-2] records `alias`, bound by `let` to the bare range-reference
+    /// variable `source`, as a range alias identified through `source`'s own
+    /// identifying variable when no `set` of the body rebinds either of them,
+    /// reachable or not. An alias forms no range, so it holds the one
+    /// formation, and with it the `len`, its never-rebound source holds
+    /// throughout the alias's scope.
+    pub(super) fn note_range_alias(&mut self, alias: &LocalBinding, source: &LocalBinding) {
+        if alias.mode.is_range()
+            && source.mode.is_range()
+            && !self.rebound_declarations.contains(&alias.declaration)
+            && !self.rebound_declarations.contains(&source.declaration)
+        {
+            let identity = self.exactness().proof_binding(source.binding);
+            self.range_alias_sources.insert(alias.binding, identity);
+        }
     }
 
     /// Records an `atomic` binder that some `set` of the body rebinds as a
@@ -2544,6 +2752,7 @@ impl<'unit> TypeContext<'unit> {
         event: &InvalidationEvent,
         site: Option<&crate::NodePath>,
     ) -> Result<(), CheckStop> {
+        HandleWatch::observe(bindings, written);
         // [REF-1] a reference keeps the index value its formation read, so a
         // write of that binding leaves the reference valid but ends the
         // binding's spelling as a name for its index. [EFF-1] A parameter no
@@ -2551,10 +2760,12 @@ impl<'unit> TypeContext<'unit> {
         if written.path.is_empty()
             && let PlaceRoot::Binding(binding) = written.root
         {
-            for reference in bindings
-                .values_mut()
-                .filter_map(|local| local.reference.as_mut())
-            {
+            for reference in bindings.values_mut().flat_map(|local| {
+                local
+                    .reference
+                    .iter_mut()
+                    .chain(local.commit_target.iter_mut())
+            }) {
                 for path in reference.paths.iter_mut().chain(&mut reference.anchors) {
                     path.supersede_binding(binding);
                 }
@@ -2592,46 +2803,61 @@ impl<'unit> TypeContext<'unit> {
         // and naming them reads the same bindings this walk updates.
         let mut preserved = Vec::new();
         for (declaration, local) in bindings.iter_mut() {
-            // A write to the enum itself ends every refinement occurrence for
-            // that enum even when an equal-path reference remains valid under
-            // the proper-prefix write rule. A payload-field write is below
-            // the witnessed enum and therefore does not end the fact.
+            // [ENT-3.S15, ENT-5] the enum's whole storage supports its
+            // variant fact, so any overlapping write ends that occurrence.
+            // An already captured payload reference follows REF-2 separately.
             for witness in &mut local.refinement_witnesses {
-                if written.may_be_prefix_of(&oracle, &witness.place, true) {
+                if places_overlap(&oracle, written, &witness.place) {
                     witness.valid = false;
                 }
             }
-            let Some(reference) = &mut local.reference else {
-                continue;
-            };
-            if primitive_write || !reference.is_valid() {
-                continue;
-            }
-            let mut invalidated = reference
-                .anchors
-                .iter()
-                .any(|anchor| written.may_be_prefix_of(&oracle, anchor, include_equal));
-            for path in &reference.paths {
-                if invalidated {
-                    break;
-                }
-                if !written.may_be_prefix_of(&oracle, path, include_equal) {
+            for (commit_target, reference) in local
+                .reference
+                .iter_mut()
+                .map(|reference| (false, reference))
+                .chain(
+                    local
+                        .commit_target
+                        .iter_mut()
+                        .map(|reference| (true, reference)),
+                )
+            {
+                if primitive_write || !reference.is_valid() {
                     continue;
                 }
-                if let Some((site, (positions, window))) =
-                    site.zip(Checker::separable_by_position(written, path))
-                {
-                    preserved.push((*declaration, site, positions, window, path.clone()));
-                } else {
-                    invalidated = true;
-                    break;
+                let mut invalidated = reference
+                    .anchors
+                    .iter()
+                    .any(|anchor| written.may_be_prefix_of(&oracle, anchor, include_equal));
+                for path in &reference.paths {
+                    if invalidated {
+                        break;
+                    }
+                    if !written.may_be_prefix_of(&oracle, path, include_equal) {
+                        continue;
+                    }
+                    if let Some((site, (positions, window))) =
+                        site.zip(Checker::separable_by_position(written, path))
+                    {
+                        preserved.push((
+                            *declaration,
+                            commit_target,
+                            site,
+                            positions,
+                            window,
+                            path.clone(),
+                        ));
+                    } else {
+                        invalidated = true;
+                        break;
+                    }
+                }
+                if invalidated {
+                    reference.invalidate(event.clone());
                 }
             }
-            if invalidated {
-                reference.invalidate(event.clone());
-            }
         }
-        for (declaration, site, positions, window, path) in preserved {
+        for (declaration, commit_target, site, positions, window, path) in preserved {
             let query = CheckedCallSeparation {
                 site: site.clone(),
                 occasion: super::super::model::CheckedSeparationOccasion::Call,
@@ -2640,6 +2866,7 @@ impl<'unit> TypeContext<'unit> {
                     binder: String::new(),
                     event: event.phrase(),
                 }),
+                held_use: None,
                 positions,
                 contract_indices: Vec::new(),
                 window,
@@ -2647,10 +2874,13 @@ impl<'unit> TypeContext<'unit> {
                 right_spelling: self.render_resolved_place(&path, bindings)?,
                 one_argument: false,
             };
-            let Some(reference) = bindings
-                .get_mut(&declaration)
-                .and_then(|local| local.reference.as_mut())
-            else {
+            let Some(reference) = bindings.get_mut(&declaration).and_then(|local| {
+                if commit_target {
+                    local.commit_target.as_mut()
+                } else {
+                    local.reference.as_mut()
+                }
+            }) else {
                 continue;
             };
             if !reference.preservations.contains(&query) {
@@ -2726,7 +2956,9 @@ mod tests {
                     loop_depth: 0,
                     compiler_updated: false,
                     reference: None,
+                    commit_target: None,
                     refinement_witnesses: Vec::new(),
+                    handle_watch: None,
                     call_value: true,
                     read_only_state: false,
                 };
@@ -2817,7 +3049,9 @@ mod tests {
                     path,
                 },
             )),
+            commit_target: None,
             refinement_witnesses: Vec::new(),
+            handle_watch: None,
             call_value: false,
             read_only_state: false,
         };

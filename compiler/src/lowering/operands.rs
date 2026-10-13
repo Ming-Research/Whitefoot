@@ -71,7 +71,8 @@ macro_rules! terminator_operands {
                 .map($value)
                 .chain(drops.$iter().map(|drop| drop.$drop()))
                 .collect(),
-            IrTerminator::Match { scrutinee, .. } => vec![$value(scrutinee)],
+            IrTerminator::Match { scrutinee, .. }
+            | IrTerminator::IntegerMatch { scrutinee, .. } => vec![$value(scrutinee)],
             IrTerminator::Return { value, drops } => std::iter::once($value(value))
                 .chain(drops.$iter().map(|drop| drop.$drop()))
                 .collect(),
@@ -100,6 +101,8 @@ macro_rules! operation_operands {
             | IrOperation::ConstantAddress { .. }
             | IrOperation::Window
             | IrOperation::ContextJoin
+            | IrOperation::SnapshotAtomicBegin
+            | IrOperation::SnapshotAtomicEnd
             | IrOperation::SharedNew { .. }
             | IrOperation::DecisionCellNew { .. }
             | IrOperation::TableEntrySlot { .. }

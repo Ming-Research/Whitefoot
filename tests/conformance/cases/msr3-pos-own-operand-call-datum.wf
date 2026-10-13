@@ -21,8 +21,8 @@ fn size_of(taken: Slots<u8, 8>) -> measured: u64 pure contract {
   ensures measured == taken.len;
 } {
   doc "Consumes the window and hands its length back.";
-  let held = taken.len;
-  return held;
+  let observed = taken.len;
+  return observed;
 }
 
 fn needs_eight(bound: u64) -> ok: unit pure contract {

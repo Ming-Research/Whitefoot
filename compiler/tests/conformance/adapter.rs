@@ -174,6 +174,9 @@ fn reach(case: &Case) -> Reached {
 
 /// Links and runs one emitted module under the case's own arrangement.
 fn execute(module: &str, arrange: Option<&Arrangement>) -> Verdict {
+    if let Err(failure) = whitefoot::require_executable_runner(module) {
+        return Verdict::Stopped(failure);
+    }
     let default = Arrangement::default();
     let arrange = arrange.unwrap_or(&default);
     let directory = invocation_directory();
@@ -309,6 +312,42 @@ fn link(module: &str, directory: &Path) -> PathBuf {
     }
     std::fs::remove_file(&assembly).expect("remove the case's emitted module");
     executable
+}
+
+#[test]
+fn executable_case_without_a_runner_stops_before_linking() {
+    let source = b"fn main() -> result: u8 pure {\n  return 7_u8;\n}\n";
+    let module = compile(
+        &[SourceInput::new("entry.wf", source)],
+        CompilerLimits::default(),
+    )
+    .expect("a u8 entry is valid library source");
+    let Verdict::Stopped(failure) = execute(&module, None) else {
+        panic!("a library has no executable case runner");
+    };
+    assert_eq!(
+        failure,
+        whitefoot::require_executable_runner(&module).expect_err("no executable runner")
+    );
+    assert!(failure.contains("repair: select a function"), "{failure}");
+}
+
+#[test]
+fn executable_cases_with_unit_and_exit_status_keep_running() {
+    for (source, expected) in [
+        (&b"fn main() -> result: unit pure {\n  return unit;\n}\n"[..], 0),
+        (
+            &b"fn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 7_u8);\n}\n"[..],
+            7,
+        ),
+    ] {
+        let module = compile(
+            &[SourceInput::new("entry.wf", source)],
+            CompilerLimits::default(),
+        )
+        .expect("the executable entry checks");
+        assert_eq!(execute(&module, None), Verdict::Run(expected));
+    }
 }
 
 /// One case's outcome, named as `runner.py` names it.

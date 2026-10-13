@@ -106,6 +106,7 @@ impl IrBuilder<'_> {
                 .push(index);
         }
         let mut guard_roots = Vec::new();
+        self.define(IrType::Unit, IrOperation::SnapshotAtomicBegin)?;
         if let Some(guard) = guard {
             expression_bindings(guard, &mut guard_roots);
         }
@@ -181,7 +182,7 @@ impl IrBuilder<'_> {
                         referent: IrAddressed::Nominal(nominal),
                     },
                 )?;
-                let object = if target.borrowed {
+                let object = if target.kept_by_place {
                     loaded
                 } else {
                     self.define(
@@ -276,7 +277,7 @@ impl IrBuilder<'_> {
                     object,
                     nominal,
                     state: field,
-                    owned: !target.borrowed,
+                    owned: !target.kept_by_place,
                     wrote: !target.reads,
                     lock,
                 });
@@ -720,6 +721,7 @@ impl IrBuilder<'_> {
                 self.current = Some(done);
             }
         }
+        self.define(IrType::Unit, IrOperation::SnapshotAtomicEnd)?;
         Ok(())
     }
     fn lower_guard(
@@ -747,6 +749,7 @@ impl IrBuilder<'_> {
             drops: Vec::new(),
         })?;
         self.current = Some(acquire);
+        self.define(IrType::Unit, IrOperation::SnapshotAtomicBegin)?;
         if let Some(last) = read.last().copied().max(eager) {
             self.take_groups_through(region, last, &direct, true)?;
         }

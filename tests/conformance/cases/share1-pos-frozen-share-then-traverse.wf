@@ -21,11 +21,11 @@ fn main() -> status: std::process::ExitStatus pure waits {
   let dataset = shared_new::<Registry>(value: move state);
   let vacant = None<Frozen<Node>>();
   let held_value = Node(child: move vacant, byte: 0_u8);
-  let held = frozen_new::<Node>(value: move held_value);
+  let observed = frozen_new::<Node>(value: move held_value);
   atomic registry = &dataset {
-    set held = frozen_share::<Node>(frozen: &registry^.root);
+    set observed = frozen_share::<Node>(frozen: &registry^.root);
   }
-  match &held.inner.child {
+  match &observed.inner.child {
     Some(value: first) => {
       match &first^.inner.child {
         Some(value: second) => {

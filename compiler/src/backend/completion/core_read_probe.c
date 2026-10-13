@@ -9,9 +9,11 @@
 
 #include "contract.h"
 #include "file_adapter.h"
+#include "snapshot_export.h"
 #include "../sched/core.h"
 
 #include <errno.h>
+#include <stdlib.h>
 #include <fcntl.h>
 #include <pthread.h>
 #include <stdatomic.h>
@@ -22,6 +24,14 @@
 #include <sys/types.h>
 #include <time.h>
 #include <unistd.h>
+
+/* This isolated adapter fixture supplies its closed snapshot leaf just as it
+ * supplies completion publication. No snapshot request belongs to this probe. */
+void wf_snapshot_run_finish(wf_snapshot_owner *owner, uint32_t abort_requested) {
+    (void)owner;
+    (void)abort_requested;
+    abort();
+}
 
 /*
  * Isolated positioned-read qualification probe.

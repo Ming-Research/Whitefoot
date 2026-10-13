@@ -117,11 +117,11 @@ struct Holder {
 }
 
 struct Wrapper {
-  held: Holder;
+  observed_state: Holder;
 }
 
 fn touch(value: &Wrapper) -> result: unit reads(value) {
-  let observed = value^.held.cell.inner;
+  let observed = value^.observed_state.cell.inner;
   return unit;
 }
 
@@ -132,10 +132,10 @@ fn moved_owner(flag: Bool) -> result: u64 pure {
   let source = &holder.cell.inner;
   let v = source^;
   if flag {
-    let wrapped = Wrapper(held: move holder);
+    let wrapped = Wrapper(observed_state: move holder);
     touch(value: &wrapped);
   } else {
-    let wrapped = Wrapper(held: move holder);
+    let wrapped = Wrapper(observed_state: move holder);
     touch(value: &wrapped);
   }
   return classify(v: v);
@@ -1524,6 +1524,11 @@ fn main() -> status: std::process::ExitStatus pure {
             IrTerminator::Match { targets, .. } => targets
                 .iter()
                 .map(|target| target.block().index())
+                .collect(),
+            IrTerminator::IntegerMatch { targets, default, .. } => targets
+                .iter()
+                .map(|target| target.block().index())
+                .chain(default.iter().map(|target| target.index()))
                 .collect(),
             IrTerminator::Return { .. } | IrTerminator::Unreachable => Vec::new(),
         };

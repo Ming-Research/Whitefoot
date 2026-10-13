@@ -40,7 +40,7 @@ fn exact_empty_and_nonempty_source_forests_publish_canonical_syntax() {
 /// the comma-separated guard list; the colon still begins relation conclusions.
 #[test]
 fn range_bool_variant_guards_round_trip_with_comparison_guards() {
-    let source = b"fn inspect(nodes: &[Bool], enabled: Bool) -> result: unit pure contract {\n  requires forall held(k in 0_u64..nodes^.len) when k < nodes^.len, nodes^[k] is True, enabled is True: k == k;\n} {\n  return unit;\n}\n";
+    let source = b"fn inspect(nodes: &[Bool], enabled: Bool) -> result: unit pure contract {\n  requires forall observed(k in 0_u64..nodes^.len) when k < nodes^.len, nodes^[k] is True, enabled is True: k == k;\n} {\n  return unit;\n}\n";
     assert_eq!(rendered_bytes(source).as_deref(), Some(source.as_slice()));
     audit_source(source, |outcome| {
         assert!(
@@ -55,7 +55,7 @@ fn range_bool_variant_guards_round_trip_with_comparison_guards() {
 /// variant's TYPEID, beside comparison guards.
 #[test]
 fn range_variant_relations_round_trip_as_guards_and_conclusions() {
-    let source = b"enum Step {\n  Next();\n  Stop();\n}\n\nfn inspect(steps: &[Step], flags: &[Bool]) -> result: unit pure contract {\n  requires forall held(k in 0_u64..steps^.len) when k < flags^.len, steps^[k] is not Stop, flags^[k] is True: steps^[k] is Next, k + 1_u64 < steps^.len;\n} {\n  return unit;\n}\n";
+    let source = b"enum Step {\n  Next();\n  Stop();\n}\n\nfn inspect(steps: &[Step], flags: &[Bool]) -> result: unit pure contract {\n  requires forall observed(k in 0_u64..steps^.len) when k < flags^.len, steps^[k] is not Stop, flags^[k] is True: steps^[k] is Next, k + 1_u64 < steps^.len;\n} {\n  return unit;\n}\n";
     assert_eq!(rendered_bytes(source).as_deref(), Some(source.as_slice()));
     audit_source(source, |outcome| {
         assert!(
@@ -540,6 +540,16 @@ fn if_else_renders_its_join_line_and_indents_both_blocks() {
     only_these_trivia_bytes_render(
         b"fn main() -> status: std::process::ExitStatus pure {\n  let flag = True();\n  if flag {\n    let first = flag;\n  } else if flag {\n    let second = flag;\n  } else if flag {\n    let third = flag;\n  } else {\n    let fourth = flag;\n  }\n  return unit;\n}\n",
     );
+}
+
+/// Match arm `else` does not own an if continuation. Grammar permits a
+/// following arm so GRAM-12 can reject its position after FORM-2 succeeds.
+#[test]
+fn match_else_arms_keep_the_ordinary_block_boundary() {
+    let source =
+        include_bytes!("../../../../../../tests/conformance/cases/gram12-neg-else-not-final.wf");
+    only_these_trivia_bytes_render(source);
+    assert_eq!(rendered_bytes(source).as_deref(), Some(source.as_slice()));
 }
 
 #[test]

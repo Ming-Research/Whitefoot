@@ -20,8 +20,8 @@ fn filled<const n: u64>(value: u8) -> result: Slots<u8, n> pure contract {
 fn main() -> status: ExitStatus pure {
   doc "MSR-6: the loop invariant names the const generic directly, which is the fourth position in which a const generic is a value.";
   let bytes = filled::<4>(value: 7_u8);
-  let held = bytes.len;
-  if held == 4_u64 {
+  let observed = bytes.len;
+  if observed == 4_u64 {
   } else {
     return exit_status(code: 1_u8);
   }

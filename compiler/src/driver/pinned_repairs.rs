@@ -6,23 +6,30 @@
 //! and the repair it carries, one program for each alternative the pair
 //! carries out, which must be accepted with the repaired construct live.
 //! Adding or rewording a repair means adding or updating a pair here or in
-//! its family module; the repairs still printed without one are listed in
-//! status board item coord-wfbl-01-25.
+//! its family module. Constructor, ownership, placement and linear-exit
+//! repairs are pinned in `remaining_repairs`, including multi-module fields.
 
 use super::{CompilationFailureKind, CompilerLimits, compile};
 use crate::SourceInput;
 
 mod call_separations;
+mod cell_consumption;
 mod collisions_and_killed_facts;
 mod content_moves;
 mod enum_routed_ensures;
 mod floats;
 mod interface_applications;
+mod postcondition_places;
 mod prelude_opaque;
+mod qualified_constants;
 mod recursive_effects;
+mod remaining_repairs;
 mod selector_scope;
 mod shared_maps;
 mod storage_destructuring;
+mod writer_operations;
+mod writer_ownership;
+mod writer_references;
 
 /// One repair [DIAG-1], pinned with the programs it produces: a rejected
 /// source, the rule and the exact repair its rejection carries, and one
@@ -3757,42 +3764,6 @@ fn main() -> status: ExitStatus pure {
 }
 "#],
     },
-    RepairPair {
-        name: "writable-len-field-counted-endpoint.wf",
-        rejected: br#"struct Span {
-  len: u64;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  let span = Span(len: 3_u64);
-  let spans = array_filled::<Span, 2>(value: span);
-  let count = 0_u64;
-  for (i in 0_u64..spans[1_u64].len) {
-    set count = count +wrap 1_u64;
-  }
-  return std::process::exit_status(code: 0_u8);
-}
-"#,
-        rule: "ENT-2",
-        sentences: &[
-            "\n  mechanical_fix: bind the computed u64 value with one preceding ordinary let and use that term as the endpoint\n",
-        ],
-        repaired: &[br#"struct Span {
-  len: u64;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  let span = Span(len: 3_u64);
-  let spans = array_filled::<Span, 2>(value: span);
-  let count = 0_u64;
-  let length = spans[1_u64].len;
-  for (i in 0_u64..length) {
-    set count = count +wrap 1_u64;
-  }
-  return std::process::exit_status(code: 0_u8);
-}
-"#],
-    },
 ];
 
 /// Every function a source declares, by the name its `fn` introduces.
@@ -3831,9 +3802,12 @@ fn each_pinned_repair_is_carried_out_by_its_programs() {
     for pair in REPAIRS
         .iter()
         .chain(call_separations::CALL_SEPARATIONS)
+        .chain(cell_consumption::CELL_CONSUMPTION)
         .chain(content_moves::CONTENT_MOVES)
         .chain(prelude_opaque::PRELUDE_OPAQUE)
+        .chain(qualified_constants::QUALIFIED_CONSTANTS)
         .chain(recursive_effects::RECURSIVE_EFFECTS)
+        .chain(remaining_repairs::REMAINING_REPAIRS)
         .chain(storage_destructuring::STORAGE_DESTRUCTURING)
         .chain(shared_maps::SHARED_MAPS)
         .chain(floats::FLOATS)
@@ -3841,6 +3815,10 @@ fn each_pinned_repair_is_carried_out_by_its_programs() {
         .chain(selector_scope::SELECTOR_SCOPE)
         .chain(enum_routed_ensures::ENUM_ROUTED_ENSURES)
         .chain(collisions_and_killed_facts::COLLISIONS_AND_KILLED_FACTS)
+        .chain(writer_operations::WRITER_OPERATIONS)
+        .chain(writer_ownership::WRITER_OWNERSHIP)
+        .chain(writer_references::WRITER_REFERENCES)
+        .chain(postcondition_places::POSTCONDITION_PLACES)
     {
         let failure = compile(
             &[SourceInput::new(pair.name, pair.rejected)],

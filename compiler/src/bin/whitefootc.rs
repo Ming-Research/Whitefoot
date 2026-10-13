@@ -8,15 +8,18 @@ use whitefoot::{
     Architecture, BuildCache, COMPLETION_BRIDGE_HEADER, COMPLETION_BRIDGE_SOURCE,
     COMPLETION_CONTRACT_HEADER, COMPLETION_FILE_ADAPTER_HEADER, COMPLETION_FILE_ADAPTER_SOURCE,
     COMPLETION_FILE_POSIX_HEADER, COMPLETION_LINUX_IO_URING_HEADER, COMPLETION_RUNTIME_SOURCE,
-    COMPLETION_SOCKET_ADDRESS_HEADER, COMPLETION_STOP_SIGNALS_SOURCE, COMPLETION_WINDOWS_IOCP_HEADER,
-    CONCURRENT_MAP_HEADER, CONCURRENT_MAP_SOURCE, CallGrain, CheckOutcome, CheckVerdict, CompilationFailure,
-    CompilerLimits, DISPATCH_LEDGER_PREFIX, DiagnosticFormat, FLOOR_STACK_BYTES,
-    FragmentGranularity, HOST_OPTIMIZATION_ARGUMENTS, KEYED_TABLE_SOURCE, LOCK_LEDGER_PREFIX, ModuleEntry,
+    COMPLETION_SOCKET_ADDRESS_HEADER, COMPLETION_STOP_SIGNALS_SOURCE,
+    COMPLETION_WINDOWS_IOCP_HEADER, CONCURRENT_MAP_HEADER, CONCURRENT_MAP_SOURCE, CallGrain,
+    CheckOutcome, CheckVerdict, CompilationFailure, CompilerLimits, DISPATCH_LEDGER_PREFIX,
+    DiagnosticFormat, FLOOR_STACK_BYTES, FORK_CAPSULE_HEADER, FORK_CAPSULE_SOURCE,
+    FragmentGranularity, HOST_OPTIMIZATION_ARGUMENTS, KEYED_TABLE_SOURCE, LOCK_LEDGER_PREFIX,
+    ModuleEntry,
     ModuleProgramFailure, ORDINARY_VALUES_HEADER, ORDINARY_VALUES_LLVM, ORDINARY_VALUES_SOURCE,
-    OverlapLowering, RecursionBudget, SCHED_CORE_HEADER, SCHED_CORE_SOURCE, SCHED_ENTRY_HEADER,
-    SCHED_ENTRY_SOURCE, SCHED_PRIM_HEADER, SourceInput, WINDOWS_RUNTIME_HEADER,
-    build_module_entry_for_emission, check, check_module_program, check_with_cache, clang_executable,
-    compile_for_emission, content_digest, discover_module_sources, entry_verdict,
+    OverlapLowering, RESTRICTED_CHILD_COMPILE_ARGUMENTS, RecursionBudget, SCHED_CORE_HEADER,
+    SCHED_CORE_SOURCE, SCHED_ENTRY_HEADER, SCHED_ENTRY_SOURCE, SCHED_PRIM_HEADER,
+    SNAPSHOT_EXPORT_HEADER, SNAPSHOT_EXPORT_SOURCE, SourceInput, WINDOWS_RUNTIME_HEADER,
+    build_module_entry_for_emission, check, check_module_program, check_with_cache,
+    clang_executable, compile_for_emission, content_digest, discover_module_sources, entry_verdict,
     form_module_program_graph, module_verdict, render_driver_failure, render_module_interface,
     running_compiler_identity, split_module, stack_ledger,
 };
@@ -130,6 +133,14 @@ const COMPLETION_SHARED_UNITS: &[RuntimeUnit] = &[
     unit("completion/contract.h", COMPLETION_CONTRACT_HEADER),
     unit("completion/file_adapter.h", COMPLETION_FILE_ADAPTER_HEADER),
     unit("completion/bridge.h", COMPLETION_BRIDGE_HEADER),
+    unit("completion/snapshot_export.h", SNAPSHOT_EXPORT_HEADER),
+    unit(
+        "concurrent_map_layout.h",
+        whitefoot::CONCURRENT_MAP_LAYOUT_HEADER,
+    ),
+    unit("completion/fork_capsule.h", FORK_CAPSULE_HEADER),
+    unit("completion/snapshot_export.c", SNAPSHOT_EXPORT_SOURCE),
+    unit("completion/fork_capsule.c", FORK_CAPSULE_SOURCE),
     unit("completion/file_posix.h", COMPLETION_FILE_POSIX_HEADER),
     unit(
         "completion/socket_address.h",
@@ -165,6 +176,8 @@ const COMPLETION_COMPILE_UNITS: &[&str] = &[
     "completion/file_adapter.c",
     "completion/file_posix.c",
     "completion/bridge.c",
+    "completion/snapshot_export.c",
+    "completion/fork_capsule.c",
     "completion/stop_signals.c",
     "completion/linux_io_uring.c",
     "keyed_table.c",
@@ -183,6 +196,8 @@ const COMPLETION_COMPILE_UNITS: &[&str] = &[
     "completion/file_adapter.c",
     "completion/file_windows.c",
     "completion/bridge.c",
+    "completion/snapshot_export.c",
+    "completion/fork_capsule.c",
     "completion/stop_signals.c",
     "completion/windows_iocp.c",
     "keyed_table.c",
@@ -822,18 +837,7 @@ fn finish(
 /// build generates for it; a checked module without one is a library, which
 /// this compiler links into no executable.
 fn require_runner(module: &str) -> Result<(), Stop> {
-    if module.contains("\ndefine i32 @wf__main_body(") {
-        return Ok(());
-    }
-    let refused = module
-        .lines()
-        .find_map(|line| line.strip_prefix("; Executable caller was not admitted: "))
-        .map_or_else(String::new, |reason| {
-            format!(": its generated caller was not admitted: {reason}")
-        });
-    Err(Stop::invocation(format!(
-        "the selected function has no executable runner{refused}; this build runs a function that takes no parameter or one Inputs and returns ExitStatus or unit, and --emit-llvm writes any checked program as a library"
-    )))
+    whitefoot::require_executable_runner(module).map_err(Stop::invocation)
 }
 
 /// Compiles the module once more, to assembly, purely to read the two things
@@ -943,6 +947,7 @@ fn compile_executable(
     full_lto: bool,
     report: &mut BuildReport,
 ) -> Result<(), String> {
+    whitefoot::require_executable_runner(llvm)?;
     // The ordinary prelude implementation library links its private engine.
     // Each build stages in its own directory, so two builds of one process
     // never share or remove each other's inputs.
@@ -975,6 +980,33 @@ fn compile_executable(
         let mut command = Command::new(clang_executable());
         unit_arguments(&mut command, &directory);
         for relative_path in &compiled {
+            let restricted = restricted_child_arguments(relative_path);
+            if !restricted.is_empty() {
+                // Per-unit flags must not disable ordinary runtime checks or
+                // sanitizers. Compile only the child closure separately.
+                let object = directory.join(relative_path).with_extension("o");
+                let mut child = Command::new(clang_executable());
+                unit_arguments(&mut child, &directory);
+                child.args(HOST_OPTIMIZATION_ARGUMENTS).args(restricted);
+                if full_lto {
+                    child.arg("-flto=full");
+                }
+                let compiled = child
+                    .arg("-c")
+                    .arg(directory.join(relative_path))
+                    .arg("-o")
+                    .arg(&object)
+                    .output()
+                    .map_err(|error| format!("cannot compile restricted child unit: {error}"))?;
+                if !compiled.status.success() {
+                    return Err(format!(
+                        "restricted child unit {relative_path}: {}",
+                        String::from_utf8_lossy(&compiled.stderr)
+                    ));
+                }
+                command.arg("-x").arg("none").arg(object);
+                continue;
+            }
             command
                 .arg("-x")
                 .arg(unit_language(relative_path))
@@ -1005,6 +1037,18 @@ fn unit_arguments(command: &mut Command, directory: &Path) {
         .arg(directory)
         .arg("-I")
         .arg(directory.join("completion"));
+}
+
+/// Options required by the restricted child closure, in every build mode.
+fn restricted_child_arguments(relative_path: &str) -> &'static [&'static str] {
+    if matches!(
+        relative_path,
+        "completion/snapshot_export.c" | "completion/fork_capsule.c"
+    ) {
+        RESTRICTED_CHILD_COMPILE_ARGUMENTS
+    } else {
+        &[]
+    }
 }
 
 /// The clang input language of one runtime unit.
@@ -1058,7 +1102,7 @@ fn link_cached_objects(
         material.extend_from_slice(&runtime);
         material.extend_from_slice(
             format!(
-                "\n{relative_path}\n{TARGET_COMPILE_ARGUMENTS:?} {HOST_OPTIMIZATION_ARGUMENTS:?} {thin:?}\n"
+                "\n{relative_path}\n{TARGET_COMPILE_ARGUMENTS:?} {HOST_OPTIMIZATION_ARGUMENTS:?} {thin:?} {:?}\n", restricted_child_arguments(relative_path)
             )
             .as_bytes(),
         );
@@ -1073,6 +1117,7 @@ fn link_cached_objects(
             }
             command
                 .args(thin)
+                .args(restricted_child_arguments(relative_path))
                 .arg("-x")
                 .arg(unit_language(relative_path))
                 .arg(directory.join(relative_path));
@@ -1850,12 +1895,18 @@ mod tests {
             "fn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 0_u8);\n}\n",
         ))
         .expect("an ExitStatus entry has a runner");
+        let unit = checked("fn main() -> result: unit pure {\n  return unit;\n}\n");
+        require_runner(&unit).expect("a unit entry has a runner");
         let integer = require_runner(&checked(
-            "fn main() -> result: u64 pure {\n  return 7_u64;\n}\n",
+            "fn main() -> result: u8 pure {\n  return 7_u8;\n}\n",
         ))
-        .expect_err("a u64 result has no runner")
+        .expect_err("a u8 result has no runner")
         .render(DiagnosticFormat::Text);
         assert!(integer.contains("no executable runner;"), "{integer}");
+        assert!(
+            integer.contains("repair: select a function taking no parameters or one std::process::Inputs and returning std::process::ExitStatus or unit"),
+            "{integer}"
+        );
         let unproved = require_runner(&checked(
             "fn main() -> result: unit pure contract {\n  requires 1_u64 <= 0_u64;\n} {\n  return unit;\n}\n",
         ))
@@ -1865,6 +1916,44 @@ mod tests {
             unproved.contains("its generated caller was not admitted"),
             "{unproved}"
         );
+        assert!(
+            unproved.contains("returning std::process::ExitStatus or unit; satisfy the generated caller refusal reported above"),
+            "{unproved}"
+        );
+        require_runner(&checked(
+            "fn main() -> result: unit pure contract {\n  requires 0_u64 <= 1_u64;\n} {\n  return unit;\n}\n",
+        ))
+        .expect("the generated caller proves the repaired requirement");
+    }
+
+    #[test]
+    fn native_construction_without_a_runner_stops_before_output() {
+        let module = whitefoot::compile(
+            &[whitefoot::SourceInput::new(
+                "entry.wf",
+                b"fn main() -> result: u8 pure {\n  return 7_u8;\n}\n",
+            )],
+            whitefoot::CompilerLimits::default(),
+        )
+        .expect("a u8 entry is valid library source");
+        let output = std::env::temp_dir().join(format!(
+            "whitefootc-entry-stop-{}",
+            std::process::id()
+        ));
+        let failure = super::compile_executable(
+            &module,
+            &output,
+            None,
+            None,
+            false,
+            &mut super::BuildReport::default(),
+        )
+        .expect_err("runner check happens before native construction");
+        assert_eq!(
+            failure,
+            whitefoot::require_executable_runner(&module).expect_err("no executable runner")
+        );
+        assert!(!output.exists());
     }
 
     fn parse(arguments: &[&str]) -> Result<Options, String> {
@@ -1895,6 +1984,8 @@ mod tests {
             "sched/core.c",
             "sched/entry.c",
             "completion/bridge.c",
+            "completion/snapshot_export.c",
+            "completion/fork_capsule.c",
             "completion/stop_signals.c",
         ] {
             assert!(

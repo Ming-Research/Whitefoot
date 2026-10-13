@@ -3104,7 +3104,7 @@ fn a_bound_context_runs_on_through_a_compound_statement_that_names_nothing_it_ho
     // here, is no reason to wait when it names nothing the context holds.
     assert_eq!(
         bound_await(
-            "  let other = 5_u64;\n  let held = box_new::<u64>(value: 3_u64);\n  let inner = held.inner;\n  let total = bound +wrap inner;"
+            "  let other = 5_u64;\n  let observed = box_new::<u64>(value: 3_u64);\n  let inner = observed.inner;\n  let total = bound +wrap inner;"
         ),
         Some(4)
     );
