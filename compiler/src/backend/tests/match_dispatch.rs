@@ -3274,15 +3274,26 @@ fn a_call_the_host_keeps_out_of_line_crosses_in_the_entry_convention() {
     let module = emit(mixing_calls().as_bytes());
     assert_split(&module, "wf_run", 3);
     if crate::toolchain::facts().preserve_most {
-        let optimized = super::host_optimized_module(&module);
         for arm in 0..2 {
-            let body = definition(&optimized, &format!("wf_run.arm.{arm}"));
+            let body = definition(&module, &format!("wf_run.arm.{arm}"));
             assert!(
                 body.contains("call preserve_mostcc void @wf__most_mix(")
                     && !body.contains("@wf_mix("),
-                "the large callee stays out of line, in the entry's convention: {body}"
+                "arm {arm} calls the large callee through the entry: {body}"
             );
         }
+        // The host inlines the arms and folds the whole loop into `main`,
+        // so the optimized module is checked for what survives: the calls
+        // that remain cross in the entry's convention, none in the C one.
+        let optimized = super::host_optimized_module(&module);
+        assert!(
+            optimized
+                .matches("call preserve_mostcc void @wf__most_mix(")
+                .count()
+                >= 2
+                && !optimized.contains("call void @wf_mix("),
+            "the large callee stays out of line, in the entry's convention: {optimized}"
+        );
         let entry = definition(&optimized, "wf__most_mix");
         assert!(
             entry.starts_with("define internal preserve_mostcc ") && !entry.contains("@wf_mix("),
