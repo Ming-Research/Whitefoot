@@ -90,6 +90,13 @@ enum SlotKind {
     Run,
 }
 
+/// A candidate slot: its first member parameter, its kind, and every
+/// `(member, parameter)` it joins.
+type SlotCandidate = (usize, SlotKind, Vec<(usize, usize)>);
+
+/// A member's slot parameter: `(parameter value, kind, first field)`.
+type SlotParameter = (IrValueId, SlotKind, usize);
+
 impl SlotKind {
     const fn of(ty: IrType) -> Option<Self> {
         match ty {
@@ -267,7 +274,7 @@ impl EnvironmentPlan {
         // A slot is a class holding exactly one parameter of every member,
         // all of one type, none ruled out. Record order follows the first
         // member's parameter order.
-        let mut slots: Vec<(usize, SlotKind, Vec<(usize, usize)>)> = Vec::new();
+        let mut slots: Vec<SlotCandidate> = Vec::new();
         for class in classes.values() {
             if class.len() != members.len() || class.iter().any(|key| excluded[*key]) {
                 continue;
@@ -609,9 +616,7 @@ impl FunctionEmitter<'_, '_> {
 
     /// The fields of each slot parameter of this member, with the record's
     /// type: `(parameter value, kind, first field)`.
-    fn slot_parameters(
-        &self,
-    ) -> Result<(String, Vec<(IrValueId, SlotKind, usize)>), BackendFailure> {
+    fn slot_parameters(&self) -> Result<(String, Vec<SlotParameter>), BackendFailure> {
         let own = self.own_environment()?;
         let (record, starts, _) = self.environments.record(own.group)?;
         let kinds = self.environments.slots(own.group)?;

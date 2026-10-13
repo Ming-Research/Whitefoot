@@ -52,8 +52,8 @@ fn descend(left: &Words, right: &Words, scale: &[u64], window: &[u64], depth: u6
     }
   }
   let plain = total +wrap bias;
-  let unchanged = weigh(left: left, right: right, scale: scale, window: window, depth: depth, at: at, bias: bias, total: plain);
-  return unchanged;
+  let passed_on = weigh(left: left, right: right, scale: scale, window: window, depth: depth, at: at, bias: bias, total: plain);
+  return passed_on;
 }
 
 fn main() -> status: ExitStatus pure {
