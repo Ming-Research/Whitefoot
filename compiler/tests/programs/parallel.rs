@@ -527,12 +527,13 @@ fn a_map_swapped_whole_keeps_its_identity_on_one_driver_and_on_four() {
     run_on_one_driver_and_on_four("map_resets.wf", 2);
 }
 
-/// [SHARE-1] a shared map whose values are unit serves as a set of byte-string
-/// keys: four contexts mark, unmark and test their own rows, then a count, a
-/// scan and a clear see exactly the marked keys, on one driver and on four.
-/// The entry's presence tag of `Option<unit>` is the only state the runtime
-/// keeps, so a tag read at the wrong offset, width or empty value would
-/// report a wrong membership (status 1, 4 or 5), count (2, 3) or clear (6, 7).
+/// [SHARE-1, SHARE-2] a shared map whose values are unit serves as a set of
+/// byte-string keys: four contexts mark, unmark and test their own rows, then
+/// a count, a scan and a clear see exactly the marked keys, on one driver and
+/// on four. The entry's presence tag of `Option<unit>` is the only state the
+/// runtime keeps, so a tag read at the wrong offset, width or empty value
+/// would report a wrong membership (status 1 or 5), count (2), scan length
+/// (3), scanned keys (4) or clear (6, 7).
 #[test]
 fn a_map_of_unit_values_holds_a_set_of_keys_on_one_driver_and_on_four() {
     run_on_one_driver_and_on_four("unit_set.wf", 2);
