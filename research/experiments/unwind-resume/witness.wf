@@ -157,7 +157,7 @@ fn publish_checksum(factory: &HandleFactory, output: &OutputStream, source: &[u8
   return 0_u8;
 }
 
-fn main(inputs: Inputs) -> status: ExitStatus reads(inputs.args), writes(inputs.clock), writes(inputs.handles), writes(inputs.stdout) waits {
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   let invocation_arguments = args_count(args: &inputs.args);
   let batch_count = 100_u64;
   if invocation_arguments > 1_u64 {
