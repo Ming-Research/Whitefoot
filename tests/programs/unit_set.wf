@@ -29,7 +29,7 @@ fn is_marked(store: &Shared<ConcurrentHashMap<unit>>, a: u64, b: u64) -> found: 
   let seen = False();
   atomic slot = &store^[&key[0_u64..2_u64]] {
     match slot^ {
-      Some(value: held) => {
+      Some(value: flag) => {
         set seen = True();
       }
       None() => {
@@ -97,13 +97,13 @@ fn main() -> status: ExitStatus pure waits {
   if wrong != 0_u64 {
     return exit_status(code: 1_u8);
   }
-  let held = 0_u64;
+  let marked = 0_u64;
   let keys = key_set_new(capacity: 32_u64);
   atomic t = &store {
-    set held = map_count::<unit>(map: t);
+    set marked = map_count::<unit>(map: t);
     collect(map: t, keys: &keys);
   }
-  if held != 32_u64 {
+  if marked != 32_u64 {
     return exit_status(code: 2_u8);
   }
   if keys.len != 32_u64 {
