@@ -114,7 +114,7 @@ fallback.
 The proof cost is source explicitness. Consider the relation that bounds a
 running byte sum:
 
-```whitefoot
+```text
 for (
   i in 0_u64..count,
   invariant per_byte: sum <= 255_u32 * i

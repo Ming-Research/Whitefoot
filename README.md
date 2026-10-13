@@ -414,6 +414,9 @@ article is published.
 
 ## Try it
 
+Start with the [getting started guide](docs/guide/getting-started.md) to
+install the compiler and run your first program.
+
 You need Rust stable, at least the `rust-version` in
 [compiler/Cargo.toml](compiler/Cargo.toml), and clang: `/usr/bin/clang` on
 Linux and macOS, or `clang` on `PATH` on Windows.

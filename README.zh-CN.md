@@ -198,6 +198,8 @@ C 程序员一眼就能读懂其中大部分。不同之处在于，Whitefoot �
 
 ## 试一试
 
+先读[入门指南](docs/guide/getting-started.md)，安装编译器并运行第一个程序。
+
 你需要 Rust stable（版本不低于 [compiler/Cargo.toml](compiler/Cargo.toml) 中的 `rust-version`）和 clang：Linux 和 macOS 上是 `/usr/bin/clang`，Windows 上是 `PATH` 中的 `clang`。
 
 ```sh
