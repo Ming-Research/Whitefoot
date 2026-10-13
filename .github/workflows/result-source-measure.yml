@@ -13,7 +13,9 @@
 # objdump, and counts instructions of the sequential apollo11 word edits (the
 # first four) under callgrind with collection toggled on
 # wf_layout.text_changed and wf_layout.update. The job fails on a build or
-# protocol error and never on a measured number; the report step prints one
+# protocol error and never on a measured number. A Snowghost parallel baseline
+# deadline permits a verification-only partial report, never a complete Stage 1
+# result; the report step prints one
 # line per pre-written criterion. Hosted times show cost, not 14900K timing.
 # Invoke with: gh workflow run result-source-measure.yml --ref claude/result-source
 name: result-source-measure
@@ -26,7 +28,7 @@ on:
       rounds:
         description: Builds per compiler, program and mode, each with an empty cache
         type: string
-        default: "3"
+        default: "1"
       snowghost_commit:
         description: Snowghost-wf revision (must build with both compilers)
         type: string
@@ -59,7 +61,7 @@ env:
   # investigation's comparison requires.
   SNOWGHOST_COMMIT: ${{ inputs.snowghost_commit || 'd4536fba7f87274303e6d265f5ed9c3a8e2629b8' }}
   HALO_COMMIT: ${{ inputs.halo_commit || '641eb29f48334489ff62af3b3ed71721c2967fb6' }}
-  ROUNDS: ${{ inputs.rounds || '3' }}
+  ROUNDS: ${{ inputs.rounds || '1' }}
 
 jobs:
   measure:
@@ -113,7 +115,7 @@ jobs:
           (fragment builds with an empty cache) or lto (--full-lto). Nothing here
           decides a pass: a failure is a build or protocol error, never a number.
           """
-          import csv, importlib.util, json, os, pathlib, re, shlex, signal, statistics, subprocess, sys, time
+          import csv, importlib.util, json, math, os, pathlib, re, shlex, signal, statistics, subprocess, sys, time
           from collections import Counter
 
           SIDES = ("base", "twin", "branch")
@@ -125,6 +127,20 @@ jobs:
           BRANCH = re.compile(r"\s(call\w*|j\w+)\s+[0-9a-f]+ <([^>+]+)>$")
           BUILD_COLUMNS = ["program", "mode", "round", "position", "side", "wall_s", "link_ms", "text_bytes"]
           COMMAND_TIMEOUT_S = 1200
+          # Provisional hosted bound, not evidence that the parallel build fits.
+          SNOWGHOST_PAR_TIMEOUT_S = 2400
+
+
+          def build_timeout_s(program, mode):
+              return SNOWGHOST_PAR_TIMEOUT_S if (program, mode) == ("snowghost", "par") else COMMAND_TIMEOUT_S
+
+
+          def cmd_build_timeout(program, mode, rounds):
+              tools = 2 if (program, mode) == ("snowghost", "seq") else 1
+              # Every side gets its build, size and (for seq) objdump deadline,
+              # each with ten seconds for escalation, plus reporting slack.
+              print(len(SIDES) * int(rounds) * (build_timeout_s(program, mode) + tools * COMMAND_TIMEOUT_S
+                                               + (1 + tools) * 10) + 60)
 
 
           def run_bounded(label, phase, command, stdout, stderr, cwd=None, timeout_s=COMMAND_TIMEOUT_S, kill_after_s=10):
@@ -255,6 +271,7 @@ jobs:
           def cmd_build(out, program, directory, entry, mode, rounds):
               out, directory, rounds = pathlib.Path(out), pathlib.Path(directory), int(rounds)
               measured_sites = program == "snowghost" and mode == "seq"
+              timeout_s = build_timeout_s(program, mode)
               for round in range(rounds):
                   shift = round % len(SIDES)
                   rows = []
@@ -275,10 +292,17 @@ jobs:
                       logs.mkdir(exist_ok=True)
                       stdout, stderr = logs / f"build-{label}.stdout", logs / f"build-{label}.stderr"
                       code, wall = run_bounded(label, f"build side={side} round={round + 1} mode={mode}", command,
-                                               stdout, stderr, cwd=directory)
+                                               stdout, stderr, cwd=directory, timeout_s=timeout_s)
                       if code:
                           print(stdout.read_text()[-6000:], file=sys.stderr, flush=True)
                           print(stderr.read_text()[-6000:], file=sys.stderr, flush=True)
+                          if (program, mode) == ("snowghost", "par") and side in ("base", "twin") and code in (124, 137) and wall >= timeout_s:
+                              marker = {"program": program, "mode": mode, "side": side, "round": round + 1,
+                                        "limit_s": timeout_s, "wall_s": wall, "status": code}
+                              (out / "results" / "snowghost-par-baseline-timeout.json").write_text(json.dumps(marker) + "\n")
+                              append_rows(out / "results" / "builds.tsv", BUILD_COLUMNS, rows)
+                              print(f"{label}: baseline deadline; remaining parallel builds stopped; verification-only partial results", flush=True)
+                              return
                           sys.exit(f"{label}: whitefootc exited with {code}; see {stdout} and {stderr}")
                       report = {}
                       for line in reversed(stdout.read_text().splitlines()):
@@ -360,17 +384,31 @@ jobs:
               destination.write_bytes(b"".join(lines))
 
 
+          def oracle_arguments(root, data_dir, script):
+              data = pathlib.Path(data_dir)
+              paths = [pathlib.Path(script), data / "apollo11.html", pathlib.Path("renderer/style/ua.css"),
+                       data / "apollo11-modules.css", data / "apollo11-site.css"]
+              for path in paths:
+                  if path.is_absolute() or not (root / path).is_file():
+                      raise ValueError(f"oracle input must be an existing relative file: {path}")
+              return ["edittime", *(str(path) for path in paths[:3]),
+                      "wikibase.client.init&only=styles&skin=vector-2022=" + str(paths[3]),
+                      "modules=site.styles&only=styles&skin=vector-2022=" + str(paths[4])]
+
+
           def cmd_callgrind(out, root, data_dir, edits, inctime_path):
               out, root = pathlib.Path(out).resolve(), pathlib.Path(root).resolve()
-              data = root / data_dir
+              if pathlib.Path(data_dir).is_absolute():
+                  raise ValueError("oracle data directory must be relative to Snowghost")
               spec = importlib.util.spec_from_file_location("inctime", inctime_path)
               inctime = importlib.util.module_from_spec(spec)
               spec.loader.exec_module(inctime)
-              script = out / "apollo11-word-first4.edits"
+              script_relative = pathlib.Path("build/x5/scripts/apollo11-word-first4.edits")
+              script = root / script_relative
+              script.parent.mkdir(parents=True, exist_ok=True)
               prefix(pathlib.Path(edits), 4, script)
-              sheets = [
-                  "wikibase.client.init&only=styles&skin=vector-2022=" + str(data / "apollo11-modules.css"),
-                  "modules=site.styles&only=styles&skin=vector-2022=" + str(data / "apollo11-site.css")]
+              (out / "apollo11-word-first4.edits").write_bytes(script.read_bytes())
+              arguments = oracle_arguments(root, data_dir, script_relative)
               (out / "callgrind").mkdir(exist_ok=True)
               for side in SIDES:
                   driver = out / "drivers" / f"snowghost-seq-{side}"
@@ -386,8 +424,7 @@ jobs:
                       # option-trie shadowing; the wrapper's .body clone is a longer name).
                       command = ["valgrind", "--tool=callgrind", "--collect-atstart=no",
                                  "--toggle-collect=" + marker[:-1] + "?", "--callgrind-out-file=" + str(output),
-                                 str(driver), "edittime", str(script), str(data / "apollo11.html"),
-                                 str(root / "renderer" / "style" / "ua.css"), *sheets]
+                                 str(driver), *arguments]
                       stdout, stderr = out / "callgrind" / f"{label}.stdout", out / "callgrind" / f"{label}.stderr"
                       start = time.perf_counter()
                       with stdout.open("w") as so, stderr.open("w") as se:
@@ -427,11 +464,39 @@ jobs:
               return sum(value for key, value in own.items() if pattern.match(key))
 
 
+          def baseline_timeout_marker(results, rounds, build_counts):
+              path = results / "snowghost-par-baseline-timeout.json"
+              if not path.exists():
+                  return None
+              marker = json.loads(path.read_text())
+              fields = {"program", "mode", "side", "round", "limit_s", "wall_s", "status"}
+              if not isinstance(marker, dict) or set(marker) != fields:
+                  raise ValueError("parallel baseline deadline marker has wrong fields")
+              if (marker["program"], marker["mode"]) != ("snowghost", "par") or marker["side"] not in ("base", "twin"):
+                  raise ValueError("parallel deadline marker does not name a baseline")
+              if type(marker["round"]) is not int or not 1 <= marker["round"] <= rounds:
+                  raise ValueError("parallel baseline deadline marker has an invalid round")
+              if type(marker["limit_s"]) is not int or marker["limit_s"] != SNOWGHOST_PAR_TIMEOUT_S or type(marker["status"]) is not int or marker["status"] not in (124, 137):
+                  raise ValueError("parallel baseline deadline marker has wrong limit or status")
+              if type(marker["wall_s"]) not in (int, float) or not math.isfinite(marker["wall_s"]) or marker["wall_s"] < marker["limit_s"]:
+                  raise ValueError("parallel baseline deadline marker precedes its deadline")
+              stopped = False
+              for round in range(1, rounds + 1):
+                  shift = (round - 1) % len(SIDES)
+                  for side in SIDES[shift:] + SIDES[:shift]:
+                      if (round, side) == (marker["round"], marker["side"]):
+                          stopped = True
+                      if build_counts["snowghost", "par", side, round] != (0 if stopped else 1):
+                          raise ValueError("parallel rows do not match the baseline deadline's completed prefix")
+              return marker
+
+
           def cmd_report(out):
               out = pathlib.Path(out)
               results = out / "results"
               lines = []
               incomplete = []
+              fatal = []
               rounds = int(os.environ["ROUNDS"])
 
               def say(text=""):
@@ -442,14 +507,28 @@ jobs:
               stats, order = {}, []
               build_rows = read_tsv(results / "builds.tsv")
               build_counts = Counter((row["program"], row["mode"], row["side"], int(row["round"])) for row in build_rows)
+              baseline_timeout = None
+              try:
+                  baseline_timeout = baseline_timeout_marker(results, rounds, build_counts)
+              except (ValueError, TypeError, KeyError) as error:
+                  incomplete.append(str(error))
+                  fatal.append(str(error))
               builds_complete = True
+              expected_builds = set()
               for program, mode in (("snowghost", "seq"), ("snowghost", "par"), ("halo", "seq"), ("halo", "lto")):
                   for side in SIDES:
                       for round in range(1, rounds + 1):
+                          expected_builds.add((program, mode, side, round))
                           count = build_counts[program, mode, side, round]
                           if count != 1:
                               builds_complete = False
                               incomplete.append(f"build {program} {mode} {side} round {round}: expected 1 row, got {count}")
+                              if not (baseline_timeout and (program, mode) == ("snowghost", "par") and count == 0):
+                                  fatal.append(incomplete[-1])
+              if set(build_counts) - expected_builds:
+                  builds_complete = False
+                  incomplete.append("build rows contain unexpected program, mode, side or round")
+                  fatal.append(incomplete[-1])
               for row in build_rows:
                   key = (row["program"], row["mode"])
                   if key not in order:
@@ -495,6 +574,10 @@ jobs:
               mixed = []
               site_rows = read_tsv(results / "sites.tsv")
               site_counts = Counter((row["side"], row["accessor"], int(row["round"])) for row in site_rows)
+              expected_sites = {(side, name, round) for side in SIDES for name in ACCESSORS for round in range(1, rounds + 1)}
+              if set(site_counts) - expected_sites:
+                  incomplete.append("site rows contain unexpected side, accessor or round")
+                  fatal.append(incomplete[-1])
               branch_styles_complete = all(site_counts["branch", name, round] == 1
                                            for name in STYLES for round in range(1, rounds + 1))
               for side in SIDES:
@@ -503,6 +586,7 @@ jobs:
                           count = site_counts[side, name, round]
                           if count != 1:
                               incomplete.append(f"sites {side} {name} round {round}: expected 1 row, got {count}")
+                              fatal.append(incomplete[-1])
               for row in site_rows:
                   slot = by_side[row["side"]].setdefault(row["accessor"], set())
                   slot.add((int(row["sites"]), int(row["sites_all"])))
@@ -539,6 +623,7 @@ jobs:
                       cg[side] = json.loads(path.read_text())
                   else:
                       incomplete.append(f"callgrind {side}: result missing")
+                      fatal.append(incomplete[-1])
               say("== Callgrind, Snowghost sequential layout_oracle, apollo11 word edits (first four), collection toggled on "
                   "wf_layout.text_changed and wf_layout.update; instructions (Ir) ==")
               if len(cg) == len(SIDES):
@@ -663,15 +748,20 @@ jobs:
                   say("Stage 1 INCOMPLETE: the tables and criteria above cover only the available results.")
                   for missing in incomplete:
                       say("missing or incomplete: " + missing)
+                  if baseline_timeout:
+                      say(f"Verification-only partial results: Snowghost parallel {baseline_timeout['side']} round "
+                          f"{baseline_timeout['round']} reached {baseline_timeout['limit_s']}s; wall "
+                          f"{baseline_timeout['wall_s']:.3f}s, exit {baseline_timeout['status']}. "
+                          "Build-cost, text-growth and noise criteria remain NOT MEASURED; Stage 1 has not passed.")
               else:
                   say("Stage 1 COMPLETE: all requested build rounds, site counts and callgrind results are present.")
               (results / "report.txt").write_text("\n".join(lines) + "\n")
-              if incomplete:
+              if fatal:
                   sys.exit("Stage 1 incomplete; diagnostic report written")
 
 
           def main():
-              commands = {"build": cmd_build, "callgrind": cmd_callgrind, "report": cmd_report}
+              commands = {"build": cmd_build, "build-timeout": cmd_build_timeout, "callgrind": cmd_callgrind, "report": cmd_report}
               commands[sys.argv[1]](*sys.argv[2:])
 
 
@@ -690,7 +780,7 @@ jobs:
             WHITEFOOT_TIME_BUDGET_RECORD="$out/results/deadline-budget-verdict.txt" \
             WHITEFOOT_CHECK_TIMEOUT=30 \
             perl .github/run-check.pl result-source/deadline-selfcheck python3 -I - "$out" <<'PY'
-          import importlib.util, os, pathlib, signal, sys, time
+          import contextlib, importlib.util, json, os, pathlib, signal, sys, time
 
           out = pathlib.Path(sys.argv[1])
           spec = importlib.util.spec_from_file_location("measure", out / "measure.py")
@@ -742,6 +832,97 @@ jobs:
               time.sleep(0.05)
           print(f"timeout-check-descendant: descendant {pid} terminated (absent or zombie awaiting reaping); partial logs retained", flush=True)
           print("timeout self-check: success, nonzero exit, TERM deadline and KILL descendant deadline passed", flush=True)
+
+          # Structural oracle check uses isolated placeholder files, never the
+          # fetched pages or results of the real comparison.
+          oracle_root = out / "oracle-arguments-selfcheck"
+          script = "build/x5/scripts/apollo11-word-first4.edits"
+          data = "build/research/concurrency"
+          expected = ["edittime", script, f"{data}/apollo11.html", "renderer/style/ua.css",
+                      f"wikibase.client.init&only=styles&skin=vector-2022={data}/apollo11-modules.css",
+                      f"modules=site.styles&only=styles&skin=vector-2022={data}/apollo11-site.css"]
+          for name in [*expected[1:4], *(value.rsplit("=", 1)[1] for value in expected[4:])]:
+              path = oracle_root / name
+              path.parent.mkdir(parents=True, exist_ok=True)
+              path.write_text("placeholder\n")
+          if measure.oracle_arguments(oracle_root, data, script) != expected:
+              sys.exit("oracle-arguments-selfcheck: edit, page, UA or mapped CSS argument differs from relative harness paths")
+          try:
+              measure.oracle_arguments(oracle_root, str(oracle_root.resolve() / data), script)
+          except ValueError:
+              pass
+          else:
+              sys.exit("oracle-arguments-selfcheck: absolute page directory admitted")
+          (oracle_root / "renderer/style/ua.css").unlink()
+          try:
+              measure.oracle_arguments(oracle_root, data, script)
+          except ValueError:
+              pass
+          else:
+              sys.exit("oracle-arguments-selfcheck: missing UA admitted")
+
+          def check_report(name, marker, expect_failure, missing_seq=False, duplicate=False,
+                           missing_callgrind=False, rounds=1, parallel_prefix=()):
+              os.environ["ROUNDS"] = str(rounds)
+              fixture = out / "report-selfcheck" / name
+              results = fixture / "results"
+              results.mkdir(parents=True, exist_ok=True)
+              rows = [{"program": program, "mode": mode, "round": round, "position": index + 1, "side": side,
+                       "wall_s": 1, "link_ms": 1, "text_bytes": 100}
+                      for program, mode in (("snowghost", "seq"), ("halo", "seq"), ("halo", "lto"))
+                      for round in range(1, rounds + 1)
+                      for index, side in enumerate(measure.SIDES)]
+              for round, side in parallel_prefix:
+                  shift = (round - 1) % len(measure.SIDES)
+                  order = measure.SIDES[shift:] + measure.SIDES[:shift]
+                  rows.append({"program": "snowghost", "mode": "par", "round": round, "position": order.index(side) + 1,
+                               "side": side, "wall_s": 1, "link_ms": 1, "text_bytes": 100})
+              if missing_seq:
+                  rows.pop(0)
+              if duplicate:
+                  rows.append(dict(rows[0]))
+              measure.append_rows(results / "builds.tsv", measure.BUILD_COLUMNS, rows)
+              measure.append_rows(results / "sites.tsv", ["round", "side", "accessor", "sites", "sites_all"],
+                                  [{"round": round, "side": side, "accessor": accessor, "sites": 1, "sites_all": 1}
+                                   for round in range(1, rounds + 1) for side in measure.SIDES for accessor in measure.ACCESSORS])
+              for side in measure.SIDES:
+                  if missing_callgrind and side == "branch":
+                      continue
+                  (results / f"callgrind-{side}.json").write_text(json.dumps({"total": 1000, "own": {}}))
+              if marker is not None:
+                  (results / "snowghost-par-baseline-timeout.json").write_text(json.dumps(marker))
+              failed = False
+              with (logs / f"report-selfcheck-{name}.log").open("w") as target, contextlib.redirect_stdout(target):
+                  try:
+                      measure.cmd_report(fixture)
+                  except SystemExit:
+                      failed = True
+              if failed != expect_failure:
+                  sys.exit(f"report-selfcheck-{name}: expected fatal={expect_failure}, got {failed}")
+              report = (results / "report.txt").read_text()
+              if "Stage 1 INCOMPLETE" not in report:
+                  sys.exit(f"report-selfcheck-{name}: partial report claims completion")
+              for tag in ("R3 build cost", "P4 text", "N noise control"):
+                  if not any(line.startswith("NOT MEASURED") and f" {tag}: " in line for line in report.splitlines()):
+                      sys.exit(f"report-selfcheck-{name}: {tag} judged from partial builds")
+
+          previous_rounds = os.environ["ROUNDS"]
+          os.environ["ROUNDS"] = "1"
+          try:
+              baseline = {"program": "snowghost", "mode": "par", "side": "base", "round": 1,
+                          "limit_s": 2400, "wall_s": 2400.1, "status": 124}
+              check_report("missing-par-without-marker", None, True)
+              check_report("baseline-deadline-partial", baseline, False)
+              check_report("rotated-round-two-partial", dict(baseline, round=2), False, rounds=2,
+                           parallel_prefix=((1, "base"), (1, "twin"), (1, "branch"), (2, "twin"), (2, "branch")))
+              check_report("candidate-marker-fatal", dict(baseline, side="branch"), True)
+              check_report("early-kill-marker-fatal", dict(baseline, status=137, wall_s=1), True)
+              check_report("missing-seq-fatal", baseline, True, missing_seq=True)
+              check_report("missing-callgrind-fatal", baseline, True, missing_callgrind=True)
+              check_report("duplicate-row-fatal", baseline, True, duplicate=True)
+          finally:
+              os.environ["ROUNDS"] = previous_rounds
+          print("oracle/report self-check: relative arguments, missing files, fatal omissions and verification-only baseline deadline passed", flush=True)
           PY
           perl .github/run-check.pl --budget-verdict "$out/results/deadline-budget-verdict.txt"
 
@@ -816,7 +997,8 @@ jobs:
         run: |
           set -euo pipefail
           out="$RUNNER_TEMP/rsrc"
-          perl .github/run-check.pl result-source/build-snowghost-seq \
+          WHITEFOOT_CHECK_TIMEOUT="$(python3 -I "$out/measure.py" build-timeout snowghost seq "$ROUNDS")" \
+            perl .github/run-check.pl result-source/build-snowghost-seq \
             python3 -I "$out/measure.py" build "$out" snowghost "$out/snowghost/renderer" layout_oracle seq "$ROUNDS"
 
       - name: Build Snowghost layout_oracle with each compiler, --par
@@ -824,7 +1006,8 @@ jobs:
         run: |
           set -euo pipefail
           out="$RUNNER_TEMP/rsrc"
-          perl .github/run-check.pl result-source/build-snowghost-par \
+          WHITEFOOT_CHECK_TIMEOUT="$(python3 -I "$out/measure.py" build-timeout snowghost par "$ROUNDS")" \
+            perl .github/run-check.pl result-source/build-snowghost-par \
             python3 -I "$out/measure.py" build "$out" snowghost "$out/snowghost/renderer" layout_oracle par "$ROUNDS"
 
       - name: Build Halo bench with each compiler, fragment build
@@ -834,7 +1017,8 @@ jobs:
           out="$RUNNER_TEMP/rsrc"
           halo_dir=$(find "$out/halo" -type d -name halo-bench | head -1)
           test -n "$halo_dir"
-          perl .github/run-check.pl result-source/build-halo-fragments \
+          WHITEFOOT_CHECK_TIMEOUT="$(python3 -I "$out/measure.py" build-timeout halo seq "$ROUNDS")" \
+            perl .github/run-check.pl result-source/build-halo-fragments \
             python3 -I "$out/measure.py" build "$out" halo "$halo_dir" bench seq "$ROUNDS"
 
       - name: Build Halo bench with each compiler, --full-lto
@@ -844,7 +1028,8 @@ jobs:
           out="$RUNNER_TEMP/rsrc"
           halo_dir=$(find "$out/halo" -type d -name halo-bench | head -1)
           test -n "$halo_dir"
-          perl .github/run-check.pl result-source/build-halo-lto \
+          WHITEFOOT_CHECK_TIMEOUT="$(python3 -I "$out/measure.py" build-timeout halo lto "$ROUNDS")" \
+            perl .github/run-check.pl result-source/build-halo-lto \
             python3 -I "$out/measure.py" build "$out" halo "$halo_dir" bench lto "$ROUNDS"
 
       - name: Generate the apollo11 edit scripts with the base driver
