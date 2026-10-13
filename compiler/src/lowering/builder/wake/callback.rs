@@ -5,7 +5,8 @@
 use std::collections::HashSet;
 
 use super::*;
-use crate::semantic::{CheckedContainerRoot, CheckedSetTarget, expression_children};
+use crate::semantic::model::expression_children;
+use crate::semantic::{CheckedContainerRoot, CheckedSetTarget};
 use crate::{IrTerminator, OverlapLowering};
 
 fn contains_call(expression: &CheckedExpression) -> bool {
