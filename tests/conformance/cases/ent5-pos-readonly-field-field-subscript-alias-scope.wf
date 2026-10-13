@@ -9,8 +9,8 @@ fn select(table: &[Slots<u8, 8>], s: &Cursor, i: u64) -> result: u8 reads(table)
   doc "ENT-2 and ENT-5: an exact local reference alias has the same proof path as its source. Reading the guarded row through that alias cannot attach its shorter scope to the preexisting fact.";
   if i < table^[s^.k].len {
     if i == i {
-      let alias = s;
-      let observed = table^[alias^.k].len;
+      let cursor_ref = s;
+      let observed = table^[cursor_ref^.k].len;
     }
     return table^[s^.k][i];
   }

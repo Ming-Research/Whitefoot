@@ -305,13 +305,14 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "#;
     check_records_client(body).expect("a projected body offset is represented");
+    // [EFF-2] these erased contract reads contribute no body effect.
     let clause = br#"alias Node = pkg::records::Node;
 
 struct Cursor {
   at: u64;
 }
 
-fn probe(nodes: &[Node], cursor: Cursor) -> result: u64 reads(nodes) contract {
+fn probe(nodes: &[Node], cursor: Cursor) -> result: u64 pure contract {
   requires cursor.at < nodes^.len;
   requires nodes^[cursor.at].count <= 8_u64;
 } {

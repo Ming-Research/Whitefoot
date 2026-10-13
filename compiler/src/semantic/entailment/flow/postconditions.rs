@@ -1768,7 +1768,7 @@ impl Reasoning<'_, '_, '_> {
         term: TermId,
         exited: &HashSet<BindingId>,
     ) -> bool {
-        self.vocabulary.scope_kills_term(&self.input, term, exited)
+        self.vocabulary.scope_kills_term(self.input, term, exited)
             || self
                 .postcondition_term_live_holders(term)
                 .iter()

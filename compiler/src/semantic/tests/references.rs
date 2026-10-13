@@ -96,6 +96,80 @@ fn main() -> status: std::process::ExitStatus pure {
     });
 }
 
+/// A reference-holder replacement ends the current spelling of captured
+/// projected offsets in both existing references and its pre-evaluated RHS.
+/// Unrelated offsets keep their spelling, and all captured references remain
+/// valid because rebinding the holder writes no referent storage.
+#[test]
+fn reference_rebinding_supersedes_projected_offsets_in_existing_and_rhs_paths() {
+    let source = br#"struct Cursor {
+  next: u64;
+}
+
+fn recapture(rows: &[Cursor], selector: &Cursor, stable_index: u64) -> result: u64 reads(rows), reads(selector.next) contract {
+  requires selector^.next < rows^.len;
+  requires stable_index < rows^.len;
+} {
+  let selected = &rows^[selector^.next];
+  let stable = &rows^[stable_index];
+  set selector = &rows^[selector^.next];
+  let copied = selected;
+  return copied^.next +wrap selector^.next +wrap stable^.next;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    with_semantics(source, |outcome| {
+        use crate::semantic::model::CheckedStatement;
+        use crate::semantic::places::{CapturedTerm, PlaceMap, PlaceRoot, PlaceStep};
+
+        let SemanticOutcome::Complete(program) = outcome else {
+            panic!("holder replacement preserves captured references: {outcome:?}");
+        };
+        let function = program
+            .data
+            .functions
+            .iter()
+            .find(|function| function.name == "recapture")
+            .unwrap();
+        let body = function.body.as_ref().unwrap();
+        let CheckedStatement::Let { binding: copied, .. } = &body[3] else {
+            panic!("expected the post-rebind reference copy");
+        };
+        let CheckedStatement::Let { binding: stable, .. } = &body[1] else {
+            panic!("expected the unrelated captured reference");
+        };
+        let map = PlaceMap::for_function(function);
+        for binding in [*copied, function.parameters[1].binding] {
+            let paths = map.resolve(PlaceRoot::Binding(binding), &[]);
+            let captured = paths
+                .iter()
+                .filter_map(|path| match path.path.as_slice() {
+                    [PlaceStep::Index(value)] => Some(value.term),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(captured.len(), 1, "one captured row: {paths:?}");
+            assert!(
+                matches!(captured[0], CapturedTerm::SupersededPlace(_)),
+                "the old selector no longer names the captured value: {paths:?}"
+            );
+        }
+        let paths = map.resolve(PlaceRoot::Binding(*stable), &[]);
+        assert_eq!(paths.len(), 1);
+        let [PlaceStep::Index(value)] = paths[0].path.as_slice() else {
+            panic!("expected the unrelated row capture: {paths:?}");
+        };
+        assert_eq!(
+            value.term,
+            CapturedTerm::Binding(function.parameters[2].binding),
+            "replacing selector does not replace stable_index"
+        );
+    });
+}
+
 /// Source-backed coverage replaces the retired synthetic payload-origin
 /// reconstruction tests: both roots, complete field/Box/payload suffixes,
 /// nested matches, distinct payload fields and variant overlap are retained.
