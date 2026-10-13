@@ -489,10 +489,9 @@ Apple must pass the corresponding unchanged-IR maintained comparison.
 Any missing check, different signal or record, lost native probe, unresolved
 link, unexplained fact result, rejected byte-edit guard, or incompatibility
 outside the three measured forms leaves qualification failed or blocked.
-The owner supplied the completed result of [the corrected hosted run](https://github.com/Ming-Research/Whitefoot/actions/runs/38398061414)
-at revision 035c50417: every qualification row passed. This report is recorded
-as owner-provided evidence; its artifacts were not independently fetched for
-this update. Against the criteria above, the reported results are:
+[The corrected hosted run](https://github.com/Ming-Research/Whitefoot/actions/runs/38398061414)
+at revision 035c50417 passed every qualification row; its log was read when
+this section was written. Against the criteria above, the results are:
 
 | Comparison | Reported result |
 | --- | --- |
@@ -508,7 +507,7 @@ macOS 15 with ordinary non-LTO linking and the maintained Apple comparison.
 It does not qualify x86-64 Darwin, other LLVM versions, LTO, release packages,
 or the host-clang isolation requirement.
 
-The current [temporary qualification workflow](../../../.github/workflows/darwin-probe-qualify.yml)
+The later temporary qualification workflow (removed; its runs are listed below)
 instead stages the built compiler and the selected clang as siblings in the
 packaged layout. The compiler's resolver runs its own three syntax/ABI probes
 and fourth Darwin method probe against that executable, then emits the selected
@@ -518,6 +517,32 @@ explicit test adapters, separate from normal emission. Preserve the same
 containment, native-probe and recursion-boundary criteria above; the completed
 experiment cannot replace a floor/ledger/runtime group or gate run for the new
 implementation. Qualification of that implementation is pending.
+
+### Later runs on the implementation
+
+These runs replace the fact substitution above with the implemented
+resolution and probe choice; the temporary workflows that produced them were
+removed afterwards.
+
+- Darwin probe qualification with upstream clang placed beside `whitefootc`,
+  so the compiler probes it and selects inline+4096 itself, and the Apple lane
+  on the source-build default: every row passed at
+  [782364a6a](https://github.com/Ming-Research/Whitefoot/actions/runs/38402832253)
+  and again at the last code revision before removal,
+  [a57803184](https://github.com/Ming-Research/Whitefoot/actions/runs/38411456468).
+- Trimming trial on both platforms at
+  [a57803184](https://github.com/Ming-Research/Whitefoot/actions/runs/38411456737):
+  compressed subsets of 148 MB (Linux x86-64) and 140 MB (macOS arm64), the
+  four same-tag licenses present, relocation, ThinLTO with the bundled lld or
+  libLTO, and the missing-headers negative all as intended; Linux requires
+  glibc symbol version 2.34.
+- compiler-release dry run with the bundled path and its exact-archive
+  acceptance at
+  [a57803184](https://github.com/Ming-Research/Whitefoot/actions/runs/38411456493):
+  Linux with no clang installed, Linux with a different host clang major first
+  on PATH, and macOS with every host clang denied execution by a sandbox
+  profile (denial proven first) all built and ran the waiting fixture through
+  ordinary, full-LTO and cached builds; nothing was published.
 
 ## Recommended ordered delivery plan
 

@@ -21,7 +21,7 @@
 # whitefootc-<platform>-bundled.tar.gz, so existing lightweight releases remain
 # distinct. Each archive contains bin/whitefootc beside its toolchain, the
 # specification/interfaces, licenses, toolchain-manifest.json and SHA256SUMS.
-# LLVM source pins are shared with the trimming trial in llvm-assets.json.
+# LLVM source pins live in .github/toolchain/llvm-assets.json.
 # Bundled candidates are retained as workflow artifacts and must pass reusable
 # exact-archive acceptance before publication, including macOS host-clang
 # isolation. Only Linux x86-64 and macOS arm64 are offered; no Windows lane exists.
