@@ -1041,6 +1041,18 @@ impl Vocabulary {
         // are not already contradictory there. Keep excluded route images for
         // the join's neutral predecessor and contradiction-parent semantics.
         let mut ordinary = vec![None; states.len()];
+        // Conditional contexts contain numeric facts only. Their complete
+        // candidate lists include the weaker proofs that later support kills
+        // may expose; matching only selected bounds would lose those proofs.
+        // Ordinary predecessor facts and the term vocabulary are fixed during
+        // this join, so identical inputs also have identical refreshes. Share
+        // that computation without combining the routes' independent guards.
+        #[derive(Eq, Hash, PartialEq)]
+        enum NumericInput {
+            Contradiction(DerivationId),
+            Candidates(Vec<(Relation, DerivationId)>),
+        }
+        let mut joined_inputs: HashMap<Vec<NumericInput>, FactState> = HashMap::new();
         fn find(
             state: &ProofFlowState,
             binding: BindingId,
@@ -1053,6 +1065,32 @@ impl Vocabulary {
             })
         }
         for ((binding, _, _), (payload, route, success)) in keys {
+            let inputs = states
+                .iter()
+                .map(|state| match find(state, binding, route) {
+                    Some(result) if result.facts.all_derivable => NumericInput::Contradiction(
+                        result
+                            .facts
+                            .contradiction
+                            .expect("a contradictory route retains its proof"),
+                    ),
+                    Some(result) => NumericInput::Candidates(result.facts.l0_candidates()),
+                    None => NumericInput::Candidates(Vec::new()),
+                })
+                .collect::<Vec<_>>();
+            let definitely_err = states.iter().all(|state| {
+                find(state, binding, route).is_some_and(|result| result.definitely_err)
+            });
+            if let Some(facts) = joined_inputs.get(&inputs) {
+                results.entry(binding).or_default().push(ResultEvidence {
+                    payload,
+                    route,
+                    success,
+                    facts: facts.clone(),
+                    definitely_err,
+                });
+                continue;
+            }
             let mut images = Vec::new();
             for (state, ordinary) in states.iter().zip(&mut ordinary) {
                 let mut result = find(state, binding, route)
@@ -1079,9 +1117,7 @@ impl Vocabulary {
                 &mut self.derivations,
                 event,
             );
-            let definitely_err = states.iter().all(|state| {
-                find(state, binding, route).is_some_and(|result| result.definitely_err)
-            });
+            joined_inputs.insert(inputs, facts.clone());
             results.entry(binding).or_default().push(ResultEvidence {
                 payload,
                 route,
@@ -1474,6 +1510,185 @@ mod tests {
             assert_eq!(selected.facts.contradiction, Some(contradiction));
             assert!(!selected.definitely_err);
         });
+    }
+
+    #[test]
+    fn route_joins_share_identical_inputs_but_keep_exclusion_masks_separate() {
+        with_vocabulary(|vocabulary| {
+            let term = vocabulary.terms.intern(TermKind::Place(
+                ResolvedPlace::binding(BindingId(0)),
+                IntegerType::I32,
+            ));
+            let holder = BindingId(1);
+            let event = vocabulary.derivations.event(FlowEventKind::S1, None);
+            let contradiction = vocabulary.derivations.intern(DerivationNode::ResultErr {
+                statement: crate::NodePath {
+                    components: vec![0],
+                },
+            });
+            let excluded = |variant| ResultEvidence {
+                payload: CheckedType::Integer(IntegerType::I32),
+                route: PayloadRoute {
+                    variant,
+                    field: 0,
+                    tag: variant,
+                },
+                success: variant == 1,
+                facts: FactState::contradictory(contradiction),
+                definitely_err: true,
+            };
+            let mut edges = [ProofFlowState::default(), ProofFlowState::default()];
+            for (edge, bound) in edges.iter_mut().zip([3, 7]) {
+                edge.facts.establish(
+                    &Relation::Bound {
+                        left: term,
+                        right: ZERO,
+                        bound,
+                    },
+                    &mut vocabulary.derivations,
+                    event,
+                );
+            }
+            edges[0]
+                .results
+                .insert(holder, vec![excluded(0), excluded(1)]);
+            edges[1].results.insert(holder, vec![excluded(2)]);
+            let before = join_events(vocabulary);
+            let mut joined = vocabulary.join_result_evidence(&edges);
+            assert_eq!(join_events(vocabulary) - before, 2);
+            let held = joined.get_mut(&holder).unwrap();
+            assert_eq!(held.len(), 3);
+            assert_eq!(held[0].facts.l0_candidates(), held[1].facts.l0_candidates());
+            assert!(!held[0].success);
+            assert!(held[1].success);
+            for (result, bound) in held.iter().zip([7, 7, 3]) {
+                assert!(!result.definitely_err);
+                let closed = close(
+                    &result.facts,
+                    &vocabulary.terms,
+                    &vocabulary.goals,
+                    &mut vocabulary.derivations,
+                );
+                assert_eq!(closed.tight_bound(term, ZERO), Some(bound));
+            }
+            // Reuse shares immutable stores, not the routes' mutable contexts.
+            held[0].facts.establish(
+                &Relation::Bound {
+                    left: term,
+                    right: ZERO,
+                    bound: 1,
+                },
+                &mut vocabulary.derivations,
+                event,
+            );
+            let unchanged = close(
+                &held[1].facts,
+                &vocabulary.terms,
+                &vocabulary.goals,
+                &mut vocabulary.derivations,
+            );
+            assert_eq!(unchanged.tight_bound(term, ZERO), Some(7));
+        });
+    }
+
+    #[test]
+    fn route_join_reuse_distinguishes_weaker_postcondition_fallbacks() {
+        with_vocabulary(|vocabulary| {
+            let term = vocabulary.terms.intern(TermKind::ResultPayload {
+                payload: CheckedType::Integer(IntegerType::I32),
+                path: Vec::new(),
+                measure: None,
+                ty: IntegerType::I32,
+            });
+            let event = vocabulary.derivations.event(FlowEventKind::S1, None);
+            let statement = crate::NodePath {
+                components: vec![0],
+            };
+            let relation = Relation::Bound {
+                left: term,
+                right: ZERO,
+                bound: 0,
+            };
+            let call = vocabulary
+                .derivations
+                .intern(DerivationNode::PostconditionCall {
+                    detail: Box::new(PostconditionCallDetail {
+                        call: statement.clone(),
+                        relation: relation.clone(),
+                        summary: VerifiedPostconditionSummaryRef {
+                            summary: RelationProvenance::Verified(VerifiedPostconditionSummary {
+                                function: FunctionId(0),
+                                block: statement,
+                                relation_ordinal: 0,
+                                component: 0,
+                            }),
+                        },
+                        substitutions: Vec::new(),
+                        transfer_events: Vec::new(),
+                        parents: Vec::new(),
+                    }),
+                });
+            let mut held = Vec::new();
+            for (variant, bound) in [5, 10, 5].into_iter().enumerate() {
+                let mut facts = FactState::new();
+                facts.establish(
+                    &Relation::Bound {
+                        left: term,
+                        right: ZERO,
+                        bound,
+                    },
+                    &mut vocabulary.derivations,
+                    event,
+                );
+                facts.establish_from_proof(&relation, call, &vocabulary.derivations);
+                held.push(ResultEvidence {
+                    payload: CheckedType::Integer(IntegerType::I32),
+                    route: PayloadRoute {
+                        variant: variant as u32,
+                        field: 0,
+                        tag: variant as u32,
+                    },
+                    success: false,
+                    facts,
+                    definitely_err: false,
+                });
+            }
+            let holder = BindingId(0);
+            let edge = ProofFlowState {
+                results: BTreeMap::from([(holder, held)]),
+                ..ProofFlowState::default()
+            };
+            let before = join_events(vocabulary);
+            let joined = vocabulary.join_result_evidence(&[edge.clone(), edge]);
+            assert_eq!(join_events(vocabulary) - before, 2);
+            for (result, bound) in joined[&holder].iter().zip([5, 10, 5]) {
+                let full = close(
+                    &result.facts,
+                    &vocabulary.terms,
+                    &vocabulary.goals,
+                    &mut vocabulary.derivations,
+                );
+                assert_eq!(full.tight_bound(term, ZERO), Some(0));
+                let mut ordinary = result.facts.clone();
+                ordinary.retain_non_postcondition_candidates(&vocabulary.derivations);
+                let ordinary = close(
+                    &ordinary,
+                    &vocabulary.terms,
+                    &vocabulary.goals,
+                    &mut vocabulary.derivations,
+                );
+                assert_eq!(ordinary.tight_bound(term, ZERO), Some(bound));
+            }
+        });
+    }
+
+    fn join_events(vocabulary: &Vocabulary) -> usize {
+        vocabulary
+            .derivations
+            .events
+            .iter()
+            .filter(|event| event.kind == FlowEventKind::Join)
+            .count()
     }
 
     fn with_vocabulary(test: impl FnOnce(&mut Vocabulary)) {
