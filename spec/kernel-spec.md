@@ -2442,14 +2442,14 @@ opaque nocopy struct Entries<V: drop> {
   readonly len: u64;
 }
 
-opaque nocopy struct DecisionCell {
-}
-
 opaque nocopy struct Shards<T: drop> {
   readonly len: u64;
 }
 
 opaque struct AnyShard {
+}
+
+opaque nocopy struct DecisionCell {
 }
 ```
 
