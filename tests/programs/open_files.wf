@@ -147,8 +147,8 @@ fn open_files_run(factory: &HandleFactory, output: &OutputStream, root: &Directo
   if fifth != 0_u8 {
     return fifth;
   }
-  let held = open_files_hold(factory: factory, root: root, remaining: 300_u64);
-  return held;
+  let kept_open = open_files_hold(factory: factory, root: root, remaining: 300_u64);
+  return kept_open;
 }
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
