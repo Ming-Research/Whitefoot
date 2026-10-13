@@ -1,0 +1,138 @@
+# Temporary: attributes the checking-time cost of the OP-5 condition
+# redundancy judgment. It builds this branch's compiler and main's (58743a931)
+# in one job and times `whitefootc --check` on apps/firn three ways:
+#   main-main      main compiler, main's firn sources
+#   main-branch    main compiler, this branch's migrated firn sources
+#   branch-branch  this branch's compiler, this branch's firn sources
+# main-main against main-branch isolates the source migration; main-branch
+# against branch-branch isolates the judgment on the same sources. Each run is
+# timed once without counters, then repeated with WHITEFOOT_CHECK_WORK set to
+# dump the checker's work counters (compiler/src/semantic/entailment/work.rs
+# documents the columns). Remove this workflow before the branch is ready.
+name: op5-cost
+
+on:
+  push:
+    branches: [claude/redundant-test-r1]
+  workflow_dispatch:
+
+concurrency:
+  group: op5-cost-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  cost:
+    name: OP-5 checking cost on firn
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    env:
+      MAIN_REVISION: 58743a931
+      WHITEFOOT_CHECK_TIMEOUT: 3000
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+      - name: Prepare the toolchain and main's worktree
+        run: |
+          rustup default stable
+          git worktree add --detach "$RUNNER_TEMP/main" "$MAIN_REVISION"
+          git -C "$RUNNER_TEMP/main" log --oneline -1
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
+          cargo fetch --locked --manifest-path "$RUNNER_TEMP/main/compiler/Cargo.toml"
+      - name: Build both compilers
+        run: |
+          perl .github/run-check.pl op5-build-branch \
+            cargo build --manifest-path compiler/Cargo.toml --profile gate --locked
+          perl .github/run-check.pl op5-build-main \
+            cargo build --manifest-path "$RUNNER_TEMP/main/compiler/Cargo.toml" --profile gate --locked
+          ls -l compiler/target/gate/whitefootc "$RUNNER_TEMP/main/compiler/target/gate/whitefootc"
+      - name: Time and count the three checks
+        run: |
+          out="$RUNNER_TEMP/op5"
+          mkdir -p "$out"
+          branch_compiler="$PWD/compiler/target/gate/whitefootc"
+          main_compiler="$RUNNER_TEMP/main/compiler/target/gate/whitefootc"
+          branch_graph="$PWD/apps/firn/modules.wfg"
+          main_graph="$RUNNER_TEMP/main/apps/firn/modules.wfg"
+          check() {
+            label=$1 compiler=$2 graph=$3 counters=$4
+            log="$out/$label.log"
+            status=0
+            if [ -n "$counters" ]; then
+              WHITEFOOT_CHECK_WORK="$counters" perl .github/run-check.pl "op5-$label" \
+                "$compiler" --check --graph "$graph" --entry firn > "$log" 2>&1 || status=$?
+            else
+              perl .github/run-check.pl "op5-$label" \
+                "$compiler" --check --graph "$graph" --entry firn > "$log" 2>&1 || status=$?
+            fi
+            grep -E '^== END ' "$log" || echo "== $label: no END line (status $status) =="
+            grep -vE '^== (RUNNING|END|BUDGET) ' "$log" | head -n 20 || true
+          }
+          for run in main-main main-branch branch-branch; do
+            case $run in
+              main-main) compiler=$main_compiler graph=$main_graph ;;
+              main-branch) compiler=$main_compiler graph=$branch_graph ;;
+              branch-branch) compiler=$branch_compiler graph=$branch_graph ;;
+            esac
+            check "time-$run" "$compiler" "$graph" ""
+          done
+          for run in main-main main-branch branch-branch; do
+            case $run in
+              main-main) compiler=$main_compiler graph=$main_graph ;;
+              main-branch) compiler=$main_compiler graph=$branch_graph ;;
+              branch-branch) compiler=$branch_compiler graph=$branch_graph ;;
+            esac
+            check "work-$run" "$compiler" "$graph" "$out/work-$run.tsv"
+          done
+      - name: Summarize the counters
+        if: always()
+        run: |
+          out="$RUNNER_TEMP/op5"
+          summary="$out/summary.txt"
+          {
+            echo "## Wall time (run-check.pl END lines)"
+            grep -h -E '^== END ' "$out"/*.log || true
+            echo
+            echo "## Totals per kind and metric (sum; *_max is the maximum)"
+            for run in main-main main-branch branch-branch; do
+              file="$out/work-$run.tsv"
+              [ -f "$file" ] || { echo "$run: no counters"; continue; }
+              echo "### $run ($(wc -l < "$file") rows, $(cut -f2 "$file" | sort -u | wc -l) analysis runs)"
+              awk -F'\t' '{ key = $4 "\t" $6
+                            if ($6 ~ /_max$/) { if ($7 > total[key]) total[key] = $7 }
+                            else total[key] += $7 }
+                          END { for (key in total) print key "\t" total[key] }' "$file" | sort
+            done
+            echo
+            echo "## Per function: closures, closure cells, affine attempts, final-family exhaustions, conditions, condition queries"
+            echo "## columns: function, then those six for main-main | main-branch | branch-branch; top 40 by branch-branch closure cells"
+            for run in main-main main-branch branch-branch; do
+              file="$out/work-$run.tsv"
+              [ -f "$file" ] || : > "$file"
+              awk -F'\t' -v run="$run" '
+                $4 == "closure" && $6 == "count" { closures[$3] += $7 }
+                $4 == "closure" && $6 == "cells_sum" { cells[$3] += $7 }
+                $4 == "function" && $6 == "affine_attempts" { affine[$3] += $7 }
+                $4 == "function" && $6 == "affine_final_family_exhaustions" { exhausted[$3] += $7 }
+                $4 == "function" && $6 == "conditions" { conditions[$3] += $7 }
+                $4 == "function" && $6 == "condition_queries" { queries[$3] += $7 }
+                { seen[$3] = 1 }
+                END { for (f in seen) printf "%s\t%d\t%d\t%d\t%d\t%d\t%d\n", f, closures[f], cells[f], affine[f], exhausted[f], conditions[f], queries[f] }
+              ' "$file" | sort -t$'\t' -k1,1 > "$out/per-function-$run.tsv"
+            done
+            join -t$'\t' -a2 -e0 -o auto "$out/per-function-main-main.tsv" "$out/per-function-main-branch.tsv" \
+              | join -t$'\t' -a2 -e0 -o auto - "$out/per-function-branch-branch.tsv" \
+              | sort -t$'\t' -k15,15nr | head -n 40 || true
+          } > "$summary"
+          cat "$summary"
+          { echo '```'; cat "$summary"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: op5-cost
+          path: ${{ runner.temp }}/op5
