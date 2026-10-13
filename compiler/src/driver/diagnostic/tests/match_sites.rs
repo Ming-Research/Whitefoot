@@ -10,8 +10,8 @@ fn match_sites_render_as_positions_in_text_and_complete_records_in_json() {
 
 fn area(s: Shape) -> result: u64 pure {
   match s {
-    Circle(radius: radius) => {
-      return radius;
+    Circle(radius: r) => {
+      return r;
     }
   }
 }
@@ -49,7 +49,7 @@ fn main() -> status: std::process::ExitStatus pure {
     let sites = [
         (
             8,
-            "match s {\n    Circle(radius: radius) => {\n      return radius;\n    }\n  }",
+            "match s {\n    Circle(radius: r) => {\n      return r;\n    }\n  }",
         ),
         (
             16,

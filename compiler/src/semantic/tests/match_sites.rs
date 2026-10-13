@@ -47,8 +47,8 @@ const TWO_FUNCTIONS: &str = r#"enum Shape {
 
 fn area(s: Shape) -> result: u64 pure {
   match s {
-    Circle(radius: radius) => {
-      return radius;
+    Circle(radius: r) => {
+      return r;
     }
   }
 }
@@ -73,7 +73,7 @@ fn one_check_lists_both_functions_in_order_and_variants_in_declaration_order() {
         "Shape",
         &[
             (
-                "match s {\n    Circle(radius: radius) => {\n      return radius;\n    }\n  }",
+                "match s {\n    Circle(radius: r) => {\n      return r;\n    }\n  }",
                 &["Square", "Triangle"],
             ),
             (
@@ -93,13 +93,13 @@ fn a_used_value_match_binding_keeps_its_derived_type_for_the_next_match() {
 
 fn inspect(s: Shape) -> result: u64 pure {
   let selected = match s {
-    Circle(radius: radius) => {
-      give Shape::Circle(radius: radius);
+    Circle(radius: r) => {
+      give Shape::Circle(radius: r);
     }
   }
   match selected {
-    Square(side: side) => {
-      return side;
+    Square(side: edge) => {
+      return edge;
     }
   }
 }
@@ -113,11 +113,11 @@ fn main() -> status: std::process::ExitStatus pure {
         "Shape",
         &[
             (
-                "match s {\n    Circle(radius: radius) => {\n      give Shape::Circle(radius: radius);\n    }\n  }",
+                "match s {\n    Circle(radius: r) => {\n      give Shape::Circle(radius: r);\n    }\n  }",
                 &["Square"],
             ),
             (
-                "match selected {\n    Square(side: side) => {\n      return side;\n    }\n  }",
+                "match selected {\n    Square(side: edge) => {\n      return edge;\n    }\n  }",
                 &["Circle"],
             ),
         ],
