@@ -85,3 +85,11 @@ fn a_consumed_aggregate_result_names_the_value_without_the_transfer_marker() {
     let source = format!("fn small(packet: Box<Array<u8, 2>>, limit: u64) -> result: Box<Array<u8, 2>> pure contract {{\n  ensures result.inner.len < limit;\n}} {{\n  return move packet;\n}}\n{MAIN}");
     assert_clause(&source, "packet.inner.len < limit");
 }
+
+#[test]
+fn a_clause_keeps_a_reference_step_before_its_box_content() {
+    let source = include_str!(
+        "../../../../../tests/conformance/cases/fn9-neg-enum-halo-return-out-of-bounds.wf"
+    );
+    assert_clause(source, "beyond < array^.inner.len");
+}

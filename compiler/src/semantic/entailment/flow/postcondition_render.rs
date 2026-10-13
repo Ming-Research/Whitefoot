@@ -146,6 +146,17 @@ impl Input<'_, '_> {
         if denotation == ParameterDenotation::EntryDatum {
             base = format!("entry({base})");
         }
+        let projections = if parameter.mode.is_reference()
+            && let Some((GoalProjection::Deref, rest)) = projections.split_first()
+        {
+            // The formal keeps its source reference step, but its checked
+            // type already names the referent. Consume that step before a
+            // Box content step can be rendered from the referent type.
+            base.push('^');
+            rest
+        } else {
+            projections
+        };
         self.render_goal_projections_at(
             base,
             Some(parameter.ty),

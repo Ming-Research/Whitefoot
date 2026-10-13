@@ -44,6 +44,8 @@ pub(super) trait PlaceNames {
 
 /// Root spelling is supplied by the caller: body bindings, entry images and
 /// counted binders keep their distinct source roles while sharing selectors.
+/// The type describes storage after the root reference boundary. Callers
+/// spell and consume that boundary before passing the remaining projections.
 pub(super) fn render_place_projections<N: PlaceNames>(
     names: &N,
     mut rendered: String,

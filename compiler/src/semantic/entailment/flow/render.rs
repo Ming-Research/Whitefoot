@@ -1075,10 +1075,10 @@ impl Reasoning<'_, '_, '_> {
                 ..
             } => {
                 let parameter = self.input.function.parameters.get(*formal as usize);
-                let (base, ty, projections) = parameter.map_or_else(
-                    || ("?".to_owned(), None, projections.as_slice()),
+                let (base, ty, range, projections) = parameter.map_or_else(
+                    || ("?".to_owned(), None, false, projections.as_slice()),
                     |parameter| {
-                        if matches!(parameter.mode, CheckedMode::Reference) {
+                        if parameter.mode.is_reference() {
                             // The clause retains its leading reference step;
                             // the remaining steps select storage below it.
                             let projections = match projections.split_first() {
@@ -1088,20 +1088,22 @@ impl Reasoning<'_, '_, '_> {
                             (
                                 format!("entry({})^", parameter.name),
                                 Some(parameter.ty),
+                                parameter.mode.is_range(),
                                 projections,
                             )
                         } else {
                             (
                                 parameter.name.clone(),
                                 Some(parameter.ty),
+                                false,
                                 projections.as_slice(),
                             )
                         }
                     },
                 );
-                let place = self
-                    .input
-                    .render_place_projections(base, ty, projections, None);
+                let place = self.input.render_place_projections_at(
+                    base, ty, range, 0, projections, None,
+                );
                 measure.map_or(place.clone(), |measure| {
                     format!("{place}.{}", measure.spelling())
                 })

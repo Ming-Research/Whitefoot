@@ -690,3 +690,25 @@ fn main() -> status: std::process::ExitStatus pure {
     assert!(rendered.contains("\n  disposition: Unproved\n"), "{rendered}");
     assert!(!rendered.contains("slot^[?]"), "{rendered}");
 }
+
+#[test]
+fn entry_measures_keep_reference_boundaries_before_box_content() {
+    for (parameter_type, measure) in [
+        ("&Box<Slots<u8>>", "part^.inner.len"),
+        ("&[Box<u64>]", "part^.len"),
+        ("&Run<Box<u64>>", "part^.len"),
+    ] {
+        let source = format!(
+            "fn size(part: {parameter_type}) -> result: u64 pure contract {{\n  ensures result <= {measure};\n}} {{\n  return 1_u64;\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n"
+        );
+        let failure = stop("boxed-entry-measure.wf", source.as_bytes());
+        let rendered = failure.to_string();
+        assert_eq!(failure.rule_id(), Some("FN-9"), "{rendered}");
+        let entry_measure = measure.replace("part^", "entry(part)^");
+        assert!(
+            rendered.contains(&format!("\n  relation: 0_u64 - {entry_measure} <= -1_i64\n")),
+            "{rendered}"
+        );
+        assert!(rendered.contains("\n  disposition: Unproved\n"), "{rendered}");
+    }
+}
