@@ -654,14 +654,17 @@ pub(super) struct Query {
 }
 
 impl Query {
+    // An included set is a negated exclusion. Source never states one: it
+    // arises only when a path condition is negated, so it is counted as the
+    // exclusion it negates.
     fn record_exclusion(&mut self, literal: &Literal) {
         if matches!(literal.relation, Relation::Excluded | Relation::Included) {
             let mut exclusion = literal.clone();
             exclusion.relation = Relation::Excluded;
             if self.exclusions.insert(exclusion) {
-                if !(literal.left.constant == 0
-                    && matches!(literal.left.terms.as_slice(), [(_, 1)]))
-                {
+                // One atom with coefficient one plus any constant reuses that
+                // atom, as RANGE-3 counts it; other expressions add one.
+                if !matches!(literal.left.terms.as_slice(), [(_, 1)]) {
                     self.exclusion_expressions.insert(literal.left.clone());
                 }
                 self.exclusion_members = self
@@ -2079,7 +2082,10 @@ mod integer_exclusion_tests {
             choices: vec![vec![vec![exclusion], vec![zero]]],
             ..Query::default()
         };
-        assert_eq!(judge(&mut world, &[], &[], &[], &[], query), Ok(Verdict::Open));
+        assert_eq!(
+            judge(&mut world, &[], &[], &[], &[], query),
+            Ok(Verdict::Open)
+        );
     }
 
     #[test]
@@ -2092,7 +2098,10 @@ mod integer_exclusion_tests {
             units: vec![Literal::new(value, Relation::Equal, Linear::constant(0))],
             ..Query::default()
         };
-        assert_eq!(judge(&mut world, &[], &[], &[], &[], query), Ok(Verdict::Open));
+        assert_eq!(
+            judge(&mut world, &[], &[], &[], &[], query),
+            Ok(Verdict::Open)
+        );
     }
 
     #[test]
@@ -2111,7 +2120,10 @@ mod integer_exclusion_tests {
             choices: vec![vec![vec![exclusion.clone()], vec![exclusion]]],
             ..Query::default()
         };
-        assert_eq!(judge(&mut world, &[], &[], &[], &[], query), Ok(Verdict::Open));
+        assert_eq!(
+            judge(&mut world, &[], &[], &[], &[], query),
+            Ok(Verdict::Open)
+        );
     }
 
     #[test]
@@ -2129,7 +2141,10 @@ mod integer_exclusion_tests {
             ],
             ..Query::default()
         };
-        assert_eq!(judge(&mut world, &[], &[], &[], &[], query), Ok(Verdict::Open));
+        assert_eq!(
+            judge(&mut world, &[], &[], &[], &[], query),
+            Ok(Verdict::Open)
+        );
     }
 
     #[test]
@@ -2263,7 +2278,10 @@ mod integer_exclusion_tests {
             ],
             ..Query::default()
         };
-        assert_eq!(judge(&mut world, &[], &[], &[], &[], query), Ok(Verdict::Open));
+        assert_eq!(
+            judge(&mut world, &[], &[], &[], &[], query),
+            Ok(Verdict::Open)
+        );
     }
 
     #[test]
@@ -2287,6 +2305,32 @@ mod integer_exclusion_tests {
                 judge(&mut world, &[], &[], &[], &[], query),
                 expected,
                 "the expression atom plus each distinct member: at the ceiling and one past it"
+            );
+        }
+    }
+
+    #[test]
+    fn an_offset_atom_exclusion_reuses_its_atom() {
+        for (members, expected) in [
+            (MAX_ATOMS - 1, Ok(Verdict::Open)),
+            (MAX_ATOMS, Err(Capacity::Atoms)),
+        ] {
+            let mut world = World::default();
+            let value = world.opaque(None);
+            let offset = value.plus_constant(3).expect("small offset");
+            let values = (0..members as i128).collect::<Vec<_>>().into();
+            let exclusion = Literal::exclusion(offset, values);
+            let query = Query {
+                units: vec![
+                    exclusion,
+                    Literal::new(value, Relation::Equal, Linear::constant(-10)),
+                ],
+                ..Query::default()
+            };
+            assert_eq!(
+                judge(&mut world, &[], &[], &[], &[], query),
+                expected,
+                "`i + 3` counts as the atom `i`, not as a further expression"
             );
         }
     }
