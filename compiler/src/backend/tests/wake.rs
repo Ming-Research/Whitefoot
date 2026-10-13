@@ -229,7 +229,7 @@ fn main() -> status: std::process::ExitStatus pure waits {
     );
     let reply = emitted_function(&llvm, "reply_ready");
     assert!(
-        reply.contains("icmp uge i64") && reply.contains("br i1"),
+        reply.contains("icmp uge i64") && (reply.contains("br i1") || reply.contains("switch i1")),
         "the real helper keeps its comparison and branches: {reply}"
     );
 
