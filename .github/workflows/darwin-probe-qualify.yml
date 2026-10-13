@@ -31,14 +31,20 @@ jobs:
   qualify:
     runs-on: macos-15
     timeout-minutes: 60
-    env:
-      QUALIFY_DIR: ${{ runner.temp }}/darwin-probe-qualify
-      WHITEFOOT_TIME_BUDGET_FILE: ${{ runner.temp }}/darwin-probe-budgets.txt
-      WHITEFOOT_TIME_BUDGET_RECORD: ${{ runner.temp }}/darwin-probe-qualify/budgets.tsv
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      # The runner context is not available in job-level env, so the scratch
+      # paths are exported here for every later step.
+      - name: Set scratch paths
+        run: |
+          {
+            echo "QUALIFY_DIR=$RUNNER_TEMP/darwin-probe-qualify"
+            echo "WHITEFOOT_TIME_BUDGET_FILE=$RUNNER_TEMP/darwin-probe-budgets.txt"
+            echo "WHITEFOOT_TIME_BUDGET_RECORD=$RUNNER_TEMP/darwin-probe-qualify/budgets.tsv"
+          } >> "$GITHUB_ENV"
 
       - name: Record host and provisional experiment limits
         run: |
