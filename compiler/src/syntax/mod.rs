@@ -29,9 +29,9 @@ pub use parser::{
     CanonicalSyntaxUnit, ExpectedTerminals, FinalizeCompilerFailure, FinalizeLimit, FinalizeLimits,
     FinalizeOutcome, FinalizeResourceFailure, FinalizeStorage, FinalizedBundle, NodePath,
     ParseCompilerFailure, ParseInvocationFailure, ParseLimit, ParseLimits, ParseOutcome,
-    ParseResourceFailure, ParseStorage, ParsedBundle, RenderOutcome, RenderedSource,
-    SyntaxCoordinate, SyntaxIssue, SyntaxRule, audit_canonical, finalize, parse, parse_graph,
-    render_canonical,
+    ParseResourceFailure, ParseStorage, ParsedBundle, QualifiedValuePath, RenderOutcome,
+    RenderedSource, SyntaxCoordinate, SyntaxIssue, SyntaxRepair, SyntaxRule, audit_canonical,
+    finalize, parse, parse_graph, render_canonical,
 };
 
 pub(crate) use parser::{FinalizedExtent, FinalizedTopology, NodeId};

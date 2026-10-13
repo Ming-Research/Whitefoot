@@ -1,5 +1,5 @@
 //! Owned native test processes with byte-preserving output and deadlines.
-use std::io::Read;
+use std::io::{Read, Write};
 use std::process::{Child, ChildStdin, Command, ExitStatus, Output, Stdio};
 use std::time::{Duration, Instant};
 
@@ -156,7 +156,72 @@ impl ProgramChild {
 
 impl Drop for ProgramChild {
     fn drop(&mut self) {
+        if !std::thread::panicking() {
+            self.terminate();
+            return;
+        }
+        let pid = self.child.id();
+        let status = self.child.try_wait();
+        let mut diagnostics = std::io::stderr().lock();
+        let _ = writeln!(
+            diagnostics,
+            "native test panic cleanup: child PID {pid}, pre-cleanup try_wait: {status:?}; \
+             cleanup may terminate a running child"
+        );
         self.terminate();
+        // The readers see EOF shortly after the child exits; give them a
+        // bounded moment so the diagnostics usually carry the output, while a
+        // descendant that still holds a pipe cannot stall cleanup.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
+        while std::time::Instant::now() < deadline
+            && [&self.output, &self.errors]
+                .iter()
+                .any(|reader| reader.as_ref().is_some_and(|thread| !thread.is_finished()))
+        {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        for (channel, thread) in [("stdout", self.output.take()), ("stderr", self.errors.take())] {
+            match thread {
+                None => {
+                    let _ = writeln!(
+                        diagnostics,
+                        "native test panic cleanup: child PID {pid} {channel} was not captured"
+                    );
+                }
+                Some(thread) if !thread.is_finished() => {
+                    // A descendant may still hold the pipe after the direct
+                    // child exits. Panic diagnostics must not wait for EOF.
+                    let _ = writeln!(
+                        diagnostics,
+                        "native test panic cleanup: child PID {pid} {channel} reader has not \
+                         finished; output unavailable without blocking cleanup"
+                    );
+                }
+                Some(thread) => match thread.join() {
+                    Ok(Ok(bytes)) => {
+                        let _ = writeln!(
+                            diagnostics,
+                            "native test panic cleanup: child PID {pid} {channel} collected after \
+                             cleanup ({} bytes, escaped): {}",
+                            bytes.len(),
+                            bytes.escape_ascii()
+                        );
+                    }
+                    Ok(Err(error)) => {
+                        let _ = writeln!(
+                            diagnostics,
+                            "native test panic cleanup: child PID {pid} {channel} reader failed: {error}"
+                        );
+                    }
+                    Err(_) => {
+                        let _ = writeln!(
+                            diagnostics,
+                            "native test panic cleanup: child PID {pid} {channel} reader panicked"
+                        );
+                    }
+                },
+            }
+        }
     }
 }
 

@@ -252,7 +252,7 @@ fn frozen_type_mismatches_use_source_names_including_nested_boxes() {
                 panic!("{outcome:?}");
             };
             assert_eq!(issue.rule_id(), "TYPE-5");
-            let SemanticIssueKind::TypeMismatch { expected, found } = issue.kind() else {
+            let SemanticIssueKind::TypeMismatch { expected, found, .. } = issue.kind() else {
                 panic!("{issue:?}");
             };
             assert_eq!(expected, "Box<u8>");
@@ -291,9 +291,18 @@ fn prelude_opaque_handle_repairs_name_their_forming_functions() {
                     panic!("{outcome:?}");
                 };
                 assert_eq!(issue.rule_id(), "TYPE-2");
-                let SemanticIssueKind::ContainerConstruction { mechanical_fix, .. } = issue.kind()
-                else {
-                    panic!("{issue:?}");
+                let mechanical_fix = match issue.kind() {
+                    SemanticIssueKind::ContainerConstruction { mechanical_fix, .. }
+                        if statement.contains("let made") =>
+                    {
+                        mechanical_fix
+                    }
+                    SemanticIssueKind::OpaqueDestructuring { mechanical_fix, .. }
+                        if !statement.contains("let made") =>
+                    {
+                        mechanical_fix
+                    }
+                    _ => panic!("{issue:?}"),
                 };
                 assert!(mechanical_fix.contains(forming), "{mechanical_fix}");
                 assert!(
