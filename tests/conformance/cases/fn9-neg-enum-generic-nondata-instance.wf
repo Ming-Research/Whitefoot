@@ -1,0 +1,16 @@
+enum RoutedReuse<T: copy> {
+  Held(data: T);
+}
+
+fn retain<T: copy>(value: T) -> result: RoutedReuse<T> pure contract {
+  ensures when Held(data: payload): payload == payload;
+} {
+  return RoutedReuse<T>::Held(data: value);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let good = retain::<u64>(value: 7_u64);
+  let flag = True();
+  let bad = retain::<Bool>(value: flag);
+  return std::process::exit_status(code: 0_u8);
+}
