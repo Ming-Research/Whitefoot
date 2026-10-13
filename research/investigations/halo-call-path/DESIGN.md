@@ -933,3 +933,45 @@ far they are from what counts can reach.
   does not depend on it.
 - Whether the 1:2000 weight is too strong for S3's guesses; a weaker ratio
   is the first thing to try if C2 fails only on harm.
+
+### Result: E1 and E3, run 38338456381
+
+Instructions per Lua call on fib(32) (callgrind, hosted ubuntu-24.04,
+artifact `halo-probe`); harm kernels as whole-run instruction totals at the
+reduced sizes. V0 reproduced 841.53.
+
+| Variant | Three-arm sum | Program total | concat vs V0 | string-key vs V0 |
+|---|---|---|---|---|
+| V0 | 174 | 841.53 | — | — |
+| V2 (all four cold) | 151 | 806.03 | −2.68% | −4.84% |
+| V2s (`slow` only) | 156 | 820.53 | −1.20% | −3.63% |
+| V2e (`unwind`, `restore_stopped_stack`) | 177 | 844.53 | −0.11% | +0.00% |
+| V2i (`heap.intern` only) | 163 | 822.03 | −1.04% | −0.69% |
+| PGOa (profile from fib) | 118.58 | 523.61 | — | — |
+| PGOb (profile from the six other kernels) | 436.00 | 626.52 | — | — |
+
+Against the criteria written before the run:
+
+- V2s ≤ 820.2: fails by 0.33 (820.53). `slow` carries 21.0 of V2's 35.5,
+  59%, just under the 60% predicted.
+- V2e ≤ 813.1: fails (844.53, +3.0). Marking the error-path callees cold
+  gains nothing on fib, so S1 alone, which reaches only those, cannot meet
+  the item's 25-instruction condition; S3 (or H) stays in play.
+- `heap.intern` harm: not harmful. V2 lowers both kernels (concat −2.7%,
+  string-key −4.8%), and V2i alone lowers them too, so the study's warning
+  that marking `heap.intern` cold would slow concatenation and string keys
+  is not borne out at function level on these kernels.
+- E3 (a) ≤ 806.03: holds by far (523.61, −37.8%).
+- E3 (b) above 823.8 would show profiles do not transfer: not confirmed.
+  A profile trained only on the other six kernels gives 626.52 (−25.6%),
+  so most of the gain transfers across Lua workloads on this interpreter.
+
+Reading: on fib, profile-guided optimization removes several times what
+any cold marking does, and much of it survives training on different
+programs. The arm table shows PGO rearranges the dispatch code wholesale
+(SubRK and Call fold into their neighbours; LtJmpRK drops to 24), so its
+gain is not the spill placement this item addresses alone. The study's
+objections to PGO as a default stand (a build input, a training set, and an
+unfair comparison against PUC Lua built without one); whether an opt-in
+profile-guided build mode is worth offering is a separate question for the
+owner. For this item, the next step is E2: S1 + S2 + S3 in the compiler.
