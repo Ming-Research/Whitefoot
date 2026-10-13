@@ -194,11 +194,67 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "#],
     },
+    RepairPair {
+        name: "call-with-two-effects-after-index-write.wf",
+        rejected: br#"fn put(window: &Array<u64, 4>, index: u64, other: u64) -> result: unit writes(window[index], window[other]) contract {
+  requires index < 4_u64;
+  requires other < 4_u64;
+} {
+  set window^[index] = 1_u64;
+  set window^[other] = 1_u64;
+  return unit;
+}
+
+fn forward(window: &Array<u64, 4>, index: u64, other: u64) -> result: u64 writes(window[index], window[other]) contract {
+  requires index < 4_u64;
+  requires other < 4_u64;
+  requires other > 0_u64;
+  requires index < other;
+} {
+  set index = 0_u64;
+  put(window: window, index: index, other: other);
+  return index;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "EFF-2",
+        sentences: &[
+            "\n  found_row: writes(window[index], window[other])\n",
+            "\n  mechanical_fix: the row `writes(window[index], window[other])` uses `index`'s value at the call, but `set index = 0_u64;` at line 16 rewrites it before the call `put(window: window, index: index, other: other)`; where this access is the row mismatch to repair, keep the row by leaving `index` unchanged, binding the new value in a fresh local, and using that local for the work that needs the new value\n",
+        ],
+        repaired: &[br#"fn put(window: &Array<u64, 4>, index: u64, other: u64) -> result: unit writes(window[index], window[other]) contract {
+  requires index < 4_u64;
+  requires other < 4_u64;
+} {
+  set window^[index] = 1_u64;
+  set window^[other] = 1_u64;
+  return unit;
+}
+
+fn forward(window: &Array<u64, 4>, index: u64, other: u64) -> result: u64 writes(window[index], window[other]) contract {
+  requires index < 4_u64;
+  requires other < 4_u64;
+  requires other > 0_u64;
+  requires index < other;
+} {
+  let newvalue = 0_u64;
+  put(window: window, index: index, other: other);
+  return newvalue;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
 ];
 
 #[test]
 fn rewritten_index_repair_does_not_move_an_operation_before_its_local_declaration() {
-    for pair in &REWRITTEN_EFFECT_INDICES[2..] {
+    for pair in &REWRITTEN_EFFECT_INDICES[2..4] {
         let failure = super::compile(
             &[super::SourceInput::new(pair.name, pair.rejected)],
             super::CompilerLimits::default(),
@@ -212,6 +268,23 @@ fn rewritten_index_repair_does_not_move_an_operation_before_its_local_declaratio
         );
         assert!(!rendered.contains("before that write"), "{rendered}");
     }
+}
+
+#[test]
+fn rewritten_index_repair_does_not_assume_same_reference_effects_are_separate() {
+    let pair = &REWRITTEN_EFFECT_INDICES[4];
+    let failure = super::compile(
+        &[super::SourceInput::new(pair.name, pair.rejected)],
+        super::CompilerLimits::default(),
+    )
+    .expect_err("the call still writes through the rewritten effect index");
+    assert_eq!(failure.rule_id(), Some("EFF-2"));
+    let rendered = failure.to_string();
+    assert!(
+        rendered.contains("keep the row by leaving `index` unchanged"),
+        "{rendered}"
+    );
+    assert!(!rendered.contains("before that write"), "{rendered}");
 }
 
 #[test]

@@ -138,6 +138,16 @@ impl Checker<'_, '_> {
                     .filter(|p| p.mode.is_reference())
                     .count()
                     > 1
+                // One reference can still supply two indexed effects whose
+                // EFF-5 separation depends on the value this write establishes.
+                // This certificate admits no declared-row pair to prove.
+                || callee
+                    .declared_effects
+                    .reads
+                    .iter()
+                    .chain(&callee.declared_effects.writes)
+                    .nth(1)
+                    .is_some()
             {
                 return Ok(false);
             }
