@@ -166,6 +166,7 @@ fn census(
                 window_address_facts: WindowAddressFacts::Emit,
                 dispatch_layout,
                 owner_scopes: &owner_scopes,
+                call_entries: None,
             },
         )?;
         let (_, symbol, _, abi, _) = emitter.body_abi()?;

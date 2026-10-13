@@ -25,6 +25,7 @@ mod integer;
 mod operations;
 mod paged;
 mod parallel;
+mod part_calls;
 pub(super) mod places;
 mod reinterpret;
 mod runs;
@@ -231,6 +232,7 @@ pub(crate) fn emit_prepared_llvm(
         target,
         WindowAddressFacts::Emit,
         &prepared.plan,
+        crate::toolchain::facts().preserve_most,
     )
 }
 
@@ -256,14 +258,39 @@ pub(super) fn emit_llvm_with_window_address_facts(
         target,
         window_address_facts,
         &selected.plan,
+        crate::toolchain::facts().preserve_most,
     )
 }
 
+/// [`emit_llvm_with_layout`] on the host target, with the parts of split
+/// dispatch loops calling through entries in the convention that preserves
+/// almost every register only when `call_entries` says the host generates
+/// it, whatever the host's own probe found (compiler/match-dispatch-lowering).
+#[cfg(test)]
+pub(crate) fn emit_llvm_with_call_entries(
+    program: &IrProgram,
+    call_entries: bool,
+) -> Result<LlvmModule, BackendFailure> {
+    let target = TargetLayout::host().map_err(BackendFailure::TargetLayout)?;
+    let selected = prepare_dispatch_layout(program, target, false)?;
+    emit_module(
+        &selected.program,
+        target,
+        WindowAddressFacts::Emit,
+        &selected.plan,
+        call_entries,
+    )
+}
+
+/// `call_entries` says whether the host generates the convention of the
+/// entries through which split dispatch parts make their ordinary calls
+/// (compiler/match-dispatch-lowering).
 fn emit_module(
     program: &IrProgram,
     target: TargetLayout,
     window_address_facts: WindowAddressFacts,
     dispatch_layout: &handler_words::DispatchLayoutPlan,
+    call_entries: bool,
 ) -> Result<LlvmModule, BackendFailure> {
     validate_program(target, program).map_err(BackendFailure::TargetLayout)?;
     let mut intrinsics = BTreeSet::new();
@@ -283,6 +310,7 @@ fn emit_module(
         HashSet::new()
     };
     let frontiers = RecursiveFrontiers::new(program, &frontier_clones);
+    let mut entries = BTreeSet::new();
     let mut functions = Module::default();
     let mut linked_declarations = std::collections::HashMap::new();
     for (ordinal, function) in program.functions().iter().enumerate() {
@@ -312,6 +340,7 @@ fn emit_module(
                 grain: None,
                 window_address_facts,
                 dispatch_layout,
+                call_entries: call_entries.then_some(&mut entries),
             },
         )?;
         let emitted = emitter.emit()?;
@@ -352,6 +381,7 @@ fn emit_module(
                     grain: Some(grain),
                     window_address_facts,
                     dispatch_layout,
+                    call_entries: call_entries.then_some(&mut entries),
                 },
             )?
             .emit()?,
@@ -388,11 +418,21 @@ fn emit_module(
                         grain: None,
                         window_address_facts,
                         dispatch_layout,
+                        call_entries: call_entries.then_some(&mut entries),
                     },
                 )?
                 .emit()?,
             );
         }
+    }
+    // Each function a split dispatch loop's part calls gets one entry.
+    for ordinal in entries {
+        functions.append(part_calls::emit_call_entry(
+            program,
+            target,
+            ordinal,
+            &frontiers,
+        )?);
     }
     let has_matches = program.functions().iter().any(|function| {
         function
@@ -1556,6 +1596,8 @@ struct FunctionEmitter<'program, 'state> {
     dispatch_ledger: Vec<String>,
     /// Composition-wide word ownership and constructor addresses.
     dispatch_layout: &'state handler_words::DispatchLayoutPlan,
+    /// See [`ModuleState::call_entries`].
+    call_entries: Option<&'state mut BTreeSet<u32>>,
 }
 
 /// What one function's emission shares with the rest of its module, and the
@@ -1579,6 +1621,9 @@ struct ModuleState<'state> {
     grain: Option<Grain>,
     window_address_facts: WindowAddressFacts,
     dispatch_layout: &'state handler_words::DispatchLayoutPlan,
+    /// The functions whose call entries the module emits, or `None` where
+    /// the host lacks the entries' convention (`part_calls`).
+    call_entries: Option<&'state mut BTreeSet<u32>>,
 }
 
 impl<'program, 'state> FunctionEmitter<'program, 'state> {
@@ -1598,6 +1643,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             grain,
             window_address_facts,
             dispatch_layout,
+            call_entries,
         } = module;
         let mut overlaps = Vec::new();
         let mut ordinary_lane_frames = HashMap::new();
@@ -1675,6 +1721,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             slot_uses: std::cell::RefCell::new(HashSet::new()),
             dispatch_ledger: Vec::new(),
             dispatch_layout,
+            call_entries,
         })
     }
 

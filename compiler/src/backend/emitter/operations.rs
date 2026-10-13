@@ -201,15 +201,18 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         // remaining levels as the callee variant's trailing parameter, the way
         // a split carries its allowance into the splitter.
         let (callee, budget) = self.callee_target(function, target.name(), result);
+        let budgeted = budget.is_some();
         if let Some(budget) = budget {
             rendered.push(format!("i64 {budget}"));
         }
+        // Inside a split dispatch loop's part, the callee's call entry.
+        let (callee, convention) = self.ordinary_call_target(function, callee, budgeted);
         if stored_result {
             return {
                 self.output.symbol(callee.to_string());
                 writeln!(
                     self.output,
-                    "  call void @{callee}({})",
+                    "  call {convention}void @{callee}({})",
                     rendered.join(", ")
                 )
             }
@@ -221,7 +224,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 self.output.symbol(callee.to_string());
                 writeln!(
                     self.output,
-                    "  {} = call {} @{callee}({})",
+                    "  {} = call {convention}{} @{callee}({})",
                     self.value_name(result),
                     emitted_type_1,
                     rendered.join(", ")

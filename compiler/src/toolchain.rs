@@ -24,6 +24,7 @@ pub const fn clang_executable() -> &'static str {
 #[derive(Clone, Copy)]
 pub(crate) struct ToolchainFacts {
     pub(crate) preserve_none: bool,
+    pub(crate) preserve_most: bool,
     pub(crate) no_capture_attribute: &'static str,
     pub(crate) coro_end_result: &'static str,
 }
@@ -42,19 +43,21 @@ impl ToolchainFacts {
         let Ok(directory) = ProbeDirectory::new() else {
             return Self {
                 preserve_none: false,
+                preserve_most: false,
                 no_capture_attribute: "nocapture",
                 coro_end_result: "i1",
             };
         };
         Self {
             preserve_none: preserve_none_supported(&directory.0),
+            preserve_most: preserve_most_supported(&directory.0),
             no_capture_attribute: no_capture_attribute(&directory.0),
             coro_end_result: coro_end_result(&directory.0),
         }
     }
 }
 
-/// Lazily probes all three facts once per process; concurrent emitters wait
+/// Lazily probes all four facts once per process; concurrent emitters wait
 /// for the same value, including conservative fallbacks when clang cannot run.
 pub(crate) fn facts() -> &'static ToolchainFacts {
     static FACTS: OnceLock<ToolchainFacts> = OnceLock::new();
@@ -151,6 +154,39 @@ fn preserve_none_supported(directory: &Path) -> bool {
     Command::new(clang_executable())
         .args(["-x", "ir", "-c", "-o"])
         .arg(directory.join("preserve_none_probe.o"))
+        .arg(&probe)
+        .output()
+        .is_ok_and(|output| output.status.success())
+}
+
+/// The module [`preserve_most_supported`] hands to the assembler, which the
+/// test below compiles again: a C-convention caller calls an internal
+/// function of the convention that preserves almost every register, which
+/// calls a C-convention function, the shape of a split dispatch part's call
+/// through a callee's entry (compiler/match-dispatch-lowering).
+const PRESERVE_MOST_PROBE: &str = "declare i64 @c(i64)\n\n\
+     define internal preserve_mostcc i64 @e(i64 %a) {\n  \
+     %r = call i64 @c(i64 %a)\n  ret i64 %r\n}\n\n\
+     define i64 @p(i64 %a) {\n  \
+     %r = call preserve_mostcc i64 @e(i64 %a)\n  ret i64 %r\n}\n";
+
+/// Whether the host toolchain probed at run time generates code for the
+/// calling convention in which the callee preserves almost every register,
+/// which a split dispatch part's ordinary calls take through each callee's
+/// entry (compiler/match-dispatch-lowering).
+///
+/// LLVM implements the convention only for some targets, so it is probed
+/// like the parts' own convention: [`PRESERVE_MOST_PROBE`] is handed to the
+/// assembler `whitefootc` runs. Where it is refused, or no assembler can be
+/// run, calls from the parts keep the C convention.
+fn preserve_most_supported(directory: &Path) -> bool {
+    let probe = directory.join("preserve_most_probe.ll");
+    if fs::write(&probe, PRESERVE_MOST_PROBE).is_err() {
+        return false;
+    }
+    Command::new(clang_executable())
+        .args(["-x", "ir", "-c", "-o"])
+        .arg(directory.join("preserve_most_probe.o"))
         .arg(&probe)
         .output()
         .is_ok_and(|output| output.status.success())
@@ -279,6 +315,32 @@ mod tests {
             tail.status.success(),
             "runtime convention fact must agree with host code generation: {}",
             String::from_utf8_lossy(&tail.stderr)
+        );
+
+        // The same for the convention of the parts' call entries. Agreement
+        // alone cannot catch a probe module that no clang accepts, so the
+        // hosts the gate runs on, Linux x86-64 and macOS AArch64, both of
+        // whose LLVM targets implement the convention, must also accept it.
+        let input = directory.0.join("most.ll");
+        fs::write(&input, PRESERVE_MOST_PROBE).expect("write call-entry verification module");
+        let most = Command::new(clang_executable())
+            .args(["-x", "ir", "-c", "-o"])
+            .arg(directory.0.join("most.o"))
+            .arg(input)
+            .output()
+            .expect("run clang after the chosen form verified");
+        assert_eq!(
+            facts.preserve_most,
+            most.status.success(),
+            "runtime call-entry convention fact must agree with host code generation: {}",
+            String::from_utf8_lossy(&most.stderr)
+        );
+        let gate_host = (cfg!(target_os = "linux") && cfg!(target_arch = "x86_64"))
+            || (cfg!(target_os = "macos") && cfg!(target_arch = "aarch64"));
+        assert!(
+            facts.preserve_most || !gate_host,
+            "the gate's hosts generate preserve_most: {}",
+            String::from_utf8_lossy(&most.stderr)
         );
     }
 }

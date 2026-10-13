@@ -2882,3 +2882,258 @@ fn main() -> status: std::process::ExitStatus pure waits {
     let output = compile_and_run(&module);
     assert!(output.status.success(), "{output:?}");
 }
+
+/// A loop over `Step` whose arms call one helper of each result ABI:
+/// `scale` returns a scalar, `three` a record in registers through its
+/// internal body and `four`, which takes two values, a record through the
+/// caller's destination. `run` before its loop and `main` call `scale`
+/// outside every part. `run` returns 1557, which swapping `four`'s
+/// arguments or losing a result would change.
+const PART_CALLS: &[u8] = br#"struct Three {
+  a: u64;
+  b: u64;
+  c: u64;
+}
+
+struct Four {
+  a: u64;
+  b: u64;
+  c: u64;
+  d: u64;
+}
+
+enum Step {
+  Again(left: u64);
+  Other(left: u64);
+  Done();
+}
+
+fn scale(x: u64) -> result: u64 pure {
+  return x *wrap 3_u64;
+}
+
+fn three(x: u64) -> result: Three pure {
+  let b = x +wrap 1_u64;
+  let c = x +wrap 2_u64;
+  return Three(a: x, b: b, c: c);
+}
+
+fn four(x: u64, y: u64) -> result: Four pure {
+  let c = x +wrap 2_u64;
+  let d = y +wrap 3_u64;
+  return Four(a: x, b: y, c: c, d: d);
+}
+
+fn run(first: Step, seed: u64) -> result: u64 pure {
+  let step = first;
+  let acc = scale(x: seed);
+  loop @steps {
+    match step {
+      Again(left: n) => {
+        let left = n;
+        if left == 0_u64 {
+          return acc;
+        }
+        let next = left -wrap 1_u64;
+        let scaled = scale(x: acc);
+        let small = three(x: scaled);
+        set acc = small.c;
+        set step = Step::Other(left: next);
+        continue;
+      }
+      Other(left: n) => {
+        let left = n;
+        let large = four(x: acc, y: left);
+        let low = large.a;
+        let high = large.d;
+        let scaled = scale(x: low);
+        set acc = scaled +wrap high;
+        set step = Step::Again(left: left);
+        continue;
+      }
+      Done() => {
+        break @steps;
+      }
+    }
+  }
+  return acc;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let outside = scale(x: 2_u64);
+  let first = Step::Again(left: 2_u64);
+  let result = run(first: first, seed: outside);
+  if result == 1557_u64 {
+    return std::process::exit_status(code: 0_u8);
+  }
+  return std::process::exit_status(code: 1_u8);
+}
+"#;
+
+/// The text of every arm of `wf_run`'s split.
+fn run_arms(module: &str) -> String {
+    (0..3)
+        .map(|arm| definition(module, &format!("wf_run.arm.{arm}")))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// compiler/match-dispatch-lowering: an ordinary call made from a part goes
+/// to the callee's `preserve_most` entry, one per callee however many calls
+/// name it, which calls the callee's body inline where the host can; the
+/// callee keeps the C convention, a call outside the parts is unchanged, and
+/// where the host lacks the convention every call keeps the C convention.
+#[test]
+fn calls_from_parts_go_through_one_preserve_most_entry_per_callee() {
+    super::system::with_ir(PART_CALLS, |program| {
+        let module = crate::backend::emitter::emit_llvm_with_call_entries(program, true)
+            .expect("the part-call fixture emits")
+            .into_string();
+        assert_split(&module, "wf_run", 3);
+        let arms = run_arms(&module);
+        for (entry, original) in [
+            ("wf__most_scale", "wf_scale"),
+            ("wf__most_three", "wf_three"),
+            ("wf__most_four", "wf_four"),
+        ] {
+            let calls = arms
+                .lines()
+                .filter(|line| line.contains(&format!("@{entry}(")))
+                .collect::<Vec<_>>();
+            assert!(
+                !calls.is_empty() && calls.iter().all(|l| l.contains("call preserve_mostcc ")),
+                "the arms call {original} through its entry: {arms}"
+            );
+            assert!(
+                !arms.contains(&format!("@{original}(")),
+                "no arm calls {original} directly: {arms}"
+            );
+            let defines = |line: &str| {
+                line.starts_with("define internal preserve_mostcc ")
+                    && line.contains(&format!(" @{entry}("))
+            };
+            let definitions = module.lines().filter(|&line| defines(line)).count();
+            assert_eq!(definitions, 1, "{entry} is defined once: {module}");
+            let callee = definition(&module, original);
+            let header = callee.lines().next().unwrap_or_default();
+            assert!(
+                !header.contains("preserve_mostcc"),
+                "the callee keeps the C convention: {callee}"
+            );
+        }
+        assert_eq!(
+            arms.matches("@wf__most_scale(").count(),
+            2,
+            "both looping arms call scale through the one entry: {arms}"
+        );
+        let scale = definition(&module, "wf__most_scale");
+        assert!(
+            scale.contains(" = call i64 @wf_scale(i64 %v") && scale.contains(") alwaysinline\n"),
+            "the scalar entry calls the callee inline: {scale}"
+        );
+        let three = definition(&module, "wf__most_three");
+        assert!(
+            three.contains("call void @wf_three.body(ptr %wf.result, ")
+                && three.contains(") alwaysinline\n")
+                && three.contains(", ptr %wf.result\n"),
+            "the register-returned entry calls the internal body and loads its result: {three}"
+        );
+        let four = definition(&module, "wf__most_four");
+        let header = four.lines().next().unwrap_or_default();
+        assert!(
+            header.contains("(ptr %wf.result, ")
+                && four.contains("call void @wf_four(ptr %wf.result, "),
+            "the destination entry passes its destination on: {four}"
+        );
+        for outside in ["main", "run"] {
+            let body = emitted_body(&module, outside);
+            assert!(
+                body.contains("= call i64 @wf_scale(") && !body.contains("wf__most_"),
+                "{outside} calls scale outside every part, in the C convention: {body}"
+            );
+        }
+
+        let fallback = crate::backend::emitter::emit_llvm_with_call_entries(program, false)
+            .expect("the part-call fixture emits")
+            .into_string();
+        assert_split(&fallback, "wf_run", 3);
+        assert!(
+            !fallback.contains("preserve_mostcc") && !fallback.contains("wf__most_"),
+            "without the convention no entry exists: {fallback}"
+        );
+        let arms = run_arms(&fallback);
+        assert!(
+            arms.contains("= call i64 @wf_scale(")
+                && arms.contains("@wf_three(")
+                && arms.contains("call void @wf_four("),
+            "without the convention the arms call every callee directly: {arms}"
+        );
+    });
+}
+
+/// The convention the host's probe found decides whether the parts call
+/// through entries, and the program computes the same result either way.
+#[test]
+fn the_host_probe_selects_part_call_entries_and_the_program_runs() {
+    let module = emit(PART_CALLS);
+    assert_eq!(
+        module.contains("call preserve_mostcc i64 @wf__most_scale("),
+        crate::toolchain::facts().preserve_most,
+        "{module}"
+    );
+    let output = compile_and_run(&module);
+    assert!(output.status.success(), "{output:?}");
+}
+
+/// A fragment build defines each entry once, hidden, in the fragment of the
+/// callee whose body it inlines, and the split function's fragment declares
+/// it with its convention.
+#[test]
+fn a_fragment_build_defines_each_part_call_entry_beside_its_callee() {
+    let inputs = [crate::SourceInput::new("part-calls.wf", PART_CALLS)];
+    let (whole, _) = crate::compile_for_emission(
+        &inputs,
+        crate::CompilerLimits::default(),
+        crate::OverlapLowering::Off,
+        None,
+        true,
+    )
+    .expect("the part-call fixture compiles for fragments");
+    let fragments = crate::split_module(&whole, crate::FragmentGranularity::Function)
+        .expect("the module splits");
+    if !crate::toolchain::facts().preserve_most {
+        assert!(
+            fragments.iter().all(|fragment| !fragment.contains("wf__most_")),
+            "{fragments:#?}"
+        );
+        return;
+    }
+    for (entry, callee) in [
+        ("wf__most_scale", "\ndefine i64 @wf_scale("),
+        ("wf__most_three", "\ndefine internal void @wf_three.body("),
+        ("wf__most_four", "\ndefine void @wf_four("),
+    ] {
+        let defines = |line: &str| {
+            line.starts_with("define hidden preserve_mostcc ")
+                && line.contains(&format!(" @{entry}("))
+        };
+        let defining = fragments
+            .iter()
+            .filter(|fragment| fragment.lines().any(&defines))
+            .collect::<Vec<_>>();
+        assert_eq!(defining.len(), 1, "{entry}: {fragments:#?}");
+        assert!(
+            defining[0].contains(callee),
+            "{entry} is defined beside its callee: {}",
+            defining[0]
+        );
+    }
+    let run = fragments
+        .iter()
+        .find(|fragment| fragment.contains("\ndefine i64 @wf_run("))
+        .expect("the split function has a fragment");
+    assert!(
+        run.contains("\ndeclare hidden preserve_mostcc i64 @wf__most_scale(i64) #0\n"),
+        "{run}"
+    );
+}
