@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 the owner's agent instructions own the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-13 A call result may take the storage of a copied argument no longer read
+
+Nodes: compiler/storage-placement
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve; I write the design-tree change log and mark the PR ready after Halo's re-measurement" (translated), on the card "approve Whitefoot#408's change to the design tree: a call result may also reuse the storage of an argument that was copied in and is not read afterwards (head commit 1e2d6fa09265)?" (translated), whose background stated the changed reuse decision, the added exception for entry parameters and read-only snapshots, and the Halo store-forwarding measurement.
+
+Summary: A call's result may be written into the storage of the call's only owned binding argument of the result's type when that argument is not read after the call, whether it was moved or copied in, with the callee still reading its arguments before any overlapping result write, because a callee cannot tell a copied argument from a moved one and copy types can never be moved, so under the old moved-only rule their results always took a separate slot and a copy at the join; in Halo's fib that copy read 16 bytes across two separately written 8-byte fields and raised store-forwarding blocks from 3.000 to 4.008 per Lua call, 42 cycles each call. Entry parameters and read-only snapshots keep their own storage, since they are read in place without a copy and sharing would add one.
+
 ## 2026-10-12 A heap reading loads the pool counter without the pool lock
 
 Nodes: language/system-interface/memory-statistics
