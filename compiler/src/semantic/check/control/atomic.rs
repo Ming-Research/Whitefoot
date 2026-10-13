@@ -10,7 +10,7 @@ use super::super::super::places::{
     places_overlap,
 };
 use super::super::expressions::calls::user::WAIT1_DECLARE_THE_CALLER_WAITING;
-use super::super::references::{ReferenceInfo, ReferenceKind};
+use super::super::references::{HandleWatch, ReferenceInfo, ReferenceKind};
 use super::super::{CheckStop, Checker, EffectSet, LocalBinding, TypedExpression};
 use super::{ControlCounters, ControlScope, StatementResult};
 use crate::semantic::check::FunctionContext;
@@ -20,6 +20,7 @@ use crate::{
     SemanticCompilerFailure, SemanticIssueKind, SemanticRule,
 };
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 pub(in crate::semantic::check) const SHARE2_NAME_A_SHARED_HANDLE: &str = "name a place of type `Shared<T>` or `SharedRead<T>`: create the object with `shared_new`, or with `shared_map_new` for a map, and give each context its own handle made with `shared_share`";
 pub(in crate::semantic::check) const SHARE2_KEY_WITHOUT_MOVE: &str = "name the key set without `move`: the statement reads it when it begins and the binding over it stays valid while the set is not written";
 pub(in crate::semantic::check) const SHARE2_KEY_A_BYTE_RANGE: &str = "name one key as a `&[u8]` range, such as `&bytes[start..end]` or a reference variable holding one, or several keys as a place of type `KeySet` built before the statement, such as `keys` or, through a reference to one, `keys^`";
@@ -103,6 +104,7 @@ impl Checker<'_, '_> {
         let mut effects = EffectSet::NONE;
         let mut targets: Vec<CheckedTarget> = Vec::new();
         let mut handles: Vec<Vec<ResolvedPlace>> = Vec::new();
+        let mut watches: Vec<Option<Rc<HandleWatch>>> = Vec::new();
         let mut statement_roots = Vec::new();
         for (place, declaration) in places.iter().zip(&declarations) {
             let suffixes = self
@@ -225,24 +227,22 @@ impl Checker<'_, '_> {
                     }
                 }
             }
-            let borrowed = match paths.as_slice() {
-                [p] => match p.root {
-                    PlaceRoot::Binding(root) => bindings.values().any(|l| {
-                        l.binding == root
-                            && l.mode.is_reference()
-                            && function
-                                .parameters
-                                .iter()
-                                .any(|p| p.declaration == l.declaration)
-                            && !function
-                                .declared_effects
-                                .writes
-                                .iter()
-                                .any(|p| p.root == l.declaration)
-                    }),
-                    PlaceRoot::Constant(_) => false,
-                },
-                _ => false,
+            // [SHARE-1, SHARE-2] a handle place that only the statement's own
+            // guard and block can reach keeps the object live while they leave
+            // it alone. Every such place is rooted at a binding: storage of
+            // this activation, or, through a reference parameter, of a caller
+            // that waits in this call. No other context reaches either, since
+            // a spawn takes values alone [WAIT-3] and a state, which every
+            // context reaches, is never a handle place, the statement reading
+            // its handles before it holds a state and no atomic statement
+            // enclosing another.
+            let rooted = paths
+                .iter()
+                .all(|path| matches!(path.root, PlaceRoot::Binding(_)));
+            let watch = if rooted && !paths.is_empty() {
+                Some(Rc::new(HandleWatch::new(paths.clone())))
+            } else {
+                None
             };
             effects = effects.union(target.effects.clone());
             for p in &paths {
@@ -265,10 +265,12 @@ impl Checker<'_, '_> {
                 referent,
                 scope.loops.len(),
             )?;
-            block_bindings
+            let local = block_bindings
                 .get_mut(&declaration.id())
-                .ok_or(SemanticCompilerFailure::InvalidResolution)?
-                .read_only_state = read_only;
+                .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+            local.read_only_state = read_only;
+            local.handle_watch.clone_from(&watch);
+            watches.push(watch);
             if let Some(reference) = block_bindings
                 .get_mut(&declaration.id())
                 .and_then(|l| l.reference.as_mut())
@@ -306,7 +308,7 @@ impl Checker<'_, '_> {
                 node_path: self.types.declarations.tree.path(*place)?.clone(),
                 binding,
                 handle: Box::new(target.expression),
-                borrowed,
+                kept_by_place: false,
                 state,
                 kind,
                 referent,
@@ -355,7 +357,15 @@ impl Checker<'_, '_> {
         let checked = self.check_atomic_parts(context, node, &mut block_bindings, counters, scope);
         self.body.atomic_depth -= 1;
         let (mut guard, mut checked) = checked?;
-        for ((target, place), aliases) in targets.iter_mut().zip(&places).zip(&header_aliases) {
+        for (((target, place), aliases), watch) in targets
+            .iter_mut()
+            .zip(&places)
+            .zip(&header_aliases)
+            .zip(&watches)
+        {
+            // No event the guard and block were checked with may have
+            // written or moved the handle place, on any path through them.
+            target.kept_by_place = watch.as_ref().is_some_and(|watch| !watch.disturbed());
             if !guard
                 .as_ref()
                 .is_some_and(|g| expression_mentions(&g.0, target.binding))
@@ -506,6 +516,7 @@ impl Checker<'_, '_> {
                 read_only_state: false,
                 reference: Some(reference),
                 refinement_witnesses: Vec::new(),
+                handle_watch: None,
                 call_value: false,
             },
         );

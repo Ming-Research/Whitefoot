@@ -2324,6 +2324,200 @@ fn main() -> status: std::process::ExitStatus pure waits {
     );
 }
 
+/// [SHARE-1, SHARE-2] an atomic statement counts a handle of its own, one
+/// `SharedRetain` and its release, only when its block may write or move a
+/// place it read the handle from. A local, a value parameter, a field beside
+/// a written sibling and a reference parameter whose row writes another field
+/// keep the object live themselves; a move, an assignment, an assignment of
+/// the enclosing value, an exchange, a callee's row, an alias, a write on a
+/// path that returns from the block and a write through a written reference
+/// parameter each still count it.
+#[test]
+fn atomic_statements_count_a_handle_only_when_the_block_may_lose_it() {
+    let source = br#"struct Holder {
+  count: u64;
+  cell: Shared<u64>;
+}
+
+fn replace_handle(cell: &Shared<u64>) -> result: unit writes(cell) {
+  let fresh = shared_new::<u64>(value: 2_u64);
+  set cell^ = move fresh;
+  return unit;
+}
+
+fn local_handle() -> result: u64 pure waits {
+  let cell = shared_new::<u64>(value: 1_u64);
+  let seen = 0_u64;
+  atomic state = &cell {
+    set state^ = state^ +wrap 1_u64;
+    set seen = state^;
+  }
+  return seen;
+}
+
+fn value_parameter(cell: Shared<u64>) -> result: u64 pure waits {
+  let seen = 0_u64;
+  atomic state = &cell {
+    set seen = state^;
+  }
+  return seen;
+}
+
+fn sibling_field() -> result: u64 pure waits {
+  let cell = shared_new::<u64>(value: 1_u64);
+  let holder = Holder(count: 0_u64, cell: move cell);
+  let seen = 0_u64;
+  atomic state = &holder.cell {
+    set holder.count = state^;
+    set seen = holder.count;
+  }
+  return seen;
+}
+
+fn writable_reference(holder: &Holder) -> result: u64 reads(holder.cell), writes(holder.count) waits {
+  let seen = 0_u64;
+  atomic state = &holder^.cell {
+    set holder^.count = state^;
+    set seen = state^;
+  }
+  return seen;
+}
+
+fn read_only_reference(cell: &Shared<u64>) -> result: u64 reads(cell) waits {
+  let seen = 0_u64;
+  atomic state = &cell^ {
+    set seen = state^;
+  }
+  return seen;
+}
+
+fn moved_in_block() -> result: u64 pure waits {
+  let cell = shared_new::<u64>(value: 1_u64);
+  let seen = 0_u64;
+  atomic state = &cell {
+    let gone = move cell;
+    set seen = state^;
+  }
+  return seen;
+}
+
+fn assigned_in_block() -> result: u64 pure waits {
+  let cell = shared_new::<u64>(value: 1_u64);
+  let seen = 0_u64;
+  atomic state = &cell {
+    let fresh = shared_new::<u64>(value: 2_u64);
+    set cell = move fresh;
+    set seen = state^;
+  }
+  return seen;
+}
+
+fn enclosing_assigned() -> result: u64 pure waits {
+  let cell = shared_new::<u64>(value: 1_u64);
+  let holder = Holder(count: 0_u64, cell: move cell);
+  let seen = 0_u64;
+  atomic state = &holder.cell {
+    let fresh = shared_new::<u64>(value: 2_u64);
+    let replacement = Holder(count: 0_u64, cell: move fresh);
+    set holder = move replacement;
+    set seen = state^;
+  }
+  return seen;
+}
+
+fn swapped_in_block() -> result: u64 pure waits {
+  let cell = shared_new::<u64>(value: 1_u64);
+  let other = shared_new::<u64>(value: 2_u64);
+  let seen = 0_u64;
+  atomic state = &cell {
+    swap(first: &cell, second: &other);
+    set seen = state^;
+  }
+  return seen;
+}
+
+fn replaced_by_callee() -> result: u64 pure waits {
+  let cell = shared_new::<u64>(value: 1_u64);
+  let seen = 0_u64;
+  atomic state = &cell {
+    replace_handle(cell: &cell);
+    set seen = state^;
+  }
+  return seen;
+}
+
+fn replaced_through_alias() -> result: u64 pure waits {
+  let cell = shared_new::<u64>(value: 1_u64);
+  let seen = 0_u64;
+  atomic state = &cell {
+    let alias = &cell;
+    let fresh = shared_new::<u64>(value: 2_u64);
+    set alias^ = move fresh;
+    set seen = state^;
+  }
+  return seen;
+}
+
+fn replaced_before_return(flag: Bool) -> result: u64 pure waits {
+  let cell = shared_new::<u64>(value: 1_u64);
+  atomic state = &cell {
+    if flag {
+      let fresh = shared_new::<u64>(value: 2_u64);
+      set cell = move fresh;
+      return state^;
+    }
+    set state^ = 3_u64;
+  }
+  return 0_u64;
+}
+
+fn replaced_through_parameter(cell: &Shared<u64>) -> result: u64 writes(cell) waits {
+  let seen = 0_u64;
+  atomic state = &cell^ {
+    let fresh = shared_new::<u64>(value: 9_u64);
+    set cell^ = move fresh;
+    set seen = state^;
+  }
+  return seen;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    with_ir(source, |program| {
+        for (name, expected) in [
+            ("local_handle", 0),
+            ("value_parameter", 0),
+            ("sibling_field", 0),
+            ("writable_reference", 0),
+            ("read_only_reference", 0),
+            ("moved_in_block", 1),
+            ("assigned_in_block", 1),
+            ("enclosing_assigned", 1),
+            ("swapped_in_block", 1),
+            ("replaced_by_callee", 1),
+            ("replaced_through_alias", 1),
+            ("replaced_before_return", 1),
+            ("replaced_through_parameter", 1),
+        ] {
+            let mut retains = 0;
+            for block in function(program, name).blocks() {
+                for instruction in block.instructions() {
+                    if let IrInstruction::Define {
+                        operation: IrOperation::SharedRetain { .. },
+                        ..
+                    } = instruction
+                    {
+                        retains += 1;
+                    }
+                }
+            }
+            assert_eq!(retains, expected, "{name}: counted handles");
+        }
+    });
+}
+
 #[test]
 fn paged_runs_keep_the_directory_origin_and_pages_lower_as_slices() {
     let source = br#"fn fill(part: &Run<u64>) -> result: unit writes(part) {
