@@ -389,7 +389,11 @@ impl Walker<'_> {
                     query,
                 ) {
                     Ok(Verdict::Refuted) => DeferredAnswer::Proved,
-                    Ok(Verdict::Open) if self.imprecise.is_some() => DeferredAnswer::Inconclusive,
+                    Ok(Verdict::Open)
+                        if self.imprecise.is_some() || self.imprecise_call.is_some() =>
+                    {
+                        DeferredAnswer::Inconclusive
+                    }
                     Ok(Verdict::Open) => DeferredAnswer::Unproved,
                     Err(Capacity::Arithmetic) => {
                         self.issues.push(RangeIssue::Unsupported {

@@ -729,7 +729,7 @@ variant_names! {
         Generics, PreludeNominalValues, ReferenceFormation, CompositeValues,
         RecursiveNominalLayout, OwnershipJoin, DuplicateMatchArm, OperationFamily,
         RangeArithmetic, RangeOrdinaryGoal, RangeOperationIntervals,
-        RangeLoopNesting, RangeAtomicAliases,
+        RangeLoopNesting, RangeCallFootprint, RangeAtomicAliases,
     }
 }
 

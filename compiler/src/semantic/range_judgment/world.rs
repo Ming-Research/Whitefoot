@@ -190,6 +190,8 @@ pub(super) struct World {
 pub(super) struct Modified {
     pub(super) containers: BTreeSet<ContainerId>,
     pub(super) descriptors: BTreeSet<ContainerId>,
+    /// Individual descriptor words written by projected call effects.
+    pub(super) measures: BTreeMap<ContainerId, BTreeSet<CheckedMeasure>>,
     /// Relocations change capacity alone; loop headers retain logical length.
     pub(super) capacities: BTreeSet<ContainerId>,
     pub(super) projections: BTreeMap<ContainerId, BTreeSet<Vec<CheckedRangeProjection>>>,
@@ -805,6 +807,37 @@ impl State {
         }
     }
 
+    /// Forget an observation's descriptor support, retaining disjoint words.
+    pub(super) fn havoc_measure(
+        &mut self,
+        world: &mut World,
+        container: ContainerId,
+        written: CheckedMeasure,
+    ) {
+        let old_generation = self.generation(container);
+        let new_generation = world.new_generation();
+        self.generations.insert(container, new_generation);
+        for measure in [
+            CheckedMeasure::Length,
+            CheckedMeasure::Capacity,
+            CheckedMeasure::Head,
+            CheckedMeasure::Pages,
+            CheckedMeasure::Bytes,
+        ] {
+            if !measures_overlap(measure, written) {
+                let old = world.measure(container, old_generation, measure);
+                let new = world.measure(container, new_generation, measure);
+                self.conds.push(Literal::new(new, Relation::Equal, old));
+            }
+        }
+        if let Some(log) = &mut world.log {
+            log.measures
+                .entry(container)
+                .or_default()
+                .insert(written.support_word());
+        }
+    }
+
     /// Forgets the contents of one container, and its descriptor when
     /// `descriptor` says the write can change it.
     pub(super) fn havoc_container(
@@ -1257,12 +1290,20 @@ pub(super) fn projections_overlap(
         if let (CheckedRangeProjection::Measure(left), CheckedRangeProjection::Measure(right)) =
             (left, right)
         {
-            return left.support_word() == right.support_word();
+            return measures_overlap(*left, *right);
         }
         return matches!((left, right),
             (CheckedRangeProjection::Payload { variant: a, .. }, CheckedRangeProjection::Payload { variant: b, .. }) if a != b);
     }
     true
+}
+
+/// Bytes is derived from the complete KeySet descriptor, while Pages is
+/// derived from the length word [MSR-2].
+fn measures_overlap(left: CheckedMeasure, right: CheckedMeasure) -> bool {
+    left == CheckedMeasure::Bytes
+        || right == CheckedMeasure::Bytes
+        || left.support_word() == right.support_word()
 }
 
 /// Owned paths name stored scalar projections, including enum tags.
@@ -1432,3 +1473,6 @@ pub(super) fn shift_projection(
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests;

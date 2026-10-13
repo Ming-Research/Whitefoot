@@ -1,0 +1,33 @@
+struct Pair {
+  f: u64;
+  g: u64;
+}
+
+fn set_g(row: &Pair) -> result: unit writes(row.g) {
+  set row^.g = 1_u64;
+  return unit;
+}
+
+fn need_small(rows: &[Pair]) -> result: unit pure contract {
+  requires forall small(k in 0_u64..rows^.len): rows^[k].f <= 7_u64;
+} {
+  return unit;
+}
+
+fn probe<fn op(row: &Pair) -> result: unit writes(row)>(rows: &[Pair]) -> result: unit writes(rows) contract {
+  requires forall held_f(k in 0_u64..rows^.len): rows^[k].f <= 7_u64;
+  requires 1_u64 <= rows^.len;
+} {
+  doc "EFF-2 fixes the formal writes(row) boundary even when set_g is selected; RANGE-2 forgets f and RANGE-3 rejects need_small.";
+  op(row: &rows^[0_u64]);
+  need_small(rows: rows);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "Instantiates the wider function formal with the narrower set_g actual.";
+  let initial = Pair(f: 0_u64, g: 0_u64);
+  let rows = array_filled::<Pair, 1>(value: initial);
+  probe::<set_g>(rows: &rows[0_u64..rows.len]);
+  return std::process::exit_status(code: 0_u8);
+}

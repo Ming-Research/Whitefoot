@@ -117,66 +117,41 @@ impl Walker<'_> {
             && self.prelude.contains(&callee.declaration)
             && matches!(callee.name.as_str(), "grow" | "grow_paged")
             && self.relocate_window_call(state, call, &values);
-        // Reads and writes through reference arguments [EFF-5].
-        let (writes, reads): (Vec<crate::DeclarationId>, Vec<crate::DeclarationId>) = match formal {
-            Some(effects) => (
-                effects.writes.iter().map(|path| path.root).collect(),
-                effects.reads.iter().map(|path| path.root).collect(),
-            ),
-            None => (
-                callee
-                    .declared_state_writes
-                    .iter()
-                    .map(|path| path.root)
-                    .collect(),
-                callee
-                    .declared_state_reads
-                    .iter()
-                    .map(|path| path.root)
-                    .collect(),
-            ),
-        };
+        // Resolve every row entry in the call-entry state: a descriptor
+        // write must not change the index selected by another `.next` entry.
+        let writes = formal.map_or(callee.declared_state_writes.as_slice(), |row| {
+            row.writes.as_slice()
+        });
+        let reads = formal.map_or(callee.declared_state_reads.as_slice(), |row| {
+            row.reads.as_slice()
+        });
+        let mut targets = Vec::new();
         for (position, parameter) in callee.parameters.iter().enumerate() {
             if !parameter.mode.is_reference()
                 || ((window_result.is_some() || relocated_window) && position == 0)
             {
                 continue;
             }
+            let written = writes.iter().any(|path| path.root == parameter.declaration);
             let Some(Value::Ref(view)) = values.get(position).cloned() else {
-                if writes.contains(&parameter.declaration) {
-                    self.forget_all(state, call);
+                if written {
+                    targets.push(effects::Write::View(View::Unknown));
                 }
                 continue;
             };
-            let written = writes.contains(&parameter.declaration);
-            // [RANGE-5] an argument the callee's row neither reads nor writes
-            // is no access.
-            if written || reads.contains(&parameter.declaration) {
+            // RANGE-5 retains the complete actual's conservative access.
+            if written || reads.iter().any(|path| path.root == parameter.declaration) {
                 self.unplaced_view(&view, written, call, state);
             }
-            if !written {
-                continue;
+            for path in writes
+                .iter()
+                .filter(|path| path.root == parameter.declaration)
+            {
+                targets.push(self.call_write(state, callee, &values, position, &path.steps, call));
             }
-            match view {
-                View::Run { container, .. } => {
-                    state.havoc_container(&mut self.world, container, false)
-                }
-                View::Element {
-                    container,
-                    indices,
-                    projection,
-                } => {
-                    state.write_element(
-                        &mut self.world,
-                        container,
-                        indices,
-                        projection.unwrap_or_default(),
-                        BTreeMap::new(),
-                    );
-                }
-                View::Place(location) => state.havoc_location(&mut self.world, &location),
-                View::Scalar(_) | View::Unknown => state.havoc_everything(&mut self.world),
-            }
+        }
+        for target in targets {
+            self.forget_call_write(state, target);
         }
         let value = window_result.unwrap_or_else(|| match result {
             CheckedType::Integer(integer) => Value::Int(self.world.opaque(Some(integer))),

@@ -18,6 +18,7 @@ use crate::NodePath;
 
 mod aggregate;
 mod calls;
+mod effects;
 mod operations;
 mod ordinary;
 #[cfg(test)]
@@ -104,6 +105,8 @@ pub(super) struct Walker<'program> {
     /// deeper, or its written set took more walks to settle, than this
     /// checker follows.
     pub(super) imprecise: Option<NodePath>,
+    /// First call whose write region needed a conservative widening.
+    pub(super) imprecise_call: Option<NodePath>,
     pub(super) certified: Vec<CertifiedLoop>,
     pub(super) deferred: Vec<(usize, DeferredAnswer)>,
     /// Whether each visited or excluded control-flow region was ever entered
@@ -217,6 +220,7 @@ impl<'program> Walker<'program> {
             facts: Vec::new(),
             issues: Vec::new(),
             imprecise: None,
+            imprecise_call: None,
             certified: Vec::new(),
             dry: 0,
             recording: None,
@@ -636,6 +640,7 @@ impl<'program> Walker<'program> {
                 // nothing after it. A stopped walk does not prove that the
                 // continuation is unreachable.
                 if self.imprecise.is_none()
+                    && self.imprecise_call.is_none()
                     && !self.issues[prior_issues..]
                         .iter()
                         .any(|issue| matches!(issue, RangeIssue::Unsupported { .. }))
@@ -2674,6 +2679,13 @@ impl<'program> Walker<'program> {
             outer.containers.extend(total.containers.iter().copied());
             outer.descriptors.extend(total.descriptors.iter().copied());
             outer.capacities.extend(total.capacities.iter().copied());
+            for (container, measures) in &total.measures {
+                outer
+                    .measures
+                    .entry(*container)
+                    .or_default()
+                    .extend(measures.iter().copied());
+            }
             for (container, paths) in &total.projections {
                 outer
                     .projections
@@ -2715,6 +2727,14 @@ impl<'program> Walker<'program> {
         for container in log.descriptors {
             if existed(&self.world.containers[container as usize].location) {
                 deciding |= total.descriptors.insert(container);
+            }
+        }
+        for (container, measures) in log.measures {
+            if existed(&self.world.containers[container as usize].location) {
+                let recorded = total.measures.entry(container).or_default();
+                for measure in measures {
+                    deciding |= recorded.insert(measure);
+                }
             }
         }
         for container in log.capacities {
@@ -2775,6 +2795,13 @@ impl<'program> Walker<'program> {
             if !modified.containers.contains(container) && !modified.descriptors.contains(container)
             {
                 header.relocate_container(&mut self.world, *container);
+            }
+        }
+        for (container, measures) in &modified.measures {
+            if !modified.descriptors.contains(container) {
+                for measure in measures {
+                    header.havoc_measure(&mut self.world, *container, *measure);
+                }
             }
         }
         for (container, projections) in &modified.projections {
