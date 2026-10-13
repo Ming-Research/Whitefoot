@@ -274,10 +274,13 @@ writeln!(self.output, "  %{pointer} = getelementptr inbounds {}, ptr {address}, 
         {
             let bytes = self.emit_allocation_size(&count, &stride, &header, &oom, &allocate)?;
             {
-                self.output.symbol("wf__heap_take");
+                let alignment = heap_allocation_alignment(self.target, self.program, block)?;
+                let (allocator, alignment_argument) =
+                    heap_call(self.target, "wf__heap_take", alignment);
+                self.output.symbol(allocator);
                 write!(
                     self.output,
-                    "  {address} = call ptr @wf__heap_take(i64 {bytes})\n  %{nonnull} = icmp ne ptr {address}, null\n  br i1 %{nonnull}, label %{init}, label %{oom}\n"
+                    "  {address} = call ptr @{allocator}(i64 {bytes}{alignment_argument})\n  %{nonnull} = icmp ne ptr {address}, null\n  br i1 %{nonnull}, label %{init}, label %{oom}\n"
                 )
             }?;
             self.output.open_block(oom.to_string());

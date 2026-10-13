@@ -536,10 +536,7 @@ fn main() -> status: std::process::ExitStatus pure {
     let byte_choice = emitted_body(&module, "byte_choice");
     let prefix_destination = byte_choice
         .lines()
-        .find_map(|line| {
-            line.trim()
-                .strip_prefix(&format!("{prefix_zero}, ptr "))
-        })
+        .find_map(|line| line.trim().strip_prefix(&format!("{prefix_zero}, ptr ")))
         .expect("the prefix has its own zero initializer");
     assert_ne!(prefix_destination, "%wf.result", "{byte_choice}");
     assert!(
@@ -821,33 +818,51 @@ void *wf_observe_window_allocate(uint64_t size) {
 #[test]
 fn an_above_u64_zero_count_reaches_target_qualification() {
     for generic in ["", "<T>"] {
-        let source = format!(
-            "struct Giant {{\n  words: Array<u64, 2305843009213693952>;\n}}\n\nfn allocate{generic}(count: u64) -> result: unit pure contract {{\n  requires count <= 0_u64;\n}} {{\n  let cells = box_slots_new::<Giant>(capacity: count);\n  free_empty(window: move cells);\n  return unit;\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n"
-        );
-        with_ir(source.as_bytes(), |program| {
-            let host = TargetLayout::host().expect("the test host is supported");
-            assert_eq!(
-                validate_program(host, program),
-                Err(TargetLayoutFailure::Unrepresentable(
-                    TargetObject::Representation
-                ))
+        for invoked in [false, true] {
+            let call = if !invoked {
+                ""
+            } else if generic.is_empty() {
+                "  let result = allocate(count: 0_u64);\n"
+            } else {
+                "  let result = allocate::<u8>(count: 0_u64);\n"
+            };
+            let source = format!(
+                "struct Giant {{\n  words: Array<u64, 2305843009213693952>;\n}}\n\nfn allocate{generic}(count: u64) -> result: unit pure contract {{\n  requires count <= 0_u64;\n}} {{\n  let cells = box_slots_new::<Giant>(capacity: count);\n  free_empty(window: move cells);\n  return unit;\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n{call}  return std::process::exit_status(code: 0_u8);\n}}\n"
             );
-        });
+            with_ir(source.as_bytes(), |program| {
+                let host = TargetLayout::host().expect("the test host is supported");
+                let failure = validate_program(host, program);
+                if !invoked && !generic.is_empty() {
+                    // The uninstantiated generic has no allocating IR body;
+                    // its otherwise-unused nominal still must be qualified.
+                    assert_eq!(
+                        failure,
+                        Err(TargetLayoutFailure::Unrepresentable(
+                            TargetObject::Representation
+                        ))
+                    );
+                } else {
+                    assert!(matches!(
+                        failure,
+                        Err(TargetLayoutFailure::Allocation {
+                            ty: crate::IrType::Nominal(_),
+                            size: None,
+                            alignment: None,
+                            object: TargetObject::Representation,
+                            ..
+                        })
+                    ));
+                }
+            });
+        }
     }
 }
 
-/// The heap's own alignment boundary, for the window and for the cell.
-///
-/// The one heap [STOR-8] hands out storage its host allocator supplies, so the
-/// element's *actual* target alignment must be one that allocator promises -
-/// the obligation `box_slots_new` and `box_new` each carry [OP-13, STOR-6].
-/// Both directions are pinned at the exact boundary: eight-byte alignment
-/// admits an eight-byte slot and a four-byte guarantee refuses it, and refuses
-/// it as a runtime-sized allocation rather than as a representation failure,
-/// because what is short is the allocator's promise and not the language
-/// ceiling.
+/// The supported requested heap-alignment boundary, independently of the
+/// target's ordinary allocator guarantee. An eight-byte maximum admits these
+/// payloads and a four-byte maximum refuses their allocations [STOR-6].
 #[test]
-fn a_runtime_window_and_a_cell_must_fit_the_selected_allocator_alignment() {
+fn a_runtime_window_and_a_cell_must_fit_the_supported_heap_alignment() {
     for fixture in [U64_RUNTIME_WINDOW, U64_CELL] {
         with_ir(fixture, |program| {
             let host =
@@ -856,21 +871,52 @@ fn a_runtime_window_and_a_cell_must_fit_the_selected_allocator_alignment() {
             // The byte domain stays the host's own: cutting the
             // address-index domain to the allocation's own size would refuse
             // the window's own block layout before the alignment is reached.
-            // Only the alignment guarantee moves here.
+            // Only the supported requested alignment moves here.
             let byte_domain = i64::MAX as u64;
             let exact = host.with_runtime_allocation_limits_for_test(byte_domain, 8);
             assert_eq!(validate_program(exact, program), Ok(()));
 
             let one_alignment_step_short =
                 host.with_runtime_allocation_limits_for_test(byte_domain, 4);
-            assert_eq!(
+            assert!(matches!(
                 validate_program(one_alignment_step_short, program),
-                Err(TargetLayoutFailure::Unrepresentable(
-                    TargetObject::RuntimeSizedAllocation
-                ))
-            );
+                Err(TargetLayoutFailure::Allocation {
+                    ty: crate::IrType::Integer {
+                        width: 64,
+                        signed: false,
+                    },
+                    size: Some(8),
+                    alignment: Some(8),
+                    maximum_alignment: 4,
+                    object: TargetObject::RuntimeSizedAllocation,
+                    ..
+                })
+            ));
         });
     }
+}
+
+#[test]
+fn a_frozen_payload_reserves_its_header_and_alignment_padding() {
+    let source = b"fn main() -> status: std::process::ExitStatus pure {\n  let value = frozen_new::<u64>(value: 7_u64);\n  return std::process::exit_status(code: 0_u8);\n}\n";
+    with_ir(source, |program| {
+        let host = TargetLayout::host().expect("supported target");
+        // The runtime's complete request is 8 payload bytes, its 32-byte
+        // header and up to 15 bytes before the aligned value.
+        let exact = host.with_runtime_allocation_limits_for_test(55, 4096);
+        assert_eq!(validate_program(exact, program), Ok(()));
+        let short = host.with_runtime_allocation_limits_for_test(54, 4096);
+        assert!(matches!(
+            validate_program(short, program),
+            Err(TargetLayoutFailure::Allocation {
+                size: Some(8),
+                alignment: Some(8),
+                maximum_size: 54,
+                object: TargetObject::RuntimeSizedAllocation,
+                ..
+            })
+        ));
+    });
 }
 
 #[test]

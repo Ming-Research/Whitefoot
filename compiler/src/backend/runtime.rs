@@ -16,6 +16,9 @@ pub fn module_requires_heap_runtime(module: &str) -> bool {
     module.contains("@wf__heap_take(")
         || module.contains("@wf__heap_give(")
         || module.contains("@wf__heap_retake(")
+        || module.contains("@wf__heap_take_aligned(")
+        || module.contains("@wf__heap_give_aligned(")
+        || module.contains("@wf__heap_retake_aligned(")
         || module.contains("@wf__empty_window")
 }
 
@@ -119,17 +122,39 @@ mod tests {
     fn without_heap_entry_points(source: &str) -> String {
         let mut remaining = source.to_owned();
         for (signature, allocator) in [
-            ("void *wf__heap_take(uint64_t bytes) {", "malloc"),
+            ("void *wf__heap_take(uint64_t bytes) {", &["malloc"][..]),
             (
                 "void *wf__heap_retake(void *block, uint64_t old_bytes, uint64_t new_bytes) {",
-                "realloc",
+                &["realloc"][..],
             ),
-            ("void wf__heap_give(void *block, uint64_t bytes) {", "free"),
+            (
+                "void wf__heap_give(void *block, uint64_t bytes) {",
+                &["free"][..],
+            ),
+            (
+                "void *wf__heap_take_aligned(uint64_t bytes, uint64_t alignment) {",
+                &["posix_memalign", "_aligned_malloc"][..],
+            ),
+            (
+                "void wf__heap_give_aligned(void *block, uint64_t bytes, uint64_t alignment) {",
+                &["free", "_aligned_free"][..],
+            ),
         ] {
             let start = remaining.find(signature).expect("counted heap entry point");
             let end = start + remaining[start..].find("\n}\n").expect("function end") + 3;
             let body = &remaining[start..end];
-            assert_eq!(body.matches(&format!("{allocator}(")).count(), 1);
+            for name in allocator {
+                let count = body
+                    .match_indices(&format!("{name}("))
+                    .filter(|(at, _)| {
+                        !body[..*at]
+                            .chars()
+                            .next_back()
+                            .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
+                    })
+                    .count();
+                assert_eq!(count, 1);
+            }
             for forbidden in [
                 "malloc",
                 "calloc",
@@ -137,8 +162,10 @@ mod tests {
                 "free",
                 "aligned_alloc",
                 "posix_memalign",
+                "_aligned_malloc",
+                "_aligned_free",
             ] {
-                if forbidden != allocator {
+                if !allocator.contains(&forbidden) {
                     assert!(!calls(body, forbidden), "{signature} calls {forbidden}");
                 }
             }
@@ -221,6 +248,8 @@ mod tests {
                 "free",
                 "aligned_alloc",
                 "posix_memalign",
+                "_aligned_malloc",
+                "_aligned_free",
             ] {
                 assert!(!calls(source, allocator), "{name} calls {allocator}");
             }

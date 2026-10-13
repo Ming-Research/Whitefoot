@@ -2043,6 +2043,7 @@ impl<'program> IrBuilder<'program> {
                     },
                 )?;
                 self.source_calls.push(IrSourceCall {
+                    origin: call.clone(),
                     result,
                     arguments: source_arguments,
                     returned_borrow_argument: result_borrow.as_ref().map(|borrow| borrow.argument),

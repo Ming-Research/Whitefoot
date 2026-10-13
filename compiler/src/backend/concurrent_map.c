@@ -621,12 +621,18 @@ static inline void unlock(cell *c, uint64_t key) { atomic_store_explicit(&c->key
 
 
 static uint64_t slot_offset(const wf_cmap *map, uint64_t length) {
+    if (length > INT64_MAX - sizeof(node) - map->slot_align + 1)
+        WF_CMAP_EXHAUSTED();
     uint64_t at = sizeof(node) + length;
     return (at + map->slot_align - 1) / map->slot_align * map->slot_align;
 }
 
 static uint64_t node_bytes(const wf_cmap *map, uint64_t length) {
-    uint64_t bytes = slot_offset(map, length) + map->slot_size;
+    uint64_t offset = slot_offset(map, length);
+    if (offset > INT64_MAX - (ENTRY_GRAIN - 1) ||
+        map->slot_size > INT64_MAX - offset - (ENTRY_GRAIN - 1))
+        WF_CMAP_EXHAUSTED();
+    uint64_t bytes = offset + map->slot_size;
     return (bytes + ENTRY_GRAIN - 1) / ENTRY_GRAIN * ENTRY_GRAIN;
 }
 
@@ -653,9 +659,40 @@ static void wait_for_readers(cell *c) {
         back_off(&round);
 }
 
+/* Extended-alignment nodes and absent slots retain the pool's original
+ * pointer immediately before the aligned address. The pool counts its full
+ * grant, including this prefix and the explicit alignment padding. */
+static size_t aligned_slot_bytes(uint64_t bytes, uint64_t alignment) {
+    size_t extra = sizeof(void *) + (size_t)alignment - 1;
+    if (bytes > INT64_MAX - extra || bytes > SIZE_MAX - extra)
+        WF_CMAP_EXHAUSTED();
+    return (size_t)bytes + extra;
+}
+
+static void *take_slot(uint64_t bytes, uint64_t alignment) {
+    if (alignment <= ENTRY_GRAIN)
+        return take((size_t)bytes);
+    void *raw = take(aligned_slot_bytes(bytes, alignment));
+    uintptr_t at = (uintptr_t)raw + sizeof(void *);
+    void *slot = (void *)((at + alignment - 1) & ~(uintptr_t)(alignment - 1));
+    ((void **)slot)[-1] = raw;
+    return slot;
+}
+
+static void give_slot(void *slot, uint64_t bytes, uint64_t alignment) {
+    if (alignment <= ENTRY_GRAIN)
+        WF_CMAP_GIVE(slot, bytes);
+    else
+        WF_CMAP_GIVE(((void **)slot)[-1], aligned_slot_bytes(bytes, alignment));
+}
+
 static node *new_node(wf_cmap_user *u, uint64_t bytes) {
-    if (bytes > ENTRY_LARGEST)
-        return take(bytes);
+    if (bytes > ENTRY_LARGEST || u->map->slot_align > ENTRY_GRAIN) {
+        node *n = take_slot(bytes, u->map->slot_align);
+        if ((uint64_t)(uintptr_t)n >> READER_SHIFT)
+            abort();
+        return n;
+    }
     unsigned k = (unsigned)(bytes / ENTRY_GRAIN) - 1;
     free_entry *f = u->free[k];
     if (f != NULL) {
@@ -684,8 +721,8 @@ static node *new_node(wf_cmap_user *u, uint64_t bytes) {
 }
 
 static void free_node(wf_cmap_user *u, node *n, uint64_t bytes) {
-    if (bytes > ENTRY_LARGEST) {
-        WF_CMAP_GIVE(n, bytes);
+    if (bytes > ENTRY_LARGEST || u->map->slot_align > ENTRY_GRAIN) {
+        give_slot(n, bytes, u->map->slot_align);
         return;
     }
     WF_CMAP_HEAP_CHANGE(-(int64_t)bytes);
@@ -1009,9 +1046,11 @@ static void enter_keyed(wf_cmap_user *u) {
     atomic_fetch_sub_explicit(&map->waiting, 1, memory_order_release);
 }
 
-/* The bytes of a map's `None` slot, whole grains, so the block the pool
- * gives is aligned for any slot the map admits. */
+/* The bytes of a map's `None` slot, rounded to the ordinary pool grain.
+ * Extended alignment is provided separately by take_slot. */
 static uint64_t none_bytes(uint64_t slot_size) {
+    if (slot_size > INT64_MAX - (ENTRY_GRAIN - 1))
+        WF_CMAP_EXHAUSTED();
     return slot_size == 0 ? ENTRY_GRAIN : (slot_size + ENTRY_GRAIN - 1) / ENTRY_GRAIN * ENTRY_GRAIN;
 }
 
@@ -1019,12 +1058,12 @@ wf_cmap *wf_cmap_create_entries(uint64_t slot_size, uint64_t slot_align, uint64_
     /* The target refuses a program whose map's slot needs more alignment
      * before emission, so this stops only a caller that breaks the
      * contract. */
-    if (slot_align == 0 || slot_align > ENTRY_GRAIN || (slot_align & (slot_align - 1)) != 0)
+    if (slot_align == 0 || slot_align > 4096 || (slot_align & (slot_align - 1)) != 0)
         abort();
     wf_cmap *map = wf_cmap_create(capacity);
     map->slot_size = slot_size;
     map->slot_align = slot_align;
-    map->none = take(none_bytes(slot_size));
+    map->none = take_slot(none_bytes(slot_size), slot_align);
     memset(map->none, 0, (size_t)none_bytes(slot_size));
     return map;
 }
@@ -2904,8 +2943,8 @@ uint64_t wf_cmap_count(wf_cmap *map) {
 
 void *wf_cmap_drain(wf_cmap *map) {
     if (map->pending != NULL) {
-        if (map->pending_bytes > ENTRY_LARGEST)
-            WF_CMAP_GIVE(map->pending, map->pending_bytes);
+        if (map->pending_bytes > ENTRY_LARGEST || map->slot_align > ENTRY_GRAIN)
+            give_slot(map->pending, map->pending_bytes, map->slot_align);
         else
             WF_CMAP_HEAP_CHANGE(-(int64_t)map->pending_bytes);
         map->pending = NULL;
@@ -2981,7 +3020,7 @@ void wf_cmap_destroy(wf_cmap *map) {
             WF_CMAP_GIVE(u->spare_keys, (size_t)u->spare_room * sizeof(wf_cmap_held));
     }
     if (map->none)
-        WF_CMAP_GIVE(map->none, none_bytes(map->slot_size));
+        give_slot(map->none, none_bytes(map->slot_size), map->slot_align);
     WF_CMAP_GIVE(map->raw, sizeof(wf_cmap) + 64);
 }
 

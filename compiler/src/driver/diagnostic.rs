@@ -158,6 +158,20 @@ impl Record {
         }
     }
 
+    /// A target-stage stop may still name the checked source allocation that
+    /// requires the failed representation, without claiming a language rule.
+    pub(super) fn target_layout(
+        message: String,
+        bundle: &SourceBundle,
+        coordinate: Option<SyntaxCoordinate>,
+    ) -> Self {
+        Self {
+            kind: Some("TargetLayout".to_owned()),
+            at: coordinate.and_then(|at| Place::resolve(bundle, at, Anchor::Start)),
+            detail: vec![("reason", Value::Text(message))],
+        }
+    }
+
     /// The payload fields in the text rendering, one `label: value` per line.
     pub(super) fn detail_text(&self) -> String {
         let mut text = String::new();

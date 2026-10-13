@@ -671,6 +671,30 @@ fn emit_module(
         ),
         Signature::new("wf__heap_take", "ptr", vec![Parameter::unnamed("i64")]),
         Signature::new(
+            "wf__heap_take_aligned",
+            "ptr",
+            vec![Parameter::unnamed("i64"), Parameter::unnamed("i64")],
+        ),
+        Signature::new(
+            "wf__heap_retake_aligned",
+            "ptr",
+            vec![
+                Parameter::unnamed("ptr"),
+                Parameter::unnamed("i64"),
+                Parameter::unnamed("i64"),
+                Parameter::unnamed("i64"),
+            ],
+        ),
+        Signature::new(
+            "wf__heap_give_aligned",
+            "void",
+            vec![
+                Parameter::unnamed("ptr"),
+                Parameter::unnamed("i64"),
+                Parameter::unnamed("i64"),
+            ],
+        ),
+        Signature::new(
             "wf__heap_give",
             "void",
             vec![Parameter::unnamed("ptr"), Parameter::unnamed("i64")],
@@ -689,7 +713,7 @@ fn emit_module(
         .iter()
         .any(|entity| entity.references.symbols.contains("wf__empty_window"))
     {
-        text.declare_global("wf__empty_window".to_owned(), "[64 x i8]", 64);
+        text.declare_global("wf__empty_window".to_owned(), "[4096 x i8]", 4096);
     }
     text.attribute_group(0, format!("\"probe-stack\"=\"{}\"", target.stack_probe()));
     let mut ledger = frontiers.ledger().to_vec();
@@ -1507,6 +1531,49 @@ pub(super) fn ordinary_frame_prelude_for_test(
         },
     )?;
     frame.render(target, program, &mut References::default())
+}
+
+/// The alignment of the bytes owned by one source heap allocation. Paged
+/// directory storage contains pointers; its separately allocated pages carry
+/// the element's alignment. Segments stores its elements after variable bounds.
+fn heap_allocation_alignment(
+    target: TargetLayout,
+    program: &IrProgram,
+    ty: IrType,
+) -> Result<u64, BackendFailure> {
+    let ty = match ty {
+        IrType::Window {
+            shape: IrWindowShape::Paged,
+            ..
+        } => return Ok(8),
+        IrType::Segments { element }
+        | IrType::Window {
+            element,
+            capacity: None,
+            ..
+        } => program.element(element).ok_or(BackendFailure::InvalidIr)?,
+        _ => ty,
+    };
+    crate::target::representation_layout(target, program, ty)
+        .map(|layout| layout.align().max(8))
+        .map_err(BackendFailure::TargetLayout)
+}
+
+/// Keep the ordinary allocator ABI for ordinary alignment. The aligned ABI
+/// appends the requested alignment and retains the same logical byte extent.
+fn heap_call(target: TargetLayout, base: &'static str, alignment: u64) -> (&'static str, String) {
+    if alignment <= target.runtime_allocation_alignment() {
+        return (base, String::new());
+    }
+    let aligned = match base {
+        "wf__heap_take" => "wf__heap_take_aligned",
+        "wf__heap_retake" => "wf__heap_retake_aligned",
+        "wf__heap_give" => "wf__heap_give_aligned",
+        "wf__frozen_new" => "wf__frozen_new_aligned",
+        "wf__shared_new" => "wf__shared_new_aligned",
+        _ => unreachable!("only allocator entry points select alignment"),
+    };
+    (aligned, format!(", i64 {alignment}"))
 }
 
 /// Reserves one logical frame slot under its semantic key.
@@ -3402,6 +3469,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             if let Some(operand) = snapshot {
                 emit_cleanup(
                     self.program,
+                    self.target,
                     &mut self.output,
                     &mut self.temporary,
                     drop.ty(),

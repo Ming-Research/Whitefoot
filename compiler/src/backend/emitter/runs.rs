@@ -1148,10 +1148,12 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         self.output.open_block(size);
         let bytes =
             self.emit_allocation_size(&count, &element_size, &header_size, &oom, &allocate)?;
-        self.output.symbol("wf__heap_take");
+        let alignment = heap_allocation_alignment(self.target, self.program, block_type)?;
+        let (allocator, alignment_argument) = heap_call(self.target, "wf__heap_take", alignment);
+        self.output.symbol(allocator);
         writeln!(
             self.output,
-            "  %{fresh} = call ptr @wf__heap_take(i64 {bytes})\n  %{nonnull} = icmp ne ptr %{fresh}, null\n  br i1 %{nonnull}, label %{init}, label %{oom}"
+            "  %{fresh} = call ptr @{allocator}(i64 {bytes}{alignment_argument})\n  %{nonnull} = icmp ne ptr %{fresh}, null\n  br i1 %{nonnull}, label %{init}, label %{oom}"
         )?;
         self.output.open_block(oom);
         self.output.symbol("wf_resource_abort");
@@ -1292,10 +1294,12 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             self.emit_allocation_size(&count, &element_size, &header_size, &oom, &allocate)?;
         // Every positive growth retakes: from the shared empty header the
         // runtime always takes a writable block and copies the header.
-        self.output.symbol("wf__heap_retake");
+        let alignment = heap_allocation_alignment(self.target, self.program, block_type)?;
+        let (allocator, alignment_argument) = heap_call(self.target, "wf__heap_retake", alignment);
+        self.output.symbol(allocator);
         writeln!(
             self.output,
-            "  %{fresh} = call ptr @wf__heap_retake(ptr %{old}, i64 {old_bytes}, i64 {bytes})"
+            "  %{fresh} = call ptr @{allocator}(ptr %{old}, i64 {old_bytes}, i64 {bytes}{alignment_argument})"
         )?;
         writeln!(
             self.output,
@@ -1362,10 +1366,12 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             &pointer,
         )?;
         {
-            self.output.symbol("wf__heap_give");
+            let alignment = heap_allocation_alignment(self.target, self.program, referent)?;
+            let (release, alignment_argument) = heap_call(self.target, "wf__heap_give", alignment);
+            self.output.symbol(release);
             writeln!(
                 self.output,
-                "  call void @wf__heap_give(ptr {}, i64 {bytes})",
+                "  call void @{release}(ptr {}, i64 {bytes}{alignment_argument})",
                 self.value_name(value)
             )
         }

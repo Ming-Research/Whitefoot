@@ -1696,12 +1696,22 @@ fn runtime_allocation_headers_qualify_for_zero_and_nonzero_strides() {
             let exact = host.with_runtime_allocation_limits_for_test(header, 8);
             assert_eq!(validate_program(exact, program), Ok(()));
             let short = host.with_runtime_allocation_limits_for_test(header - 1, 8);
-            assert_eq!(
-                validate_program(short, program),
-                Err(TargetLayoutFailure::Unrepresentable(
-                    crate::target::TargetObject::RuntimeSizedAllocation
-                ))
-            );
+            let failure =
+                validate_program(short, program).expect_err("the header exceeds the byte domain");
+            let TargetLayoutFailure::Allocation {
+                alignment,
+                maximum_size,
+                maximum_alignment,
+                object,
+                ..
+            } = failure
+            else {
+                panic!("allocation context missing: {failure:?}");
+            };
+            assert_eq!(alignment, Some(1));
+            assert_eq!(maximum_size, header - 1);
+            assert_eq!(maximum_alignment, 8);
+            assert_eq!(object, crate::target::TargetObject::RuntimeSizedAllocation);
             if element == "Empty" {
                 // Narrow only the address domain, retaining enough space for
                 // the ordinary prelude's concrete nominal representations.

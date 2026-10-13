@@ -385,14 +385,18 @@ int wf__context_join_wait(uint64_t *group, void *frame);
  * after which the emitted code drops the state and calls `wf__shared_free`. */
 #define WF_SHARED_STATE_OFFSET 64u
 /* Frozen handles point directly at aligned, immutable value storage. The
- * header contains only a count and the allocator extent, with no object lock.
+ * header contains a count, the allocator extent and its original base,
+ * with no object lock.
  * The last acq_rel release precedes the emitted value release and free. */
+#define WF_FROZEN_HEADER_BYTES 32u
 void *wf__frozen_new(uint64_t value_bytes);
+void *wf__frozen_new_aligned(uint64_t value_bytes, uint64_t alignment);
 void wf__frozen_share(void *value);
 int wf__frozen_release(void *value);
 void wf__frozen_free(void *value);
 
 void *wf__shared_new(uint64_t state_bytes);
+void *wf__shared_new_aligned(uint64_t state_bytes, uint64_t alignment);
 void wf__shared_share(void *object);
 int wf__shared_release(void *object);
 void wf__shared_free(void *object);
@@ -652,10 +656,14 @@ uint64_t wf__guard_clock_ns(void);
 /* Emitted heap storage uses the optional heap.c unit; accounting and reads
  * are always available without allocator references. Resident observation
  * returns 1 with bytes written, or 0 when the host cannot report it. */
-extern const unsigned char wf__empty_window[64];
+#define WF_HEAP_MAX_ALIGNMENT 4096u
+extern const unsigned char wf__empty_window[WF_HEAP_MAX_ALIGNMENT];
 void *wf__heap_take(uint64_t bytes);
 void *wf__heap_retake(void *block, uint64_t old_bytes, uint64_t new_bytes);
 void wf__heap_give(void *block, uint64_t bytes);
+void *wf__heap_take_aligned(uint64_t bytes, uint64_t alignment);
+void *wf__heap_retake_aligned(void *block, uint64_t old_bytes, uint64_t new_bytes, uint64_t alignment);
+void wf__heap_give_aligned(void *block, uint64_t bytes, uint64_t alignment);
 void wf__heap_change(int64_t change);
 uint64_t wf__heap_in_use(void);
 int wf__resident_bytes(uint64_t *bytes);

@@ -1131,7 +1131,8 @@ static void *wf_pool_take(size_t bytes, size_t *granted) {
 /* The whole size of the block a request of `bytes` is granted. */
 static size_t wf_pool_granted(size_t bytes) {
     if (bytes > WF_POOL_LARGEST) {
-        if (bytes > SIZE_MAX - WF_POOL_LARGE_GRAIN) {
+        if (bytes > INT64_MAX - (WF_POOL_LARGE_GRAIN - 1u) ||
+            bytes > SIZE_MAX - (WF_POOL_LARGE_GRAIN - 1u)) {
             wf_context_exhausted();
         }
         return (bytes + WF_POOL_LARGE_GRAIN - 1u) / WF_POOL_LARGE_GRAIN * WF_POOL_LARGE_GRAIN;
@@ -3338,7 +3339,8 @@ static void wf_watch_on(wf_watch *watch, uint32_t *count, wf_watch_link **head,
         if (test == NULL) test = &wf_wake_always;
         /* The permanent never state has no pool block; nothing bounds it. */
         (void)wf_wake_used(test, object->pool_bytes > WF_SHARED_STATE_OFFSET
-                                     ? (uint64_t)(object->pool_bytes - WF_SHARED_STATE_OFFSET)
+                                     ? (uint64_t)(object->pool_bytes - WF_SHARED_STATE_OFFSET -
+                                         ((uintptr_t)object - (uintptr_t)((void **)object)[-1]))
                                      : UINT64_MAX);
     }
     for (;;) {
@@ -3736,22 +3738,40 @@ _Noreturn void wf__runtime_exhausted(void) {
 typedef struct {
     _Atomic uint64_t handles;
     size_t pool_bytes;
-    _Alignas(max_align_t) unsigned char value[];
+    void *pool_raw;
+    _Alignas(16) unsigned char value[];
 } wf_frozen;
+_Static_assert(offsetof(wf_frozen, value) == WF_FROZEN_HEADER_BYTES,
+               "frozen value storage has the target-qualified header extent");
 
 static wf_frozen *wf_frozen_header(void *value) {
     return (wf_frozen *)((unsigned char *)value - offsetof(wf_frozen, value));
 }
 
-void *wf__frozen_new(uint64_t value_bytes) {
+/* The runtime pool guarantees 512-byte alignment, not every larger
+ * alignment. Pad within a counted pool grant and retain its original base. */
+void *wf__frozen_new_aligned(uint64_t value_bytes, uint64_t alignment) {
     size_t granted;
-    if (value_bytes > SIZE_MAX - sizeof(wf_frozen)) {
+    if (alignment == 0 || alignment > WF_HEAP_MAX_ALIGNMENT ||
+        (alignment & (alignment - 1)) != 0)
+        abort();
+    if (alignment < _Alignof(wf_frozen))
+        alignment = _Alignof(wf_frozen);
+    size_t extra = offsetof(wf_frozen, value) + (size_t)alignment - 1;
+    if (value_bytes > INT64_MAX - extra || value_bytes > SIZE_MAX - extra)
         wf_context_exhausted();
-    }
-    wf_frozen *frozen = wf_pool_take(sizeof(wf_frozen) + (size_t)value_bytes, &granted);
+    void *raw = wf_pool_take(extra + (size_t)value_bytes, &granted);
+    uintptr_t at = (uintptr_t)raw + offsetof(wf_frozen, value);
+    void *value = (void *)((at + alignment - 1) & ~(uintptr_t)(alignment - 1));
+    wf_frozen *frozen = wf_frozen_header(value);
     atomic_init(&frozen->handles, 1u);
     frozen->pool_bytes = granted;
-    return frozen->value;
+    frozen->pool_raw = raw;
+    return value;
+}
+
+void *wf__frozen_new(uint64_t value_bytes) {
+    return wf__frozen_new_aligned(value_bytes, _Alignof(wf_frozen));
 }
 
 void wf__frozen_share(void *value) {
@@ -3764,25 +3784,37 @@ int wf__frozen_release(void *value) {
 
 void wf__frozen_free(void *value) {
     wf_frozen *frozen = wf_frozen_header(value);
-    wf_pool_give(frozen, frozen->pool_bytes);
+    wf_pool_give(frozen->pool_raw, frozen->pool_bytes);
 }
 
-void *wf__shared_new(uint64_t state_bytes) {
+/* The raw pool pointer immediately precedes the object header. Keeping
+ * this prefix for ordinary objects too leaves one release protocol and keeps
+ * the state at its existing fixed offset for locks and wake expressions. */
+void *wf__shared_new_aligned(uint64_t state_bytes, uint64_t alignment) {
     size_t granted;
-    wf_shared *shared;
-    if (state_bytes > SIZE_MAX - WF_SHARED_STATE_OFFSET) {
+    if (alignment == 0 || alignment > WF_HEAP_MAX_ALIGNMENT ||
+        (alignment & (alignment - 1)) != 0)
+        abort();
+    if (alignment < _Alignof(wf_shared))
+        alignment = _Alignof(wf_shared);
+    size_t extra = WF_SHARED_STATE_OFFSET + sizeof(void *) + (size_t)alignment - 1;
+    if (state_bytes > INT64_MAX - extra || state_bytes > SIZE_MAX - extra)
         wf_context_exhausted();
-    }
-    shared = (wf_shared *)wf_pool_take(
-        WF_SHARED_STATE_OFFSET + (size_t)state_bytes,
-        &granted
-    );
+    void *raw = wf_pool_take(extra + (size_t)state_bytes, &granted);
+    uintptr_t at = (uintptr_t)raw + sizeof(void *) + WF_SHARED_STATE_OFFSET;
+    uintptr_t state = (at + alignment - 1) & ~(uintptr_t)(alignment - 1);
+    wf_shared *shared = (wf_shared *)(state - WF_SHARED_STATE_OFFSET);
+    ((void **)shared)[-1] = raw;
     memset(shared, 0, sizeof(*shared));
     atomic_store_explicit(&shared->handles, 1u, memory_order_relaxed);
     atomic_store_explicit(&shared->holders, 0u, memory_order_relaxed);
     atomic_flag_clear(&shared->lock);
     shared->pool_bytes = granted;
     return shared;
+}
+
+void *wf__shared_new(uint64_t state_bytes) {
+    return wf__shared_new_aligned(state_bytes, _Alignof(wf_shared));
 }
 
 void wf__shared_share(void *object) {
@@ -3797,7 +3829,7 @@ int wf__shared_release(void *object) {
 
 void wf__shared_free(void *object) {
     wf_shared *shared = (wf_shared *)object;
-    wf_pool_give(shared, shared->pool_bytes);
+    wf_pool_give(((void **)shared)[-1], shared->pool_bytes);
 }
 
 /* A separately decided control verdict, not exposed mutable shared state.

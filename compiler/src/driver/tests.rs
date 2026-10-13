@@ -2904,6 +2904,89 @@ fn unrepresentable_array_is_a_target_failure_without_a_source_rule() {
     assert!(failure.detail().contains("Unrepresentable"));
 }
 
+/// Source types currently require at most 16-byte natural alignment, so an
+/// injected target limit exercises the same refusal above the supported ABI
+/// maximum without adding an artificial source-language alignment feature.
+#[test]
+fn an_unrepresentable_heap_alignment_names_the_type_and_source_allocation() {
+    let source = b"fn main() -> status: std::process::ExitStatus pure {\n  let cells = box_slots_new::<std::process::MemoryMeter>(capacity: 1_u64);\n  free_empty(window: move cells);\n  return std::process::exit_status(code: 0_u8);\n}\n";
+    check(
+        &[SourceInput::new("alignment.wf", source)],
+        CompilerLimits::default(),
+    )
+    .expect("source acceptance is independent of the selected heap alignment");
+    let target = crate::target::TargetLayout::host()
+        .expect("supported test target")
+        .with_runtime_allocation_limits_for_test(i64::MAX as u64, 8);
+    let failure = super::with_checked_program(
+        &[SourceInput::new("alignment.wf", source)],
+        None,
+        CompilerLimits::default(),
+        |checked, resolved| {
+            let program =
+                crate::lower_checked_with_layout(checked, crate::OverlapLowering::Off, target)
+                    .map_err(super::CompilationFailure::lowering)?;
+            crate::target::validate_program(target, &program).map_err(|failure| {
+                super::CompilationFailure::target_layout(failure, &program, resolved)
+            })
+        },
+    )
+    .expect_err("the selected target refuses a 16-byte payload alignment");
+    assert_eq!(failure.stage(), CompilationStage::TargetLayout);
+    assert_eq!(failure.kind(), CompilationFailureKind::TargetLayout);
+    assert_eq!(failure.rule_id(), None);
+    let location = failure
+        .location()
+        .expect("the checked allocation call is retained");
+    assert_eq!(
+        (location.path(), location.line(), location.column()),
+        ("alignment.wf", 2, 15),
+    );
+    let detail = failure.detail();
+    assert!(detail.contains("MemoryMeter"), "{detail}");
+    assert!(detail.contains("requires alignment 16 bytes"), "{detail}");
+    assert!(detail.contains("at most 8 bytes"), "{detail}");
+    let json = failure.render(super::DiagnosticFormat::Json);
+    assert!(
+        json.contains("\"file\":\"alignment.wf\",\"line\":2,\"column\":15"),
+        "{json}"
+    );
+    assert!(json.contains("MemoryMeter"), "{json}");
+    assert!(json.contains("requires alignment 16 bytes"), "{json}");
+    assert!(json.contains("at most 8 bytes"), "{json}");
+    assert!(!json.contains("\"rule\":"), "{json}");
+    assert!(failure.to_string().starts_with("alignment.wf:2:15:"));
+}
+
+#[test]
+fn an_unrepresentable_heap_payload_names_the_type_and_source_allocation() {
+    let source = b"struct Giant {\n  words: Array<u64, 2305843009213693952>;\n}\n\nfn main() -> status: std::process::ExitStatus pure {\n  let cells = box_slots_new::<Giant>(capacity: 0_u64);\n  free_empty(window: move cells);\n  return std::process::exit_status(code: 0_u8);\n}\n";
+    check(
+        &[SourceInput::new("payload.wf", source)],
+        CompilerLimits::default(),
+    )
+    .expect("an unrepresentable target payload remains source-valid");
+    let failure = compile(
+        &[SourceInput::new("payload.wf", source)],
+        CompilerLimits::default(),
+    )
+    .expect_err("the element layout exceeds the selected target address domain");
+    assert_eq!(failure.stage(), CompilationStage::TargetLayout);
+    assert_eq!(failure.kind(), CompilationFailureKind::TargetLayout);
+    assert_eq!(failure.rule_id(), None);
+    let location = failure.location().expect("the allocation call is retained");
+    assert_eq!(
+        (location.path(), location.line(), location.column()),
+        ("payload.wf", 6, 15),
+    );
+    let detail = failure.detail();
+    assert!(detail.contains("Giant"), "{detail}");
+    assert!(
+        detail.contains("exceeds the target address domain"),
+        "{detail}"
+    );
+}
+
 #[test]
 fn a_loop_frame_outside_the_selected_address_domain_stays_a_target_failure() {
     use crate::target::{TargetLayout, TargetLayoutFailure, TargetObject};

@@ -24,6 +24,8 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         } else {
             "wf__heap_take"
         };
+        let alignment = heap_allocation_alignment(self.target, self.program, *referent)?;
+        let (allocator, alignment_argument) = heap_call(self.target, allocator, alignment);
         let referent_type = self.output.type_name(self.program, *referent)?;
         let nonnull = self.next_temporary()?;
         let oom = format!("box.new.oom.v{}", result.ordinal());
@@ -39,7 +41,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 self.output.symbol(allocator);
                 write!(
                     self.output,
-                    "  {emission_argument_0} = call ptr @{allocator}(i64 ptrtoint (ptr getelementptr ({referent_type}, ptr null, i64 1) to i64))\n  %{nonnull} = icmp ne ptr {emission_argument_1}, null\n  br i1 %{nonnull}, label %{ready}, label %{oom}\n"
+                    "  {emission_argument_0} = call ptr @{allocator}(i64 ptrtoint (ptr getelementptr ({referent_type}, ptr null, i64 1) to i64){alignment_argument})\n  %{nonnull} = icmp ne ptr {emission_argument_1}, null\n  br i1 %{nonnull}, label %{ready}, label %{oom}\n"
                 )
             }?;
             self.output.open_block(oom.to_string());
@@ -96,10 +98,13 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         if release == crate::IrReleaseClass::General {
             {
                 let referent_type = self.output.type_name(self.program, ty)?;
-                self.output.symbol("wf__heap_give");
+                let alignment = heap_allocation_alignment(self.target, self.program, ty)?;
+                let (release, alignment_argument) =
+                    heap_call(self.target, "wf__heap_give", alignment);
+                self.output.symbol(release);
                 writeln!(
                     self.output,
-                    "  call void @wf__heap_give(ptr {}, i64 ptrtoint (ptr getelementptr ({referent_type}, ptr null, i64 1) to i64))",
+                    "  call void @{release}(ptr {}, i64 ptrtoint (ptr getelementptr ({referent_type}, ptr null, i64 1) to i64){alignment_argument})",
                     self.value_name(value)
                 )
             }

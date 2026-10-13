@@ -98,7 +98,11 @@ pub(crate) fn prepare_dispatch_layout(
         // a target failure, including inline arrays and bounded lane frames.
         match validate_program(target, &selected) {
             Ok(()) => {}
-            Err(TargetLayoutFailure::Unrepresentable(_)) => return Ok(empty()),
+            Err(
+                TargetLayoutFailure::Unrepresentable(_) | TargetLayoutFailure::Allocation { .. },
+            ) => {
+                return Ok(empty());
+            }
             Err(failure) => return Err(BackendFailure::TargetLayout(failure)),
         }
         let actual = census(&selected, target, &plan)?;

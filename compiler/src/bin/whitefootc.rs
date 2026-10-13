@@ -1973,7 +1973,10 @@ mod tests {
             "declare ptr @wf__heap_take(i64)",
             "declare ptr @wf__heap_retake(ptr, i64, i64)",
             "declare void @wf__heap_give(ptr, i64)",
-            "@wf__empty_window = external constant [64 x i8], align 64",
+            "declare ptr @wf__heap_take_aligned(i64, i64)",
+            "declare ptr @wf__heap_retake_aligned(ptr, i64, i64, i64)",
+            "declare void @wf__heap_give_aligned(ptr, i64, i64)",
+            "@wf__empty_window = external constant [4096 x i8], align 4096",
         ] {
             let (_, with_heap) = runtime_units(dependency);
             assert!(with_heap.contains(&"heap.c"));
