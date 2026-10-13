@@ -286,7 +286,7 @@ fn main() -> status: std::process::ExitStatus pure {
             .unwrap();
         let CheckedStatement::Match {
             scrutinee,
-            enum_type,
+            match_type,
             arms,
             ..
         } = &probe.body.as_ref().unwrap()[0]
@@ -313,7 +313,7 @@ fn main() -> status: std::process::ExitStatus pure {
         let Value::Bool(_, before) = walker.eval(&mut state, scrutinee) else {
             panic!("the condition must be a Bool selection");
         };
-        let branches = walker.arms(&mut state, scrutinee, *enum_type, arms);
+        let branches = walker.arms(&mut state, scrutinee, *match_type, arms);
         assert_eq!(branches.len(), 2);
         for (index, mut branch) in branches.into_iter().enumerate() {
             let expected_tag = i128::from(index != 0);
@@ -348,5 +348,136 @@ fn main() -> status: std::process::ExitStatus pure {
                 assert_eq!(before, after, "the implicit else leaves the image intact");
             }
         }
+    });
+}
+
+/// Integer arms all start at the same captured element version. The else
+/// path adds one exclusion, and writing the element cannot change that fact
+/// into an exclusion of the new value.
+#[test]
+fn integer_else_captures_one_set_before_an_element_write() {
+    let source = br#"fn probe(cells: &Array<u64, 1>) -> result: unit writes(cells) {
+  match cells^[0_u64] {
+    0_u64 => {
+    }
+    1_u64 => {
+    }
+    2_u64 => {
+    }
+    else => {
+      set cells^[0_u64] = 0_u64;
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    with_semantics(source, |outcome| {
+        let crate::SemanticOutcome::Complete(program) = outcome else {
+            panic!("integer match source must check: {outcome:?}");
+        };
+        let data = &program.data;
+        let functions: Vec<_> = data.functions.iter().collect();
+        let probe = data
+            .executable_functions()
+            .find(|function| function.name == "probe")
+            .unwrap();
+        let CheckedStatement::Match {
+            scrutinee,
+            match_type,
+            arms,
+            ..
+        } = &probe.body.as_ref().unwrap()[0]
+        else {
+            panic!("expected integer match");
+        };
+        let prelude = BTreeSet::new();
+        let mut walker = Walker::new(
+            &functions,
+            &data.nominals,
+            &data.elements,
+            probe,
+            Vec::new(),
+            &data.constants,
+            JudgmentScope::Concrete,
+            &prelude,
+        );
+        let mut state = State::default();
+        let parameter = Location::root(Origin::Parameter(probe.parameters[0].binding));
+        state.values.insert(
+            probe.parameters[0].binding,
+            Value::Ref(View::Place(parameter)),
+        );
+        let Value::Int(before) = walker.eval(&mut state, scrutinee) else {
+            panic!("integer element");
+        };
+        // `arms` runs each body as well as establishing its selection. The
+        // write's target evaluation also records the Array's known length,
+        // so count selection conditions before running the body.
+        let mut entry_arms = arms.clone();
+        for arm in &mut entry_arms {
+            arm.body.clear();
+        }
+        let branches = walker.arms(&mut state, scrutinee, *match_type, &entry_arms);
+        assert_eq!(branches.len(), 4);
+        for branch in &branches {
+            assert_eq!(
+                branch.conds.len(),
+                state.conds.len() + 1,
+                "each arm adds one selection; else never adds one disequality per label"
+            );
+        }
+        let exclusions = branches
+            .iter()
+            .flat_map(|branch| &branch.conds)
+            .filter(|literal| literal.relation == Relation::Excluded)
+            .collect::<Vec<_>>();
+        assert_eq!(exclusions.len(), 1, "one whole-set condition is captured");
+        assert_eq!(exclusions[0].left, before);
+        assert_eq!(exclusions[0].members(), &[0, 1, 2]);
+        let mut otherwise = walker
+            .block(branches.last().unwrap().clone(), &arms.last().unwrap().body)
+            .expect("the actual else body continues after its write");
+        let Value::Int(after) = walker.eval(&mut otherwise, scrutinee) else {
+            panic!("integer element");
+        };
+        assert_ne!(before, after, "a write selects a new version");
+        let mut old_units = otherwise.conds.clone();
+        old_units.push(Literal::new(before, Relation::Equal, Linear::constant(0)));
+        assert_eq!(
+            facts::judge(
+                &mut walker.world,
+                &[],
+                &[],
+                &[],
+                &[],
+                Query {
+                    units: old_units,
+                    ..Query::default()
+                }
+            ),
+            Ok(Verdict::Refuted),
+            "old selection still excludes zero"
+        );
+        let mut new_units = otherwise.conds;
+        new_units.push(Literal::new(after, Relation::Equal, Linear::constant(0)));
+        assert_eq!(
+            facts::judge(
+                &mut walker.world,
+                &[],
+                &[],
+                &[],
+                &[],
+                Query {
+                    units: new_units,
+                    ..Query::default()
+                }
+            ),
+            Ok(Verdict::Open),
+            "the write permits zero in the new version"
+        );
     });
 }

@@ -28,9 +28,9 @@ use crate::semantic::CheckedSetTarget;
 use crate::semantic::permission::PermissionSite;
 use crate::semantic::{
     BindingId, CheckedArrayRoot, CheckedDrop, CheckedEffectStep, CheckedExpression,
-    CheckedMatchArm, CheckedMeasure, CheckedMode, CheckedNominalKind, CheckedParameter,
-    CheckedProgramData, CheckedProjectedDrop, CheckedShared, CheckedStatement, CheckedValue,
-    FunctionPermissions, MeasureCell, MeasuredKind,
+    CheckedMatchArm, CheckedMatchSelection, CheckedMatchType, CheckedMeasure, CheckedMode,
+    CheckedNominalKind, CheckedParameter, CheckedProgramData, CheckedProjectedDrop, CheckedShared,
+    CheckedStatement, CheckedValue, FunctionPermissions, MeasureCell, MeasuredKind,
 };
 
 use super::*;
@@ -1647,7 +1647,7 @@ impl<'program> IrBuilder<'program> {
                 )?,
                 CheckedStatement::Match {
                     scrutinee,
-                    enum_type,
+                    match_type,
                     arms,
                     continues,
                     ..
@@ -1655,7 +1655,7 @@ impl<'program> IrBuilder<'program> {
                     if !self.lower_conditional_call(statement)? {
                         self.lower_match(
                             scrutinee,
-                            *enum_type,
+                            *match_type,
                             arms,
                             *continues,
                             None,
@@ -1669,7 +1669,7 @@ impl<'program> IrBuilder<'program> {
                     result_mode,
                     result_range_element,
                     scrutinee,
-                    enum_type,
+                    match_type,
                     arms,
                     continues,
                     ..
@@ -1707,7 +1707,7 @@ impl<'program> IrBuilder<'program> {
                     };
                     self.lower_match(
                         scrutinee,
-                        *enum_type,
+                        *match_type,
                         arms,
                         *continues,
                         Some((*binding, result)),
@@ -1722,7 +1722,7 @@ impl<'program> IrBuilder<'program> {
         // [WAIT-3] a context no later statement of its block used is joined
         // at the block's end, before the block's releases and its successor.
         if self.current.is_some() {
-            self.await_contexts_before(outer_pending, usize::MAX)?;
+            self.await_contexts_at_block_end(outer_pending)?;
         }
         self.pending_contexts.truncate(outer_pending);
         Ok(())
@@ -1732,7 +1732,7 @@ impl<'program> IrBuilder<'program> {
     fn lower_match(
         &mut self,
         scrutinee: &CheckedExpression,
-        enum_type: CheckedEnumType,
+        match_type: CheckedMatchType,
         arms: &[CheckedMatchArm],
         continues: bool,
         value_binding: Option<(BindingId, IrType)>,
@@ -1755,7 +1755,7 @@ impl<'program> IrBuilder<'program> {
         self.lower_match_from_value(
             scrutinee,
             borrowed_address,
-            enum_type,
+            match_type,
             arms,
             continues,
             value_binding,
@@ -1769,7 +1769,7 @@ impl<'program> IrBuilder<'program> {
         &mut self,
         scrutinee: IrValueId,
         borrowed_address: Option<IrValueId>,
-        enum_type: CheckedEnumType,
+        match_type: CheckedMatchType,
         arms: &[CheckedMatchArm],
         continues: bool,
         value_binding: Option<(BindingId, IrType)>,
@@ -1800,18 +1800,46 @@ impl<'program> IrBuilder<'program> {
         for _ in arms {
             arm_blocks.push(self.new_block(&[])?.0);
         }
-        self.terminate(IrTerminator::Match {
-            scrutinee,
-            enum_type: crate::lowering::lower_enum_type(self.erasure, enum_type)?,
-            targets: arms
-                .iter()
-                .zip(&arm_blocks)
-                .map(|(arm, block)| IrMatchTarget {
-                    tag: arm.tag,
-                    block: *block,
-                })
-                .collect(),
-        })?;
+        let terminator = match match_type {
+            CheckedMatchType::Enum(enum_type) => IrTerminator::Match {
+                scrutinee,
+                enum_type: crate::lowering::lower_enum_type(self.erasure, enum_type)?,
+                targets: arms
+                    .iter()
+                    .zip(&arm_blocks)
+                    .map(|(arm, block)| {
+                        let CheckedMatchSelection::Variant(tag) = arm.selection else {
+                            return Err(LoweringFailure::InvalidCheckedProgram);
+                        };
+                        Ok(IrMatchTarget { tag, block: *block })
+                    })
+                    .collect::<Result<_, _>>()?,
+            },
+            CheckedMatchType::Integer(_) => {
+                let mut targets = Vec::with_capacity(arms.len());
+                let mut default = None;
+                for (arm, block) in arms.iter().zip(&arm_blocks) {
+                    match arm.selection {
+                        CheckedMatchSelection::Integer(value) => {
+                            targets.push(IrIntegerMatchTarget {
+                                value,
+                                block: *block,
+                            });
+                        }
+                        CheckedMatchSelection::Else => default = Some(*block),
+                        CheckedMatchSelection::Variant(_) => {
+                            return Err(LoweringFailure::InvalidCheckedProgram);
+                        }
+                    }
+                }
+                IrTerminator::IntegerMatch {
+                    scrutinee,
+                    targets,
+                    default,
+                }
+            }
+        };
+        self.terminate(terminator)?;
         for (arm, block) in arms.iter().zip(arm_blocks) {
             self.current = Some(block);
             self.bindings = base_bindings.clone();
@@ -1820,7 +1848,7 @@ impl<'program> IrBuilder<'program> {
             // fields it names: the match is the point at which the scrutinee
             // ceases to exist.
             if !arm.covered.is_empty() {
-                let CheckedEnumType::Nominal(nominal) = enum_type else {
+                let CheckedMatchType::Enum(CheckedEnumType::Nominal(nominal)) = match_type else {
                     return Err(LoweringFailure::InvalidCheckedProgram);
                 };
                 let nominal = self.erased(nominal)?;
@@ -1835,7 +1863,10 @@ impl<'program> IrBuilder<'program> {
                         IrOperation::ProjectVariant {
                             aggregate: scrutinee,
                             nominal,
-                            variant: arm.tag,
+                            variant: match arm.selection {
+                                CheckedMatchSelection::Variant(tag) => tag,
+                                _ => return Err(LoweringFailure::InvalidCheckedProgram),
+                            },
                             field: *field,
                         },
                     )?;
@@ -1844,7 +1875,7 @@ impl<'program> IrBuilder<'program> {
                 self.append_drops(releases)?;
             }
             for binder in &arm.binders {
-                let CheckedEnumType::Nominal(nominal) = enum_type else {
+                let CheckedMatchType::Enum(CheckedEnumType::Nominal(nominal)) = match_type else {
                     return Err(LoweringFailure::InvalidCheckedProgram);
                 };
                 let nominal = self.erased(nominal)?;
@@ -1855,7 +1886,10 @@ impl<'program> IrBuilder<'program> {
                         IrOperation::ProjectVariant {
                             aggregate: scrutinee,
                             nominal,
-                            variant: arm.tag,
+                            variant: match arm.selection {
+                                CheckedMatchSelection::Variant(tag) => tag,
+                                _ => return Err(LoweringFailure::InvalidCheckedProgram),
+                            },
                             field: binder.field,
                         },
                     )?
@@ -1869,7 +1903,10 @@ impl<'program> IrBuilder<'program> {
                             address,
                             projection: IrPlaceStep::EnumVariant {
                                 nominal,
-                                variant: arm.tag,
+                                variant: match arm.selection {
+                                    CheckedMatchSelection::Variant(tag) => tag,
+                                    _ => return Err(LoweringFailure::InvalidCheckedProgram),
+                                },
                                 field: binder.field,
                             },
                         },

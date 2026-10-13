@@ -1,0 +1,22 @@
+fn unrelated(cell: &Option<u64>) -> result: Option<u64> reads(cell) {
+  doc "Reading an argument does not make the constructed return value the argument's tracked place.";
+  let old = cell^;
+  return Some<u64>(value: 7_u64);
+}
+
+fn wrong_argument(cell: &Option<u64>) -> result: u64 reads(cell) {
+  doc "Selecting Some from an unrelated call result establishes no variant fact about an argument read by that call.";
+  match unrelated(cell: cell) {
+    None() => {
+      return 0_u64;
+    }
+    Some(..) => {
+      let direct = cell^.Some.value;
+      return direct;
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
