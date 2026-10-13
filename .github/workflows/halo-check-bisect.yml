@@ -1,4 +1,4 @@
-# Temporary attribution of PR #361's Halo checker slowdown. This is an
+# Temporary attribution of the checker slowdowns on Halo (#361, then #406).
 # explicitly requested experiment, not a correctness gate; it reads no
 # research inputs. Remove it and its branch after attribution is complete.
 name: halo-check-attribution
@@ -21,8 +21,8 @@ env:
   CARGO_INCREMENTAL: 0
   CARGO_PROFILE_GATE_DEBUG: line-tables-only
   CARGO_PROFILE_GATE_STRIP: none
-  BASE_REVISION: c9c45a6ecee57c53675cc4c9e5c82cfe96eb5022
-  HEAD_REVISION: 8ffb6d93241f69e736b12d4339eba780e857d8c9
+  BASE_REVISION: c842d16d4068469fcae3592392924c50eb0895c5
+  HEAD_REVISION: 168f0b186ca37ab9b74a554bbdf44ddf1f7b9907
   HALO_REVISION: 80f0ee4
   WHITEFOOT_CHECK_TIMEOUT: 1800
 
