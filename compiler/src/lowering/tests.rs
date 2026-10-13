@@ -2330,13 +2330,37 @@ fn main() -> status: std::process::ExitStatus pure waits {
 /// a written sibling and a reference parameter whose row writes another field
 /// keep the object live themselves; a move, an assignment, an assignment of
 /// the enclosing value, an exchange, a callee's row, an alias, a write on a
-/// path that returns from the block and a write through a written reference
-/// parameter each still count it.
+/// path that returns from the block, a write through a written reference
+/// parameter, a callee's write of an element not proved apart from the
+/// handle's and a window operation that takes the handle's element back each
+/// still count it. So does a consume of a sibling field, by a move, a `match`
+/// or a destructuring `let`, which releases the handle's field with the rest
+/// of the owner [WIN-3].
 #[test]
 fn atomic_statements_count_a_handle_only_when_the_block_may_lose_it() {
     let source = br#"struct Holder {
   count: u64;
   cell: Shared<u64>;
+}
+
+struct Pair {
+  cell: Shared<u64>;
+  other: Shared<u64>;
+}
+
+struct Spare {
+  cell: Shared<u64>;
+  spare: Option<Shared<u64>>;
+}
+
+struct Inner {
+  first: Shared<u64>;
+  count: u64;
+}
+
+struct Nested {
+  cell: Shared<u64>;
+  inner: Inner;
 }
 
 fn replace_handle(cell: &Shared<u64>) -> result: unit writes(cell) {
@@ -2481,6 +2505,76 @@ fn replaced_through_parameter(cell: &Shared<u64>) -> result: u64 writes(cell) wa
   return seen;
 }
 
+fn sibling_moved() -> result: u64 pure waits {
+  let cell = shared_new::<u64>(value: 1_u64);
+  let other = shared_new::<u64>(value: 2_u64);
+  let pair = Pair(cell: move cell, other: move other);
+  let seen = 0_u64;
+  atomic state = &pair.cell {
+    let gone = move pair.other;
+    set seen = state^;
+  }
+  return seen;
+}
+
+fn sibling_matched() -> result: u64 pure waits {
+  let cell = shared_new::<u64>(value: 1_u64);
+  let other = shared_new::<u64>(value: 2_u64);
+  let spare = Some<Shared<u64>>(value: move other);
+  let slot = Spare(cell: move cell, spare: move spare);
+  let seen = 0_u64;
+  atomic state = &slot.cell {
+    match move slot.spare {
+      Some(value: taken) => {
+        set seen = state^;
+      }
+      None() => {
+        set seen = state^;
+      }
+    }
+  }
+  return seen;
+}
+
+fn sibling_destructured() -> result: u64 pure waits {
+  let cell = shared_new::<u64>(value: 1_u64);
+  let first = shared_new::<u64>(value: 2_u64);
+  let inner = Inner(first: move first, count: 3_u64);
+  let nested = Nested(cell: move cell, inner: move inner);
+  let seen = 0_u64;
+  atomic state = &nested.cell {
+    let Inner(first: taken, count: number) = move nested.inner;
+    set seen = state^;
+  }
+  return seen;
+}
+
+fn element_replaced(shards: &[Shared<u64>], from: u64, into: u64) -> result: u64 writes(shards) waits contract {
+  requires from < shards^.len;
+  requires into < shards^.len;
+} {
+  let seen = 0_u64;
+  atomic state = &shards^[from] {
+    replace_handle(cell: &shards^[into]);
+    set seen = state^;
+  }
+  return seen;
+}
+
+fn element_taken_back() -> result: u64 pure waits {
+  let cell = shared_new::<u64>(value: 1_u64);
+  let slots = slots_new::<Shared<u64>, 4>();
+  place_back(window: &slots, value: move cell);
+  let seen = 0_u64;
+  if 0_u64 < slots.len {
+    atomic state = &slots[0_u64] {
+      let taken = take_back(window: &slots);
+      set seen = state^;
+    }
+  }
+  return seen;
+}
+
 fn main() -> status: std::process::ExitStatus pure waits {
   return std::process::exit_status(code: 0_u8);
 }
@@ -2500,6 +2594,11 @@ fn main() -> status: std::process::ExitStatus pure waits {
             ("replaced_through_alias", 1),
             ("replaced_before_return", 1),
             ("replaced_through_parameter", 1),
+            ("sibling_moved", 1),
+            ("sibling_matched", 1),
+            ("sibling_destructured", 1),
+            ("element_replaced", 1),
+            ("element_taken_back", 1),
         ] {
             let mut retains = 0;
             for block in function(program, name).blocks() {

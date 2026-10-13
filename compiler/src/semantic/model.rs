@@ -1059,8 +1059,8 @@ pub(crate) struct CheckedTarget {
     pub(crate) handle: Box<CheckedExpression>,
     /// [SHARE-1] whether the handle place keeps the object live until the
     /// statement completes, because neither its guard nor its block may
-    /// write or move that place and no other context reaches it, so the
-    /// statement counts no handle of its own.
+    /// write, move or release that place and no other context reaches it,
+    /// so the statement counts no handle of its own.
     pub(crate) kept_by_place: bool,
     pub(crate) state: CheckedType,
     pub(crate) kind: CheckedTargetKind,

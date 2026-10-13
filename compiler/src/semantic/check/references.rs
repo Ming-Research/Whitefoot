@@ -164,12 +164,15 @@ impl InvalidationEvent {
 }
 
 /// [SHARE-1, SHARE-2] the places an atomic statement read one target's
-/// handle from, and whether a write or move checked while the statement's
-/// binding is in scope may overlap one of them [OWN-7].
+/// handle from, and whether a write, move or release checked while the
+/// statement's binding is in scope may overlap one of them [OWN-7].
 ///
 /// The binding carries it through the same walk that carries [REF-2]
 /// validity, so it sees every event that walk enumerates: a statement's
 /// write or move, a call's substituted row [EFF-5] and a window operation.
+/// A move out of a field also releases the rest of its owner [WIN-3], which
+/// that walk does not enumerate; the consume reports each released part
+/// here itself.
 /// Unlike validity it is shared by every copy of the binding's state and is
 /// never restored by a join, so an event on a path that leaves the block by
 /// an edge marks it as well as one that falls through.
@@ -187,7 +190,8 @@ impl HandleWatch {
         }
     }
 
-    /// Whether some event may have written or moved a watched place.
+    /// Whether some event may have written, moved or released a watched
+    /// place.
     pub(super) fn disturbed(&self) -> bool {
         self.disturbed.get()
     }

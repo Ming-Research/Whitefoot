@@ -364,7 +364,8 @@ impl Checker<'_, '_> {
             .zip(&watches)
         {
             // No event the guard and block were checked with may have
-            // written or moved the handle place, on any path through them.
+            // written, moved or released the handle place, on any path
+            // through them.
             target.kept_by_place = watch.as_ref().is_some_and(|watch| !watch.disturbed());
             if !guard
                 .as_ref()
