@@ -3,8 +3,23 @@
 use super::*;
 
 fn outcome(source: &[u8], graph: bool) -> ParseOutcome {
+    outcome_from(
+        source,
+        if graph {
+            Production::GraphFile
+        } else {
+            Production::Program
+        },
+    )
+}
+
+fn outcome_from(source: &[u8], entry: Production) -> ParseOutcome {
     let inputs = [SourceInput::new(
-        if graph { "modules.wfg" } else { "hints.wf" },
+        if entry == Production::Program {
+            "hints.wf"
+        } else {
+            "modules.wfg"
+        },
         source,
     )];
     let bundle = bundle(&inputs);
@@ -18,10 +33,13 @@ fn outcome(source: &[u8], graph: bool) -> ParseOutcome {
     ) else {
         panic!("repair fixture must classify");
     };
-    if graph {
-        crate::syntax::parser::parse_graph(classified, PARSE_LIMITS)
-    } else {
-        parse(classified, PARSE_LIMITS)
+    match entry {
+        Production::Program => parse(classified, PARSE_LIMITS),
+        Production::GraphFile => crate::syntax::parser::parse_graph(classified, PARSE_LIMITS),
+        Production::GraphSegment => {
+            crate::syntax::parser::parse_graph_segment(classified, PARSE_LIMITS)
+        }
+        _ => panic!("repair fixture has an unsupported entry production"),
     }
 }
 
@@ -63,16 +81,21 @@ fn expression_hints_do_not_attach_to_function_header_errors() {
 
 #[test]
 fn graph_row_hint_gives_complete_declaration_forms() {
-    let result = outcome(b"module geometry {", true);
-    let ParseOutcome::SourceIssue(issue) = result else {
-        panic!("foreign graph row must reject: {result:?}");
-    };
-    assert_eq!(
-        issue.mechanical_fix,
-        Some(
-            "write graph declarations as `package name = \"location\";`, then module rows `module_path: [dependency_path, ...];`, then entries `entry name = module_path;`; examples are `package util = \"../util\";`, `pkg::geometry: [];`, and `entry app = pkg::geometry::main;` [GRAM-2]"
-        )
-    );
+    for entry in [Production::GraphFile, Production::GraphSegment] {
+        let result = outcome_from(b"module geometry {", entry);
+        let ParseOutcome::SourceIssue(issue) = result else {
+            panic!("foreign graph row must reject: {result:?}");
+        };
+        assert_eq!(issue.rule(), SyntaxRule::Gram2);
+        assert_eq!(issue_bytes(b"module geometry {", issue), b"geometry");
+        assert_eq!(
+            issue.mechanical_fix,
+            Some(
+                "write graph declarations as `package name = \"location\";`, then module rows `module_path: [dependency_path, ...];`, then entries `entry name = module_path;`; examples are `package util = \"../util\";`, `pkg::geometry: [];`, and `entry app = pkg::geometry::main;` [GRAM-2]"
+            ),
+            "{entry:?}"
+        );
+    }
     assert!(matches!(outcome(b"package util = \"../util\";\n\npkg::geometry: [];\n\nentry app = pkg::geometry::main;\n", true), ParseOutcome::Complete(_)));
 }
 

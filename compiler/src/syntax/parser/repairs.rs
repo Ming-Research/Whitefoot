@@ -92,6 +92,7 @@ pub(super) fn attach(
         let graph = matches!(
             context.production,
             Production::GraphFile
+                | Production::GraphSegment
                 | Production::ModuleRow
                 | Production::ModulePath
                 | Production::PackageDecl

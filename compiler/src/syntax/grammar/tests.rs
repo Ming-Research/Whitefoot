@@ -124,8 +124,9 @@ fn complete_inventory_is_pinned() {
     // v0.84's range facts add `apart_clause` [GRAM-4] and `range_clause`,
     // `range_binder` and `range_relation` [GRAM-5]: four productions.
     // v0.90's package bindings add `package_decl` [GRAM-2, MOD-11].
-    // v0.128 adds `range_guard` [GRAM-5, RANGE-1].
-    // v0.143 adds the diagnostic-only graph_segment entry [DIAG-1].
+    // v0.142 adds `range_variant` [GRAM-5, RANGE-1]; a guard is a
+    // `range_relation`, so no production of its own remains.
+    // The diagnostic-only graph_segment adds one production to main's 101.
     assert_eq!(productions().len(), 102);
     // v0.72's standard library qualifier [MOD-10] adds a `"pkg" | "std"`
     // alternation to `alias_decl`, `module_path` and `callee`, three
@@ -160,10 +161,12 @@ fn complete_inventory_is_pinned() {
     // v0.128 admits projections inside `entry` [GRAM-5, MSR-3]:
     // `pbase` gains one `psuffix*` repeat.
     // v0.128's range guard optional comparison adds one decision.
-    // v0.136 adds one suffix choice each in clause_expr, range_guard and
-    // range_relation; it adds no production.
-    // graph_segment adds its row choice and repetition.
-    assert_eq!(DECISIONS.len(), 185);
+    // v0.136's unchanged suffix adds a choice inside `clause_expr`.
+    // v0.142 shares the comparison, variant or unchanged choice between a
+    // guard and a conclusion, adds `range_variant`'s optional `not`, and
+    // retires the guard's optional comparison and separate suffix choice.
+    // Main has 182 decisions; graph_segment adds a repeat and a choice.
+    assert_eq!(DECISIONS.len(), 184);
     // `continue` adds the same statement prefixes and followers as `break`:
     // 72 rows at existing decisions and 29 at its optional label decision.
     // Together these extend the previous 7,816-row inventory by 101.
@@ -181,17 +184,17 @@ fn complete_inventory_is_pinned() {
     // by thirteen affine-expression entry origins, and two guard-list
     // continuations each followed by those thirteen origins: 104 rows.
     // Together the projected entry former and the guard comparison add
-    // 95 + 104 rows to the 7,932-row v0.127 inventory, 8,131 rows.
-    // v0.136: recomputed from the amended EBNF's provenance-bearing
-    // FIRST(2), FOLLOW(2) and SELECT sets, the `unchanged` suffixes add 417
-    // rows, three of them where it follows the entry former's repeat, and
-    // one terminal.
-    // graph_segment contributes 8 choice rows and 9 repetition rows.
-    // Its row continuation adds package/pkg/std/IDENT after an entry's
-    // semicolon: four new rows in entry_decl's final choice and four in
-    // module_path's suffix repetition. This adds 25 rows to 8,548.
-    assert_eq!(SELECT_ROWS.len(), 8_573);
-    assert_eq!(diagnostic_terminal_order().len(), 116);
+    // 95 + 104 rows to the 7,932-row v0.127 inventory.
+    // The row inventory preserves FIRST(2), FOLLOW(2) and SELECT provenance.
+    // v0.140's `unchanged` conclusion and v0.142's single `range_relation`
+    // production (guards and conclusions alike) together give 8,384 rows.
+    // graph_segment adds 8 choice rows and 9 repetition rows. Its
+    // continuation adds package/pkg/std/IDENT after an entry semicolon,
+    // four rows each in entry_decl's final choice and module_path's suffix
+    // repetition. These graph-only changes add 25 to main's 8,384 rows.
+    assert_eq!(SELECT_ROWS.len(), 8_409);
+    // v0.136's `unchanged` and v0.142's `not` are both fixed terminals.
+    assert_eq!(diagnostic_terminal_order().len(), 117);
     assert_eq!(productions()[0], Production::Program);
     // v0.70 [GRAM-2] adds the file alias header as an `item` arm and closes
     // with the module graph productions; [GRAM-3] adds `type_path` and
@@ -224,8 +227,8 @@ fn complete_inventory_is_pinned() {
     assert_eq!(productions()[89], Production::RangeTail);
     assert_eq!(productions()[90], Production::RangeClause);
     assert_eq!(productions()[91], Production::RangeBinder);
-    assert_eq!(productions()[92], Production::RangeGuard);
-    assert_eq!(productions()[93], Production::RangeRelation);
+    assert_eq!(productions()[92], Production::RangeRelation);
+    assert_eq!(productions()[93], Production::RangeVariant);
     assert_eq!(productions()[97], Production::Effect);
     assert_eq!(productions()[98], Production::EffectPath);
     assert_eq!(productions()[99], Production::Epbase);
@@ -265,7 +268,7 @@ fn complete_inventory_is_pinned() {
     assert_eq!(Production::CalleePath.index(), 92);
     assert_eq!(Production::TypeInvariant.index(), 94);
     assert_eq!(Production::PackageDecl.index(), 99);
-    assert_eq!(Production::RangeGuard.index(), 100);
+    assert_eq!(Production::RangeVariant.index(), 100);
     assert_eq!(Production::GraphSegment.index(), 101);
     // Index 2 is `struct_decl`'s `"opaque"?` optional [GRAM-2, TYPE-2], so
     // every decision after `item` follows that optional before
@@ -319,7 +322,8 @@ fn complete_inventory_is_pinned() {
     assert_eq!(DECISIONS[63].kind(), DecisionKind::Choice);
     assert_eq!(DECISIONS[64].production(), Production::Param);
     assert_eq!(DECISIONS[64].kind(), DecisionKind::Choice);
-    // v0.143 inserts graph_segment's repeat and choice after graph_file.
+    // graph_segment follows graph_file and adds two decisions before
+    // every subsequent production; the source-order pins below include it.
     assert_eq!(DECISIONS[68].production(), Production::GraphSegment);
     assert_eq!(DECISIONS[68].kind(), DecisionKind::Repeat0);
     assert_eq!(DECISIONS[69].production(), Production::GraphSegment);
@@ -378,10 +382,14 @@ fn complete_inventory_is_pinned() {
     // factored `range_tail?` that keeps the index and range steps
     // strong-LL(2) [GRAM-1, GRAM-5].
     // The projected entry former adds the repeat immediately before these
-    // suffix decisions; later decision identities move by one [MSR-3]. Its
-    // rows include the `unchanged` suffix that may follow a place [RANGE-1].
+    // suffix decisions; later decision identities move by one [MSR-3].
+    // v0.136's clause suffix choice moves them once more; v0.142 keeps it.
     assert_eq!(DECISIONS[159].production(), Production::Pbase);
     assert_eq!(DECISIONS[159].kind(), DecisionKind::Repeat0);
+    // The 12 entering rows and 83 exiting rows are unchanged: replacing
+    // range_guard's `unchanged` occurrence with range_variant's `is`
+    // occurrence removes one FOLLOW provenance row and adds one.
+    // The graph-only diagnostic start contributes no place continuation.
     assert_eq!(DECISIONS[159].rows().len(), 95);
     assert_eq!(DECISIONS[160].production(), Production::Psuffix);
     assert_eq!(DECISIONS[160].kind(), DecisionKind::Choice);
@@ -398,21 +406,24 @@ fn complete_inventory_is_pinned() {
         assert_eq!(DECISIONS[index].production(), Production::RangeClause);
         assert_eq!(DECISIONS[index].kind(), kind);
     }
-    // v0.128 [GRAM-5, RANGE-1] the guard's optional comparison.
-    assert_eq!(DECISIONS[166].production(), Production::RangeGuard);
-    assert_eq!(DECISIONS[166].kind(), DecisionKind::Optional);
-    // v0.136's admitted and diagnostic-only unchanged suffixes [RANGE-1].
+    // v0.136's diagnostic-only ordinary unchanged suffix [RANGE-1].
     assert_eq!(DECISIONS[155].production(), Production::ClauseExpr);
     assert_eq!(DECISIONS[155].kind(), DecisionKind::Choice);
-    assert_eq!(DECISIONS[167].production(), Production::RangeGuard);
-    assert_eq!(DECISIONS[167].kind(), DecisionKind::Choice);
-    assert_eq!(DECISIONS[168].production(), Production::RangeRelation);
-    assert_eq!(DECISIONS[168].kind(), DecisionKind::Choice);
+    // v0.142 shares comparison, variant and unchanged relations between a
+    // guard and a conclusion, then adds the variant's optional `not`.
+    // A relation has no bare alternative, so it owns no optional [RANGE-1].
+    for (index, production, kind) in [
+        (166, Production::RangeRelation, DecisionKind::Choice),
+        (167, Production::RangeVariant, DecisionKind::Optional),
+    ] {
+        assert_eq!(DECISIONS[index].production(), production);
+        assert_eq!(DECISIONS[index].kind(), kind);
+    }
     // `epsuffix` mirrors it inside an effect row [EFF-1].
+    assert_eq!(DECISIONS[182].production(), Production::Epsuffix);
+    assert_eq!(DECISIONS[182].kind(), DecisionKind::Choice);
     assert_eq!(DECISIONS[183].production(), Production::Epsuffix);
-    assert_eq!(DECISIONS[183].kind(), DecisionKind::Choice);
-    assert_eq!(DECISIONS[184].production(), Production::Epsuffix);
-    assert_eq!(DECISIONS[184].kind(), DecisionKind::Optional);
+    assert_eq!(DECISIONS[183].kind(), DecisionKind::Optional);
 }
 
 /// `borrow_expr` is `"&" place` and owns no decision.
@@ -495,10 +506,12 @@ fn the_retired_atoms_leave_the_inventory_and_the_new_ones_enter() {
     for (spelling, terminal) in [
         (b"apart".as_slice(), FixedTerminal::Apart),
         (b"forall".as_slice(), FixedTerminal::Forall),
+        (b"not".as_slice(), FixedTerminal::Not),
+        (b"unchanged".as_slice(), FixedTerminal::Unchanged),
     ] {
         assert_eq!(FixedTerminal::from_spelling(spelling), Some(terminal));
     }
-    assert_eq!(ALL_FIXED_TERMINALS.len(), 109);
+    assert_eq!(ALL_FIXED_TERMINALS.len(), 110);
     // No fixed atom is capitalized any more, so nothing competes with TYPEID.
     assert!(ALL_FIXED_TERMINALS.iter().all(|terminal| {
         !terminal
@@ -542,14 +555,14 @@ fn every_decision_has_two_position_rows_and_complete_arm_coverage() {
             stack.extend_from_slice(node.children());
         }
     }
-    // The same 183 decisions `complete_inventory_is_pinned` reads out of the
+    // The same 184 decisions `complete_inventory_is_pinned` reads out of the
     // generated table, counted a second time by walking every production's
     // node tree. `struct_decl`'s `"opaque"?` optional [GRAM-2, TYPE-2] is
     // reachable from `item`, so the walk and the table agree on it; a
     // decision in the table that no production reaches would show up as the
     // two counts disagreeing.
     assert_eq!(decisions, DECISIONS.len());
-    assert_eq!(decisions, 183);
+    assert_eq!(decisions, 184);
 }
 
 #[test]
@@ -606,10 +619,7 @@ fn overlaps(left: LookaheadPredicate, right: LookaheadPredicate) -> bool {
 
 #[test]
 fn all_detailed_rows_retain_provenance_and_remain_cross_arm_disjoint() {
-    // v0.136 adds one suffix choice each in clause_expr, range_guard and
-    // range_relation; it adds no production.
-    // graph_segment adds its row choice and repetition.
-    assert_eq!(DECISIONS.len(), 185);
+    assert_eq!(DECISIONS.len(), 184);
     let mut total_rows = 0_usize;
     let mut saw_atom_only = false;
     for decision in &DECISIONS {
@@ -655,6 +665,6 @@ fn all_detailed_rows_retain_provenance_and_remain_cross_arm_disjoint() {
     }
     // Count the complete inventory independently by summing each decision's
     // rows, including the explicit interface import arm [FN-3].
-    assert_eq!(total_rows, 8_548);
+    assert_eq!(total_rows, 8_409);
     assert!(saw_atom_only);
 }

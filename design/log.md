@@ -5,6 +5,27 @@ Newest first. One entry per approved change of the tree: a dated title,
 the owner's agent instructions own the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-13 A call result may take the storage of a copied argument no longer read
+
+Nodes: compiler/storage-placement
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve; I write the design-tree change log and mark the PR ready after Halo's re-measurement" (translated), on the card "approve Whitefoot#408's change to the design tree: a call result may also reuse the storage of an argument that was copied in and is not read afterwards (head commit 1e2d6fa09265)?" (translated), whose background stated the changed reuse decision, the added exception for entry parameters and read-only snapshots, and the Halo store-forwarding measurement.
+
+Summary: A call's result may be written into the storage of the call's only owned binding argument of the result's type when that argument is not read after the call, whether it was moved or copied in, with the callee still reading its arguments before any overlapping result write, because a callee cannot tell a copied argument from a moved one and copy types can never be moved, so under the old moved-only rule their results always took a separate slot and a copy at the join; in Halo's fib that copy read 16 bytes across two separately written 8-byte fields and raised store-forwarding blocks from 3.000 to 4.008 per Lua call, 42 cycles each call. Entry parameters and read-only snapshots keep their own storage, since they are read in place without a copy and sharing would add one.
+## 2026-10-13 The lock ledger reports when each atomic target group is taken
+
+Nodes: compiler/waiting-contexts/state-locks
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve this decision" (translated), on the card "approve the design-tree change of Whitefoot#421 (head commit 0d2e4f75b)? It adds one decision: the compiler gains a `--lock-ledger` flag reporting when each atomic statement takes each lock group" (translated).
+
+Summary: One decision is added. `whitefootc --lock-ledger` reports, for each atomic statement, its ordered target groups with their bindings and state type, whether each is taken before the guard, on every body path, on some body paths or never, and the first use or later group that takes it, because a writer could not otherwise see that an early read or a preceding type group extends a hold, as Firn's write commands did. Lowering records the acquisition requests it emits and classifies them on its control-flow graph, instead of a warning on early use, which is often intended, or a separate source analysis that could disagree with the acquired groups; the report changes neither acceptance nor acquisition placement.
+## 2026-10-13 A range fact can state an element's variant, and each conclusion stands on its own reads
+
+Nodes: language/checks-and-proofs/range-facts
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve Whitefoot#394's specification and design-tree change ... (head commit 25cb94f9d)" (translated), whose background listed the changed Bool-guard decision, the four added decisions and the four added refusals.
+
+Summary: The Bool-guard decision now writes Bool data only as `is True` / `is False`. Four decisions are added: the variant relation `e is V` / `e is not V`; each conclusion holds by its own reads; a conclusion that can never hold is an error, identity being the written spelling; and a reference-bound payload binder denotes the element's payload projection in goals. Four refusals are recorded: `==` for variants (value equality would equate two values of one variant with different payloads), the pattern form `e is V(..)` (its parentheses suggest a binding), one definedness condition for the whole clause (it accepted vacuous clauses), and requiring the payload to be copied to a local first (it refuses the natural form).
 ## 2026-10-13 A tracked integer field place has a current image, and a quotient's upper bound follows from its dividend and divisor
 
 Nodes: language/checks-and-proofs/automatic-facts

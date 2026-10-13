@@ -664,7 +664,7 @@ define pre = 0_i32 +wrap 1_i32;
 define post = 0_i32 +wrap 1_i32;
 requires pre;
 requires pre /defined post;
-requires forall ordered(k in 0_u64..2_u64, m in k..4_u64) when k < m, run[k] != 0_i32: run[k] <= run[m], 0_u64 <= k;
+requires forall ordered(k in 0_u64..2_u64, m in k..4_u64) when k < m, run[k] != 0_i32, run[m] is not None: run[k] <= run[m], 0_u64 <= k, run[k] is Some;
 ensures when Some(value: routed): routed;
 ensures 2_i32 * routed + 1_i32 <= post - 1_i32;
 }
@@ -1327,6 +1327,23 @@ fn nullable_type_arguments_keep_their_own_prefix_and_the_real_outer_continuation
             "{source:?}"
         );
     }
+}
+
+#[test]
+fn bare_bool_range_guard_rejects_with_the_is_true_repair() {
+    // [GRAM-5, RANGE-1] a guard requires one relation, so
+    // a Bool datum written alone stops at its `:`.
+    let source = b"fn inspect(nodes: &[Bool]) -> result: unit pure contract {\n  requires forall held(k in 0_u64..nodes^.len) when nodes^[k]: k == k;\n} {\n  return unit;\n}\n".as_slice();
+    let outcome = parse_active("bare-guard.wf", source);
+    let ParseOutcome::SourceIssue(issue) = outcome else {
+        panic!("a lone expression as a guard must reject: {outcome:?}");
+    };
+    assert_eq!(issue.rule(), SyntaxRule::Gram5);
+    assert_eq!(issue_bytes(source, issue), b":");
+    assert!(
+        format!("{issue:?}").contains("`is True`"),
+        "the diagnostic names the `is True` spelling: {issue:?}"
+    );
 }
 
 /// [GRAM-5, RANGE-1] the suffix is parsed in guards and ordinary relations

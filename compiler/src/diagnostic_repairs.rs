@@ -84,3 +84,6 @@ pub(crate) fn qualified_name(spelling: &str, module_name: &str, names: &[&str]) 
 }
 
 pub(crate) const FLAT_CONTRACT_OPERATION_FIX: &str = "bind each operation with its own preceding `define` in this contract block and pass the binding as the operand; a `contract_block` has no `let`, and each expression has one operation over two atoms [GRAM-2, GRAM-6, GRAM-9]";
+
+/// A bare Bool is tested by a variant relation in a range guard [RANGE-1].
+pub(crate) const RANGE1_BARE_BOOL_FIX: &str = "a range guard is one comparison or one variant relation, and a range postcondition conclusion may also state `unchanged` [RANGE-1]; a Bool datum written alone does not derive: test it with `is True` or `is False`, as in `when nodes^[k].live is True:`";

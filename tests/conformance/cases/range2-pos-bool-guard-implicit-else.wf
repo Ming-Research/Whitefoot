@@ -1,5 +1,5 @@
 fn need_false(nodes: &[Bool], enabled: Bool) -> result: unit pure contract {
-  requires forall impossible(k in 0_u64..nodes^.len) when enabled: k == 99_u64;
+  requires forall impossible(k in 0_u64..nodes^.len) when enabled is True: k == 99_u64;
 } {
   return unit;
 }

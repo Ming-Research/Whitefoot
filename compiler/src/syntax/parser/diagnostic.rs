@@ -4,6 +4,7 @@ mod repairs;
 use crate::diagnostic_repairs::{
     FLAT_CONTRACT_OPERATION_FIX, FLAT_OPERATION_FIX, FORM3_IDENT_FIX, FORM3_LABEL_FIX,
     FORM3_TYPEID_FIX, GRAM2_CONTRACT_ORDER_FIX, GRAM9_BODY_FIX, GRAM9_CONTRACT_FIX,
+    RANGE1_BARE_BOOL_FIX,
 };
 use crate::lexer::TokenKind;
 use crate::syntax::grammar::{
@@ -69,6 +70,7 @@ pub(crate) struct ProbeContext {
 const fn production_fix(production: Production) -> Option<&'static str> {
     match production {
         Production::ContractBlock => Some(GRAM2_CONTRACT_ORDER_FIX),
+        Production::RangeRelation => Some(RANGE1_BARE_BOOL_FIX),
         _ => None,
     }
 }
@@ -1235,7 +1237,8 @@ pub(crate) fn diagnose_decision(
     context: ProbeContext,
     site: DiagnosticSite<'_>,
     work: &mut Work,
+    continuation: impl Iterator<Item = Continuation> + Clone,
 ) -> DiagnosticResult {
-    let result = diagnose_decision_inner(decision, context, site, work);
+    let result = diagnose_decision_inner(decision, context, site, work, continuation);
     repairs::attach(result, context, site)
 }
