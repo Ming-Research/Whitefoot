@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 the owner's agent instructions own the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-13 A range postcondition states that an element is unchanged and reads entry versions
+
+Nodes: compiler/range-judgment, language/checks-and-proofs, language/checks-and-proofs/range-facts
+
+Owner-approved: On the shared status board on 2026-10-12, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the specification revision and design-tree change of Whitefoot#395 at commit 26f62c5fd?" (translated), including `unchanged` becoming a reserved word; the rule text is unchanged since that commit, only renumbered from v0.136 to v0.138 because main reached v0.137 first.
+
+Summary: A range postcondition may read a written reference parameter's entry version through `entry(p)`, and the new one-sided `P unchanged` proposition says an element position at exit is the version it had at entry, for any element type and without an equality operator. A whole-element read identifies a storage version and a copy is a fresh version keeping only value projections, which closes the copy-back hole the first review found. Callers expand a callee's `unchanged` only for reads already present, inside the existing two-round instantiation bound. It is motivated by Snowghost's growth and append helpers, whose callers lost every fact about old elements, including type invariants of elements that own a Box.
+
 ## 2026-10-13 A const argument is judged where it is written; a symbolic integer constant keeps its exact type
 
 Nodes: language/generics, compiler/checker-facts
