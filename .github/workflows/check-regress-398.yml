@@ -1,0 +1,77 @@
+# Temporary: attribute the checker slowdown Whitefoot#398 introduced on the
+# pinned Snowghost style oracle module (6.5 s before, 244 s after). One job per
+# revision records the checker's work counters and a perf call graph of the
+# same renamed input. Remove before this branch is ready.
+name: check-regress-398
+
+on:
+  push:
+    branches: [claude/check-regress-398]
+
+concurrency:
+  group: check-regress-398-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+  SNOWGHOST_REVISION: 466e9843f7a0fe4926022be8718d4ab677cafed1
+
+jobs:
+  attribute:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        rev: [e96f620db, 089f57c16]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Build the compiler at ${{ matrix.rev }} with symbols
+        run: |
+          rustup default stable
+          git worktree add --detach "$RUNNER_TEMP/main" "${{ matrix.rev }}"
+          cargo fetch --locked --manifest-path "$RUNNER_TEMP/main/compiler/Cargo.toml"
+          CARGO_PROFILE_GATE_DEBUG=line-tables-only CARGO_PROFILE_GATE_STRIP=none \
+            cargo build --manifest-path "$RUNNER_TEMP/main/compiler/Cargo.toml" --profile gate --locked --offline
+          lscpu | grep -E 'Model name'
+      - name: Install perf
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq linux-tools-common "linux-tools-$(uname -r)" || sudo apt-get install -y -qq linux-tools-generic
+          sudo sysctl -w kernel.perf_event_paranoid=1
+          sudo sysctl -w kernel.kptr_restrict=0
+      - name: Check the style oracle module with counters and perf
+        run: |
+          git clone --quiet https://github.com/Ming-Research/Snowghost-wf.git "$RUNNER_TEMP/snowghost"
+          git -C "$RUNNER_TEMP/snowghost" checkout --quiet --detach "$SNOWGHOST_REVISION"
+          find "$RUNNER_TEMP/snowghost/renderer/oracle" -name "*.wf" -exec perl -pi -e "s/\\bheld\\b/held_value/g" {} +
+          mkdir -p "$RUNNER_TEMP/out"
+          bin="$RUNNER_TEMP/main/compiler/target/gate/whitefootc"
+          perf_bin=$(command -v perf || ls /usr/lib/linux-tools/*/perf | head -1)
+          start=$(date +%s.%N)
+          set +e
+          WHITEFOOT_CHECK_WORK="$RUNNER_TEMP/out/work.tsv" timeout 900 "$perf_bin" record -F 199 -g --call-graph dwarf,16384 \
+            -o "$RUNNER_TEMP/out/perf.data" -- "$bin" \
+            --graph "$RUNNER_TEMP/snowghost/renderer/modules.wfg" --check-module pkg::oracle::style --report \
+            > "$RUNNER_TEMP/out/check.txt" 2>&1
+          status=$?
+          set -e
+          end=$(date +%s.%N)
+          printf 'RESULT rev=%s status=%s seconds=%.2f\n' "${{ matrix.rev }}" "$status" "$(echo "$end - $start" | bc)"
+          tail -3 "$RUNNER_TEMP/out/check.txt"
+          "$perf_bin" report -i "$RUNNER_TEMP/out/perf.data" --no-children --sort symbol --stdio --percent-limit 0.5 \
+            > "$RUNNER_TEMP/out/self.txt" 2>/dev/null || true
+          "$perf_bin" report -i "$RUNNER_TEMP/out/perf.data" --children --sort symbol --stdio -g none --percent-limit 1 \
+            > "$RUNNER_TEMP/out/children.txt" 2>/dev/null || true
+          "$perf_bin" report -i "$RUNNER_TEMP/out/perf.data" --no-children --sort symbol --stdio -g caller,0.5,callee --percent-limit 3 \
+            > "$RUNNER_TEMP/out/callers.txt" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/out/perf.data"
+          head -60 "$RUNNER_TEMP/out/self.txt"
+          wc -l "$RUNNER_TEMP/out/work.tsv" || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: attribution-${{ matrix.rev }}
+          path: ${{ runner.temp }}/out
