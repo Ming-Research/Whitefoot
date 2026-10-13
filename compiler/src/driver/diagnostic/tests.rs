@@ -464,7 +464,7 @@ fn a_compiler_facing_stop_keeps_its_payload_under_its_category_and_stage() {
 
 #[test]
 fn a_page_length_postcondition_names_the_unsupported_construct() {
-    let source = br#"fn page_width(p: &Paged<u64>, k: u64) -> r: u64 reads(p) contract {
+    let source = br#"fn page_width(p: &Paged<u64>, k: u64) -> r: u64 pure contract {
   requires k < p^.pages.len;
   ensures r <= p^.pages[k].len;
 } {
@@ -504,7 +504,7 @@ fn a_weaker_existing_requirement_does_not_supply_the_missing_bound() {
         "weaker-bound.wf",
         br#"const first_index: u64 = 0_u64;
 
-fn inspect(rows: &[Slots<u8, 4>]) -> result: unit reads(rows) contract {
+fn inspect(rows: &[Slots<u8, 4>]) -> result: unit pure contract {
   requires rows^[0_u64].len == 0_u64;
   requires first_index <= rows^.len;
 } {
@@ -534,7 +534,7 @@ fn an_implicit_type_invariant_is_not_a_requirement_the_writer_can_move() {
   invariant nonempty(r): 0_u64 < r.cells.len;
 }
 
-fn inspect(rows: &Rows) -> result: unit reads(rows) contract {
+fn inspect(rows: &Rows) -> result: unit pure contract {
   requires rows^.cells[0_u64].len == 0_u64;
 } {
   return unit;

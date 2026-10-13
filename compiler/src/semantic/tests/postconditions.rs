@@ -58,7 +58,7 @@ pub(super) fn assert_fn9_refuted(source: &[u8]) {
 #[test]
 fn page_length_requirements_and_page_count_postconditions_keep_their_judgments() {
     assert_complete(
-        br#"fn page_width(p: &Paged<u64>, k: u64) -> r: u64 reads(p) contract {
+        br#"fn page_width(p: &Paged<u64>, k: u64) -> r: u64 pure contract {
   requires k < p^.pages.len;
   requires 0_u64 <= p^.pages[k].len;
   ensures r <= p^.pages.len;
@@ -68,7 +68,7 @@ fn page_length_requirements_and_page_count_postconditions_keep_their_judgments()
 "#,
     );
     super::assert_unsupported(
-        br#"fn page_width(p: &Paged<u64>) -> r: u64 reads(p) contract {
+        br#"fn page_width(p: &Paged<u64>) -> r: u64 pure contract {
   requires 0_u64 < p^.pages.len;
   ensures r <= p^.pages[0_u64].len;
 } {
