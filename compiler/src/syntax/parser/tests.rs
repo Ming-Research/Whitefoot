@@ -1277,11 +1277,12 @@ fn integer_match_arm_forms_are_grammar_alternatives() {
     let ParseOutcome::Complete(parsed) = parse_active("integer-match.wf", source) else {
         panic!("integer literals, named constants and else must parse as arm forms");
     };
-    let FinalizeOutcome::Complete(finalized) = finalize(parsed, FinalizeLimits::default()) else {
+    let limits = crate::CompilerLimits::default();
+    let FinalizeOutcome::Complete(finalized) = finalize(parsed, limits.finalizer) else {
         panic!("integer arm derivation must finalize");
     };
     let crate::CanonicalOutcome::Complete(syntax) =
-        crate::audit_canonical(*finalized, crate::CanonicalLimits::default())
+        crate::audit_canonical(*finalized, limits.canonical)
     else {
         panic!("integer arm fixture must use canonical formatting");
     };

@@ -1056,7 +1056,7 @@ impl<'program> Walker<'program> {
                     Value::Int(value) => value,
                     _ => self.world.opaque(integer_type(ty)),
                 };
-                let values: std::rc::Rc<[i128]> = arms
+                let values: std::sync::Arc<[i128]> = arms
                     .iter()
                     .filter_map(|arm| match arm.selection {
                         CheckedMatchSelection::Integer(value) => Some(value),

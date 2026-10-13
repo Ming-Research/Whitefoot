@@ -13,7 +13,7 @@
 //! version's projection at other indices or at a disjoint sibling field.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::rc::Rc;
+use std::sync::Arc;
 
 use super::super::model::{BindingId, CheckedMeasure, IntegerType};
 use super::super::range_facts::CheckedRangeProjection;
@@ -146,7 +146,7 @@ pub(super) enum AtomDef {
     /// The immutable value captured by an integer match's else arm.
     /// A path assumes this predicate equals one; its definition applies only
     /// under that guard, so joins can retain it without restricting other arms.
-    IntegerExclusion { value: Linear, values: Rc<[i128]> },
+    IntegerExclusion { value: Linear, values: Arc<[i128]> },
     /// One of a join's arm values, by the arm taken.
     Joined { join: JoinId, values: Vec<Linear> },
 }
@@ -200,7 +200,7 @@ pub(super) struct Modified {
 }
 
 impl World {
-    pub(super) fn integer_exclusion(&mut self, value: Linear, values: Rc<[i128]>) -> Literal {
+    pub(super) fn integer_exclusion(&mut self, value: Linear, values: Arc<[i128]>) -> Literal {
         let predicate = Linear::atom(self.push(AtomDef::IntegerExclusion { value, values }, None));
         Literal::new(predicate, Relation::Equal, Linear::constant(1))
     }

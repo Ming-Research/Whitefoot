@@ -1,10 +1,11 @@
 //! Compact integer selection facts [ENT-3.S17, ENT-4, ENT-5].
 use super::*;
+use std::sync::Arc;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Exclusion {
     pub(crate) expression: GoalId,
-    pub(crate) values: Rc<[i128]>,
+    pub(crate) values: Arc<[i128]>,
     pub(crate) views: Vec<ExclusionView>,
     pub(crate) proof: DerivationId,
 }
@@ -29,7 +30,7 @@ pub(crate) enum ExclusionConclusion {
 pub(crate) struct ExclusionProof {
     pub(crate) projection: Option<(TermId, i128)>,
     pub(crate) expression: GoalId,
-    pub(crate) values: Rc<[i128]>,
+    pub(crate) values: Arc<[i128]>,
     pub(crate) conclusion: ExclusionConclusion,
     pub(crate) event: Option<FlowEventId>,
     pub(crate) parents: Vec<DerivationId>,
@@ -54,7 +55,7 @@ impl ExclusionProof {
 impl Exclusion {
     pub(crate) fn from_view(
         expression: GoalId,
-        values: Rc<[i128]>,
+        values: Arc<[i128]>,
         projection: Option<(TermId, i128)>,
         proof: DerivationId,
         goals: &GoalTable,
@@ -85,7 +86,7 @@ impl Exclusion {
             detail: Box::new(ExclusionProof {
                 projection: view.projection,
                 expression: view.expression,
-                values: Rc::clone(&self.values),
+                values: Arc::clone(&self.values),
                 conclusion,
                 event: None,
                 parents: vec![view.proof],
@@ -102,7 +103,7 @@ impl Exclusion {
             detail: Box::new(ExclusionProof {
                 projection: None,
                 expression: self.expression,
-                values: Rc::clone(&self.values),
+                values: Arc::clone(&self.values),
                 conclusion,
                 event: None,
                 parents: vec![self.proof],
@@ -380,7 +381,7 @@ pub(super) fn join_exclusions(
                 detail: Box::new(ExclusionProof {
                     projection: None,
                     expression: fact.expression,
-                    values: Rc::clone(&fact.values),
+                    values: Arc::clone(&fact.values),
                     conclusion: ExclusionConclusion::Set,
                     event: Some(event),
                     parents,
@@ -409,7 +410,7 @@ pub(super) fn join_exclusions(
                         detail: Box::new(ExclusionProof {
                             projection: view.projection,
                             expression: view.expression,
-                            values: Rc::clone(&fact.values),
+                            values: Arc::clone(&fact.values),
                             conclusion: ExclusionConclusion::Set,
                             event: Some(event),
                             parents,
@@ -423,7 +424,7 @@ pub(super) fn join_exclusions(
                 .collect();
             Some(Exclusion {
                 expression: fact.expression,
-                values: Rc::clone(&fact.values),
+                values: Arc::clone(&fact.values),
                 views,
                 proof,
             })
@@ -473,14 +474,14 @@ mod tests {
                 measure: None,
             }],
         );
-        let values: Rc<[i128]> = values.into();
+        let values: Arc<[i128]> = values.into();
         let mut ledger = DerivationLedger::default();
         let event = ledger.event(FlowEventKind::S17, None);
         let proof = ledger.intern(DerivationNode::IntegerExclusion {
             detail: Box::new(ExclusionProof {
                 projection: Some((term, 0)),
                 expression,
-                values: Rc::clone(&values),
+                values: Arc::clone(&values),
                 conclusion: ExclusionConclusion::Set,
                 event: Some(event),
                 parents: Vec::new(),
@@ -600,13 +601,13 @@ mod tests {
         );
         assert_ne!(canonical, other);
         assert_eq!(goals.canonical(other), canonical);
-        let values = Rc::clone(&first.exclusions[0].values);
+        let values = Arc::clone(&first.exclusions[0].values);
         let event = ledger.event(FlowEventKind::S17, None);
         let proof = ledger.intern(DerivationNode::IntegerExclusion {
             detail: Box::new(ExclusionProof {
                 projection: None,
                 expression: other,
-                values: Rc::clone(&values),
+                values: Arc::clone(&values),
                 conclusion: ExclusionConclusion::Set,
                 event: Some(event),
                 parents: Vec::new(),

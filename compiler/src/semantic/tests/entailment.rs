@@ -2466,6 +2466,9 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                     assert_eq!(parent.ordinal as usize, ordinal);
                     match retained_conclusion(&conclusions, parent.parent) {
                         DerivationConclusion::Contradiction => {}
+                        DerivationConclusion::Exclusion { .. } => {
+                            panic!("delivery join parent cannot be a whole exclusion set")
+                        }
                         DerivationConclusion::Relation(edge_relation) => {
                             let DerivationNode::PostconditionGive {
                                 statement: edge, ..
@@ -2667,6 +2670,9 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                         .as_ref()
                         .expect("an affine-only bounds obligation retains its canonical goal");
                     match conclusion {
+                        DerivationConclusion::Exclusion { .. } => {
+                            panic!("an affine-only bounds root cannot be a whole exclusion set")
+                        }
                         DerivationConclusion::Goal {
                             goal,
                             sign: GoalSign::Positive,
@@ -2701,6 +2707,9 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                     };
                     retained_term(summary, requested.right);
                     match conclusion {
+                        DerivationConclusion::Exclusion { .. } => {
+                            panic!("a bounds obligation root cannot be a whole exclusion set")
+                        }
                         DerivationConclusion::Relation(relation) => {
                             let left = requested
                                 .left
@@ -2822,6 +2831,9 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                 assert!(!outcome.node_path.components().is_empty());
                 assert!(!outcome.requires_clause.components().is_empty());
                 match conclusion {
+                    DerivationConclusion::Exclusion { .. } => {
+                        panic!("a discharged call root cannot be a whole exclusion set")
+                    }
                     DerivationConclusion::Goal {
                         goal,
                         sign: GoalSign::Positive,

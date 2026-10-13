@@ -144,7 +144,7 @@ impl Judging<'_, '_, '_> {
                                 detail: Box::new(ExclusionProof {
                                     projection,
                                     expression,
-                                    values: std::rc::Rc::clone(values),
+                                    values: std::sync::Arc::clone(values),
                                     conclusion: ExclusionConclusion::Set,
                                     event: Some(event),
                                     parents: Vec::new(),
@@ -152,7 +152,7 @@ impl Judging<'_, '_, '_> {
                             });
                     state.establish_exclusion(Exclusion::from_view(
                         expression,
-                        std::rc::Rc::clone(values),
+                        std::sync::Arc::clone(values),
                         projection,
                         proof,
                         &self.vocabulary.goals,

@@ -245,7 +245,7 @@ struct FlowEdge {
 /// context [ENT-5].
 #[derive(Default)]
 struct ArmFacts {
-    integer: Option<(GoalExpression, std::rc::Rc<[i128]>)>,
+    integer: Option<(GoalExpression, std::sync::Arc<[i128]>)>,
     node_path: Option<crate::NodePath>,
     comparison: Option<Relation>,
     goals: Vec<GoalId>,

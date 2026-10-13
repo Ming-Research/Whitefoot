@@ -393,7 +393,7 @@ impl Reasoning<'_, '_, '_> {
                         detail: Box::new(ExclusionProof {
                             projection,
                             expression: goal,
-                            values: std::rc::Rc::clone(&fact.values),
+                            values: std::sync::Arc::clone(&fact.values),
                             conclusion: ExclusionConclusion::Set,
                             event: None,
                             parents,
@@ -401,7 +401,7 @@ impl Reasoning<'_, '_, '_> {
                     });
                 view.establish_exclusion(Exclusion::from_view(
                     goal,
-                    std::rc::Rc::clone(&fact.values),
+                    std::sync::Arc::clone(&fact.values),
                     projection,
                     proof,
                     &self.vocabulary.goals,
