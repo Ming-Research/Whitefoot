@@ -5,6 +5,21 @@ Newest first. One entry per approved change of the tree: a dated title,
 the owner's agent instructions own the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-13 A call inside its own call-graph component receives every callee postcondition as an induction hypothesis
+
+Nodes: language, language/checks-and-proofs, language/checks-and-proofs/obligation-discharge
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the specification revision (v0.142 to v0.143) and design-tree change of Whitefoot#427 at commit ae19f6b4e?" (translated); before it, the same day, the owner chose option A on the direction card "after a recursive function calls itself (or another member of its cycle), may it use the ensures the callee wrote?" (translated): in-component calls receive every callee postcondition as an induction hypothesis on call-return order.
+
+Summary: The obligation-discharge decision now gives a call to a member of its own component every callee postcondition, written and generated, affine and range, unrouted and routed, as an induction hypothesis on call-return order, with every selected return proved once and no summary fixed point, because the strong-induction argument for partial correctness does not depend on whether a clause was written or generated and Snowghost's recursive halving count needs a written result bound after its recursive calls; the old refusal of written postcondition hypotheses, grounded only on no program having needed one, is replaced by a refusal of limiting hypotheses to generated type-invariant postconditions. The cached-compilation decision in `language` and the multi-module component decision in `language/checks-and-proofs` are reworded to point to that judgment; their choices are unchanged.
+
+## 2026-10-13 Borrowed parameters a recursive group forwards unchanged travel in one record
+
+Nodes: compiler/recursive-environment
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the new design-tree node 'recursive-group shared record' in PR Whitefoot#413 at head commit 5529cacf6?" (translated).
+
+Summary: A new compiler node with four decisions; the specification and the set of accepted programs are unchanged. In a strongly connected component of ordinary source definitions, read-only borrowed parameters every member has and every in-component call forwards unchanged travel in one `noalias readonly` record; each slot is loaded in the blocks that use it, forwarded classes present in every member take aligned positions first, and the public symbol stays the entry from outside and builds the record, because Snowghost's selector matcher passed 9 and 8 argument words against six registers and paid stack passing and spills on every call, instead of a source-level reference record or a different calling convention. The record is used only when it replaces at least two words and some member exceeds the target's integer argument registers, provisionally, because below that every argument is already in a register. The calls closing the component's cycles are `noinline` and forward calls stay inlinable, because inlining a cycle copy into a rare arm put a callee-saved frame on every call of the witness's test. Internal entries are named by their form and chosen in one place, shared with the split-part calling-convention entry. Measured: the witness's with-table and without-table gap fell from 4.3 and 4.2 instructions per call to 0, and Snowghost's renderer ratio rose from 0.9047 to 0.9829.
 ## 2026-10-12 A one-shot decision cell decides a kill against a held write
 
 Nodes: compiler/waiting-contexts, language/ownership, language/waiting/shared-objects, language/waiting/shared-objects/frozen-objects
