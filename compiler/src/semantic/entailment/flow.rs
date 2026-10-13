@@ -874,9 +874,6 @@ struct PreparedAffineAuto {
     intervals: WordHashMap<AffineTermId, AffineAtomInterval>,
     measures: Option<WordHashMap<AffineTermId, Vec<TermId>>>,
     residual: AffineResidualScratch,
-    /// Canonical coefficients AND upper bound, inserted only after all AUTO
-    /// families have failed; no successful proof or intermediate is retained.
-    failed: HashSet<AffineInequality>,
     final_interval_exceptions: Option<Vec<usize>>,
 }
 

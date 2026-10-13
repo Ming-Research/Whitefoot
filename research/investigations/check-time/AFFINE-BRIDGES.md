@@ -2,14 +2,15 @@
 
 ## Question and evidence boundary
 
-This is a read-only investigation dated 2026-10-13. Why does the enlarged
+The initial read-only investigation, dated 2026-10-13, asked: why does the enlarged
 integer-datum inventory spend approximately 20.64 billion extra instructions
 inside bridge-residual AUTO, and can the compiler compute the identical
-specified answer more cheaply? These are candidate reductions, not selected
-designs or implementation requirements. A changed AUTO answer or successful
-first-witness parent sequence rejects every candidate below. No compiler,
-specification, workflow or approval log was changed, and no local build, test
-or measurement ran.
+specified answer more cheaply? The ranked reductions below were research
+proposals; the follow-up sections record the subsequent instrumentation,
+selected pruning, measurements and cleanup. A changed AUTO answer or
+successful first-witness parent sequence rejects every candidate. The
+specification and approval logs remain unchanged. No local build, test or
+measurement ran.
 
 The sources are:
 
@@ -401,9 +402,11 @@ These are proposed measurements only; this research task runs none of them.
 
 ## Counter-only follow-up protocol
 
-The next observation uses the existing `WHITEFOOT_CHECK_WORK` path; its metric
-definitions belong to [work.rs](../../../compiler/src/semantic/entailment/work.rs).
-The shadow countermodel probe runs only in an active counter scope, after a
+The counter-only follow-up used the existing `WHITEFOOT_CHECK_WORK` path.
+This section records its historical protocol; the temporary shadow instrument
+was removed in the review cleanup below. Its metric definitions were then
+documented in [work.rs](../../../compiler/src/semantic/entailment/work.rs).
+The shadow countermodel probe ran only in an active counter scope, after a
 complete initial AUTO failure enters Step 6. It tries three assignments in
 fixed order: zero clamped to each strongest interval, all interval minima,
 then all maxima. It validates the complete affine input set through detached
@@ -411,7 +414,7 @@ read-only data. It neither supplies a proof nor suppresses any ordinary AUTO
 call. A group contributes covered bridge calls and exhaustions only when its
 model and every observed bridge remain valid under the same input view.
 
-The probe has an initial observation ceiling of 100,000 charged operations per
+The probe had an initial observation ceiling of 100,000 charged operations per
 group and 2,000,000 per function-analysis invocation, including snapshot and
 validation work. These are experiment limits, never acceptance limits.
 Arithmetic overflow, unavailable or changed inputs, and exhausted observation
@@ -460,9 +463,10 @@ material work to remove.
 All 176 shadow groups were unknown: 20 hit the group ceiling and 156 hit the
 function ceiling, totaling 2,000,000 charged units. There were zero certified
 and zero rejected groups. This is inconclusive, not evidence against the
-countermodel proposal. The ceilings remain unchanged: the current probe
-copies and rechecks the full atom/measure snapshots repeatedly; raising the
-limits is not a cheap way to settle the final-family question.
+countermodel proposal. The observation used unchanged ceilings: the probe copied and rechecked the
+full atom/measure snapshots repeatedly; raising the limits was not a cheap
+way to settle the final-family question. The review cleanup below removes
+this temporary probe without claiming a negative result.
 
 ### Why overlap alone is insufficient
 
@@ -600,5 +604,73 @@ Any verdict or first-parent difference rejects the reduction. Target overflow
 or an uncertain image minimum becoming a false failure also rejects it. If
 the support-complement superset retains nearly every image, or classification
 and posting-list work consumes the searches removed, it is not a remedy for
-this workload. Performance remains unmeasured until the next CI run; builds,
-tests and measurements run only there.
+this workload. The following CI result tests this criterion. Builds, tests and measurements
+run only in CI.
+
+
+## Pruning measurement and review cleanup
+
+[Measurement 38381962220](https://github.com/Ming-Research/Whitefoot/actions/runs/38381962220)
+compared `668dd2d76745e68d2f005efc58aa604f579d1377` with the same base
+`f0903241325885e1704a7212524a8c8f1eeedc3e`, using the same pinned Halo
+`80f0ee4` on hosted ubuntu-24.04. All eight verdicts were `pkg::vm: accepted`.
+Three interleaved uninstrumented CPU head/base ratios were 0.601, 0.605 and
+0.599, median 0.601: 39.9% less CPU than this base on this workload. This is
+exploratory hosted evidence, not a precise 14900K result or a claim about other
+programs. The comparison includes shared preparation and failed-query reuse;
+the cleaned-head confirmation will check that removing failure caching leaves
+the recovery intact.
+
+For function `run`, the counter log reports 34,237,146 total image opportunities,
+2,878,666 selected and actually visited images, and 31,358,480 skipped images
+(91.6% of reached traversal). There were 176 full-traversal fallbacks. Thus the
+selector removes the repeated image search identified in the prior counters,
+and the hosted CPU reduction meets the proposed performance criterion.
+[Gate 38381962183](https://github.com/Ming-Research/Whitefoot/actions/runs/38381962183)
+passed the Linux static, unit, corpus and runtime groups on that revision;
+the ready/main-only combined two-platform job was skipped. These checks are
+evidence for the measured revision, not execution evidence for subsequent
+cleanup edits.
+
+The shadow probe again observed 176 groups, all unknown: 20 group cutoffs,
+156 function cutoffs, and 2,000,000 charged operations. Zero certified and
+zero rejected groups leave candidate 2 inconclusive. The probe, observation
+limits and all shadow counters/tests are removed as temporary instrumentation.
+Countermodel certification remains deferred; no failure or success is inferred
+from the cutoffs.
+
+The review cleanup also removes the completely failed-query set, lookup,
+publication, its counter and reuse-only tests. Its earlier 310 exact-repeat
+hits did not recover time beyond hosted variation, satisfying that proposal's
+falsifier. Pruning does not depend on cached answers. The prepared evaluator
+remains solely to share interval endpoints, measure associations, residual
+scratch and image interval-feasibility classifications across a numeric proof's
+initial target and bridge residuals. Rechecking the existing closed/candidate
+view still invalidates all this preparation together after input changes.
+Every target runs AUTO afresh with its own arithmetic-check state. The pruning
+regressions continue to compare answers and first parents with exhaustive
+traversal, including fact/image invalidation.
+
+The retained additions to the existing work instrument are:
+
+| Counter group | Why it remains |
+| --- | --- |
+| AUTO initial/bridge/other origins | Separates the Step-6 multiplier from initial proof work; `other` keeps the accounting complete. |
+| DIRECT initial/single/pair/final-L0/other families | Identifies which fixed family consumes searches and whether work moves between families; `other` includes DIRECT outside ordinary AUTO. |
+| Final images total/selected/visited/skipped and filter fallbacks | Measures the selector's coverage and actual work avoided, including early success and conservative overflow fallback. |
+| Interval construction/warm probes | Separates shared preparation from repeated endpoint access that remains after pruning. |
+
+Tightening counts and overflow-event classifications are removed with the
+attribution-only metrics. Their checked arithmetic and overflow regression
+cases remain; removing observations cannot change candidate formation.
+Existing join, closure and affine-index counters are unchanged. The documented
+TSV schema in `work.rs` remains the owner of counter definitions.
+
+The temporary measurement workflow remains for one cleaned-head confirmation
+against the pinned base above, then is removed before ready. Its head schema
+requires only retained counters and no shadow or failed-reuse fields. Require
+identical verdicts and inspect pruning counts and uninstrumented CPU recovery.
+Removing failure reuse may restore searches for repeated targets, so raw call
+counts need not equal the previous head. Losing the
+recovery after cleanup reopens the attribution, rather than weakening the
+criterion. The cleaned revision still needs CI validation and this confirmation.

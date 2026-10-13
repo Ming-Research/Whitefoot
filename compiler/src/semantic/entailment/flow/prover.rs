@@ -6,7 +6,6 @@ use super::super::work::{self, AffineMetric as Metric};
 use super::*;
 
 mod final_l0;
-mod shadow;
 
 impl Vocabulary {
     pub(super) fn intern_measure(
@@ -1622,60 +1621,32 @@ impl Reasoning<'_, '_, '_> {
         context: ProofContext<'_>,
         auto: &mut AffineAutoQuery<'_>,
     ) -> Option<AffineConsequenceProof> {
-        let mut shadow = shadow::Group::start(self.vocabulary, auto, target);
-        let Some(right_value) = self.vocabulary.affine_term_value(right, context.affine) else {
-            if let Some(mut shadow) = shadow {
-                shadow.unavailable();
-                shadow.finish();
-            }
-            return None;
-        };
+        let right_value = self.vocabulary.affine_term_value(right, context.affine)?;
         let candidates = self.affine_right_bridge_candidates(context.affine);
         let closed = context.close(
             &self.vocabulary.terms,
             &self.vocabulary.goals,
             &mut self.vocabulary.derivations,
         );
-        if let Some(shadow) = &mut shadow {
-            shadow.prepare(self, auto, target, &closed);
-        }
         for candidate in candidates {
             let Some(bound) = closed.tight_bound(candidate.term, right) else {
                 continue;
             };
             let mut check = AffineCheckState::new();
-            let image = match AffineInequality::from_bounded_forms(
+            let Ok(image) = AffineInequality::from_bounded_forms(
                 &candidate.value,
                 &right_value,
                 bound,
                 &mut check,
-            ) {
-                Ok(image) => image,
-                Err(error) => {
-                    if error == AffineCheckError::ArithmeticOverflow {
-                        work::affine_metric(Metric::OverflowBridge);
-                    }
-                    continue;
-                }
+            ) else {
+                continue;
             };
-            let residual = match AffineInequality::residual_after(target, &image, &mut check) {
-                Ok(residual) => residual,
-                Err(error) => {
-                    if error == AffineCheckError::ArithmeticOverflow {
-                        work::affine_metric(Metric::OverflowBridge);
-                    }
-                    continue;
-                }
+            let Ok(residual) = AffineInequality::residual_after(target, &image, &mut check) else {
+                continue;
             };
-            if let Some(shadow) = &mut shadow {
-                shadow.bridge(&image, &residual);
-            }
             work::affine_metric(Metric::AutoCallsBridge);
             let proof =
                 self.prepared_affine_target_proof(&residual, context.facts, context.closed, auto);
-            if let Some(shadow) = &mut shadow {
-                shadow.observe_view(self.vocabulary, auto, &closed);
-            }
             let Some(mut proof) = proof else { continue };
             let Some(bridge) = closed.bound_proof(
                 candidate.term,
@@ -1686,13 +1657,7 @@ impl Reasoning<'_, '_, '_> {
                 continue;
             };
             proof.parents.push(bridge);
-            if let Some(shadow) = shadow {
-                shadow.finish();
-            }
             return Some(proof);
-        }
-        if let Some(shadow) = shadow {
-            shadow.finish();
         }
         None
     }
@@ -1731,22 +1696,17 @@ impl Reasoning<'_, '_, '_> {
                 continue;
             };
             let Some(affine_bound) = requested.checked_sub(bridge) else {
-                work::affine_metric(Metric::OverflowBridge);
                 continue;
             };
-            let Ok(right) = work::affine_result(
-                middle_value.add(
-                    &AffineForm::constant(affine_bound),
-                    &mut AffineCheckState::new(),
-                ),
-                Metric::OverflowBridge,
+            let Ok(right) = middle_value.add(
+                &AffineForm::constant(affine_bound),
+                &mut AffineCheckState::new(),
             ) else {
                 continue;
             };
-            let Ok(target) = work::affine_result(
-                AffineInequality::from_forms(left, &right, &mut AffineCheckState::new()),
-                Metric::OverflowBridge,
-            ) else {
+            let Ok(target) =
+                AffineInequality::from_forms(left, &right, &mut AffineCheckState::new())
+            else {
                 continue;
             };
             let relation = Relation::Bound {
@@ -3319,23 +3279,17 @@ impl Reasoning<'_, '_, '_> {
         check: &mut AffineCheckState,
     ) -> Result<Option<Vec<DerivationId>>, AffineCheckError> {
         work::affine_metric(query.direct_metric);
-        let result = (|| {
-            let inequality = inequality.into();
-            if query.closed.contradictory() {
-                return Ok(query.closed.contradiction_proof().map(|proof| vec![proof]));
-            }
-            if let Some(parents) =
-                self.vocabulary
-                    .affine_l0_proof(inequality, query.l0, query.closed, check)?
-            {
-                return Ok(Some(parents));
-            }
-            self.affine_interval_proof(inequality, query, check)
-        })();
-        if matches!(result, Err(AffineCheckError::ArithmeticOverflow)) {
-            work::affine_metric(Metric::OverflowDirect);
+        let inequality = inequality.into();
+        if query.closed.contradictory() {
+            return Ok(query.closed.contradiction_proof().map(|proof| vec![proof]));
         }
-        result
+        if let Some(parents) =
+            self.vocabulary
+                .affine_l0_proof(inequality, query.l0, query.closed, check)?
+        {
+            return Ok(Some(parents));
+        }
+        self.affine_interval_proof(inequality, query, check)
     }
 
     /// Checks the fixed `DIRECT(T - S)` residual of one accumulated candidate
@@ -3423,7 +3377,7 @@ impl Reasoning<'_, '_, '_> {
             .flatten()
     }
 
-    /// Reprepare before looking up a failed target. In particular, forming a
+    /// Revalidate shared preparation before every target. Forming a
     /// bridge candidate can mint a measure image through interior mutation.
     /// The retained index identity covers exact ordered candidates, including
     /// every unit measure image that interval substitution can read. Constants
@@ -3453,15 +3407,10 @@ impl Reasoning<'_, '_, '_> {
                 intervals: WordHashMap::default(),
                 measures: None,
                 residual: AffineResidualScratch::default(),
-                failed: HashSet::new(),
                 final_interval_exceptions: None,
             });
         }
         let prepared = auto.prepared.as_mut().expect("prepared above");
-        if prepared.failed.contains(target) {
-            super::super::work::affine_failed_reuse_hit();
-            return None;
-        }
         let mut query = AffineDirectQuery {
             l0: &l0,
             values: auto.values,
@@ -3477,14 +3426,11 @@ impl Reasoning<'_, '_, '_> {
         prepared.measures = query.measures;
         prepared.residual = query.residual;
         prepared.final_interval_exceptions = query.final_interval_exceptions;
-        if matches!(result, Ok(None)) {
-            prepared.failed.insert(target.clone());
-        }
         result.ok().flatten()
     }
 
-    /// A fresh arithmetic state for every distinct target; only complete AUTO
-    /// exhaustion returns Ok(None). Preparation errors are never memoized.
+    /// A fresh arithmetic state for every target; only complete AUTO
+    /// exhaustion returns Ok(None). No answer is memoized.
     fn evaluate_affine_target(
         &mut self,
         target: &AffineInequality,
@@ -3574,14 +3520,8 @@ pub(super) fn first_two_premise_candidate<T>(
     for first in 0..premises.len() {
         for second in first..premises.len() {
             let pair = [&premises[first].inequality, &premises[second].inequality];
-            let sum = match scratch.sum(&pair, check) {
-                Ok(sum) => sum,
-                Err(error) => {
-                    if error == AffineCheckError::ArithmeticOverflow {
-                        work::affine_metric(Metric::OverflowPair);
-                    }
-                    continue;
-                }
+            let Ok(sum) = scratch.sum(&pair, check) else {
+                continue;
             };
             if let Some(proof) = prove(sum, check) {
                 return Some((first, second, proof));

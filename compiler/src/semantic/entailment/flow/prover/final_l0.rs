@@ -275,10 +275,9 @@ impl LazyAffineL0Index {
                 let Some(bound) = closed.tight_bound(left.term, right.term) else {
                     continue;
                 };
-                let Ok(inequality) = work::affine_result(
-                    AffineInequality::from_bounded_forms(&left.value, &right.value, bound, check),
-                    Metric::OverflowIndex,
-                ) else {
+                let Ok(inequality) =
+                    AffineInequality::from_bounded_forms(&left.value, &right.value, bound, check)
+                else {
                     continue;
                 };
                 if selected
@@ -331,10 +330,9 @@ impl LazyAffineL0Index {
                 let Some(bound) = closed.tight_bound(left.term, right.term) else {
                     continue;
                 };
-                let Ok(inequality) = work::affine_result(
-                    AffineInequality::from_bounded_forms(&left.value, &right.value, bound, check),
-                    Metric::OverflowIndex,
-                ) else {
+                let Ok(inequality) =
+                    AffineInequality::from_bounded_forms(&left.value, &right.value, bound, check)
+                else {
                     continue;
                 };
                 let ordinal = *index

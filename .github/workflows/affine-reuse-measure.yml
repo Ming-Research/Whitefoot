@@ -1,4 +1,4 @@
-# Temporary, explicitly requested AUTO failure-reuse experiment; not a gate.
+# Temporary, explicitly requested final-L0 pruning confirmation; not a gate.
 # Remove this workflow after measurement, before the branch is marked ready.
 name: affine-reuse-measure
 
@@ -24,6 +24,7 @@ env:
   CARGO_PROFILE_GATE_DEBUG: line-tables-only
   CARGO_PROFILE_GATE_STRIP: none
   HALO_REVISION: 80f0ee4
+  BASELINE_REVISION: f0903241325885e1704a7212524a8c8f1eeedc3e
   WHITEFOOT_CHECK_TIMEOUT: 1800
 
 jobs:
@@ -34,14 +35,15 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Resolve identical-source comparison and prepare worktrees
+      - name: Resolve fixed confirmation baseline and prepare worktrees
         run: |
           out="$RUNNER_TEMP/affine-reuse"
           mkdir -p "$out"
           printf 'WHITEFOOT_TIME_BUDGET_RECORD=%s/time-budget-overruns.txt\n' "$out" >> "$GITHUB_ENV"
           git fetch --no-tags origin '+refs/heads/main:refs/remotes/origin/main'
-          base=$(git merge-base origin/main HEAD)
+          base=$(git rev-parse "${BASELINE_REVISION}^{commit}")
           head=$(git rev-parse HEAD)
+          git merge-base --is-ancestor "$base" "$head"
           printf 'BASE_REVISION=%s\nHEAD_REVISION=%s\n' "$base" "$head" >> "$GITHUB_ENV"
           rustup default stable
           git worktree add --detach "$RUNNER_TEMP/base" "$base"
@@ -128,28 +130,20 @@ jobs:
 
           out = pathlib.Path(os.environ['RUNNER_TEMP']) / 'affine-reuse'
           out.mkdir(exist_ok=True)
-          lines = ['## AUTO failed-query reuse on Halo VM', '',
+          lines = ['## Final-L0 pruning confirmation on Halo VM', '',
                    f"Earlier steps: {os.environ['JOB_STATUS']}. Base `{os.environ.get('BASE_REVISION', 'unresolved')}`; head `{os.environ.get('HEAD_REVISION', 'unresolved')}`.",
-                   'Hosted Ubuntu 24.04; same pinned Halo source and compiler build settings. Three uninstrumented rounds alternate order; work counters use one separate run per compiler. The head counter run also observes the bounded shadow countermodel probe; the six timing runs leave it disabled.',
+                   'Hosted Ubuntu 24.04; same pinned Halo source and compiler build settings. The compiler baseline is fixed at the pre-change revision rather than a moving merge-base. Three uninstrumented rounds alternate order; work counters use one separate run per compiler.',
                    'CPU ratios are exploratory hosted-runner observations, not a performance gate or a measurement on the 14900K.', '']
           errors = [] if os.environ['JOB_STATUS'] == 'success' else ['An earlier measurement step failed']
-          reuse = 'affine_failed_reuse_hits'
           observed = {
               'affine_auto_calls_initial', 'affine_auto_calls_bridge', 'affine_auto_calls_other',
               'affine_direct_initial', 'affine_direct_single', 'affine_direct_pair',
-              'affine_direct_final_l0', 'affine_direct_other', 'affine_tightenings_formed',
+              'affine_direct_final_l0', 'affine_direct_other',
+              'affine_interval_construction_probes', 'affine_interval_warm_probes',
               'affine_final_images_total', 'affine_final_images_selected',
               'affine_final_images_visited', 'affine_final_images_skipped',
-              'affine_final_filter_fallbacks',
-              'affine_overflow_pair', 'affine_overflow_tightening', 'affine_overflow_residual',
-              'affine_overflow_residual_bound_up', 'affine_overflow_residual_bound_down',
-              'affine_overflow_direct', 'affine_overflow_bridge', 'affine_overflow_index',
-              'affine_interval_construction_probes', 'affine_interval_warm_probes',
-              'affine_shadow_groups', 'affine_shadow_would_certify', 'affine_shadow_rejected',
-              'affine_shadow_unknown', 'affine_shadow_group_cutoffs', 'affine_shadow_function_cutoffs',
-              'affine_shadow_assignments', 'affine_shadow_operations',
-              'affine_shadow_bridge_calls', 'affine_shadow_final_exhaustions'}
-          additive = observed | {reuse}
+              'affine_final_filter_fallbacks'}
+          additive = observed
           expected = {
               'function': {'joins', 'join_passes', 'intern_calls', 'closure_cache_hits',
                            'affine_attempts', 'affine_memo_hits', 'affine_memo_misses',
@@ -343,16 +337,7 @@ jobs:
                   ['Images omitted in reached traversal prefixes', skipped, visited + skipped,
                    f'{100 * skipped / (visited + skipped):.2f}%' if visited + skipped else 'not observed']])
               lines.append('Total counts the complete image inventory each time the final family is entered; selected counts the planned subset. Visited counts actual candidate callbacks before success or exhaustion. Skipped counts only omitted images before the first retained success, or all omissions on exhaustion; omissions after an early success are excluded. Filter fallbacks traverse the full inventory. The omitted-prefix share measures image callbacks avoided, not DIRECT opportunities or CPU savings: one visited image can form several tightened DIRECT calls. Compare affine_direct_final_l0 separately; planned selection alone does not measure saved traversal.\n')
-              lines.append(f"The run table sums all {invocations['head']['run']} head analysis invocations of the exact function name `run`; individual invocation IDs remain in head-work.tsv. The shadow probe is counter-only: three fixed assignments (clamped zero, minimum, maximum), at most 100,000 validation operations per group and 2,000,000 per function invocation. Cutoffs make observed certification coverage a lower bound.\n")
-              coverage = []
-              for label, numerator, denominator in (
-                  ('Groups certified', 'affine_shadow_would_certify', 'affine_shadow_groups'),
-                  ('Bridge AUTO calls inside certified groups', 'affine_shadow_bridge_calls', 'affine_auto_calls_bridge'),
-                  ('Certified-group bridge exhaustions / all AUTO exhaustions', 'affine_shadow_final_exhaustions', 'affine_final_family_exhaustions')):
-                  n, d = run_work[f'function.{numerator}'], run_work[f'function.{denominator}']
-                  coverage.append([label, n, d, f'{100 * n / d:.2f}%' if d else 'not observed'])
-              table('Shadow countermodel coverage in Halo run', ['Observed subset', 'Subset count', 'All count', 'Share'], coverage)
-              lines.append('Low certified bridge-call or exhaustion coverage is evidence against this fixed assignment set only when probe coverage is complete or adequate; many unknown outcomes or group/function cutoffs leave an inconclusive lower bound. The exhaustion denominator includes initial and other AUTO queries as well as Step-6 bridges. affine_shadow_operations counts validation work, not CPU cost: these counters cannot establish net savings, and a future CI cost attribution must determine whether validation consumes the covered search cost.\n')
+              lines.append(f"The run table sums all {invocations['head']['run']} head analysis invocations of the exact function name `run`; individual invocation IDs remain in head-work.tsv.\n")
               names = results['base'].keys() | results['head'].keys()
               metrics = sorted({m for side in results.values() for fn in side.values() for m in fn})
               totals, differences = [], []

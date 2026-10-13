@@ -7,8 +7,6 @@
 //! counted for measurement, but a cumulative compiler budget never changes
 //! whether a source proposition is accepted.
 
-use super::work::{self, AffineMetric as Metric};
-
 /// Dense identity of one term in a semantic-checker-owned affine vocabulary.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) struct AffineTermId(u32);
@@ -276,14 +274,12 @@ impl AffineResidualScratch {
     ) -> Option<T> {
         // As before, derive both factors and form both tightenings before
         // attempting even the untightened residual.
-        let observe_factor = |result: Result<Option<i128>, AffineCheckError>| {
-            if matches!(result, Err(AffineCheckError::ArithmeticOverflow)) {
-                work::affine_metric(Metric::OverflowTightening);
-            }
-            result.ok().flatten()
-        };
-        let multiple = observe_factor(target_multiple_factor(candidate, target, check));
-        let divisor = observe_factor(coefficient_gcd(candidate, check))
+        let multiple = target_multiple_factor(candidate, target, check)
+            .ok()
+            .flatten();
+        let divisor = coefficient_gcd(candidate, check)
+            .ok()
+            .flatten()
             .filter(|factor| Some(*factor) != multiple);
         let mut tightened = [None; 2];
         for ((slot, terms), factor) in tightened
@@ -292,15 +288,10 @@ impl AffineResidualScratch {
             .zip([multiple, divisor])
         {
             let Some(factor) = factor else { continue };
-            match integer_tightening_into(candidate, factor, &mut self.divided, terms, check) {
-                Ok(Some(upper)) => {
-                    work::affine_metric(Metric::TighteningsFormed);
-                    *slot = Some(AffineInequalityView { terms, upper });
-                }
-                Err(AffineCheckError::ArithmeticOverflow) => {
-                    work::affine_metric(Metric::OverflowTightening);
-                }
-                Ok(None) | Err(_) => {}
+            if let Ok(Some(upper)) =
+                integer_tightening_into(candidate, factor, &mut self.divided, terms, check)
+            {
+                *slot = Some(AffineInequalityView { terms, upper });
             }
         }
         for accumulated in std::iter::once(candidate).chain(tightened.into_iter().flatten()) {
@@ -315,25 +306,9 @@ impl AffineResidualScratch {
                 // Do not regroup target - premise: multiplying a MIN
                 // coefficient by -1 must still fail before cancellation.
                 let bound = checked_mul(accumulated.upper(), 1)?;
-                let upper = checked_sub(target.upper(), bound);
-                if matches!(upper, Err(AffineCheckError::ArithmeticOverflow)) {
-                    work::affine_metric(if bound < 0 {
-                        Metric::OverflowResidualBoundUp
-                    } else {
-                        Metric::OverflowResidualBoundDown
-                    });
-                }
-                upper
+                checked_sub(target.upper(), bound)
             })();
-            let upper = match upper {
-                Ok(upper) => upper,
-                Err(error) => {
-                    if error == AffineCheckError::ArithmeticOverflow {
-                        work::affine_metric(Metric::OverflowResidual);
-                    }
-                    continue;
-                }
-            };
+            let Ok(upper) = upper else { continue };
             let residual = AffineInequalityView {
                 terms: &self.residual,
                 upper,

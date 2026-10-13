@@ -1,6 +1,5 @@
-//! Temporary checker work attribution for the many-arm join cost, outside
-//! the acceptance and derivation state. Remove it after the join-cost fix
-//! unless it is kept as a maintained diagnostic.
+//! Maintained checker work diagnostics for joins, affine query preparation
+//! and AUTO family traversal, outside the acceptance and derivation state.
 //!
 //! `WHITEFOOT_CHECK_WORK=<scratch TSV>` appends these counters through the
 //! ordinary semantic path, including `whitefootc --check`. The variable is
@@ -31,36 +30,20 @@
 //!   `affine_promotions` counts complete builds, at most one per residency.
 //!   `affine_final_family_starts` counts entry into AUTO's final L0 family;
 //!   `affine_final_family_exhaustions` counts those traversals returning no
-//!   proof after all entries. Repeated traversals count separately even when
-//!   the complete index is reused. `affine_failed_reuse_hits` counts targets
-//!   whose complete AUTO failure is reused within one numeric disposition,
-//!   after revalidating the closed facts and ordered candidate images under
-//!   that session's fixed binding images and automatic premises. These hits
-//!   execute no final-family traversal. Cold scans are aggregated per request;
+//!   proof after the retained entries are exhausted; omitted entries are
+//!   certified failures. Repeated traversals count separately even when
+//!   the complete index is reused. Cold scans are aggregated per request;
 //!   all affine counters are aggregated per function before emission.
 //! - Additional `function` affine observations (all emitted even when zero):
 //!   `affine_auto_calls_initial` counts initial numeric/bounded-relation AUTO
 //!   submissions; `affine_auto_calls_bridge` counts Step-6 residual submissions
 //!   in both numeric and bounded-relation routes; `affine_auto_calls_other`
-//!   counts other standalone AUTO (including quotient targets). Submissions
-//!   include failed-query reuse hits, which perform no DIRECT search.
+//!   counts other standalone AUTO (including quotient targets).
 //!   `affine_direct_initial`, `affine_direct_single`, `affine_direct_pair`,
 //!   `affine_direct_final_l0` count actual DIRECT calls in each AUTO family;
 //!   `affine_direct_other` counts DIRECT calls outside an AUTO family. Initial
 //!   here means DIRECT(T) of every AUTO, including a bridge-origin AUTO.
 //!   Tightened variants count in the same family; unformable residuals do not.
-//!   `affine_tightenings_formed` counts representable integer tightenings in
-//!   the shared candidate scratch path, even if an earlier variant succeeds.
-//!   `affine_overflow_pair` counts discarded pair sums; `_tightening` counts
-//!   overflowing factor computations or tightening formations; `_residual`
-//!   counts discarded candidate residuals; `_direct` counts DIRECT returning
-//!   arithmetic overflow; `_bridge` counts discarded bridge image/target
-//!   formations; `_index` counts discarded L0 image formations in lazy or
-//!   complete index preparation. These are operations, not unique queries.
-//!   `affine_overflow_residual_bound_up` and `_bound_down` are subsets of
-//!   `_residual`: final bound subtraction overflow toward MAX or MIN. They
-//!   exclude coefficient overflow before bound subtraction. Non-overflow
-//!   arithmetic errors and failed inverse lookup keys are not counted.
 //!   `affine_interval_construction_probes` and `_warm_probes` partition the
 //!   endpoint-map membership probes in DIRECT and final-family filter
 //!   preparation: absent (construct) or present (reuse). Dot-product and
@@ -74,31 +57,6 @@
 //!   retaining every entry because the target is empty, the state contradictory,
 //!   or the exact target interval maximum is unavailable or does not exceed
 //!   its bound. Unknown candidate minima individually retain those entries.
-//! - The `affine_shadow_*` counters observe numeric proofs entering Step 6
-//!   after complete initial AUTO failure. `groups` partitions into
-//!   `would_certify`, `rejected` (all fixed assignments fail validation or do
-//!   not violate the target), and `unknown` (stale/unavailable inputs,
-//!   arithmetic uncertainty without a surviving model, or a work cutoff).
-//!   `assignments` counts attempted zero-clamped, all-minimum and all-maximum
-//!   vectors, in that order. They must satisfy every canonical automatic
-//!   premise, strongest indexed L0 image and strongest atom interval and
-//!   violate the target. The view is rechecked after ordinary bridge setup
-//!   and every actual AUTO, and every submitted bridge/residual is validated.
-//!   `bridge_calls` and `final_exhaustions` count actual residual submissions
-//!   (including reuse hits) and actual final-family exhaustions only inside
-//!   completely certified groups. They exclude the initial AUTO. Other
-//!   bounded-relation Step-6 routes contribute no shadow group.
-//!   `operations` counts charged observer units: visited/copied atom records,
-//!   images/coefficients, endpoint queries, vector entries, inequality checks,
-//!   scalar lookup/multiply/add and a conservative key-sorting allowance. It
-//!   is not an instruction count; closure lookup internals are not expanded.
-//!   Storage/scans are charged before allocation or traversal. At most
-//!   100,000 units per group and 2,000,000 per function invocation are allowed;
-//!   `group_cutoffs` and `function_cutoffs` count the first refused charge per
-//!   affected group. A cutoff only invalidates this observer, never AUTO.
-//!   With cutoffs/unknowns, measured certified coverage is a lower bound.
-//!   No shadow snapshot, allocation or probe executes without an active
-//!   counter scope. The probe owns detached data and publishes no proof.
 //! - `join`: ordinal identifies a pass; `join` identifies its enclosing
 //!   `join_at` call. `inputs` includes contradictory predecessors;
 //!   `union_rows` counts contributing closure rows plus requested extra rows
@@ -163,6 +121,7 @@ struct JoinWork {
     intern_calls: u64,
 }
 
+#[derive(Default)]
 struct AffineWork {
     attempts: u64,
     memo_hits: u64,
@@ -172,25 +131,7 @@ struct AffineWork {
     promotions: u64,
     final_family_starts: u64,
     final_family_exhaustions: u64,
-    failed_reuse_hits: u64,
     extra: [u64; AffineMetric::Count as usize],
-}
-
-impl Default for AffineWork {
-    fn default() -> Self {
-        Self {
-            attempts: 0,
-            memo_hits: 0,
-            memo_misses: 0,
-            cold_demands: 0,
-            left_candidates_scanned: 0,
-            promotions: 0,
-            final_family_starts: 0,
-            final_family_exhaustions: 0,
-            failed_reuse_hits: 0,
-            extra: [0; AffineMetric::Count as usize],
-        }
-    }
 }
 
 /// Observer-only affine metrics. Names are shared by TSV emission and tests.
@@ -204,27 +145,8 @@ pub(super) enum AffineMetric {
     DirectPair,
     DirectFinalL0,
     DirectOther,
-    TighteningsFormed,
-    OverflowPair,
-    OverflowTightening,
-    OverflowResidual,
-    OverflowResidualBoundUp,
-    OverflowResidualBoundDown,
-    OverflowDirect,
-    OverflowBridge,
-    OverflowIndex,
     IntervalConstructionProbes,
     IntervalWarmProbes,
-    ShadowGroups,
-    ShadowWouldCertify,
-    ShadowRejected,
-    ShadowUnknown,
-    ShadowGroupCutoffs,
-    ShadowFunctionCutoffs,
-    ShadowAssignments,
-    ShadowOperations,
-    ShadowBridgeCalls,
-    ShadowFinalExhaustions,
     FinalImagesTotal,
     FinalImagesSelected,
     FinalImagesVisited,
@@ -243,46 +165,14 @@ impl AffineMetric {
         "affine_direct_pair",
         "affine_direct_final_l0",
         "affine_direct_other",
-        "affine_tightenings_formed",
-        "affine_overflow_pair",
-        "affine_overflow_tightening",
-        "affine_overflow_residual",
-        "affine_overflow_residual_bound_up",
-        "affine_overflow_residual_bound_down",
-        "affine_overflow_direct",
-        "affine_overflow_bridge",
-        "affine_overflow_index",
         "affine_interval_construction_probes",
         "affine_interval_warm_probes",
-        "affine_shadow_groups",
-        "affine_shadow_would_certify",
-        "affine_shadow_rejected",
-        "affine_shadow_unknown",
-        "affine_shadow_group_cutoffs",
-        "affine_shadow_function_cutoffs",
-        "affine_shadow_assignments",
-        "affine_shadow_operations",
-        "affine_shadow_bridge_calls",
-        "affine_shadow_final_exhaustions",
         "affine_final_images_total",
         "affine_final_images_selected",
         "affine_final_images_visited",
         "affine_final_images_skipped",
         "affine_final_filter_fallbacks",
     ];
-}
-
-pub(super) fn affine_result<T>(
-    result: Result<T, super::affine::AffineCheckError>,
-    metric: AffineMetric,
-) -> Result<T, super::affine::AffineCheckError> {
-    if matches!(
-        result,
-        Err(super::affine::AffineCheckError::ArithmeticOverflow)
-    ) {
-        affine_metric(metric);
-    }
-    result
 }
 
 pub(super) fn affine_metric(metric: AffineMetric) {
@@ -294,43 +184,6 @@ pub(super) fn affine_add(metric: AffineMetric, amount: u64) {
         let value = &mut work.affine.extra[metric as usize];
         *value = value.saturating_add(amount);
     });
-}
-
-/// No allocation, snapshot or probe runs without an active counter scope.
-pub(super) fn affine_observing() -> bool {
-    if !enabled() {
-        return false;
-    }
-    ACTIVE.with(|active| active.borrow().is_some())
-}
-
-pub(super) fn affine_exhaustions() -> u64 {
-    if !affine_observing() {
-        return 0;
-    }
-    ACTIVE.with(|active| {
-        active
-            .borrow()
-            .as_ref()
-            .unwrap()
-            .affine
-            .final_family_exhaustions
-    })
-}
-
-pub(super) const SHADOW_FUNCTION_OPERATIONS: u64 = 2_000_000;
-
-/// Charges only observer work, never the affine checker's arithmetic state.
-pub(super) fn shadow_charge(amount: u64) -> bool {
-    let mut charged = false;
-    update(|work| {
-        let count = &mut work.affine.extra[AffineMetric::ShadowOperations as usize];
-        if amount <= SHADOW_FUNCTION_OPERATIONS.saturating_sub(*count) {
-            *count += amount;
-            charged = true;
-        }
-    });
-    charged
 }
 
 fn enabled() -> bool {
@@ -358,14 +211,6 @@ impl AffineTestScope {
         Self(
             previous,
             TEST_ENABLED.with(|enabled| enabled.replace(Some(true))),
-        )
-    }
-
-    pub(super) fn disabled() -> Self {
-        let previous = ACTIVE.with(|active| active.replace(None));
-        Self(
-            previous,
-            TEST_ENABLED.with(|enabled| enabled.replace(Some(false))),
         )
     }
 
@@ -548,47 +393,13 @@ pub(super) fn affine_promotion() {
     update(|work| work.affine.promotions = work.affine.promotions.saturating_add(1));
 }
 
-// Thread-local observations of the production traversal hooks, independent of
-// the optional TSV sink. Tests compare deltas, so parallel tests do not share
-// counts and no environment variable or output file is needed.
-#[cfg(test)]
-thread_local! {
-    static AFFINE_TRAVERSALS: std::cell::Cell<[u64; 3]> = const { std::cell::Cell::new([0; 3]) };
-}
-
-#[cfg(test)]
-pub(super) fn affine_traversals() -> [u64; 3] {
-    AFFINE_TRAVERSALS.with(std::cell::Cell::get)
-}
-
-#[cfg(test)]
-fn affine_traversal(index: usize) {
-    AFFINE_TRAVERSALS.with(|counts| {
-        let mut value = counts.get();
-        value[index] += 1;
-        counts.set(value);
-    });
-}
-
-pub(super) fn affine_failed_reuse_hit() {
-    #[cfg(test)]
-    affine_traversal(2);
-    update(|work| {
-        work.affine.failed_reuse_hits = work.affine.failed_reuse_hits.saturating_add(1);
-    });
-}
-
 pub(super) fn affine_final_family_start() {
-    #[cfg(test)]
-    affine_traversal(0);
     update(|work| {
         work.affine.final_family_starts = work.affine.final_family_starts.saturating_add(1);
     });
 }
 
 pub(super) fn affine_final_family_exhausted() {
-    #[cfg(test)]
-    affine_traversal(1);
     update(|work| {
         work.affine.final_family_exhaustions =
             work.affine.final_family_exhaustions.saturating_add(1);
@@ -638,7 +449,6 @@ impl FunctionWork {
                 self.affine.left_candidates_scanned,
             ),
             ("affine_promotions", self.affine.promotions),
-            ("affine_failed_reuse_hits", self.affine.failed_reuse_hits),
             (
                 "affine_final_family_starts",
                 self.affine.final_family_starts,
