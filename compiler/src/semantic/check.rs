@@ -283,6 +283,10 @@ struct LocalBinding {
     /// reference binding is rebound; only its flow-sensitive validity meets
     /// at joins.
     refinement_witnesses: Vec<RefinementWitness>,
+    /// [SHARE-2] on an atomic statement's binding, the places its handle was
+    /// read from, which every write and move checked in the statement marks
+    /// when it may overlap one of them. Every copy of this state shares it.
+    handle_watch: Option<std::rc::Rc<references::HandleWatch>>,
     /// [EFF-1] whether this binding is a parameter holding the value its call
     /// passed on every path to here. An index names a row's index parameter
     /// only while it does, since a row evaluates that parameter once at the
@@ -2380,6 +2384,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 )
             }),
             refinement_witnesses: Vec::new(),
+            handle_watch: None,
             call_value: true,
         })
     }
