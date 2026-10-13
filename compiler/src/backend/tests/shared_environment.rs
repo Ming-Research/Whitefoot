@@ -321,7 +321,7 @@ fn recorded_loop_capture_loads_in_the_indexed_driver_call_block() {
     return counted;
   }
   let counts = box_array_filled::<u64>(count: 8_u64, value: 0_u64);
-  for (i in 0_u64..64_u64) {
+  for (i in 0_u64..p) {
     let bucket = i % 8_u64;
     let added = left^ +wrap right^;
     set counts.inner[bucket] = counts.inner[bucket] +wrap added;
@@ -339,7 +339,7 @@ fn main() -> status: std::process::ExitStatus pure {
   let left = 3_u64;
   let right = 2_u64;
   let spare = 0_u64;
-  let counted = count_first(left: &left, right: &right, spare: &spare, depth: 2_u64, x: 1_u64, y: 2_u64, z: 3_u64, p: 4_u64, q: 5_u64);
+  let counted = count_first(left: &left, right: &right, spare: &spare, depth: 2_u64, x: 1_u64, y: 2_u64, z: 3_u64, p: 64_u64, q: 5_u64);
   if counted != 40_u64 {
     return std::process::exit_status(code: 1_u8);
   }
@@ -355,7 +355,8 @@ fn main() -> status: std::process::ExitStatus pure {
         },
     );
     let first = emitted_function(&llvm, "_env_count_first");
-    // The indexed loop keeps its range driver; the site itself allocates
+    // The extent is the forwarded `p`: a literal 64-iteration call-free loop
+    // is a compile-time small site and keeps no driver. The indexed loop keeps its range driver; the site itself allocates
     // nothing and asks the runtime for no split budget.
     assert!(first.contains("@wf__par_split_count_first."), "{first}");
     assert!(!first.contains("@wf__par_split_budget("), "{first}");
@@ -785,10 +786,10 @@ fn functions_without_a_record_resolve_their_operands_before_their_blocks() {
   return left^ == right^;
 }
 
-fn count_words(left: &u64, right: &u64) -> result: u64 reads(left), reads(right) {
+fn count_words(left: &u64, right: &u64, extent: u64) -> result: u64 reads(left), reads(right) {
   doc "An indexed loop the range driver takes, capturing two borrows.";
   let counts = box_array_filled::<u64>(count: 8_u64, value: 0_u64);
-  for (i in 0_u64..64_u64) {
+  for (i in 0_u64..extent) {
     let bucket = i % 8_u64;
     let added = left^ +wrap right^;
     set counts.inner[bucket] = counts.inner[bucket] +wrap added;
@@ -822,7 +823,7 @@ fn main() -> status: std::process::ExitStatus pure {
   }
   let one = 3_u64;
   let two = 2_u64;
-  let counted = count_words(left: &one, right: &two);
+  let counted = count_words(left: &one, right: &two, extent: 64_u64);
   if same(left: &a, right: &b) {
     if counted == 40_u64 {
       return std::process::exit_status(code: 0_u8);
@@ -862,7 +863,9 @@ fn main() -> status: std::process::ExitStatus pure {
     }
 
     // The driver's operands taken from the function body exist before its
-    // call. The site prepares no private storage and asks for no budget.
+    // call. The site prepares no private storage and asks for no budget. Its
+    // extent is a parameter, since a literal 64-iteration call-free loop is a
+    // compile-time small site with no driver.
     let count = emitted_function(&llvm, "count_words");
     assert!(!count.contains("@wf__par_split_budget("), "{count}");
     assert!(!count.contains("@wf__heap_take("), "{count}");

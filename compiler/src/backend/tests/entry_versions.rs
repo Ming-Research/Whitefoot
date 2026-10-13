@@ -177,7 +177,9 @@ fn many(seed: u64) -> result: u64 pure {
 }
 
 /// An indexed reduction no longer leaves its function to local decisions:
-/// its span and its families' cell count join the entry choice.
+/// its span, the formal's length, joins the entry choice. The family's cell
+/// count is the length of a Box the body allocates, not an entry value, so
+/// the cells refinement is dropped and only the span test decides.
 #[test]
 fn an_indexed_site_takes_part_in_the_entry_choice() {
     let source: &[u8] = include_bytes!("../../../../tests/programs/parallel/indexed_reductions.wf");
@@ -208,7 +210,11 @@ fn an_indexed_site_takes_part_in_the_entry_choice() {
             .get("histogram")
             .expect("an indexed site's span is an entry value");
         assert_eq!(predicates.len(), 1, "{predicates:?}");
-        assert!(predicates[0].cells.is_some(), "{predicates:?}");
+        assert!(
+            matches!(predicates[0].span, crate::IrWorkEstimate::Length(_)),
+            "{predicates:?}"
+        );
+        assert!(predicates[0].cells.is_none(), "{predicates:?}");
     });
     let module = emit_with_overlap(source);
     assert!(super::emitted_body(&module, "histogram").contains("par.region.entry:"));

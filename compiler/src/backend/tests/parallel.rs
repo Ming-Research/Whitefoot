@@ -1817,7 +1817,13 @@ fn pair_trailing(n: u64, x: u64, y: u64, m: u64) -> result: u64 pure {
             }
         }
     }
+    // With no call group left, `pair_dependent` chooses at entry from `n`,
+    // the span of the splits it reaches; the order below is the parallel
+    // body's, after that choice's own arithmetic.
     let dependent = function_body(&module, "@wf_pair_dependent");
+    let dependent = &dependent[dependent
+        .find("\nentry:\n")
+        .unwrap_or_else(|| panic!("the parallel body follows the entry choice:\n{dependent}"))..];
     assert!(!dependent.contains("@wf__par_publish("), "{dependent}");
     assert!(!dependent.contains("@wf__par_join("), "{dependent}");
     assert_eq!(dependent.matches("call i64 @wf_heavy(").count(), 2);

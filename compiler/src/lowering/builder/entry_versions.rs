@@ -330,6 +330,13 @@ fn entry_is_a_target(function: &IrFunction) -> bool {
             IrTerminator::Match { targets, .. } => {
                 targets.iter().any(|target| target.block().index() == 0)
             }
+            IrTerminator::IntegerMatch {
+                targets, default, ..
+            } => targets
+                .iter()
+                .map(|target| target.block())
+                .chain(*default)
+                .any(|target| target.index() == 0),
             IrTerminator::Return { .. } | IrTerminator::Unreachable => false,
         })
 }

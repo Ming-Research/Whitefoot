@@ -329,7 +329,12 @@ fn build_compute_oracle(
 /// Observe the actual price operand at each demand-split call. This is test
 /// instrumentation over emitted operands, so it cannot reconstruct pricing
 /// from source or make a static estimate look like a runtime extent.
+///
+/// The observed extents include ones below the split grain, which a
+/// function's entry choice would send to the ordinary closure before any
+/// driver call, so every entry choice is sent to the parallel body first.
 fn observe_range_prices(module: &str) -> String {
+    let module = super::without_entry_selection(module);
     let mut observed = String::new();
     let mut ordinal = 0;
     for line in module.lines() {
