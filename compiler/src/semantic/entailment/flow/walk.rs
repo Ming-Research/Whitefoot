@@ -406,26 +406,27 @@ impl Analyzer<'_, '_> {
             // access through the binding's new value.
             let bindings = place.spelled_indices().collect::<Vec<_>>();
             let mut identity_preserved = true;
-            for (capture, binding) in bindings {
+            for (capture, source) in bindings {
+                let mut support = place.clone();
+                support.path.clear();
+                support
+                    .path
+                    .push(PlaceStep::Index(CapturedValue::new(capture, source)));
                 if prepared.kills.iter().any(|event| {
-                    self.input.affine_event_kills_binding(
+                    self.input.event_kills_offset_support(
                         &prepared.entry_separations(&state.separations),
-                        binding,
+                        &support,
                         event,
                     )
                 }) || target_kills.iter().any(|event| {
                     self.input
-                        .affine_event_kills_binding(&state.separations, binding, event)
+                        .event_kills_offset_support(&state.separations, &support, event)
                 }) {
-                    // A direct page selection can already have discarded its
-                    // occurrence in favor of current spelling. That spelling
-                    // cannot name the old value after this write, and minting
-                    // a replacement capture would assert an invented identity.
                     if !matches!(capture, CaptureId::Source(_) | CaptureId::LoopHeader { .. }) {
                         identity_preserved = false;
                         break;
                     }
-                    place.supersede_binding(binding);
+                    place.supersede_term(source);
                 }
             }
             let destinations = vec![identity_preserved.then(|| {
@@ -1216,9 +1217,7 @@ impl Analyzer<'_, '_> {
                     .frames
                     .gives
                     .last()
-                    .is_some_and(|frame| {
-                        value_carrier(frame.result_mode, frame.result_type, value)
-                    })
+                    .is_some_and(|frame| value_carrier(frame.result_mode, frame.result_type, value))
                     .then(|| self.reasoning().mint_value_carrier(node_path, value, state));
                 let mut result = self.capture_result(node_path, value, state);
                 let judgment = self.expression_effects(value, state);
@@ -2007,8 +2006,12 @@ impl Analyzer<'_, '_> {
             if let Some(binder) = arm.binders.iter().find(|binder| {
                 binder.field == result.route.field && binder.mode == CheckedMode::Own
             }) {
-                self.reasoning()
-                    .select_result(&binder.node_path, result, binder.binding, &mut state);
+                self.reasoning().select_result(
+                    &binder.node_path,
+                    result,
+                    binder.binding,
+                    &mut state,
+                );
             }
         }
         self.frames

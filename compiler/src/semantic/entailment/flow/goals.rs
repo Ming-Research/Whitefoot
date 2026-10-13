@@ -666,8 +666,20 @@ impl Input<'_, '_> {
         projections
             .iter()
             .map(|projection| {
-                projection.instantiate_formal(|ordinal| {
+                projection.instantiate_formal(|ordinal, projected| {
                     let offset = self.function.parameters.get(ordinal as usize)?;
+                    if let Some((id, _)) = projected {
+                        let mut place = ResolvedPlace::binding(offset.binding);
+                        place.path = self.context.captured_places.formal(id);
+                        let id = self.context.captured_places.intern(place);
+                        let term = if self.context.captured_places.get(id).path.is_empty() {
+                            CapturedTerm::Binding(offset.binding)
+                        } else {
+                            CapturedTerm::Place(id)
+                        };
+                        return Some(CapturedValue::new(CaptureId::SpellingDetermined, term));
+                    }
+
                     Some(
                         CapturedValue::new(
                             CaptureId::source(u32::MAX),

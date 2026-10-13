@@ -2093,7 +2093,9 @@ mod indexed_goal_kill_tests {
     fn signed_indexed_facts_follow_offset_events_and_scope_exits() {
         let constant_ids = HashMap::new();
         let const_parameter_types = HashMap::new();
+        let captured_places = super::super::places::CapturedPlaceTable::default();
         let context = EntailmentContext {
+            captured_places: &captured_places,
             declarations: &[],
             callees: &[],
             constants: &[],
@@ -2337,7 +2339,9 @@ mod range_argument_kill_tests {
     ) -> R {
         let constant_ids = HashMap::new();
         let const_parameter_types = HashMap::new();
+        let captured_places = super::super::places::CapturedPlaceTable::default();
         let context = EntailmentContext {
+            captured_places: &captured_places,
             declarations: &[],
             callees: &[],
             constants: &[],

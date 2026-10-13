@@ -2251,12 +2251,12 @@ fn subscript_offsets(
 /// value here.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum SubscriptedTerm {
-    /// Every offset is a captured literal, const or binding [REF-1], so the
-    /// place has the term identity the entailment fragment interns.
+    /// Every offset is a captured literal, const or tracked place [REF-1],
+    /// so the place has the identity the entailment fragment interns.
     Represented,
-    /// An offset is a tracked place with projections, which ENT-2 admits but
-    /// no captured value names. This is a compiler capability limit, reported
-    /// as unsupported, not a language rejection [DIAG-1].
+    /// An admitted tracked offset has no captured representation. This is a
+    /// compiler capability limit, reported as unsupported, not a language
+    /// rejection [DIAG-1].
     Unrepresented,
 }
 
@@ -3373,9 +3373,8 @@ impl CheckedCallSeparationPositions {
     /// is never proved, and a pair with no other candidate is one no named
     /// position separates [EFF-5, OWN-7].
     pub(crate) fn names_its_values(self) -> bool {
-        let named = |value: super::places::CapturedValue| {
-            value != super::places::CapturedValue::unknown()
-        };
+        let named =
+            |value: super::places::CapturedValue| value != super::places::CapturedValue::unknown();
         let named_range =
             |range: super::places::CapturedRange| named(range.start) && named(range.end);
         match self {
@@ -3427,6 +3426,8 @@ pub(crate) struct CheckedEffects {
 
 #[derive(Debug)]
 pub(crate) struct CheckedProgramData {
+    #[allow(dead_code)]
+    pub(crate) captured_places: super::places::CapturedPlaces,
     pub(crate) nominals: Vec<CheckedNominal>,
     /// [BLK-4, DIAG-2] retained confinement for each complete nominal,
     /// including phantom brands. Structural types carry their region and

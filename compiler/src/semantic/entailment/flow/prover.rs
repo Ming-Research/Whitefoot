@@ -1755,14 +1755,21 @@ impl Reasoning<'_, '_, '_> {
             }
             // A superseded binding's capture still names the value its
             // formation read, which is the immutable term the capture minted.
-            CapturedTerm::Binding(_) | CapturedTerm::Superseded(_)
+            CapturedTerm::Binding(_)
+            | CapturedTerm::Superseded(_)
+            | CapturedTerm::Place(_)
+            | CapturedTerm::SupersededPlace(_)
                 if matches!(value.capture, CaptureId::Source(_)) =>
             {
                 self.vocabulary.terms.interned(&TermKind::IndexCapture {
                     capture: value.capture,
                 })
             }
-            CapturedTerm::Binding(_) | CapturedTerm::Superseded(_) | CapturedTerm::Opaque => None,
+            CapturedTerm::Binding(_)
+            | CapturedTerm::Superseded(_)
+            | CapturedTerm::Place(_)
+            | CapturedTerm::SupersededPlace(_)
+            | CapturedTerm::Opaque => None,
         }
     }
 

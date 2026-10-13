@@ -23,6 +23,10 @@ pub(super) enum ContractReadStep {
     Row(CheckedEffectStep),
     /// Literal and const positions already have a captured value.
     Captured(PlaceStep),
+    /// A projected parameter offset is substituted as one ordinary goal datum.
+    Projected(GoalProjection),
+    /// The selector's own relative read path, independent of its indexed base.
+    FormalPath(crate::semantic::places::FormalOffsetId),
     /// A finite typed range position and the erased definition images its
     /// local roots can name, kept intact until caller substitution.
     Computed(CheckedRangeTerm, Vec<(BindingId, GoalExpression)>),
@@ -224,6 +228,20 @@ fn ordinary_read(
     if let Some(steps) = ordinary_steps(signature, ordinal, projections) {
         add_read(signature, ordinal, steps, reads);
     }
+    // Offset evaluation reads its own referent even when the indexed base
+    // is an owned parameter and contributes no reference argument read.
+    for projection in projections {
+        if let GoalProjection::FormalPlaceSubscript { ordinal, place, .. }
+        | GoalProjection::FormalPlacePage { ordinal, place, .. } = projection
+        {
+            add_read(
+                signature,
+                *ordinal,
+                vec![ContractReadStep::FormalPath(*place)],
+                reads,
+            );
+        }
+    }
 }
 
 fn ordinary_steps(
@@ -260,6 +278,8 @@ fn ordinary_steps(
             GoalProjection::FormalPage { ordinal } => ContractReadStep::Row(
                 CheckedEffectStep::Page(signature.parameters[ordinal as usize].declaration),
             ),
+            projection @ (GoalProjection::FormalPlaceSubscript { .. }
+            | GoalProjection::FormalPlacePage { .. }) => ContractReadStep::Projected(projection),
             projection => ContractReadStep::Captured(projection.place_step()),
         })
         .collect();

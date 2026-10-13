@@ -612,6 +612,7 @@ struct TypeContext<'unit> {
     /// symbolic validation instance is checked; every concrete instantiation
     /// evaluates entries away, so no id reaches lowering.
     derived_consts: Vec<DerivedConst>,
+    captured_places: super::places::CapturedPlaceTable,
     behavior: behavior::BehaviorInventory,
     /// [TYPE-11] each struct's formed type invariants, in declaration order.
     type_invariants: HashMap<NominalId, Vec<type_invariants::TypeInvariantTemplate>>,
@@ -660,7 +661,8 @@ struct BodyChecker {
     /// ends those call values. The sets only grow across the function's
     /// retries, and a new member restarts the walk, as a new loop-header
     /// summary path does.
-    loop_superseded_bindings: HashMap<super::model::CheckedLoopId, HashSet<BindingId>>,
+    loop_superseded_bindings:
+        HashMap<super::model::CheckedLoopId, HashSet<super::places::CapturedTerm>>,
     /// [EFF-1] the index and range-endpoint captures that read a parameter
     /// while it held its call value on every path to their formation, which
     /// name the row's index parameter whatever later writes and joins do.
@@ -1543,6 +1545,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             .lock_ledger_sources(&functions, &executable_functions);
 
         Ok(CheckedProgramData {
+            captured_places: self.types.captured_places.snapshot(),
             nominals: self.types.nominals.clone(),
             nominal_confinement: self
                 .types
@@ -2741,11 +2744,25 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                     // over is the value that argument names here.
                     let projection = match projection {
                         GoalProjection::FormalSubscript { ordinal } => GoalProjection::Subscript(
-                            self.goal_argument_offset(arguments.get(*ordinal as usize))?,
+                            self.goal_argument_offset(arguments.get(*ordinal as usize), None)?,
                         ),
                         GoalProjection::FormalPage { ordinal } => GoalProjection::Page(
-                            self.goal_argument_offset(arguments.get(*ordinal as usize))?,
+                            self.goal_argument_offset(arguments.get(*ordinal as usize), None)?,
                         ),
+                        GoalProjection::FormalPlaceSubscript { ordinal, place, ty }
+                        | GoalProjection::FormalPlacePage { ordinal, place, ty } => {
+                            let ty =
+                                self.instantiate_goal_type(check_context, *ty, signature, regions)?;
+                            let offset = self.goal_argument_offset(
+                                arguments.get(*ordinal as usize),
+                                Some((*place, ty)),
+                            )?;
+                            if matches!(projection, GoalProjection::FormalPlacePage { .. }) {
+                                GoalProjection::Page(offset)
+                            } else {
+                                GoalProjection::Subscript(offset)
+                            }
+                        }
                         other => *other,
                     };
                     image = image
@@ -2811,7 +2828,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
 
     /// The offset one actual supplies to a formal-valued subscript [MSR-1].
     ///
-    /// [ENT-2] decides a place's identity by its canonical spelling, so an
+    /// [ENT-2] decides a place's identity by its proof path, so an
     /// argument [`super::goal::actual_offset`] names supplies exactly that,
     /// and an argument it names no offset for supplies the unknown offset,
     /// which no admitted family separates -- the conservative reading in
@@ -2819,6 +2836,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
     fn goal_argument_offset(
         &self,
         argument: Option<&GoalExpression>,
+        projection: Option<(super::places::FormalOffsetId, CheckedType)>,
     ) -> Result<super::places::CapturedValue, CheckStop> {
         let named = |declaration| {
             let constant = self
@@ -2830,7 +2848,16 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             }
         };
         Ok(argument
-            .and_then(|argument| super::goal::actual_offset(argument, &named))
+            .and_then(|argument| match projection {
+                Some((place, ty)) => super::goal::projected_actual_offset(
+                    argument,
+                    place,
+                    ty,
+                    &self.types.captured_places,
+                    &named,
+                ),
+                None => super::goal::actual_offset(argument, &self.types.captured_places, &named),
+            })
             .unwrap_or_else(super::places::CapturedValue::unknown))
     }
 
@@ -3931,6 +3958,7 @@ impl<'unit> TypeContext<'unit> {
             constants: Default::default(),
             checked_constants: Default::default(),
             derived_consts: Default::default(),
+            captured_places: Default::default(),
             behavior: Default::default(),
             type_invariants: Default::default(),
             range_type_invariants: Default::default(),

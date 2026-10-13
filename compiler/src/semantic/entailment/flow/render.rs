@@ -254,9 +254,14 @@ impl Input<'_, '_> {
             CapturedTerm::Literal(value) => value.to_string(),
             CapturedTerm::Binding(binding) => self.render_header_binding(binding, counted),
             CapturedTerm::Const(declaration) => self.declaration_name(declaration),
+            CapturedTerm::Place(id) => {
+                self.render_header_place(&self.context.captured_places.get(id), counted)
+            }
             // [REF-1] the binding's spelling names a later value than the one
             // this index read, and no source spelling names that one.
-            CapturedTerm::Superseded(_) | CapturedTerm::Opaque => "?".to_owned(),
+            CapturedTerm::Superseded(_)
+            | CapturedTerm::SupersededPlace(_)
+            | CapturedTerm::Opaque => "?".to_owned(),
         }
     }
 
@@ -560,7 +565,12 @@ impl Input<'_, '_> {
             }
             // [REF-1] a later write made the binding's spelling name another
             // value, so neither it nor the occurrence spells this one.
-            CapturedTerm::Superseded(_) => RangeEndpointReading::Unspelled(None),
+            CapturedTerm::Place(id) => RangeEndpointReading::Spelled(
+                self.render_place(&self.context.captured_places.get(id)),
+            ),
+            CapturedTerm::Superseded(_) | CapturedTerm::SupersededPlace(_) => {
+                RangeEndpointReading::Unspelled(None)
+            }
             CapturedTerm::Opaque => RangeEndpointReading::Unspelled(match endpoint.capture {
                 CaptureId::Source(occurrence) => Some(occurrence),
                 _ => None,
@@ -778,11 +788,13 @@ impl Input<'_, '_> {
                     ));
                     ty = ty.and_then(|ty| element_type(ty, self.context.elements));
                 }
-                GoalProjection::FormalSubscript { ordinal } => {
+                GoalProjection::FormalSubscript { ordinal }
+                | GoalProjection::FormalPlaceSubscript { ordinal, .. } => {
                     rendered.push_str(&format!("[parameter #{ordinal}]"));
                     ty = ty.and_then(|ty| element_type(ty, self.context.elements));
                 }
-                GoalProjection::FormalPage { ordinal } => {
+                GoalProjection::FormalPage { ordinal }
+                | GoalProjection::FormalPlacePage { ordinal, .. } => {
                     rendered.push_str(&format!(".pages[parameter #{ordinal}]"));
                     ty = ty.and_then(|ty| element_type(ty, self.context.elements));
                 }

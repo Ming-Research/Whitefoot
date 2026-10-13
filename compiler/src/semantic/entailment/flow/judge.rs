@@ -84,7 +84,10 @@ impl Reasoning<'_, '_, '_> {
         state: &mut ProofFlowState,
     ) {
         if !matches!(captured.capture, CaptureId::Source(_))
-            || !matches!(captured.term, CapturedTerm::Binding(_))
+            || !matches!(
+                captured.term,
+                CapturedTerm::Binding(_) | CapturedTerm::Place(_)
+            )
         {
             return;
         }

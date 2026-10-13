@@ -1289,7 +1289,7 @@ impl<'unit> Checker<'_, 'unit> {
             let offset = self.check_atom(context, offset_node, &mut probe, loop_depth)?;
             self.check_place_offset(offset_node, &offset)?;
             let captured = self.body.note_capture(
-                Checker::captured_of(offset_node, &offset.expression)
+                self.captured_of(offset_node, &offset.expression)
                     .unwrap_or(CapturedValue::unknown()),
                 bindings,
             );
@@ -1634,7 +1634,7 @@ impl<'unit> Checker<'_, 'unit> {
                 let mut probe = bindings.clone();
                 let offset = self.check_atom(context, offset_node, &mut probe, loop_depth)?;
                 self.check_place_offset(offset_node, &offset)?;
-                let Some(captured) = Checker::captured_of(offset_node, &offset.expression) else {
+                let Some(captured) = self.captured_of(offset_node, &offset.expression) else {
                     return self
                         .types
                         .declarations
@@ -1841,7 +1841,7 @@ impl<'unit> Checker<'_, 'unit> {
             let offset = self.check_atom(context, offset_node, &mut probe, loop_depth)?;
             self.check_place_offset(offset_node, &offset)?;
             let captured = self.body.note_capture(
-                Checker::captured_of(offset_node, &offset.expression)
+                self.captured_of(offset_node, &offset.expression)
                     .unwrap_or(CapturedValue::unknown()),
                 bindings,
             );
@@ -2203,10 +2203,17 @@ impl<'unit> Checker<'_, 'unit> {
             CapturedTerm::Binding(binding) | CapturedTerm::Superseded(binding) => {
                 bindings.values().find(|local| local.binding == binding)?
             }
-            CapturedTerm::Literal(_) | CapturedTerm::Const(_) | CapturedTerm::Opaque => {
+            CapturedTerm::Literal(_)
+            | CapturedTerm::Const(_)
+            | CapturedTerm::Place(_)
+            | CapturedTerm::SupersededPlace(_)
+            | CapturedTerm::Opaque => {
                 return None;
             }
         };
+        if local.mode != super::super::model::CheckedMode::Own {
+            return None;
+        }
         let holds_call_value =
             matches!(captured.term, CapturedTerm::Binding(_)) && local.call_value;
         if !holds_call_value && !self.body.call_value_captures.contains(&captured.capture) {
@@ -2643,6 +2650,54 @@ impl<'unit> TypeContext<'unit> {
         site: Option<&crate::NodePath>,
     ) -> Result<(), CheckStop> {
         HandleWatch::observe(bindings, written);
+        let superseded = bindings
+            .values()
+            .filter_map(|local| local.reference.as_ref())
+            .flat_map(|reference| reference.paths.iter().chain(&reference.anchors))
+            .flat_map(ResolvedPlace::spelled_indices)
+            .filter_map(|(_, term)| {
+                let overwritten = self.captured_places.support(term).iter().any(|read| {
+                    if written.root == read.root && written.path.is_empty() {
+                        return true;
+                    }
+                    let mut targets = match read.root {
+                        PlaceRoot::Binding(binding) => bindings
+                            .values()
+                            .find(|local| local.binding == binding)
+                            .and_then(|local| local.reference.as_ref())
+                            .map(|reference| reference.paths.clone())
+                            .unwrap_or_else(|| {
+                                vec![ResolvedPlace {
+                                    path: Vec::new(),
+                                    ..read.clone()
+                                }]
+                            }),
+                        PlaceRoot::Constant(_) => vec![ResolvedPlace {
+                            path: Vec::new(),
+                            ..read.clone()
+                        }],
+                    };
+                    targets
+                        .iter_mut()
+                        .for_each(|target| target.path.extend(&read.path));
+                    targets
+                        .iter()
+                        .any(|target| places_overlap(&UnprovedSeparations, target, written))
+                });
+                overwritten.then_some(term)
+            })
+            .collect::<Vec<_>>();
+        for reference in bindings
+            .values_mut()
+            .filter_map(|local| local.reference.as_mut())
+        {
+            for path in reference.paths.iter_mut().chain(&mut reference.anchors) {
+                for term in &superseded {
+                    path.supersede_term(*term);
+                }
+            }
+        }
+
         // [REF-1] a reference keeps the index value its formation read, so a
         // write of that binding leaves the reference valid but ends the
         // binding's spelling as a name for its index. [EFF-1] A parameter no
@@ -3069,7 +3124,7 @@ mod tests {
             other_formation.paths[0]
                 .spelled_indices()
                 .collect::<Vec<_>>(),
-            [(CaptureId::source(1), BindingId(1))]
+            [(CaptureId::source(1), CapturedTerm::Binding(BindingId(1)))]
         );
     }
 
