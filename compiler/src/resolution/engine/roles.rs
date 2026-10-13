@@ -745,14 +745,18 @@ fn classify_node(
         }
         // [TYPE-6] an arm label resolves against the scrutinee's already
         // known enum type, so it waits for the checker.
-        Production::Arm => add_single(
-            classified,
-            owner,
-            &names,
-            RawRoleKind::DeferredUse(DeferredUseRole::ArmVariant),
-            roles,
-            complete_counts,
-        )?,
+        Production::Arm if !names.is_empty() => {
+            let kind = match name_predicate(classified, names[0]) {
+                Some(TerminalPredicate::TypeIdentifier) => {
+                    RawRoleKind::DeferredUse(DeferredUseRole::ArmVariant)
+                }
+                Some(TerminalPredicate::Identifier) => {
+                    RawRoleKind::LexicalUse(LexicalUseRole::IntegerMatchValue)
+                }
+                _ => return Err(ResolutionCompilerFailure::InvalidRoleShape),
+            };
+            add_single(classified, owner, &names, kind, roles, complete_counts)?;
+        }
         // [EFF-1] `epbase := IDENT`: the reference parameter is the row's
         // root, with no source `^` suffix.
         Production::Epbase => add_single(
@@ -989,7 +993,10 @@ fn classify_node(
         )?,
         _ => {}
     }
-    if matches!(production, Production::Atom | Production::Cvalue) {
+    if matches!(
+        production,
+        Production::Atom | Production::Cvalue | Production::Arm
+    ) {
         for terminal in direct {
             add_generic_suffix(classified, owner, *terminal, roles)?;
         }

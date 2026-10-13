@@ -631,6 +631,9 @@ pub(super) struct Query {
     /// Imported frame instances contribute step-2 definitions, not a round
     /// of automatic instantiation [RANGE-3].
     pub(super) frames: unchanged::Definitions,
+    /// Distinct members in every reached exclusion definition. Its predicate
+    /// is the expression atom; members count structurally, not as literals.
+    pub(super) exclusion_members: usize,
 }
 
 impl Query {
@@ -966,6 +969,9 @@ fn expand(
     query: &mut Query,
 ) -> Result<(), Capacity> {
     loop {
+        if atoms.len().saturating_add(query.exclusion_members) > MAX_ATOMS {
+            return Err(Capacity::Atoms);
+        }
         let Some(atom) = atoms.iter().copied().find(|atom| !expanded.contains(atom)) else {
             // Frame definitions also apply to reads introduced by ordinary
             // version definitions and second-round instances. They add no
@@ -976,15 +982,23 @@ fn expand(
             return Ok(());
         };
         expanded.insert(atom);
-        if atoms.len() > MAX_ATOMS {
-            return Err(Capacity::Atoms);
-        }
         let def = world.atoms[atom as usize].def.clone();
         let ty = world.atoms[atom as usize].ty;
         let value = Linear::atom(atom);
         let mut alternatives: Vec<Vec<Literal>> = Vec::new();
         match def {
             AtomDef::Opaque | AtomDef::Measure => {}
+            AtomDef::IntegerExclusion {
+                value: selected,
+                values,
+            } => {
+                collect_linear(&selected, atoms);
+                query.exclusion_members = query.exclusion_members.saturating_add(values.len());
+                if atoms.len().saturating_add(query.exclusion_members) > MAX_ATOMS {
+                    return Err(Capacity::Atoms);
+                }
+                alternatives = exclusion_cases(value, selected, &values);
+            }
             AtomDef::SegmentLength { row, .. } => collect_linear(&row, atoms),
             AtomDef::Read {
                 version,
@@ -1200,6 +1214,45 @@ fn expand(
             query.choices.push(alternatives);
         }
     }
+}
+
+/// One guarded definition for the whole exclusion: its inactive case and
+/// exactly the nonempty integer gaps. In an else path the predicate is one,
+/// so the inactive case is immediately contradictory. No member becomes a
+/// binary disequality choice. Strict comparisons avoid endpoint arithmetic.
+fn exclusion_cases(predicate: Linear, value: Linear, values: &[i128]) -> Vec<Vec<Literal>> {
+    let enabled = Literal::new(predicate.clone(), Relation::Equal, Linear::constant(1));
+    let mut cases = vec![vec![Literal::new(
+        predicate,
+        Relation::Equal,
+        Linear::constant(0),
+    )]];
+    let Some(first) = values.first() else {
+        cases.push(vec![enabled]);
+        return cases;
+    };
+    cases.push(vec![
+        enabled.clone(),
+        Literal::new(value.clone(), Relation::Less, Linear::constant(*first)),
+    ]);
+    for pair in values.windows(2) {
+        if pair[0].checked_add(1).is_some_and(|next| next < pair[1]) {
+            cases.push(vec![
+                enabled.clone(),
+                Literal::new(value.clone(), Relation::Greater, Linear::constant(pair[0])),
+                Literal::new(value.clone(), Relation::Less, Linear::constant(pair[1])),
+            ]);
+        }
+    }
+    cases.push(vec![
+        enabled,
+        Literal::new(
+            value,
+            Relation::Greater,
+            Linear::constant(*values.last().unwrap()),
+        ),
+    ]);
+    cases
 }
 
 /// Renumbers the problem's atoms densely and gives the solver each read's
@@ -1793,6 +1846,102 @@ mod aggregate_tests {
         for (variant, rule) in formed.conclusions.iter().enumerate() {
             assert_eq!(rule.guards.len(), 1);
             assert_eq!(rule.guards[0].right, Linear::constant(variant as i128));
+        }
+    }
+}
+
+#[cfg(test)]
+mod integer_exclusion_tests {
+    use super::*;
+
+    #[test]
+    fn whole_exclusion_uses_only_nonempty_gaps() {
+        let cases = exclusion_cases(Linear::atom(0), Linear::atom(1), &[0, 1, 2, 5]);
+        assert_eq!(
+            cases.len(),
+            4,
+            "inactive case and three nonempty complement gaps"
+        );
+        assert!(
+            cases
+                .iter()
+                .flatten()
+                .all(|literal| literal.relation != Relation::NotEqual)
+        );
+        assert_eq!(
+            exclusion_cases(Linear::atom(0), Linear::atom(1), &[]).len(),
+            2
+        );
+    }
+
+    #[test]
+    fn exclusion_and_bounds_determine_remaining_value() {
+        let mut world = World::default();
+        let value = world.opaque(Some(super::super::super::model::IntegerType::U64));
+        let exclusion = world.integer_exclusion(value.clone(), vec![0, 1, 2].into());
+        let query = Query {
+            units: vec![
+                exclusion,
+                Literal::new(value.clone(), Relation::LessEqual, Linear::constant(3)),
+                Literal::new(value, Relation::NotEqual, Linear::constant(3)),
+            ],
+            ..Query::default()
+        };
+        assert_eq!(
+            judge(&mut world, &[], &[], &[], query),
+            Ok(Verdict::Refuted)
+        );
+    }
+
+    #[test]
+    fn exclusion_join_does_not_restrict_another_arm() {
+        let mut world = World::default();
+        let value = world.opaque(None);
+        let exclusion = world.integer_exclusion(value.clone(), vec![0, 1, 2].into());
+        let zero = Literal::new(value.clone(), Relation::Equal, Linear::constant(0));
+        let query = Query {
+            units: vec![zero.clone()],
+            choices: vec![vec![vec![exclusion], vec![zero]]],
+            ..Query::default()
+        };
+        assert_eq!(judge(&mut world, &[], &[], &[], query), Ok(Verdict::Open));
+    }
+
+    #[test]
+    fn unreferenced_exclusion_does_not_count_toward_a_problem() {
+        let mut world = World::default();
+        let value = world.opaque(None);
+        let values = (0..MAX_ATOMS as i128).collect::<Vec<_>>().into();
+        let _unused = world.integer_exclusion(value.clone(), values);
+        let query = Query {
+            units: vec![Literal::new(value, Relation::Equal, Linear::constant(0))],
+            ..Query::default()
+        };
+        assert_eq!(judge(&mut world, &[], &[], &[], query), Ok(Verdict::Open));
+    }
+
+    #[test]
+    fn exclusion_members_share_the_structural_atom_ceiling() {
+        for (members, expected) in [
+            (MAX_ATOMS - 2, Ok(Verdict::Open)),
+            (MAX_ATOMS - 1, Err(Capacity::Atoms)),
+        ] {
+            let mut world = World::default();
+            let value = world.opaque(None);
+            let values = (0..members as i128).collect::<Vec<_>>().into();
+            let exclusion = world.integer_exclusion(value.clone(), values);
+            let query = Query {
+                units: vec![
+                    exclusion,
+                    Literal::new(value, Relation::Equal, Linear::constant(-1)),
+                ],
+                ..Query::default()
+            };
+            assert_eq!(
+                judge(&mut world, &[], &[], &[], query),
+                expected,
+                "source atom plus exclusion expression atom plus each distinct member"
+            );
         }
     }
 }

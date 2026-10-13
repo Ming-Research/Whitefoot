@@ -535,7 +535,7 @@ pub(crate) struct ConditionalCall<'check> {
 pub(crate) fn conditional_call(statement: &CheckedStatement) -> Option<ConditionalCall<'_>> {
     let CheckedStatement::Match {
         scrutinee,
-        enum_type: super::model::CheckedEnumType::Bool,
+        match_type: super::model::CheckedMatchType::Enum(super::model::CheckedEnumType::Bool),
         arms,
         ..
     } = statement
@@ -573,7 +573,10 @@ pub(crate) fn conditional_call(statement: &CheckedStatement) -> Option<Condition
             statement,
             value,
             site: call,
-            tag: arm.tag,
+            tag: match arm.selection {
+                super::model::CheckedMatchSelection::Variant(tag) => tag,
+                _ => return None,
+            },
         });
     }
     found
@@ -1322,36 +1325,39 @@ impl<'check> Program<'check> {
                 )
             }
             CheckedStatement::Match {
-                enum_type, arms, ..
+                match_type, arms, ..
             } => (
                 // Report a refused Bool conditional only when its sole acting
                 // arm is one call statement, including a discarded result that
                 // needs release. It gets a diagnostic site, not a call member.
                 // Multi-statement arms, multiple acting arms and other matches
                 // keep their existing unreported boundary.
-                matches!(enum_type, super::model::CheckedEnumType::Bool)
-                    .then(|| {
-                        let mut acting = arms.iter().filter(|arm| !arm.body.is_empty());
-                        let arm = acting.next()?;
-                        if acting.next().is_some() {
-                            return None;
-                        }
-                        match arm.body.as_slice() {
-                            [
-                                CheckedStatement::Evaluate {
-                                    node_path,
-                                    value: CheckedExpression::UserCall { .. },
-                                }
-                                | CheckedStatement::DropExpression {
-                                    node_path,
-                                    value: CheckedExpression::UserCall { .. },
-                                    ..
-                                },
-                            ] => Some(node_path),
-                            _ => None,
-                        }
-                    })
-                    .flatten(),
+                matches!(
+                    match_type,
+                    super::model::CheckedMatchType::Enum(super::model::CheckedEnumType::Bool)
+                )
+                .then(|| {
+                    let mut acting = arms.iter().filter(|arm| !arm.body.is_empty());
+                    let arm = acting.next()?;
+                    if acting.next().is_some() {
+                        return None;
+                    }
+                    match arm.body.as_slice() {
+                        [
+                            CheckedStatement::Evaluate {
+                                node_path,
+                                value: CheckedExpression::UserCall { .. },
+                            }
+                            | CheckedStatement::DropExpression {
+                                node_path,
+                                value: CheckedExpression::UserCall { .. },
+                                ..
+                            },
+                        ] => Some(node_path),
+                        _ => None,
+                    }
+                })
+                .flatten(),
                 None,
                 None,
                 "a match statement",

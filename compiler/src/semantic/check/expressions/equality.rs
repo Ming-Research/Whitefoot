@@ -84,11 +84,13 @@ impl TypeContext<'_> {
                         .tree
                         .direct_token_with(node, TerminalPredicate::Literal)?
                     {
-                        if matches!(
-                            self.declarations.tree.token_bytes(literal)?,
-                            b"0_T" | b"1_T"
-                        ) {
-                            let one = self.declarations.tree.token_bytes(literal)? == b"1_T";
+                        let bytes = self.declarations.tree.token_bytes(literal)?;
+                        if bytes
+                            .get(..2)
+                            .is_some_and(|prefix| matches!(prefix, b"0_" | b"1_"))
+                            && bytes.get(2).is_some_and(u8::is_ascii_uppercase)
+                        {
+                            let one = bytes.first() == Some(&b'1');
                             return Ok(Some(
                                 self.check_generic_numeric_identity(context, node, one)?
                                     .expression

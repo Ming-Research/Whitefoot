@@ -21,6 +21,10 @@ use super::affine::{AffineForm, AffineInequality};
 use super::term::{MeasureBound, TermId, TermKind, TermTable, ZERO, type_range};
 use crate::NodePath;
 
+#[path = "state_exclusions.rs"]
+mod exclusions;
+pub(crate) use exclusions::{Exclusion, ExclusionConclusion, ExclusionProof};
+
 /// One normalized source relation over interned terms.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum Relation {
@@ -224,6 +228,7 @@ pub(crate) enum FlowEventKind {
     S13,
     /// [ENT-3.S16] a proved header or local invariant's exact L0 conclusion.
     S16,
+    S17,
     /// [MSR-3] one entry datum minted at body entry, per parameter measure a
     /// declared relation names.
     Entry,
@@ -314,6 +319,9 @@ pub(crate) struct PostconditionCallSubstitution {
 /// Parent IDs always precede their child in the arena.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum DerivationNode {
+    IntegerExclusion {
+        detail: Box<ExclusionProof>,
+    },
     LetOrigin {
         binding: BindingId,
         value: GoalId,
@@ -795,6 +803,7 @@ impl DerivationNode {
             }
             Self::OriginEquality { detail } => detail.origins.iter().copied().for_each(visit),
             Self::OriginProjection { parent, .. } => visit(*parent),
+            Self::IntegerExclusion { detail } => detail.parents.iter().copied().for_each(visit),
             Self::LetOrigin { .. } => {}
             Self::TransportedHeaderRelation { detail } => detail.parents().for_each(visit),
             Self::UnsignedDivisionProduct {
@@ -911,6 +920,7 @@ impl DerivationNode {
             Self::OriginTransport { origins, .. } => 1 + origins.len(),
             Self::OriginEquality { detail } => detail.origins.len(),
             Self::OriginProjection { .. } => 1,
+            Self::IntegerExclusion { detail } => detail.parents.len(),
             Self::LetOrigin { .. } => 0,
             Self::TransportedHeaderRelation { detail } => detail.parents().count(),
             Self::UnsignedDivisionProduct { .. }
@@ -976,6 +986,7 @@ impl DerivationNode {
 
     fn rank(&self) -> u8 {
         match self {
+            Self::IntegerExclusion { .. } => 51,
             Self::LetOrigin { .. } => 47,
             Self::OriginTransport { .. } => 48,
             Self::OriginEquality { .. } => 49,
@@ -1561,6 +1572,7 @@ impl DerivationLedger {
     }
 
     fn measure(&self) -> DerivationMetrics {
+        let mut exclusion_value_sets = HashSet::new();
         let mut metrics = DerivationMetrics::default();
         for root in &self.roots {
             match &self.nodes[root.node.0 as usize] {
@@ -1596,6 +1608,15 @@ impl DerivationLedger {
                 .nodes
                 .iter()
                 .map(|node| match node {
+                    DerivationNode::IntegerExclusion { detail } => {
+                        size_of::<ExclusionProof>()
+                            + detail.parents.capacity() * size_of::<DerivationId>()
+                            + if exclusion_value_sets.insert(detail.values.as_ptr()) {
+                                size_of_val(detail.values.as_ref())
+                            } else {
+                                0
+                            }
+                    }
                     DerivationNode::OriginTransport { origins, .. } => {
                         size_of_val(origins.as_ref())
                     }
@@ -1751,6 +1772,7 @@ fn compare_node_ties(left: &DerivationNode, right: &DerivationNode) -> std::cmp:
 
 fn tie_component(node: &DerivationNode, index: usize) -> Option<u32> {
     match node {
+        DerivationNode::IntegerExclusion { detail } => detail.tie_component(index),
         DerivationNode::LetOrigin {
             binding,
             value,
@@ -2030,6 +2052,7 @@ fn tie_component(node: &DerivationNode, index: usize) -> Option<u32> {
 
 fn node_event(node: &DerivationNode) -> Option<FlowEventId> {
     match node {
+        DerivationNode::IntegerExclusion { detail } => detail.event,
         DerivationNode::LetOrigin { event, .. } => Some(*event),
         DerivationNode::SourceBound { event, .. }
         | DerivationNode::SourceDistinct { event, .. }
@@ -2055,6 +2078,7 @@ fn node_event(node: &DerivationNode) -> Option<FlowEventId> {
 
 fn node_event_mut(node: &mut DerivationNode) -> Option<&mut FlowEventId> {
     match node {
+        DerivationNode::IntegerExclusion { detail } => detail.event.as_mut(),
         DerivationNode::LetOrigin { event, .. } => Some(event),
         DerivationNode::SourceBound { event, .. }
         | DerivationNode::SourceDistinct { event, .. }
@@ -2120,6 +2144,11 @@ fn remap_node(node: &mut DerivationNode, remap: &[Option<DerivationId>]) {
             }
         }
         DerivationNode::OriginProjection { parent, .. } => remap_id(parent, remap),
+        DerivationNode::IntegerExclusion { detail } => {
+            for parent in &mut detail.parents {
+                remap_id(parent, remap);
+            }
+        }
         DerivationNode::LetOrigin { .. } => {}
         DerivationNode::TransportedHeaderRelation { detail } => {
             for input in &mut detail.inputs {
@@ -2287,6 +2316,7 @@ struct GoalRecord {
 /// Per-function interning table for [ENT-2]'s finite goal universe.
 #[derive(Default)]
 pub(crate) struct GoalTable {
+    pub(crate) integer_comparisons: WordHashMap<GoalId, (GoalExpression, i128, GoalSign)>,
     ids: HashMap<GoalExpression, GoalId>,
     views: WordHashMap<GoalId, Vec<GoalId>>,
     records: Vec<GoalRecord>,
@@ -3033,6 +3063,7 @@ pub(crate) struct KilledCell {
 
 #[derive(Clone, Debug)]
 pub(crate) struct FactState {
+    pub(crate) exclusions: Vec<Exclusion>,
     /// What part of the bound matrix is already closed. Only a state closed
     /// over the current term universe may answer a query without closing
     /// again; a closed core lets the next closure start from its fresh part.
@@ -3098,6 +3129,7 @@ impl Default for FactState {
 impl FactState {
     pub(crate) fn new() -> Self {
         Self {
+            exclusions: Vec::new(),
             closure: ClosureRecord::Unknown,
             ordinary_closure: ClosureRecord::Unknown,
             closed_view: std::cell::RefCell::new(None),
@@ -3846,6 +3878,10 @@ impl FactState {
             return;
         }
         self.keep_view_as_seed(None);
+        self.exclusions.retain(|fact| !killed(fact.expression));
+        for fact in &mut self.exclusions {
+            fact.views.retain(|view| !killed(view.expression));
+        }
         self.opaque.retain(|(goal, _)| !killed(*goal));
         self.opaque_proofs.retain(|(goal, _), _| !killed(*goal));
         self.opaque_sources.retain(|(goal, _), _| !killed(*goal));
@@ -3887,6 +3923,7 @@ fn compose_transitive_bounds(first: i128, second: i128) -> i128 {
 /// live facts and the implicit facts of every registered term.
 #[derive(Clone)]
 pub(crate) struct ClosedState {
+    exclusions: Vec<Exclusion>,
     all_derivable: bool,
     contradiction: Option<DerivationId>,
     /// Closed bounds and their proofs, indexed by the dense term identities
@@ -4148,11 +4185,7 @@ pub(crate) fn implicit_derives(terms: &TermTable, relation: &Relation) -> bool {
             difference,
         } => {
             derives_bound(left, right, difference.saturating_sub(1))
-                || derives_bound(
-                    right,
-                    left,
-                    difference.saturating_neg().saturating_sub(1),
-                )
+                || derives_bound(right, left, difference.saturating_neg().saturating_sub(1))
         }
     }
 }
@@ -4628,6 +4661,9 @@ impl ClosedState {
             } => {
                 self.distinct
                     .contains(&distinct_key(*left, *right, *difference))
+                    || self
+                        .exclusion_membership(*left, *right, *difference)
+                        .is_some()
                     || self.derives_bound(*left, *right, difference.saturating_sub(1))
                     || self.derives_bound(
                         *right,
@@ -4689,7 +4725,10 @@ impl ClosedState {
             GoalSign::Positive => self.derives(relation),
             GoalSign::Negative => self.derives(&relation.negated()),
         });
-        if projected || self.derives_normalized_goal(goal, sign, goals) {
+        if projected
+            || self.exclusion_goal(goal, sign, goals).is_some()
+            || self.derives_normalized_goal(goal, sign, goals)
+        {
             return true;
         }
         if literal_goal_sign(goals.expression(goal)).is_some_and(|truth| truth == sign) {
@@ -4836,7 +4875,10 @@ impl ClosedState {
                 difference,
             } => {
                 let pair = distinct_key(*left, *right, *difference);
-                let mut best = self.distinct_proofs.get(&pair).copied();
+                let mut best =
+                    self.distinct_proofs.get(&pair).copied().or_else(|| {
+                        self.exclusion_relation_proof(*left, *right, *difference, ledger)
+                    });
                 for (from, to, gap) in [
                     (*left, *right, difference.saturating_sub(1)),
                     (*right, *left, difference.saturating_neg().saturating_sub(1)),
@@ -4946,6 +4988,7 @@ impl ClosedState {
         }
         let direct = self
             .opaque_proof(goal, sign, goals)
+            .or_else(|| self.exclusion_goal_proof(goal, sign, goals, ledger))
             .or_else(|| self.goal_projection_proof(goal, sign, goals, ledger))
             .or_else(|| self.normalization_proof(goal, sign, goals, ledger));
         if direct.is_some() {
@@ -5283,6 +5326,10 @@ pub(crate) fn contradiction_without_proofs(
         super::work::probe(0, 0);
         return true;
     }
+    assert!(
+        state.exclusions.is_empty(),
+        "exclusion states require the complete proof-producing closure"
+    );
     let universe = closure_universe(state, terms, goals, None);
     if let Some(EdgeClosure {
         dense, distinct, ..
@@ -5458,6 +5505,7 @@ fn goal_contradiction_without_proofs(
     goals: &GoalTable,
 ) -> bool {
     let closed = ClosedState {
+        exclusions: Vec::new(),
         all_derivable: false,
         contradiction: None,
         matrix,
@@ -5494,7 +5542,7 @@ fn close_with_excluded_term(
     ledger: &mut DerivationLedger,
     excluded: Option<TermId>,
 ) -> ClosedState {
-    let closed = close_with_row_pruning::<true, false>(state, terms, goals, ledger, excluded);
+    let closed = exclusions::close_with_exclusions(state, terms, goals, ledger, excluded);
     super::work::closure(closed.matrix.dimension, closed.matrix.live);
     closed
 }
@@ -5511,6 +5559,7 @@ fn close_with_row_pruning<const PRUNE_ROWS: bool, const REFERENCE_PRODUCT: bool>
 ) -> ClosedState {
     if state.all_derivable {
         return ClosedState {
+            exclusions: Vec::new(),
             all_derivable: true,
             contradiction: state.contradiction,
             matrix: DenseClosureBounds::new(0),
@@ -5547,6 +5596,7 @@ fn close_with_row_pruning<const PRUNE_ROWS: bool, const REFERENCE_PRODUCT: bool>
         #[cfg(test)]
         tests::record_route(tests::ClosureRoute::Closed);
         let mut closed = ClosedState {
+            exclusions: Vec::new(),
             all_derivable: false,
             contradiction: None,
             matrix: DenseClosureBounds::values_from_store(term_count, &state.bounds, &universe),
@@ -5785,6 +5835,7 @@ fn close_with_row_pruning<const PRUNE_ROWS: bool, const REFERENCE_PRODUCT: bool>
         }
     }
     let closed = ClosedState {
+        exclusions: Vec::new(),
         all_derivable: contradiction.is_some(),
         contradiction,
         matrix: dense_bounds,
@@ -6261,6 +6312,7 @@ fn close_by_edge_insertion(
         }
     }
     let closed = ClosedState {
+        exclusions: Vec::new(),
         all_derivable: contradiction.is_some(),
         contradiction,
         matrix: dense,
@@ -6384,6 +6436,7 @@ fn close_from_view_seed(
         }
     }
     let closed = ClosedState {
+        exclusions: Vec::new(),
         all_derivable: contradiction.is_some(),
         contradiction,
         matrix: dense,
@@ -7210,7 +7263,9 @@ pub(crate) fn materialize_closure_before_kill(
     // A closed record covers the relations only: a signed goal can still
     // meet its opposite sign, whose contradiction the snapshot must promote.
     if state.all_derivable
-        || (state.closure.is_closed_over(terms.ids().count()) && state.opaque.is_empty())
+        || (state.closure.is_closed_over(terms.ids().count())
+            && state.opaque.is_empty()
+            && state.exclusions.is_empty())
     {
         return;
     }
@@ -7219,7 +7274,11 @@ pub(crate) fn materialize_closure_before_kill(
     // from those bounds cannot create a new survivor-to-survivor conclusion,
     // and every later query recreates the same implicit bounds. Origins are
     // transfer metadata rather than independently derivable facts.
-    if state.bounds.is_empty() && state.distinct.is_empty() && state.opaque.is_empty() {
+    if state.bounds.is_empty()
+        && state.distinct.is_empty()
+        && state.opaque.is_empty()
+        && state.exclusions.is_empty()
+    {
         return;
     }
     let event = ledger.event(FlowEventKind::Snapshot, None);
@@ -7382,6 +7441,7 @@ fn materialize_closure(
         .map(|(pair, proof)| (*pair, Candidates::One(*proof)))
         .collect();
     let mut materialized = FactState {
+        exclusions: state.exclusions.clone(),
         closure: ClosureRecord::closed(terms.ids().count()),
         ordinary_closure: ClosureRecord::closed(terms.ids().count()),
         closed_view: std::cell::RefCell::new(None),
@@ -8023,6 +8083,7 @@ fn join_at_once(
         .chain(distinct_proofs.values().copied())
         .any(|proof| ledger.depends_on_postcondition_call(proof));
     FactState {
+        exclusions: exclusions::join_exclusions(states, &closed, &contributing, ledger, event),
         closure: ClosureRecord::closed(terms.ids().count()),
         ordinary_closure: ClosureRecord::closed(terms.ids().count()),
         closed_view: std::cell::RefCell::new(None),
@@ -9117,7 +9178,8 @@ pub(crate) mod tests {
             for (left, right) in [(left, right), (right, left)] {
                 let (bound, proof) = joined.bounds.get(left, right).expect("correlated equality");
                 assert_eq!(bound, 0);
-                let DerivationNode::JoinBound { parents, .. } = &ledger.nodes[proof.0 as usize] else {
+                let DerivationNode::JoinBound { parents, .. } = &ledger.nodes[proof.0 as usize]
+                else {
                     panic!("an equality stronger than implicit bounds retains a join boundary");
                 };
                 assert_eq!(parents.len(), count);

@@ -148,6 +148,13 @@ fn successors(block: &IrBlock) -> Vec<usize> {
             .iter()
             .map(|target| target.block().index())
             .collect(),
+        IrTerminator::IntegerMatch {
+            targets, default, ..
+        } => targets
+            .iter()
+            .map(|target| target.block().index())
+            .chain(default.iter().map(|target| target.index()))
+            .collect(),
         IrTerminator::Return { .. } | IrTerminator::Unreachable => Vec::new(),
     }
 }
@@ -709,11 +716,42 @@ impl FunctionEmitter<'_, '_> {
             .iter()
             .map(|rejection| format!("{}: {}", over(rejection.matched), rejection.reason))
             .collect();
+        // Integer codes have no nominal layout or dense tag-indexed table.
+        // Record cyclic integer dispatches rather than silently presenting
+        // them as a split candidate whose handler-word contract cannot apply.
+        for (header, block) in self.function.blocks().iter().enumerate() {
+            if !reachable[header] {
+                continue;
+            }
+            let IrTerminator::IntegerMatch {
+                targets, default, ..
+            } = block.terminator()
+            else {
+                continue;
+            };
+            let starts: Vec<_> = targets
+                .iter()
+                .map(|target| target.block().index())
+                .chain(default.iter().map(|target| target.index()))
+                .collect();
+            let region = reach(self.function, &starts, header);
+            if self
+                .function
+                .blocks()
+                .iter()
+                .enumerate()
+                .any(|(index, member)| region[index] && successors(member).contains(&header))
+            {
+                ledger.push(format!("{body_symbol}: not split: integer selection uses an ordinary switch; split handler tables require a nominal enum"));
+            }
+        }
         let Some(plan) = found else {
             self.dispatch_ledger.extend(ledger);
             return Ok(None);
         };
-        let handler_word = self.dispatch_layout.word(plan.matched, self.function.name());
+        let handler_word = self
+            .dispatch_layout
+            .word(plan.matched, self.function.name());
         let kind = if self.function.waits() {
             Some("the function waits")
         } else if self.grain.is_some() {
@@ -2680,9 +2718,9 @@ fn confined(key: FunctionSlot, across: &BTreeSet<usize>) -> bool {
         // keep a loop unsplit); the result slot
         // occurs only in a register-returned definition's public entry,
         // which holds no loop.
-        FunctionSlot::WaitingResult(_)
-        | FunctionSlot::ContextResult(_)
-        | FunctionSlot::Result => false,
+        FunctionSlot::WaitingResult(_) | FunctionSlot::ContextResult(_) | FunctionSlot::Result => {
+            false
+        }
     }
 }
 

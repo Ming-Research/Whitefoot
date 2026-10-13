@@ -1664,6 +1664,54 @@ impl Reasoning<'_, '_, '_> {
     /// relation and goal origins of a `Bool` match. A checked row's success
     /// facts reach its `Ok` arm through the scrutinee's conditional Result
     /// context instead [ENT-5].
+    pub(super) fn match_arm_facts(
+        &mut self,
+        scrutinee: &CheckedExpression,
+        match_type: CheckedMatchType,
+        arms: &[CheckedMatchArm],
+        state: &FactState,
+    ) -> ArmFacts {
+        if let CheckedMatchType::Enum(enum_type) = match_type {
+            return self.arm_facts(scrutinee, enum_type, state);
+        }
+        let Some(expression) = self.input.admitted_value_goal_expression(scrutinee) else {
+            return ArmFacts::default();
+        };
+        let mut values = arms
+            .iter()
+            .filter_map(|arm| match arm.selection {
+                CheckedMatchSelection::Integer(value) => Some(value),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        values.sort_unstable();
+        values.dedup();
+        ArmFacts {
+            integer: Some((expression, values.into())),
+            node_path: expression_node_path(scrutinee).cloned(),
+            ..ArmFacts::default()
+        }
+    }
+
+    /// An exclusion projects only a term (including a widening view), never
+    /// a general affine spelling such as `x + 1` [ENT-4].
+    pub(super) fn exclusion_projection(
+        &mut self,
+        expression: &GoalExpression,
+    ) -> Option<(TermId, i128)> {
+        if let Some(value) = self.input.goal_integer_constant(expression) {
+            return Some((ZERO, value));
+        }
+        if let GoalExpression::Operation { row, arguments, .. } = expression
+            && super::super::super::goal::widening_integer_conversion(row)
+            && let [argument] = arguments.as_slice()
+        {
+            return self.exclusion_projection(argument);
+        }
+        let term = self.goal_operand(expression)?;
+        Some(self.vocabulary.terms.constant_part(term))
+    }
+
     pub(super) fn arm_facts(
         &mut self,
         scrutinee: &CheckedExpression,
@@ -1673,12 +1721,14 @@ impl Reasoning<'_, '_, '_> {
         let node_path = expression_node_path(scrutinee).cloned();
         if enum_type != CheckedEnumType::Bool {
             return ArmFacts {
+                integer: None,
                 node_path,
                 comparison: None,
                 goals: Vec::new(),
             };
         }
         ArmFacts {
+            integer: None,
             node_path,
             comparison: self.scrutinee_relation(scrutinee, state),
             goals: self.goal_origin_set(scrutinee, state),
@@ -2012,8 +2062,7 @@ impl Vocabulary {
         let mut image = FactState::new();
         for (relation, parent) in carried {
             if let Relation::Bound { left, right, bound } = relation {
-                let through_zero = if receiver_term(&self.terms, left, receiver) && right != ZERO
-                {
+                let through_zero = if receiver_term(&self.terms, left, receiver) && right != ZERO {
                     zero_bounds
                         .get(&(left, ZERO))
                         .copied()
@@ -3334,9 +3383,12 @@ impl Analyzer<'_, '_> {
                 &self.vocabulary.goals,
                 &mut self.vocabulary.derivations,
             );
-            let fallback =
-                self.vocabulary
-                    .receiver_delivery_state(&ordinary, context.statement, receiver, event);
+            let fallback = self.vocabulary.receiver_delivery_state(
+                &ordinary,
+                context.statement,
+                receiver,
+                event,
+            );
             delivered.merge_relation_candidates_from(&fallback, &self.vocabulary.derivations);
         }
         let mut image = ProofFlowState {

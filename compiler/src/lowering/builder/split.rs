@@ -1156,6 +1156,20 @@ impl<'program> IrBuilder<'program> {
                         targets,
                     }
                 }
+                IrTerminator::IntegerMatch {
+                    scrutinee,
+                    mut targets,
+                    default,
+                } => {
+                    for target in &mut targets {
+                        target.block = block(target.block);
+                    }
+                    IrTerminator::IntegerMatch {
+                        scrutinee,
+                        targets,
+                        default: default.map(block),
+                    }
+                }
                 IrTerminator::Return { value, drops } => IrTerminator::Jump {
                     target: continuation,
                     arguments: vec![value],
@@ -1794,6 +1808,13 @@ fn reachable_without(blocks: &[IrBlock], removed: usize, goal: usize) -> bool {
             IrTerminator::Match { targets, .. } => targets
                 .iter()
                 .map(|target| target.block().index())
+                .collect(),
+            IrTerminator::IntegerMatch {
+                targets, default, ..
+            } => targets
+                .iter()
+                .map(|target| target.block().index())
+                .chain(default.iter().map(|target| target.index()))
                 .collect(),
             IrTerminator::Return { .. } | IrTerminator::Unreachable => Vec::new(),
         };

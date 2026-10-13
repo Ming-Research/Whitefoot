@@ -14,11 +14,11 @@ use super::super::entailment::affine::{AffineCheckState, AffineInequality};
 use super::super::entailment::{
     CallGoalDisposition, CallGoalEvidence, CallGoalOutcome, CountedAtomicDerivation,
     CountedCaptureSide, CountedDerivationSet, CountedProofPoint, CountedRootAtom, DerivationId,
-    DerivationNode, DerivationRootKind, FlowEvent, FlowEventId, FlowEventKind, FunctionEntailment,
-    GoalId, GoalSign, ImplicitBoundKind, JoinParent, MeasureBound, ObligationFamily,
-    ObligationOutcome, PlaceRoot, PostconditionCallDetail, PostconditionDeliveryJoinDetail,
-    PostconditionDisposition, RangeSeparationOrdering, Relation, SourceAffineFactRef, TermId,
-    TermKind, TransportedHeaderRelation, ZERO, type_range,
+    DerivationNode, DerivationRootKind, ExclusionConclusion, FlowEvent, FlowEventId, FlowEventKind,
+    FunctionEntailment, GoalId, GoalSign, ImplicitBoundKind, JoinParent, MeasureBound,
+    ObligationFamily, ObligationOutcome, PlaceRoot, PostconditionCallDetail,
+    PostconditionDeliveryJoinDetail, PostconditionDisposition, RangeSeparationOrdering, Relation,
+    SourceAffineFactRef, TermId, TermKind, TransportedHeaderRelation, ZERO, type_range,
 };
 use super::super::goal::{GoalDatum, GoalExpression, GoalOperation};
 use super::super::model::{
@@ -203,6 +203,10 @@ fn accepted_discharge_flags(source: &[u8], function: &str) -> Vec<bool> {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum DerivationConclusion {
+    Exclusion {
+        expression: GoalId,
+        values: Vec<i128>,
+    },
     Origin,
     Relation(Relation),
     Goal {
@@ -318,6 +322,7 @@ fn retained_event(summary: &FunctionEntailment, id: FlowEventId) -> &FlowEvent {
 
 fn node_event(node: &DerivationNode) -> Option<FlowEventId> {
     match node {
+        DerivationNode::IntegerExclusion { detail } => detail.event,
         DerivationNode::SourceBound { event, .. }
         | DerivationNode::SourceDistinct { event, .. }
         | DerivationNode::SourceGoal { event, .. }
@@ -445,6 +450,7 @@ fn assert_source_event(summary: &FunctionEntailment, id: FlowEventId, used: &mut
             | FlowEventKind::S11
             | FlowEventKind::S13
             | FlowEventKind::S16
+            | FlowEventKind::S17
     ));
 }
 
@@ -931,6 +937,179 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
         depths.push(depth);
 
         let conclusion = match node {
+            DerivationNode::IntegerExclusion { detail } => {
+                assert!(
+                    detail.values.windows(2).all(|pair| pair[0] < pair[1]),
+                    "exclusions are canonical sets"
+                );
+                assert!(
+                    summary
+                        .inventory
+                        .goals
+                        .get(detail.expression.0 as usize)
+                        .is_some()
+                );
+                if let Some(event) = detail.event {
+                    used_events[event.0 as usize] = true;
+                    match retained_event(summary, event).kind {
+                        FlowEventKind::S17 => assert!(detail.parents.is_empty()),
+                        FlowEventKind::Join => {
+                            assert!(!detail.parents.is_empty());
+                            for parent in &detail.parents {
+                                match retained_conclusion(&conclusions, *parent) {
+                                    DerivationConclusion::Exclusion { expression, values } => {
+                                        assert_eq!(
+                                            summary.inventory.goals[expression.0 as usize]
+                                                .expression,
+                                            summary.inventory.goals[detail.expression.0 as usize]
+                                                .expression
+                                        );
+                                        if detail.projection.is_some() {
+                                            let DerivationNode::IntegerExclusion {
+                                                detail: incoming,
+                                            } = &summary.derivations.nodes[parent.0 as usize]
+                                            else {
+                                                panic!("view join keeps source-view proof");
+                                            };
+                                            assert_eq!(incoming.expression, detail.expression);
+                                            assert_eq!(incoming.projection, detail.projection);
+                                        }
+                                        assert_eq!(values.as_slice(), detail.values.as_ref());
+                                    }
+                                    DerivationConclusion::Contradiction => {}
+                                    other => {
+                                        panic!("exclusion join needs that exact set: {other:?}")
+                                    }
+                                }
+                            }
+                        }
+                        other => panic!("unexpected exclusion establishment event: {other:?}"),
+                    }
+                    assert_eq!(detail.conclusion, ExclusionConclusion::Set);
+                } else {
+                    let (parent, origins) = detail
+                        .parents
+                        .split_first()
+                        .expect("exclusion query has a source");
+                    let DerivationConclusion::Exclusion { expression, values } =
+                        retained_conclusion(&conclusions, *parent)
+                    else {
+                        panic!("exclusion query needs an excluded set");
+                    };
+                    assert_eq!(values.as_slice(), detail.values.as_ref());
+                    if matches!(detail.conclusion, ExclusionConclusion::Set) {
+                        for origin in origins {
+                            assert_eq!(
+                                retained_conclusion(&conclusions, *origin),
+                                &DerivationConclusion::Origin
+                            );
+                        }
+                        assert_eq!(
+                            retained_origin_expansion(summary, *expression, origins),
+                            retained_origin_expansion(summary, detail.expression, origins)
+                        );
+                    } else {
+                        assert!(origins.is_empty());
+                        assert_eq!(
+                            summary.inventory.goals[expression.0 as usize].expression,
+                            summary.inventory.goals[detail.expression.0 as usize].expression
+                        );
+                    }
+                }
+                match &detail.conclusion {
+                    ExclusionConclusion::Set => DerivationConclusion::Exclusion {
+                        expression: detail.expression,
+                        values: detail.values.to_vec(),
+                    },
+                    ExclusionConclusion::Relation(relation) => {
+                        let Relation::Distinct {
+                            left,
+                            right,
+                            difference,
+                        } = relation
+                        else {
+                            panic!("membership proves a disequality");
+                        };
+                        assert_relation_terms_resolve(summary, relation);
+                        let (term, offset) = detail
+                            .projection
+                            .expect("membership has an admitted term view");
+                        let constant = if *left == term && *right == ZERO {
+                            *difference + offset
+                        } else {
+                            assert_eq!((*left, *right), (ZERO, term));
+                            -*difference + offset
+                        };
+                        assert!(detail.values.binary_search(&constant).is_ok());
+                        DerivationConclusion::Relation(relation.clone())
+                    }
+                    ExclusionConclusion::Goal(goal, sign) => {
+                        let GoalExpression::Operation {
+                            row: GoalOperation::Integer { operation, .. },
+                            arguments,
+                            ..
+                        } = &summary.inventory.goals[goal.0 as usize].expression
+                        else {
+                            panic!("membership goal is an integer comparison");
+                        };
+                        assert!(matches!(
+                            (operation, sign),
+                            (CheckedIntegerOperation::Equal, GoalSign::Negative)
+                                | (CheckedIntegerOperation::NotEqual, GoalSign::Positive)
+                        ));
+                        let [left, right] = arguments.as_slice() else {
+                            panic!("comparison has two operands");
+                        };
+                        let expression =
+                            &summary.inventory.goals[detail.expression.0 as usize].expression;
+                        let constant = if left == expression {
+                            right
+                        } else {
+                            assert_eq!(right, expression);
+                            left
+                        };
+                        let value = match constant {
+                            GoalExpression::Datum(GoalDatum::Literal(CheckedValue::Integer {
+                                ty,
+                                bits,
+                            })) => super::super::entailment::integer_value(*ty, *bits),
+                            GoalExpression::Datum(GoalDatum::Literal(
+                                CheckedValue::NumericIdentity { one, .. },
+                            )) => i128::from(*one),
+                            // A named constant's evaluated term supplies the independent value.
+                            _ => {
+                                let projection = summary.inventory.goals[goal.0 as usize]
+                                    .projection
+                                    .as_ref()
+                                    .expect("named integer constant comparison has a projection");
+                                let (Relation::Distinct { difference, .. }
+                                | Relation::Equal { difference, .. }) = projection
+                                else {
+                                    panic!("equality comparison projection");
+                                };
+                                if left == expression {
+                                    *difference
+                                } else {
+                                    -*difference
+                                }
+                            }
+                        };
+                        assert!(detail.values.binary_search(&value).is_ok());
+                        DerivationConclusion::Goal {
+                            goal: *goal,
+                            sign: *sign,
+                        }
+                    }
+                    ExclusionConclusion::Contradiction => {
+                        let (term, constant) = detail
+                            .projection
+                            .expect("constant exclusion has projection");
+                        assert_eq!(term, ZERO);
+                        assert!(detail.values.binary_search(&constant).is_ok());
+                        DerivationConclusion::Contradiction
+                    }
+                }
+            }
             DerivationNode::LetOrigin { value, event, .. } => {
                 assert!(summary.inventory.goals.get(value.0 as usize).is_some());
                 let retained = retained_event(summary, *event);
@@ -12546,4 +12725,231 @@ fn main() -> status: std::process::ExitStatus pure {
         TermKind::Place(place, IntegerType::U8)
             if place.path.iter().any(|step| matches!(step, PlaceStep::Index(_)))
                 && matches!(place.path.last(), Some(PlaceStep::Field(_))))));
+}
+
+#[test]
+fn integer_match_selection_proofs_replay_and_origin_transport_keeps_one_source_set() {
+    let direct =
+        include_bytes!("../../../../tests/conformance/cases/ent3-pos-integer-else-exclusions.wf");
+    let summary = accepted_entailment(direct, "selected");
+    validate_derivations(&summary);
+    assert_eq!(summary.call_goals.len(), 2);
+    assert!(
+        summary
+            .call_goals
+            .iter()
+            .all(|goal| goal.disposition == CallGoalDisposition::Discharged)
+    );
+    assert_eq!(summary.derivations.nodes.iter().filter(|node| matches!(node,
+        DerivationNode::IntegerExclusion { detail } if detail.event.is_some_and(|event| retained_event(&summary, event).kind == FlowEventKind::S17)
+    )).count(), 1);
+
+    let computed =
+        include_bytes!("../../../../tests/conformance/cases/gram12-pos-temporary-scrutinee-run.wf");
+    let summary = accepted_entailment(computed, "selected");
+    validate_derivations(&summary);
+    assert_eq!(summary.call_goals.len(), 2);
+    assert!(
+        summary
+            .call_goals
+            .iter()
+            .all(|goal| goal.disposition == CallGoalDisposition::Discharged)
+    );
+}
+
+#[test]
+fn integer_match_exclusion_is_not_transported_through_a_killed_origin() {
+    let source = br#"fn not_three(value: u64) -> result: unit pure contract {
+  requires value != 3_u64;
+} {
+  return unit;
+}
+
+fn selected(value: u64) -> result: unit pure {
+  let computed = value +wrap 1_u64;
+  match computed {
+    3_u64 => {
+      return unit;
+    }
+    else => {
+      set value = 2_u64;
+      let replaced = value +wrap 1_u64;
+      not_three(value: replaced);
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    with_semantics(source, |outcome| {
+        let SemanticOutcome::SourceIssue { issue, .. } = outcome else {
+            panic!("writing the origin operand must prevent exclusion transport: {outcome:?}");
+        };
+        assert_eq!(issue.rule(), SemanticRule::Fn8);
+        assert!(matches!(
+            issue.kind(),
+            SemanticIssueKind::UndischargedCallRequirement(_)
+        ));
+    });
+}
+
+#[test]
+fn signed_integer_match_arm_facts_use_the_type_width_twos_complement_value() {
+    let source = br#"fn minus_one(value: i8) -> result: unit pure contract {
+  requires value == -1_i8;
+} {
+  return unit;
+}
+
+fn selected(value: i8) -> result: unit pure {
+  match value {
+    -1_i8 => {
+      minus_one(value: value);
+    }
+    else => {
+      return unit;
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let summary = accepted_entailment(source, "selected");
+    validate_derivations(&summary);
+    assert_eq!(summary.call_goals.len(), 1);
+    assert_eq!(
+        summary.call_goals[0].disposition,
+        CallGoalDisposition::Discharged
+    );
+    assert!(
+        !summary.derivations.nodes.iter().any(|node| matches!(
+            node,
+            DerivationNode::L0Contradiction { .. } | DerivationNode::GoalContradiction { .. }
+        )),
+        "a reachable signed arm proves its equality without contradiction"
+    );
+}
+
+#[test]
+fn integer_exclusion_origin_views_are_discarded_before_a_write() {
+    let source = br#"fn not_three(value: u64) -> result: unit pure contract {
+  requires value != 3_u64;
+} {
+  return unit;
+}
+
+fn selected(value: u64) -> result: unit pure {
+  match value +wrap 1_u64 {
+    3_u64 => {
+      return unit;
+    }
+    else => {
+      let copied = value +wrap 1_u64;
+      not_three(value: copied);
+      set value = 0_u64;
+      not_three(value: copied);
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let goals = call_goals(source, "selected");
+    assert_eq!(goals.len(), 2);
+    assert_eq!(goals[0].disposition, CallGoalDisposition::Discharged);
+    assert_eq!(
+        goals[1].disposition,
+        CallGoalDisposition::Unproved,
+        "the first query's exclusion view cannot survive as a new flow source"
+    );
+    with_semantics(source, |outcome| {
+        let SemanticOutcome::SourceIssue { issue, .. } = outcome else {
+            panic!("OT's query-local view must not publish a fact before a write: {outcome:?}");
+        };
+        assert_eq!(issue.rule(), SemanticRule::Fn8);
+    });
+}
+
+#[test]
+fn a_long_integer_dispatch_walk_retains_one_whole_exclusion_source() {
+    let mut source = String::from(
+        r#"fn excluded(value: u64) -> result: unit pure contract {
+  requires value != 129_u64;
+} {
+  return unit;
+}
+
+fn selected(value: u64) -> result: unit pure {
+  match value {
+"#,
+    );
+    for value in 0..130 {
+        source.push_str(&format!(
+            "    {value}_u64 => {{\n      return unit;\n    }}\n"
+        ));
+    }
+    source.push_str(
+        r#"    else => {
+      excluded(value: value);
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+    );
+    let summary = accepted_entailment(source.as_bytes(), "selected");
+    validate_derivations(&summary);
+    assert_eq!(summary.call_goals.len(), 1);
+    assert_eq!(
+        summary.call_goals[0].disposition,
+        CallGoalDisposition::Discharged
+    );
+    let sets = summary
+        .derivations
+        .nodes
+        .iter()
+        .filter_map(|node| match node {
+            DerivationNode::IntegerExclusion { detail }
+                if detail.event.is_some_and(|event| {
+                    retained_event(&summary, event).kind == FlowEventKind::S17
+                }) =>
+            {
+                Some(detail)
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(sets.len(), 1, "one match establishes one whole else set");
+    assert_eq!(sets[0].conclusion, ExclusionConclusion::Set);
+    assert_eq!(sets[0].values.as_ref(), &(0..130).collect::<Vec<i128>>());
+    assert!(sets[0].parents.is_empty());
+    assert!(
+        summary.derivations.nodes.iter().all(|node| !matches!(node,
+            DerivationNode::SourceDistinct { event, .. }
+                if retained_event(&summary, *event).kind == FlowEventKind::S17
+        )),
+        "a direct per-label source must not replace or accompany the exclusion source"
+    );
+    assert!(
+        summary.derivations.nodes.iter().any(|node| matches!(node,
+            DerivationNode::IntegerExclusion { detail }
+                if detail.event.is_none()
+                    && matches!(detail.conclusion, ExclusionConclusion::Goal(_, _)
+                        | ExclusionConclusion::Relation(Relation::Distinct { .. }))
+        )),
+        "the required inequality is queried from the shared set"
+    );
 }

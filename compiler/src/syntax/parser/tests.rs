@@ -1270,3 +1270,45 @@ fn unchanged_suffixes_parse_for_semantic_admission() {
     let outcome = parse_active("unchanged.wf", source);
     assert!(matches!(outcome, ParseOutcome::Complete(_)), "{outcome:?}");
 }
+
+#[test]
+fn integer_match_arm_forms_are_grammar_alternatives() {
+    let source = b"fn probe(value: i8) -> result: i8 pure {\n  match value {\n    -128_i8 => {\n      return 0_i8;\n    }\n    named => {\n      return 1_i8;\n    }\n    else => {\n      return 2_i8;\n    }\n  }\n}\n";
+    let ParseOutcome::Complete(parsed) = parse_active("integer-match.wf", source) else {
+        panic!("integer literals, named constants and else must parse as arm forms");
+    };
+    let FinalizeOutcome::Complete(finalized) = finalize(parsed, FinalizeLimits::default()) else {
+        panic!("integer arm derivation must finalize");
+    };
+    let crate::CanonicalOutcome::Complete(syntax) =
+        crate::audit_canonical(*finalized, crate::CanonicalLimits::default())
+    else {
+        panic!("integer arm fixture must use canonical formatting");
+    };
+    let view = crate::syntax::views::SyntaxView::new(&syntax).unwrap();
+    let arms = view.descendants_with(view.root(), Production::Arm).unwrap();
+    use crate::syntax::views::MatchArmHeader;
+    assert!(matches!(
+        view.match_arm_header(arms[0]).unwrap(),
+        MatchArmHeader::Literal(_)
+    ));
+    assert!(matches!(
+        view.match_arm_header(arms[1]).unwrap(),
+        MatchArmHeader::Constant(_)
+    ));
+    assert_eq!(
+        view.match_arm_header(arms[2]).unwrap(),
+        MatchArmHeader::Else
+    );
+}
+
+#[test]
+fn integer_match_rejects_range_and_comma_grouped_value_headers_at_the_grammar() {
+    for source in [
+        b"fn probe(value: u8) -> result: unit pure { match value { 1_u8..=5_u8 => {} else => {} } }".as_slice(),
+        b"fn probe(value: u8) -> result: unit pure { match value { 1_u8, 2_u8 => {} else => {} } }".as_slice(),
+    ] {
+        let outcome = parse_active("integer-pattern.wf", source);
+        assert!(matches!(outcome, ParseOutcome::SourceIssue(_)), "{outcome:?}");
+    }
+}

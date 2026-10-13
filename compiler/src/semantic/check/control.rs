@@ -364,7 +364,7 @@ impl<'unit> Checker<'_, 'unit> {
                 Ok(StatementResult {
                     statement: CheckedStatement::Match {
                         scrutinee: matched.scrutinee,
-                        enum_type: matched.enum_type,
+                        match_type: matched.match_type,
                         arms: matched.arms,
                         continues: matched.can_continue,
                     },
@@ -381,7 +381,7 @@ impl<'unit> Checker<'_, 'unit> {
                 Ok(StatementResult {
                     statement: CheckedStatement::Match {
                         scrutinee: matched.scrutinee,
-                        enum_type: matched.enum_type,
+                        match_type: matched.match_type,
                         arms: matched.arms,
                         continues: matched.can_continue,
                     },
@@ -643,7 +643,7 @@ impl<'unit> Checker<'_, 'unit> {
                     result_mode: mode,
                     result_range_element,
                     scrutinee: matched.scrutinee,
-                    enum_type: matched.enum_type,
+                    match_type: matched.match_type,
                     arms: matched.arms,
                     continues: matched.can_continue,
                 },

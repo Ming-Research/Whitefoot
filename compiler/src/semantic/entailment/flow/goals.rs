@@ -716,6 +716,10 @@ impl Input<'_, '_> {
 
     pub(super) fn goal_integer_constant(&self, expression: &GoalExpression) -> Option<i128> {
         match expression {
+            GoalExpression::Datum(GoalDatum::Literal(CheckedValue::NumericIdentity {
+                one,
+                ..
+            })) => Some(i128::from(*one)),
             GoalExpression::Datum(GoalDatum::Literal(CheckedValue::Integer { ty, bits })) => {
                 Some(integer_value(*ty, *bits))
             }
@@ -1172,6 +1176,33 @@ impl Reasoning<'_, '_, '_> {
                         .collect(),
                 )
             });
+        let integer_comparison = if let GoalExpression::Operation {
+            row: GoalOperation::Integer { operation, .. },
+            arguments,
+            ..
+        } = &expression
+        {
+            let sign = match operation {
+                CheckedIntegerOperation::Equal => Some(GoalSign::Negative),
+                CheckedIntegerOperation::NotEqual => Some(GoalSign::Positive),
+                _ => None,
+            };
+            sign.and_then(|sign| {
+                let [left, right] = arguments.as_slice() else {
+                    return None;
+                };
+                self.input
+                    .goal_integer_constant(right)
+                    .map(|constant| (left.clone(), constant, sign))
+                    .or_else(|| {
+                        self.input
+                            .goal_integer_constant(left)
+                            .map(|constant| (right.clone(), constant, sign))
+                    })
+            })
+        } else {
+            None
+        };
         let projection = self.goal_projection(&expression);
         let normalization = self.goal_normalization(&expression);
         let mut support = Vec::new();
@@ -1180,6 +1211,13 @@ impl Reasoning<'_, '_, '_> {
             .vocabulary
             .goals
             .intern(expression, projection, normalization, support);
+        if let Some(comparison) = integer_comparison {
+            let canonical = self.vocabulary.goals.canonical(goal);
+            self.vocabulary
+                .goals
+                .integer_comparisons
+                .insert(canonical, comparison);
+        }
         if let Some((equal, fields)) = fields {
             self.vocabulary
                 .goals

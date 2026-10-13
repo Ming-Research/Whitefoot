@@ -771,10 +771,16 @@ impl<'unit> Checker<'_, 'unit> {
             .direct_token_with(node, TerminalPredicate::Literal)?
         {
             let bytes = self.types.declarations.tree.token_bytes(literal)?;
-            if matches!(bytes, b"0_T" | b"1_T") {
-                return self
-                    .types
-                    .check_generic_numeric_identity(context, node, bytes == b"1_T");
+            if bytes
+                .get(..2)
+                .is_some_and(|prefix| matches!(prefix, b"0_" | b"1_"))
+                && bytes.get(2).is_some_and(u8::is_ascii_uppercase)
+            {
+                return self.types.check_generic_numeric_identity(
+                    context,
+                    node,
+                    bytes.first() == Some(&b'1'),
+                );
             }
             return Ok(TypedExpression::owned(
                 CheckedExpression::Constant(self.types.declarations.parse_literal(node, literal)?),
@@ -1768,10 +1774,12 @@ impl<'unit> Checker<'_, 'unit> {
                         variant: u32::from(id == crate::BuiltinPreludeId::DIV_OVERFLOW),
                     }
                 }
-                crate::BuiltinPreludeId::NEXT | crate::BuiltinPreludeId::NEEDS => Constructor::Enum {
-                    nominal: self.types.prelude_nominal(super::PreludeType::ScanStep)?,
-                    variant: u32::from(id == crate::BuiltinPreludeId::NEEDS),
-                },
+                crate::BuiltinPreludeId::NEXT | crate::BuiltinPreludeId::NEEDS => {
+                    Constructor::Enum {
+                        nominal: self.types.prelude_nominal(super::PreludeType::ScanStep)?,
+                        variant: u32::from(id == crate::BuiltinPreludeId::NEEDS),
+                    }
+                }
                 crate::BuiltinPreludeId::NARROW_ERROR => Constructor::Enum {
                     nominal: self
                         .types
@@ -2405,7 +2413,7 @@ impl<'unit> TypeContext<'unit> {
         }
         Ok((fields, ty))
     }
-    fn check_generic_numeric_identity(
+    pub(in crate::semantic::check) fn check_generic_numeric_identity(
         &self,
         context: FunctionContext<'_, '_>,
         node: NodeId,

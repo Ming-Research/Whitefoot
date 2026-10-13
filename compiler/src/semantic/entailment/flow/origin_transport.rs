@@ -295,6 +295,23 @@ impl Reasoning<'_, '_, '_> {
             }
             collect(expression, &mut expressions, &mut seen);
         }
+        for fact in &context.facts.exclusions {
+            if fact.views.is_empty() {
+                // Common canonical truth does not recover an admission view
+                // that was absent on a reaching path.
+                collect(
+                    self.vocabulary.goals.expression(fact.expression).clone(),
+                    &mut expressions,
+                    &mut seen,
+                );
+            } else {
+                for view in &fact.views {
+                    let expression = self.vocabulary.goals.expression(view.expression).clone();
+                    collect(expression.clone(), &mut Vec::new(), &mut numeric_views);
+                    collect(expression, &mut expressions, &mut seen);
+                }
+            }
+        }
         if let Some(submitted) = submitted {
             collect(submitted.clone(), &mut Vec::new(), &mut numeric_views);
             collect(submitted.clone(), &mut expressions, &mut seen);
@@ -347,6 +364,50 @@ impl Reasoning<'_, '_, '_> {
             expansions.insert(goal, expansion);
         }
         let mut view = context.facts.clone();
+        // Query-local representatives share the complete set and retain the
+        // ordinary-let links that justify replacing its expression.
+        for fact in &context.facts.exclusions {
+            let source = self.vocabulary.goals.expression(fact.expression).clone();
+            let source_expansion = keys.expansion(&source);
+            for expression in &expressions {
+                let expansion = keys.expansion(expression);
+                if expansion.key != source_expansion.key || expression == &source {
+                    continue;
+                }
+                let goal = self.intern_goal_expression(expression.clone());
+                let numeric = !fact.views.is_empty()
+                    && numeric_views.get(expression).is_some_and(|views| {
+                        views
+                            .iter()
+                            .any(|view| view.same_admission_view(expression))
+                    });
+                let projection = numeric
+                    .then(|| self.exclusion_projection(expression))
+                    .flatten();
+                let mut parents = vec![fact.proof];
+                parents.extend_from_slice(&definition_parents(&source_expansion, &expansion));
+                let proof = self
+                    .vocabulary
+                    .derivations
+                    .intern(DerivationNode::IntegerExclusion {
+                        detail: Box::new(ExclusionProof {
+                            projection,
+                            expression: goal,
+                            values: std::rc::Rc::clone(&fact.values),
+                            conclusion: ExclusionConclusion::Set,
+                            event: None,
+                            parents,
+                        }),
+                    });
+                view.establish_exclusion(Exclusion::from_view(
+                    goal,
+                    std::rc::Rc::clone(&fact.values),
+                    projection,
+                    proof,
+                    &self.vocabulary.goals,
+                ));
+            }
+        }
         for members in integer_classes.values() {
             let (left, left_term, left_offset) = members[0];
             for &(right, right_term, right_offset) in &members[1..] {

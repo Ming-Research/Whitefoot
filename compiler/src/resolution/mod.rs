@@ -381,6 +381,8 @@ pub enum LexicalUseRole {
     Const,
     /// U13: constant-value identifier.
     ConstValue,
+    /// [GRAM-12] an integer arm IDENT, admitting a named const alone.
+    IntegerMatchValue,
     /// U14: place base.
     PlaceBase,
     /// U15: identifier callee.
@@ -952,6 +954,8 @@ pub enum ResolutionRule {
     Gram2,
     /// Match-binder freshness.
     Gram10,
+    /// Integer arm constant lookup.
+    Gram12,
     /// Type or place lookup.
     Type5,
     /// Namespace collision, constructor, or label lookup.
@@ -1003,6 +1007,7 @@ impl ResolutionRule {
             Self::Form5 => "FORM-5",
             Self::Gram2 => "GRAM-2",
             Self::Gram10 => "GRAM-10",
+            Self::Gram12 => "GRAM-12",
             Self::Type5 => "TYPE-5",
             Self::Type6 => "TYPE-6",
             Self::Set1 => "SET-1",

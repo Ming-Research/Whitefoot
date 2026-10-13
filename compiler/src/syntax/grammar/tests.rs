@@ -159,8 +159,8 @@ fn complete_inventory_is_pinned() {
     // v0.128 admits projections inside `entry` [GRAM-5, MSR-3]:
     // `pbase` gains one `psuffix*` repeat.
     // v0.128's range guard optional comparison adds one decision.
-    // v0.136 adds one suffix choice each in clause_expr, range_guard and
-    // range_relation; it adds no production.
+    // v0.141 adds one arm-header choice to the v0.136 inventory;
+    // it adds no production.
     // v0.141 adds one arm-label choice among a variant pattern, literal,
     // named const and `else` [GRAM-4]; it adds no production.
     assert_eq!(DECISIONS.len(), 184);
@@ -531,14 +531,14 @@ fn every_decision_has_two_position_rows_and_complete_arm_coverage() {
             stack.extend_from_slice(node.children());
         }
     }
-    // The same 183 decisions `complete_inventory_is_pinned` reads out of the
+    // The same 184 decisions `complete_inventory_is_pinned` reads out of the
     // generated table, counted a second time by walking every production's
     // node tree. `struct_decl`'s `"opaque"?` optional [GRAM-2, TYPE-2] is
     // reachable from `item`, so the walk and the table agree on it; a
     // decision in the table that no production reaches would show up as the
     // two counts disagreeing.
     assert_eq!(decisions, DECISIONS.len());
-    assert_eq!(decisions, 183);
+    assert_eq!(decisions, 184);
 }
 
 #[test]
@@ -595,9 +595,9 @@ fn overlaps(left: LookaheadPredicate, right: LookaheadPredicate) -> bool {
 
 #[test]
 fn all_detailed_rows_retain_provenance_and_remain_cross_arm_disjoint() {
-    // v0.136 adds one suffix choice each in clause_expr, range_guard and
-    // range_relation; it adds no production.
-    assert_eq!(DECISIONS.len(), 183);
+    // v0.141 adds one arm-header choice to the v0.136 inventory;
+    // it adds no production.
+    assert_eq!(DECISIONS.len(), 184);
     let mut total_rows = 0_usize;
     let mut saw_atom_only = false;
     for decision in &DECISIONS {

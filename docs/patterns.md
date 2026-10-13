@@ -339,8 +339,7 @@ The [consuming linked sequence](../tests/programs/tail_list.wf) demonstrates
 moving the next heap cell into a self transfer while releasing the old one.
 
 For a command code represented by an integer, select its constant values
-with `match` [GRAM-12, ERR-2]. This is the specified integer form; compiler
-support is a separate implementation step. A complete dispatch function is:
+with `match` [GRAM-12, ERR-2]. A complete dispatch function is:
 
 ```whitefoot
 const code_ping: u64 = 1_u64;

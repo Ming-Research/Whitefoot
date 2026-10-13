@@ -1525,6 +1525,11 @@ fn main() -> status: std::process::ExitStatus pure {
                 .iter()
                 .map(|target| target.block().index())
                 .collect(),
+            IrTerminator::IntegerMatch { targets, default, .. } => targets
+                .iter()
+                .map(|target| target.block().index())
+                .chain(default.iter().map(|target| target.index()))
+                .collect(),
             IrTerminator::Return { .. } | IrTerminator::Unreachable => Vec::new(),
         };
         assert!(

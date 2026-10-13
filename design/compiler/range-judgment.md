@@ -26,5 +26,7 @@ Decision: Imported whole-selection frame equalities are expanded into definition
 
 Decision: A copied container receives a distinct version whose value projections are defined by its captured source while whole-selection identity remains unknown, because assigning a copied Array back writes the whole container and cannot prove that its elements were untouched even when every value is restored ([callee proof](../../research/investigations/range-helper-frames/DESIGN.md#the-unchanged-proposition)), instead of sharing the source's version between separate copied containers or discarding the source's ordinary value facts.
 
+Decision: The range world represents an integer match's remaining condition by one private zero-or-one predicate atom whose definition holds the captured symbolic value and a shared sorted exclusion set, and a problem opens that definition as one guarded choice over the set's nonempty complement gaps, because the existing literal and join representation then carries the exact whole-set condition without expanding it into independently split disequalities or imposing it on unrelated join arms, instead of adding per-member path literals or a second path-condition analysis. Only definitions reached by the problem contribute their predicate and member counts to the existing structural atom ceiling.
+
 Rejected:
 - Range facts inside the entailment flow's fact domain: rejected because every element write would kill them through the ordinary overlap events and the prover's families relate no element reads.
