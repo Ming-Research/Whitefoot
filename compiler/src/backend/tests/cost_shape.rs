@@ -414,6 +414,21 @@ fn source_function<'module>(module: &'module str, symbol: &str) -> &'module str 
     &module[start..end]
 }
 
+/// Keep the LLVM token, including quotes, so argument and definition lookup
+/// use exactly the same spelling. Generic instance symbols contain `$`.
+fn function_token(line: &str) -> Option<&str> {
+    let rest = &line[line.find('@')? + 1..];
+    let end = if let Some(quoted) = rest.strip_prefix('"') {
+        // LLVM escapes inside quoted names are hex bytes, not literal quotes.
+        quoted.find('"')? + 2
+    } else {
+        rest.find(|character: char| {
+            !(character.is_ascii_alphanumeric() || matches!(character, '_' | '.' | '$' | '-'))
+        })?
+    };
+    (end > 0 && rest[end..].starts_with('(')).then(|| &rest[..end])
+}
+
 fn call_target(line: &str) -> Option<&str> {
     let trimmed = line.trim_start();
     if !(trimmed.starts_with("call ")
@@ -423,12 +438,388 @@ fn call_target(line: &str) -> Option<&str> {
     {
         return None;
     }
-    let at = trimmed.find('@')? + 1;
-    let rest = &trimmed[at..];
-    let end = rest.find(|character: char| {
-        !(character.is_ascii_alphanumeric() || character == '_' || character == '.')
-    })?;
-    rest[end..].starts_with('(').then(|| &rest[..end])
+    function_token(trimmed)
+}
+
+fn value_definition<'a>(function: &'a str, value: &str) -> Option<&'a str> {
+    function.lines().find_map(|line| {
+        let (result, definition) = line.trim().split_once(" = ")?;
+        (result == value).then_some(definition)
+    })
+}
+
+/// Evaluate only the allocation's integer extent, not arbitrary LLVM. Unknown
+/// arithmetic fails closed rather than acquiring the expected source extent.
+fn allocation_integer(
+    function: &str,
+    value: &str,
+    formal: &str,
+    actual: u64,
+    visiting: &mut std::collections::BTreeSet<String>,
+) -> Option<u64> {
+    if value == formal {
+        return Some(actual);
+    }
+    if let Ok(number) = value.parse() {
+        return Some(number);
+    }
+    if !visiting.insert(value.to_owned()) {
+        return None;
+    }
+    let definition = value_definition(function, value)?;
+    let (operation, left, right) =
+        if let Some(rest) = definition.strip_prefix("extractvalue { i64, i1 } ") {
+            let pair = comma_item(rest, 0)?;
+            if comma_item(rest, 1)? != "0" {
+                return None;
+            }
+            let producer = value_definition(function, pair)?;
+            if call_target(producer)? != "llvm.uadd.with.overflow.i64" {
+                return None;
+            }
+            (
+                "add",
+                call_argument(producer, "llvm.uadd.with.overflow.i64", 0)?,
+                call_argument(producer, "llvm.uadd.with.overflow.i64", 1)?,
+            )
+        } else {
+            let (operation, rest) = definition.split_once(' ')?;
+            if !matches!(operation, "add" | "mul" | "shl") {
+                return None;
+            }
+            let (flags, rest) = rest.split_once("i64 ")?;
+            if !flags
+                .split_whitespace()
+                .all(|flag| matches!(flag, "nuw" | "nsw"))
+            {
+                return None;
+            }
+            (operation, comma_item(rest, 0)?, comma_item(rest, 1)?)
+        };
+    let left = allocation_integer(
+        function,
+        left.split_whitespace().next_back()?,
+        formal,
+        actual,
+        visiting,
+    )?;
+    let right = allocation_integer(
+        function,
+        right.split_whitespace().next_back()?,
+        formal,
+        actual,
+        visiting,
+    )?;
+    let answer = match operation {
+        "add" => left.checked_add(right),
+        "mul" => left.checked_mul(right),
+        "shl" => left.checked_mul(1_u64.checked_shl(u32::try_from(right).ok()?)?),
+        _ => None,
+    };
+    visiting.remove(value);
+    answer
+}
+
+/// A retained empty-window constructor is credited per call, never once per
+/// definition. Validate its body independently of its symbol or source type:
+/// one take, the actual extent, two header writes, and the fresh return.
+/// This deliberately narrow oracle rejects unfamiliar bodies for inspection.
+fn retained_constructor_bytes(function: &str, call: &str) -> Result<u64, String> {
+    let fail = || format!("unrecognized retained allocation at {call}\n{function}");
+    let callee = call_target(call).ok_or_else(fail)?;
+    let header = function.lines().next().ok_or_else(fail)?;
+    if function_token(header) != Some(callee) || !header.starts_with("define ptr ") {
+        return Err(fail());
+    }
+    let parameter = call_argument(header, callee, 0).ok_or_else(fail)?;
+    if !parameter.starts_with("i64 ") || call_argument(header, callee, 1).is_some() {
+        return Err(fail());
+    }
+    let formal = parameter.split_whitespace().next_back().ok_or_else(fail)?;
+    let actual = call_argument(call, callee, 0)
+        .and_then(|argument| {
+            argument
+                .strip_prefix("i64 ")?
+                .split_whitespace()
+                .next_back()?
+                .parse::<u64>()
+                .ok()
+        })
+        .filter(|actual| *actual > 0)
+        .ok_or_else(fail)?;
+    if call_argument(call, callee, 1).is_some() {
+        return Err(fail());
+    }
+    let takes: Vec<_> = function
+        .lines()
+        .filter(|line| call_target(line) == Some("wf__heap_take"))
+        .collect();
+    let [take] = takes.as_slice() else {
+        return Err(fail());
+    };
+    let (allocation, _) = take.trim().split_once(" = ").ok_or_else(fail)?;
+    let integer = |value| {
+        allocation_integer(
+            function,
+            value,
+            formal,
+            actual,
+            &mut std::collections::BTreeSet::new(),
+        )
+    };
+    let bytes = call_argument(take, "wf__heap_take", 0)
+        .and_then(|argument| argument.split_whitespace().next_back())
+        .and_then(integer)
+        .filter(|bytes| (16..=i64::MAX as u64).contains(bytes))
+        .ok_or_else(fail)?;
+    bulk_initializations_use_fresh_storage(function)?;
+
+    // Acyclic blocks and intersection of predecessor facts establish that
+    // every successful path allocates and writes both header words once.
+    // Only the exact zero-capacity edge is pruned using the actual argument;
+    // overflow and allocation-failure branches may end in unreachable.
+    let mut names = vec!["<entry>"];
+    let mut blocks = vec![Vec::new()];
+    for line in function.lines().skip(1) {
+        let text = line.trim();
+        if text.is_empty() || text.starts_with(';') || text == "}" {
+            continue;
+        }
+        if !line.starts_with(char::is_whitespace)
+            && let Some((label, _)) = text.split_once(':')
+        {
+            if blocks.last().is_some_and(Vec::is_empty) {
+                *names.last_mut().ok_or_else(fail)? = label;
+            } else {
+                names.push(label);
+                blocks.push(Vec::new());
+            }
+        } else {
+            blocks.last_mut().ok_or_else(fail)?.push(text);
+        }
+    }
+    let mut successors = vec![Vec::new(); blocks.len()];
+    let mut predecessors = vec![Vec::new(); blocks.len()];
+    for (index, block) in blocks.iter().enumerate() {
+        let end = *block.last().ok_or_else(fail)?;
+        let mut labels: Vec<_> = end
+            .split("label %")
+            .skip(1)
+            .map(|part| part.split([',', ' ']).next().ok_or_else(fail))
+            .collect::<Result<_, _>>()?;
+        if end.starts_with("br i1 ")
+            && let Some(predicate) = end
+                .strip_prefix("br i1 ")
+                .and_then(|rest| rest.split(',').next())
+            && let Some(condition) = value_definition(function, predicate)
+            && condition == format!("icmp eq i64 {formal}, 0")
+        {
+            if labels.len() != 2 {
+                return Err(fail());
+            }
+            labels.remove(0);
+        }
+        if !end.starts_with("br ") && !end.starts_with("ret ptr ") && end != "unreachable" {
+            return Err(fail());
+        }
+        for label in labels {
+            let target = names
+                .iter()
+                .position(|name| *name == label)
+                .ok_or_else(fail)?;
+            successors[index].push(target);
+            predecessors[target].push(index);
+        }
+    }
+    let mut pending: std::collections::VecDeque<_> = predecessors
+        .iter()
+        .enumerate()
+        .filter_map(|(index, incoming)| incoming.is_empty().then_some(index))
+        .collect();
+    let mut remaining: Vec<_> = predecessors.iter().map(Vec::len).collect();
+    let mut facts = vec![None; blocks.len()];
+    facts[0] = Some(0_u8);
+    let mut visited = 0;
+    let mut returns = 0;
+    let mut stores = [0, 0];
+    while let Some(index) = pending.pop_front() {
+        visited += 1;
+        if let Some(mut state) = facts[index] {
+            for line in &blocks[index] {
+                if call_target(line) == Some("wf__heap_take") {
+                    state |= 1;
+                } else if let Some(callee) = call_target(line)
+                    && !matches!(callee, "llvm.uadd.with.overflow.i64" | "wf_resource_abort")
+                {
+                    return Err(fail());
+                }
+                if let Some(store) = line.strip_prefix("store i64 ") {
+                    let value = comma_item(store, 0).and_then(integer).ok_or_else(fail)?;
+                    let address = comma_item(store, 1)
+                        .and_then(|operand| operand.strip_prefix("ptr "))
+                        .ok_or_else(fail)?;
+                    let word = if address == allocation && value == 0 {
+                        0
+                    } else if value == actual
+                        && let Some(projection) = value_definition(function, address)
+                        && projection.starts_with("getelementptr ")
+                        && getelementptr_base(projection) == Some(allocation)
+                        && comma_item(projection, 0)
+                            .and_then(|part| part.split_whitespace().next_back())
+                            == Some("i8")
+                        && comma_item(
+                            projection.strip_prefix("getelementptr ").ok_or_else(fail)?,
+                            2,
+                        ) == Some("i64 8")
+                    {
+                        1
+                    } else {
+                        return Err(fail());
+                    };
+                    if state & 1 == 0 {
+                        return Err(fail());
+                    }
+                    stores[word] += 1;
+                    state |= 2 << word;
+                } else if line.starts_with("store ") {
+                    return Err(fail());
+                }
+                if let Some(returned) = line.strip_prefix("ret ptr ") {
+                    if state != 7 {
+                        return Err(fail());
+                    }
+                    if returned != allocation {
+                        let phi = value_definition(function, returned)
+                            .and_then(|definition| definition.strip_prefix("phi ptr "))
+                            .ok_or_else(fail)?;
+                        for &from in &predecessors[index] {
+                            if facts[from].is_none() {
+                                continue;
+                            }
+                            let incoming =
+                                (0..).map_while(|at| comma_item(phi, at)).find_map(|part| {
+                                    let pair = part.trim().strip_prefix('[')?.strip_suffix(']')?;
+                                    (comma_item(pair, 1)?.trim().strip_prefix('%')? == names[from])
+                                        .then(|| comma_item(pair, 0))
+                                        .flatten()
+                                });
+                            if incoming != Some(allocation) {
+                                return Err(fail());
+                            }
+                        }
+                    }
+                    returns += 1;
+                }
+            }
+            facts[index] = Some(state);
+            for &target in &successors[index] {
+                facts[target] = Some(facts[target].map_or(state, |previous| previous & state));
+            }
+        }
+        for &target in &successors[index] {
+            remaining[target] -= 1;
+            if remaining[target] == 0 {
+                pending.push_back(target);
+            }
+        }
+    }
+    if visited != blocks.len() || returns == 0 || stores != [1, 1] {
+        return Err(fail());
+    }
+    Ok(bytes)
+}
+
+#[test]
+fn retained_allocation_oracle_follows_quoted_calls_and_measured_extent() {
+    let body = r#"define ptr @"window$words"(i64 %capacity) {
+entry:
+  %empty = icmp eq i64 %capacity, 0
+  br i1 %empty, label %ready, label %size
+size:
+  %payload = shl i64 %capacity, 3
+  %sum = call { i64, i1 } @llvm.uadd.with.overflow.i64(i64 %payload, i64 16)
+  %bytes = extractvalue { i64, i1 } %sum, 0
+  %overflow = extractvalue { i64, i1 } %sum, 1
+  br i1 %overflow, label %oom, label %allocate
+allocate:
+  %fresh = call ptr @wf__heap_take(i64 %bytes)
+  %null = icmp eq ptr %fresh, null
+  br i1 %null, label %oom, label %initialize
+initialize:
+  store i64 0, ptr %fresh, align 8
+  %cap = getelementptr inbounds i8, ptr %fresh, i64 8
+  store i64 %capacity, ptr %cap, align 8
+  br label %ready
+oom:
+  call void @wf_resource_abort()
+  unreachable
+ready:
+  %result = phi ptr [ %fresh, %initialize ], [ @wf__empty_window, %entry ]
+  ret ptr %result
+}
+"#;
+    let call = "  %run = tail call ptr @\"window$words\"(i64 512)";
+    assert_eq!(call_target(call), Some("\"window$words\""));
+    assert_eq!(call_argument(call, "\"window$words\"", 0), Some("i64 512"));
+    assert_eq!(source_function(body, "\"window$words\""), body.trim_end());
+    assert_eq!(retained_constructor_bytes(body, call), Ok(4112));
+    // Each source call contributes its own extent, not one take per helper
+    // definition. Wrong arithmetic must change the observed size map.
+    let calls = [call.to_owned(), call.replace("512", "1024")];
+    let mut sizes = std::collections::BTreeMap::new();
+    for site in &calls {
+        *sizes
+            .entry(retained_constructor_bytes(body, site).unwrap())
+            .or_insert(0) += 1;
+    }
+    assert_eq!(
+        sizes,
+        std::collections::BTreeMap::from([(4112, 1), (8208, 1)])
+    );
+    assert_eq!(
+        retained_constructor_bytes(&body.replace("%capacity, 3", "%capacity, 2"), call),
+        Ok(2064)
+    );
+    assert_eq!(
+        retained_constructor_bytes(&body.replace("i64 16)", "i64 24)"), call),
+        Ok(4120)
+    );
+    assert_eq!(
+        retained_constructor_bytes(
+            &body.replace("shl i64 %capacity, 3", "mul i64 %capacity, 8"),
+            call
+        ),
+        Ok(4112)
+    );
+    let bytes = body.replace("shl i64 %capacity, 3", "add i64 %capacity, 0");
+    assert_eq!(
+        retained_constructor_bytes(&bytes, &call.replace("512", "4096")),
+        Ok(4112)
+    );
+
+    for (fault, bad) in [
+        ("missing take", body.replace("%fresh = call ptr @wf__heap_take(i64 %bytes)", "%fresh = inttoptr i64 1 to ptr")),
+        ("two takes", body.replace("%null =", "%extra = call ptr @wf__heap_take(i64 %bytes)\n  %null =")),
+        ("cyclic take", body.replace("label %oom, label %initialize", "label %allocate, label %initialize")),
+        ("unproved bypass", body.replace("icmp eq i64 %capacity, 0", "icmp eq i64 %capacity, 512")),
+        ("reused return", body.replace("[ %fresh, %initialize ]", "[ @wf__empty_window, %initialize ]")),
+        ("wrong header", body.replace("store i64 %capacity", "store i64 17")),
+        ("missing header word", body.replace("  store i64 %capacity, ptr %cap, align 8\n", "")),
+        ("repeated header write", body.replace("  store i64 %capacity, ptr %cap, align 8", "  store i64 %capacity, ptr %cap, align 8\n  store i64 %capacity, ptr %cap, align 8")),
+        ("wrong header address", body.replace("getelementptr inbounds i8", "getelementptr inbounds i64")),
+        ("unsupported extent", body.replace("shl i64 %capacity, 3", "xor i64 %capacity, 3")),
+        ("payload initialization", body.replace("br label %ready", "call void @llvm.memset.p0.i64(ptr %fresh, i8 0, i64 16, i1 false)\n  br label %ready")),
+    ] {
+        assert_ne!(bad, body, "{fault} mutation must change its witness");
+        assert!(retained_constructor_bytes(&bad, call).is_err(), "{fault}");
+    }
+    assert!(retained_constructor_bytes(body, &call.replace("512", "0")).is_err());
+    assert!(retained_constructor_bytes(body, &call.replace("512", "%unknown")).is_err());
+    assert_eq!(
+        call_target("  call ptr @window$bytes(i64 4096)"),
+        Some("window$bytes")
+    );
+    assert_eq!(call_target("  call ptr @\"unfinished(i64 1)"), None);
 }
 
 /// A counted retake remakes the existing cell; a fresh take or a null input
@@ -484,6 +875,19 @@ fn the_reused_buffers_are_initialized_once_at_allocation() {
     // wrapper retains its accounting side effect. Count either optimized
     // spelling, including both calloc factors, while retaining the exact
     // source-site and per-size counts, and one allocation per retained helper.
+    // Branch weights can leave an allocation primitive out of line. Its body
+    // is not a source allocation site: credit its validated take at each call.
+    let retained_helpers: std::collections::BTreeMap<_, _> = optimized()
+        .lines()
+        .filter(|line| line.starts_with("define "))
+        .filter_map(function_token)
+        .map(|symbol| (symbol, source_function(optimized(), symbol)))
+        .filter(|(_, body)| !program_functions().contains(body))
+        .filter(|(_, body)| {
+            body.lines()
+                .any(|line| matches!(call_target(line), Some("wf__heap_take" | "calloc")))
+        })
+        .collect();
     let mut expanded = 0;
     let mut out_of_line = 0;
     let mut prefix_sized = 0;
@@ -548,6 +952,12 @@ fn the_reused_buffers_are_initialized_once_at_allocation() {
                     Some(count) => *sizes.entry(16 + count).or_insert(0) += 1,
                     None => prefix_sized += 1,
                 }
+            }
+            if let Some(body) = call_target(line).and_then(|callee| retained_helpers.get(callee)) {
+                let bytes = retained_constructor_bytes(body, line)
+                    .unwrap_or_else(|reason| panic!("{reason}"));
+                out_of_line += 1;
+                *sizes.entry(bytes).or_insert(0) += 1;
             }
         }
     }
@@ -623,6 +1033,11 @@ fn the_reused_buffers_are_initialized_once_at_allocation() {
         let Some(first_allocation) = ["@wf__heap_take(", "@calloc(", "@wf_zeroed_bytes("]
             .iter()
             .filter_map(|site| function.find(site))
+            .chain(
+                retained_helpers
+                    .keys()
+                    .filter_map(|callee| function.find(&format!("@{callee}("))),
+            )
             .min()
         else {
             continue;
