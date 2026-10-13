@@ -275,6 +275,66 @@ fn marked_atom_starts_require_a_callee_head() {
     }
 }
 
+/// [FORM-3] a fixed grammar word written where a name is declared is
+/// rejected at that word with the rename that frees it, and the rename's
+/// sentence says what in the grammar takes the word.
+#[test]
+fn a_fixed_word_in_a_name_slot_offers_the_reserved_name_rename() {
+    for (source, word, fresh) in [
+        (
+            "fn f() -> r: u8 pure { let copy = 1_u8; return copy; }",
+            "copy",
+            "copy_value",
+        ),
+        (
+            "fn f(is: u8) -> r: u8 pure { return is; }",
+            "is",
+            "is_value",
+        ),
+        ("struct Gauge { held: u8; }", "held", "held_value"),
+        (
+            "fn f(choice: Option<u8>) -> r: u8 pure { match choice { Some(value: held) => { return held; } None() => { return 0_u8; } } }",
+            "held",
+            "held_value",
+        ),
+        (
+            "fn f() -> r: u8 pure { let copy = 1_u8; let copy_value = copy; return copy_value; }",
+            "copy",
+            "copy_value2",
+        ),
+    ] {
+        let result = outcome(source.as_bytes(), false);
+        let ParseOutcome::SourceIssue(issue) = result else {
+            panic!("a reserved name must reject: {source}: {result:?}");
+        };
+        assert_eq!(issue.rule(), SyntaxRule::Form3, "{source}");
+        assert_eq!(
+            issue_bytes(source.as_bytes(), issue),
+            word.as_bytes(),
+            "{source}"
+        );
+        assert!(
+            matches!(issue.mechanical_fix, Some(SyntaxRepair::ReservedName(_))),
+            "{source}: {:?}",
+            issue.mechanical_fix
+        );
+        let sentence = issue
+            .mechanical_fix
+            .and_then(|fix| fix.sentence(source.as_bytes()))
+            .expect("the rename has words");
+        assert!(
+            sentence.starts_with(&format!(
+                "`{word}` is reserved: it is a fixed word of the grammar of "
+            )),
+            "{sentence}"
+        );
+        assert!(
+            sentence.ends_with(&format!("such as `{fresh}`")),
+            "{sentence}"
+        );
+    }
+}
+
 #[test]
 fn a_call_head_after_an_atom_prefix_does_not_start_another_atom() {
     for (call, head) in [
