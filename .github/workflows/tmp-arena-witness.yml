@@ -1,0 +1,80 @@
+# Temporary: checks, builds and runs the programs of
+# research/investigations/arena-invariant-witness/ to answer whether the range
+# judgment asserts an inner join's arm choice on a path that skipped the join.
+# Dispatch only; removed before the branch is ready.
+name: tmp-arena-witness
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - claude/arena-invariant-witness
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  witness:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set the scratch root
+        run: |
+          echo "WHITEFOOT_SCRATCH_ROOT=$RUNNER_TEMP/whitefoot" >> "$GITHUB_ENV"
+
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          /usr/bin/clang --version
+          rustup default stable
+          cargo --version
+
+      - name: Fetch locked compiler dependencies
+        run: cargo fetch --locked --manifest-path compiler/Cargo.toml
+
+      - name: Build whitefootc
+        run: perl .github/run-check.pl tmp-witness-build cargo build --release --locked --offline --manifest-path compiler/Cargo.toml
+
+      - name: Check, build and run each program
+        run: |
+          wfc="$PWD/compiler/target/release/whitefootc"
+          out="$RUNNER_TEMP/witness"
+          mkdir -p "$out"
+          for source in research/investigations/arena-invariant-witness/*.wf; do
+            name=$(basename "$source" .wf)
+            echo "=== $name"
+            set +e
+            "$wfc" --check "$source"
+            status=$?
+            set -e
+            echo "check exit status: $status"
+            if [ "$status" -eq 0 ]; then
+              echo "verdict: ACCEPTED"
+              set +e
+              "$wfc" "$source" -o "$out/$name"
+              built=$?
+              set -e
+              echo "build exit status: $built"
+              if [ "$built" -eq 0 ]; then
+                set +e
+                "$out/$name"
+                ran=$?
+                set -e
+                echo "run exit status: $ran"
+              fi
+            else
+              echo "verdict: REJECTED"
+            fi
+            echo "verdict line: $name check=$status" >> "$GITHUB_STEP_SUMMARY"
+          done
+

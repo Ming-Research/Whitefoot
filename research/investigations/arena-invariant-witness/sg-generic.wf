@@ -1,0 +1,56 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+enum MathNode<L: copy> {
+  Leaf(value: L);
+  Min(left: u64, right: u64);
+}
+
+struct LengthMath<L: copy> {
+  nodes: Box<Array<MathNode<L>>>;
+  root: u64;
+  invariant valid_root(v): v.root < v.nodes.inner.len;
+  invariant(v): forall left_before(k in 0_u64..v^.nodes.inner.len): v^.nodes.inner[k].Min.left < k;
+  invariant(v): forall right_before(k in 0_u64..v^.nodes.inner.len): v^.nodes.inner[k].Min.right < k;
+}
+
+fn eval(value: &LengthMath<f32>, at: u64) -> result: f32 reads(value) contract {
+  requires at < value^.nodes.inner.len;
+} {
+  match value^.nodes.inner[at] {
+    Leaf(value: v) => {
+      return v^;
+    }
+    Min(left: l, right: r) => {
+      let first_at = l^;
+      invariant first_in: first_at < value^.nodes.inner.len {
+        use left_before(at);
+      }
+      let first = eval(value: value, at: first_at);
+      let second_at = r^;
+      invariant second_in: second_at < value^.nodes.inner.len {
+        use right_before(at);
+      }
+      let second = eval(value: value, at: second_at);
+      return fmin(first, second);
+    }
+  }
+}
+
+fn main() -> status: ExitStatus pure {
+  let zero = MathNode<f32>::Leaf(value: 0.0_f32);
+  let nodes = box_array_filled::<MathNode<f32>>(count: 3_u64, value: zero);
+  let low = MathNode<f32>::Leaf(value: 10.0_f32);
+  let high = MathNode<f32>::Leaf(value: 20.0_f32);
+  let root = MathNode<f32>::Min(left: 0_u64, right: 1_u64);
+  set nodes.inner[0_u64] = low;
+  set nodes.inner[1_u64] = high;
+  set nodes.inner[2_u64] = root;
+  let value = LengthMath<f32>(nodes: move nodes, root: 2_u64);
+  let result = eval(value: &value, at: value.root);
+  let ok = feq(result, 10.0_f32);
+  if ok {
+    return exit_status(code: 0_u8);
+  }
+  return exit_status(code: 1_u8);
+}
