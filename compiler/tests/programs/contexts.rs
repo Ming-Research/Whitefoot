@@ -56,6 +56,40 @@ fn a_context_polling_an_object_lets_the_producer_run_on_one_driver() {
     }
 }
 
+/// Each of eight workers owns its shard object and map, so its hot loop has
+/// no contended lock that could accidentally let another context run. The
+/// stopper waits until all workers have started, sleeps for 1 ms and claims
+/// their DecisionCell under an ordinary atomic statement. Workers read that
+/// cell without waiting and finish only when the stopper gets its turn.
+/// An acquisition that omits its yield pass lets a worker monopolize its
+/// driver, so the startup barrier or sleeping stopper cannot finish and the
+/// native child reaches the shared program deadline. Whole shards and two
+/// grouped map targets cover their distinct lock paths; an ordinary object
+/// is the control. One executable covers all acquisition shapes.
+#[test]
+fn every_atomic_target_path_lets_a_delayed_stopper_run() {
+    let program = build_program(&compile_program("atomic_progress.wf"));
+    for (mode, target) in [
+        (0_u8, "shard"),
+        (1_u8, "keyed entry"),
+        (2_u8, "key set"),
+        (3_u8, "whole shards"),
+        (4_u8, "keyed entry and shard"),
+        (5_u8, "two grouped keyed maps"),
+        (6_u8, "ordinary object"),
+    ] {
+        for drivers in ["1", "2"] {
+            let output =
+                program.run_with_file_input_and_settings(&[mode], &[("WF_DRIVERS", drivers)]);
+            assert_eq!(
+                output.status.code(),
+                Some(0),
+                "{target}, drivers {drivers}: {output:?}"
+            );
+        }
+    }
+}
+
 /// R3: two contexts hand a guard back and forth and stop only after a third
 /// context's read completes. The two are never both waiting, so a driver
 /// that looked for host completions only when nothing was ready never
