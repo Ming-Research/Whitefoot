@@ -1,11 +1,7 @@
-# Temporary: finds which main merge made `whitefootc --check-module pkg::vm`
-# slower on Halo's library graph. Compiler release wf-d837678c6905 takes 3.33 s
-# and wf-93e97efdc27b 4.19 s (+25.8%, 14900K, same Halo source). Each matrix job
-# builds the base compiler (d837678c6905) and one first-parent main merge
-# between them, then times both on Halo 80f0ee4 in 5 alternating rounds. The
-# final job lists the median (user+sys) ratio per merge, oldest first.
-# Remove this workflow and its branch when the merge is found.
-name: halo-check-bisect
+# Temporary attribution of PR #361's Halo checker slowdown. This is an
+# explicitly requested experiment, not a correctness gate; it reads no
+# research inputs. Remove it and its branch after attribution is complete.
+name: halo-check-attribution
 
 on:
   push:
@@ -13,189 +9,335 @@ on:
     paths: [.github/workflows/halo-check-bisect.yml]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 concurrency:
-  group: halo-check-bisect-${{ github.ref }}
+  group: halo-check-attribution-${{ github.ref }}
   cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: never
   CARGO_INCREMENTAL: 0
-  BASE_REVISION: d837678c69057a7ca79be8fa0bd1598af51647b6
-  # The Halo source both compilers check (branch claude/halo-pin-93e97ef).
+  CARGO_PROFILE_GATE_DEBUG: line-tables-only
+  CARGO_PROFILE_GATE_STRIP: none
+  BASE_REVISION: c9c45a6ecee57c53675cc4c9e5c82cfe96eb5022
+  HEAD_REVISION: 8ffb6d93241f69e736b12d4339eba780e857d8c9
   HALO_REVISION: 80f0ee4
+  WHITEFOOT_CHECK_TIMEOUT: 1800
 
 jobs:
-  time:
-    name: ${{ matrix.title }}
+  attribute:
     runs-on: ubuntu-24.04
     timeout-minutes: 90
-    strategy:
-      fail-fast: false
-      matrix:
-        # Newest first, as the first-parent main merges between the two
-        # releases; title is the pull request number and branch.
-        include:
-          - {commit: 93e97efdc27ba5700328794445d1f401b9be6213, title: "#405 join-slot-local"}
-          - {commit: d596153529e4aaa98e474cbd224cadec648694d1, title: "#399 gate-pr-branches-only"}
-          - {commit: 588bd31ed641520effc36bf4e6e0451715a3e3c5, title: "#411 ref2-sibling-release"}
-          - {commit: 35cfc4a0ba27ca74a9933711ef52369a67ec912d, title: "#395 range-helper-frames"}
-          - {commit: 9bc6bb7eda51e15037f0b8dbc36385aae3865165, title: "#390 const-arg-type"}
-          - {commit: 2a785316590a8f22a7e3c92508e4b59daca783bf, title: "#392 guard-clock-and-error-class"}
-          - {commit: c0394d85a8a9773a7abe1a36bfde4e76bceb9eea, title: "#400 read-through-results"}
-          - {commit: d469bd164682363025b007cf5fd134f49a5cbab0, title: "#383 cache-key-path"}
-          - {commit: bfa06a7d019b3745f8892f90291422c531b9afd1, title: "#404 runtime-budget-raise"}
-          - {commit: 58743a931a5ec6244864d37041fd1a7c1c5a145d, title: "#396 share2-indexed-target"}
-          - {commit: 6876bd1751aba44c53784ecbdce89f480fecb88f, title: "#397 agents-ci-only"}
-          - {commit: d67e83250c5f8fcfa5e3ea02a0835e9b908e2142, title: "#391 place-render-names"}
-          - {commit: 1741f12627c4c9f2f361dca2608969de0c571352, title: "#384 meta-commit-witness"}
-          - {commit: c52e867cae4fd81de4e8bec2027bce66ce240f47, title: "#401 budget-raise-1012"}
-          - {commit: abc27fbd342e407839a4042bf6804cac2fb5ca2d, title: "#381 heap-read-nolock"}
-          - {commit: 8b14adf8abd120d5eb74070edc16dbe35ca9e22c, title: "#378 keyset-spare"}
-          - {commit: f0df1d2587533618d7ad8acaac4b0ea1ad9830e8, title: "#373 contract-alias-overlap"}
-          - {commit: 51c5f4263f512d5b1a5f02f7cd3d5e23baa276a2, title: "#379 readelf-import-check"}
-          - {commit: 29de8a21eef895f9e5ff12373422202d753936b9, title: "#371 mixed-join-cursor"}
-          - {commit: 1762a4480e9edf0cc4aa0b896e97061630e048d7, title: "#365 driver-count"}
-          - {commit: 8ffb6d93241f69e736b12d4339eba780e857d8c9, title: "#361 keyset-bytes"}
-          - {commit: c9c45a6ecee57c53675cc4c9e5c82cfe96eb5022, title: "#375 macos-corpus-budget"}
-          - {commit: 94d353e33034b8de457a8cff90904e637a054cea, title: "#362 io-error-text"}
-          - {commit: 5b8bccb2d9bed3c40155ae0351510e844fb46559, title: "#366 range-guard-facts"}
-          - {commit: 60272a6a9bec86290bd60511bb1d1ef3438c3074, title: "#372 gate-ready-group"}
-          - {commit: 26355924f94222025151e56b3e8f9a8c8db4135c, title: "#363 paged-small-owners"}
-    env:
-      COMMIT: ${{ matrix.commit }}
-      WHITEFOOT_CHECK_TIMEOUT: 1800
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Prepare the toolchain and both worktrees
+      - name: Prepare paired worktrees and profiling tools
         run: |
+          out="$RUNNER_TEMP/attribution"
+          mkdir -p "$out"
           rustup default stable
           git worktree add --detach "$RUNNER_TEMP/base" "$BASE_REVISION"
-          git worktree add --detach "$RUNNER_TEMP/commit" "$COMMIT"
-          git -C "$RUNNER_TEMP/base" log --oneline -1
-          git -C "$RUNNER_TEMP/commit" log --oneline -1
-          cargo fetch --locked --manifest-path "$RUNNER_TEMP/base/compiler/Cargo.toml"
-          cargo fetch --locked --manifest-path "$RUNNER_TEMP/commit/compiler/Cargo.toml"
-      - name: Build both compilers
+          git worktree add --detach "$RUNNER_TEMP/head" "$HEAD_REVISION"
+          cargo fetch --locked --manifest-path "$RUNNER_TEMP/base/compiler/Cargo.toml" > "$out/base-fetch.log" 2>&1
+          cargo fetch --locked --manifest-path "$RUNNER_TEMP/head/compiler/Cargo.toml" > "$out/head-fetch.log" 2>&1
+          # A matching kernel package is preferable. Hosted kernels sometimes
+          # have no apt package; use the generic binary directly in that case.
+          sudo apt-get update > "$out/apt-update.log" 2>&1
+          if ! sudo apt-get install -y "linux-tools-$(uname -r)" > "$out/apt-kernel-perf.log" 2>&1; then
+            sudo apt-get install -y linux-tools-generic > "$out/apt-generic-perf.log" 2>&1 || true
+          fi
+          perf_bin=$(find /usr/lib/linux-tools -type f -name perf 2>/dev/null | sort -V | tail -n 1) || true
+          if [ -n "$perf_bin" ]; then echo "PERF_BIN=$perf_bin" >> "$GITHUB_ENV"; fi
+          {
+            uname -a
+            lscpu
+            rustc --version --verbose
+            cargo --version
+            printf 'base=%s\nhead=%s\nprofile=gate\ndebug=line-tables-only\nstrip=none\n' "$BASE_REVISION" "$HEAD_REVISION"
+            printf 'perf_bin=%s\nperf_event_paranoid=' "$perf_bin"
+            cat /proc/sys/kernel/perf_event_paranoid
+            if [ -n "$perf_bin" ]; then "$perf_bin" --version; fi
+          } > "$out/metadata.txt" 2>&1
+          # Counters must be available without altering either compiler.
+          for which in base head; do
+            cp "$RUNNER_TEMP/$which/compiler/src/semantic/entailment/work.rs" "$out/$which-work-schema.rs"
+          done
+      - name: Build identical profiles with symbols
         run: |
-          perl .github/run-check.pl bisect-build-base \
-            cargo build --manifest-path "$RUNNER_TEMP/base/compiler/Cargo.toml" --profile gate --locked
-          perl .github/run-check.pl bisect-build-commit \
-            cargo build --manifest-path "$RUNNER_TEMP/commit/compiler/Cargo.toml" --profile gate --locked
-          ls -l "$RUNNER_TEMP/base/compiler/target/gate/whitefootc" "$RUNNER_TEMP/commit/compiler/target/gate/whitefootc"
-      - name: Fetch pinned Halo
+          out="$RUNNER_TEMP/attribution"
+          for which in base head; do
+            perl .github/run-check.pl "attribution-build-$which" \
+              cargo build --manifest-path "$RUNNER_TEMP/$which/compiler/Cargo.toml" --profile gate --locked --offline \
+              > "$out/$which-build.log" 2>&1 || { cat "$out/$which-build.log"; exit 1; }
+            compiler="$RUNNER_TEMP/$which/compiler/target/gate/whitefootc"
+            file "$compiler" >> "$out/metadata.txt"
+            sha256sum "$compiler" >> "$out/metadata.txt"
+            readelf -S "$compiler" > "$out/$which-elf-sections.txt"
+            grep -q '\.debug_line' "$out/$which-elf-sections.txt"
+          done
+      - name: Fetch pinned Halo source
         run: |
-          git clone --quiet "https://github.com/Ming-Research/Halo-wf.git" "$RUNNER_TEMP/halo"
+          out="$RUNNER_TEMP/attribution"
+          git clone --quiet https://github.com/Ming-Research/Halo-wf.git "$RUNNER_TEMP/halo" > "$out/halo-fetch.log" 2>&1
           git -C "$RUNNER_TEMP/halo" checkout --quiet --detach "$HALO_REVISION"
-          git -C "$RUNNER_TEMP/halo" rev-parse HEAD
-      - name: Time the check of pkg::vm
+          git -C "$RUNNER_TEMP/halo" rev-parse HEAD >> "$out/metadata.txt"
+          printf 'command=whitefootc --graph lib/halo/modules.wfg --check-module pkg::vm\n' >> "$out/metadata.txt"
+      - name: Three interleaved uninstrumented checks per compiler
         run: |
-          out="$RUNNER_TEMP/bisect"
-          mkdir -p "$out"
-          cpu=$(grep -m 1 'model name' /proc/cpuinfo | sed 's/^[^:]*: *//')
-          echo "cpu: $cpu"
-          base="$RUNNER_TEMP/base/compiler/target/gate/whitefootc"
-          commit="$RUNNER_TEMP/commit/compiler/target/gate/whitefootc"
-          tsv="$out/$COMMIT.tsv"
-          printf 'commit\tround\twhich\twall\tuser\tsys\tcpu\n' > "$tsv"
+          unset WHITEFOOT_CHECK_WORK
+          out="$RUNNER_TEMP/attribution"
+          printf 'round\twhich\twall_s\tuser_s\tsys_s\n' > "$out/times.tsv"
           cd "$RUNNER_TEMP/halo"
           run() {
-            label=$1 compiler=$2
-            perl "$GITHUB_WORKSPACE/.github/run-check.pl" "bisect-$label" \
+            which=$1 label=$2
+            perl "$GITHUB_WORKSPACE/.github/run-check.pl" "attribution-$label" \
               /usr/bin/time -q -f '%e %U %S' -o "$out/$label.time" \
-              "$compiler" --graph lib/halo/modules.wfg --check-module pkg::vm \
-              > "$out/$label.log" 2>&1 || { cat "$out/$label.log"; echo "::error::$label exited nonzero"; exit 1; }
+              "$RUNNER_TEMP/$which/compiler/target/gate/whitefootc" \
+              --graph lib/halo/modules.wfg --check-module pkg::vm \
+              > "$out/$label.log" 2>&1 || { cat "$out/$label.log"; return 1; }
           }
-          # Warm each compiler once (page cache, binary load).
-          run warm-base "$base"
-          run warm-commit "$commit"
-          for round in 1 2 3 4 5; do
-            for which in base commit; do
-              run "$which-$round" "$([ $which = base ] && echo "$base" || echo "$commit")"
+          run base warm-base
+          run head warm-head
+          for round in 1 2 3; do
+            order='base head'
+            if [ "$round" = 2 ]; then order='head base'; fi
+            for which in $order; do
+              run "$which" "$which-$round"
               read -r wall user sys < "$out/$which-$round.time"
-              printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$COMMIT" "$round" "$which" "$wall" "$user" "$sys" "$cpu" >> "$tsv"
-              echo "$which round $round: $wall s wall, $user user, $sys sys"
+              printf '%s\t%s\t%s\t%s\t%s\n' "$round" "$which" "$wall" "$user" "$sys" >> "$out/times.tsv"
             done
           done
-          cat "$tsv"
+          cat "$out/times.tsv"
+      - name: Profile both checks, with paired Callgrind fallback
+        run: |
+          unset WHITEFOOT_CHECK_WORK
+          out="$RUNNER_TEMP/attribution"
+          cd "$RUNNER_TEMP/halo"
+          mode=perf
+          for which in base head; do
+            if [ -z "${PERF_BIN:-}" ] || ! perl "$GITHUB_WORKSPACE/.github/run-check.pl" "attribution-perf-$which" \
+                "$PERF_BIN" record -e cpu-clock:u -F 999 --call-graph dwarf,16384 \
+                -o "$out/$which.perf.data" -- \
+                "$RUNNER_TEMP/$which/compiler/target/gate/whitefootc" \
+                --graph lib/halo/modules.wfg --check-module pkg::vm > "$out/$which-perf.log" 2>&1; then
+              mode=callgrind
+              continue
+            fi
+            if ! "$PERF_BIN" report --stdio --no-children --sort symbol --percent-limit 0 --call-graph none \
+                -i "$out/$which.perf.data" > "$out/$which-perf-report.txt" 2> "$out/$which-perf-report.log" \
+              || ! "$PERF_BIN" script --no-inline --hide-call-graph -F period,sym,dso \
+                -i "$out/$which.perf.data" > "$out/$which-perf-self.txt" 2> "$out/$which-perf-script.log" \
+              || [ ! -s "$out/$which-perf-self.txt" ]; then
+              mode=callgrind
+            fi
+          done
+          printf '%s\n' "$mode" > "$out/profile-mode.txt"
+          if [ "$mode" = callgrind ]; then
+            printf 'Perf failed or produced no usable samples; both compilers use Callgrind. See perf logs.\n' > "$out/profile-fallback.txt"
+            sudo apt-get install -y valgrind > "$out/apt-valgrind.log" 2>&1
+            valgrind --version >> "$out/metadata.txt"
+            for which in base head; do
+              perl "$GITHUB_WORKSPACE/.github/run-check.pl" "attribution-callgrind-$which" \
+                valgrind --tool=callgrind --callgrind-out-file="$out/$which.callgrind" \
+                "$RUNNER_TEMP/$which/compiler/target/gate/whitefootc" \
+                --graph lib/halo/modules.wfg --check-module pkg::vm > "$out/$which-callgrind.log" 2>&1 \
+                || { cat "$out/$which-callgrind.log"; exit 1; }
+              callgrind_annotate --show=Ir --show-percs=no --inclusive=no --threshold=100 --auto=no \
+                "$out/$which.callgrind" > "$out/$which-callgrind-report.txt"
+            done
+          fi
+      - name: Collect work counters separately from time and profiles
+        run: |
+          out="$RUNNER_TEMP/attribution"
+          cd "$RUNNER_TEMP/halo"
+          for which in base head; do
+            perl "$GITHUB_WORKSPACE/.github/run-check.pl" "attribution-counters-$which" \
+              /usr/bin/time -q -f '%e %U %S' -o "$out/$which-counters.time" \
+              env WHITEFOOT_CHECK_WORK="$out/$which-work.tsv" \
+              "$RUNNER_TEMP/$which/compiler/target/gate/whitefootc" \
+              --graph lib/halo/modules.wfg --check-module pkg::vm > "$out/$which-counters.log" 2>&1 \
+              || { cat "$out/$which-counters.log"; exit 1; }
+            test -s "$out/$which-work.tsv"
+            if grep -q 'checker work output' "$out/$which-counters.log"; then
+              cat "$out/$which-counters.log"
+              exit 1
+            fi
+          done
+      - name: Summarize timings, exclusive profiles and counter differences
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          python3 - <<'PY'
+          import collections, csv, os, pathlib, re, statistics
+          out = pathlib.Path(os.environ['RUNNER_TEMP']) / 'attribution'
+          out.mkdir(exist_ok=True)
+          lines = ['## Halo VM checker attribution',
+                   f"Earlier steps: {os.environ['JOB_STATUS']}. Base `{os.environ['BASE_REVISION']}`; head `{os.environ['HEAD_REVISION']}`.",
+                   'Same pinned Halo, gate profile with line tables; three uninstrumented rounds alternate order. Profiles and counters are separate runs.', '']
+          errors = []
+          def table(title, headers, rows, limit=None):
+              lines.extend([f'### {title}', '', '| ' + ' | '.join(headers) + ' |',
+                            '| ' + ' | '.join(['---'] * len(headers)) + ' |'])
+              for row in rows[:limit] if limit else rows:
+                  lines.append('| ' + ' | '.join(str(v).replace('|', '\\|') for v in row) + ' |')
+              lines.append('')
+          def write_tsv(name, headers, rows):
+              with (out / name).open('w') as f:
+                  w = csv.writer(f, delimiter='\t'); w.writerow(headers); w.writerows(rows)
+          def symbol_key(text):
+              # Rust symbol hashes and source checkout roots are build identities,
+              # not different functions. Preserve original labels in raw reports.
+              text = re.sub(r'::h[0-9a-f]{16}(?=$|[ >])', '', text)
+              for which in ('base', 'head'):
+                  text = text.replace(str(out.parent / which) + '/', '<compiler>/')
+              return text
+          def section(action):
+              try:
+                  action()
+              except (OSError, ValueError, KeyError, AssertionError, statistics.StatisticsError) as e:
+                  errors.append(str(e)); lines.extend([f'Unavailable or invalid measurement: {e}', ''])
+          def times():
+              with (out / 'times.tsv').open() as f:
+                  rows = list(csv.DictReader(f, delimiter='\t'))
+              paired = collections.defaultdict(dict)
+              for r in rows:
+                  paired[int(r['round'])][r['which']] = r
+              assert len(rows) == 6 and set(paired) == {1, 2, 3}, 'Need all three paired timing rounds'
+              ratios = []
+              for pair in paired.values():
+                  assert set(pair) == {'base', 'head'}, 'Incomplete timing pair'
+                  cpu = lambda r: float(r['user_s']) + float(r['sys_s'])
+                  ratios.append(cpu(pair['head']) / cpu(pair['base']))
+              table('Uninstrumented timing', ['Compiler', 'Median wall s', 'Median user+sys s'], [
+                  [which, f"{statistics.median(float(r['wall_s']) for r in rows if r['which'] == which):.3f}",
+                   f"{statistics.median(float(r['user_s']) + float(r['sys_s']) for r in rows if r['which'] == which):.3f}"]
+                  for which in ('base', 'head')])
+              lines.append(f'Median paired CPU ratio head/base: **{statistics.median(ratios):.3f}**; range {min(ratios):.3f}–{max(ratios):.3f}.\n')
+          def profiles():
+              mode = (out / 'profile-mode.txt').read_text().strip()
+              values = {}
+              for which in ('base', 'head'):
+                  data = collections.Counter()
+                  if mode == 'perf':
+                      for row in (out / f'{which}-perf-self.txt').read_text().splitlines():
+                          if not row.strip() or row.lstrip().startswith('#'): continue
+                          m = re.fullmatch(r'\s*(\d+)\s+(.+?)\s+\((.*)\)\s*', row)
+                          assert m, f'Unrecognized perf sample: {row}'
+                          data[symbol_key(f'{m[2]} [{m[3]}]')] += int(m[1])
+                      scale, unit = 1_000_000, 'sampled user CPU ms (cpu-clock:u nanosecond periods / 1e6)'
+                      report = (out / f'{which}-perf-report.txt').read_text().splitlines()
+                      top, symbols = [], 0
+                      for row in report:
+                          if re.match(r'\s*\d+(?:\.\d+)?%', row):
+                              symbols += 1
+                              if symbols > 40: continue
+                          top.append(row)
+                      (out / f'{which}-perf-report-top40.txt').write_text('\n'.join(top) + '\n')
+                  else:
+                      assert mode == 'callgrind', 'Unknown profile mode'
+                      for row in (out / f'{which}-callgrind-report.txt').read_text().splitlines():
+                          m = re.fullmatch(r'\s*([\d,]+)\s+(.+)', row)
+                          if m and 'PROGRAM TOTALS' not in m[2]:
+                              data[symbol_key(m[2])] += int(m[1].replace(',', ''))
+                      scale, unit = 1, 'exclusive Ir instruction counts (not elapsed time)'
+                  assert data and sum(data.values()) > 0, f'No usable {which} {mode} symbols'
+                  values[which] = data
+                  ordered = data.most_common()
+                  write_tsv(f'{which}-profile-self.tsv', ['symbol', 'self_period_ns' if mode == 'perf' else 'self_Ir'], ordered)
+                  top = [f'{unit}\n'] + [f'{v / scale:.3f}\t{k}\n' for k, v in ordered[:40]]
+                  (out / f'{which}-profile-top40.txt').write_text(''.join(top))
+                  table(f'{which}: exclusive top 40 ({mode})', ['Self', 'Symbol'],
+                        [[f'{v / scale:.3f}', k] for k, v in ordered[:40]])
+              diff = sorted(((k, values['base'][k], values['head'][k], values['head'][k] - values['base'][k])
+                             for k in values['base'].keys() | values['head'].keys()), key=lambda r: abs(r[3]), reverse=True)
+              write_tsv('profile-diff.tsv', ['symbol', 'base', 'head', 'delta_head_minus_base'], diff)
+              (out / 'profile-units.txt').write_text(unit + '\nRaw profile diff values are ns for perf, Ir for Callgrind.\n')
+              lines.extend([f'Profile units: {unit}. A single profiled run per compiler; instrumentation and sampling noise limit attribution.', ''])
+              table('Largest exclusive profile differences', ['Symbol', 'Base', 'Head', 'Head − base'],
+                    [[k, f'{a / scale:.3f}', f'{b / scale:.3f}', f'{d / scale:+.3f}'] for k, a, b, d in diff], 40)
+          def counters():
+              expected = {
+                  'function': {'joins', 'join_passes', 'intern_calls', 'closure_cache_hits', 'affine_attempts',
+                               'affine_memo_hits', 'affine_memo_misses', 'affine_cold_demands',
+                               'affine_left_candidates_scanned', 'affine_promotions',
+                               'affine_final_family_starts', 'affine_final_family_exhaustions'},
+                  'snapshot': {'count', 'rows_sum', 'rows_max', 'cells_sum', 'cells_max'},
+                  'closure': {'count', 'rows_sum', 'rows_max', 'cells_sum', 'cells_max'},
+                  'probe': {'count', 'rows_sum', 'rows_max', 'cells_sum', 'cells_max'},
+                  'join': {'join', 'inputs', 'union_rows', 'pairs_evaluated', 'pairs_retained', 'parent_references', 'intern_calls'}}
+              results, invocations = {}, {}
+              for which in ('base', 'head'):
+                  runs = collections.defaultdict(dict)
+                  with (out / f'{which}-work.tsv').open() as f:
+                      for row in csv.reader(f, delimiter='\t'):
+                          assert len(row) == 7, f'{which}: counter row must have seven fields'
+                          pid, run, name, kind, ordinal, metric, raw = row
+                          value = int(raw)
+                          assert 0 <= value < 2**64 - 1, f'{which}: saturated or invalid counter'
+                          assert kind in expected and metric in expected[kind], f'{which}: unexpected counter {kind}.{metric}'
+                          key = kind, int(ordinal), metric
+                          bucket = runs[pid, run, name]
+                          assert key not in bucket, f'{which}: duplicate counter row'
+                          bucket[key] = value
+                  assert runs, f'{which}: missing counter runs'
+                  counts, data = collections.Counter(), collections.defaultdict(dict)
+                  for (_, _, name), run in runs.items():
+                      counts[name] += 1
+                      for kind in ('function', 'snapshot', 'closure', 'probe'):
+                          assert {m for k, o, m in run if k == kind and o == 0} == expected[kind], f'{which}: incomplete {kind} counters'
+                      passes = run['function', 0, 'join_passes']
+                      assert {o for k, o, m in run if k == 'join'} == set(range(passes)), f'{which}: missing join passes'
+                      for ordinal in range(passes):
+                          assert {m for k, o, m in run if k == 'join' and o == ordinal} == expected['join'], f'{which}: incomplete join counters'
+                      for (kind, ordinal, metric), value in run.items():
+                          # Join ID is an identity; intern_calls is already
+                          # counted at function level. Maxima stay maxima.
+                          if kind == 'join' and metric in ('join', 'intern_calls'): continue
+                          key = f'{kind}.{metric}'
+                          old = data[name].get(key, 0)
+                          data[name][key] = max(old, value) if metric.endswith('_max') else old + value
+                  results[which], invocations[which] = data, counts
+              names = results['base'].keys() | results['head'].keys()
+              metrics = sorted({m for side in results.values() for fn in side.values() for m in fn})
+              totals, differences = [], []
+              for metric in metrics:
+                  vals = []
+                  for which in ('base', 'head'):
+                      values = [f.get(metric, 0) for f in results[which].values()]
+                      vals.append(max(values, default=0) if metric.endswith('_max') else sum(values))
+                  totals.append([metric, *vals, vals[1] - vals[0]])
+                  for name in names:
+                      a = results['base'].get(name, {}).get(metric, 0)
+                      b = results['head'].get(name, {}).get(metric, 0)
+                      differences.append([name, metric, a, b, b - a, invocations['base'][name], invocations['head'][name]])
+              differences.sort(key=lambda row: abs(row[4]), reverse=True)
+              write_tsv('work-totals.tsv', ['metric', 'base', 'head', 'delta'], totals)
+              write_tsv('work-function-diff.tsv', ['function', 'metric', 'base', 'head', 'delta', 'base_invocations', 'head_invocations'], differences)
+              table('Work totals (max metrics are maxima, other metrics are sums)', ['Metric', 'Base', 'Head', 'Delta'], totals)
+              table('Largest per-function work differences', ['Function', 'Metric', 'Base', 'Head', 'Delta', 'Base analyses', 'Head analyses'], differences, 40)
+              table('Counter observation overhead (one run, exploratory)', ['Compiler', 'Wall s', 'User+sys s'], [
+                  [which, v[0], f'{float(v[1]) + float(v[2]):.3f}'] for which in ('base', 'head')
+                  for v in [(out / f'{which}-counters.time').read_text().split()]])
+          for action in (times, profiles, counters): section(action)
+          lines.extend(['### Measurements distinguish', '',
+              '- More immutable datum candidates: affine scans or affine-index self cost can increase. Preparation occurs before memo lookup; full promotion pair traversal is not counted, so equal attempt/promotion counts do not refute this.',
+              '- New postcondition delivery work: affine substitution, candidate formation or propagation self cost can rise even with unchanged join/closure work. The added l0_candidates scan has no dedicated counter.',
+              '- Larger propagated state: snapshot/closure rows and cells, join pair work and interning should increase.',
+              '- Equal work counts with higher exclusive cost suggests higher cost per operation or a path these counters do not observe.',
+              '', 'All raw profiles, complete reports, top 40 tables, timing/counter logs, compiler identities and diffs are in the artifact.'])
+          text = '\n'.join(lines) + '\n'
+          (out / 'summary.md').write_text(text)
+          print(text)
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as f: f.write(text)
+          if errors: raise SystemExit('Incomplete attribution: ' + '; '.join(errors))
+          PY
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: bisect-${{ matrix.commit }}
-          path: ${{ runner.temp }}/bisect/*.tsv
-          if-no-files-found: error
-
-  summary:
-    name: Median ratios by merge
-    needs: time
-    if: always()
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: bisect-*
-          path: tsv
-          merge-multiple: true
-      - name: Write the table
-        run: |
-          python3 - <<'PY'
-          import csv, glob, os, statistics
-          # Oldest first; mirrors the matrix.
-          order = [
-            ("26355924f94222025151e56b3e8f9a8c8db4135c", "#363 paged-small-owners"),
-            ("60272a6a9bec86290bd60511bb1d1ef3438c3074", "#372 gate-ready-group"),
-            ("5b8bccb2d9bed3c40155ae0351510e844fb46559", "#366 range-guard-facts"),
-            ("94d353e33034b8de457a8cff90904e637a054cea", "#362 io-error-text"),
-            ("c9c45a6ecee57c53675cc4c9e5c82cfe96eb5022", "#375 macos-corpus-budget"),
-            ("8ffb6d93241f69e736b12d4339eba780e857d8c9", "#361 keyset-bytes"),
-            ("1762a4480e9edf0cc4aa0b896e97061630e048d7", "#365 driver-count"),
-            ("29de8a21eef895f9e5ff12373422202d753936b9", "#371 mixed-join-cursor"),
-            ("51c5f4263f512d5b1a5f02f7cd3d5e23baa276a2", "#379 readelf-import-check"),
-            ("f0df1d2587533618d7ad8acaac4b0ea1ad9830e8", "#373 contract-alias-overlap"),
-            ("8b14adf8abd120d5eb74070edc16dbe35ca9e22c", "#378 keyset-spare"),
-            ("abc27fbd342e407839a4042bf6804cac2fb5ca2d", "#381 heap-read-nolock"),
-            ("c52e867cae4fd81de4e8bec2027bce66ce240f47", "#401 budget-raise-1012"),
-            ("1741f12627c4c9f2f361dca2608969de0c571352", "#384 meta-commit-witness"),
-            ("d67e83250c5f8fcfa5e3ea02a0835e9b908e2142", "#391 place-render-names"),
-            ("6876bd1751aba44c53784ecbdce89f480fecb88f", "#397 agents-ci-only"),
-            ("58743a931a5ec6244864d37041fd1a7c1c5a145d", "#396 share2-indexed-target"),
-            ("bfa06a7d019b3745f8892f90291422c531b9afd1", "#404 runtime-budget-raise"),
-            ("d469bd164682363025b007cf5fd134f49a5cbab0", "#383 cache-key-path"),
-            ("c0394d85a8a9773a7abe1a36bfde4e76bceb9eea", "#400 read-through-results"),
-            ("2a785316590a8f22a7e3c92508e4b59daca783bf", "#392 guard-clock-and-error-class"),
-            ("9bc6bb7eda51e15037f0b8dbc36385aae3865165", "#390 const-arg-type"),
-            ("35cfc4a0ba27ca74a9933711ef52369a67ec912d", "#395 range-helper-frames"),
-            ("588bd31ed641520effc36bf4e6e0451715a3e3c5", "#411 ref2-sibling-release"),
-            ("d596153529e4aaa98e474cbd224cadec648694d1", "#399 gate-pr-branches-only"),
-            ("93e97efdc27ba5700328794445d1f401b9be6213", "#405 join-slot-local"),
-          ]
-          rows = {}
-          for path in glob.glob("tsv/*.tsv"):
-              with open(path) as f:
-                  for r in csv.DictReader(f, delimiter="\t"):
-                      rows.setdefault(r["commit"], {}).setdefault(int(r["round"]), {})[r["which"]] = (
-                          float(r["user"]) + float(r["sys"]), r["cpu"])
-          lines = ["## Checking pkg::vm: commit compiler against base d837678c6905",
-                   "Ratio is (user+sys) of the merge's compiler over the base's, 5 alternating rounds.", "",
-                   "| Commit | Pull request | Median ratio | Min | Max | CPU |", "|---|---|---:|---:|---:|---|"]
-          marked = False
-          for commit, title in order:
-              rounds = rows.get(commit)
-              if not rounds:
-                  lines.append(f"| {commit[:8]} | {title} | missing | | | |")
-                  continue
-              ratios = [r["commit"][0] / r["base"][0] for r in rounds.values() if "base" in r and "commit" in r]
-              median = statistics.median(ratios)
-              cpu = next(iter(rounds.values()))["base"][1]
-              mark = ""
-              if not marked and median > 1.10:
-                  marked = True
-                  mark = " **first above 1.10**"
-              lines.append(f"| {commit[:8]} | {title}{mark} | {median:.3f} | {min(ratios):.3f} | {max(ratios):.3f} | {cpu} |")
-          text = "\n".join(lines) + "\n"
-          print(text)
-          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
-              f.write(text)
-          PY
+          name: halo-check-attribution-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/attribution/
+          if-no-files-found: warn
