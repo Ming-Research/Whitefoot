@@ -19,7 +19,7 @@ use crate::semantic::postcondition::{
     NormalizedRelation, ParameterDenotation, PayloadRoute, PostconditionPlace,
     PostconditionPlaceRoot, RelationDatum, RelationTemplate, RelationTerm,
 };
-use crate::{DeclarationClass, FixedTerminal, LexicalUseRole, ResolvedTarget};
+use crate::FixedTerminal;
 
 const TYPE11_DROP_THE_GENERICS: &str = "declare the invariant on a struct without generics, or state the relation as a `requires` and `ensures` pair on each function that takes the value";
 const TYPE11_DROP_OPAQUE: &str = "declare the invariant on a struct that is not `opaque`";
@@ -319,53 +319,41 @@ impl<'unit> Checker<'_, 'unit> {
         })
     }
 
-    /// [TYPE-11] whether a parameter's written type is exactly a struct with
+    /// [TYPE-11] whether an own or reference parameter's declared type,
+    /// after the function instance's substitution [FN-2], is a struct with
     /// type invariants, by value or behind `&`, and which one. A parameter
-    /// whose written type is a type parameter takes none, whatever its
-    /// instance.
+    /// written as a type parameter takes the invariants of the struct its
+    /// instance binds, exactly as one written as that struct does.
     pub(super) fn declared_invariant_struct(
         &self,
-        check_context: &CheckContext<'_>,
         parameter: &ParameterSignature,
-    ) -> Result<Option<NominalId>, CheckStop> {
+    ) -> Option<NominalId> {
         if !matches!(parameter.mode, CheckedMode::Own | CheckedMode::Reference) {
-            return Ok(None);
+            return None;
         }
         let CheckedType::Nominal(nominal) = parameter.ty else {
-            return Ok(None);
-        };
-        if !self.types.type_invariants.contains_key(&nominal) {
-            return Ok(None);
-        }
-        let node = self
-            .types
-            .declarations
-            .tree
-            .node_with_path(&parameter.node_path)
-            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-        let Some(ty) = self
-            .types
-            .declarations
-            .tree
-            .first_child_with(node, Production::Type)?
-        else {
-            return Ok(None);
+            return None;
         };
         self.types
-            .written_invariant_struct(check_context, ty, nominal)
+            .type_invariants
+            .contains_key(&nominal)
+            .then_some(nominal)
     }
 
     /// [TYPE-11] the requirements a callable's type invariants add after its
     /// written ones: each invariant of each parameter's declared struct, in
-    /// parameter order, and those of `shared_new`'s state over its argument.
+    /// parameter order. The prelude's `shared_new` and `frozen_new` take
+    /// their argument's this way, as a parameter of type T at the struct
+    /// [SHARE-1]; atomic targets establish a shared state's, and no read of
+    /// a frozen value establishes them yet (board item
+    /// `proof-bl-frozen-invariant-reads`).
     pub(super) fn implicit_type_invariant_requirements(
         &self,
-        check_context: &CheckContext<'_>,
         signature: &FunctionSignature,
     ) -> Result<Vec<CheckedRequirement>, CheckStop> {
         let mut requirements = Vec::new();
         for (ordinal, parameter) in signature.parameters.iter().enumerate() {
-            if let Some(nominal) = self.declared_invariant_struct(check_context, parameter)? {
+            if let Some(nominal) = self.declared_invariant_struct(parameter) {
                 let ordinal =
                     u32::try_from(ordinal).map_err(|_| SemanticCompilerFailure::CounterOverflow)?;
                 requirements.extend(self.type_invariant_requirements(
@@ -375,19 +363,29 @@ impl<'unit> Checker<'_, 'unit> {
                 ));
             }
         }
-        // [SHARE-1] the prelude's `shared_new` and `frozen_new` move their
-        // argument into an object that holds it from then on, so the
-        // argument owes its invariants [TYPE-11]; atomic targets establish
-        // a shared state's, and no read of a frozen value establishes them
-        // yet (board item `proof-bl-frozen-invariant-reads`).
-        if matches!(signature.name.as_str(), "shared_new" | "frozen_new")
-            && self.types.declarations.tree.is_body_less(signature.node)?
-            && let Some(CheckedType::Nominal(nominal)) =
-                signature.parameters.first().map(|parameter| parameter.ty)
-        {
-            requirements.extend(self.type_invariant_requirements(nominal, 0, false));
-        }
         Ok(requirements)
+    }
+
+    /// [FN-8] whether the build supplies a callable's definition, as it does
+    /// for a [PRE-1] declaration and a [PRE-2] host function, so that no
+    /// Whitefoot body proves a postcondition against it [SCOPE-3].
+    pub(super) fn supplied_definition(
+        &self,
+        signature: &FunctionSignature,
+    ) -> Result<bool, CheckStop> {
+        let host = self
+            .types
+            .declarations
+            .declaration_home(signature.declaration)
+            .is_some_and(|(package, path)| {
+                *package == crate::PackageKey::Standard && crate::library::is_host_module(path)
+            });
+        let prelude = self
+            .types
+            .declarations
+            .tree
+            .is_prelude_node(signature.node)?;
+        Ok(host || prelude)
     }
 
     /// [TYPE-11] each type invariant over the parameter at `ordinal`, or over
@@ -512,7 +510,7 @@ impl<'unit> Checker<'_, 'unit> {
     ) -> Result<Vec<CheckedPostcondition>, CheckStop> {
         let mut postconditions = Vec::new();
         for (invariant, subject, selector) in
-            self.type_invariant_postcondition_selectors(context.check_context, context.function)?
+            self.type_invariant_postcondition_selectors(context.function)?
         {
             postconditions.push(self.types.build_checked_postcondition(
                 context,
@@ -529,10 +527,12 @@ impl<'unit> Checker<'_, 'unit> {
     /// written postconditions [FN-9]: over the exit state of each reference
     /// parameter whose row writes it, then over each result ordinal, each
     /// with the invariant, its subject and a selector of every explicit
-    /// return.
+    /// return. Each position's type is the instance's [FN-2]. A callable
+    /// whose definition the build supplies promises none, since no body
+    /// proves them: `take_back` at a struct with type invariants hands out
+    /// a storage element nothing checked.
     pub(super) fn type_invariant_postcondition_selectors(
         &self,
-        check_context: &CheckContext<'_>,
         function: &FunctionSignature,
     ) -> Result<
         Vec<(
@@ -542,6 +542,9 @@ impl<'unit> Checker<'_, 'unit> {
         )>,
         CheckStop,
     > {
+        if self.supplied_definition(function)? {
+            return Ok(Vec::new());
+        }
         let mut subjects = Vec::new();
         for (ordinal, parameter) in function.parameters.iter().enumerate() {
             if parameter.mode != CheckedMode::Reference
@@ -549,7 +552,7 @@ impl<'unit> Checker<'_, 'unit> {
             {
                 continue;
             }
-            if let Some(nominal) = self.declared_invariant_struct(check_context, parameter)? {
+            if let Some(nominal) = self.declared_invariant_struct(parameter) {
                 let ordinal =
                     u32::try_from(ordinal).map_err(|_| SemanticCompilerFailure::CounterOverflow)?;
                 subjects.push((nominal, InvariantSubject::ExitParameter(ordinal), 0, None));
@@ -563,23 +566,9 @@ impl<'unit> Checker<'_, 'unit> {
             {
                 continue;
             }
-            let Some(ty) = self
-                .types
-                .declarations
-                .tree
-                .first_child_with(result.rtype, Production::Type)?
-            else {
-                continue;
-            };
-            if self
-                .types
-                .written_invariant_struct(check_context, ty, nominal)?
-                .is_some()
-            {
-                let ordinal =
-                    u32::try_from(ordinal).map_err(|_| SemanticCompilerFailure::CounterOverflow)?;
-                subjects.push((nominal, InvariantSubject::Result(ordinal), ordinal, None));
-            }
+            let ordinal =
+                u32::try_from(ordinal).map_err(|_| SemanticCompilerFailure::CounterOverflow)?;
+            subjects.push((nominal, InvariantSubject::Result(ordinal), ordinal, None));
         }
         for (ordinal, result) in function.results.iter().enumerate() {
             if result.mode != CheckedMode::Own {
@@ -943,31 +932,6 @@ const fn comparison_spelling(
 }
 
 impl TypeContext<'_> {
-    /// [TYPE-11] whether a written `type` names exactly `nominal`'s source
-    /// struct, not a type parameter an instance substituted it for.
-    pub(super) fn written_invariant_struct(
-        &self,
-        check_context: &CheckContext<'_>,
-        ty: NodeId,
-        nominal: NominalId,
-    ) -> Result<Option<NominalId>, CheckStop> {
-        if !self.declarations.tree.names_nominal(ty)? {
-            return Ok(None);
-        }
-        let usage = self
-            .declarations
-            .use_at(check_context, ty, LexicalUseRole::Type)?;
-        let ResolvedTarget::Source {
-            declaration,
-            class: DeclarationClass::NominalType,
-        } = usage.target()
-        else {
-            return Ok(None);
-        };
-        let written = self.source_nominal_instance(declaration, &GenericSubstitution::default());
-        Ok((written == Some(nominal)).then_some(nominal))
-    }
-
     /// [TYPE-11] one type invariant's relation: one comparison whose sides
     /// are each one relation term, at least one naming the binder.
     fn type_invariant_relation(

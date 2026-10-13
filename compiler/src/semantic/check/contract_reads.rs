@@ -168,10 +168,10 @@ impl Checker<'_, '_> {
         // Both entry and published exit/result invariant clauses use the
         // existing TYPE-11 substitution. Owned result roots supply no
         // reference argument and therefore add no compared read.
-        for requirement in self.implicit_type_invariant_requirements(&check_context, signature)? {
+        for requirement in self.implicit_type_invariant_requirements(signature)? {
             collect_goal(&requirement.template.root, signature, &mut reads);
         }
-        self.append_range_type_invariant_contracts(&check_context, signature, &parameters)?;
+        self.append_range_type_invariant_contracts(signature, &parameters)?;
         for clause in &self.body.range_facts.requirements {
             collect_range_clause(clause, signature, &[], ClauseState::Entry, &mut reads);
         }

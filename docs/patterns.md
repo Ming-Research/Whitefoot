@@ -984,7 +984,10 @@ Every function taking a `Table` or a `&Table` receives the relation at entry,
 which here proves `t^.slots[at]` in bounds, and owes it back where it hands the
 value on: at its returns and its `propagate` error exits when it writes the
 value, at each call passing it, and at `shared_new`. Every construction owes it
-too. Between two field writes of
+too. A generic function's instance at `Table` takes it the same way through a
+parameter or result written as its type parameter, while an element of a
+storage carries none, so a library container of `Table` is refused where it
+hands an element out or compares two. Between two field writes of
 one body the relation may be false, since no other code can see the value
 there. A shared object's state keeps it the same way: each atomic block
 receives it at entry and owes it at every edge that leaves the block.

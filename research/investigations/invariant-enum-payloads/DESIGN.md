@@ -49,7 +49,7 @@ A routed postcondition a type invariant generates, which no exit of the
 instance selects, holds vacuously and is not an error. Only function
 boundaries change; a struct below a container element or another struct's
 field stays outside TYPE-11, the remainder of the deferral the board keeps
-for type invariants beyond directly written struct types.
+for type invariants beyond function-boundary positions.
 
 The routes are not special to `Result` and `Option`: any enum, prelude or
 source, and any variant field qualifies, failure variants included. Written
@@ -99,12 +99,15 @@ fact about a payload is used where its value was not checked.
    invariant struct, the exit is selected by the `Err`-routed postcondition
    and judged in e's own `Err`-routed context, which e's producer verified.
 
-Nothing is trusted unproved: no PRE-1 row has a parameter or result whose
-type is an enum with a payload field, and a PRE-2 host function's enum types
-carry only the host module's own types, none of which declares a type
-invariant, and no type parameter in a payload position; so no supplied
-declaration carries a generated relation that SCOPE-3 would have to supply.
-A concurrent hash map's `Option<V>` entries are reached only through atomic
+Nothing is trusted unproved: a declaration whose definition the build
+supplies, a PRE-1 or PRE-2 function, owes the generated requirements and
+publishes no generated postcondition [TYPE-11], since no body proves one
+and SCOPE-3 would otherwise have to supply it. The first version of this
+change relied instead on no supplied declaration having an enum position,
+which was false after substitution: the prelude's `take_back` at
+`T = Option<S>` returns an enum whose `Some` field is S, and it would have
+promised S's invariant over a storage element no write checked. A
+concurrent hash map's `Option<V>` entries are reached only through atomic
 statements, a container position this change leaves alone.
 
 ### Where it is assumed
@@ -150,9 +153,18 @@ ordinary case of a failure helper. The guard stays for written clauses.
 - **A payload of type parameter T instantiated with S**, such as
   `Result<T, E>` in a generic function's instance at `T = S`, is covered:
   the rule reads the instance's substituted type.
-- **A bare parameter or result of type T instantiated with S** keeps
-  today's rule: a written type parameter takes no type invariant, whatever
-  its instance [TYPE-11]. Ruling A changes enum payloads only.
+- **A bare parameter or result of type T instantiated with S**, written
+  `item: T`, `item: &T` or `-> result: T`, takes S's invariants at that
+  instance exactly as a position written S does: every TYPE-11 boundary
+  position reads the instance's substituted type [TYPE-11, FN-2]. The
+  owner chose this (option B) on the card asking whether bare
+  type-parameter parameters take the invariant at body entry before this
+  change merges, so that a generic wrapper's entry matches its `Option<T>`
+  exit. A result is covered with the parameters, because otherwise `-> S`
+  would promise the invariant and `-> T` at `T = S` would promise nothing
+  about the same value. A declaration whose definition the build supplies
+  owes these as requirements and promises none (see
+  [Soundness](#where-the-invariant-is-proved)).
 - **Nested payloads** such as `Option<Result<S, E>>` are out of scope: the
   outer variant's payload is an enum, not a struct with invariants, so it
   generates nothing, and the inner `Result` reached by matching the outer
@@ -181,18 +193,28 @@ of that value has an empty context and is refused
 ## Consequences
 
 - Every generic source function whose instance at an invariant struct
-  returns an `Option<T>` or `Result<T, E>` holding a value it cannot show
-  valid becomes unprovable at that instance. The standard library's
+  returns a T, an `Option<T>` or a `Result<T, E>` holding a value it cannot
+  show valid becomes unprovable at that instance. The standard library's
   containers do this: `slab_remove::<S>` returns an element read from
-  storage, and storage elements carry no invariant. A program that keeps an
-  invariant struct in a library container and removes it is accepted today
-  and refused after this change. No program in this repository or on the
-  main lines of Snowghost, Halo or Firn does so; Halo's two witnesses
+  storage in `Some`, and `deque_pop_back::<S>` and
+  `grow_vector_remove::<S>` return one bare, each refused at its return
+  (FN-9); storage elements carry no invariant, and the prelude's
+  `take_back`, `take_front` and `remove_at` promise none. A function that
+  passes a storage element to a parameter of type T or `&T` is refused at
+  that call too (FN-8): `priority_queue_pop::<S>` at its `swap` with the
+  root as well as at its return, and each priority-queue operation that
+  compares elements at its `PriorityOrder` member call, whose `&T`
+  parameters now owe S's invariant over the elements they compare. A
+  program that keeps an invariant struct in a library container is
+  accepted before this change and refused after it when it removes the
+  value or orders the container by it. No program in this repository or on
+  the main lines of Snowghost, Halo or Firn does so; Halo's two witnesses
   declare invariant structs but put none in a container.
-- A generic wrapper `fn wrap<T>(x: T) -> Option<T>` at `T = S` is refused
-  the same way, because its bare-T parameter takes no requirement. Closing
-  that needs either bare type-parameter positions to take the instance's
-  invariant, or container elements to carry it; both are owner decisions.
+- A generic wrapper `fn wrap<T>(x: T) -> Option<T>` at `T = S` is accepted:
+  its bare-T parameter takes S's invariant at entry, which proves the
+  `Some` route at its exit. The enum-payload rule alone refused it, which
+  led to the owner's option B above; container elements still carry no
+  invariant, and carrying it there remains a separate owner decision.
 
 ## Transport needed
 
@@ -292,3 +314,17 @@ Cases added after these runs, with no observed verdict yet:
   field rather than a bare binding is judged over that field's own payload
   place, so a comparison already made through a reference-mode `match`
   binder proves the callee's routed requirement.
+
+Cases added on 2026-10-12 for bare type-parameter positions (owner's
+option B), with no observed verdict yet; "before" is the rule this branch
+applied until then, which judged a direct position by its written type:
+
+| Case | Before | After |
+| --- | --- | --- |
+| `type11-pos-generic-wrapper` | FN-9 at the wrapper's return | runs, exit 7 |
+| `type11-neg-generic-wrapper-argument` | FN-9 at the wrapper's return | FN-8 at the call |
+| `type11-pos-generic-identity-result` | OP-2 at the caller's subtraction | runs, exit 7 |
+| `type11-neg-generic-storage-result` | accepted | FN-9 at the remover's return |
+| `type11-pos-generic-function-formal` | FN-4 at the binding | runs, exit 5 |
+| `type11-pos-generic-written-reference` | OP-2 at the caller's subtraction | runs, exit 7 |
+| `type11-pos-interface-generic-formal`, formerly `type11-neg-interface-generic-formal` | FN-4 at the binding | runs, exit 10 |

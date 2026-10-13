@@ -1937,7 +1937,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         } else {
             (Vec::new(), Vec::new())
         };
-        for requirement in self.implicit_type_invariant_requirements(check_context, signature)? {
+        for requirement in self.implicit_type_invariant_requirements(signature)? {
             requirements.push(requirement);
             requirement_places.push(Vec::new());
         }
@@ -1958,7 +1958,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             &postcondition_selectors,
             &parameter_bindings,
         )?;
-        self.append_range_type_invariant_contracts(check_context, signature, &parameters)?;
+        self.append_range_type_invariant_contracts(signature, &parameters)?;
         postcondition_selectors = self
             .types
             .declarations

@@ -256,7 +256,7 @@ impl<'unit> Checker<'_, 'unit> {
                 requires: Vec::new(),
                 ensures: Vec::new(),
             };
-            self.append_type_invariant_contracts(check_context, signature, &mut contracts)?;
+            self.append_type_invariant_contracts(signature, &mut contracts)?;
             return Ok(contracts);
         };
         let mut bindings = HashMap::new();
@@ -390,7 +390,7 @@ impl<'unit> Checker<'_, 'unit> {
             .declarations
             .check_published_relation_consistency(signature, &selectors, &relations)?;
         let mut contracts = InterfaceContracts { requires, ensures };
-        self.append_type_invariant_contracts(check_context, signature, &mut contracts)?;
+        self.append_type_invariant_contracts(signature, &mut contracts)?;
         Ok(contracts)
     }
 
@@ -400,11 +400,10 @@ impl<'unit> Checker<'_, 'unit> {
     /// compares them like written clauses.
     fn append_type_invariant_contracts(
         &mut self,
-        check_context: &CheckContext<'_>,
         signature: &FunctionSignature,
         contracts: &mut InterfaceContracts,
     ) -> Result<(), CheckStop> {
-        for requirement in self.implicit_type_invariant_requirements(check_context, signature)? {
+        for requirement in self.implicit_type_invariant_requirements(signature)? {
             contracts.requires.push(InterfaceRequirement {
                 clause: requirement.clause,
                 template: requirement.template,
@@ -415,7 +414,7 @@ impl<'unit> Checker<'_, 'unit> {
         let mut relation_ordinal = u32::try_from(contracts.ensures.len())
             .map_err(|_| SemanticCompilerFailure::CounterOverflow)?;
         for (invariant, subject, selector) in
-            self.type_invariant_postcondition_selectors(check_context, signature)?
+            self.type_invariant_postcondition_selectors(signature)?
         {
             contracts.ensures.push(InterfaceEnsures {
                 clause: invariant.clause.clone(),
