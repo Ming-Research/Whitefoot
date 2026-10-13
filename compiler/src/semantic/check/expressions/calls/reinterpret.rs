@@ -36,7 +36,7 @@ impl<'unit> Checker<'_, 'unit> {
             return self.types.declarations.issue_node(
                 SemanticRule::Op1,
                 node,
-                SemanticIssueKind::InvalidOperation,
+                SemanticIssueKind::invalid_operation(),
             );
         }
         let atoms = self.types.declarations.operation_atoms(node, 1)?;

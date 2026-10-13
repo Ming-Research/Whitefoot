@@ -301,8 +301,8 @@ fn copy_destructuring_preserves_its_source_and_noncopy_requires_move() {
         ),
         SemanticRule::Own1,
         |kind| {
-            matches!(kind, SemanticIssueKind::MoveOfCopy { mechanical_fix }
-            if *mechanical_fix == "remove `move` from the destructuring: let N(f: a, ...) = p;")
+            matches!(kind, SemanticIssueKind::MoveOfCopy { mechanical_fix, .. }
+            if *mechanical_fix == "write `rebuilt` without `move`")
         },
     );
 }
