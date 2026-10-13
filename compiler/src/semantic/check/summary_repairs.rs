@@ -25,23 +25,13 @@ impl TypeContext<'_> {
         functions: &[&CheckedFunction],
         inputs: &SummaryRepairInputs<'_>,
     ) -> CheckStop {
-        if let CheckStop::Issue(issue) = &mut stop {
-            let target = self.rejected_record(caller, issue);
-            // Temporary CI evidence for the bounds-consumer replay failure.
-            #[cfg(test)]
-            eprintln!(
-                "summary-replay target: caller={} rule={} record={:?}",
-                caller.name,
-                issue.rule_id(),
-                target.as_ref().ok()
-            );
-            if let Ok(Some(target)) = target
-                && let Ok(Some(repair)) =
-                    self.unavailable_summary(caller, target, functions, inputs)
-                && let Some(mechanical_fix) = proof_repair(&mut issue.kind)
-            {
-                *mechanical_fix = repair;
-            }
+        if let CheckStop::Issue(issue) = &mut stop
+            && let Ok(Some(target)) = self.rejected_record(caller, issue)
+            && let Ok(Some(repair)) =
+                self.unavailable_summary(caller, target, functions, inputs)
+            && let Some(mechanical_fix) = proof_repair(&mut issue.kind)
+        {
+            *mechanical_fix = repair;
         }
         stop
     }
@@ -187,14 +177,6 @@ impl TypeContext<'_> {
                     ))
                 })
                 .collect::<Result<Vec<_>, CheckStop>>()?;
-            #[cfg(test)]
-            eprintln!(
-                "summary-replay candidate: caller={} callee={} rule={} clauses={}",
-                caller.name,
-                callee.name,
-                failure.rule_id(),
-                postconditions.len()
-            );
             if postconditions.is_empty()
                 || !unavailable_summary_discharges_record(
                     caller, &context, occurrence, &postconditions, target,
