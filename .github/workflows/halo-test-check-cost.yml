@@ -1,0 +1,97 @@
+# Temporary (board item enum-route-check-cost); remove before the branch is ready.
+# Halo's VM test host module pkg::test checked 0.83 s with wf-d837678c6905
+# and 190.6 s with wf-af7665be672d (Halo-wf run 38424433942). This measures
+# the same source with the pre-regression compiler, current main and this
+# branch, three interleaved rounds, compiler CPU, plus one counter run each.
+# Criterion: branch/old CPU at most 1.5.
+name: halo-test-check-cost
+
+on:
+  push:
+    branches: [claude/enum-route-check-cost]
+    paths: [.github/workflows/halo-test-check-cost.yml, 'compiler/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: halo-test-check-cost-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+  OLD_REVISION: d837678c6905
+  HALO_REVISION: 9de699da3261322eaa750c21f31ae290ef5e93cf
+  WHITEFOOT_CHECK_TIMEOUT: 1800
+
+jobs:
+  measure:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Prepare sources and compilers
+        run: |
+          mkdir -p "$RUNNER_TEMP/out"
+          rustup default stable
+          git worktree add --detach "$RUNNER_TEMP/old" "$OLD_REVISION"
+          git worktree add --detach "$RUNNER_TEMP/main" origin/main
+          git clone --quiet https://github.com/Ming-Research/Halo-wf.git "$RUNNER_TEMP/halo"
+          git -C "$RUNNER_TEMP/halo" checkout --quiet --detach "$HALO_REVISION"
+          git -C "$RUNNER_TEMP/halo" submodule update --init --quiet
+          { printf 'old=%s\nmain=%s\nbranch=%s\nhalo=%s\n' "$(git -C "$RUNNER_TEMP/old" rev-parse HEAD)" "$(git -C "$RUNNER_TEMP/main" rev-parse HEAD)" "$(git rev-parse HEAD)" "$HALO_REVISION"; lscpu | grep 'Model name'; } | tee "$RUNNER_TEMP/out/identity.txt"
+          for tree in "$RUNNER_TEMP/old" "$RUNNER_TEMP/main" "$GITHUB_WORKSPACE"; do
+            perl .github/run-check.pl htc-fetch cargo fetch --locked --manifest-path "$tree/compiler/Cargo.toml"
+            perl .github/run-check.pl compiler/build cargo build --manifest-path "$tree/compiler/Cargo.toml" --profile gate --bin whitefootc --locked --offline
+          done
+      - name: Interleaved pkg::test checks and counters
+        run: |
+          python3 - <<'PY'
+          import collections, csv, os, pathlib, statistics, subprocess
+          temp = pathlib.Path(os.environ['RUNNER_TEMP']); out = temp / 'out'
+          ws = pathlib.Path(os.environ['GITHUB_WORKSPACE'])
+          bins = {'old': temp / 'old/compiler/target/gate/whitefootc', 'main': temp / 'main/compiler/target/gate/whitefootc', 'branch': ws / 'compiler/target/gate/whitefootc'}
+          cmd = ['--graph', 'tests/halo-vm/modules.wfg', '--check-module', 'pkg::test']
+          env = {k: v for k, v in os.environ.items() if k not in ('WHITEFOOT_CHECK_WORK', 'WHITEFOOT_TIME_BUDGET_RECORD')}
+          def run(which, label, counters=False):
+              timing = out / (label + '.time'); e = dict(env)
+              if counters: e['WHITEFOOT_CHECK_WORK'] = str(out / (which + '-work.tsv'))
+              r = subprocess.run(['perl', str(ws / '.github/run-check.pl'), 'htc-' + label, '/usr/bin/time', '-q', '-f', '%e\t%U\t%S', '-o', str(timing), str(bins[which]), *cmd],
+                                 cwd=temp / 'halo', env=e, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+              if r.returncode: print(r.stdout[-4000:]); raise SystemExit(f'{label} failed with {r.returncode}')
+              wall, user, sys_ = map(float, timing.read_text().split()); return user + sys_
+          paired = collections.defaultdict(dict); order = list(bins)
+          for rnd in range(1, 4):
+              cur = order[:] if rnd % 2 else order[::-1]
+              for w in cur:
+                  paired[rnd][w] = run(w, f'{w}-{rnd}'); print(rnd, w, f'{paired[rnd][w]:.2f}', flush=True)
+          lines = ['## Halo pkg::test: compiler CPU (user+sys), 3 interleaved rounds', '', '| Compiler | Median CPU s | Ratio to old (median, min-max) |', '|---|---:|---:|']
+          for w in order:
+              rs = [p[w] / p['old'] for p in paired.values()]
+              lines.append(f"| {w} | {statistics.median(p[w] for p in paired.values()):.2f} | {statistics.median(rs):.3f} ({min(rs):.3f}-{max(rs):.3f}) |")
+          totals = {}
+          for w in order:
+              run(w, 'counters-' + w, counters=True); t = collections.Counter()
+              with (out / (w + '-work.tsv')).open() as f:
+                  for row in csv.reader(f, delimiter='\t'):
+                      if len(row) == 7 and row[6].isdigit(): t[row[3] + ':' + row[5]] += int(row[6])
+              totals[w] = t
+          keys = sorted(set().union(*totals.values()), key=lambda k: -max(t[k] for t in totals.values()))[:20]
+          lines += ['', '| Counter | old | main | branch |', '|---|---:|---:|---:|'] + [f"| {k} | {totals['old'][k]} | {totals['main'][k]} | {totals['branch'][k]} |" for k in keys]
+          summary = '\n'.join(lines) + '\n'; print(summary)
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as f: f.write(summary)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: halo-test-check-cost
+          path: ${{ runner.temp }}/out/
+          if-no-files-found: warn

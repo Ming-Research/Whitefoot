@@ -186,11 +186,37 @@ fn read(value: u64, unknown: Outcome) -> result: u8 pure {
   }
 }
 "#;
-    with_semantics_dark(source, |outcome| {
+    with_semantics(source, |outcome| {
         assert!(
             matches!(outcome, SemanticOutcome::Complete(_)),
             "selecting Some must recover value <= 7 from its only possible branch: {outcome:?}"
         );
+    });
+
+    // A bound covering all u64 values supplies no evidence for narrowing,
+    // even when Some still comes from just one branch of the same join.
+    let unbounded = std::str::from_utf8(source)
+        .expect("UTF-8 witness")
+        .replace("value <= 7_u64", "value <= 18446744073709551615_u64");
+    with_semantics(unbounded.as_bytes(), |outcome| {
+        let SemanticOutcome::SourceIssue { issue } = outcome else {
+            panic!("the unproved narrowing must reject: {outcome:?}");
+        };
+        assert_eq!(issue.rule(), SemanticRule::Op6);
+        let SemanticIssueKind::UndischargedConversionDomainObligation {
+            disposition,
+            residual,
+            ..
+        } = issue.kind()
+        else {
+            panic!("expected the narrowing obligation, got {:?}", issue.kind());
+        };
+        assert_eq!(*disposition, crate::StaticObligationDisposition::Unproved);
+        assert_eq!(residual, "cvt.defined::<u64, u8>(value)");
+        let SemanticLocation::SourceNode(_, coordinate) = issue.location();
+        let start = usize::try_from(coordinate.start().value()).expect("offset fits");
+        let end = usize::try_from(coordinate.end().value()).expect("offset fits");
+        assert_eq!(&unbounded.as_bytes()[start..end], b"cvt::<u64, u8>(value)");
     });
 }
 
@@ -213,10 +239,41 @@ fn caller() -> result: u64 pure {
   return take(value: copied);
 }
 "#;
-    with_semantics_dark(source, |outcome| {
+    with_semantics(source, |outcome| {
         assert!(
             matches!(outcome, SemanticOutcome::Complete(_)),
             "the call must receive the copied payload invariant: {outcome:?}"
+        );
+    });
+
+    // Construct a valid Span first, then invalidate it before wrapping and
+    // copying. An unknown Option<Span> parameter would instead establish the
+    // routed invariant at body entry and would not be a negative control.
+    let unordered = std::str::from_utf8(source)
+        .expect("UTF-8 witness")
+        .replace(
+            "  let made = Some<Span>(value: span);",
+            "  set span.low = 10_u64;\n  let made = Some<Span>(value: span);",
+        );
+    with_semantics(unordered.as_bytes(), |outcome| {
+        let SemanticOutcome::SourceIssue { issue } = outcome else {
+            panic!("the invalid copied payload must reject at its call: {outcome:?}");
+        };
+        assert_eq!(issue.rule(), SemanticRule::Fn8);
+        let SemanticIssueKind::UndischargedCallRequirement(detail) = issue.kind() else {
+            panic!("expected the routed call requirement, got {:?}", issue.kind());
+        };
+        assert_eq!(detail.concrete_callee, "take");
+        let cited = |location: &SemanticLocation| {
+            let SemanticLocation::SourceNode(_, coordinate) = location;
+            let start = usize::try_from(coordinate.start().value()).expect("offset fits");
+            let end = usize::try_from(coordinate.end().value()).expect("offset fits");
+            &unordered.as_bytes()[start..end]
+        };
+        assert_eq!(cited(issue.location()), b"take(value: copied)");
+        assert_eq!(
+            cited(&detail.requires_clause),
+            b"invariant ordered(span): span.low <= span.high;"
         );
     });
 }
