@@ -4,7 +4,7 @@
 # 100 to 800 ns of private work); Q2 is a Whitefoot witness (one atomic
 # statement on a map entry and the context's own part, with and without a
 # whole target on one Shared<u64> sequence) built with the compiler revision
-# named by wf_rev, by default the head of the branch that stops counting
+# named by wf_rev, by default a main revision that has stopped counting
 # handles of value handles, so that today's form is measured at its best.
 # Removed after the run, with the results copied into the investigation's
 # record.
@@ -48,9 +48,9 @@ on:
         type: string
         default: "5000"
       wf_rev:
-        description: The compiler revision the Whitefoot arms are built with (default, the head of claude/skip-handle-count)
+        description: The compiler revision the Whitefoot arms are built with (default, main at 3adedae9bb1a, which includes skip-handle-count)
         type: string
-        default: aec381cecc3de3300afa1498ddba3d10698f3d04
+        default: 3adedae9bb1a9028e0afd95d2776e5330db4abc1
 
 defaults:
   run:
