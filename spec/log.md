@@ -11,6 +11,14 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-13 v0.137: a const argument is typed and range-checked where it is written; an interface application names only in-scope binders
+
+Rules: changed CONST-1, FN-3
+
+Owner-approved: On the shared status board on 2026-10-12, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the specification revision and design-tree change of Whitefoot#390 at commit c80159911?" (translated), whose background listed seven rule changes: CONST-1 reads a decimal integer literal as unsigned 64-bit with no type of its own, judged only by whether its value fits the parameter type; CONST-1 requires each name in a const argument (const generic, interface const binder, named const) to have exactly the parameter's declared integer type; CONST-1 refuses a value outside the parameter type's closed range at the argument, closed arguments where written and arguments with const generics at each concrete instance; CONST-1 states that a const generic's value at each instance lies in its written type's range, never wrapped or truncated; CONST-1 refuses a named const with a negative value, a wording change since the compiler already did; FN-3 gives an interface const binder the integer type its interface header's parameter declares; FN-3 makes an interface application in an argument list or a qualified member call name, in order, only binders some in-scope import declares, refusing any other form (a literal, a concrete type) at the application with a repair. The rule text is unchanged since that commit, only renumbered from v0.136 to v0.137 because main reached v0.136 first.
+
+Summary: Main accepted `get::<300>()` for `const n: u8`: the checker reasoned about n as 300 while generated code truncated it to 44, an out-of-bounds read. A const argument's names must now have exactly the parameter's integer type and its value must lie in the parameter type's closed range, judged where the argument is written when it names no const generic and at each concrete instance when it does, so a const generic's value never leaves its written type's range. A decimal literal has no type of its own and is judged only by whether its value fits. An interface const binder has the integer type its header declares, and an interface application in an argument list names only binders an in-scope import declares, so a literal or concrete type there is refused at the application with a repair instead of stopping the compiler.
+
 ## 2026-10-12 v0.136: a guard reaches no self-changing host handle; an IoError's class description
 
 Rules: changed SHARE-2, SHARE-3, PRE-2
