@@ -170,7 +170,7 @@ runtime prologue, storage slot, `llvm.assume`, or fallback edge. The sole
 
 Worked example: a base64 encoder, the two-buffer shape every codec has, one shared input, one exclusive output, and a capacity relation between them. The committed source:
 
-```
+```text
 fn encode['r](out: &uniq 'r buffer<u8>, src: own buffer<u8>) -> written: own u64
     reads('r), writes('r) contract {
   define out_len = len<u8>(deref(out));
@@ -197,7 +197,7 @@ One line of contract says the output can hold `4 * ceil(len_of(src)/3)` bytes, s
 
 Before the proof tier (committed `b64.s`, the checked build), every read and write in the loop carries its compare-and-branch. This is what "everything is checked" costs:
 
-```
+```asm
 LBB0_9:                          ; hot loop, pre-proof build
 	sub	x13, x10, #1
 	cmp	x13, x3               ; src bounds check
@@ -218,7 +218,7 @@ prover connected the passed capacity fact to the loop induction `i = 3k, o =
 semantics the entry check compiled to one comparison, and the hot loop carried
 zero check branches:
 
-```
+```asm
 _encode:                         ; proof build, from committed b64.ll
 	lsr	x8, x1, #2
 	add	x8, x8, x8, lsl #1    ; 3 * (out_len / 4)
@@ -275,7 +275,7 @@ Rust has no channel for this. An optimizer facing a Rust call inlines it or prov
 
 The committed experiment isolates that boundary. A pure mixing function compiles into its own object file, so the caller's compiler never sees the body:
 
-```
+```text
 fn mix(x: own i64) -> mixed: own i64 pure {
   let a: own i64 = imul.wrap<i64>(x, 2862933555777941757_i64);
   let b: own i64 = iadd.wrap<i64>(a, 3037000493_i64);
@@ -287,7 +287,7 @@ fn mix(x: own i64) -> mixed: own i64 pure {
 
 Without the declared effects (control build), the caller does what every C and Rust compiler must do, two billion real calls:
 
-```
+```asm
 LBB0_1:                          ; control: the loop survives
 	mov	w0, #42
 	bl	_mix                  ; a real call, every iteration
@@ -298,7 +298,7 @@ LBB0_1:                          ; control: the loop survives
 
 With the declared row on the declaration, the compiler hoists the call and strength-reduces the accumulation, and the loop is gone:
 
-```
+```asm
 _main:                           ; effects build: no loop left
 	mov	w0, #42
 	bl	_mix                  ; called once
@@ -321,7 +321,7 @@ but does not emit that alias metadata.
 
 **First, the C-facing half.** Take the classic reduction `accumulate(acc, addend, n)`, whose body folds `*addend` into `*acc`, compiled from Whitefoot borrows against plain C pointers. Naive C reloads and re-stores through both pointers every iteration, because `acc` and `addend` might alias:
 
-```
+```asm
 _accumulate_naive:               ; C, no restrict
 LBB0_2:
 	ldr	x10, [x1]             ; reload *addend  (might have changed!)
@@ -334,7 +334,7 @@ LBB0_2:
 
 Whitefoot's `&uniq acc, & addend` emits `noalias`/`readonly` on the parameters by construction, and the loop keeps everything in registers:
 
-```
+```asm
 _accumulate:                     ; Whitefoot, from the borrow modes
 	ldr	x8, [x1]              ; load *addend once
 	ldr	x9, [x0]              ; load *acc once
@@ -352,7 +352,7 @@ On the additive variant of this kernel the same fact changes the complexity clas
 
 The committed kernel is a struct-of-arrays update, eight `u64` columns, two written, six read, the obvious loop:
 
-```
+```text
 struct Cols {
   a: buffer<u64>;  b: buffer<u64>;  c: buffer<u64>;  d: buffer<u64>;
   e: buffer<u64>;  f: buffer<u64>;  g: buffer<u64>;  h: buffer<u64>;
@@ -378,7 +378,7 @@ semantics, three shapes) vectorized through loop versioning: LLVM emitted a
 cascade of runtime pointer-overlap guards and a speculative fast path. From the
 committed Rust assembly of the obvious shape:
 
-```
+```asm
 	cmp	x8, x7                ; column pair overlap test
 	ccmp	x9, x24, #2, lo
 	cmp	x8, x19               ; next pair
@@ -425,7 +425,7 @@ following listing and measurement are historical evidence for a possible
 future proof consumer, not an active writer form or compiler capability.
 The committed historical kernel:
 
-```
+```text
 contract SatMonoid {
   fn combine(x: own u64, y: own u64) -> combined: own u64 pure;
   law associative(combine);
@@ -454,7 +454,7 @@ fn reduce(b: own buffer<u64>) -> total: own u64 traps {
 
 The writer states the laws. The checker discharges them against the operation table's semantics, where unsigned saturating add is associative as table data rather than writer folklore. Only then does the optimizer use them, reassociating the obvious fold into four independent, block-interleaved accumulators seeded with the proved identity. From the committed assembly, the four parallel saturating chains:
 
-```
+```asm
 LBB1_3:                          ; reassociated: 4 independent chains
 	adds	x8, x8, x15
 	csinv	x8, x8, xzr, lo       ; saturate
@@ -485,7 +485,7 @@ Scanner kernels (word counting, token classification, run detection) carry per-b
 
 The committed word-count kernel keeps every predicate in `Bool`:
 
-```
+```text
     let c: own u8 = index<u8>(b, i);
     let ge9: own Bool = ige<u8>(c, 9_u8);
     let le13: own Bool = ile<u8>(c, 13_u8);
@@ -519,7 +519,7 @@ unreachable; the current seeded catalog has not yet established that claim.
 
 There is one legal spelling per construct and one legal byte-level formatting, covering indentation, spacing, and blank lines. The toolchain rejects non-canonical input; it never reformats. Flat integer infix has no precedence or nesting; composition uses `let`. There are no comments; documentation lives in a structured `doc` field. `if` handles `Bool`, `match` handles enums, and the iteration forms are `loop` and one ascending half-open `for`. Arithmetic semantics are explicit at each site:
 
-```
+```whitefoot
 fn clamp_hundred(value: own u64) -> result: own u64 pure contract {
   ensures result <= 100_u64;
 } {
@@ -530,7 +530,7 @@ fn clamp_hundred(value: own u64) -> result: own u64 pure contract {
 The helper owns and proves that normal-result promise. Its caller consumes the
 verified relation directly:
 
-```
+```text
 let wrapped = a +wrap b;
 let bounded = clamp_hundred(value: a);
 let exact = bounded + 1_u64;

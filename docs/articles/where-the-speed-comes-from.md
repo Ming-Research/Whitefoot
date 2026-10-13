@@ -42,7 +42,7 @@ because overflow is part of their meaning ([Integers](integers.md)).
 **Reference parameters.** This function writes one field through a
 reference:
 
-```
+```text
 fn deposit(to: &Account, amount: u64) -> result: unit writes(to.balance) {
   let t = deref(to).balance;
   set deref(to).balance = t +wrap amount;
@@ -52,7 +52,7 @@ fn deposit(to: &Account, amount: u64) -> result: unit writes(to.balance) {
 
 Its parameter reaches LLVM with four attributes:
 
-```text
+```llvm
 define i8 @wf_deposit(ptr noalias nonnull nocapture dereferenceable(16) %v0, i64 %v1) #0 {
 ```
 
@@ -79,7 +79,7 @@ one path, and a cost on another path is not yet explained.
 
 This loop adds one array into another:
 
-```
+```whitefoot
 fn add_into(dst: &[u32], src: &[u32]) -> result: unit reads(src), writes(dst) contract {
   requires deref(dst).len <= deref(src).len;
 } {
@@ -98,7 +98,7 @@ passes the two as separate parameters, so that the pointer can carry the
 same attributes as any reference, except `dereferenceable`, since the length
 may be zero:
 
-```text
+```llvm
 define i8 @wf_add_into(ptr noalias nonnull nocapture %wf.arg.v0.data, i64 %wf.arg.v0.len, ptr noalias nonnull nocapture %wf.arg.v1.data, i64 %wf.arg.v1.len) #0 {
 ```
 

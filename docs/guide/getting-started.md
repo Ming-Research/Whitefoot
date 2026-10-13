@@ -8,10 +8,11 @@ to a working repair.
 
 Choose a bundled release, whose tag is `wf-<12 hex digits>-bundled`, on the
 [GitHub releases page](https://github.com/Ming-Research/Whitefoot/releases).
-Download `SHA256SUMS` and the archive for your platform:
+Set its exact tag once, replacing the example below:
 
-- Linux x86-64: `whitefootc-linux-x86_64-bundled.tar.gz`.
-- macOS arm64: `whitefootc-macos-arm64-bundled.tar.gz`.
+```sh
+release_tag='wf-<12 hex digits>-bundled'
+```
 
 The package carries its own clang and lld toolchain. You do not need a
 separate host clang installation or Rust. It also contains the
@@ -20,10 +21,18 @@ specification, standard library interfaces, licenses,
 
 ### Linux x86-64
 
-Linux needs glibc 2.34 or newer. The bundled release is qualified on
-Ubuntu 24.04. In the directory holding your downloads, verify the archive:
+Ubuntu 24.04 is the qualified Linux host. Other distributions are
+unqualified. Install the libraries the bundled toolchain needs:
 
 ```sh
+sudo apt-get install libc6-dev libgcc-13-dev libstdc++6 zlib1g libxml2 libicu74 liblzma5
+```
+
+Download the Linux archive and its published checksum file, then verify it:
+
+```sh
+curl -LO "https://github.com/Ming-Research/Whitefoot/releases/download/${release_tag}/whitefootc-linux-x86_64-bundled.tar.gz"
+curl -LO "https://github.com/Ming-Research/Whitefoot/releases/download/${release_tag}/SHA256SUMS"
 sha256sum -c --ignore-missing SHA256SUMS
 ```
 
@@ -43,9 +52,11 @@ Install the Command Line Tools for the SDK and the system linker:
 xcode-select --install
 ```
 
-In the directory holding your downloads, verify the archive:
+Download the macOS archive and its published checksum file, then verify it:
 
 ```sh
+curl -LO "https://github.com/Ming-Research/Whitefoot/releases/download/${release_tag}/whitefootc-macos-arm64-bundled.tar.gz"
+curl -LO "https://github.com/Ming-Research/Whitefoot/releases/download/${release_tag}/SHA256SUMS"
 shasum -a 256 -c --ignore-missing SHA256SUMS
 ```
 
@@ -57,6 +68,13 @@ mkdir -p whitefoot
 tar -xzf whitefootc-macos-arm64-bundled.tar.gz -C whitefoot
 ```
 
+If you downloaded through a browser instead, remove the quarantine
+attribute after extraction so the unsigned binaries can run:
+
+```sh
+xattr -dr com.apple.quarantine whitefoot
+```
+
 ### Put the compiler on PATH
 
 The archive has no enclosing directory, so extraction puts `bin/` directly
@@ -64,7 +82,7 @@ under `whitefoot/`. On either platform:
 
 ```sh
 export PATH="$PWD/whitefoot/bin:$PATH"
-whitefootc --version
+whitefootc --help
 ```
 
 Keep the extracted package together: `bin/whitefootc` uses the bundled

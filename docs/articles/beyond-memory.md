@@ -25,7 +25,7 @@ rejects every heap type and every call that allocates. The heap type is
 `Box`. An `Array`, `Slots` or `Ring` whose capacity is chosen at run time
 lives only inside a `Box`, so it goes too.
 
-```
+```whitefoot reject STOR-8 file=noheap.wf
 program no_heap;
 
 fn total(n: u64) -> sum: u64 pure contract {
@@ -40,7 +40,7 @@ fn total(n: u64) -> sum: u64 pure contract {
 }
 ```
 
-```text
+```whitefoot-output
 noheap.wf:9:15: error[STOR-8]: HeapTypeUnderNoHeap
   source:   let cells = box_array_filled::<u64>(count: n, value: 1_u64);
   marker:               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -54,7 +54,7 @@ constant. Such an array lives in the function's frame, and keeping one there
 is not an allocation. The largest count the function accepts becomes the
 array's size:
 
-```
+```whitefoot
 fn total(n: u64) -> sum: u64 pure contract {
   requires n <= 1024_u64;
 } {
@@ -118,7 +118,7 @@ The standard library's files, directories, directory listings, listeners
 and the two halves of a connection are linear. Each is declared with the
 `nodrop` modifier, as `std::fs` declares a file opened for reading:
 
-```
+```text
 public opaque nodrop struct ReadFile {
 }
 ```
@@ -126,7 +126,7 @@ public opaque nodrop struct ReadFile {
 This function reads the first byte of a file and forgets to close it when
 the read fails:
 
-```
+```text
 fn first_byte(files: &HandleFactory, root: &DirectoryRead, path: &RelativePath) -> result: Option<u8> reads(root), reads(path), writes(files) {
   match open_read(factory: files, root: root, path: path) {
     Ok(value: file) => {
@@ -164,7 +164,7 @@ the two routes the repair offers, only the first applies here: `ReadFile` is
 opaque, so no program can take it apart, and the file leaves by being moved
 whole. Here that means closing it in the failure arm too:
 
-```
+```text
         Err(error: stop) => {
           close_read(factory: files, file: move file);
           return None<u8>();
@@ -179,7 +179,7 @@ The check covers every path, including the paths that meet again after a
 branch. Closing a file on one side of an `if` and not on the other is
 rejected where the two sides join:
 
-```
+```text
 fn maybe_close(files: &HandleFactory, file: ReadFile, now: Bool) -> result: unit writes(files) {
   if now {
     close_read(factory: files, file: move file);
@@ -205,7 +205,7 @@ Every program that takes the standard `Inputs` meets this rule at once. The
 directory the program starts in, `Inputs.cwd`, is a `Directory` with read and
 write halves, so `main` takes it apart and closes both halves:
 
-```
+```text
 let Inputs(cwd: directory, handles: files, ..) = move inputs;
 let std::fs::Directory(read: cwd, write: cwd_write) = move directory;
 std::fs::close_directory_write(factory: &files, directory: move cwd_write);
@@ -225,7 +225,7 @@ released, and the compiler checks that there is one on every path.
 carry it, and the same check then applies to its values. A request that
 must be answered can be one:
 
-```
+```whitefoot reject PROV-6 file=pending.wf
 nodrop struct Pending {
   id: u64;
 }
@@ -244,7 +244,7 @@ fn handle(id: u64, valid: Bool) -> result: u64 pure {
 }
 ```
 
-```text
+```whitefoot-output
 pending.wf:18:3: error[PROV-6]: LinearValueNotConsumed
   source:   return 0_u64;
   marker:   ^^^^^^^^^^^^^
@@ -278,7 +278,7 @@ is written.
 - **Loops and recursion are not proved to finish.** This program declares no
   heap, and its recursion counts `remaining` down to zero:
 
-  ```
+  ```whitefoot
   program no_heap;
 
   fn depth(remaining: u64, acc: u64) -> result: u64 pure {

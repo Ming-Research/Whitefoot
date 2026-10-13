@@ -2,7 +2,7 @@
 
 Here is a quicksort, written the way a textbook writes it:
 
-```
+```text
 fn quicksort(v: &[u64]) -> result: unit writes(v) {
   let n = deref(v).len;
   if n <= 1_u64 {
@@ -121,7 +121,7 @@ iteration writes its own elements, or when the only value carried from one
 iteration to the next is combined with one associative operation, such as
 `+wrap`, `imin` or `ior`:
 
-```
+```whitefoot
 fn total(src: &[u64]) -> sum: u64 reads(src) {
   let sum = 0_u64;
   for (i in 0_u64..deref(src).len) {

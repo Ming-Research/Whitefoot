@@ -59,7 +59,7 @@ Whitefoot 是一门研究性质的系统编程语言，围绕三个特性设计�
 
 这个循环原地保留缓冲区中的非空格字节。`invariant behind: kept <= i` 这一行声明了一个名为 `behind` 的不变式（invariant），说明为什么写入 `buf[kept]` 不会越界。编译器在第一次迭代之前和每次迭代之后证明它，再结合 `i < buf.len` 得出 `kept < buf.len`，所以这次写入被编译成一条普通的存储指令：
 
-```
+```whitefoot
 fn squeeze(buf: &[u8]) -> kept: u64 writes(buf) {
   let kept = 0_u64;
   for (
@@ -82,7 +82,7 @@ fn squeeze(buf: &[u8]) -> kept: u64 writes(buf) {
 
 每个函数都用 `reads(...)` 和 `writes(...)` 写明它读取和写入什么，编译器会对照函数体检查这个声明。所以它知道每次调用会访问哪些内存；当它证明两个调用访问的是不同的内存时，就可以让它们同时运行。这段源代码里没有任何地方要求并行：
 
-```
+```text
 fn quicksort(v: &[u64]) -> result: unit writes(v) {
   let n = v^.len;
   if n <= 1_u64 {
@@ -110,7 +110,7 @@ fn quicksort(v: &[u64]) -> result: unit writes(v) {
 
 Whitefoot 保留了 C 的简单结构，借用了部分 Rust 语法。程序由函数、结构体、枚举和数组组成。下面这个函数返回缓冲区中的下一个字节，并让游标（cursor）前进一位：
 
-```
+```whitefoot
 struct Cursor {
   position: u64;
 }

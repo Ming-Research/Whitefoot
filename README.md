@@ -120,7 +120,7 @@ The compiler proves it before the first iteration and after every iteration,
 and with `i < buf.len` concludes `kept < buf.len`, so the store compiles to a
 plain store:
 
-```
+```whitefoot
 fn squeeze(buf: &[u8]) -> kept: u64 writes(buf) {
   let kept = 0_u64;
   for (
@@ -155,7 +155,7 @@ knows what memory each call touches, and when it proves that two calls touch
 different memory, it may run them at the same time. Nothing in this source
 asks for parallelism:
 
-```
+```text
 fn quicksort(v: &[u64]) -> result: unit writes(v) {
   let n = v^.len;
   if n <= 1_u64 {
@@ -204,7 +204,7 @@ Whitefoot keeps C's simple structure and borrows some of Rust's syntax. A
 program is made of functions, structs, enums and arrays. This function returns
 the next byte of a buffer and advances a cursor:
 
-```
+```whitefoot
 struct Cursor {
   position: u64;
 }

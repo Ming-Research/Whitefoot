@@ -38,7 +38,7 @@ it as what it is: a fixed record that names the resource and nothing else.
 This recursion does a little work after each call returns, so LLVM cannot
 turn it into a loop:
 
-```
+```whitefoot
 fn walk(n: u64, x: u64) -> result: u64 pure {
   if n == 0_u64 {
     return x;
@@ -84,7 +84,7 @@ A recursion that ends in a call to itself can be written so that it does not
 grow the stack at all. `musttail` requires the call to reuse the current
 frame:
 
-```
+```whitefoot
 fn count(n: u64, acc: u64) -> result: u64 pure {
   if n == 0_u64 {
     return acc;

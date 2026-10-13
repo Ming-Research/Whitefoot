@@ -3,7 +3,7 @@
 The first example in the [README](../../README.md) removes a bounds check
 with one line:
 
-```
+```text
 invariant behind: kept <= i
 ```
 
@@ -16,7 +16,7 @@ last sections show where it stops and what you write then.
 
 Here is the loop again. It keeps the non-space bytes of a buffer, in place:
 
-```
+```whitefoot
 fn squeeze(buf: &[u8]) -> kept: u64 writes(buf) {
   let kept = 0_u64;
   for (
@@ -179,7 +179,7 @@ zero, following it from x back to x gives `x - x <= -1`, which says
 `0 <= -1`. The facts cannot all be true at once, so the program never reaches
 that point.
 
-```
+```whitefoot
 fn pick(buf: &[u8], i: u64) -> r: u8 reads(buf) {
   let n = deref(buf).len;
   if i < n {
@@ -232,7 +232,7 @@ remains. That is neither one known difference nor a consequence of the
 values' bounds, and there is no earlier invariant to take away, so the
 compiler rejects the target. You then name the facts to add:
 
-```
+```text
 invariant component_sum: first + second + third <= first_limit + second_limit + third_limit {
   use (first <= first_limit);
   use (second <= second_limit);
