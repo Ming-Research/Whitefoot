@@ -1758,17 +1758,18 @@ fn an_unused_same_range_scalar_actual_does_not_taint_a_root_quantified_bound() {
     });
 }
 
-/// The inner f read is zero and the run has one element. The outer read at
-/// f + 1 is therefore undefined, so RANGE-1 asserts no conclusion there.
-/// Restoring only that outer read cannot prove the query: its inner index
-/// read must contribute provenance through the read-domain conditions.
+/// The inner f read is one and the run has one element. The outer read at
+/// f is therefore undefined, so RANGE-1 asserts no conclusion there.
+/// The outer read selects g, which the call writes, so no same-frame sibling
+/// definition can restore it. Only the inner f read can prove the empty domain.
 #[test]
 fn a_same_range_read_domain_loss_is_explicit_for_a_quantified_requirement() {
     let source = same_frame_requirement_program(
-        "forall absent(k in 0_u64..1_u64): part^[part^[0_u64].f + 1_u64].f < 0_u64",
+        "forall absent(k in 0_u64..1_u64): part^[part^[0_u64].f].g < 0_u64",
         "part",
         "",
-    );
+    )
+    .replace(".f < 1_u64", ".f == 1_u64");
     super::assert_unsupported(
         source.as_bytes(),
         crate::UnsupportedSemanticFeature::RangeCallFootprint,
