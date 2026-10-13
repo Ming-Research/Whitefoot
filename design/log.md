@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 the owner's agent instructions own the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-13 The lock ledger reports when each atomic target group is taken
+
+Nodes: compiler/waiting-contexts/state-locks
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve this decision" (translated), on the card "approve the design-tree change of Whitefoot#421 (head commit 0d2e4f75b)? It adds one decision: the compiler gains a `--lock-ledger` flag reporting when each atomic statement takes each lock group" (translated).
+
+Summary: One decision is added. `whitefootc --lock-ledger` reports, for each atomic statement, its ordered target groups with their bindings and state type, whether each is taken before the guard, on every body path, on some body paths or never, and the first use or later group that takes it, because a writer could not otherwise see that an early read or a preceding type group extends a hold, as Firn's write commands did. Lowering records the acquisition requests it emits and classifies them on its control-flow graph, instead of a warning on early use, which is often intended, or a separate source analysis that could disagree with the acquired groups; the report changes neither acceptance nor acquisition placement.
+
 ## 2026-10-13 A fact some arms hold survives their join, and a joined value is free where its join was bypassed
 
 Nodes: compiler/range-judgment, language/checks-and-proofs/range-facts
