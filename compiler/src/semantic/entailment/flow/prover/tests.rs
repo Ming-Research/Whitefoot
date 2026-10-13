@@ -1502,11 +1502,12 @@ fn affine_refutation_respects_explicit_premises() {
         assert!(observed.same_as_traversal);
 
         // a <= 4 under the same premise: a = 5 falsifies it.
-        assert!(
-            analyzer
-                .reasoning()
-                .affine_model_refutes(&at_most_four, &premise, &closed, &index)
-        );
+        assert!(analyzer.reasoning().affine_model_refutes(
+            &at_most_four,
+            &premise,
+            &closed,
+            &index
+        ));
         assert!(
             analyzer
                 .vocabulary
@@ -1766,9 +1767,10 @@ fn affine_refutation_finds_no_point_when_arithmetic_overflows() {
 fn affine_refutation_needs_a_view_with_a_point() {
     with_integer_parameters(&[IntegerType::I32; 2], |analyzer| {
         let mut affine = AffineFlowState::default();
-        let empty = analyzer
-            .vocabulary
-            .new_affine_atom_with_interval(IntegerType::I32, 5, 3, false);
+        let empty =
+            analyzer
+                .vocabulary
+                .new_affine_atom_with_interval(IntegerType::I32, 5, 3, false);
         let b = analyzer.vocabulary.new_affine_atom(IntegerType::I32);
         affine.values.insert(BindingId(0), empty.clone());
         affine.values.insert(BindingId(1), b);
