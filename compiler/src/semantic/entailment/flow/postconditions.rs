@@ -176,13 +176,13 @@ impl Input<'_, '_> {
                 && restored.call.node_path == *call
                 && restored.call.callee == function
             {
-                available.push(AvailablePostcondition {
-                    relation: restored.postcondition.relation.clone(),
-                    route: restored.postcondition.selector.route,
-                    authority: super::super::RelationProvenance::Verified(
-                        restored.identity.clone(),
-                    ),
-                });
+                available.extend(restored.postconditions.iter().map(|(clause, identity)| {
+                    AvailablePostcondition {
+                        relation: clause.relation.clone(),
+                        route: clause.selector.route,
+                        authority: super::super::RelationProvenance::Verified(identity.clone()),
+                    }
+                }));
             }
             return available;
         };

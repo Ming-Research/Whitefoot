@@ -972,28 +972,21 @@ pub(super) fn postcondition(disposition: Disposition, called: bool) -> &'static 
     }
 }
 
-/// An existing callee proof failed, so its result relation was not published.
-pub(super) fn unavailable_return_summary(
+/// A private counterfactual proved which withheld declaration this proof needs.
+pub(super) fn unavailable_summary(
     instance: &str,
     summary: &str,
+    call_site: &str,
     rule: &str,
     failed: &str,
-    line: u64,
+    declared_site: Option<&str>,
+    failed_site: &str,
 ) -> String {
+    let declaration = declared_site
+        .map(|site| format!(" declared at {site}"))
+        .unwrap_or_default();
     format!(
-        "the returned value reads the result of `{instance}`, whose summary `{summary}` is unavailable because its [{rule}] obligation `{failed}` fails at line {line}; if this summary supplies the missing return relation, repair that obligation in `{instance}` so it proves the summary before relying on it at this return"
-    )
-}
-
-pub(super) fn unavailable_call_summary(
-    instance: &str,
-    summary: &str,
-    call_line: u64,
-    failed: &str,
-    exit_line: u64,
-) -> String {
-    format!(
-        "the call to `{instance}` at line {call_line} cannot supply its summary `{summary}` because that callee's [FN-9] obligation `{failed}` fails at line {exit_line}; repair that obligation in `{instance}` so it proves the summary needed by this requirement; for a loop-computed bound, carry the needed bound in a loop-header `invariant`"
+        "the call to `{instance}` at {call_site} cannot supply its summary `{summary}` because that callee's [{rule}] obligation `{failed}`{declaration} fails at {failed_site}; repair that obligation in `{instance}` so it proves the summary needed by this proof; for a loop-computed bound, carry the needed bound in a loop-header `invariant`"
     )
 }
 

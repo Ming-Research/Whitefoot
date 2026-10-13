@@ -1261,6 +1261,10 @@ fn analyze_candidate_inner(
     context: &EntailmentContext<'_>,
 ) -> FunctionEntailment {
     let run = run(function, context);
+    entailment_from_run(function, run)
+}
+
+fn entailment_from_run(function: &CheckedFunction, run: AnalysisRun) -> FunctionEntailment {
     let mut entailment = FunctionEntailment {
         body_disposition: run.body_disposition,
         operation_intervals: run.operation_intervals,
@@ -1821,49 +1825,117 @@ struct Input<'check, 'unit> {
 
 struct RestoredSummary {
     call: super::ConcreteCallOccurrence,
-    postcondition: super::super::postcondition::CheckedPostcondition,
     /// The schedule's prospective identity for this private hypothesis,
     /// never an independently verified summary or a retained proof.
-    identity: super::VerifiedPostconditionSummary,
+    postconditions: Vec<(
+        super::super::postcondition::CheckedPostcondition,
+        super::VerifiedPostconditionSummary,
+    )>,
     contradiction: std::cell::Cell<bool>,
 }
 
 /// Reuse ordinary publication and transfer on a private walk, changing one
-/// declared clause at one call only. No private proof or value identity leaves.
-pub(super) fn unavailable_summary_discharges_call(
+/// unavailable summary set at one call only. No private proof identity leaves.
+pub(super) fn unavailable_summary_discharges_record(
     function: &CheckedFunction,
     context: &EntailmentContext<'_>,
     call: &super::ConcreteCallOccurrence,
-    postcondition: &super::super::postcondition::CheckedPostcondition,
-    identity: &super::VerifiedPostconditionSummary,
-    target: &CallGoalOutcome,
+    postconditions: &[(
+        super::super::postcondition::CheckedPostcondition,
+        super::VerifiedPostconditionSummary,
+    )],
+    target: usize,
 ) -> bool {
-    let matches = |outcome: &CallGoalOutcome| {
-        outcome.node_path == target.node_path
-            && outcome.callee == target.callee
-            && outcome.requires_clause == target.requires_clause
-            && outcome.subject == target.subject
+    let discharged = |entailment: &FunctionEntailment| {
+        entailment
+            .answers
+            .get(target)
+            .copied()
+            .flatten()
+            .map(|answer| answer.discharged(entailment))
     };
-    let baseline = run(function, context);
-    if !baseline.call_goals.iter().any(|outcome| {
-        matches(outcome) && outcome.disposition == CallGoalDisposition::Unproved
-    }) {
+    let baseline = entailment_from_run(function, run(function, context));
+    if discharged(&baseline) != Some(false) {
         return false;
     }
     let mut analyzer = Analyzer::new(context, function);
     analyzer.input.restored_summary = Some(RestoredSummary {
         call: call.clone(),
-        postcondition: postcondition.clone(),
-        identity: identity.clone(),
+        postconditions: postconditions.to_vec(),
         contradiction: std::cell::Cell::new(false),
     });
     let restored = run_analyzer(analyzer);
-    !restored.diagnostic_contradiction
-        && restored.call_goals.iter().any(|outcome| {
-            matches(outcome)
-                && outcome.disposition == CallGoalDisposition::Discharged
-                && !outcome.evidence.contains(&CallGoalEvidence::AllDerivable)
-        })
+    if restored.diagnostic_contradiction {
+        return false;
+    }
+    let restored = entailment_from_run(function, restored);
+    discharged(&restored) == Some(true) && !record_uses_contradiction(&restored, target)
+}
+
+fn record_uses_contradiction(entailment: &FunctionEntailment, target: usize) -> bool {
+    use super::super::obligations::RecordAnswer;
+
+    let Some(answer) = entailment.answers.get(target).copied().flatten() else {
+        return true;
+    };
+    let mut parents = match answer {
+        RecordAnswer::Obligation(index) => {
+            let outcome = &entailment.obligations[index];
+            if outcome.contradictory {
+                return true;
+            }
+            outcome.derivation.into_iter().collect::<Vec<_>>()
+        }
+        RecordAnswer::CallGoal(index) => {
+            let outcome = &entailment.call_goals[index];
+            if outcome.evidence.contains(&CallGoalEvidence::AllDerivable) {
+                return true;
+            }
+            outcome.derivation.into_iter().collect()
+        }
+        RecordAnswer::LoopInvariant(index) => {
+            let outcome = &entailment.loop_invariants[index];
+            let mut parents = Vec::new();
+            for evidence in std::iter::once(&outcome.base_evidence)
+                .chain(outcome.inputs.iter().map(|input| &input.evidence))
+            {
+                if evidence.contradiction.is_some() {
+                    return true;
+                }
+                parents.extend(&evidence.components);
+            }
+            parents
+        }
+        RecordAnswer::Postcondition(index) => entailment.postconditions[index]
+            .exits
+            .iter()
+            .filter_map(|exit| exit.derivation)
+            .collect(),
+        // Targets, use premises and certificate residuals all read the same
+        // ordinary state; the observer checks it after term formation too.
+        RecordAnswer::SourceProof(_) => Vec::new(),
+        RecordAnswer::Uninhabited => return true,
+    };
+    let mut seen = HashSet::new();
+    while let Some(parent) = parents.pop() {
+        if !seen.insert(parent) {
+            continue;
+        }
+        let Some(node) = entailment.derivations.nodes.get(parent.0 as usize) else {
+            return true;
+        };
+        if matches!(
+            node,
+            DerivationNode::L0Contradiction { .. }
+                | DerivationNode::GoalContradiction { .. }
+                | DerivationNode::JoinContradiction { .. }
+                | DerivationNode::MaterializedContradiction { .. }
+        ) {
+            return true;
+        }
+        parents.extend(node.parent_ids());
+    }
+    false
 }
 
 impl Reasoning<'_, '_, '_> {

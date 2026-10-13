@@ -690,7 +690,7 @@ impl<'unit> Checker<'_, 'unit> {
                         .declarations
                         .declaration_spelling(local.declaration)?,
                     event: event.phrase(),
-                    mechanical_fix: REF2_FORM_AGAIN,
+                    mechanical_fix: REF2_FORM_AGAIN.to_owned(),
                 },
             ),
             ReferenceValidity::Valid if !reference.loop_dependencies().is_empty() => {

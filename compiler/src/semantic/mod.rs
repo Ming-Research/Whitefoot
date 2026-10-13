@@ -939,7 +939,7 @@ pub enum SemanticIssueKind {
         /// The invalidating event [REF-2] names.
         event: &'static str,
         /// Exact restructuring required by REF-2.
-        mechanical_fix: &'static str,
+        mechanical_fix: String,
     },
     /// [REF-1] `&p` where `p` is a reference variable, which is not storage
     /// of its own.
@@ -1058,7 +1058,7 @@ pub enum SemanticIssueKind {
     /// statement [SHARE-2]. The residual names the exact position family.
     UndischargedCallSeparation {
         residual: String,
-        mechanical_fix: &'static str,
+        mechanical_fix: String,
     },
     /// Two effects of one call's substituted row lie on overlapping paths
     /// and at least one is a write, with no admitted family able to separate
@@ -1194,7 +1194,7 @@ pub enum SemanticIssueKind {
     UndischargedSourceProof {
         name: String,
         obligation: SourceProofObligation,
-        mechanical_fix: &'static str,
+        mechanical_fix: String,
     },
     /// A return expression disagrees with the written function result.
     ReturnMismatch,
@@ -1304,7 +1304,7 @@ pub enum SemanticIssueKind {
     /// A requirement entry uses a construct outside the admitted FN-8 goal subset.
     InvalidRequires,
     /// Structural callable requirement failed with ordinary repair guidance.
-    InvalidHeldContract { reason: String, mechanical_fix: &'static str },
+    InvalidHeldContract { reason: String, mechanical_fix: String },
     /// A selected snapshot input closure contains a resource vertex.
     SnapshotResource { owned_path: String, mechanical_fix: &'static str },
     /// An ensures selector does not match the concrete result class FN-9 admits.

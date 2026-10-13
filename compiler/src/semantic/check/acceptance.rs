@@ -360,7 +360,7 @@ impl<'unit> DeclarationInventory<'unit> {
             kind: SemanticIssueKind::UndischargedSourceProof {
                 name: outcome.name.clone(),
                 obligation,
-                mechanical_fix,
+                mechanical_fix: mechanical_fix.to_owned(),
             },
             request: None,
         })
@@ -467,7 +467,7 @@ impl<'unit> TypeContext<'unit> {
     }
     /// The issue one undischarged record reports: its rule selects the kind,
     /// and the record with the judgment that answered it fill it in.
-    fn undischarged_issue(
+    pub(super) fn undischarged_issue(
         &self,
         function: &CheckedFunction,
         record: &ObligationRecord,
@@ -757,7 +757,7 @@ impl<'unit> TypeContext<'unit> {
                     .ok_or(SemanticCompilerFailure::InvalidResolution)?;
                 SemanticIssueKind::InvalidHeldContract {
                     reason: format!("{}: {residual}", self.declarations.tree.source_spelling(requirement)?),
-                    mechanical_fix: super::held::REPAIR,
+                    mechanical_fix: super::held::REPAIR.to_owned(),
                 }
             }
             (SemanticRule::Eff5, ObligationFamily::CallSeparation(query)) => {
@@ -771,19 +771,19 @@ impl<'unit> TypeContext<'unit> {
                 );
                 SemanticIssueKind::UndischargedCallSeparation {
                     residual,
-                    mechanical_fix,
+                    mechanical_fix: mechanical_fix.to_owned(),
                 }
             }
             (SemanticRule::Op11, ObligationFamily::ExchangeSeparation(_)) => {
                 SemanticIssueKind::UndischargedCallSeparation {
                     residual,
-                    mechanical_fix: "prove before the `swap` that the two positions are distinct, or exchange places that are equal or disjoint without an ancestor relation",
+                    mechanical_fix: "prove before the `swap` that the two positions are distinct, or exchange places that are equal or disjoint without an ancestor relation".to_owned(),
                 }
             }
             (SemanticRule::Share2, ObligationFamily::AtomicTargetSeparation(_)) => {
                 SemanticIssueKind::UndischargedCallSeparation {
                     residual,
-                    mechanical_fix: SHARE2_PROVE_THE_HANDLE_PLACES_APART,
+                    mechanical_fix: SHARE2_PROVE_THE_HANDLE_PLACES_APART.to_owned(),
                 }
             }
             (SemanticRule::Ref2, ObligationFamily::ReferencePreservation(query)) => {
@@ -795,7 +795,7 @@ impl<'unit> TypeContext<'unit> {
                 SemanticIssueKind::InvalidReferenceUse {
                     binder: use_site.binder.clone(),
                     event: use_site.event,
-                    mechanical_fix: references::REF2_FORM_AGAIN,
+                    mechanical_fix: references::REF2_FORM_AGAIN.to_owned(),
                 }
             }
             (SemanticRule::Ref4, ObligationFamily::RangeFormation) => {
