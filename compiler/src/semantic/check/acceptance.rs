@@ -452,13 +452,6 @@ impl<'unit> TypeContext<'unit> {
             if answer.discharged(entailment) {
                 continue;
             }
-            if let RecordAnswer::Condition(condition) = answer {
-                super::redundancy_inventory::record(
-                    self.declarations,
-                    function,
-                    entailment.conditions.get(condition),
-                );
-            }
             if record.rule == SemanticRule::Fn9 {
                 relations.push((record, answer));
             } else {

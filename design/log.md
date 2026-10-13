@@ -7,11 +7,12 @@ a mechanism since retired.
 
 ## 2026-10-12 Conditions the checker decides are rejected
 
-Nodes: language/checks-and-proofs/redundant-tests, compiler/acceptance-records
+Nodes: language/checks-and-proofs/redundant-tests, compiler/acceptance-records, compiler/proof-query-context
 
-Owner-approved: On the shared status board on 2026-10-12, written in Chinese, the owner chose option A, "approve" (translated), on the card lm-r1-spec-v0136, "approve this group of specification and design-tree changes: a condition test whose result the checker can already derive is rejected as an error, and the diagnostic gives the deletion? (Whitefoot#393, head commit 5f2abebc7a58)" (translated).
+Owner-approved: On the shared status board on 2026-10-12, written in Chinese, the owner chose option A, "approve" (translated), on the card lm-r1-spec-v0136, "approve this group of specification and design-tree changes: a condition test whose result the checker can already derive is rejected as an error, and the diagnostic gives the deletion? (Whitefoot#393, head commit 5f2abebc7a58)" (translated); on 2026-10-13 the owner chose option A on the card lm-r1-post-approval-card, "approve the design-tree decisions and specification example changes Whitefoot#393 added after the previous approval (head commit 82fdda25e)" (translated), approving the decisions added and changed at that head.
 
-Summary: A new node rejects an `if` or `value_if` condition when every fact its selected branch establishes at entry is already derivable, with a repair that deletes the test and its dead branch; it judges a generic body once at its own parameters' symbolic instance and admits a condition in a contradictory state. It rejects judging only the goal origins and a language facility for a program to check its own final result, since the harness can compare the output. The acceptance-records decision adds the redundancy judgment to the obligations the structural checker records.
+Summary: A new node rejects an `if` or `value_if` condition when every fact its selected branch establishes at entry is already derivable, with a repair that deletes the test and its dead branch; it judges a generic body once at its own parameters' symbolic instance and admits a condition in a contradictory state. It rejects judging only the goal origins and a language facility for a program to check its own final result, since the harness can compare the output. The acceptance-records decision adds the redundancy judgment to the obligations the structural checker records. The proof-query-context decision keeps reusing a closed view when goals are appended, after checking them for newly derivable contradictions, so the redundancy queries share preparation without changing a judgment.
+
 ## 2026-10-13 Match branches on integer constant values, with one exclusion fact for `else` and one switch
 
 Nodes: compiler/checker-facts, compiler/match-dispatch-lowering, compiler/range-judgment, compiler/structured-emission, language/checks-and-proofs/automatic-facts, language/checks-and-proofs/range-facts, language/dispatch, language/grammar, language/name-resolution, language/surface-form/match-form

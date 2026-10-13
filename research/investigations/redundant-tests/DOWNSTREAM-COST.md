@@ -56,7 +56,7 @@ migration of either downstream project.
 
 ## Halo migration measurement input
 
-[.github/halo-migration.patch](../../../.github/halo-migration.patch) targets Halo revision
+[halo-migration.patch](halo-migration.patch) targets Halo revision
 `56878ac4d607f7496c8e23a4c2ffe2d45e9cb552`, after replacing the whole word
 `held` with `held_value` in every `.wf` file. Paths are relative to the Halo
 repository root. The patch lives beside the temporary comparison workflow
@@ -487,7 +487,7 @@ uninstrumented cost.
 
 ## Executed CI protocol
 
-The temporary [workflow](../../../.github/workflows/op5-cost.yml) built each
+The temporary [workflow](https://github.com/Ming-Research/Whitefoot/blob/2ae94da7a5b580971e1fcef32c54ff644752ac0f/.github/workflows/op5-cost.yml) built each
 compiler once and retained the migrated Firn three-way comparison. It packaged
 the same pinned downstream sources and both binaries for independent module
 jobs. Halo selected `pkg::vm`; Snowghost selected every module declared in its

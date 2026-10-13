@@ -116,7 +116,7 @@ work instrument count them.
 
 Existing tests that a decided condition now rejects are listed by the
 temporary `WHITEFOOT_REDUNDANT_CONDITIONS` instrument (see
-`compiler/src/semantic/check/redundancy_inventory.rs`) over one gate run. A
+[`compiler/src/semantic/check/redundancy_inventory.rs`](https://github.com/Ming-Research/Whitefoot/blob/2ae94da7a5b580971e1fcef32c54ff644752ac0f/compiler/src/semantic/check/redundancy_inventory.rs)) over one gate run. A
 genuinely redundant test is deleted; where an observation needs a branch, the
 input is made actually unknown while the oracle is kept; a program's check of
 its own final result moves to the harness that checks its output. No expected

@@ -462,10 +462,7 @@ impl Reasoning<'_, '_, '_> {
             },
             ..context
         };
-        let ordinary = {
-            let _timed = super::super::work::timed(super::super::work::Phase::OrdinaryProve);
-            self.prove_prepared(prepared, goal)
-        };
+        let ordinary = self.prove_prepared(prepared, goal);
         // A proof in the entering state remains a proof in its origin view.
         // Preserve its selected parent and diagnostic grounds; internal
         // component queries already share their enclosing prepared view.
@@ -523,16 +520,13 @@ impl Reasoning<'_, '_, '_> {
             expression,
             affine: affine.as_ref(),
         };
-        let ordinary = {
-            let _timed = super::super::work::timed(super::super::work::Phase::OrdinaryProve);
-            self.prove_prepared(
-                ProofContext {
-                    origin_view: OriginView::Ordinary,
-                    ..context
-                },
-                goal,
-            )
-        };
+        let ordinary = self.prove_prepared(
+            ProofContext {
+                origin_view: OriginView::Ordinary,
+                ..context
+            },
+            goal,
+        );
         if ordinary.disposition == ProofDisposition::Proved || context.facts.goal_origins.is_empty()
         {
             return ordinary;
@@ -568,10 +562,7 @@ impl Reasoning<'_, '_, '_> {
             closed: None,
             origin_view: OriginView::Prepared,
         };
-        let mut result = {
-            let _timed = super::super::work::timed(super::super::work::Phase::OriginViewProve);
-            self.prove_prepared(prepared, goal)
-        };
+        let mut result = self.prove_prepared(prepared, goal);
         if result.disposition == ordinary.disposition {
             return ordinary;
         }
@@ -3492,7 +3483,6 @@ impl Reasoning<'_, '_, '_> {
         context: ProofContext<'_>,
         refute: bool,
     ) -> Option<AffineConsequenceProof> {
-        let _timed = work::timed(work::Phase::AffineSearch);
         let (closed, l0) = self.affine_query_view(context);
         let mut query = AffineDirectQuery::new(&l0, context.affine, &closed);
         self.evaluate_affine_target(
@@ -3532,7 +3522,6 @@ impl Reasoning<'_, '_, '_> {
         auto: &mut AffineAutoQuery<'_>,
         refute: bool,
     ) -> Option<AffineConsequenceProof> {
-        let _timed = work::timed(work::Phase::AffineSearch);
         // Origin transport has already selected these facts at the numeric
         // disposition; affine_query_view only reads affine inputs and close().
         let mut context = ProofContext::new(facts, auto.values);

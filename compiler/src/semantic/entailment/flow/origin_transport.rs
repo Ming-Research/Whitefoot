@@ -378,7 +378,6 @@ impl Reasoning<'_, '_, '_> {
         submitted: Option<&GoalExpression>,
         require_new_class: bool,
     ) -> Option<FactState> {
-        let build = super::super::work::timed(super::super::work::Phase::OriginViewBuild);
         let mut cache = std::mem::take(&mut self.vocabulary.origin_queries);
         let mut origins = context
             .facts
@@ -618,14 +617,9 @@ impl Reasoning<'_, '_, '_> {
             }
         }
 
-        super::super::work::origin_view(expressions.len(), classes.values().map(Vec::len).sum());
-        drop(build);
-        let _fixed_point =
-            super::super::work::timed(super::super::work::Phase::OriginViewFixedPoint);
         // Monotone finite signed closure. Every changing pass installs at
         // least one of exactly two signs per collected Boolean member.
         loop {
-            super::super::work::origin_view_pass();
             let closed = close(
                 &view,
                 &self.vocabulary.terms,
