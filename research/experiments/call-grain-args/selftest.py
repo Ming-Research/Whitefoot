@@ -136,6 +136,42 @@ class Identity(unittest.TestCase):
         self.assertEqual(identity.parse(OBJECT), identity.parse(shifted))
 
 
+class Normalization(unittest.TestCase):
+    PRIVATE = """0000000000000000 <wf_workload-0xc0>:
+   0:\tmov    %rax,%rbx
+   3:\tret
+
+0000000000000040 <wf_workload>:
+  40:\tcall   0 <wf_workload-0x40>
+  45:\tjne    4a <wf_workload+0x4a>
+  47:\tret
+"""
+
+    def test_headers_without_a_symbol_are_not_functions(self):
+        self.assertEqual(list(identity.parse(self.PRIVATE)), ["wf_workload"])
+
+    def test_private_targets_do_not_follow_the_layout(self):
+        a = identity.parse(self.PRIVATE)
+        b = identity.parse(self.PRIVATE.replace("<wf_workload-0x40>", "<wf__floor_record_latch+0xc0>"))
+        self.assertEqual(a, b)
+        self.assertIn("call   <private>", a["wf_workload"][0])
+        self.assertIn("jne    <wf_workload+0x4a>", a["wf_workload"][1])
+
+    def test_an_injected_instruction_change_is_still_found(self):
+        a = identity.parse(self.PRIVATE)
+        b = identity.parse(self.PRIVATE.replace("jne    4a", "je     4a").replace("<wf_workload+0x4a>", "<wf_workload+0x4a>"))
+        self.assertNotEqual(a, b)
+        c = identity.parse(self.PRIVATE.replace("<wf_workload-0x40>", "<wf_workload+0x4a>"))
+        self.assertNotEqual(a, c)
+
+    def test_change_against_main_comparison(self):
+        a = identity.parse(OBJECT)
+        pairs, failures = identity.compare_objects(a, identity.parse(OBJECT.replace("xor    %eax", "xor    %ebx")))
+        self.assertEqual(pairs["wf_mix_words"], "different")
+        self.assertEqual(pairs["wf_workload"], "identical")
+        self.assertEqual(identity.compare_objects(a, {})[0]["wf_workload"], "only-base")
+
+
 class Program(unittest.TestCase):
     def test_generated_source_has_the_steps_and_the_pair(self):
         text = generate.source(5)

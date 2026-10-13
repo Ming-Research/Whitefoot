@@ -153,6 +153,13 @@ def cmd_identity(a):
             required = ["wf_workload"] if workload == "pair" else []
             pairs, failures = identity.compare_clones(seq, par, required)
             entry = dict(pairs=pairs, failures=failures, compared=sum(v == "identical" for v in pairs.values()))
+            diffs = out / "identity-diffs"
+            diffs.mkdir(exist_ok=True)
+            for name, verdict in pairs.items():
+                if verdict == "different":
+                    twin = identity.CLONE + name[3:]
+                    text = identity.full_diff(seq[name], par.get(twin, par.get(name, [])), "sequential " + name, label + " " + twin)
+                    (diffs / f"{label}-{workload}-{name}.diff").write_text(text + "\n")
             if workload == "pair":
                 entry["control_overlapped_world_differs"] = "wf_workload" in par and "wf_workload" in seq \
                     and par["wf_workload"] != seq["wf_workload"]
@@ -162,12 +169,28 @@ def cmd_identity(a):
                     entry["first_difference"] = identity.first_difference(seq[bad[0]], par.get(twin, par.get(bad[0], [])))
             clones[label][workload] = entry
     result["clones"] = clones
+    delta = {}
+    for workload in ["pair"] + KERNELS:
+        base_par = identity.disassemble(image(out, "base", workload).with_suffix(".o"))
+        chg_par = identity.disassemble(image(out, "chg", workload).with_suffix(".o"))
+        pairs, failures = identity.compare_objects(base_par, chg_par)
+        for name, verdict in pairs.items():
+            if verdict == "different":
+                (out / "identity-diffs").mkdir(exist_ok=True)
+                (out / "identity-diffs" / f"change-vs-main-{workload}-{name}.diff").write_text(
+                    identity.full_diff(base_par[name], chg_par[name], "main " + name, "change " + name) + "\n")
+        delta[workload] = dict(pairs=pairs, failures=failures, identical=sum(v == "identical" for v in pairs.values()))
+    result["change_vs_main"] = delta
     save(out, "identity.json", result)
     for k, v in result["llvm"].items():
         print(f"identity llvm {k}: identical={v['identical']} deterministic={v['deterministic']} control={v['control_detects_difference']}")
     for label, per in clones.items():
         for w, e in per.items():
-            print(f"identity clones {label}/{w}: compared={e['compared']} failures={len(e['failures'])}")
+            print(f"identity clones {label}/{w}: clone vs sequential build: identical={e['compared']} "
+                  f"different={sum(v == 'different' for v in e['pairs'].values())} "
+                  f"missing={sum(v == 'missing' for v in e['pairs'].values())}")
+    for w, e in delta.items():
+        print(f"identity change vs main {w}: identical={e['identical']} differing symbols={len(e['failures'])}")
 
 
 # ------------------------------------------------------------------- verify
@@ -437,6 +460,9 @@ def cmd_summarize(a):
     lines.append(f"C5 the one-thread path (sequential clones) of the change is machine-code identical to the sequential build: "
                  f"{('PASS' if chg_ok else 'FAIL') if verdict else '(no verdict) ' + str(chg_ok)}; method check on main alone: "
                  f"{'identical' if base_ok else 'NOT identical (the method or main itself differs)'}; sequential lowering unchanged: {ident.get('seq_lowering_unchanged')}")
+    for w, e in ident.get("change_vs_main", {}).items():
+        lines.append(f"   change's object vs main's object, {w}: {e['identical']} symbols identical, "
+                     f"{len(e['failures'])} not" + (": " + "; ".join(e["failures"][:6]) if e["failures"] else ""))
     for label in ("chg", "base"):
         for w, e in clones.get(label, {}).items():
             if e["failures"]:

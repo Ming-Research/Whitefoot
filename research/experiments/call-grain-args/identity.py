@@ -15,14 +15,28 @@ CLONE = "wf__par_seq_"
 SKIP = re.compile(r"^wf_(bench_|fixture_|release_)")
 HEADER = re.compile(r"^[0-9a-f]+ <([^>]+)>:$")
 ADDRESS = re.compile(r"^\s*[0-9a-f]+:\s?")
-TARGET = re.compile(r"\b[0-9a-f]+ (<[^>]+>)")
+TARGET = re.compile(r"\b[0-9a-f]+ <([^>]+)>")
+OFFSET = re.compile(r"^(.*?)([+-]0x[0-9a-f]+)$")
 LOCAL = re.compile(r"\.L[A-Za-z_]*\d+(?:_\d+)?")
 
 
-def normalize(line):
+def target(match, current):
+    """A branch or call target: an exact symbol stays, a jump inside the current
+    function keeps its offset, and anything else is `<private>`: code without a
+    symbol of its own (the modules' private helpers) prints as its neighbour
+    plus or minus an offset that follows the layout, not the program."""
+    name = match.group(1)
+    split = OFFSET.match(name)
+    if not split:
+        return f"<{name}>"
+    inside = split.group(1) == current and split.group(2).startswith("+")
+    return f"<{name}>" if inside else "<private>"
+
+
+def normalize(line, current=None):
     """One disassembly line without addresses, with sequential-clone names mapped back."""
     line = ADDRESS.sub("", line.rstrip())
-    line = TARGET.sub(r"\1", line)
+    line = TARGET.sub(lambda m: target(m, current), line)
     line = line.replace(CLONE, "wf_")
     return LOCAL.sub(".L#", line)
 
@@ -39,13 +53,18 @@ def parse(text):
     for line in text.splitlines():
         match = HEADER.match(line)
         if match:
+            # Code before the first symbol is headed by a made-up
+            # `<neighbour-0x..>`; it is not a function.
             current = match.group(1)
+            if OFFSET.match(current):
+                current = None
+                continue
             functions[current] = []
         elif current is not None and line.strip() and not line.startswith(("Disassembly", "/")):
             functions[current].append(line)
     result = {}
     for name, lines in functions.items():
-        body = [normalize(x) for x in lines]
+        body = [normalize(x, name) for x in lines]
         while body and re.fullmatch(r"\s*(nop\w*|xchg\s+%ax,%ax|data16.*|cs nopw.*)(\s.*)?", body[-1]):
             body.pop()
         result[name] = body
@@ -79,6 +98,30 @@ def compare_clones(sequential, parallel, required):
         if pairs.get(name) != "identical":
             failures.append(f"{name}: required and not identical ({pairs.get(name, 'absent')})")
     return pairs, failures
+
+
+def compare_objects(base, change):
+    """Same-symbol comparison of two parallel objects (the change's against main's).
+
+    Returns (pairs, failures) like compare_clones: identical, different, or
+    only-base / only-change for a symbol one object lacks."""
+    pairs, failures = {}, []
+    for name in sorted(set(base) | set(change)):
+        if name not in change:
+            pairs[name] = "only-base"
+        elif name not in base:
+            pairs[name] = "only-change"
+        elif base[name] == change[name]:
+            pairs[name] = "identical"
+        else:
+            pairs[name] = "different"
+        if pairs[name] != "identical":
+            failures.append(f"{name}: {pairs[name]}")
+    return pairs, failures
+
+
+def full_diff(a, b, label_a, label_b):
+    return "\n".join(difflib.unified_diff(a, b, label_a, label_b, lineterm="", n=3))
 
 
 def first_difference(a, b, context=3, limit=40):
