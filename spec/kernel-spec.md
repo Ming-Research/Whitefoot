@@ -1613,7 +1613,7 @@ Body operations contribute the following access categories; target, operand, off
 | Committing a value assignment to a target live at statement entry [SET-1] | Write of the target storage |
 | Reinitializing a complete binding dead at statement entry [SET-1] | No target-storage access contribution |
 | Read-modify-write `set p = p +wrap x;` [SET-1, OP-2] | Read of p through the right-hand side and write of p at commit |
-| Atomic in-place update [OP-12] | Read of the old target value and write of the target at commit |
+| Atomic in-place update [OP-12] | The effect [OP-12] states |
 | Handing over a value by `move`, `give`, `return`, or structural repacking [GIVE-1, FN-1, OWN-1] | Contributions of value evaluation; the transfer adds no read or write |
 | Forming a reference to a path or range [REF-1, REF-4] | Contributions of offset and endpoint evaluation; naming the referent adds no read or write of its contents |
 | Forming a page reference `&p.pages[k]` [REF-4] | The read specified by [REF-4] |
