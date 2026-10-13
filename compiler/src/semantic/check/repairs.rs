@@ -44,6 +44,10 @@ use super::super::model::{
 use super::super::permission::visit_read_bindings;
 use crate::NodePath;
 
+pub(super) mod writer_operations;
+pub(super) mod writer_ownership;
+pub(super) mod writer_references;
+
 /// [OP-16] name the first excluded part, without suggesting that copy alone
 /// grants equality or that comparing storage bytes implements value equality.
 pub(super) fn value_equality_repair(ty: &str, part: &str) -> String {

@@ -199,9 +199,14 @@ impl<'unit> Checker<'_, 'unit> {
             return self.types.declarations.issue_node(
                 SemanticRule::Own1,
                 node,
-                SemanticIssueKind::BareAffineUse {
-                    mechanical_fix: "destructure an own-mode value; a borrow owns nothing to take apart",
-                },
+                self.ownership_issue(
+                    context.check_context,
+                    place,
+                    value.expression.ty(),
+                    false,
+                    Some(value.mode),
+                    Some("destructure an own-mode value; a borrow owns nothing to take apart".to_owned()),
+                )?,
             );
         }
         let CheckedType::Nominal(nominal) = value.expression.ty() else {
@@ -484,7 +489,7 @@ impl<'unit> Checker<'_, 'unit> {
                 SemanticRule::Type7,
                 expression_node,
                 SemanticIssueKind::MissingDereference {
-                    mechanical_fix: "write `holder^`",
+                    mechanical_fix: "write `holder^`".to_owned(),
                 },
             );
         }
@@ -508,23 +513,48 @@ impl<'unit> Checker<'_, 'unit> {
             );
         }
         let CheckedType::Nominal(result_nominal) = value.expression.ty() else {
-            return self.types.declarations.invalid_propagation(propagate);
+            return self.invalid_propagation(
+                propagate,
+                function.result,
+                value.expression.ty(),
+                false,
+            );
         };
         let Some(PreludeType::Result(ok_type, error_type)) =
             self.types.prelude_type(result_nominal)
         else {
-            return self.types.declarations.invalid_propagation(propagate);
+            return self.invalid_propagation(
+                propagate,
+                function.result,
+                value.expression.ty(),
+                false,
+            );
         };
         let CheckedType::Nominal(return_nominal) = function.result else {
-            return self.types.declarations.invalid_propagation(propagate);
+            return self.invalid_propagation(
+                propagate,
+                function.result,
+                value.expression.ty(),
+                true,
+            );
         };
         let Some(PreludeType::Result(_, return_error_type)) =
             self.types.prelude_type(return_nominal)
         else {
-            return self.types.declarations.invalid_propagation(propagate);
+            return self.invalid_propagation(
+                propagate,
+                function.result,
+                value.expression.ty(),
+                true,
+            );
         };
         if error_type != return_error_type {
-            return self.types.declarations.invalid_propagation(propagate);
+            return self.invalid_propagation(
+                propagate,
+                function.result,
+                value.expression.ty(),
+                true,
+            );
         }
         let error_drops =
             self.types
@@ -567,6 +597,31 @@ impl<'unit> Checker<'_, 'unit> {
             },
             value.effects,
         ))
+    }
+
+    fn invalid_propagation<ResultValue>(
+        &self,
+        node: NodeId,
+        enclosing_return: CheckedType,
+        operand: CheckedType,
+        operand_is_result: bool,
+    ) -> Result<ResultValue, CheckStop> {
+        let enclosing_return_type = self.types.checked_type_name(enclosing_return)?;
+        let operand_type = self.types.checked_type_name(operand)?;
+        let mechanical_fix = super::super::repairs::writer_operations::propagation_repair(
+            &enclosing_return_type,
+            &operand_type,
+            operand_is_result,
+        );
+        self.types.declarations.issue_node(
+            SemanticRule::Err3,
+            node,
+            SemanticIssueKind::InvalidPropagation {
+                enclosing_return_type,
+                operand_type,
+                mechanical_fix,
+            },
+        )
     }
 }
 
@@ -886,13 +941,6 @@ impl<'unit> DeclarationInventory<'unit> {
         };
         Ok(self.tree.place_has_dereference(place)?)
     }
-    fn invalid_propagation<ResultValue>(&self, node: NodeId) -> Result<ResultValue, CheckStop> {
-        self.issue_node(
-            SemanticRule::Err3,
-            node,
-            SemanticIssueKind::InvalidPropagation,
-        )
-    }
     /// [TYPE-7]'s implicit read at return position: a live borrow-mode
     /// binding used where the written `rtype` requires its referent
     /// value is rejected citing TYPE-7, and [FN-1] forms no candidate for
@@ -963,7 +1011,7 @@ impl<'unit> DeclarationInventory<'unit> {
                 SemanticRule::Type7,
                 expression_node,
                 SemanticIssueKind::MissingDereference {
-                    mechanical_fix: "write `holder^`",
+                    mechanical_fix: "write `holder^`".to_owned(),
                 },
             );
         }

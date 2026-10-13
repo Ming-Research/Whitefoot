@@ -36,7 +36,7 @@ fn main() -> status: std::process::ExitStatus pure {
         ),
         rule: "OWN-1",
         sentences: &[
-            "\n  mechanical_fix: remove `move` from the destructuring: let N(f: a, ...) = p;\n",
+            "\n  mechanical_fix: write `rebuilt` without `move`\n",
         ],
         repaired: &[br#"struct ScanResult {
   size: u64;

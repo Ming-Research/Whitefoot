@@ -102,7 +102,7 @@ impl<'unit> Checker<'_, 'unit> {
                 SemanticRule::Type7,
                 expression_node,
                 SemanticIssueKind::MissingDereference {
-                    mechanical_fix: "write `holder^`",
+                    mechanical_fix: "write `holder^`".to_owned(),
                 },
             );
         }
@@ -377,7 +377,7 @@ impl<'unit> Checker<'_, 'unit> {
                 SemanticRule::Type7,
                 expression_node,
                 SemanticIssueKind::MissingDereference {
-                    mechanical_fix: "write `holder^`",
+                    mechanical_fix: "write `holder^`".to_owned(),
                 },
             );
         }
@@ -522,6 +522,16 @@ impl<'unit> Checker<'_, 'unit> {
             };
             let label = if variant.tag == 1 {
                 "the `if` branch".to_owned()
+            } else if matches!(blocks.alternative, ConditionalAlternative::Absent) {
+                let mut label =
+                    "the implicit false edge of this `if` (no `else` is written)".to_owned();
+                if matches!(
+                    condition.expression,
+                    CheckedExpression::Constant(super::super::super::model::CheckedValue::Bool(_))
+                ) {
+                    label.push_str("; constant conditions do not remove this structural edge [FN-1]");
+                }
+                label
             } else {
                 "the `else` branch".to_owned()
             };
@@ -555,21 +565,15 @@ impl<'unit> Checker<'_, 'unit> {
                     SemanticIssueKind::InvalidGive,
                 );
             }
-            self.types.declarations.join_states(
-                &base_keys,
-                &give_states,
-                &give_labels,
-                node,
-                bindings,
-            )?;
+            self.types
+                .declarations
+                .join_states(&base_keys, &give_states, &give_labels, node, bindings)
+                .map_err(|stop| self.conditional_join_repair(check_context, &base_bindings, stop))?;
         } else {
-            self.types.declarations.join_states(
-                &base_keys,
-                &normal_states,
-                &normal_labels,
-                node,
-                bindings,
-            )?;
+            self.types
+                .declarations
+                .join_states(&base_keys, &normal_states, &normal_labels, node, bindings)
+                .map_err(|stop| self.conditional_join_repair(check_context, &base_bindings, stop))?;
         }
         Ok(MatchResult {
             scrutinee: condition.expression,
@@ -593,6 +597,38 @@ impl<'unit> Checker<'_, 'unit> {
             },
             loop_transfers,
         })
+    }
+
+    fn conditional_join_repair(
+        &self,
+        context: &CheckContext<'_>,
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+        mut stop: CheckStop,
+    ) -> CheckStop {
+        if let CheckStop::Issue(issue) = &mut stop
+            && let SemanticIssueKind::LivenessJoinDisagreement {
+                binding,
+                mechanical_fix,
+                ..
+            } = &mut issue.kind
+            && let Some(local) = bindings.iter().find_map(|(declaration, local)| {
+                (self
+                    .types
+                    .declarations
+                    .declaration_spelling(*declaration)
+                    .ok()
+                    .as_ref()
+                    == Some(binding))
+                .then_some(local)
+            })
+            && local.mode == CheckedMode::Own
+            && matches!(self.types.is_copy_type(context, local.ty), Ok(false))
+            && matches!(self.types.linear_release_obligation(context, local.ty), Ok(None))
+            && let Ok(ty) = self.types.checked_type_name(local.ty)
+        {
+            *mechanical_fix = super::super::repairs::writer_ownership::join(Some((binding, &ty)));
+        }
+        stop
     }
 
     fn bool_descriptor() -> MatchDescriptor {
@@ -1019,10 +1055,7 @@ impl<'unit> DeclarationInventory<'unit> {
                             binding: self.declaration_spelling(*key)?,
                             live_predecessor: live,
                             dead_predecessor: dead,
-                            mechanical_fix: "every predecessor of a join agrees on a binding's \
-                                             live-or-dead status: consume it on every predecessor, \
-                                             on none, or commit a value back into it before the \
-                                             predecessor that consumed it reaches the join",
+                            mechanical_fix: super::super::repairs::writer_ownership::join(None),
                         },
                     );
                 }
