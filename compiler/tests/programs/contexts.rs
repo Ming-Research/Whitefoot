@@ -308,7 +308,10 @@ fn a_deadlock_report_distinguishes_binding_use_from_ordinary_block_end() {
 }
 
 /// Immediate named joins and repeated batches release contexts for reuse;
-/// the sums detect a lost, repeated or prematurely completed child.
+/// the sums detect a lost, repeated or prematurely completed child. Passing on
+/// a runtime without a roster as well, it is the deadlock-sites cost fixture
+/// kept runnable; the roster's own invariants are checked by the C runtime
+/// fixtures.
 #[test]
 fn named_and_unnamed_context_batches_finish_and_reuse_their_storage() {
     let program = build_program(&compile_program("context_starts.wf"));
@@ -319,7 +322,8 @@ fn named_and_unnamed_context_batches_finish_and_reuse_their_storage() {
 }
 
 /// Sixteen contexts pass one startup guard and independently start and join
-/// tiny children. Each publishes only its final sum and completion count.
+/// tiny children. Each publishes only its final sum and completion count. Like
+/// the fixture above, it is the concurrent cost fixture kept runnable.
 #[test]
 fn concurrent_context_starts_preserve_every_workers_sum_and_completion() {
     let program = build_program(&compile_program("context_starts_concurrent.wf"));

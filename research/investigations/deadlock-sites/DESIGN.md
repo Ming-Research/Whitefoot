@@ -219,8 +219,9 @@ result is recorded in the [full comparison result](#full-comparison-result).
 
 ## Roster-disabled attribution arm
 
-The fourth arm, `site-only`, is a separate build of the exact candidate
-revision with only this prefix added to its detached checkout's `bridge.c`
+The fourth arm, `site-only`, was a separate build of the measured candidate
+revision (446524e29 holds its harness and the runtime switch below; both were
+removed afterwards) with only this prefix added to its detached checkout's `bridge.c`
 before Cargo embeds that source:
 
 ```c
