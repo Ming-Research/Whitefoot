@@ -1,0 +1,201 @@
+# Temporary: finds which main merge after release wf-93e97efdc27b made
+# `whitefootc --check-module pkg::vm` slower again on Halo's library graph.
+# On the 14900K (same Halo source 80f0ee4) the old release wf-d837678c6905
+# takes 3.36 s, wf-93e97efdc27b about 4.2 s and main 7d9118eba about 6.2 s.
+# Each matrix job builds the base compiler (d837678c6905) and one first-parent
+# main merge, then times both in 5 alternating rounds on a hosted runner. The
+# final job lists the median (user+sys) ratio per merge, oldest first.
+# Remove this workflow and its branch when the merge is found.
+name: halo-check-bisect
+
+on:
+  push:
+    branches: [claude/halo-check-bisect2]
+    paths: [.github/workflows/halo-check-bisect.yml]
+  workflow_dispatch:
+
+concurrency:
+  group: halo-check-bisect-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+  BASE_REVISION: d837678c69057a7ca79be8fa0bd1598af51647b6
+  # The Halo source both compilers check (branch claude/halo-pin-93e97ef).
+  HALO_REVISION: 80f0ee4
+
+jobs:
+  time:
+    name: ${{ matrix.title }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        # Newest first, as the first-parent main merges between the two
+        # releases; title is the pull request number and branch.
+        include:
+          - {commit: af7665be672d29912d878dd5da8c3932bb6f296c, title: "#431 enum-routed-ensures"}
+          - {commit: 7d9118ebaf88beac3ecdcd87d408dcd61db6cf3d, title: "#427 recursive-written-ensures"}
+          - {commit: 12169900dc0ff13cf20b854342716f7157ee7721, title: "#413 recursive-shared-env"}
+          - {commit: 60c8a3fc2089b05411e2a5b4da256eba0e5c859a, title: "#364 kill-cell"}
+          - {commit: 5dd90db143b143881d92dbde266619681ba77a00, title: "#377 guard-fairness"}
+          - {commit: 4826ee7a2604e394392ca44b6e2eb986327a90b1, title: "#426 release-language"}
+          - {commit: 1f29e1b1dfe8b0fe255d591be0809317126046d4, title: "#428 gate-budget-by-cpu"}
+          - {commit: 16bd35902a25b6b99d4d5d518b39a539e6f9f408, title: "#418 atomic-targets-design"}
+          - {commit: f0903241325885e1704a7212524a8c8f1eeedc3e, title: "#408 copy-result-in-place"}
+          - {commit: 072a4eddda646a28431a82cd728951f71a6eba33, title: "#382 opaque-struct-cases"}
+          - {commit: ad8ea57f7cbb0bfd099c9924f7b52639e172e04f, title: "#421 lazy-lock-guidance"}
+          - {commit: 80af3c39f3f065f6991179dfff8af6f2231fa640, title: "#394 range-variant-facts"}
+          - {commit: a755d4e3bb9be245a44d754c65c8e774752e2097, title: "#407 cache-key-symlink"}
+          - {commit: 2709db93a9a79a6abd80684b7ee7afdfdddaf14f, title: "#423 patterns-stale-fixes"}
+          - {commit: 168f0b186ca37ab9b74a554bbdf44ddf1f7b9907, title: "#406 float-proof-gaps"}
+          - {commit: c842d16d4068469fcae3592392924c50eb0895c5, title: "#425 linux-unit-budget-150"}
+          - {commit: a7f849230106f69b0ff21f0401dfc1e23ad5602a, title: "#360 v2h-brtable-bounds"}
+          - {commit: d75f318d56318834785322bde3a3656fb93116a6, title: "#422 linux-corpus-budget-205"}
+          - {commit: b9c6235e340ba127260e67089dc87dbff7b00362, title: "#414 move-slot-length"}
+          - {commit: 32cc362fe9a91f2d9ffb5620ded2ea3fdab45f2c, title: "#415 gate-scope-missing"}
+          - {commit: 089f57c165dbd858aebbd923c415358f3b3069d0, title: "#398 invariant-payload"}
+          - {commit: e96f620dbf0fa63431d66e1768b7189ee1a47814, title: "#402 socket-address"}
+          - {commit: c28b0145e777fa6159ba7134fe1d9591c24466b1, title: "#416 macos-corpus-budget-205"}
+          - {commit: 93e97efdc27ba5700328794445d1f401b9be6213, title: "wf-93e97efdc27b release"}
+    env:
+      COMMIT: ${{ matrix.commit }}
+      WHITEFOOT_CHECK_TIMEOUT: 1800
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Prepare the toolchain and both worktrees
+        run: |
+          rustup default stable
+          git worktree add --detach "$RUNNER_TEMP/base" "$BASE_REVISION"
+          git worktree add --detach "$RUNNER_TEMP/commit" "$COMMIT"
+          git -C "$RUNNER_TEMP/base" log --oneline -1
+          git -C "$RUNNER_TEMP/commit" log --oneline -1
+          cargo fetch --locked --manifest-path "$RUNNER_TEMP/base/compiler/Cargo.toml"
+          cargo fetch --locked --manifest-path "$RUNNER_TEMP/commit/compiler/Cargo.toml"
+      - name: Build both compilers
+        run: |
+          perl .github/run-check.pl bisect-build-base \
+            cargo build --manifest-path "$RUNNER_TEMP/base/compiler/Cargo.toml" --profile gate --locked
+          perl .github/run-check.pl bisect-build-commit \
+            cargo build --manifest-path "$RUNNER_TEMP/commit/compiler/Cargo.toml" --profile gate --locked
+          ls -l "$RUNNER_TEMP/base/compiler/target/gate/whitefootc" "$RUNNER_TEMP/commit/compiler/target/gate/whitefootc"
+      - name: Fetch pinned Halo
+        run: |
+          git clone --quiet "https://github.com/Ming-Research/Halo-wf.git" "$RUNNER_TEMP/halo"
+          git -C "$RUNNER_TEMP/halo" checkout --quiet --detach "$HALO_REVISION"
+          git -C "$RUNNER_TEMP/halo" rev-parse HEAD
+      - name: Time the check of pkg::vm
+        run: |
+          out="$RUNNER_TEMP/bisect"
+          mkdir -p "$out"
+          cpu=$(grep -m 1 'model name' /proc/cpuinfo | sed 's/^[^:]*: *//')
+          echo "cpu: $cpu"
+          base="$RUNNER_TEMP/base/compiler/target/gate/whitefootc"
+          commit="$RUNNER_TEMP/commit/compiler/target/gate/whitefootc"
+          tsv="$out/$COMMIT.tsv"
+          printf 'commit\tround\twhich\twall\tuser\tsys\tcpu\n' > "$tsv"
+          cd "$RUNNER_TEMP/halo"
+          run() {
+            label=$1 compiler=$2
+            perl "$GITHUB_WORKSPACE/.github/run-check.pl" "bisect-$label" \
+              /usr/bin/time -q -f '%e %U %S' -o "$out/$label.time" \
+              "$compiler" --graph lib/halo/modules.wfg --check-module pkg::vm \
+              > "$out/$label.log" 2>&1 || { cat "$out/$label.log"; echo "::error::$label exited nonzero"; exit 1; }
+          }
+          # Warm each compiler once (page cache, binary load).
+          run warm-base "$base"
+          run warm-commit "$commit"
+          for round in 1 2 3 4 5; do
+            for which in base commit; do
+              run "$which-$round" "$([ $which = base ] && echo "$base" || echo "$commit")"
+              read -r wall user sys < "$out/$which-$round.time"
+              printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$COMMIT" "$round" "$which" "$wall" "$user" "$sys" "$cpu" >> "$tsv"
+              echo "$which round $round: $wall s wall, $user user, $sys sys"
+            done
+          done
+          cat "$tsv"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bisect-${{ matrix.commit }}
+          path: ${{ runner.temp }}/bisect/*.tsv
+          if-no-files-found: error
+
+  summary:
+    name: Median ratios by merge
+    needs: time
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: bisect-*
+          path: tsv
+          merge-multiple: true
+      - name: Write the table
+        run: |
+          python3 - <<'PY'
+          import csv, glob, os, statistics
+          # Oldest first; mirrors the matrix.
+          order = [
+            ("93e97efdc27ba5700328794445d1f401b9be6213", "wf-93e97efdc27b release"),
+            ("c28b0145e777fa6159ba7134fe1d9591c24466b1", "#416 macos-corpus-budget-205"),
+            ("e96f620dbf0fa63431d66e1768b7189ee1a47814", "#402 socket-address"),
+            ("089f57c165dbd858aebbd923c415358f3b3069d0", "#398 invariant-payload"),
+            ("32cc362fe9a91f2d9ffb5620ded2ea3fdab45f2c", "#415 gate-scope-missing"),
+            ("b9c6235e340ba127260e67089dc87dbff7b00362", "#414 move-slot-length"),
+            ("d75f318d56318834785322bde3a3656fb93116a6", "#422 linux-corpus-budget-205"),
+            ("a7f849230106f69b0ff21f0401dfc1e23ad5602a", "#360 v2h-brtable-bounds"),
+            ("c842d16d4068469fcae3592392924c50eb0895c5", "#425 linux-unit-budget-150"),
+            ("168f0b186ca37ab9b74a554bbdf44ddf1f7b9907", "#406 float-proof-gaps"),
+            ("2709db93a9a79a6abd80684b7ee7afdfdddaf14f", "#423 patterns-stale-fixes"),
+            ("a755d4e3bb9be245a44d754c65c8e774752e2097", "#407 cache-key-symlink"),
+            ("80af3c39f3f065f6991179dfff8af6f2231fa640", "#394 range-variant-facts"),
+            ("ad8ea57f7cbb0bfd099c9924f7b52639e172e04f", "#421 lazy-lock-guidance"),
+            ("072a4eddda646a28431a82cd728951f71a6eba33", "#382 opaque-struct-cases"),
+            ("f0903241325885e1704a7212524a8c8f1eeedc3e", "#408 copy-result-in-place"),
+            ("16bd35902a25b6b99d4d5d518b39a539e6f9f408", "#418 atomic-targets-design"),
+            ("1f29e1b1dfe8b0fe255d591be0809317126046d4", "#428 gate-budget-by-cpu"),
+            ("4826ee7a2604e394392ca44b6e2eb986327a90b1", "#426 release-language"),
+            ("5dd90db143b143881d92dbde266619681ba77a00", "#377 guard-fairness"),
+            ("60c8a3fc2089b05411e2a5b4da256eba0e5c859a", "#364 kill-cell"),
+            ("12169900dc0ff13cf20b854342716f7157ee7721", "#413 recursive-shared-env"),
+            ("7d9118ebaf88beac3ecdcd87d408dcd61db6cf3d", "#427 recursive-written-ensures"),
+            ("af7665be672d29912d878dd5da8c3932bb6f296c", "#431 enum-routed-ensures"),
+          ]
+          rows = {}
+          for path in glob.glob("tsv/*.tsv"):
+              with open(path) as f:
+                  for r in csv.DictReader(f, delimiter="\t"):
+                      rows.setdefault(r["commit"], {}).setdefault(int(r["round"]), {})[r["which"]] = (
+                          float(r["user"]) + float(r["sys"]), r["cpu"])
+          lines = ["## Checking pkg::vm: commit compiler against base d837678c6905",
+                   "Ratio is (user+sys) of the merge's compiler over the base's, 5 alternating rounds.", "",
+                   "| Commit | Pull request | Median ratio | Step from previous | Min | Max | CPU |", "|---|---|---:|---:|---:|---:|---|"]
+          previous = None
+          steps = []
+          for commit, title in order:
+              rounds = rows.get(commit)
+              if not rounds:
+                  lines.append(f"| {commit[:8]} | {title} | missing | | | |")
+                  continue
+              ratios = [r["commit"][0] / r["base"][0] for r in rounds.values() if "base" in r and "commit" in r]
+              median = statistics.median(ratios)
+              cpu = next(iter(rounds.values()))["base"][1]
+              step = "" if previous is None else f"{median - previous:+.3f}"
+              if previous is not None:
+                  steps.append((median - previous, title))
+              previous = median
+              lines.append(f"| {commit[:8]} | {title} | {median:.3f} | {step} | {min(ratios):.3f} | {max(ratios):.3f} | {cpu} |")
+          if steps:
+              lines += ["", "Largest steps: " + "; ".join(f"{n} {d:+.3f}" for d, n in sorted(steps, reverse=True)[:3])]
+          text = "\n".join(lines) + "\n"
+          print(text)
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
+              f.write(text)
+          PY
