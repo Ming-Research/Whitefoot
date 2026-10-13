@@ -658,23 +658,26 @@ impl<'unit> Checker<'_, 'unit> {
                 ));
             }
         }
-        if let Some(measure) = self.types.declarations.trailing_measure_member(&suffixes)? {
-            let base = &suffixes[..suffixes.len() - 1];
-            if let Some(SelectedPlaceType::Value(ty)) = self.types.place_prefix_selected_kind(
+        // [TYPE-10] a trailing measure spelling over a prefix of unmeasured
+        // type is an ordinary source field, judged with the other fields
+        // below.
+        let mut trailing_measure = self.types.declarations.trailing_measure_member(&suffixes)?;
+        let mut unmeasured_member = false;
+        if trailing_measure.is_some()
+            && let Some(SelectedPlaceType::Value(ty)) = self.types.place_prefix_selected_kind(
                 check_context,
                 place,
-                base,
+                &suffixes[..suffixes.len() - 1],
                 bindings,
                 owner.value_role(),
-            )? && ty.measured().is_none()
-            {
-                return self.types.declarations.invalid_affine_proof(
-                    owner,
-                    node,
-                    "an affine factor selects a field or an element of a place",
-                    "bind the integer value with a `let` and use that binding",
-                );
-            }
+            )?
+            && ty.measured().is_none()
+        {
+            trailing_measure = None;
+            unmeasured_member = true;
+        }
+        if let Some(measure) = trailing_measure {
+            let base = &suffixes[..suffixes.len() - 1];
             let (expression, declaration) = self.check_proof_measure_place(
                 context,
                 place,
@@ -706,7 +709,31 @@ impl<'unit> Checker<'_, 'unit> {
                 None,
             ));
         }
-        if dereferenced {
+        // [INV-1, ENT-6] a tracked field place: a binding, its `^` exactly
+        // when it is a reference, and field selections ending at an integer
+        // field. The flow carries one current image for that place, as it
+        // does for a measure, so the factor reads that image and evaluates
+        // nothing.
+        if let Some((declaration, expression)) =
+            self.tracked_field_factor(check_context, place, bindings, owner.value_role())?
+        {
+            if !allowed_values.contains(&declaration) {
+                return self.types.declarations.invalid_affine_proof(
+                    owner,
+                    node,
+                    "an affine relation reads a value outside its admitted entry state",
+                    "read a field of a value that exists before this proof point",
+                );
+            }
+            return Ok((
+                CheckedAffineExpression {
+                    node_path: self.types.declarations.tree.path(node)?.clone(),
+                    kind: CheckedAffineExpressionKind::Field(Box::new(expression)),
+                },
+                None,
+            ));
+        }
+        if dereferenced && !unmeasured_member {
             return self.types.declarations.invalid_affine_proof(
                 owner,
                 node,
@@ -949,10 +976,11 @@ enum AffineConversion<'expression> {
 fn checked_affine_expression(source: &CheckedAffineExpression) -> Option<AffineExpression> {
     let mut pending = vec![AffineConversion::Visit(source)];
     let mut values = Vec::new();
-    // [INV-1] the two factor shapes with no checker-visible term identity:
-    // a measure former's place, and a const generic at the symbolic
-    // instance. They share one descending index block so no two of them
-    // collide and neither collides with a binding's own ascending index.
+    // [INV-1] the factor shapes with no checker-visible term identity: a
+    // measure former's place or a tracked field place, compared by their
+    // checked read, and a const generic at the symbolic instance. They share
+    // one descending index block so no two of them collide and none collides
+    // with a binding's own ascending index.
     enum Opaque<'expression> {
         Measure(&'expression CheckedExpression),
         ConstGeneric(DeclarationId),
@@ -967,7 +995,8 @@ fn checked_affine_expression(source: &CheckedAffineExpression) -> Option<AffineE
                 CheckedAffineExpressionKind::Local { binding, ty: _ } => {
                     values.push(AffineExpression::Term(AffineTermId::from_index(binding.0)));
                 }
-                CheckedAffineExpressionKind::Measure(measure) => {
+                CheckedAffineExpressionKind::Measure(measure)
+                | CheckedAffineExpressionKind::Field(measure) => {
                     let index = opaques
                         .iter()
                         .position(|seen| {

@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 the owner's agent instructions own the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-13 A tracked integer field place has a current image, and a quotient's upper bound follows from its dividend and divisor
+
+Nodes: language/checks-and-proofs/automatic-facts
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the specification and design-tree changes of Whitefoot#406: every tracked integer field place has a current image, a quotient's upper bound follows from its dividend and divisor, and `ishl(1, s)` has its own name? (head commit f722d963a)". The revision merged here differs from f722d963a only by the removal of a temporary measurement workflow and the merge of main.
+
+Summary: One decision is added: every tracked integer field place, whether its root holds the value or is a reference, carries a current affine image that only a commit to the field replaces and every event invalidating its supporting facts removes, instead of limiting images to fields reached through reference parameters, which the owner widened on an earlier card. The same change states the quotient upper bound as dividend below (k+1) divisors with the divisor proved at least one, and treats a variable right shift as division by the named power `ishl(1, s)`, instead of product terms or a writer-supplied proof step.
+
 ## 2026-10-13 A fact some arms hold survives their join, and a joined value is free where its join was bypassed
 
 Nodes: compiler/range-judgment, language/checks-and-proofs/range-facts
