@@ -1,4 +1,4 @@
-# Kernel Specification v0.150
+# Kernel Specification v0.151
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -3792,7 +3792,7 @@ L0 negation is exact over mathematical integers: the negation of `a - b <= c` is
 [ENT-3.S4]
 - S4 (requires facts).
 At a concrete function-body entry, its complete instantiated [FN-8] goal G is established as `+G`.
-When and only when G's complete root is one comparison admitted by comparison-origin shape (a), whose operands after template and call substitution are each an admitted term, constant, or measure term, or a widening conversion of one [ENT-2], that exact relation R is also established.
+When and only when G's complete root is one integer comparison whose operands after template and call substitution are each an admitted term, constant, or measure term, one of these displaced by a constant through addition or subtraction, or a widening conversion of one of these [ENT-2], that exact relation R is also established.
 Beyond that projection, only the members of G's signed decomposition set and their projections are established; no other child of any goal is established.
 For G and each member of that same signed decomposition, in the existing member order, an integer ordering leaf with no L0 projection also establishes its [ENT-6] affine ordering normalization when that normalization is admitted. Its written `<`, `<=`, `>`, or `>=` and established truth sign determine the one inequality; negation reverses the order with the ordinary integer strictness adjustment. Equality, disequality, nonlinear products, and undecomposed Boolean children supply no additional image. The normalization uses the body-entry immutable scalar, measure and tracked field place images [ENT-6] and is appended as one ordinary automatic affine premise, with no loop assumption. A later replacement, measure kill or tracked field place kill cannot retarget those captured images. An ordering leaf that already has an L0 projection adds no affine premise by this family, so this rule does not duplicate ordinary L0 bounds to enlarge AUTO's premise combinations.
 S4 is the admitted-body axiom justified by every ordinary caller's static discharge; no callee-entry prologue or boundary check executes.
