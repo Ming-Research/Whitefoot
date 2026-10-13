@@ -135,6 +135,7 @@ int main(void) {
     reader->driver = &wf_driver_root;
     reader->root = reader->resume = &reader_frame;
     reader->group = group;
+    wf_context_roster_add(reader);
     atomic_store(&wf_context_live, 1u);
     wf_executor_init(1u, NULL);
     wf_executor_count = 2u;

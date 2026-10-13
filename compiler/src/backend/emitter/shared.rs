@@ -98,7 +98,7 @@ pub(super) fn record_prelude(function: &IrFunction) -> String {
             | IrOperation::WatchBegin { record }
             | IrOperation::WatchObject { record, .. }
             | IrOperation::WatchTable { record, .. }
-            | IrOperation::WatchPark { record } => *record,
+            | IrOperation::WatchPark { record, .. } => *record,
             IrOperation::KeySetNew { .. } => {
                 scratch.push(*result);
                 continue;
@@ -924,13 +924,14 @@ impl FunctionEmitter<'_, '_> {
             return Err(BackendFailure::InvalidIr);
         }
         let prefix = labels("park", result);
+        let site = self.wait_site_operand(result);
         self.names(&["wf__watch_park", "llvm.coro.save"]);
         writeln!(
             self.output,
             "  br label %{prefix}.try\n\
              {prefix}.try:\n  \
              %{prefix}.saved = call token @llvm.coro.save(ptr null)\n  \
-             %{prefix}.parked = call i32 @wf__watch_park(ptr {}, ptr {HANDLE})\n  \
+             %{prefix}.parked = call i32 @wf__watch_park(ptr {}, ptr {HANDLE}, ptr {site})\n  \
              %{prefix}.suspends = icmp ne i32 %{prefix}.parked, 0\n  \
              br i1 %{prefix}.suspends, label %{prefix}.suspend, label %{prefix}.done\n\
              {prefix}.suspend:",
@@ -1217,12 +1218,13 @@ impl FunctionEmitter<'_, '_> {
         test: Option<&IrWakeTest>,
     ) -> Result<(), BackendFailure> {
         let test = self.emit_wake_test(result, test)?;
+        let site = self.wait_site_operand(result);
         self.emit_shared_wait(
             result,
             object,
             "wf__shared_watch",
             "watch",
-            &format!(", {test}"),
+            &format!(", {test}, ptr {site}"),
         )
     }
 

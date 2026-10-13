@@ -25,6 +25,7 @@ pub(super) struct AtomicRegion {
     bindings: HashMap<BindingId, usize>,
     target_bindings: HashMap<BindingId, usize>,
     ledger: Rc<RefCell<AtomicLedger>>,
+    wait_site: String,
 }
 #[derive(Clone)]
 struct TargetRegion {
@@ -149,6 +150,13 @@ impl IrBuilder<'_> {
             bindings: HashMap::new(),
             target_bindings: HashMap::new(),
             ledger: ledger.clone(),
+            wait_site: self
+                .wait_report_sources
+                .get(site)
+                .cloned()
+                .unwrap_or_else(|| {
+                    "waits for the guard of an atomic statement (source unavailable)".to_owned()
+                }),
         };
         for (group_index, indexes) in grouped.into_values().enumerate() {
             ledger.borrow_mut().push_group(
@@ -779,6 +787,7 @@ impl IrBuilder<'_> {
                 IrOperation::SharedWatch {
                     object: target.object,
                     test,
+                    site: region.wait_site.clone(),
                 },
             )?;
         } else {
@@ -813,7 +822,13 @@ impl IrBuilder<'_> {
                 }
             }
             self.release_groups(region, true)?;
-            self.define(IrType::Unit, IrOperation::WatchPark { record })?;
+            self.define(
+                IrType::Unit,
+                IrOperation::WatchPark {
+                    record,
+                    site: region.wait_site.clone(),
+                },
+            )?;
         }
         self.terminate(IrTerminator::Jump {
             target: acquire,

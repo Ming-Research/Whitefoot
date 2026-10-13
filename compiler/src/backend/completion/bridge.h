@@ -374,8 +374,10 @@ void *wf__context_prepare(uint64_t bytes);
 void wf__context_launch(uint64_t *group, void *arguments, void *(*start)(void *arguments));
 /* Returns zero when every context the group's activation started has
  * finished, and otherwise records the running context as the group's waiter,
- * to resume `frame`, and returns nonzero, after which the frame suspends. */
-int wf__context_join_wait(uint64_t *group, void *frame);
+ * to resume `frame`, and returns nonzero, after which the frame suspends.
+ * `site` is a static string describing the wait after "context <id> ";
+ * it and any source positions it contains must outlive the program. */
+int wf__context_join_wait(uint64_t *group, void *frame, const char *site);
 
 /* Shared objects [SHARE-1]: a header the runtime keeps, then the object's
  * state at WF_SHARED_STATE_OFFSET, which the emitted code stores, reads and
@@ -425,7 +427,8 @@ uint32_t wf__claim_killed(void *cell);
 int wf__shared_acquire(void *object, uint32_t write, void *frame);
 void wf__shared_unlock(void *object, uint32_t write);
 void wf__shared_unlock_unwritten(void *object, uint32_t write);
-int wf__shared_watch(void *object, uint32_t write, void *frame, const void *test);
+int wf__shared_watch(void *object, uint32_t write, void *frame, const void *test,
+                     const char *site);
 /* The acquire of a statement that already holds a keyed table's entries,
  * which keeps its driver and never suspends: it returns once the running
  * context holds the object. */
@@ -569,7 +572,8 @@ void wf__table_hold_release(void *hold, uint64_t tag_offset, uint32_t tag_width,
 void wf__watch_begin(void *watch);
 void wf__watch_object(void *watch, void *object, const void *test);
 void wf__watch_table(void *watch, void *table);
-int wf__watch_park(void *watch, void *frame);
+/* `site` has the static lifetime and text contract of context_join_wait. */
+int wf__watch_park(void *watch, void *frame, const char *site);
 
 /* What keyed_table.c takes from this runtime for guards: the list of
  * watches registered on a table, which it keeps in the table, whose count

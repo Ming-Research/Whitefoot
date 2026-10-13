@@ -32,6 +32,7 @@ mod text_literals;
 mod type_invariants;
 mod type_regions;
 mod types;
+mod wait_report_sources;
 
 pub(crate) use receipts::ProofReceipts;
 pub(crate) use repairs::{header_invariant_scope_repair, postcondition_selector_repair};
@@ -1541,6 +1542,10 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             .types
             .declarations
             .lock_ledger_sources(&functions, &executable_functions);
+        let wait_report_sources = self
+            .types
+            .declarations
+            .wait_report_sources(&functions, &executable_functions);
 
         Ok(CheckedProgramData {
             nominals: self.types.nominals.clone(),
@@ -1585,6 +1590,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             permission,
             permission_ledger,
             lock_ledger_sources,
+            wait_report_sources,
         })
     }
 

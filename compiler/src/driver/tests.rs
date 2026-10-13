@@ -1152,6 +1152,83 @@ fn an_entry_build_is_reused_for_an_unchanged_composition() {
     ));
 }
 
+/// Moving host files preserves source judgments and receipts, but rebuilds
+/// emitted wait descriptions so a warm module cannot name the former path.
+#[test]
+fn moving_a_source_rebuilds_wait_descriptions_without_rechecking_its_proof() {
+    let directory = CacheDirectory::new("wait-site-relocation");
+    let cache = directory.open();
+    let graph = crate::form_module_graph(
+        SourceInput::new(
+            "modules.wfg",
+            b"pkg: [std::process];\n\nentry app = pkg::main;\n",
+        ),
+        CompilerLimits::default(),
+    )
+    .expect("the graph forms");
+    let records: [(&str, &[u8]); 2] = [
+        (
+            "module.wfm",
+            b"public fn main() -> status: std::process::ExitStatus pure waits doc \"Waits on its guard.\";\n",
+        ),
+        (
+            "main.wf",
+            b"fn main() -> status: std::process::ExitStatus pure waits {\n  let cell = shared_new::<u64>(value: 0_u64);\n  atomic value = &cell when value^ != 0_u64 {\n    set value^ = 2_u64;\n  }\n  return std::process::exit_status(code: 0_u8);\n}\n",
+        ),
+    ];
+    let build = |display_path, cached| {
+        let inputs = module_inputs(&graph, &records)
+            .into_iter()
+            .map(|input| {
+                if input.logical_path() == "main.wf" {
+                    SourceInput::from_host_path("main.wf", display_path, input.bytes())
+                        .in_module(input.module(), input.role())
+                } else {
+                    input
+                }
+            })
+            .collect::<Vec<_>>();
+        super::build_module_entry(
+            &graph,
+            &inputs,
+            super::ModuleEntry::Named("app"),
+            CompilerLimits::default(),
+            OverlapLowering::Off,
+            cached,
+        )
+        .expect("relocation does not change source acceptance")
+    };
+    let (original, reused) = build("old/main.wf", Some(&cache));
+    assert!(!reused, "the first module build is cold");
+    assert_eq!(original, build("old/main.wf", None).0);
+    let (warm, reused) = build("old/main.wf", Some(&cache));
+    assert!(reused, "the unchanged host path reuses the emitted module");
+    assert_eq!(warm, original);
+    let before = cache.receipt_counts();
+    let (relocated, reused) = build("new/main.wf", Some(&cache));
+    let after = cache.receipt_counts();
+    assert!(!reused, "the emitted module's source names changed");
+    assert!(after.0 > before.0, "relocation reuses proof receipts");
+    assert_eq!(after.1, before.1, "relocation records no new proof");
+    assert_eq!(relocated, build("new/main.wf", None).0);
+    let text = relocated.into_string();
+    let literal = |value: &str| {
+        value
+            .bytes()
+            .map(|byte| format!("\\{byte:02X}"))
+            .collect::<String>()
+    };
+    assert!(
+        text.contains(&literal(
+            "waits for the guard of the atomic statement at new/main.wf:3:3\0"
+        )),
+        "{text}"
+    );
+    assert!(!text.contains(&literal("old/main.wf")), "{text}");
+    let (_, reused) = build("new/main.wf", Some(&cache));
+    assert!(reused, "the relocated module then reuses its own entry");
+}
+
 /// [MOD-9] a module program's entry build reports the permission ledger of
 /// its whole composition, a line from a module other than the entry's
 /// included, and emits the module the same build without the ledger emits.

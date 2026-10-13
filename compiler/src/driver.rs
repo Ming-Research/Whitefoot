@@ -2380,6 +2380,15 @@ fn entry_module_material(
 ) -> Vec<u8> {
     let mut material =
         composition_material(ENTRY_MODULES, graph, selection, inputs, RecordOrder::Read);
+    // Runtime wait descriptions embed the names the writer is shown. Moving
+    // otherwise identical records must rebuild their emitted descriptions,
+    // while source verdicts and proof receipts remain path-independent.
+    for input in inputs.1 {
+        let mut fields = Fields::default();
+        fields.push(input.display_path().as_bytes());
+        material.extend_from_slice(&fields.into_bytes());
+        material.push(b'\n');
+    }
     material.extend_from_slice(
         format!(
             "overlap {overlap:?}\nfragments {}\npreserve-none {}\nno-capture {}\ncoro-end {}\n",

@@ -30,6 +30,7 @@ static void *start_frame(void *arguments) { return arguments; }
 
 void wf_driver_service_test_destroy(void *opaque) {
     service_frame *frame = opaque;
+    CHECK(wf_context_current == NULL || wf_context_current->roster == NULL);
     if (frame->kind == FRAME_LAUNCHER) {
         CHECK(pthread_equal(pthread_self(), launcher_thread));
         CHECK(atomic_load(&wf_monitor_exited));
@@ -94,7 +95,7 @@ void wf_driver_service_test_resume(void *opaque) {
             CHECK(wf__driver_index() == 1u);
             atomic_fetch_add(&ran_timer, 1u);
             frame->stage = 2u;
-            CHECK(wf__context_join_wait(frame->group, frame));
+            CHECK(wf__context_join_wait(frame->group, frame, "waits to join a native test context"));
         } else {
             CHECK(wf__driver_index() == 1u);
             CHECK(frame->group[0] == 0u);
@@ -110,7 +111,7 @@ void wf_driver_service_test_resume(void *opaque) {
         atomic_store(&computing, 1u);
         while (!atomic_load(&release_compute)) wf_prim_yield();
         CHECK(wf__driver_index() == 0u);
-        CHECK(wf__context_join_wait(frame->group, frame) == 1);
+        CHECK(wf__context_join_wait(frame->group, frame, "waits to join a native test context") == 1);
     } else if (frame->kind == FRAME_TIMER) {
         CHECK(wf__driver_index() == 1u);
         CHECK(wf_context_current == &wf_context_root);
@@ -125,7 +126,7 @@ void wf_driver_service_test_resume(void *opaque) {
         atomic_store(&release_compute, 1u);
         atomic_store(&wf_drivers_stopping, 1u);
     } else {
-        CHECK(wf__context_join_wait(frame->group, frame) == 1);
+        CHECK(wf__context_join_wait(frame->group, frame, "waits to join a native test context") == 1);
         wf_group_finish(frame->group);
         CHECK(atomic_load(&wf_context_current->wake_gate) == WF_WAKE_EARLY);
         CHECK(atomic_load(&wf_driver_self->run_count) == 0u);
@@ -138,6 +139,8 @@ int wf_driver_service_test_done(void *opaque) {
 }
 
 static void fixture_begin(void) {
+    CHECK(wf_contexts.head == NULL);
+    wf_contexts.next_identity = 0u;
     memset(&wf_driver_root, 0, sizeof(wf_driver_root));
     memset(&wf_context_root, 0, sizeof(wf_context_root));
     memset(&assistant, 0, sizeof(assistant));
@@ -170,9 +173,12 @@ static void fixture_begin(void) {
     wf_driver_service = &wf_driver_root;
     wf_context_current = NULL;
     wf_context_root.driver = &wf_driver_root;
+    wf_context_roster_add(&wf_context_root);
 }
 
 static void fixture_end(void) {
+    if (wf_context_root.roster != NULL) wf_context_roster_remove(&wf_context_root);
+    CHECK(wf_contexts.head == NULL);
     CHECK(atomic_load(&wf_drivers_moving) == 0u);
     atomic_store(&wf_driver_count, 1u);
     while (atomic_load(&wf_drivers_notifying)) wf_prim_yield();
@@ -185,6 +191,54 @@ static void fixture_end(void) {
     wf_context_current = NULL;
     atomic_store(&wf_driver_count, 0u);
     atomic_store(&wf_drivers[0], NULL);
+}
+
+static void wait_sites_and_roster(void) {
+    static const char join_site[] = "waits at test.wf:8:3 to join the context spawned at test.wf:5:5 (implicit join at the end of this block/loop iteration)";
+    static const char guard_site[] = "waits for the guard of the atomic statement at test.wf:3:5";
+    fixture_begin();
+    CHECK(wf_context_root.identity == 0u);
+    wf_context child = {0};
+    wf_context_roster_add(&child);
+    CHECK(child.identity == 1u && child.roster == &wf_contexts);
+    CHECK(wf_contexts.head == &child && child.roster_next == &wf_context_root);
+    wf_context_roster_remove(&child);
+    CHECK(child.roster == NULL && wf_contexts.head == &wf_context_root);
+    wf_context_roster_add(&child);
+    CHECK(child.identity == 2u);
+    wf_context_roster_remove(&child);
+
+    service_frame frame = {0};
+    uint64_t group[2] = {1u, 0u};
+    wf_context_current = &wf_context_root;
+    CHECK(wf__context_join_wait(group, &frame, join_site) == 1);
+    CHECK(atomic_load(&wf_context_root.wait_site) == join_site);
+    wf_context_commit_wake(&wf_context_root);
+    wf_group_finish(group);
+    CHECK(wf_run_take(&wf_driver_root) == &wf_context_root);
+    CHECK(atomic_load(&wf_context_root.wait_site) == join_site);
+    wf_context_parked_away = 0;
+    CHECK(wf__context_join_wait(group, &frame, guard_site) == 0);
+    CHECK(atomic_load(&wf_context_root.wait_site) == join_site);
+
+    wf_watch watch;
+    wf_watch_list unit = {0};
+    wf__watch_begin(&watch);
+    wf__watch_unit(&watch, &unit);
+    CHECK(wf__watch_park(&watch, &frame, guard_site) == 1);
+    CHECK(atomic_load(&wf_context_root.wait_site) == guard_site);
+    wf_context_commit_wake(&wf_context_root);
+    wf__watch_written(&unit);
+    CHECK(wf_run_take(&wf_driver_root) == &wf_context_root);
+    CHECK(atomic_load(&wf_context_root.wait_site) == guard_site);
+    wf_context_parked_away = 0;
+    wf__watch_begin(&watch);
+    wf__watch_unit(&watch, &unit);
+    wf__watch_written(&unit);
+    CHECK(wf__watch_park(&watch, &frame, join_site) == 0);
+    CHECK(atomic_load(&wf_context_root.wait_site) == guard_site);
+    CHECK(wf_run_take(&wf_driver_root) == NULL);
+    fixture_end();
 }
 
 typedef struct startup_park {
@@ -586,6 +640,7 @@ static void displaced_dispositions(void) {
         child->root = child->resume = &compute;
         child->driver = &wf_driver_root;
         child->group = group;
+        wf_context_roster_add(child);
         atomic_store(&wf_context_live, 1u);
         wf_context_root.root = wf_context_root.resume = &timer;
         wf_completion_record *record = park_record(&wf_context_root, WF_COMPLETION_ROUTE_TIMER, 1u);
@@ -629,6 +684,7 @@ static void displaced_dispositions(void) {
                 wf_completion_record_complete(child->record);
             }
             CHECK(wf_run_take(&wf_driver_root) == child);
+            wf_context_roster_remove(child);
             wf_pool_give(child, granted);
             atomic_store(&wf_context_live, 0u);
         }
@@ -726,6 +782,8 @@ int main(void) {
     wf_test_guard_start(30);
     wf_bridge_require();
     CHECK(!wf_bridge_ring_ready()); /* deterministic service-only fixture */
+    wf_test_guard_phase("wait-site stores, wake retention and live-context roster removal");
+    wait_sites_and_roster();
     wf_test_guard_phase("startup publication wakes an obsolete unbounded park");
     startup_publication();
     wf_test_guard_phase("ready-queue steals have separate attribution");

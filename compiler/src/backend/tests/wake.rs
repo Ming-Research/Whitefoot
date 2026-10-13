@@ -38,15 +38,30 @@ fn call_line<'body>(body: &'body str, entry: &str) -> &'body str {
     line
 }
 
+/// The watch's test precedes its static wait-site descriptor.
+fn watch_test<'body>(llvm: &str, watch: &'body str) -> &'body str {
+    let (arguments, site) = watch
+        .rsplit_once(", ptr ")
+        .unwrap_or_else(|| panic!("the watch passes its site last: {watch}"));
+    let site = site.trim_end_matches(')');
+    assert!(site.starts_with("@.wf_wait."), "{watch}");
+    assert!(
+        llvm.lines().any(|line| line.starts_with(&format!("{site} = "))
+            && line.contains("unnamed_addr constant [")),
+        "the descriptor is read-only module data: {llvm}"
+    );
+    arguments
+        .rsplit_once(", ptr ")
+        .unwrap_or_else(|| panic!("the watch passes its test before the site: {watch}"))
+        .1
+}
+
 #[test]
 fn a_kept_comparison_is_registered_as_its_bytes() {
     let llvm = compile(guarded("g^.stop == 3_u64", "set g^.turn = seen;").as_bytes());
     let main = emitted_function(&llvm, "main");
     let watch = call_line(main, "wf__shared_watch");
-    let Some((_, test)) = watch.rsplit_once(", ptr ") else {
-        panic!("the watch passes its test last: {watch}");
-    };
-    let test = test.trim_end_matches(')');
+    let test = watch_test(&llvm, watch);
     assert!(test.starts_with("%wf.wake.v"), "{watch}");
     assert!(
         main.contains(&format!("{test} = alloca [104 x i8], align 8")),
@@ -78,7 +93,7 @@ fn a_guard_with_no_kept_part_registers_no_test() {
     let llvm = compile(guarded("seen == 3_u64", "set g^.turn = seen;").as_bytes());
     let main = emitted_function(&llvm, "main");
     let watch = call_line(main, "wf__shared_watch");
-    assert!(watch.ends_with(", ptr null)"), "{watch}");
+    assert_eq!(watch_test(&llvm, watch), "null", "{watch}");
     assert!(!main.contains("%wf.wake.v"), "{main}");
 }
 

@@ -1,0 +1,29 @@
+fn produce(queue: Shared<Ring<u64, 8>>) -> result: unit pure waits {
+  for @put (index in 0_u64..9_u64) {
+    atomic items = &queue when items^.len < items^.cap {
+      place_back(window: items, value: index);
+    }
+  }
+  return unit;
+}
+
+fn consume(queue: Shared<Ring<u64, 8>>) -> result: unit pure waits {
+  for @get (index in 0_u64..9_u64) {
+    atomic items = &queue when items^.len > 0_u64 {
+      let received = take_front(window: items);
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let empty = ring_new::<u64, 8>();
+  let queue = shared_new::<Ring<u64, 8>>(value: move empty);
+  for @start (index in 0_u64..1_u64) {
+    let produced = shared_share::<Ring<u64, 8>>(shared: &queue);
+    let producer = spawn produce(queue: move produced);
+  }
+  let consumed = shared_share::<Ring<u64, 8>>(shared: &queue);
+  spawn consume(queue: move consumed);
+  return std::process::exit_status(code: 0_u8);
+}

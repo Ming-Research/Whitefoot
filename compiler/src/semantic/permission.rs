@@ -2337,7 +2337,7 @@ pub(super) fn visit_read_bindings(
 
 /// Whether an expression tree names `binding` anywhere, through
 /// [`named_binding`] at each node, both matches being exhaustive.
-fn expression_names(expression: &CheckedExpression, binding: BindingId) -> bool {
+pub(super) fn expression_names(expression: &CheckedExpression, binding: BindingId) -> bool {
     named_binding(expression) == Some(binding)
         || expression_children(expression)
             .into_iter()
@@ -2347,7 +2347,7 @@ fn expression_names(expression: &CheckedExpression, binding: BindingId) -> bool 
 /// Whether a statement that holds no block names `binding` in an expression
 /// or set target it holds; a statement that holds a block answers yes, since
 /// its caller walks it.
-fn leaf_names(statement: &CheckedStatement, binding: BindingId) -> bool {
+pub(super) fn leaf_names(statement: &CheckedStatement, binding: BindingId) -> bool {
     match statement {
         CheckedStatement::Let { value, .. }
         | CheckedStatement::DestructuringLet { value, .. }

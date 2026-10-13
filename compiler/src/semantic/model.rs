@@ -3505,6 +3505,9 @@ pub(crate) struct CheckedProgramData {
     /// Lowering uses these only to present its non-normative lock ledger;
     /// they retain no lock timing, permission or acceptance judgment.
     pub(crate) lock_ledger_sources: std::collections::HashMap<NodePath, String>,
+    /// Presentation-only descriptions of guard waits and planned context joins.
+    /// Source coordinates are resolved while the canonical tree is retained.
+    pub(crate) wait_report_sources: std::collections::HashMap<NodePath, String>,
 }
 
 impl CheckedProgramData {
