@@ -6,7 +6,9 @@ use crate::target::TargetLayout;
 use crate::{IrReleaseClass, IrShared, IrVariant, IrWindowShape};
 
 use super::union_enums::{is_memory_only, variant_field_gep};
-use super::{BackendFailure, IrNominalId, IrNominalKind, IrProgram, IrType};
+use super::{
+    BackendFailure, IrNominalId, IrNominalKind, IrProgram, IrType, heap_allocation_alignment, heap_call,
+};
 
 /// One release action per node type of the release graph [PROV-6].
 ///
