@@ -9,37 +9,27 @@
 //! stays in its registers and the callee saves what it overwrites.
 //!
 //! Each function a part calls gets one entry, emitted once per module after
-//! every function. The callee itself keeps the C convention, so its other
-//! callers and the callable ABI that linked C bodies share are unchanged.
-//! The entry calls the callee with a call-site `alwaysinline`, so where the
-//! host can see the callee's body the entry becomes a copy of it in the
-//! entry's convention, which the host inlines into a part where its cost
-//! allows and otherwise calls. A forwarding entry would be inlined into
-//! every part as a single call and leave the C-convention call it forwards
-//! to. The entry has local linkage, so one that a single part calls earns
-//! the host's last-call inlining bonus where an externally visible callee
-//! would not. In a fragment build the entry is defined in its callee's
-//! fragment, where that body is.
+//! every function: a small internal function of the entry convention marked
+//! `noinline`, whose body is one C-convention call of the callee with the
+//! same arguments and its result returned. The host cannot inline it into a
+//! part, so the part's call stays in the entry convention and the part keeps
+//! its state in its argument registers, while the entry saves what the C
+//! call overwrites. The entry holds no copy of the callee's body: a copy was
+//! inlined back into the parts, which restored the C-convention calls inside
+//! them. The callee itself keeps the C convention, so its other callers and
+//! the callable ABI that linked C bodies share are unchanged.
 //!
 //! The rule covers calls to functions this module defines whose result is a
 //! value or goes through the caller's destination:
 //!
-//! - A linked declaration's body is C the host sees only at link time, if at
-//!   all, so its entry would forward one call: inlined, it restores the C
-//!   call it wraps, and kept out of line it adds a call and blocks the
-//!   inlining a full-LTO link gives the runtime's C bodies.
+//! - A linked declaration is not covered: this module defines no body for
+//!   its entry to wrap, and the rule stays with the functions the module
+//!   defines.
 //! - A register-returned definition (compiler/result-registers) is an entry
 //!   over its internal destination-form body, which the host optimizes alone
-//!   before inlining it into that one caller. A call entry that forced the
-//!   body inline would merge it unoptimized, the form that decision rejects,
-//!   and one that called the body would give it a second caller and take
-//!   that inlining from the definition's other callers.
+//!   before inlining it into that one caller; its call keeps that inlining.
 //! - A waiting callee is entered by a frame transfer, not an ordinary call
 //!   [WAIT-1].
-//!
-//! A callee the host cannot inline at all, such as a directly recursive
-//! one, leaves its entry a single forwarding call, which the host inlines
-//! back into the part, so such a call keeps the C convention in effect.
 
 use super::dispatch::Part;
 use super::*;
@@ -101,10 +91,9 @@ impl FunctionEmitter<'_, '_> {
 }
 
 /// The call entry of the `callee`th function of `program`: an internal
-/// function of the entry convention with the callee's callable ABI, which
-/// calls the callee, inline where the host can, and returns its result,
-/// anchored to the callee's source symbol so a fragment build defines it
-/// beside that body.
+/// function of the entry convention with the callee's callable ABI, marked
+/// `noinline`, which calls the callee in the C convention and returns its
+/// result.
 pub(super) fn emit_call_entry(program: &IrProgram, callee: u32) -> Result<Module, BackendFailure> {
     let function = program
         .functions()
@@ -137,22 +126,22 @@ pub(super) fn emit_call_entry(program: &IrProgram, callee: u32) -> Result<Module
     let mut signature = Signature::new(entry_symbol(function.name()), result.clone(), parameters);
     signature.linkage = Linkage::Internal;
     signature.convention = ENTRY_CONVENTION;
+    signature.suffix.push_str(" noinline");
     signature.references = references;
     let arguments = ordinary_call_arguments(program, function, &public)?;
     let mut output = FunctionBody::default();
     output.open_block("entry".to_owned());
     output.symbol(symbol.clone());
     if public.result().uses_destination() {
-        write!(output, "  call void @{symbol}({arguments}) alwaysinline\n  ret void\n")?;
+        write!(output, "  call void @{symbol}({arguments})\n  ret void\n")?;
     } else {
         write!(
             output,
-            "  %wf.entry = call {result} @{symbol}({arguments}) alwaysinline\n  \
+            "  %wf.entry = call {result} @{symbol}({arguments})\n  \
              ret {result} %wf.entry\n"
         )?;
     }
-    let mut entity = signature.define(output, "")?;
-    entity.anchor = Some(symbol);
+    let entity = signature.define(output, "")?;
     let mut module = Module::default();
     module.define(entity);
     module.text("\n");

@@ -2992,14 +2992,15 @@ fn run_arms(module: &str) -> String {
 
 /// compiler/match-dispatch-lowering: an ordinary call made from a part goes
 /// to the callee's `preserve_most` entry, one per callee however many calls
-/// name it, which calls the callee inline where the host can; the callee
-/// keeps the C convention, a call outside the parts is unchanged, a call of
+/// name it, an out-of-line `noinline` function whose body is one
+/// C-convention call of the callee; the callee keeps the C convention, a call outside the parts is unchanged, a call of
 /// a register-returned callee keeps the C convention, and where the host
 /// lacks the entries' convention every call keeps the C convention.
 ///
 /// Deciding the rule for every call puts an entry in `main` and in `run`'s
 /// enclosing body; one entry per call site defines `wf__most_scale` twice;
-/// an entry that only forwards fails the `alwaysinline` check; covering
+/// an entry that is not `noinline`, or that carries `alwaysinline`, fails the
+/// attribute checks; covering
 /// register-returned callees gives `three` an entry; ignoring the probe's
 /// answer leaves entries in the fallback.
 #[test]
@@ -3047,17 +3048,20 @@ fn calls_from_parts_go_through_one_preserve_most_entry_per_callee() {
             "a register-returned callee is called directly: {module}"
         );
         let scale = definition(&module, "wf__most_scale");
+        let scale_header = scale.lines().next().unwrap_or_default();
         assert!(
             scale.contains("%wf.entry = call i64 @wf_scale(i64 %v")
-                && scale.contains(") alwaysinline\n"),
-            "the scalar entry calls the callee inline: {scale}"
+                && scale_header.contains(" noinline")
+                && !scale.contains("alwaysinline"),
+            "the scalar entry is a noinline call of the callee: {scale}"
         );
         let four = definition(&module, "wf__most_four");
         let header = four.lines().next().unwrap_or_default();
         assert!(
             header.contains("(ptr %wf.result, ")
+                && header.contains(" noinline")
                 && four.contains("call void @wf_four(ptr %wf.result, ")
-                && four.contains(") alwaysinline\n"),
+                && !four.contains("alwaysinline"),
             "the destination entry passes its destination on: {four}"
         );
         for outside in ["main", "run"] {
@@ -3100,12 +3104,11 @@ fn the_host_probe_selects_part_call_entries_and_the_program_runs() {
     assert!(output.status.success(), "{output:?}");
 }
 
-/// A fragment build defines each entry once, hidden, in the fragment of the
-/// callee whose body it inlines, and the split function's fragment declares
-/// it with its convention. Placing the entry by its callers alone defines
-/// it privately in `run`'s fragment, away from the body it inlines.
+/// A fragment build defines each entry once, wherever its callers' fragments
+/// place a local definition, as a `noinline` call of the callee in the C
+/// convention; the entry holds no copy of the callee's body.
 #[test]
-fn a_fragment_build_defines_each_part_call_entry_beside_its_callee() {
+fn a_fragment_build_defines_each_part_call_entry_once() {
     let inputs = [crate::SourceInput::new("part-calls.wf", PART_CALLS)];
     let (whole, _) = crate::compile_for_emission(
         &inputs,
@@ -3124,12 +3127,10 @@ fn a_fragment_build_defines_each_part_call_entry_beside_its_callee() {
         );
         return;
     }
-    for (entry, callee) in [
-        ("wf__most_scale", "\ndefine i64 @wf_scale("),
-        ("wf__most_four", "\ndefine void @wf_four("),
-    ] {
+    for (entry, original) in [("wf__most_scale", "wf_scale"), ("wf__most_four", "wf_four")] {
         let defines = |line: &str| {
-            line.starts_with("define hidden preserve_mostcc ")
+            line.starts_with("define ")
+                && line.contains(" preserve_mostcc ")
                 && line.contains(&format!(" @{entry}("))
         };
         let defining = fragments
@@ -3137,20 +3138,20 @@ fn a_fragment_build_defines_each_part_call_entry_beside_its_callee() {
             .filter(|fragment| fragment.lines().any(&defines))
             .collect::<Vec<_>>();
         assert_eq!(defining.len(), 1, "{entry}: {fragments:#?}");
+        let text = defining[0];
+        let header = text.lines().find(|line| defines(line)).unwrap_or_default();
+        assert!(header.contains(" noinline"), "{header}");
         assert!(
-            defining[0].contains(callee),
-            "{entry} is defined beside its callee: {}",
-            defining[0]
+            text.contains(&format!("call i64 @{original}("))
+                || text.contains(&format!("call void @{original}(")),
+            "{entry} calls its callee: {text}"
+        );
+        assert!(
+            !text.contains(&format!("define i64 @{original}("))
+                && !text.contains(&format!("define void @{original}(")),
+            "{entry} holds no copy of the callee: {text}"
         );
     }
-    let run = fragments
-        .iter()
-        .find(|fragment| fragment.contains("\ndefine i64 @wf_run("))
-        .expect("the split function has a fragment");
-    assert!(
-        run.contains("\ndeclare hidden preserve_mostcc i64 @wf__most_scale(i64) #0\n"),
-        "{run}"
-    );
 }
 
 /// Rounds of `mix`'s squaring chain: each adds a multiplication and an
@@ -3260,14 +3261,14 @@ fn main() -> status: std::process::ExitStatus pure {{
     )
 }
 
-/// A callee too large for the host to inline stays an out-of-line call in
-/// the entry's convention from both arms, the entry holds the callee's body
-/// rather than a call to it, and the record it returns through the
-/// caller's destination arrives intact.
+/// The entry of a callee stays an out-of-line function after the host
+/// optimizes: the arms call it in the entry's convention, it survives as a
+/// definition whose only call is a C-convention call of `wf_mix`, and the
+/// record it returns through the caller's destination arrives intact.
 ///
-/// An entry that only forwarded would be inlined into each arm, leaving a
-/// C-convention call of `wf_mix` there; one without `alwaysinline` would
-/// still call `wf_mix`; a destination lost or misplaced across the
+/// An entry holding a copy of the callee's body, or one the host may inline,
+/// is inlined into each arm and leaves no entry definition or no
+/// `preserve_mostcc` call there; a destination lost or misplaced across the
 /// convention changes `run`'s result and `main` exits 1.
 #[test]
 fn a_call_the_host_keeps_out_of_line_crosses_in_the_entry_convention() {
@@ -3290,14 +3291,19 @@ fn a_call_the_host_keeps_out_of_line_crosses_in_the_entry_convention() {
             optimized
                 .matches("call preserve_mostcc void @wf__most_mix(")
                 .count()
-                >= 2
-                && !optimized.contains("call void @wf_mix("),
-            "the large callee stays out of line, in the entry's convention: {optimized}"
+                >= 2,
+            "the arms keep calling the entry in its convention: {optimized}"
         );
         let entry = definition(&optimized, "wf__most_mix");
         assert!(
-            entry.starts_with("define internal preserve_mostcc ") && !entry.contains("@wf_mix("),
-            "the entry holds the callee's body in its own convention: {entry}"
+            entry.starts_with("define internal preserve_mostcc ")
+                && entry.contains("call void @wf_mix("),
+            "the entry survives and calls the callee in the C convention: {entry}"
+        );
+        assert_eq!(
+            optimized.matches("call void @wf_mix(").count(),
+            entry.matches("call void @wf_mix(").count(),
+            "the entry holds the only call of the callee: {optimized}"
         );
     }
     let output = compile_and_run(&module);
