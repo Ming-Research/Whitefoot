@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 the owner's agent instructions own the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-12 Cache keys carry no host path
+
+Nodes: compiler/incremental-compilation
+
+Owner-approved: On the shared status board on 2026-10-12, written in Chinese, the owner chose option A, "approve" (translated), on the card cache-key-logical-identity, "approve the design tree decision that cache keys contain no host path? (Whitefoot#383, head commit 1821dc02d42d)" (translated), whose background listed the new decision and the new Rejected item.
+
+Summary: No build-cache key contains the host path an invocation read a record from; a key identifies each record by its stable resolved module identity and logical path with the content its query reads, and a recorded rejection is reused only while the host paths its diagnostic prints are unchanged, because a graph reached through a relative path, an absolute path or a path with a `..` component is the same input whose acceptances and built modules should be reused, while its diagnostics must still name this invocation's paths. Keying every verdict on display paths, which rebuilt an unchanged graph whenever the spelling changed, is replaced; rewriting the paths inside a recorded rejection's text is rejected because a rendering quotes several paths in free text beside quoted source.
+
 ## 2026-10-12 A heap reading loads the pool counter without the pool lock
 
 Nodes: language/system-interface/memory-statistics
