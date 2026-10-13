@@ -6,6 +6,8 @@
 name: v2h-handler-code
 
 on:
+  push:
+    branches: [claude/v2h-handler-causes]
   workflow_dispatch:
 
 permissions:
