@@ -1,0 +1,40 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Level {
+  value: i64;
+}
+
+struct Frame {
+  label: u8;
+  level: Level;
+}
+
+fn make_frame(start: i64) -> made: Frame pure contract {
+  requires -1000_i64 <= start;
+  ensures -1000_i64 <= made.level.value;
+} {
+  doc "The construction placements carry start into the nested field the postcondition names.";
+  let level = Level(value: start);
+  let frame = Frame(label: 1_u8, level: level);
+  return frame;
+}
+
+fn lowered(start: i64, d: u8) -> result: i64 pure contract {
+  requires -1000_i64 <= start;
+} {
+  doc "The call result's postcondition bounds the nested field s.level.value, two field selections below a local root; its read takes that place's image, so the subtraction of a widened byte cannot overflow.";
+  let s = make_frame(start: start);
+  let w = cvt::<u8, i64>(d);
+  let r = s.level.value - w;
+  return r;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "Lowers 3 by 7 and checks the result outside the compiler.";
+  let r = lowered(start: 3_i64, d: 7_u8);
+  if r == -4_i64 {
+    return exit_status(code: 0_u8);
+  }
+  return exit_status(code: 1_u8);
+}

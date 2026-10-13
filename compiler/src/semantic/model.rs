@@ -152,6 +152,13 @@ pub(crate) enum CheckedAffineExpressionKind {
     /// automatic derivation already carries an atom for; the invariant
     /// evaluates nothing and reads no storage [INV-1].
     Measure(Box<CheckedExpression>),
+    /// [INV-1, ENT-6] one tracked field place written as an affine factor:
+    /// a binding, its `^` exactly when it is a `&T` reference, and one or
+    /// more field selections ending at an integer field. The inner expression is exactly the read
+    /// the ordinary place checker forms for that spelling, so the affine
+    /// domain reaches the same [ENT-2] term whose current image the flow
+    /// carries; the invariant evaluates nothing and reads no storage.
+    Field(Box<CheckedExpression>),
     Add(Box<CheckedAffineExpression>, Box<CheckedAffineExpression>),
     Subtract(Box<CheckedAffineExpression>, Box<CheckedAffineExpression>),
     MultiplyByConstant {

@@ -1,0 +1,15 @@
+struct Bounds {
+  cap: u32;
+}
+
+fn inspect(limits: &Bounds) -> result: u32 reads(limits.cap) {
+  doc "A local reference variable names the parameter's struct exactly, so view^.cap has the proof path of limits^.cap: a tracked field place, which INV-1 admits as a factor.";
+  let view = &limits^;
+  invariant bounded: 0_u32 <= view^.cap;
+  let capacity = view^.cap;
+  return capacity;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

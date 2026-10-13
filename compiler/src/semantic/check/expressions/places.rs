@@ -405,6 +405,101 @@ impl<'unit> Checker<'_, 'unit> {
         )
     }
 
+    /// [INV-1, ENT-6] the read one written affine factor denotes when it is a
+    /// tracked field place: its base names a live binding, followed by `^`
+    /// exactly when that binding is a `&T` reference and then by one or more
+    /// field selections, and its proof path is that root with field
+    /// selections alone, ending at an integer field. `None` for every other
+    /// place, which the caller judges by its own rows.
+    pub(in crate::semantic::check) fn tracked_field_factor(
+        &mut self,
+        check_context: &CheckContext<'_>,
+        node: NodeId,
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+        root_role: LexicalUseRole,
+    ) -> Result<Option<(DeclarationId, CheckedExpression)>, CheckStop> {
+        use crate::syntax::views::PlaceSuffix;
+        let suffixes = self
+            .types
+            .declarations
+            .tree
+            .children_with(node, Production::Psuffix)?;
+        let Some(&first) = suffixes.first() else {
+            return Ok(None);
+        };
+        let dereferenced = matches!(
+            self.types.declarations.tree.place_suffix(first)?,
+            PlaceSuffix::Dereference
+        );
+        let fields = if dereferenced {
+            &suffixes[1..]
+        } else {
+            suffixes.as_slice()
+        };
+        if fields.is_empty() {
+            return Ok(None);
+        }
+        for suffix in fields {
+            if !matches!(
+                self.types.declarations.tree.place_suffix(*suffix)?,
+                PlaceSuffix::Member(_)
+            ) {
+                return Ok(None);
+            }
+        }
+        let pbase = self
+            .types
+            .declarations
+            .tree
+            .first_child_with(node, Production::Pbase)?
+            .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
+        if !self.types.declarations.tree.children(pbase)?.is_empty() {
+            return Ok(None);
+        }
+        let usage = self
+            .types
+            .declarations
+            .use_at(check_context, pbase, root_role)?;
+        let ResolvedTarget::Source {
+            declaration,
+            class: DeclarationClass::Value,
+        } = usage.target()
+        else {
+            return Ok(None);
+        };
+        // The written `^` follows the root exactly when the root is a `&T`
+        // reference; any other spelling is no tracked field place, and the
+        // caller's own rows judge it.
+        let Some(root) = bindings.get(&declaration) else {
+            return Ok(None);
+        };
+        if !root.live || dereferenced != (root.mode == CheckedMode::Reference) {
+            return Ok(None);
+        }
+        let place = self.elaborate_place_prefix(
+            check_context,
+            node,
+            node,
+            &suffixes,
+            bindings,
+            root_role,
+        )?;
+        let identity = &place.resolved.identity;
+        if !matches!(place.ty, CheckedType::Integer(_))
+            || place.measure.is_some()
+            || place.range_referent
+            || !matches!(identity.root, PlaceRoot::Binding(_))
+            || identity.path.is_empty()
+            || !identity
+                .path
+                .iter()
+                .all(|step| matches!(step, PlaceStep::Field(_)))
+        {
+            return Ok(None);
+        }
+        Ok(Some((declaration, place.expression)))
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(super) fn elaborate_place_prefix(
         &mut self,
