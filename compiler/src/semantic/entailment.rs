@@ -232,9 +232,23 @@ pub(crate) struct EntailmentContext<'check> {
     /// the component's atomic publication boundary.
     pub(crate) verified_postconditions: &'check [Vec<&'check CheckedPostcondition>],
     pub(crate) verified_postcondition_proofs: &'check [Vec<&'check FunctionPostconditionProof>],
+    /// [FN-9, TYPE-11, DIAG-2] each concrete function's component and, while
+    /// that component is being verified, the type-invariant postconditions
+    /// it will publish, indexed by concrete [`FunctionId`]. A call to a
+    /// member of the caller's own component receives exactly these, as
+    /// induction hypotheses; empty outside the component schedule.
+    pub(crate) component_postconditions: &'check [ComponentPostconditions<'check>],
     /// Binding names in dense [`super::model::BindingId`] order, for the
     /// [ENT-6] canonical residual rendering.
     pub(crate) binding_names: &'check [String],
+}
+
+/// [DIAG-2] one function's component ordinal and the type-invariant
+/// postconditions [TYPE-11] its component is verifying, each with the
+/// summary identity the component's atomic publication gives it.
+pub(crate) struct ComponentPostconditions<'check> {
+    pub(crate) component: u32,
+    pub(crate) generated: Vec<(&'check CheckedPostcondition, VerifiedPostconditionSummary)>,
 }
 
 impl EntailmentContext<'_> {
@@ -286,6 +300,19 @@ impl EntailmentContext<'_> {
                 .then_some((postcondition, proof))
             })
             .collect()
+    }
+
+    /// [DIAG-2] the induction hypotheses a call from `caller` to `callee`
+    /// receives: the callee's type-invariant postconditions when the two
+    /// are members of one component being verified, and `None` otherwise.
+    pub(crate) fn component_postconditions(
+        &self,
+        caller: FunctionId,
+        callee: FunctionId,
+    ) -> Option<&ComponentPostconditions<'_>> {
+        let caller = self.component_postconditions.get(caller.0 as usize)?;
+        let callee = self.component_postconditions.get(callee.0 as usize)?;
+        (caller.component == callee.component).then_some(callee)
     }
 
     pub(crate) fn verified_postcondition(
@@ -1014,6 +1041,9 @@ pub(crate) struct FunctionPostconditionProof {
     /// function-local derivation IDs.
     pub(crate) summary: Option<VerifiedPostconditionSummary>,
     pub(crate) exits: Vec<PostconditionExit>,
+    /// [TYPE-11] whether the relation is a routed one a type invariant
+    /// generated, which holds vacuously where no exit selects it.
+    pub(crate) vacuous: bool,
     pub(crate) aggregate: PostconditionAggregate,
 }
 
