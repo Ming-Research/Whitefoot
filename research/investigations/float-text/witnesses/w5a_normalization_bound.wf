@@ -24,7 +24,6 @@ fn normalization_zeros(first: u64, shift: u32) -> result: u64 pure contract {
       return skipped;
     }
   }
-  return skipped;
 }
 
 fn main() -> status: ExitStatus pure {

@@ -28,9 +28,10 @@ jobs:
     timeout-minutes: 15
     env:
       WHITEFOOT_CHECK_TIMEOUT: 600
-      WHITEFOOT_TIME_BUDGET_RECORD: ${{ runner.temp }}/float-text-budget-overruns.txt
     steps:
       - uses: actions/checkout@v4
+      - name: Set the runner-local budget record
+        run: echo "WHITEFOOT_TIME_BUDGET_RECORD=$RUNNER_TEMP/float-text-budget-overruns.txt" >> "$GITHUB_ENV"
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Build whitefootc

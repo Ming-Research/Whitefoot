@@ -6,7 +6,7 @@ fn consume_shift(amount: i64) -> result: i64 pure contract {
   requires amount <= 1080_i64;
   ensures result == 0_i64;
 } {
-  doc "Expected refusal, not run: INV-1 on the next-header proof of remaining_ceiling. Subtracting min(remaining, 60) consumes at most eighteen chunks, but the published min rows bound its result above by each operand without expressing the lower relation needed here.";
+  doc "Observed INV-1 refusal at the next-header proof of remaining_floor. Subtracting min(remaining, 60) cannot make remaining negative, but the checker did not discharge this first header obligation; the cause remains unverified. The later remaining_ceiling obligation, which expresses exhaustion within eighteen chunks, has not yet been reached.";
   let remaining = amount;
   for (
     step in 0_u64..18_u64,

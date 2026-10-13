@@ -857,26 +857,24 @@ WITNESSES = [
     # W1b's gap apart from the table.
     ("w1c_high_word_bound", w1c, "reject"),
     ("w2a_left_shift", w2a, "open"),
-    # Language gap: no rule bounds ishr(total, shift) by total's bound in units
-    # of 2^shift, so the quotient digit's bound below ten is unprovable
-    # (DESIGN.md, E2 results).
+    # On 43c252e85 the full witness still fails at the quotient's narrowing
+    # conversion. Its header retains only the global remainder bound, not
+    # the relation to this call's divisor needed by ENT-3.S7. The isolated
+    # quotient-rule gap below is closed; this is not evidence it remains open.
     ("w2b_right_shift", w2b, "reject"),
-    # Candidate language gap: a field reached through a reference has no
-    # affine image, so the sum bound the requirement gives does not reach the
-    # count invariant over the stored field (DESIGN.md, E2 results).
-    ("w2c_front_shift", w2c, "reject"),
+    # ENT-6 tracked field images close the original E2 gap. Accepted on
+    # 43c252e85 after Whitefoot#406; DESIGN.md retains the historical result.
+    ("w2c_front_shift", w2c, "accept"),
     # W2c with that bound restated as an invariant.
     ("w2d_front_shift_restated", w2d, "accept"),
-    # W2b's gap apart from the decimal buffer.
-    ("w2e_quotient_bound", w2e, "reject"),
-    # W2c's candidate gap apart from the decimal buffer; refused earlier, at
-    # the overflow check of the copied count (DESIGN.md, E2 results).
-    ("w2f_field_bound", w2f, "reject"),
-    # Predicted: the type invariant bounds the copied count, so the refusal
-    # moves to FN-9 at the return, as in w2c.
-    ("w2g_field_bound_invariant", w2g, "reject"),
-    # Predicted: the postcondition is not the difference, so OP-2 stays.
-    ("w2h_field_sum", w2h, "reject"),
+    # ENT-3.S7/MSR-4 step 7 close W2b's isolated quotient gap. Accepted on
+    # 43c252e85 after Whitefoot#406; the full W2b has a separate refusal.
+    ("w2e_quotient_bound", w2e, "accept"),
+    # The reference-field witnesses are also accepted on 43c252e85 after
+    # Whitefoot#406, with and without a type invariant or extra parameter.
+    ("w2f_field_bound", w2f, "accept"),
+    ("w2g_field_bound_invariant", w2g, "accept"),
+    ("w2h_field_sum", w2h, "accept"),
     ("w3a_window_write", w3a, "open"),
     ("w3b_index_write", w3b, "open"),
     ("w4_scan", w4, "open"),

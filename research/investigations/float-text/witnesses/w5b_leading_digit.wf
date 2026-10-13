@@ -6,7 +6,7 @@ fn first_digit(value: u64) -> result: u8 pure contract {
   requires value <= 99_u64;
   ensures 1_u8 <= result;
 } {
-  doc "Expected refusal, not run: FN-9 at the final return cannot establish that the last digit emitted by repeated division of a positive integer is nonzero. Two slots suffice for the admitted integers. This is the normalization fact needed before exact decimal shifts.";
+  doc "The direct indexed return was rejected as FN-9 InvalidPostconditionReturn before its numeric proof. The read now supplies one named result datum, like the module's ordinary digit read. Whether FN-9 can establish that the last digit emitted by repeated division of a positive integer is nonzero remains unverified. Two slots suffice for the admitted integers. This is the normalization fact needed before exact decimal shifts.";
   let reversed = array_filled::<u8, 2>(value: 0_u8);
   let rest = value;
   let length = 1_u64;
@@ -23,7 +23,8 @@ fn first_digit(value: u64) -> result: u8 pure contract {
     }
   }
   let last = length - 1_u64;
-  return reversed[last];
+  let digit = reversed[last];
+  return digit;
 }
 
 fn main() -> status: ExitStatus pure {

@@ -16,5 +16,4 @@ fn binary_exponent(value: u64) -> result: u32 pure contract {
       return exponent;
     }
   }
-  return exponent;
 }

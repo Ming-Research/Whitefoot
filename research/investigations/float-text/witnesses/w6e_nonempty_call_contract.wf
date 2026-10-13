@@ -7,7 +7,7 @@ fn assign_nonzero(digits: &Digits) -> result: unit writes(digits.count) {
   return unit;
 }
 
-fn consume_nonempty(digits: &Digits) -> result: unit reads(digits.count) contract {
+fn consume_nonempty(digits: &Digits) -> result: unit pure contract {
   requires 1_u64 <= digits^.count;
 } {
   return unit;
