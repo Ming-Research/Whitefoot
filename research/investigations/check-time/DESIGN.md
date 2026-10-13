@@ -860,3 +860,99 @@ timing covers these three inputs on one machine. Meeting the criterion at
 640 arms needs a join that enumerates only the pairs default values cannot
 reconstruct (correlated zero bounds and disequalities are its open
 obligations).
+
+## Firn total checking comparison: prior criterion
+
+**Question, fixed before acquisition.** Does the experiment head reduce
+Firn's total checking time by at least 0.5 seconds relative to the pinned
+current main, with a reduction larger than the twin control's full observed
+range? This comparison also reports each compiler's difference from a
+historical compiler without the redundant-condition rejection rule. It does
+not attribute those differences to that rule: neither the pinned current
+main nor the experiment head contains it. The requested redundant-rule
+verdict is therefore **NOT COMPARABLE**, regardless of the timing result.
+
+**Historical evidence and its limits.** A search of the investigation
+`DESIGN.md` files, `research/experiments/`, and the redundant-condition
+branch's research history found no reproducible source for a 1.6-second
+increase. The nearest record is
+[the supplied attribution in the redundant-condition recovery argument](https://github.com/Ming-Research/Whitefoot/blob/82fdda25ecb15171568f8b7dd3f033c47f5ab6f7/research/investigations/redundant-tests/EXACT-RECOVERY.md#L14-L36):
+8.72 seconds on that branch versus 6.11 seconds on main, explicitly supplied
+evidence rather than a measurement made by that document. Its approximately
+130-test Firn dispatch chain accounts for 35% of origin-view cost, not 35%
+of total wall time or its increase. The inclusive phase sums overlap and
+cannot be added or subtracted to recover wall time. The record does not
+identify the measured branch revision or link the raw run artifacts.
+
+[The historical Firn workflow](https://github.com/Ming-Research/Whitefoot/blob/30169c91105990913b11f7c07dc4e49f63de6997/.github/workflows/op5-cost.yml#L1-L106)
+uses main compiler `58743a931a5ec6244864d37041fd1a7c1c5a145d` on main and
+migrated branch sources, then the branch compiler on those branch sources.
+It runs each cell once without counters and once with work counters. It
+uses the gate Cargo profile, `CARGO_INCREMENTAL=0`, and a hosted
+`ubuntu-24.04` runner, without a Firn warmup, repeated timing rounds, twin
+control or CPU affinity. Its command checks the full Firn entry, not a
+single command module. The comparison below preserves that CLI/profile
+scope, but changes the machine, CPU affinity, repetitions and revisions;
+it is not an exact reproduction of the historical experiment.
+
+**Inputs.** Compiler identities and source identities are separate:
+
+| Variant | Compiler | Firn graph and application sources |
+|---|---|---|
+| A | Historical main `58743a931a5ec6244864d37041fd1a7c1c5a145d`, without the redundant-condition rejection rule | B's source tree |
+| B | Pinned main `ad8ea57f7cbb0bfd099c9924f7b52639e172e04f` | Its own source tree |
+| C | The workflow's resolved full head commit | Its own source tree |
+| T | A byte-for-byte copy of B's compiler executable | B's source tree |
+
+Each unmodified compiler embeds its own standard library through
+`compiler/src/library.rs`; `compiler/src/driver/packages.rs` loads that
+embedded graph. There is no standard-library root override in this
+comparison. Record each compiler revision's `lib/std` tree hash. A and B
+therefore share Firn application sources but not necessarily standard-library
+bytes, which further limits attribution of `B - A` to compiler checking.
+A's ability to accept B's application graph is unverified. An
+unsupported interface or any other rejection invalidates the entire
+acquisition; do not repair its source, substitute an earlier library or
+report the shorter failing check as a timing result. B and C use their own
+sources, so any differences in checked inputs must be retained with the
+result, and the comparison remains one of total checking work rather than
+a same-source attribution to one compiler mechanism.
+
+**Acquisition.** Run only through the `14900k` CI runner, one compiler
+process at a time, pinned to logical CPU 2. Build A, B and C with the gate
+Cargo profile and `CARGO_INCREMENTAL=0`, each in a fresh target directory;
+build times are outside the check measurements. Record the exact compiler
+and source revisions and verify T's executable bytes against B. For each
+cell, select the graph from the source tree named above and time:
+
+```sh
+taskset -c 2 "$compiler" --check --graph "$source/apps/firn/modules.wfg" --entry firn
+```
+
+Run through the CI heavy-command wrapper. Use no compiler cache and no work
+counters. First acquire one sample per variant and inspect the durations
+before continuing at scale. Then perform one excluded warmup per variant
+and seven measured rounds, rotating the A/B/C/T order between rounds.
+Retain each command's exit status and elapsed seconds separately from the
+wrapper's timing. Any failed command, missing observation or incomplete
+seven-round panel invalidates the acquisition and produces no numeric
+acceptance result. A runner interruption is not a source-language verdict.
+
+**Calculation and falsifier.** Let A, B, C and T denote the medians of their
+seven measured elapsed times in seconds. Report the measured medians, each
+variant's minimum and maximum, the current-main extra `B - A`, and the
+head extra `C - A`. The reduction is
+`(B - A) - (C - A) = B - C`; A cancels and cannot establish the cause of
+that reduction. The numeric criterion passes only if `B - C >= 0.5`
+seconds and `B - C > max(T samples) - min(T samples)` seconds. Otherwise
+it fails. The twin spread is an absolute range in seconds, not a percentage
+or confidence interval. Passing this criterion would show the specified
+total-checking reduction on this input and machine; it would establish
+neither the earlier 1.6-second claim nor the cost of the absent rule.
+
+**Lifecycle and current evidence.** This is a temporary, manually dispatched
+experiment on a work branch, with no PR or main-line merge and no gate
+dependency. Its workflow and helper belong under `.github/`, are called by
+this experiment, and are removed with the experiment. There are no results
+yet: CI has not run for this comparison. No build, check, test or timing has
+run on the workstation.
