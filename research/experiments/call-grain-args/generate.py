@@ -39,8 +39,10 @@ def source(steps):
   let count = words^.len;
   let total = salt;
   for (i in 0_u64..count) {{
-    let value = ixor(words^[i], i);
-    let rounds = 4_u64 +wrap iand(value, 7_u64);
+    let word = words^[i];
+    let value = ixor(word, i);
+    let low = iand(value, 7_u64);
+    let rounds = 4_u64 +wrap low;
     let r = 0_u64;
     loop @spin {{
       if r == rounds {{
@@ -62,7 +64,8 @@ fn workload(repetitions: u64, extent: u64, seed: u64) -> result: u64 pure {{
   }}
   invariant bounded: extent <= {LIMIT}_u64;
   let left = box_array_filled::<u64>(count: extent, value: seed);
-  let right = box_array_filled::<u64>(count: extent, value: seed +wrap 1_u64);
+  let seed_right = seed +wrap 1_u64;
+  let right = box_array_filled::<u64>(count: extent, value: seed_right);
   let i = 0_u64;
   let total = seed;
   loop @repeat {{
@@ -71,9 +74,13 @@ fn workload(repetitions: u64, extent: u64, seed: u64) -> result: u64 pure {{
     }}
     let n = left.inner.len;
     let m = right.inner.len;
-    let a = mix_words(words: &left.inner[0_u64..n], salt: i);
-    let b = mix_words(words: &right.inner[0_u64..m], salt: i +wrap seed);
-    set total = total +wrap ixor(a, b);
+    let window_left = &left.inner[0_u64..n];
+    let window_right = &right.inner[0_u64..m];
+    let salt_right = i +wrap seed;
+    let a = mix_words(words: window_left, salt: i);
+    let b = mix_words(words: window_right, salt: salt_right);
+    let both = ixor(a, b);
+    set total = total +wrap both;
     set i = i +wrap 1_u64;
   }}
   return total;

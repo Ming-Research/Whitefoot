@@ -33,7 +33,13 @@ OMITTED = re.compile(r"omitted offer of \S*mix_words \(static work (\d+) below")
 
 
 def sh(command, **kwargs):
-    return subprocess.run([str(c) for c in command], check=True, text=True, **kwargs)
+    capture = kwargs.get("capture_output")
+    done = subprocess.run([str(c) for c in command], text=True, **kwargs)
+    if done.returncode:
+        if capture:
+            sys.stderr.write(f"command failed ({done.returncode}): {' '.join(map(str, command))}\n{done.stdout or ''}{done.stderr or ''}")
+        raise subprocess.CalledProcessError(done.returncode, command, done.stdout, done.stderr)
+    return done
 
 
 def sha256(path):

@@ -9,6 +9,7 @@ carry controls that must fail the comparison they could vacuously pass.
 import difflib
 import re
 import subprocess
+import sys
 
 CLONE = "wf__par_seq_"
 SKIP = re.compile(r"^wf_(bench_|fixture_|release_)")
@@ -92,7 +93,11 @@ def same_bytes(a, b):
 def compile_llvm(wfc, source, flags, output, ledger=False):
     """Compile to LLVM text; returns the ledger text (empty when not asked)."""
     command = [wfc, *flags, *(["--par-ledger"] if ledger else []), "--emit-llvm", str(source), "-o", str(output)]
-    return subprocess.run(command, check=True, capture_output=True, text=True).stdout
+    done = subprocess.run(command, capture_output=True, text=True)
+    if done.returncode:
+        sys.stderr.write(f"command failed ({done.returncode}): {' '.join(map(str, command))}\n{done.stdout}{done.stderr}")
+        raise subprocess.CalledProcessError(done.returncode, command)
+    return done.stdout
 
 
 def llvm_checks(base_wfc, cand_wfc, kernels, fixtures, scratch):
