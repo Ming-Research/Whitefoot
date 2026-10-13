@@ -185,9 +185,22 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             let destination = self.value_place(result)?;
             rendered.push(format!("ptr {destination}"));
         }
-        for (argument, parameter) in arguments.iter().zip(abi.parameters()) {
+        // A call inside this function's recursive group names the callee's
+        // internal form and passes this activation's own environment record
+        // in place of the arguments it holds (compiler/recursive-environment).
+        let internal = self.internal_call(function, &self.callee_symbol(function, target.name()));
+        if internal.is_some() {
+            rendered.push(format!("ptr {}", call_entries::ENVIRONMENT));
+        }
+        for (index, (argument, parameter)) in arguments.iter().zip(abi.parameters()).enumerate() {
             if self.value_type(*argument) != Some(parameter.ty()) {
                 return Err(BackendFailure::InvalidIr);
+            }
+            if internal
+                .as_ref()
+                .is_some_and(|internal| internal.packed.get(index) == Some(&true))
+            {
+                continue;
             }
             if parameter.is_indirect() {
                 let address = self.value_place(*argument)?;
@@ -204,12 +217,16 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         if let Some(budget) = budget {
             rendered.push(format!("i64 {budget}"));
         }
+        let (callee, convention) = match &internal {
+            Some(internal) => (internal.symbol.clone(), internal.convention),
+            None => (callee, ""),
+        };
         if stored_result {
             return {
                 self.output.symbol(callee.to_string());
                 writeln!(
                     self.output,
-                    "  call void @{callee}({})",
+                    "  call {convention}void @{callee}({})",
                     rendered.join(", ")
                 )
             }
@@ -221,7 +238,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 self.output.symbol(callee.to_string());
                 writeln!(
                     self.output,
-                    "  {} = call {} @{callee}({})",
+                    "  {} = call {convention}{} @{callee}({})",
                     self.value_name(result),
                     emitted_type_1,
                     rendered.join(", ")

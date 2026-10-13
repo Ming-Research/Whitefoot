@@ -9,6 +9,7 @@
 mod array;
 mod boxes;
 mod buffer;
+mod call_entries;
 mod cleanup;
 mod constants;
 mod contexts;
@@ -283,6 +284,9 @@ fn emit_module(
         HashSet::new()
     };
     let frontiers = RecursiveFrontiers::new(program, &frontier_clones);
+    // The recursive groups whose members pass one shared environment record
+    // among themselves (compiler/recursive-environment).
+    let environments = call_entries::EnvironmentPlan::new(program, target, &frontiers)?;
     let mut functions = Module::default();
     let mut linked_declarations = std::collections::HashMap::new();
     for (ordinal, function) in program.functions().iter().enumerate() {
@@ -312,6 +316,7 @@ fn emit_module(
                 grain: None,
                 window_address_facts,
                 dispatch_layout,
+                environments: &environments,
             },
         )?;
         let emitted = emitter.emit()?;
@@ -352,6 +357,7 @@ fn emit_module(
                     grain: Some(grain),
                     window_address_facts,
                     dispatch_layout,
+                    environments: &environments,
                 },
             )?
             .emit()?,
@@ -388,6 +394,7 @@ fn emit_module(
                         grain: None,
                         window_address_facts,
                         dispatch_layout,
+                        environments: &environments,
                     },
                 )?
                 .emit()?,
@@ -1556,6 +1563,13 @@ struct FunctionEmitter<'program, 'state> {
     dispatch_ledger: Vec<String>,
     /// Composition-wide word ownership and constructor addresses.
     dispatch_layout: &'state handler_words::DispatchLayoutPlan,
+    /// The module's recursive groups that share an environment record
+    /// (compiler/recursive-environment).
+    environments: &'state call_entries::EnvironmentPlan,
+    /// This function's place in one of them, when it is emitted in the
+    /// ordinary world: its body is then the internal form that receives the
+    /// record, and its public symbol the entry that builds it.
+    environment: Option<call_entries::Member>,
 }
 
 /// What one function's emission shares with the rest of its module, and the
@@ -1579,6 +1593,8 @@ struct ModuleState<'state> {
     grain: Option<Grain>,
     window_address_facts: WindowAddressFacts,
     dispatch_layout: &'state handler_words::DispatchLayoutPlan,
+    /// The module's recursive groups that share an environment record.
+    environments: &'state call_entries::EnvironmentPlan,
 }
 
 impl<'program, 'state> FunctionEmitter<'program, 'state> {
@@ -1598,7 +1614,21 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             grain,
             window_address_facts,
             dispatch_layout,
+            environments,
         } = module;
+        // Only the ordinary world passes a group's record: a clone or a
+        // budget variant keeps the public form of every call it makes.
+        let environment = if sequential_clones.is_none() && grain.is_none() {
+            program
+                .functions()
+                .iter()
+                .position(|candidate| std::ptr::eq(candidate, function))
+                .and_then(|ordinal| u32::try_from(ordinal).ok())
+                .and_then(|ordinal| environments.member(ordinal))
+                .cloned()
+        } else {
+            None
+        };
         let mut overlaps = Vec::new();
         let mut ordinary_lane_frames = HashMap::new();
         if sequential_clones.is_none() {
@@ -1675,6 +1705,8 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             slot_uses: std::cell::RefCell::new(HashSet::new()),
             dispatch_ledger: Vec::new(),
             dispatch_layout,
+            environments,
+            environment,
         })
     }
 
@@ -1927,10 +1959,21 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             (None, Some(_)) => recursion_budget_symbol(self.function.name()),
             (None, None) => source_symbol(self.function.name()),
         };
-        let body_symbol = if entry {
-            result_body_symbol(&symbol)
+        // A member of a recursive group defines its body under its internal
+        // environment form; its public symbol becomes the entry that builds
+        // the record (compiler/recursive-environment).
+        let defined = if self.environment.is_some() && !waiting && !declaration {
+            call_entries::internal_entry_symbol(
+                call_entries::EntryForm::Environment,
+                self.function.name(),
+            )
         } else {
             symbol.clone()
+        };
+        let body_symbol = if entry {
+            result_body_symbol(&defined)
+        } else {
+            defined
         };
         Ok((symbol, body_symbol, public, abi, entry))
     }
@@ -1940,7 +1983,11 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let reachable = self.reachable_blocks()?;
         let waiting = self.function.waits();
         let (symbol, body_symbol, public, abi, entry) = self.body_abi()?;
-        let (mut parameters, mut references) = self.signature_parameters(&abi)?;
+        let (mut parameters, mut references) = if self.environment.is_some() {
+            self.internal_parameters(&abi)?
+        } else {
+            self.signature_parameters(&abi)?
+        };
         let result = if abi.result().uses_destination() {
             "void".to_owned()
         } else {
@@ -2001,7 +2048,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             Signature::new(body_symbol.clone(), result, parameters)
         };
         signature.references = references;
-        if entry {
+        if entry || self.environment.is_some() {
             signature.linkage = Linkage::Internal;
         }
         if declaration {
@@ -2011,6 +2058,11 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             module.text("\n");
             return Ok(module);
         }
+        // A group member's slot parameters arrive in the record and are
+        // loaded first, under the names the parameters would have had, so
+        // they dominate everything the frame and the reassembly below emit.
+        let loads = self.environment_loads()?;
+        self.entry_prelude.insert_str(0, &loads);
         // A range reference arrives as its element pointer and count; the
         // body reads its ordinary `{ ptr, i64 }` pair, reassembled once in
         // the entry block beside the frame's slots, where it dominates every
@@ -2099,7 +2151,20 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             self.emit_frame_exit()?;
         }
         let public_entry = if entry {
-            Some(self.public_entry(&symbol, &body_symbol, &public, &abi)?)
+            let returning = if self.environment.is_some() {
+                call_entries::internal_entry_symbol(
+                    call_entries::EntryForm::Environment,
+                    self.function.name(),
+                )
+            } else {
+                symbol.clone()
+            };
+            Some(self.public_entry(&returning, &body_symbol, &public, &abi)?)
+        } else {
+            None
+        };
+        let environment_entry = if self.environment.is_some() {
+            Some(self.environment_entry(&symbol, &public)?)
         } else {
             None
         };
@@ -2110,6 +2175,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         }
         if let Some(public_entry) = public_entry {
             module.append(public_entry);
+        }
+        if let Some(environment_entry) = environment_entry {
+            module.append(environment_entry);
         }
         for line in std::mem::take(&mut self.dispatch_ledger) {
             module.text(format!("{DISPATCH_LEDGER_PREFIX}{line}\n"));
@@ -2194,6 +2262,10 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
     /// in its destination form before it inlines the body here. An
     /// always-inline body would be merged before that simplification and
     /// would lose the loop shapes the destination form gives it.
+    ///
+    /// A member of a recursive group gets this entry in its internal
+    /// environment form, named `symbol`, which its group's calls and its
+    /// public entry name (compiler/recursive-environment).
     fn public_entry(
         &self,
         symbol: &str,
@@ -2202,20 +2274,31 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         body: &FunctionAbi,
     ) -> Result<Module, BackendFailure> {
         let ty = public.result().ty();
-        let (mut parameters, mut references) = self.signature_parameters(body)?;
+        let (mut parameters, mut references) = if self.environment.is_some() {
+            self.internal_parameters(body)?
+        } else {
+            self.signature_parameters(body)?
+        };
         let result = llvm_type_with_references(self.program, ty, &mut references.types)?;
         let frame = FunctionFramePlan::returned_value(self.target, self.program, ty)?.render(
             self.target,
             self.program,
             &mut references,
         )?;
-        let mut arguments = ordinary_call_arguments(self.program, self.function, body)?;
+        let mut arguments = if self.environment.is_some() {
+            self.internal_call_arguments(body)?
+        } else {
+            ordinary_call_arguments(self.program, self.function, body)?
+        };
         if self.grain.is_some() {
             parameters.push(Parameter::named("i64", "%wf.budget"));
             arguments.push_str(", i64 %wf.budget");
         }
         let mut signature = Signature::new(symbol, result.clone(), parameters);
         signature.references = references;
+        if self.environment.is_some() {
+            signature.linkage = Linkage::Internal;
+        }
         let mut output = FunctionBody::default();
         output.open_block("entry".to_owned());
         output.symbol(body_symbol);

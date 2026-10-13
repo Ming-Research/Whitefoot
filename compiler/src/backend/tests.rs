@@ -72,6 +72,7 @@ mod reinterpret;
 mod requires;
 mod resource_enums;
 mod result_abi;
+mod shared_environment;
 mod shared_maps;
 mod stack_ledger;
 mod storage_alias;
@@ -804,14 +805,20 @@ fn emitted_function<'module>(module: &'module str, name: &str) -> &'module str {
 /// The definition that carries one source function's emitted body: the
 /// function's own definition, or, for a result returned in registers, the
 /// internal destination-form body its public entry calls
-/// (compiler/src/backend/abi.rs).
+/// (compiler/src/backend/abi.rs), in the internal environment form of a
+/// recursive group's member where it has one
+/// (compiler/recursive-environment).
 fn emitted_body<'module>(module: &'module str, name: &str) -> &'module str {
-    let body = format!("{name}.body");
-    if module.contains(&format!(" @wf_{body}(")) {
-        emitted_function(module, &body)
-    } else {
-        emitted_function(module, name)
+    for candidate in [
+        format!("_env_{name}.body"),
+        format!("_env_{name}"),
+        format!("{name}.body"),
+    ] {
+        if module.contains(&format!(" @wf_{candidate}(")) {
+            return emitted_function(module, &candidate);
+        }
     }
+    emitted_function(module, name)
 }
 
 /// The first-class aggregate type one emitted definition returns in

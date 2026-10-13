@@ -172,6 +172,21 @@ impl TargetLayout {
         self.stack_probe
     }
 
+    /// How many integer-class argument words the selected target's C calling
+    /// convention passes in registers: six on x86-64 System V, four on
+    /// x86-64 Windows and eight on AArch64; a call that passes more puts the
+    /// rest on the stack. Only a lowering's profitability choice reads it
+    /// (compiler/recursive-environment); no calling interface depends on it.
+    pub(super) fn integer_argument_registers(self) -> u64 {
+        if self.triple.starts_with("aarch64") {
+            8
+        } else if self.triple.contains("windows") {
+            4
+        } else {
+            6
+        }
+    }
+
     pub(super) const fn address_index_max(self) -> u64 {
         self.address_index_max
     }
