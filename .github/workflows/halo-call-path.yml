@@ -404,6 +404,12 @@ jobs:
     env:
       B_COMMIT: 98aa600b1
       FIB_N: "32"
+      # V0-V3 of the first probe, then the cold-callee study's E1 subsets.
+      VARIANTS: "V0 V1 V2 V3 V2s V2e V2i"
+      # E1's harm check: the two kernels the study names, at a reduced N so
+      # callgrind finishes (the criterion compares two counts of one kernel at
+      # one N). E3's training adds the other four of the six non-fib kernels.
+      HARM_KERNELS: "concat string-key"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -491,7 +497,7 @@ jobs:
         run: |
           set -euo pipefail
           out="$RUNNER_TEMP/halo-probe"
-          for v in V0 V1 V2 V3; do
+          for v in $VARIANTS; do
             ll="$out/variants/$(echo "$v" | tr 'V' 'v').ll"
             SECONDS=0
             /usr/bin/clang -O2 -falign-functions=64 -Wno-override-module -Xclang -disable-llvm-passes \
@@ -514,13 +520,13 @@ jobs:
           print(a)")
           "$out/halo-Bplain" < "$out/fib.lua" > "$out/fib.Bplain.out"
           test "$(cat "$out/fib.Bplain.out")" = "$expected"
-          for v in V0 V1 V2 V3; do
+          for v in $VARIANTS; do
             "$out/halo-$v" < "$out/fib.lua" > "$out/fib.$v.out"
             cmp "$out/fib.Bplain.out" "$out/fib.$v.out"
             echo "$v prints $(cat "$out/fib.$v.out"), as B does (expected $expected)"
           done
 
-      # The five counts run at once; each is one process.
+      # The counts run at once; each is one process.
       - name: Count instructions with callgrind and join to the disassembly
         run: |
           set -euo pipefail
@@ -530,7 +536,7 @@ jobs:
           print(2 * a - 1)")
           echo "fib($FIB_N) makes $calls Lua calls of fib" | tee -a "$out/manifest.txt"
           pids=()
-          for v in Bplain V0 V1 V2 V3; do
+          for v in Bplain $VARIANTS; do
             valgrind --tool=callgrind --dump-instr=yes --collect-jumps=yes --dump-line=no \
               --compress-strings=no --compress-pos=no \
               --callgrind-out-file="$out/callgrind/$v.out" "$out/halo-$v" < "$out/fib.lua" \
@@ -538,16 +544,142 @@ jobs:
             pids+=($!)
           done
           for pid in "${pids[@]}"; do wait "$pid"; done
-          for v in Bplain V0 V1 V2 V3; do
+          for v in Bplain $VARIANTS; do
             python3 -I research/investigations/halo-call-path/probe/measure.py run \
               "$v" "$out/halo-$v" "$out/callgrind/$v.out" "$calls" "$out/callgrind"
           done
+
+      # The six kernels other than fib, and the two harm-check kernels, with N
+      # reduced so that callgrind (about 50 times slower than native) and the
+      # instrumented training runs stay short. fib is the measured N=32 above.
+      - name: Write the reduced kernels
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/halo-probe"
+          mkdir -p "$out/kernels"
+          for pair in binary-trees:12 concat:200000 integer-table:1000000 loop:5000000 sort:100000 string-key:200000; do
+            k=${pair%%:*}; n=${pair#*:}
+            sed "s/^local N = [0-9]*\$/local N = $n/" "$RUNNER_TEMP/halo-b/research/experiments/halo-bench/kernels/$k.lua" > "$out/kernels/$k.lua"
+            grep -q "^local N = $n\$" "$out/kernels/$k.lua"
+          done
+          ls -l "$out/kernels"
+
+      # E1's harm check (DESIGN.md, E1): concat and string-key under V0 and V2,
+      # as total instructions per run. Every variant binary is the whole Halo
+      # host, so the same binaries run any kernel; nothing is rebuilt. The
+      # total is callgrind's "Collected" line (every executed instruction of
+      # the process, as the table's program total is for fib). The subsets V2s,
+      # V2e and V2i are counted too, for attribution. Outputs must match B's.
+      - name: Count the harm-check kernels under every variant
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/halo-probe"
+          mkdir -p "$out/kernel-runs"
+          pids=()
+          for k in $HARM_KERNELS; do
+            for v in Bplain $VARIANTS; do
+              valgrind --tool=callgrind --callgrind-out-file="$out/kernel-runs/$k.$v.out" "$out/halo-$v" < "$out/kernels/$k.lua" \
+                > "$out/kernel-runs/$k.$v.stdout" 2> "$out/kernel-runs/$k.$v.stderr" &
+              pids+=($!)
+            done
+          done
+          for pid in "${pids[@]}"; do wait "$pid"; done
+          : > "$out/callgrind/kernels.tsv"
+          for k in $HARM_KERNELS; do
+            for v in Bplain $VARIANTS; do
+              total=$(sed -n 's/^==[0-9]*== Collected : \([0-9]*\).*/\1/p' "$out/kernel-runs/$k.$v.stderr")
+              [ -n "$total" ] || { echo "no callgrind total for $k under $v"; tail -n 5 "$out/kernel-runs/$k.$v.stderr"; exit 1; }
+              cmp "$out/kernel-runs/$k.Bplain.stdout" "$out/kernel-runs/$k.$v.stdout"
+              printf '%s\t%s\t%s\n' "$k" "$v" "$total" >> "$out/callgrind/kernels.tsv"
+            done
+            echo "$k prints $(cat "$out/kernel-runs/$k.V0.stdout") under every variant"
+          done
+          cat "$out/callgrind/kernels.tsv"
+          rm -f "$out"/kernel-runs/*.out
+
+      # E3, the profile ceiling (DESIGN.md, E3): no compiler change. whitefootc
+      # runs one clang command (compile and link, -flto=full), so
+      # CCC_OVERRIDE_OPTIONS, which appends its edits to every clang command
+      # whitefootc runs, adds -fprofile-generate to compile and link, then
+      # -fprofile-use=<profdata> to rebuild. B's compiler and the same Halo
+      # source build all of them. Trained (a) on fib(32) and (b) on the six
+      # other kernels at reduced N; each rebuilt binary's fib is counted as
+      # the variants' is. Anything that stops the experiment prints
+      # "E3 not applicable: <reason>" and ends this step with success, so the
+      # E1 results still publish; this step is the only place failures are
+      # tolerated.
+      - name: E3, profile-guided ceiling
+        run: |
+          set +e
+          set +o pipefail
+          out="$RUNNER_TEMP/halo-probe"
+          e3="$RUNNER_TEMP/e3"
+          wfc="$RUNNER_TEMP/b/compiler/target/gate/whitefootc"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          workspace="$PWD"
+          rm -rf "$e3"; mkdir -p "$e3/prof-a" "$e3/prof-b"
+          log="$out/e3.log"; : > "$log"
+          na() {
+            echo "E3 not applicable: $*" | tee "$out/callgrind/e3-not-applicable.txt" | tee -a "$log"
+            echo "::warning::E3 not applicable: $*"
+            exit 0
+          }
+          sudo apt-get install -y -q "libclang-rt-$version-dev" >> "$log" 2>&1
+          prof=$(command -v "llvm-profdata-$version" || command -v llvm-profdata)
+          [ -n "$prof" ] || na "no llvm-profdata for LLVM $version"
+          cd "$RUNNER_TEMP/halo-b" || na "no Halo checkout"
+          graph=research/experiments/halo-bench/modules.wfg
+          build() {  # build NAME OPTIONS
+            CCC_OVERRIDE_OPTIONS="$2" "$wfc" --graph "$graph" --entry bench --full-lto -o "$e3/$1" >> "$log" 2>&1
+          }
+          build halo-gen '+-fprofile-generate' || { tail -n 20 "$log"; na "the instrumented build failed (-fprofile-generate through CCC_OVERRIDE_OPTIONS; last lines in e3.log)"; }
+          # Training runs of the instrumented binary, native.
+          LLVM_PROFILE_FILE="$e3/prof-a/%p.profraw" "$e3/halo-gen" < "$out/fib.lua" > "$e3/gen-fib.out" 2>> "$log" \
+            || na "the instrumented binary failed on fib"
+          cmp "$out/fib.Bplain.out" "$e3/gen-fib.out" || na "the instrumented binary prints a different fib result"
+          ls "$e3"/prof-a/*.profraw > /dev/null 2>&1 || na "the instrumented binary wrote no profile (no profile runtime linked?)"
+          for k in binary-trees concat integer-table loop sort string-key; do
+            LLVM_PROFILE_FILE="$e3/prof-b/$k.%p.profraw" "$e3/halo-gen" < "$out/kernels/$k.lua" > "$e3/gen-$k.out" 2>> "$log" \
+              || na "the instrumented binary failed on kernel $k"
+          done
+          "$prof" merge -o "$e3/a.profdata" "$e3"/prof-a/*.profraw >> "$log" 2>&1 || na "llvm-profdata merge failed on the fib profile"
+          "$prof" merge -o "$e3/b.profdata" "$e3"/prof-b/*.profraw >> "$log" 2>&1 || na "llvm-profdata merge failed on the kernel profile"
+          ls -l "$e3"/*.profdata | tee -a "$log"
+          quiet='+-Wno-profile-instr-unprofiled +-Wno-profile-instr-out-of-date +-Wno-backend-plugin'
+          build halo-PGOa "+-fprofile-use=$e3/a.profdata $quiet" || na "the -fprofile-use build with the fib profile failed"
+          build halo-PGOb "+-fprofile-use=$e3/b.profdata $quiet" || na "the -fprofile-use build with the kernel profile failed"
+          for v in PGOa PGOb; do
+            if cmp -s "$e3/halo-$v" "$out/halo-Bplain"; then na "the $v binary is byte-identical to the unprofiled build: the profile was not applied"; fi
+            "$e3/halo-$v" < "$out/fib.lua" > "$e3/$v.out" || na "$v failed on fib"
+            cmp "$out/fib.Bplain.out" "$e3/$v.out" || na "$v prints a different fib result"
+            cp "$e3/halo-$v" "$out/halo-$v"
+          done
+          calls=$(python3 -c "a,b=0,1
+          for _ in range($FIB_N + 1): a,b=b,a+b
+          print(2 * a - 1)")
+          pids=()
+          for v in PGOa PGOb; do
+            valgrind --tool=callgrind --dump-instr=yes --collect-jumps=yes --dump-line=no \
+              --compress-strings=no --compress-pos=no \
+              --callgrind-out-file="$out/callgrind/$v.out" "$out/halo-$v" < "$out/fib.lua" \
+              > "$out/callgrind/$v.stdout" 2> "$out/callgrind/$v.stderr" &
+            pids+=($!)
+          done
+          for pid in "${pids[@]}"; do wait "$pid"; done
+          for v in PGOa PGOb; do
+            python3 -I "$workspace/research/investigations/halo-call-path/probe/measure.py" run \
+              "$v" "$out/halo-$v" "$out/callgrind/$v.out" "$calls" "$out/callgrind" 2>&1 | tee -a "$log"
+            [ -f "$out/callgrind/$v.json" ] || echo "E3 measurement of $v failed (see e3.log)" | tee -a "$out/callgrind/e3-not-applicable.txt"
+          done
+          exit 0
 
       - name: Table
         run: |
           set -euo pipefail
           out="$RUNNER_TEMP/halo-probe"
-          python3 -I research/investigations/halo-call-path/probe/measure.py table "$out/callgrind" Bplain V0 V1 V2 V3 | tee "$out/table.md"
+          labels="Bplain $VARIANTS"
+          for v in PGOa PGOb; do if [ -f "$out/callgrind/$v.json" ]; then labels="$labels $v"; fi; done
+          python3 -I research/investigations/halo-call-path/probe/measure.py table "$out/callgrind" $labels | tee "$out/table.md"
           if grep -q '!!!!!!' "$out/table.md"; then echo "::warning::V0 does not reproduce B's 841.53 per Lua call"; fi
           {
             echo "## halo-probe"
@@ -556,6 +688,7 @@ jobs:
             echo
             echo '```text'
             cat "$out/manifest.txt" "$out/variants/variants-report.txt" "$out/codegen.txt"
+            if [ -f "$out/e3.log" ]; then tail -n 40 "$out/e3.log"; fi
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 

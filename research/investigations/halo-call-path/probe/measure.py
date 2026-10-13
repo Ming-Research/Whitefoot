@@ -208,7 +208,7 @@ def table(outdir, labels):
 
         def trio(d):
             return sum(arm(d, r, 'self_per_call') for r in ('SubRK', 'LtJmpRK', 'GetUpval'))
-        for name in ('V1', 'V2', 'V3'):
+        for name in ('V1', 'V2', 'V3', 'V2s', 'V2e', 'V2i', 'PGOa', 'PGOb'):
             if name in data:
                 d = data[name]
                 out.append(f'{name} against V0: three-arm sum {trio(d) - trio(v0):+.2f}, program total {d["total_per_call"] - v0["total_per_call"]:+.2f} per Lua call')
@@ -220,7 +220,90 @@ def table(outdir, labels):
             near = abs(trio(data['V2']) - trio(data['V1'])) <= 3 or trio(data['V2']) <= trio(data['V1'])
             out.append('V2 alone reaches V1\'s three-arm sum within 3 (cost is spill placement, not the convention): '
                        + ('YES' if near else 'no'))
+    out.extend(kernel_table(outdir))
+    out.extend(criteria(data, outdir))
     print('\n'.join(out))
+
+
+def read_kernels(outdir):
+    """OUTDIR/kernels.tsv: kernel, label, total instructions of one run."""
+    path = os.path.join(outdir, 'kernels.tsv')
+    got = {}
+    if os.path.exists(path):
+        for row in open(path):
+            bits = row.rstrip('\n').split('\t')
+            if len(bits) == 3 and bits[2].isdigit():
+                got[(bits[0], bits[1])] = int(bits[2])
+    return got
+
+
+def kernel_table(outdir):
+    got = read_kernels(outdir)
+    if not got:
+        return ['', '(no kernels.tsv: the harm check did not run)']
+    labels = sorted({l for _, l in got}, key=lambda l: (l != 'V0', l))
+    kernels = sorted({k for k, _ in got})
+    out = ['', 'Halo kernels at reduced N, total instructions per run (callgrind "Collected"):', '',
+           '| Kernel | ' + ' | '.join(labels) + ' |', '|---|' + '---|' * len(labels)]
+    for k in kernels:
+        cells = []
+        for l in labels:
+            v = got.get((k, l))
+            base = got.get((k, 'V0'))
+            cells.append('n/a' if v is None else f'{v}' + ('' if l == 'V0' or not base else f' ({(v - base) / base * 100:+.3f}%)'))
+        out.append(f'| {k} | ' + ' | '.join(cells) + ' |')
+    return out
+
+
+def verdict(ok):
+    return 'PASS' if ok else 'FAIL'
+
+
+def criteria(data, outdir):
+    """Each pre-written criterion of DESIGN.md's E1 and E3, quoted, with its number, the measured one and the verdict."""
+    out = ['', 'Criteria of the cold-callee study, quoted from DESIGN.md (PASS means the prediction held):', '']
+    total = lambda l: data[l]['total_per_call'] if l in data else None
+    v0, v2 = total('V0'), total('V2')
+    if v0 is not None and v2 is not None:
+        out.append(f'Measured here: V0 {v0:.2f}, V2 {v2:.2f}, V2 gain {v0 - v2:.2f} per Lua call (the study quotes 841.53, 806.03, 35.5).')
+    s, e, i = total('V2s'), total('V2e'), total('V2i')
+    if s is not None:
+        out.append('- E1 "V2s gives at least 60% of V2\'s 35.5 instructions per Lua call (at most 820.2)": '
+                   f'criterion V2s <= 820.2; measured {s:.2f}; {verdict(s <= 820.2)}')
+    if e is not None and i is not None:
+        gain = (v0 - e) + (v0 - i)
+        out.append('- E1 "V2e plus V2i together at most 40%" (of 35.5, so at most 14.2 of gain; the two gains added, '
+                   f'since no variant marks both): criterion V2e gain + V2i gain <= 14.2; measured {v0 - e:.2f} + {v0 - i:.2f} = {gain:.2f}; {verdict(gain <= 14.2)}')
+    if e is not None:
+        out.append('- E1 "If V2e alone reaches 80% of V2 (at most 813.1), S3 and H are not needed for Halo\'s fib and E2 stops after S1": '
+                   f'criterion V2e <= 813.1; measured {e:.2f}; {verdict(e <= 813.1)}'
+                   + ('' if e <= 813.1 else ' (so S3 and H stay in play)'))
+    got = read_kernels(outdir)
+    for k in ('concat', 'string-key'):
+        a, b = got.get((k, 'V0')), got.get((k, 'V2'))
+        if a and b:
+            rise = (b - a) / a * 100
+            out.append('- E1 "if V2 raises either kernel\'s instruction count by more than 1%, function-level `cold` on `heap.intern` is confirmed harmful '
+                       f'and stays excluded from every rule": {k}: criterion rise <= 1% else harmful; measured V0 {a}, V2 {b}, {rise:+.3f}%; '
+                       f'{verdict(rise <= 1)} (PASS = not harmful on this kernel)')
+        else:
+            out.append(f'- E1 harm check on {k}: no V0/V2 count in kernels.tsv')
+        c = got.get((k, 'V2i'))
+        if a and c:
+            out.append(f'  (additionally {k} under V2i, `heap.intern` alone: {(c - a) / a * 100:+.3f}%)')
+    pa, pb = total('PGOa'), total('PGOb')
+    if pa is None and pb is None:
+        note = os.path.join(outdir, 'e3-not-applicable.txt')
+        out.append('- E3: ' + (open(note).read().strip() if os.path.exists(note) else 'no PGO result'))
+    if pa is not None:
+        out.append('- E3 "(a) at or below V2\'s 806.03": '
+                   f'criterion PGOa <= 806.03; measured {pa:.2f}; {verdict(pa <= 806.03)}')
+    if pb is not None:
+        out.append('- E3 "If (b) recovers less than half of V2\'s gain (above 823.8), a profile does not transfer across Lua workloads, '
+                   'which confirms that `slow`\'s coldness is a property of the input and that P is not a default build mode": '
+                   f'criterion PGOb > 823.8 confirms; measured {pb:.2f}; '
+                   + ('CONFIRMED (does not transfer)' if pb > 823.8 else 'NOT confirmed (a profile from other kernels recovers at least half)'))
+    return out
 
 
 if __name__ == '__main__':

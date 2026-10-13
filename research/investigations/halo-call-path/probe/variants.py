@@ -8,7 +8,7 @@ inlining decision already made. Deleted with the experiment branch.
 
   usage: variants.py precodegen.ll OUTDIR
 
-writes OUTDIR/v0.ll .. v3.ll and OUTDIR/variants-report.txt.
+writes OUTDIR/v0.ll .. v3.ll, v2s.ll, v2e.ll, v2i.ll and OUTDIR/variants-report.txt.
 
 Terms. A part is a function defined `preserve_nonecc` (a dispatch arm or
 other split piece). A surviving call is a `call fastcc @f(` that is not a
@@ -29,11 +29,33 @@ tail call, inside a part: the call the host did not inline.
       `heap.intern`, `unwind` and `restore_stopped_stack` (matched by exact
       mangled name below); calling conventions unchanged.
   V3  V1 and V2 together (the clones of the slow callees are cold too).
+
+E1 of the cold-callee study (DESIGN.md, "Experiments, criteria written before
+measuring") splits V2 by callee, convention unchanged, input otherwise V0:
+
+  V2s  `cold` on `slow` only.
+  V2e  `cold` on `unwind` and `restore_stopped_stack` only.
+  V2i  `cold` on `heap.intern` only.
+
+so the files are v0 .. v3, v2s, v2e and v2i. A subset that matches no
+definition is an error (the name patterns went stale).
 """
 import re
 import sys
 
-COLD = re.compile(r'^wf_package\.halo\.(vm\.slow\$instance\$[0-9a-f]+|heap\.intern|vm\.unwind|vm\.restore_stopped_stack)$')
+COLD_NAMES = {
+    'slow': r'vm\.slow\$instance\$[0-9a-f]+',
+    'intern': r'heap\.intern',
+    'unwind': r'vm\.unwind',
+    'restore': r'vm\.restore_stopped_stack',
+}
+
+
+def cold_pattern(keys):
+    return re.compile(r'^wf_package\.halo\.(' + '|'.join(COLD_NAMES[k] for k in keys) + ')$')
+
+
+COLD = cold_pattern(COLD_NAMES)
 LINKAGE = {'internal', 'private', 'linkonce_odr', 'weak', 'weak_odr', 'dso_local', 'hidden', 'protected', 'external', 'linkonce', 'common', 'available_externally'}
 NAME = re.compile(r'@("[^"]+"|[\w.$-]+)\(')
 CALL = re.compile(r'(?P<pre>(?:musttail |tail |notail )?call) fastcc (?P<mid>[^@]*?)@(?P<name>"[^"]+"|[\w.$-]+)\(')
@@ -125,7 +147,7 @@ def make_v1(lines, funcs, report):
     return out, [f for f, _ in clones]
 
 
-def add_cold(lines, report):
+def add_cold(lines, report, pattern=COLD, label=''):
     out, matched = [], []
     for line in lines:
         if line.startswith('define '):
@@ -133,14 +155,16 @@ def add_cold(lines, report):
             base = bare(raw)
             if base.endswith(MOST):
                 base = base[:-len(MOST)]
-            if COLD.match(base):
+            if pattern.match(base):
                 new = re.sub(r'(\)\s+(?:unnamed_addr\s+)?)(#\d+)', r'\1cold \2', line, count=1)
                 if new == line:
                     raise SystemExit(f'no attribute group to put cold before: {line[:200]}')
                 matched.append(bare(raw))
                 line = new
         out.append(line)
-    report.append(f'cold added to {len(matched)} definitions:')
+    if not matched:
+        raise SystemExit(f'cold {label}: no definition matches {pattern.pattern}')
+    report.append(f'cold {label} added to {len(matched)} definitions:')
     report.extend('  ' + n for n in matched)
     return out
 
@@ -154,9 +178,14 @@ def main():
     report.append(f'call fastcc lines the call pattern does not match (left alone): {unmatched}')
     v1, _ = make_v1(lines, funcs, report)
     report.append('V2/V3 cold:')
-    v2 = add_cold(lines, report)
-    v3 = add_cold(v1, report)
-    for name, text in (('v0', lines), ('v1', v1), ('v2', v2), ('v3', v3)):
+    v2 = add_cold(lines, report, COLD, 'v2')
+    v3 = add_cold(v1, report, COLD, 'v3')
+    subsets = {'v2s': ('slow',), 'v2e': ('unwind', 'restore'), 'v2i': ('intern',)}
+    extra = []
+    for name, keys in subsets.items():
+        report.append(f'{name}: cold on {", ".join(keys)} only')
+        extra.append((name, add_cold(lines, report, cold_pattern(keys), name)))
+    for name, text in (('v0', lines), ('v1', v1), ('v2', v2), ('v3', v3), *extra):
         with open(f'{outdir}/{name}.ll', 'w') as f:
             f.write('\n'.join(text))
         report.append(f'{name}.ll: {len(text)} lines')
