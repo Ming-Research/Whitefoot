@@ -113,6 +113,7 @@ repository-invariants:
 	@$(PY) .github/check-research-inputs.py --self-test
 	@$(PY) .github/check-research-inputs.py
 	@sh .github/test-run-check.sh
+	@sh .github/test-gate-scope.sh
 	@perl .github/check-english.pl --self-test
 	@perl .github/check-english.pl
 	@test -s AGENTS.md || { echo "AGENTS.md missing" >&2; exit 1; }
