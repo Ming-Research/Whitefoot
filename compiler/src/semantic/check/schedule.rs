@@ -9,8 +9,9 @@ use super::{CheckStop, CheckedFunctionInventory, Checker};
 use crate::DeclarationId;
 use crate::semantic::SemanticCompilerFailure;
 use crate::semantic::entailment::{
-    EntailmentCallee, EntailmentContext, PostconditionSchedule, VerifiedPostconditionSummary,
-    analyze_function, analyze_function_candidate, postcondition_schedule,
+    ComponentPostconditions, EntailmentCallee, EntailmentContext, PostconditionSchedule,
+    VerifiedPostconditionSummary, analyze_function, analyze_function_candidate,
+    postcondition_schedule,
 };
 
 impl Checker<'_, '_> {
@@ -110,6 +111,7 @@ impl Checker<'_, '_> {
                         contract_queries: &contract_queries,
                         verified_postconditions: &[],
                         verified_postcondition_proofs: &[],
+                        component_postconditions: &[],
                         binding_names: &checked.binding_names,
                     };
                     if optimistic_batch {
@@ -190,6 +192,72 @@ impl Checker<'_, '_> {
                             .collect::<Vec<_>>()
                     })
                     .collect::<Vec<_>>();
+                // [DIAG-2, TYPE-11] a call to a member of the caller's own
+                // component receives that member's type-invariant
+                // postconditions as induction hypotheses, named by the
+                // summary identities the component publishes them under
+                // once every selected exit of every member has proved them.
+                let mut at_level = vec![false; schedule.components.len()];
+                for position in positions {
+                    at_level[*position] = true;
+                }
+                let component_postconditions = functions
+                    .iter()
+                    .map(|checked| {
+                        let index = checked.function.id.0 as usize;
+                        let component = schedule
+                            .function_components
+                            .get(index)
+                            .copied()
+                            .unwrap_or(u32::MAX);
+                        let verifying = selected(index)
+                            && at_level.get(component as usize).copied().unwrap_or(false);
+                        let generated = checked
+                            .function
+                            .postconditions
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, postcondition)| {
+                                verifying && postcondition.selector.generated
+                            })
+                            .filter_map(|(ordinal, postcondition)| {
+                                Some((
+                                    postcondition,
+                                    VerifiedPostconditionSummary {
+                                        function: checked.function.id,
+                                        block: postcondition.selector.block.clone(),
+                                        relation_ordinal: u32::try_from(ordinal).ok()?,
+                                        component,
+                                    },
+                                ))
+                            })
+                            .collect();
+                        ComponentPostconditions {
+                            component,
+                            generated,
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                // A receipt's key names every postcondition its analysis may
+                // read, the induction hypotheses included [MOD-8].
+                let receipt_published = receipts.map(|_| {
+                    verified_postconditions
+                        .iter()
+                        .zip(&component_postconditions)
+                        .map(|(verified, component)| {
+                            verified
+                                .iter()
+                                .copied()
+                                .chain(
+                                    component
+                                        .generated
+                                        .iter()
+                                        .map(|(postcondition, _)| *postcondition),
+                                )
+                                .collect::<Vec<_>>()
+                        })
+                        .collect::<Vec<_>>()
+                });
                 let mut settled = Vec::new();
                 let mut fresh = Vec::new();
                 // Instances of a renaming class first met at this level: the
@@ -227,7 +295,7 @@ impl Checker<'_, '_> {
                                 functions,
                                 function_index,
                                 callees,
-                                &verified_postconditions,
+                                receipt_published.as_ref().unwrap_or(&verified_postconditions),
                                 &const_parameter_types,
                             ),
                             _ => None,
@@ -277,11 +345,14 @@ impl Checker<'_, '_> {
                             contract_queries: &contract_queries,
                             verified_postconditions: &verified_postconditions,
                             verified_postcondition_proofs: &verified_postcondition_proofs,
+                            component_postconditions: &component_postconditions,
                             binding_names: &checked.binding_names,
                         };
                         analyze_function_candidate(&checked.function, &context)
                     })
                 };
+                drop(receipt_published);
+                drop(component_postconditions);
                 drop(verified_postconditions);
                 drop(verified_postcondition_proofs);
                 for (function_index, entailment, renamed) in settled {

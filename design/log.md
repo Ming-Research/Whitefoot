@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 the owner's agent instructions own the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-13 A struct's type invariants travel through enum payloads, bare type parameters, recursive calls and branch deliveries
+
+Nodes: language/checks-and-proofs, language/checks-and-proofs/automatic-facts, language/checks-and-proofs/obligation-discharge
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the specification revision and design-tree change of Whitefoot#398 at commit b8d1126d3? (including bare type parameters symmetric, recursive results carrying invariants, and branch give delivering values)" (translated); before it, on 2026-10-12, the owner approved the enum-payload part at commit f42b49029 (option A, "approve"), chose option B on the card asking whether bare type parameters also take invariants at entry before merging, and chose option A on the direction cards "a recursive function's own successful result carries the invariant" and "a struct delivered by an if-branch give carries the invariant" (translated).
+
+Summary: Type invariants cross a function boundary inside an own enum's variant field as routed requirements and postconditions, because fallible producers return their structs inside `Result` or `Option`; refused were a written every-exit-is-`Err` form alone or beside the routes and assuming a parameter's routed invariant at body entry. Boundary positions are judged on the instance's type, instead of the written type (a wrapper would owe the invariant at exit and get nothing at entry) or parameters only (a `Span` result and a `T` result would promise different things). A callable whose definition the build supplies requires and promises no invariant, because no body proves the promise. The multi-module component decision now admits generated invariant postconditions inside a component as induction hypotheses, since they come from signatures and struct declarations, keeping each module's verdict a function of its own bodies and its dependencies' interfaces; written postconditions stay withheld, because no program needs them and they would change which written clauses are accepted. The `give` delivery decision splits into integers (unchanged) and other own values, delivered as a `let` binding; delivering only type invariants and re-calling the producer in each branch were refused.
+
 ## 2026-10-13 A program reads a socket address's parts and a connection's local address
 
 Nodes: language/system-interface/socket-addresses

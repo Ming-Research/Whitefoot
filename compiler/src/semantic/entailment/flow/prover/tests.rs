@@ -23,6 +23,7 @@ fn with_integer_parameters(types: &[IntegerType], check: impl FnOnce(&mut Analyz
         contract_queries: &[],
         verified_postconditions: &[],
         verified_postcondition_proofs: &[],
+        component_postconditions: &[],
         binding_names: &[],
     };
     let function = CheckedFunction {
@@ -55,6 +56,7 @@ fn with_integer_parameters(types: &[IntegerType], check: impl FnOnce(&mut Analyz
         declared_state_reads: Vec::new(),
         requirements: Vec::new(),
         requirement_places: Vec::new(),
+        routed_requirements: Vec::new(),
         postconditions: Vec::new(),
         range_facts: Default::default(),
         body: None,
