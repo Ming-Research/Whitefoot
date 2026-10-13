@@ -1,0 +1,229 @@
+alias DirectoryRead = std::fs::DirectoryRead;
+alias DirectoryWrite = std::fs::DirectoryWrite;
+alias HandleFactory = std::io::HandleFactory;
+alias HostPaths = std::fs::HostPaths;
+
+const temporary: Array<u8, 18> =[97_u8, 112_u8, 112_u8, 101_u8, 110_u8, 100_u8, 111_u8, 110_u8, 108_u8, 121_u8, 46_u8, 97_u8, 111_u8, 102_u8, 46_u8, 116_u8, 109_u8, 112_u8];
+
+const log: Array<u8, 14> =[97_u8, 112_u8, 112_u8, 101_u8, 110_u8, 100_u8, 111_u8, 110_u8, 108_u8, 121_u8, 46_u8, 97_u8, 111_u8, 102_u8];
+
+const record: Array<u8, 6> =[104_u8, 101_u8, 108_u8, 108_u8, 111_u8, 10_u8];
+
+fn error_kind(error: &std::io::IoError) -> kind: u8 reads(error) {
+  match error^ {
+    NotFound(code: c, origin: o) => {
+      return 1_u8;
+    }
+    PermissionDenied(code: c, origin: o) => {
+      return 2_u8;
+    }
+    AlreadyExists(code: c, origin: o) => {
+      return 9_u8;
+    }
+    NotDirectory(code: c, origin: o) => {
+      return 3_u8;
+    }
+    IsDirectory(code: c, origin: o) => {
+      return 4_u8;
+    }
+    DirectoryNotEmpty(code: c, origin: o) => {
+      return 9_u8;
+    }
+    ReadOnly(code: c, origin: o) => {
+      return 9_u8;
+    }
+    ResourceBusy(code: c, origin: o) => {
+      return 9_u8;
+    }
+    InvalidInput(code: c, origin: o) => {
+      return 9_u8;
+    }
+    InvalidPath(code: c, origin: o) => {
+      return 5_u8;
+    }
+    Unsupported(code: c, origin: o) => {
+      return 6_u8;
+    }
+    TimedOut(code: c, origin: o) => {
+      return 9_u8;
+    }
+    DeadlinePassed() => {
+      return 9_u8;
+    }
+    Cancelled() => {
+      return 9_u8;
+    }
+    BrokenPipe(code: c, origin: o) => {
+      return 9_u8;
+    }
+    WriteZero(code: c, origin: o) => {
+      return 9_u8;
+    }
+    UnexpectedEnd(code: c, origin: o) => {
+      return 9_u8;
+    }
+    ConnectionRefused(code: c, origin: o) => {
+      return 9_u8;
+    }
+    ConnectionReset(code: c, origin: o) => {
+      return 9_u8;
+    }
+    ConnectionAborted(code: c, origin: o) => {
+      return 9_u8;
+    }
+    NotConnected(code: c, origin: o) => {
+      return 9_u8;
+    }
+    AddressInUse(code: c, origin: o) => {
+      return 9_u8;
+    }
+    AddressUnavailable(code: c, origin: o) => {
+      return 9_u8;
+    }
+    ResourceExhausted(code: c, origin: o) => {
+      return 9_u8;
+    }
+    FileTooLarge(code: c, origin: o) => {
+      return 9_u8;
+    }
+    NoSpace(code: c, origin: o) => {
+      return 9_u8;
+    }
+    QuotaExceeded(code: c, origin: o) => {
+      return 9_u8;
+    }
+    CrossDevice(code: c, origin: o) => {
+      return 9_u8;
+    }
+    DeviceFailure(code: c, origin: o) => {
+      return 9_u8;
+    }
+    Other(code: c, origin: o) => {
+      return 9_u8;
+    }
+  }
+}
+
+fn write_temporary(factory: &HandleFactory, root: &DirectoryWrite) -> result: u8 reads(root), writes(factory) waits {
+  match std::fs::open_append(factory: factory, root: root, name: &temporary[0_u64..18_u64], start: 0_u64, end: 18_u64) {
+    Ok(value: file) => {
+      let outcome = 0_u8;
+      match std::fs::truncate_file(factory: factory, file: &file, length: 0_u64) {
+        Ok(value: done) => {
+        }
+        Err(error: problem) => {
+          set outcome = 21_u8;
+        }
+      }
+      let sent = 0_u64;
+      loop @append {
+        if sent < 6_u64 {
+        } else {
+          break @append;
+        }
+        if outcome != 0_u8 {
+          break @append;
+        }
+        match std::fs::append_once(factory: factory, file: &file, source: &record[0_u64..6_u64], start: sent, end: 6_u64) {
+          Ok(value: next) => {
+            if next == sent {
+              set outcome = 22_u8;
+            }
+            set sent = next;
+          }
+          Err(error: problem) => {
+            set outcome = 23_u8;
+          }
+        }
+      }
+      if outcome == 0_u8 {
+        match std::fs::sync_file(factory: factory, file: &file) {
+          Ok(value: done) => {
+          }
+          Err(error: problem) => {
+            set outcome = 24_u8;
+          }
+        }
+      }
+      match std::fs::close_write(factory: factory, file: move file) {
+        Ok(value: done) => {
+        }
+        Err(error: problem) => {
+          set outcome = 25_u8;
+        }
+      }
+      return outcome;
+    }
+    Err(error: problem) => {
+      return 20_u8;
+    }
+  }
+}
+
+fn publish(factory: &HandleFactory, root: &DirectoryWrite) -> result: u8 writes(factory), writes(root) waits {
+  let written = write_temporary(factory: factory, root: root);
+  if written != 0_u8 {
+    return written;
+  }
+  match std::fs::rename_file(factory: factory, root: root, from: &temporary[0_u64..18_u64], from_start: 0_u64, from_end: 18_u64, to: &log[0_u64..14_u64], to_start: 0_u64, to_end: 14_u64) {
+    Ok(value: done) => {
+    }
+    Err(error: problem) => {
+      return 26_u8;
+    }
+  }
+  match std::fs::sync_directory(factory: factory, root: root) {
+    Ok(value: done) => {
+      return 0_u8;
+    }
+    Err(error: problem) => {
+      return 27_u8;
+    }
+  }
+}
+
+fn open_data(args: &std::text::Args, factory: &HandleFactory, paths: &HostPaths, base: &DirectoryRead) -> result: u8 reads(args), reads(paths), reads(base), writes(factory) waits {
+  match std::text::arg_get(args: args, position: 1_u64) {
+    Ok(value: text) => {
+      match std::fs::open_host_directory(factory: factory, paths: paths, base: base, path: &text) {
+        Ok(value: data) => {
+          let std::fs::Directory(read: data_read, write: data_write) = move data;
+          std::fs::close_directory(factory: factory, directory: move data_read);
+          let outcome = publish(factory: factory, root: &data_write);
+          match std::fs::close_directory_write(factory: factory, directory: move data_write) {
+            Ok(value: done) => {
+            }
+            Err(error: problem) => {
+              set outcome = 28_u8;
+            }
+          }
+          return outcome;
+        }
+        Err(error: problem) => {
+          let kind = error_kind(error: &problem);
+          return 9_u8 +wrap kind;
+        }
+      }
+    }
+    Err(error: problem) => {
+      return 2_u8;
+    }
+  }
+}
+
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
+  doc "Opens the existing directory its argument names by host path, keeps only the write half, and publishes an append-only log in it as a synced temporary file renamed over the log name followed by a directory sync. A refused open exits 9 plus its error kind: 10 NotFound, 11 PermissionDenied, 12 NotDirectory.";
+  let std::process::Inputs(args: args, cwd: directory, handles: factory, host_paths: host_paths, ..) = move inputs;
+  let std::fs::Directory(read: reader, write: writer) = move directory;
+  std::fs::close_directory_write(factory: &factory, directory: move writer);
+  let outcome = 3_u8;
+  match move host_paths {
+    Some(value: paths) => {
+      set outcome = open_data(args: &args, factory: &factory, paths: &paths, base: &reader);
+    }
+    None() => {
+    }
+  }
+  std::fs::close_directory(factory: &factory, directory: move reader);
+  return std::process::exit_status(code: outcome);
+}

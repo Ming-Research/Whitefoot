@@ -662,7 +662,8 @@ typedef struct wf_host_operation {
     int64_t position;
     /* Path components stay live until an open or namespace change completes. */
     alignas(2) unsigned char component[WF_COMPONENT_BYTES + 2];
-    /* Only rename needs a second name, borrowed from the runtime pool. */
+    /* Rename's second name, or a host path copied from a window [PRE-2],
+     * borrowed from the runtime pool until the finish. */
     unsigned char *destination;
 } wf_host_operation;
 _Static_assert(offsetof(wf_host_operation, record) == 0,
@@ -994,6 +995,322 @@ void wf__body_open_read(wf_open_result *result, wf_value *factory,
     wf_host_operation operation;
     if (wf__body_open_read_start(result, factory, root, path, &operation))
         wf__body_open_read_finish(result, factory, root, path, &operation);
+}
+
+/* [PRE-2] The host-path opens. A POSIX host supplies `HostPaths` and looks a
+ * path up with `openat` from the base's descriptor, which starts an absolute
+ * path at the root directory, resolves each `..` after the links before it
+ * and follows every link the lookup reaches, the last component's included:
+ * unlike a name, a path is opened without O_NOFOLLOW. A directory open never
+ * passes O_CREAT. Both halves of a directory are the descriptor the lookup
+ * returned and its duplicate, so they name the one directory that lookup
+ * opened. Every other host supplies no `HostPaths`, so no program reaches
+ * its bodies; they answer Unsupported without spending a credit. */
+enum { WF_HOST_OPEN_FILE, WF_HOST_OPEN_DIRECTORY, WF_HOST_OPEN_PAIR };
+
+static int wf_host_refused(uint8_t *tag, wf_io_error *error, wf_value *factory, unsigned kind) {
+    wf_transition(factory);
+    *tag = 1;
+    wf_error_class(error, kind, 0, 0);
+    return 0;
+}
+
+#if defined(_WIN32)
+static int wf_host_bytes_start(uint8_t *tag, wf_io_error *error, wf_value *factory,
+                               const wf_value *base, const wf_view *path, uint64_t start,
+                               uint64_t end, uint8_t encoding, unsigned shape,
+                               wf_host_operation *operation) {
+    (void)base; (void)path; (void)start; (void)end; (void)encoding; (void)shape; (void)operation;
+    return wf_host_refused(tag, error, factory, WF_IO_UNSUPPORTED);
+}
+
+static int wf_host_string_start(uint8_t *tag, wf_io_error *error, wf_value *factory,
+                                const wf_value *base, const wf_value *path, unsigned shape,
+                                wf_host_operation *operation) {
+    (void)base; (void)path; (void)shape; (void)operation;
+    return wf_host_refused(tag, error, factory, WF_IO_UNSUPPORTED);
+}
+
+static void wf_host_open_finish(wf_open_result *result, wf_value *factory,
+                                wf_host_operation *operation, uint64_t copied) {
+    (void)factory; (void)operation; (void)copied;
+    memset(result, 0, sizeof(*result));
+    result->tag = 1;
+    wf_error_class(&result->err.error, WF_IO_UNSUPPORTED, 0, 0);
+}
+
+static void wf_host_pair_finish(wf_directory_result *result, wf_value *factory,
+                                wf_host_operation *operation, uint64_t copied) {
+    (void)factory; (void)operation; (void)copied;
+    memset(result, 0, sizeof(*result));
+    result->tag = 1;
+    wf_error_class(&result->err.error, WF_IO_UNSUPPORTED, 0, 0);
+}
+#else
+#if defined(PATH_MAX)
+#define WF_HOST_PATH_BYTES ((uint64_t)PATH_MAX)
+#else
+#define WF_HOST_PATH_BYTES UINT64_C(4096)
+#endif
+
+/* Spends the credits an open of `shape` holds on success: two for a pair,
+ * whose first comes back when the second is refused. */
+static int wf_host_take(wf_io_error *error, wf_value *factory, unsigned shape) {
+    if (!wf_factory_take(factory, error)) return 0;
+    if (shape == WF_HOST_OPEN_PAIR && !wf_factory_take(factory, error)) {
+        wf_factory_return(factory);
+        return 0;
+    }
+    return 1;
+}
+
+static int wf_host_submit(const wf_value *base, const char *path, unsigned shape,
+                          wf_host_operation *operation) {
+    wf__completion_file_open_at_submit(
+        wf_descriptor(base), path, shape == WF_HOST_OPEN_FILE ? 0 : WF_OPEN_DIRECTORY_FLAGS, 0, 0,
+        shape == WF_HOST_OPEN_FILE ? WF_FILE_EXPECT_REGULAR : WF_FILE_EXPECT_DIRECTORY,
+        &operation->record);
+    return wf__completion_pending(&operation->record) ? 2 : 1;
+}
+
+/* A window's path is copied, with its terminating NUL, into a pool block the
+ * operation keeps until its finish has joined the open: the host may read
+ * the path after the submit returns. The finish gives the block back. */
+static int wf_host_bytes_start(uint8_t *tag, wf_io_error *error, wf_value *factory,
+                               const wf_value *base, const wf_view *path, uint64_t start,
+                               uint64_t end, uint8_t encoding, unsigned shape,
+                               wf_host_operation *operation) {
+    uint64_t length = end - start;
+    const unsigned char *text = wf_window(path, start);
+    unsigned char *copy;
+    if (length == 0 || length >= WF_HOST_PATH_BYTES || memchr(text, 0, (size_t)length) != NULL
+        || (encoding == WF_PATH_ENCODING_UTF8 && !wf_utf8_valid(text, length)))
+        return wf_host_refused(tag, error, factory, WF_IO_INVALID_PATH);
+    if (!wf_host_take(error, factory, shape)) {
+        *tag = 1;
+        return 0;
+    }
+    copy = wf__runtime_take(length + 1);
+    memcpy(copy, text, (size_t)length);
+    copy[length] = 0;
+    operation->destination = copy;
+    return wf_host_submit(base, (const char *)copy, shape, operation);
+}
+
+/* An argument's native bytes are NUL-terminated invocation backing that
+ * outlives the open, so the host reads them in place. */
+static int wf_host_string_start(uint8_t *tag, wf_io_error *error, wf_value *factory,
+                                const wf_value *base, const wf_value *path, unsigned shape,
+                                wf_host_operation *operation) {
+    if (path->words[1] == 0) return wf_host_refused(tag, error, factory, WF_IO_INVALID_PATH);
+    if (!wf_host_take(error, factory, shape)) {
+        *tag = 1;
+        return 0;
+    }
+    operation->destination = NULL;
+    return wf_host_submit(base, wf_value_pointer(path), shape, operation);
+}
+
+/* `copied` is the length of the path a window start copied, or zero. */
+static void wf_host_release_copy(wf_host_operation *operation, uint64_t copied) {
+    if (copied != 0) wf__runtime_give(operation->destination, copied + 1);
+    operation->destination = NULL;
+}
+
+static void wf_host_open_finish(wf_open_result *result, wf_value *factory,
+                                wf_host_operation *operation, uint64_t copied) {
+    wf_open_finish(result, factory, operation);
+    wf_host_release_copy(operation, copied);
+}
+
+/* A refused open has returned one credit and the pair returns the other. A
+ * refused duplicate closes the opened descriptor, so no half survives. */
+static void wf_host_pair_finish(wf_directory_result *result, wf_value *factory,
+                                wf_host_operation *operation, uint64_t copied) {
+    wf_open_result opened;
+    int reader, writer;
+    wf_open_finish(&opened, factory, operation);
+    wf_host_release_copy(operation, copied);
+    memset(result, 0, sizeof(*result));
+    if (opened.tag != 0) {
+        wf_factory_return(factory);
+        result->tag = 1;
+        result->err.error = opened.err.error;
+        return;
+    }
+    reader = wf_descriptor(&opened.ok.value);
+    writer = fcntl(reader, F_DUPFD_CLOEXEC, 0);
+    if (writer < 0) {
+        int error = errno;
+        (void)close(reader);
+        wf_factory_return(factory);
+        wf_factory_return(factory);
+        result->tag = 1;
+        wf_error(&result->err.error, error, 1);
+        return;
+    }
+    wf_descriptor_value(&result->ok.value.read, reader);
+    wf_descriptor_value(&result->ok.value.write, writer);
+}
+#endif
+
+int wf__body_open_host_read_start(wf_open_result *result, wf_value *factory,
+                                  const wf_value *paths, const wf_value *base,
+                                  const wf_value *path, wf_host_operation *operation) {
+    (void)paths;
+    memset(result, 0, sizeof(*result));
+    return wf_host_string_start(&result->tag, &result->err.error, factory, base, path,
+                                WF_HOST_OPEN_FILE, operation);
+}
+
+void wf__body_open_host_read_finish(wf_open_result *result, wf_value *factory,
+                                    const wf_value *paths, const wf_value *base,
+                                    const wf_value *path, wf_host_operation *operation) {
+    (void)paths; (void)base; (void)path;
+    wf_host_open_finish(result, factory, operation, 0);
+}
+
+void wf__body_open_host_read(wf_open_result *result, wf_value *factory, const wf_value *paths,
+                             const wf_value *base, const wf_value *path) {
+    wf_host_operation operation;
+    if (wf__body_open_host_read_start(result, factory, paths, base, path, &operation))
+        wf__body_open_host_read_finish(result, factory, paths, base, path, &operation);
+}
+
+int wf__body_open_host_read_bytes_start(wf_open_result *result, wf_value *factory,
+                                        const wf_value *paths, const wf_value *base,
+                                        const wf_view *path, uint64_t start, uint64_t end,
+                                        uint8_t encoding, wf_host_operation *operation) {
+    (void)paths;
+    memset(result, 0, sizeof(*result));
+    return wf_host_bytes_start(&result->tag, &result->err.error, factory, base, path, start, end,
+                               encoding, WF_HOST_OPEN_FILE, operation);
+}
+
+void wf__body_open_host_read_bytes_finish(wf_open_result *result, wf_value *factory,
+                                          const wf_value *paths, const wf_value *base,
+                                          const wf_view *path, uint64_t start, uint64_t end,
+                                          uint8_t encoding, wf_host_operation *operation) {
+    (void)paths; (void)base; (void)path; (void)encoding;
+    wf_host_open_finish(result, factory, operation, end - start);
+}
+
+void wf__body_open_host_read_bytes(wf_open_result *result, wf_value *factory, const wf_value *paths,
+                                   const wf_value *base, const wf_view *path, uint64_t start,
+                                   uint64_t end, uint8_t encoding) {
+    wf_host_operation operation;
+    if (wf__body_open_host_read_bytes_start(result, factory, paths, base, path, start, end,
+                                            encoding, &operation))
+        wf__body_open_host_read_bytes_finish(result, factory, paths, base, path, start, end,
+                                             encoding, &operation);
+}
+
+int wf__body_open_host_directory_read_start(wf_open_result *result, wf_value *factory,
+                                            const wf_value *paths, const wf_value *base,
+                                            const wf_value *path, wf_host_operation *operation) {
+    (void)paths;
+    memset(result, 0, sizeof(*result));
+    return wf_host_string_start(&result->tag, &result->err.error, factory, base, path,
+                                WF_HOST_OPEN_DIRECTORY, operation);
+}
+
+void wf__body_open_host_directory_read_finish(wf_open_result *result, wf_value *factory,
+                                              const wf_value *paths, const wf_value *base,
+                                              const wf_value *path, wf_host_operation *operation) {
+    (void)paths; (void)base; (void)path;
+    wf_host_open_finish(result, factory, operation, 0);
+}
+
+void wf__body_open_host_directory_read(wf_open_result *result, wf_value *factory,
+                                       const wf_value *paths, const wf_value *base,
+                                       const wf_value *path) {
+    wf_host_operation operation;
+    if (wf__body_open_host_directory_read_start(result, factory, paths, base, path, &operation))
+        wf__body_open_host_directory_read_finish(result, factory, paths, base, path, &operation);
+}
+
+int wf__body_open_host_directory_read_bytes_start(wf_open_result *result, wf_value *factory,
+                                                  const wf_value *paths, const wf_value *base,
+                                                  const wf_view *path, uint64_t start,
+                                                  uint64_t end, uint8_t encoding,
+                                                  wf_host_operation *operation) {
+    (void)paths;
+    memset(result, 0, sizeof(*result));
+    return wf_host_bytes_start(&result->tag, &result->err.error, factory, base, path, start, end,
+                               encoding, WF_HOST_OPEN_DIRECTORY, operation);
+}
+
+void wf__body_open_host_directory_read_bytes_finish(wf_open_result *result, wf_value *factory,
+                                                    const wf_value *paths, const wf_value *base,
+                                                    const wf_view *path, uint64_t start,
+                                                    uint64_t end, uint8_t encoding,
+                                                    wf_host_operation *operation) {
+    (void)paths; (void)base; (void)path; (void)encoding;
+    wf_host_open_finish(result, factory, operation, end - start);
+}
+
+void wf__body_open_host_directory_read_bytes(wf_open_result *result, wf_value *factory,
+                                             const wf_value *paths, const wf_value *base,
+                                             const wf_view *path, uint64_t start, uint64_t end,
+                                             uint8_t encoding) {
+    wf_host_operation operation;
+    if (wf__body_open_host_directory_read_bytes_start(result, factory, paths, base, path, start,
+                                                      end, encoding, &operation))
+        wf__body_open_host_directory_read_bytes_finish(result, factory, paths, base, path, start,
+                                                       end, encoding, &operation);
+}
+
+int wf__body_open_host_directory_start(wf_directory_result *result, wf_value *factory,
+                                       const wf_value *paths, const wf_value *base,
+                                       const wf_value *path, wf_host_operation *operation) {
+    (void)paths;
+    memset(result, 0, sizeof(*result));
+    return wf_host_string_start(&result->tag, &result->err.error, factory, base, path,
+                                WF_HOST_OPEN_PAIR, operation);
+}
+
+void wf__body_open_host_directory_finish(wf_directory_result *result, wf_value *factory,
+                                         const wf_value *paths, const wf_value *base,
+                                         const wf_value *path, wf_host_operation *operation) {
+    (void)paths; (void)base; (void)path;
+    wf_host_pair_finish(result, factory, operation, 0);
+}
+
+void wf__body_open_host_directory(wf_directory_result *result, wf_value *factory,
+                                  const wf_value *paths, const wf_value *base,
+                                  const wf_value *path) {
+    wf_host_operation operation;
+    if (wf__body_open_host_directory_start(result, factory, paths, base, path, &operation))
+        wf__body_open_host_directory_finish(result, factory, paths, base, path, &operation);
+}
+
+int wf__body_open_host_directory_bytes_start(wf_directory_result *result, wf_value *factory,
+                                             const wf_value *paths, const wf_value *base,
+                                             const wf_view *path, uint64_t start, uint64_t end,
+                                             uint8_t encoding, wf_host_operation *operation) {
+    (void)paths;
+    memset(result, 0, sizeof(*result));
+    return wf_host_bytes_start(&result->tag, &result->err.error, factory, base, path, start, end,
+                               encoding, WF_HOST_OPEN_PAIR, operation);
+}
+
+void wf__body_open_host_directory_bytes_finish(wf_directory_result *result, wf_value *factory,
+                                               const wf_value *paths, const wf_value *base,
+                                               const wf_view *path, uint64_t start, uint64_t end,
+                                               uint8_t encoding, wf_host_operation *operation) {
+    (void)paths; (void)base; (void)path; (void)encoding;
+    wf_host_pair_finish(result, factory, operation, end - start);
+}
+
+void wf__body_open_host_directory_bytes(wf_directory_result *result, wf_value *factory,
+                                        const wf_value *paths, const wf_value *base,
+                                        const wf_view *path, uint64_t start, uint64_t end,
+                                        uint8_t encoding) {
+    wf_host_operation operation;
+    if (wf__body_open_host_directory_bytes_start(result, factory, paths, base, path, start, end,
+                                                 encoding, &operation))
+        wf__body_open_host_directory_bytes_finish(result, factory, paths, base, path, start, end,
+                                                  encoding, &operation);
 }
 
 /* `.` and `..` name the directory itself and its parent, never an entry
@@ -1968,6 +2285,12 @@ int wf__ordinary_inputs(wf_inputs *inputs, int argc, void *argv) {
 #endif
     if (cwd < 0) return 0;
     wf_descriptor_value(&inputs->cwd_write, cwd);
+    /* [PRE-2] A POSIX host grants host-path lookup; every other host supplies
+     * None, which the zeroed field already is. The authority's own value is
+     * empty: it names no descriptor and owns nothing to close. */
+#if !defined(_WIN32)
+    inputs->host_paths.tag = WF_OPTION_SOME;
+#endif
     wf_text(&inputs->args, argv, argc > 0 ? (uint64_t)(unsigned)argc : 0);
     wf_handle_budget = capacity;
     inputs->handles.words[2] = (uint64_t)(uintptr_t)&wf_handle_budget;

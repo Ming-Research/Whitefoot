@@ -28,6 +28,9 @@ mod programs {
     mod hashing;
     #[cfg(unix)]
     mod heap;
+    // POSIX supplies host-path authority; every other host supplies none.
+    #[cfg(unix)]
+    mod host_paths;
     #[cfg(unix)]
     mod image;
     mod memory;

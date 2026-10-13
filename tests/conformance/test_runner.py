@@ -256,11 +256,13 @@ class ArrangementTests(unittest.TestCase):
         self.validate(
             self.case(
                 {
-                    "argv": ["77f0", ""],
+                    "argv": ["77f0", "", {"initial": "62"}],
                     "stdin": "0a",
                     "files": [
                         {"path": "61ff", "bytes": ""},
                         {"path": "62", "directory": True},
+                        {"path": "63", "link": "62"},
+                        {"path": "64", "bytes": {"initial": "63"}},
                     ],
                     "redirect": {"stdout": "combined", "stderr": "combined"},
                 }
@@ -282,6 +284,20 @@ class ArrangementTests(unittest.TestCase):
     def test_fixture_is_either_a_file_or_a_directory(self):
         with self.assertRaisesRegex(ValueError, "exactly one of bytes, directory"):
             self.validate(self.case({"files": [{"path": "61", "bytes": "", "directory": True}]}))
+
+    def test_fixture_is_not_both_a_link_and_a_file(self):
+        with self.assertRaisesRegex(ValueError, "exactly one of bytes, directory, link"):
+            self.validate(self.case({"files": [{"path": "61", "bytes": "", "link": "62"}]}))
+
+    def test_link_target_is_nonempty_hex(self):
+        with self.assertRaisesRegex(ValueError, "link must not be empty"):
+            self.validate(self.case({"files": [{"path": "61", "link": ""}]}))
+
+    def test_initial_relative_bytes_have_only_the_initial_member(self):
+        with self.assertRaisesRegex(ValueError, "argv\\[1\\] must be a hex byte string or an object"):
+            self.validate(self.case({"argv": ["61", {"initial": "62", "extra": "63"}]}))
+        with self.assertRaisesRegex(ValueError, "bytes.initial must be a lowercase"):
+            self.validate(self.case({"files": [{"path": "61", "bytes": {"initial": "6"}}]}))
 
     def test_duplicate_fixture_paths_are_rejected(self):
         with self.assertRaisesRegex(ValueError, "duplicate fixture paths"):
