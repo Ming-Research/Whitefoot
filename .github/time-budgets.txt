@@ -76,3 +76,10 @@ performance-slow-control        55         55         55         -      -
 performance-shifted-images      10         10         10         -      -
 performance-placement-control   45         45         45         -      -
 performance-comparison          45         45         45         -      -
+
+# Temporary unwind-resume.yml experiment stages; remove with that workflow.
+# Initial operational ceilings, not empirically derived 20-run CPU-class budgets.
+# No established stage budget is changed; actual timing evidence is still absent.
+unwind-build                    600        600        600        -      -
+unwind-compile                  120        120        120        -      -
+unwind-observe                  180        180        180        -      -
