@@ -13,6 +13,13 @@ Owner-approved: On the shared status board on 2026-10-13, written in Chinese, th
 
 Summary: The reference-validity decision adds one sentence. Where the specification lets a window reference survive, its formation bounds reuse the existing retained-question record but are judged after the call's invalidation and postcondition publication, destructured results included, and the reference is kept when they are proved, because the specification keeps a reference valid while its bounds hold, instead of invalidating every window reference at any call that writes the window's length, end or filled part. A write to a prefix of the reference's path, a moved Ring start, and `take_back` and `remove_at`, whose specified guarantees exclude those bounds, still invalidate it independently.
 
+## 2026-10-13 The range walk checks every object partition of possibly aliased atomic targets
+
+Nodes: compiler/range-judgment
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the design-tree change: for several atomic targets that may be the same object, the range judgment checks every possible object partition? (Ming-Research/Whitefoot#441, head cb26294b1)" (translated).
+
+Summary: At an atomic statement the range walk checks each partition of the possibly aliased whole-object targets that their pairwise relations allow, giving targets placed in one object one storage location and the others separate ones, so the existing write, call, branch and exit judgments keep a same-or-different relation throughout the block; it replaces the unsupported report for multi-target blocks with range type invariants. Refused were treating possible aliases as always equal or always distinct (each misjudges one case) and conditional alias handling at every mutation. The invariants to restore at exit are keyed by the original entry targets, and loop proof records merge only after every partition proves them. The provisional cost grows with the Bell number of the targets, without a work bound; it is reassessed when real multi-target atomic blocks slow development.
 ## 2026-10-13 Conformance rejections pin their byte range, and an out-of-order requirement is moved rather than restated
 
 Nodes: compiler/verification, compiler/diagnostic-repairs
