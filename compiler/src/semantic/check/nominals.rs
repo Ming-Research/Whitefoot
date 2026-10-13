@@ -225,6 +225,7 @@ impl<'unit> TypeContext<'unit> {
             linear: false,
             // [PRE-1] `opaque nocopy struct Box<T>`.
             nocopy: true,
+            type_invariant: false,
         });
         self.nominal_nodes.push(None);
         self.nominal_states.push(2);
@@ -263,6 +264,7 @@ impl<'unit> TypeContext<'unit> {
             kind: CheckedNominalKind::Struct { fields },
             linear: false,
             nocopy: false,
+            type_invariant: false,
         });
         self.nominal_nodes.push(None);
         self.nominal_states.push(2);
@@ -414,6 +416,7 @@ impl<'unit> TypeContext<'unit> {
             kind: CheckedNominalKind::Enum { variants },
             linear: false,
             nocopy: false,
+            type_invariant: false,
         });
         self.nominal_nodes.push(None);
         self.nominal_states.push(2);

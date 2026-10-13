@@ -7,6 +7,7 @@ mod buffers;
 mod call_grain;
 mod contexts;
 mod indexed;
+mod lock_ledger;
 mod loops;
 mod parameters;
 mod prelude;
@@ -186,6 +187,7 @@ pub(crate) fn lower_checked_from(
                 constants: &constants,
                 function_results: &function_results,
                 synthesis: &synthesis,
+                lock_ledger_sources: &checked.data.lock_ledger_sources,
             };
             lower_function(
                 function,
@@ -251,6 +253,7 @@ struct LoweringContext<'program> {
     /// Every physical function's declared IR result, indexed by its IR ordinal.
     function_results: &'program [IrType],
     synthesis: &'program SynthesisCell,
+    lock_ledger_sources: &'program HashMap<NodePath, String>,
 }
 
 fn lower_scalar_constant(value: &CheckedValue) -> Result<IrConstant, LoweringFailure> {
@@ -780,6 +783,9 @@ struct IrBuilder<'program> {
     /// [SHARE-2] the atomic statements whose blocks enclose the statement
     /// being lowered, innermost last.
     atomics: Vec<atomic::AtomicRegion>,
+    /// Source citations and developer lines recorded by atomic lowering.
+    lock_ledger_sources: &'program HashMap<NodePath, String>,
+    lock_ledger: Vec<String>,
     /// Atomic entry roots whose completed statements permit concurrent readers.
     readonly_atomic_roots: std::collections::HashSet<BindingId>,
     /// Executing split contexts, including enclosing chunks' permissions.
@@ -823,6 +829,7 @@ impl<'program> IrBuilder<'program> {
             constants,
             function_results,
             synthesis,
+            lock_ledger_sources,
         } = context;
         let mut builder = Self {
             target,
@@ -857,6 +864,8 @@ impl<'program> IrBuilder<'program> {
             context_awaits: Vec::new(),
             pending_contexts: Vec::new(),
             atomics: Vec::new(),
+            lock_ledger_sources,
+            lock_ledger: Vec::new(),
             readonly_atomic_roots: std::collections::HashSet::new(),
             capture_write_contexts: Vec::new(),
             indexed_roots: Vec::new(),
@@ -889,6 +898,7 @@ impl<'program> IrBuilder<'program> {
             constants: self.constants,
             function_results: self.function_results,
             synthesis: self.synthesis,
+            lock_ledger_sources: self.lock_ledger_sources,
         }
     }
 
@@ -918,6 +928,7 @@ impl<'program> IrBuilder<'program> {
             box_keeping_reference_parameters: self.box_keeping_reference_parameters,
             source_signature: None,
             source_calls: self.source_calls,
+            lock_ledger: self.lock_ledger,
             result: self.result,
             values: self.values,
             blocks: self
@@ -1591,12 +1602,14 @@ impl<'program> IrBuilder<'program> {
                     })?;
                 }
                 CheckedStatement::Atomic {
+                    node_path,
                     targets,
                     guard,
                     body,
                     fallthrough_drops,
                     ..
                 } => self.lower_atomic(
+                    node_path,
                     targets,
                     guard.as_deref(),
                     body,
@@ -1608,6 +1621,7 @@ impl<'program> IrBuilder<'program> {
                     enum_type,
                     arms,
                     continues,
+                    ..
                 } => {
                     if !self.lower_conditional_call(statement)? {
                         self.lower_match(

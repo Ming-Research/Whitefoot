@@ -1,0 +1,18 @@
+fn clobber(page: &[u64]) -> result: unit writes(page) {
+  if 0_u64 < page^.len {
+    set page^[0_u64] = 9_u64;
+  }
+  return unit;
+}
+
+fn through_page(p: &Paged<u64>) -> result: unit writes(p) contract {
+  requires p^.pages.len >= 1_u64;
+  ensures forall kept(k in 0_u64..p^.len): p^[k] unchanged;
+} {
+  clobber(page: &p^.pages[0_u64]);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

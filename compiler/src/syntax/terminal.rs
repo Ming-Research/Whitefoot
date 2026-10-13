@@ -226,12 +226,16 @@ pub enum FixedTerminal {
     Musttail,
     /// `spawn`.
     Spawn,
+    /// `unchanged`.
+    Unchanged,
     /// `.`.
     Dot,
     /// `^`.
     Caret,
     /// `forall`.
     Forall,
+    /// `not`.
+    Not,
     /// `pure`.
     Pure,
     /// `reads`.
@@ -241,7 +245,7 @@ pub enum FixedTerminal {
 }
 
 /// Every fixed raw-token predicate in the active specification, in first occurrence order.
-pub const ALL_FIXED_TERMINALS: [FixedTerminal; 108] = [
+pub const ALL_FIXED_TERMINALS: [FixedTerminal; 110] = [
     FixedTerminal::Public,
     FixedTerminal::Alias,
     FixedTerminal::Equal,
@@ -344,9 +348,11 @@ pub const ALL_FIXED_TERMINALS: [FixedTerminal; 108] = [
     FixedTerminal::GreaterEqual,
     FixedTerminal::Musttail,
     FixedTerminal::Spawn,
+    FixedTerminal::Unchanged,
     FixedTerminal::Dot,
     FixedTerminal::Caret,
     FixedTerminal::Forall,
+    FixedTerminal::Not,
     FixedTerminal::Pure,
     FixedTerminal::Reads,
     FixedTerminal::Writes,
@@ -459,7 +465,9 @@ impl FixedTerminal {
             Self::LessEqual => "<=",
             Self::GreaterEqual => ">=",
             Self::Caret => "^",
+            Self::Unchanged => "unchanged",
             Self::Forall => "forall",
+            Self::Not => "not",
             Self::Package => "package",
             Self::Entry => "entry",
             Self::Dot => ".",
@@ -862,7 +870,9 @@ mod tests {
         // `apart` [RANGE-5] first occurs in the counted header after the match
         // atoms, and `forall` [RANGE-1] after the element read's `^`. v0.101's
         // `continue` [GRAM-4] first occurs right after `break`, moving every
-        // later terminal one slot.
+        // later terminal one slot. v0.136's `unchanged` [RANGE-1] first occurs
+        // in `clause_expr`, before the place suffixes. v0.142's `not` first occurs in
+        // the variant relation after `forall`, moving the effect atoms one slot.
         assert_eq!(FixedTerminal::Alias as u8, 1);
         assert_eq!(FixedTerminal::Equal as u8, 2);
         assert_eq!(FixedTerminal::Pkg as u8, 3);
@@ -891,13 +901,15 @@ mod tests {
         assert_eq!(FixedTerminal::Times as u8, 67);
         assert_eq!(FixedTerminal::Musttail as u8, 100);
         assert_eq!(FixedTerminal::PercentChecked as u8, 95);
-        assert_eq!(FixedTerminal::Writes as u8, 107);
+        assert_eq!(FixedTerminal::Writes as u8, 109);
         assert_eq!(FixedTerminal::Waits as u8, 23);
         assert_eq!(FixedTerminal::Spawn as u8, 101);
         assert_eq!(FixedTerminal::Apart as u8, 77);
-        assert_eq!(FixedTerminal::Forall as u8, 104);
-        assert_eq!(TerminalPredicate::Identifier.index(), 108);
-        assert_eq!(TerminalPredicate::Digits.index(), 114);
+        assert_eq!(FixedTerminal::Unchanged as u8, 102);
+        assert_eq!(FixedTerminal::Forall as u8, 105);
+        assert_eq!(FixedTerminal::Not as u8, 106);
+        assert_eq!(TerminalPredicate::Identifier.index(), 110);
+        assert_eq!(TerminalPredicate::Digits.index(), 116);
     }
 
     /// The inventory holds every predicate, once.

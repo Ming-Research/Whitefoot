@@ -1,48 +1,56 @@
-# Wall-time budgets, in seconds, for each labeled verification stage on the
-# hosted runners: ubuntu-24.04 (linux) and macos-15 (macos). `run-check.pl`
-# reads this table without changing any stage's status. In CI it records a
-# stage over its budget, or one without a row for its host, and the job's
-# final verdict step fails on that record; a local run only prints the
-# comparison.
+# Wall-time budgets in seconds, one row per labeled verification stage.
+# Linux columns name CPU classes mapped below to exact /proc/cpuinfo model
+# names. Each stage/class budget is the maximum of at least its 20 most recent
+# recorded runs plus 10%, rounded up to 5 s. The prior 10 s floor remains,
+# rather than coming from the 2026-10-13 ruling; it can affect only stages
+# whose measured maximum is below about 9 s.
+# A model with fewer than 20 runs has no column. An unmapped model uses the
+# stage's largest Linux class budget and is reported by name. Unsampled rows
+# retain the former Linux values until per-CPU runs are recorded in
+# research/investigations/test-economy/time-budgets.md.
 #
-# A new stage's budget, and every budget recomputed over a new sample of
-# runs, is 1.25 times the slowest of the runs recorded in
-# research/investigations/test-economy/time-budgets.md, rounded up to 5 s,
-# and never under 10 s; that file also records any value the owner set
-# directly. AGENTS.md "Checks" says how to judge an overrun. A raise needs
-# the owner's approval as a decision in the report and adds 10 s to the
-# stage over its budget and to the group stage that contains it, if any;
-# lower a budget in the change that makes its stage much faster. "-" marks a
-# stage that does not run on that host.
+# macos values remain reported references: overruns are report-only. Linux and
+# Windows overruns fail the final CI verdict; a missing row for the host fails
+# on every host. run-check.pl preserves the command's status and records these
+# results when WHITEFOOT_TIME_BUDGET_RECORD is set. Without a record it prints
+# the comparison only. "-" marks a stage that does not run on that host.
+# Windows values retain their existing rule: 1.25 times the recorded maximum,
+# rounded up to 5 s, with a 10 s floor, or an owner-set value. AGENTS.md "Checks"
+# states how to judge an overrun; budget raises need the owner's decision.
+# Windows raises keep the 10 s increment for the stage and its group, if any.
 
-label                           linux  macos  windows
+cpu epyc-7763  AMD EPYC 7763 64-Core Processor
+cpu epyc-9v74  AMD EPYC 9V74 80-Core Processor
+cpu epyc-9v45  AMD EPYC 9V45 96-Core Processor
+
+label                           epyc-7763  epyc-9v74  epyc-9v45  macos  windows
 
 # gate.yml, static group
-check/static                    85     125    -
-repository-invariants           25     30     -
-spec-archives                   10     10     -
-readme-translation              10     10     -
-spec-prose-integrity            10     10     -
-guidance                        10     10     -
-source-size                     10     10     -
-design-lint                     10     15     -
-conformance                     10     10     -
-performance-instrument          10     10     -
-compiler/lint                   55     75     -
+check/static                    80         85         65         125    -
+repository-invariants           25         25         25         30     -
+spec-archives                   10         10         10         10     -
+readme-translation              10         10         10         10     -
+spec-prose-integrity            10         10         10         10     -
+guidance                        10         10         10         10     -
+source-size                     10         10         10         10     -
+design-lint                     10         10         10         15     -
+conformance                     10         10         10         10     -
+performance-instrument          10         10         10         10     -
+compiler/lint                   55         60         40         75     -
 
 # gate.yml, unit group: the library in test mode, then its cases
-check/unit                      315    395    -
-compiler/test-build-unit        175    270    -
-compiler/test-unit              140    175    -
+check/unit                      385        320        225        425    -
+compiler/test-build-unit        175        175        130        300    -
+compiler/test-unit              215        150        100        175    -
 
 # gate.yml, corpus group: the ordinary library, the CLI and corpus harnesses,
 # then their cases
-check/corpus                    305    340    -
-compiler/test-build-corpus      135    175    -
-compiler/test-corpus            175    185    -
+check/corpus                    360        320        220        360    -
+compiler/test-build-corpus      135        115        85         175    -
+compiler/test-corpus            235        210        140        205    -
 
 # gate.yml, runtime group
-check/runtime                   20     30     -
+check/runtime                   25         25         15         30     -
 
 # tmp-shared-take-witness.yml, dispatch only. Provisional ceilings for the
 # first CI sample, not measured budgets or performance acceptance criteria.
@@ -52,26 +60,26 @@ shared-take-witness-build        60     90     -
 shared-take-witness-counts       180    180    -
 
 # io-hosts.yml, completion-linux
-linux-runtime                   50     -      -
-linux-asan-ubsan                20     -      -
-linux-default-tsan              10     -      -
-linux-deque-tsan                10     -      -
-linux-runtime-tsan              10     -      -
+linux-runtime                   50         50         50         -      -
+linux-asan-ubsan                20         20         20         -      -
+linux-default-tsan              10         10         10         -      -
+linux-deque-tsan                10         10         10         -      -
+linux-runtime-tsan              10         10         10         -      -
 
 # map-sanitizers.yml, on changes to the concurrent map's runtime or test
-map-asan                        30     20     -
-map-tsan                        45     45     -
+map-asan                        30         30         30         20     -
+map-tsan                        45         45         45         45     -
 
 # compute-regression.yml: two cold compiler builds at two Cargo jobs, their
 # images, then the host control, the instrument's slowdown and placement
 # controls with the shifted images the latter builds, and the paired
 # comparison
-performance-candidate-compiler  130    -      -
-performance-baseline-compiler   115    -      -
-performance-candidate-images    10     -      -
-performance-baseline-images     10     -      -
-performance-null                45     -      -
-performance-slow-control        55     -      -
-performance-shifted-images      10     -      -
-performance-placement-control   45     -      -
-performance-comparison          45     -      -
+performance-candidate-compiler  130        130        130        -      -
+performance-baseline-compiler   115        115        115        -      -
+performance-candidate-images    10         10         10         -      -
+performance-baseline-images     10         10         10         -      -
+performance-null                45         45         45         -      -
+performance-slow-control        55         55         55         -      -
+performance-shifted-images      10         10         10         -      -
+performance-placement-control   45         45         45         -      -
+performance-comparison          45         45         45         -      -

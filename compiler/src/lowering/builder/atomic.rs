@@ -1,4 +1,5 @@
 //! Atomic type groups, ordered takes, and release on every leaving edge.
+use super::lock_ledger::AtomicLedger;
 use super::{GiveTarget, IrBuilder, lower_type};
 use crate::semantic::{
     BindingId, CheckedArrayRoot, CheckedContainerRoot, CheckedDrop, CheckedEnumType,
@@ -8,9 +9,11 @@ use crate::semantic::{
 use crate::{
     IrAddressed, IrConstant, IrDrop, IrDropSubject, IrMatchTarget, IrNominalId, IrNominalKind,
     IrOperation, IrRecord, IrRecordKind, IrShared, IrTerminator, IrType, IrValueId,
-    LoweringFailure,
+    LoweringFailure, NodePath,
 };
-use std::collections::{BTreeSet, HashMap};
+use std::cell::RefCell;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::rc::Rc;
 const U64: IrType = IrType::Integer {
     width: 64,
     signed: false,
@@ -21,6 +24,7 @@ pub(super) struct AtomicRegion {
     groups: Vec<Group>,
     bindings: HashMap<BindingId, usize>,
     target_bindings: HashMap<BindingId, usize>,
+    ledger: Rc<RefCell<AtomicLedger>>,
 }
 #[derive(Clone)]
 struct TargetRegion {
@@ -83,6 +87,7 @@ impl IrBuilder<'_> {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn lower_atomic(
         &mut self,
+        site: &NodePath,
         targets: &[CheckedTarget],
         guard: Option<&CheckedExpression>,
         body: &[CheckedStatement],
@@ -104,26 +109,55 @@ impl IrBuilder<'_> {
         if let Some(guard) = guard {
             expression_bindings(guard, &mut guard_roots);
         }
-        let eager = grouped
-            .values()
-            .enumerate()
-            .filter(|(_, indexes)| {
-                indexes.iter().any(|i| {
-                    matches!(
-                        targets[*i].kind,
-                        CheckedTargetKind::MapEntry(_) | CheckedTargetKind::MapSet(_)
-                    ) || guard_roots.iter().any(|r| r.binding == targets[*i].binding)
-                })
-            })
-            .map(|(i, _)| i)
-            .max();
+        let ledger_site = self
+            .lock_ledger_sources
+            .get(site)
+            .cloned()
+            .unwrap_or_else(|| "<unknown site>".to_owned());
+        let ledger = Rc::new(RefCell::new(AtomicLedger::new(ledger_site.clone())));
+        let guard_site = guard
+            .and_then(CheckedExpression::carrier)
+            .and_then(|path| self.lock_ledger_sources.get(path))
+            .cloned()
+            .unwrap_or_else(|| ledger_site.clone());
+        let mut eager_direct = BTreeMap::new();
+        for (group_index, indexes) in grouped.values().enumerate() {
+            let source = indexes.iter().find_map(|index| {
+                let target = &targets[*index];
+                if matches!(
+                    target.kind,
+                    CheckedTargetKind::MapEntry(_) | CheckedTargetKind::MapSet(_)
+                ) {
+                    Some(target.ledger_site.clone())
+                } else if guard_roots.iter().any(|root| root.binding == target.binding) {
+                    Some(guard_site.clone())
+                } else {
+                    None
+                }
+            });
+            if let Some(source) = source {
+                eager_direct.insert(group_index, source);
+            }
+        }
+        // The provenance map selects the eager prefix as well as describing
+        // it, so the ledger and acquisition cannot choose different groups.
+        let eager = eager_direct.keys().next_back().copied();
         let mut region = AtomicRegion {
             targets: Vec::new(),
             groups: Vec::new(),
             bindings: HashMap::new(),
             target_bindings: HashMap::new(),
+            ledger: ledger.clone(),
         };
         for (group_index, indexes) in grouped.into_values().enumerate() {
+            ledger.borrow_mut().push_group(
+                indexes
+                    .iter()
+                    .map(|index| targets[*index].ledger_name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                targets[indexes[0]].ledger_state.clone(),
+            );
             let grouped = indexes.len() > 1;
             let mut members = Vec::new();
             for index in indexes {
@@ -277,10 +311,11 @@ impl IrBuilder<'_> {
             });
         }
         if let Some(guard) = guard {
-            self.lower_guard(&region, guard, eager)?;
+            self.lower_guard(&region, guard, eager, &eager_direct, &ledger_site)?;
         } else if let Some(last) = eager {
-            self.take_groups_through(&region, last)?;
+            self.take_groups_through(&region, last, &eager_direct, true)?;
         }
+        ledger.borrow_mut().body_entry = self.current;
         self.atomics.push(region.clone());
         let lowered = self.lower_statements(body, give_target);
         self.atomics.pop();
@@ -291,6 +326,8 @@ impl IrBuilder<'_> {
             self.leave_atomic(&region)?;
         }
         self.bindings.retain(|b, _| enclosing.contains(b));
+        self.lock_ledger
+            .extend(ledger.borrow().render(self.function_name, &self.blocks));
         Ok(())
     }
     fn u64_constant(&mut self, bits: u64) -> Result<IrValueId, LoweringFailure> {
@@ -368,8 +405,18 @@ impl IrBuilder<'_> {
         };
         let mut roots = Vec::new();
         statement_bindings(statement, &mut roots);
-        if let Some(last) = self.reached_groups(&region, &roots).last().copied() {
-            self.take_groups_through(&region, last)?;
+        let reached = self.reached_groups(&region, &roots);
+        if let Some(last) = reached.last().copied() {
+            let source = statement
+                .ledger_path()
+                .and_then(|path| self.lock_ledger_sources.get(path))
+                .cloned()
+                .unwrap_or_else(|| "<unknown site>".to_owned());
+            let direct = reached
+                .into_iter()
+                .map(|group| (group, source.clone()))
+                .collect();
+            self.take_groups_through(&region, last, &direct, false)?;
         }
         self.bind_entries(&region, &roots)
     }
@@ -413,11 +460,21 @@ impl IrBuilder<'_> {
         &mut self,
         region: &AtomicRegion,
         last: usize,
+        direct: &BTreeMap<usize, String>,
+        before_guard: bool,
     ) -> Result<(), LoweringFailure> {
         for (index, group) in region.groups.iter().enumerate().take(last + 1) {
             // An eager group is already held in the body. Guard acquisition runs before the region is pushed.
             if group.flag.is_none() && !self.atomics.is_empty() {
                 continue;
+            }
+            // Observe this request before the taken-word branch. That branch
+            // can skip the take only when this execution already holds it.
+            if let Some(block) = self.current {
+                region
+                    .ledger
+                    .borrow_mut()
+                    .request(index, block, direct, before_guard);
             }
             let done = group
                 .flag
@@ -664,12 +721,18 @@ impl IrBuilder<'_> {
         region: &AtomicRegion,
         guard: &CheckedExpression,
         eager: Option<usize>,
+        eager_direct: &BTreeMap<usize, String>,
+        ledger_site: &str,
     ) -> Result<(), LoweringFailure> {
         let mut roots = Vec::new();
         expression_bindings(guard, &mut roots);
         let mut read = self.reached_groups(region, &roots);
+        let mut direct = eager_direct.clone();
         if read.is_empty() {
             read.extend(0..region.groups.len());
+            // The watch fallback really takes every group before evaluating
+            // a guard that reads none. It is an eager request, not a body use.
+            direct.extend(read.iter().map(|index| (*index, ledger_site.to_owned())));
         }
         let acquire = self.new_block(&[])?.0;
         self.terminate(IrTerminator::Jump {
@@ -679,7 +742,7 @@ impl IrBuilder<'_> {
         })?;
         self.current = Some(acquire);
         if let Some(last) = read.last().copied().max(eager) {
-            self.take_groups_through(region, last)?;
+            self.take_groups_through(region, last, &direct, true)?;
         }
         self.bind_entries(region, &roots)?;
         let holds = self.expression(guard)?;
@@ -824,6 +887,9 @@ impl IrBuilder<'_> {
         Ok(())
     }
     fn leave_atomic(&mut self, region: &AtomicRegion) -> Result<(), LoweringFailure> {
+        if let Some(block) = self.current {
+            region.ledger.borrow_mut().exits.insert(block);
+        }
         self.release_groups(region, false)?;
         self.append_drops(
             region

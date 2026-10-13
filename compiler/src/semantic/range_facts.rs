@@ -25,6 +25,8 @@ pub(crate) const MAX_RANGE_ATOMS: usize = 4096;
 pub(crate) enum CheckedRangeRoot {
     /// A parameter or a binding live where the clause is written.
     Binding(BindingId),
+    /// A written reference parameter's storage at function entry [RANGE-1].
+    Entry(BindingId),
     /// One result ordinal of the function, in a postcondition, zero for a
     /// single result; for the ordinal a route `when V(value: r)` names, the
     /// payload r denotes [RANGE-1, FN-9].
@@ -58,6 +60,8 @@ pub(crate) enum CheckedRangeStep {
 /// Ordinals identify declared fields and variants of the selected type.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) enum CheckedRangeProjection {
+    /// Opaque whole-selection identity for `unchanged`; not value equality [RANGE-1].
+    WholeElement,
     Field(u32),
     BoxContent,
     /// A subscript below the outer element, indexing this tuple position.
@@ -177,6 +181,9 @@ pub(crate) struct CheckedRangeClause {
     pub(crate) binders: Vec<CheckedRangeBinder>,
     pub(crate) guards: Vec<CheckedRangeRelation>,
     pub(crate) conclusions: Vec<CheckedRangeRelation>,
+    /// Typed contract reads retained before canonical arithmetic erases
+    /// zero-weight or canceled terms. Used only by EFF-5 alias checking.
+    pub(crate) contract_reads: Vec<CheckedRangeTerm>,
 }
 
 /// One `use NAME(arguments);` step of a certificate [RANGE-4].
@@ -387,7 +394,8 @@ impl CheckedRangeClause {
             }
             match value {
                 CheckedRangeTerm::SegmentLength { segment, .. } => term(segment, root, reference),
-                CheckedRangeTerm::Read { indices, .. } => {
+                CheckedRangeTerm::Read { indices, .. }
+                | CheckedRangeTerm::ValueProjection { indices, .. } => {
                     for index in indices {
                         term(index, root, reference);
                     }
@@ -404,6 +412,9 @@ impl CheckedRangeClause {
         for binder in &mut clause.binders {
             term(&mut binder.start, root, reference);
             term(&mut binder.end, root, reference);
+        }
+        for read in &mut clause.contract_reads {
+            term(read, root, reference);
         }
         for relation in clause.guards.iter_mut().chain(&mut clause.conclusions) {
             term(&mut relation.left, root, reference);

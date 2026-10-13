@@ -123,6 +123,7 @@ pub(crate) fn judge(
             &[],
             &[],
             &[],
+            &[],
             Query {
                 type_facts: formed.type_facts.clone(),
                 units,
@@ -136,6 +137,7 @@ pub(crate) fn judge(
                     .flat_map(|(rule, _)| rule.guards.iter().chain(&rule.conclusions))
                     .cloned()
                     .collect(),
+                ..Query::default()
             },
         ) {
             Ok(Verdict::Refuted) => {}

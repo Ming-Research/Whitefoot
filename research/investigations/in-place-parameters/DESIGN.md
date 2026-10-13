@@ -2613,3 +2613,125 @@ Whether #357 merges with the Snowghost cells left at main's level and the
 accessor inlining split into its own item, or waits for that item, is the
 owner's open choice on card `lm-357-accept-split`; nothing in this record
 presumes the answer.
+
+## Read-through criterion experiment
+
+Written before measuring, on branch `claude/inplace-read-criterion` from main
+`f0df1d258`.
+
+### Question and mechanism
+
+PR #310's [read-through snapshots](#read-through-snapshots) made Halo's fib
+0.779 and binary-trees 0.913 of the #292 compiler but loop 1.024, beyond the
+twin's range (Halo-wf run 37986461719). A read-only IR comparison located
+loop's difference in `instruction_for_loop` (Halo
+`lib/halo/vm/handlers.wf`): `let limit = stack^.inner[rlimit]; let step =
+stack^.inner[rstep];` are by-value Load snapshots whose only uses are the
+calls `num_of(v: limit)` and `num_of(v: step)`, each inside an arm of the
+match on `num_of(v: init)`. Before #310 each Load copied its 16-byte Value
+into a slot; `num_of` (`lib/halo/value/value.wf`) has no call and only
+matches its parameter and reads the f64 payload, so the host inliner takes it
+and SROA promotes the slot, leaving the tag and payload loads at the Load.
+Read-through passes the stack element's address instead, so after inlining
+those loads sit inside the match arms; register allocation then changed and
+the ForLoop arm gained a stack store and reload. The removed copy cost
+nothing.
+
+The Load that #310 meant to remove is different. In `prepare`
+(`lib/halo/vm/calls.wf`), `let v = stack^.inner[fslot]` reaches
+`func_of` but also `call_type_error` and `metamethod`, which are not inlined,
+so the snapshot slot escapes and its copy survived optimization on the hot
+path. The table handlers' `t`, `key` and `value` snapshots reach
+`table_get`, `raw_assign` and `slow` in the same way.
+
+Question: which lowering rule keeps the Load copy exactly where the host
+would fold it into scalar loads, and reads through where the copy would
+survive?
+
+### Candidate criteria
+
+Each applies only to a Load snapshot the maintained rule already admits; a
+kept copy is the pre-#310 Load copy. The compiler selects one with the
+experiment-only `WHITEFOOT_READ_THROUGH` (`all`, the default and main's rule;
+`off`, every copy kept, the pre-#310 control; and the three below), and
+`WHITEFOOT_READ_THROUGH_TRACE=<file>` lists each eligible Load's decision.
+
+| Criterion | Keeps the Load copy when | ForLoop `limit`, `step` | prepare `v` | table handlers' `t`, `key`, `value` |
+| --- | --- | --- | --- | --- |
+| `scalar` | every use observes the snapshot only as scalars: a match on it, a scalar field or payload projection, an unchanged carry, or an argument to a call-free callee whose parameter is observed only that way | copy | read through (`call_type_error`, `metamethod` call others) | read through (`table_get`, `raw_assign`, `slow` call others) |
+| `leaves` | its type has at most two scalar leaves (a tag and one payload word) | copy | copy | copy |
+| `block` | no use follows the Load in its own block | copy | read through (`func_of` in the same block) | read through (`table_get` in the same block) |
+
+Predictions from source inspection: `scalar` and `block` restore loop and keep
+fib's and binary-trees' gains; `leaves` behaves like `off` for Halo's Value
+snapshots and loses those gains, so it measures how much of them read-through
+itself supplies. `block` is position-based: it reads through a same-block use
+that the host inlines entirely, and copies a snapshot whose only surviving
+consumer sits in a later block, so it is not expected to generalize.
+`scalar` assumes the host always inlines a call-free scalar-only callee; a
+large call-free callee breaks that assumption. The traces confirm or refute
+the per-helper columns before timing is read.
+
+### Comparison and falsifier
+
+Builds: this branch's compiler, one Halo build (Halo-wf `c900a68b2f06`) per
+criterion, and a copy of the `all` build as the twin. Workload: fib (30),
+loop (100,000,000) and binary-trees (depth 14), each launch checked against
+PUC Lua's checksum, 7 rounds with a rotating order, pinned with `taskset`,
+on the i9-14900K runner (`compute-bench.yml`, `experiment: read-through`).
+Reported: per kernel and build, median, minimum–maximum and median against
+`all`; the ForLoop arm's instruction count and rsp-relative operands.
+
+- Control: `off` against `all` reproduces #310's effect on current main.
+  If loop's `off`/`all` ratio lies within the twin's range, the regression
+  no longer exists on main and no criterion is selected for loop.
+- A criterion is rejected when its fib or binary-trees median exceeds `all`'s
+  by more than the twin's range (it loses read-through's gain), or when its
+  loop median is not closer to `off` than to `all` beyond the twin's range.
+- A criterion whose ForLoop arm keeps the extra stack store and reload is not
+  credited with loop's recovery even if timing passes.
+
+### Result (2026-10-12)
+
+Run: Whitefoot run 38306704741 on the i9-14900K runner, experiment branch
+head `06f0f9793904` (the switch and trace above; base main `f0df1d258`),
+Halo-wf `c900a68b2f06`, 7 rounds, CPUs 0-3. Every launch matched PUC Lua's
+checksum.
+
+The traces matched the predicted columns: of Halo's 165 eligible Load
+snapshots, `scalar` copied 56 (both ForLoop operands; `prepare` and the 22
+table-handler snapshots read through), `leaves` copied 116, `block` 16 and
+`off` all 165.
+
+Median seconds (minimum–maximum), and median against `all`:
+
+| Kernel | all | twin of all | off | scalar | leaves | block |
+| --- | --- | --- | --- | --- | --- | --- |
+| fib | 0.08755 (0.08736–0.08854) | 0.9965 | 0.9903 | 0.9965 | 0.9978 | 0.9981 |
+| loop | 0.50247 (0.50222–0.50314) | 1.0010 | 1.0007 | 1.0010 | 1.0010 | 1.0010 |
+| binary-trees | 1.21442 (1.21168–1.38190) | 1.0019 | 1.0183 | 1.0049 | 1.0180 | 1.0104 |
+
+Loop's maxima include single launches near 0.90 s in several builds
+(twin, `leaves`, `block`), outliers that leave every median within 0.1%.
+
+The ForLoop arm is 288 instructions under `all` and 290 under every other
+criterion, with 47 rsp-relative operands in all six; the extra stack store
+and reload #310 introduced no longer distinguishes the builds.
+
+Reading, against the falsifiers written above:
+
+- Control: loop's `off`/`all` ratio, 1.0007, lies within the twin's 1.0010,
+  so read-through no longer slows loop on current main; the #310 regression
+  (1.024) does not reproduce, and no criterion is selected for loop. The
+  record does not attribute which later change removed it; #357's transfer
+  granules and TBAA tags changed the same arm's code.
+- binary-trees: `off` and `leaves` are 1.8% slower than `all` and `block`
+  1.0%, beyond the twin's 0.2%, so read-through still supplies binary-trees'
+  gain and those criteria lose part of it; `scalar` is 0.5% slower, also
+  beyond the twin. fib differs by at most 1% with `off`'s range overlapping
+  `all`'s. Every narrowing criterion is therefore rejected.
+
+Disposition: the maintained rule (read through every eligible Load
+snapshot) stands unchanged, and the storage-placement decision needs no
+amendment. The experiment's switch and trace stay on the experiment branch
+and do not enter main.

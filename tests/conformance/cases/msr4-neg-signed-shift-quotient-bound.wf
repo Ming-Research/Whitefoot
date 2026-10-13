@@ -1,0 +1,17 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn leading_digit(total: i64, base: i64) -> result: i64 pure contract {
+  requires 0_i64 <= base;
+  requires base <= 100_i64;
+  requires total < 16_i64 * base;
+  ensures result <= 99_i64;
+} {
+  doc "The same bound as the accepted unsigned shift, but over a signed total: a signed right shift is not captured as a division, so the quotient bound is not derived from the dividend and the postcondition stays unproved.";
+  let quotient = ishr(total, 4_u32);
+  return quotient;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

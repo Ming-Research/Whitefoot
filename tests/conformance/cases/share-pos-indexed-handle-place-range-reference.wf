@@ -1,0 +1,29 @@
+fn bump(shards: &[Shared<u64>], slot: u64) -> result: unit reads(shards) waits contract {
+  requires slot < shards^.len;
+} {
+  atomic held = &shards^[slot] {
+    set held^ = held^ +wrap 1_u64;
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let first = shared_new::<u64>(value: 1_u64);
+  let second = shared_new::<u64>(value: 2_u64);
+  let third = shared_new::<u64>(value: 4_u64);
+  let fourth = shared_new::<u64>(value: 40_u64);
+  let slots = slots_new::<Shared<u64>, 4>();
+  place_back(window: &slots, value: move first);
+  place_back(window: &slots, value: move second);
+  place_back(window: &slots, value: move third);
+  place_back(window: &slots, value: move fourth);
+  let shards = slots_into_array::<Shared<u64>, 4>(values: move slots);
+  bump(shards: &shards[0_u64..4_u64], slot: 3_u64);
+  bump(shards: &shards[2_u64..4_u64], slot: 1_u64);
+  let total = 0_u64;
+  atomic held = &shards[3_u64] {
+    set total = held^;
+  }
+  let code = cvt.wrap::<u64, u8>(total);
+  return std::process::exit_status(code: code);
+}

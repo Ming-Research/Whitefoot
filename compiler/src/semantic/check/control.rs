@@ -25,7 +25,7 @@ use super::super::model::{
 use super::references::{InvalidationEvent, REF3_RETURN_AN_INDEX, ReferenceInfo};
 use super::{CheckStop, Checker, EffectSet, LocalBinding};
 use crate::semantic::places::PlaceRoot;
-pub(super) use atomic::SHARE2_WAIT_OUTSIDE_THE_BLOCK;
+pub(super) use atomic::{SHARE2_PROVE_THE_HANDLE_PLACES_APART, SHARE2_WAIT_OUTSIDE_THE_BLOCK};
 pub(super) use commit::CommitReadOut;
 use loops::{LoopContext, LoopTransferState};
 
@@ -363,6 +363,7 @@ impl<'unit> Checker<'_, 'unit> {
                 let matched = self.check_if(context, node, bindings, counters, scope, false)?;
                 Ok(StatementResult {
                     statement: CheckedStatement::Match {
+                        node_path: self.types.declarations.tree.path(node)?.clone(),
                         scrutinee: matched.scrutinee,
                         enum_type: matched.enum_type,
                         arms: matched.arms,
@@ -380,6 +381,7 @@ impl<'unit> Checker<'_, 'unit> {
                 let matched = self.check_match(context, node, bindings, counters, scope, false)?;
                 Ok(StatementResult {
                     statement: CheckedStatement::Match {
+                        node_path: self.types.declarations.tree.path(node)?.clone(),
                         scrutinee: matched.scrutinee,
                         enum_type: matched.enum_type,
                         arms: matched.arms,

@@ -1,0 +1,18 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn rounded_down(total: u8, shift: u32) -> result: u8 pure contract {
+  requires total <= 15_u8;
+  requires shift <= 3_u32;
+  ensures result <= total;
+} {
+  doc "The product bound over the narrowest unsigned type: the power atom of a u8 shift has the interval one to 128, and the quotient times the multiplier is at most the total.";
+  let multiplier = ishl(1_u8, shift);
+  let quotient = ishr(total, shift);
+  let product = quotient * multiplier;
+  return product;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}
