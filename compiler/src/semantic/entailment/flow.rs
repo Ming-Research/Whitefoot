@@ -835,6 +835,37 @@ impl<'a> AffineDirectQuery<'a> {
     }
 }
 
+/// One numeric disposition retains AUTO preparation through its bridge targets.
+/// The borrows freeze binding images and premise order for this session. Atoms
+/// are immutable on this call path; it neither rolls back nor replaces them.
+/// Interior-mutable measure images are checked through the prepared index.
+struct AffineAutoQuery<'a> {
+    values: &'a AffineFlowState,
+    assumptions: &'a [ActiveAffineFact],
+    prepared: Option<PreparedAffineAuto>,
+}
+
+impl<'a> AffineAutoQuery<'a> {
+    fn new(values: &'a AffineFlowState, assumptions: &'a [ActiveAffineFact]) -> Self {
+        Self {
+            values,
+            assumptions,
+            prepared: None,
+        }
+    }
+}
+
+struct PreparedAffineAuto {
+    closed: Rc<ClosedState>,
+    l0: Rc<LazyAffineL0Index>,
+    intervals: WordHashMap<AffineTermId, AffineAtomInterval>,
+    measures: Option<WordHashMap<AffineTermId, Vec<TermId>>>,
+    residual: AffineResidualScratch,
+    /// Canonical coefficients AND upper bound, inserted only after all AUTO
+    /// families have failed; no successful proof or intermediate is retained.
+    failed: HashSet<AffineInequality>,
+}
+
 struct AutomaticAffinePremise {
     inequality: AffineInequality,
     source: Option<SourceAffineFactRef>,

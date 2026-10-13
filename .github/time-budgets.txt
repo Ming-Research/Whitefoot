@@ -68,3 +68,11 @@ performance-slow-control        55     -      -
 performance-shifted-images      10     -      -
 performance-placement-control   45     -      -
 performance-comparison          45     -      -
+
+# Temporary affine-reuse-measure.yml experiment. These initial ceilings match
+# its 1800 s command timeout, not a measured gate budget; remove them with the
+# workflow, or derive budgets from samples before retaining these stages.
+affine-reuse-build-base          1800   -      -
+affine-reuse-build-head          1800   -      -
+affine-reuse-check               1800   -      -
+affine-reuse-counters            1800   -      -

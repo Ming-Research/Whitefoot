@@ -1524,12 +1524,14 @@ impl Reasoning<'_, '_, '_> {
         context: ProofContext<'_>,
     ) -> Option<AffineConsequenceProof> {
         let assumptions = affine_facts(context.affine);
-        if let Some(proof) = self.affine_target_proof(target, &assumptions, context) {
+        let mut auto = AffineAutoQuery::new(context.affine, &assumptions);
+        if let Some(proof) =
+            self.prepared_affine_target_proof(target, context.facts, context.closed, &mut auto)
+        {
             return Some(proof);
         }
         if let Some(right) = right
-            && let Some(proof) =
-                self.affine_right_bridge_proof(target, right, &assumptions, context)
+            && let Some(proof) = self.affine_right_bridge_proof(target, right, context, &mut auto)
         {
             return Some(proof);
         }
@@ -1602,8 +1604,8 @@ impl Reasoning<'_, '_, '_> {
         &mut self,
         target: &AffineInequality,
         right: TermId,
-        assumptions: &[ActiveAffineFact],
         context: ProofContext<'_>,
+        auto: &mut AffineAutoQuery<'_>,
     ) -> Option<AffineConsequenceProof> {
         let right_value = self.vocabulary.affine_term_value(right, context.affine)?;
         let candidates = self.affine_right_bridge_candidates(context.affine);
@@ -1628,7 +1630,9 @@ impl Reasoning<'_, '_, '_> {
             let Ok(residual) = AffineInequality::residual_after(target, &image, &mut check) else {
                 continue;
             };
-            let Some(mut proof) = self.affine_target_proof(&residual, assumptions, context) else {
+            let Some(mut proof) =
+                self.prepared_affine_target_proof(&residual, context.facts, context.closed, auto)
+            else {
                 continue;
             };
             let Some(bridge) = closed.bound_proof(
@@ -3364,17 +3368,85 @@ impl Reasoning<'_, '_, '_> {
         assumptions: &[ActiveAffineFact],
         context: ProofContext<'_>,
     ) -> Option<AffineConsequenceProof> {
-        let values = context.affine;
-        let mut check = AffineCheckState::new();
         let (closed, l0) = self.affine_query_view(context);
-        let mut query = AffineDirectQuery::new(&l0, values, &closed);
-        if let Ok(Some(parents)) = self.affine_residual_proof(target, &mut query, &mut check) {
-            return Some(AffineConsequenceProof {
-                premises: Vec::new(),
-                parents,
+        let mut query = AffineDirectQuery::new(&l0, context.affine, &closed);
+        self.evaluate_affine_target(target, assumptions, &mut query)
+            .ok()
+            .flatten()
+    }
+
+    /// Reprepare before looking up a failed target. In particular, forming a
+    /// bridge candidate can mint a measure image through interior mutation.
+    /// The retained index identity covers exact ordered candidates, including
+    /// every unit measure image that interval substitution can read. Constants
+    /// omitted from that index cannot name an interval atom. Candidate formation
+    /// also interns every binding term used by intervals, with the same type
+    /// filter, before closing facts; measure_terms_by_atom therefore introduces
+    /// no further image or term on this path. Binding images and premises are
+    /// frozen by the session's borrows, and no AUTO/bridge path replaces atoms.
+    fn prepared_affine_target_proof(
+        &mut self,
+        target: &AffineInequality,
+        facts: &FactState,
+        closed: Option<&ProofClosure>,
+        auto: &mut AffineAutoQuery<'_>,
+    ) -> Option<AffineConsequenceProof> {
+        // Origin transport has already selected these facts at the numeric
+        // disposition; affine_query_view only reads affine inputs and close().
+        let mut context = ProofContext::new(facts, auto.values);
+        context.closed = closed;
+        let (closed, l0) = self.affine_query_view(context);
+        if !auto.prepared.as_ref().is_some_and(|prepared| {
+            Rc::ptr_eq(&prepared.closed, &closed) && Rc::ptr_eq(&prepared.l0, &l0)
+        }) {
+            auto.prepared = Some(PreparedAffineAuto {
+                closed: Rc::clone(&closed),
+                l0: Rc::clone(&l0),
+                intervals: WordHashMap::default(),
+                measures: None,
+                residual: AffineResidualScratch::default(),
+                failed: HashSet::new(),
             });
         }
-        let automatic = automatic_affine_premises(assumptions, &mut check).ok()?;
+        let prepared = auto.prepared.as_mut().expect("prepared above");
+        if prepared.failed.contains(target) {
+            super::super::work::affine_failed_reuse_hit();
+            return None;
+        }
+        let mut query = AffineDirectQuery {
+            l0: &l0,
+            values: auto.values,
+            closed: &closed,
+            intervals: std::mem::take(&mut prepared.intervals),
+            measures: prepared.measures.take(),
+            residual: std::mem::take(&mut prepared.residual),
+        };
+        let result = self.evaluate_affine_target(target, auto.assumptions, &mut query);
+        prepared.intervals = query.intervals;
+        prepared.measures = query.measures;
+        prepared.residual = query.residual;
+        if matches!(result, Ok(None)) {
+            prepared.failed.insert(target.clone());
+        }
+        result.ok().flatten()
+    }
+
+    /// A fresh arithmetic state for every distinct target; only complete AUTO
+    /// exhaustion returns Ok(None). Preparation errors are never memoized.
+    fn evaluate_affine_target(
+        &mut self,
+        target: &AffineInequality,
+        assumptions: &[ActiveAffineFact],
+        query: &mut AffineDirectQuery<'_>,
+    ) -> Result<Option<AffineConsequenceProof>, AffineCheckError> {
+        let mut check = AffineCheckState::new();
+        if let Ok(Some(parents)) = self.affine_residual_proof(target, query, &mut check) {
+            return Ok(Some(AffineConsequenceProof {
+                premises: Vec::new(),
+                parents,
+            }));
+        }
+        let automatic = automatic_affine_premises(assumptions, &mut check)?;
 
         // Preserve the complete coefficient-one single-premise route. Every
         // premise is tried independently; an arithmetic error in one candidate
@@ -3386,14 +3458,14 @@ impl Reasoning<'_, '_, '_> {
             if let Some(parents) = self.affine_candidate_residual_proof(
                 target,
                 &assumption.inequality,
-                &mut query,
+                query,
                 &mut check,
             ) {
-                return Some(affine_consequence_from_residual(
+                return Ok(Some(affine_consequence_from_residual(
                     &[(index, 1)],
                     &automatic,
                     parents,
-                ));
+                )));
             }
         }
 
@@ -3403,7 +3475,7 @@ impl Reasoning<'_, '_, '_> {
         // only which successful derivation is retained, never acceptance.
         if let Some((first, second, parents)) =
             first_two_premise_candidate(&automatic, &mut check, |sum, check| {
-                self.affine_candidate_residual_proof(target, sum, &mut query, check)
+                self.affine_candidate_residual_proof(target, sum, query, check)
             })
         {
             let selected = if first == second {
@@ -3411,9 +3483,9 @@ impl Reasoning<'_, '_, '_> {
             } else {
                 vec![(first, 1), (second, 1)]
             };
-            return Some(affine_consequence_from_residual(
+            return Ok(Some(affine_consequence_from_residual(
                 &selected, &automatic, parents,
-            ));
+            )));
         }
 
         // Ordinary L0 relations remain outside the affine premise set. This
@@ -3421,11 +3493,12 @@ impl Reasoning<'_, '_, '_> {
         // strongest indexed L0 image once, then run the ordinary DIRECT check
         // on the residual. DIRECT may itself close an exact L0 image, but the
         // route never publishes or recursively saturates either relation.
-        self.affine_l0_then_direct_proof(target, &mut query, &mut check)
+        Ok(self
+            .affine_l0_then_direct_proof(target, query, &mut check)
             .map(|parents| AffineConsequenceProof {
                 premises: Vec::new(),
                 parents,
-            })
+            }))
     }
 }
 

@@ -32,7 +32,11 @@
 //!   `affine_final_family_starts` counts entry into AUTO's final L0 family;
 //!   `affine_final_family_exhaustions` counts those traversals returning no
 //!   proof after all entries. Repeated traversals count separately even when
-//!   the complete index is reused. Cold scans are aggregated per request;
+//!   the complete index is reused. `affine_failed_reuse_hits` counts targets
+//!   whose complete AUTO failure is reused within one numeric disposition,
+//!   after revalidating the closed facts and ordered candidate images under
+//!   that session's fixed binding images and automatic premises. These hits
+//!   execute no final-family traversal. Cold scans are aggregated per request;
 //!   all affine counters are aggregated per function before emission.
 //! - `join`: ordinal identifies a pass; `join` identifies its enclosing
 //!   `join_at` call. `inputs` includes contradictory predecessors;
@@ -108,6 +112,7 @@ struct AffineWork {
     promotions: u64,
     final_family_starts: u64,
     final_family_exhaustions: u64,
+    failed_reuse_hits: u64,
 }
 
 struct FunctionWork {
@@ -290,13 +295,47 @@ pub(super) fn affine_promotion() {
     update(|work| work.affine.promotions = work.affine.promotions.saturating_add(1));
 }
 
+// Thread-local observations of the production traversal hooks, independent of
+// the optional TSV sink. Tests compare deltas, so parallel tests do not share
+// counts and no environment variable or output file is needed.
+#[cfg(test)]
+thread_local! {
+    static AFFINE_TRAVERSALS: std::cell::Cell<[u64; 3]> = const { std::cell::Cell::new([0; 3]) };
+}
+
+#[cfg(test)]
+pub(super) fn affine_traversals() -> [u64; 3] {
+    AFFINE_TRAVERSALS.with(std::cell::Cell::get)
+}
+
+#[cfg(test)]
+fn affine_traversal(index: usize) {
+    AFFINE_TRAVERSALS.with(|counts| {
+        let mut value = counts.get();
+        value[index] += 1;
+        counts.set(value);
+    });
+}
+
+pub(super) fn affine_failed_reuse_hit() {
+    #[cfg(test)]
+    affine_traversal(2);
+    update(|work| {
+        work.affine.failed_reuse_hits = work.affine.failed_reuse_hits.saturating_add(1);
+    });
+}
+
 pub(super) fn affine_final_family_start() {
+    #[cfg(test)]
+    affine_traversal(0);
     update(|work| {
         work.affine.final_family_starts = work.affine.final_family_starts.saturating_add(1);
     });
 }
 
 pub(super) fn affine_final_family_exhausted() {
+    #[cfg(test)]
+    affine_traversal(1);
     update(|work| {
         work.affine.final_family_exhaustions =
             work.affine.final_family_exhaustions.saturating_add(1);
@@ -330,6 +369,7 @@ impl FunctionWork {
                 self.affine.left_candidates_scanned,
             ),
             ("affine_promotions", self.affine.promotions),
+            ("affine_failed_reuse_hits", self.affine.failed_reuse_hits),
             (
                 "affine_final_family_starts",
                 self.affine.final_family_starts,

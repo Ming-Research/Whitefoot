@@ -629,6 +629,397 @@ fn cache_bound(
     );
 }
 
+fn reuse_target(left: &AffineForm, right: &AffineForm, upper: i128) -> AffineInequality {
+    AffineInequality::from_bounded_forms(left, right, upper, &mut AffineCheckState::new()).unwrap()
+}
+
+fn reuse_datums(
+    analyzer: &mut Analyzer<'_, '_>,
+    affine: &AffineFlowState,
+    images: &[AffineForm],
+) -> Vec<TermId> {
+    images
+        .iter()
+        .enumerate()
+        .map(|(ordinal, image)| {
+            let datum = analyzer.vocabulary.terms.intern(TermKind::CallDatum {
+                call_path: vec![u32::try_from(ordinal).unwrap()],
+                formal: 0,
+                projections: Vec::new(),
+                measure: None,
+                ty: IntegerType::I32,
+            });
+            affine
+                .measure_atoms
+                .borrow_mut()
+                .insert(datum, image.clone());
+            datum
+        })
+        .collect()
+}
+
+fn affine_traversal_counts() -> [u64; 3] {
+    super::super::super::work::affine_traversals()
+}
+
+fn affine_traversal_delta(before: [u64; 3]) -> [u64; 3] {
+    let after = affine_traversal_counts();
+    std::array::from_fn(|index| after[index] - before[index])
+}
+
+// The old bridge traversal, using the independently allocating AUTO evaluator
+// below. It deliberately creates a new query for each residual, with no shared
+// failed set or interval preparation, and keeps the bridge's appended parent.
+fn reference_numeric_bridge(
+    analyzer: &mut Analyzer<'_, '_>,
+    target: &AffineInequality,
+    right: TermId,
+    context: ProofContext<'_>,
+) -> Option<AffineConsequenceProof> {
+    let assumptions = affine_facts(context.affine);
+    if let Some(proof) =
+        analyzer
+            .reasoning()
+            .reference_affine_target_proof(target, &assumptions, context)
+    {
+        return Some(proof);
+    }
+    let right_value = analyzer
+        .vocabulary
+        .affine_term_value(right, context.affine)?;
+    let candidates = analyzer
+        .reasoning()
+        .affine_right_bridge_candidates(context.affine);
+    let closed = context.close(
+        &analyzer.vocabulary.terms,
+        &analyzer.vocabulary.goals,
+        &mut analyzer.vocabulary.derivations,
+    );
+    for candidate in candidates {
+        let Some(bound) = closed.tight_bound(candidate.term, right) else {
+            continue;
+        };
+        let image = reuse_target(&candidate.value, &right_value, bound);
+        let residual =
+            AffineInequality::residual_after(target, &image, &mut AffineCheckState::new()).unwrap();
+        if let Some(mut proof) =
+            analyzer
+                .reasoning()
+                .reference_affine_target_proof(&residual, &assumptions, context)
+        {
+            proof.parents.push(
+                closed
+                    .bound_proof(
+                        candidate.term,
+                        right,
+                        bound,
+                        &mut analyzer.vocabulary.derivations,
+                    )
+                    .unwrap(),
+            );
+            return Some(proof);
+        }
+    }
+    None
+}
+
+#[test]
+fn affine_failed_reuse_exhausts_identical_integer_datum_bridges_once() {
+    with_analyzer(|analyzer| {
+        let affine = AffineFlowState::default();
+        let a = analyzer.vocabulary.new_affine_atom(IntegerType::I32);
+        let b = analyzer.vocabulary.new_affine_atom(IntegerType::I32);
+        let datums = reuse_datums(analyzer, &affine, &[b.clone(), b.clone(), b.clone()]);
+        let r = datums[0];
+        let mut facts = FactState::new();
+        for &datum in &datums[1..] {
+            cache_bound(analyzer, &mut facts, datum, r, 0);
+            cache_bound(analyzer, &mut facts, r, datum, 0);
+        }
+        let target = reuse_target(&a, &b, -1);
+        let context = ProofContext::new(&facts, &affine);
+        let before = affine_traversal_counts();
+        assert!(reference_numeric_bridge(analyzer, &target, r, context).is_none());
+        assert_eq!(affine_traversal_delta(before), [4, 4, 0]);
+        let before = affine_traversal_counts();
+        assert!(
+            analyzer
+                .reasoning()
+                .numeric_affine_proof(&target, Some(r), context)
+                .is_none()
+        );
+        // Disabling failed reuse returns [4, 4, 0], even with a hot L0 index.
+        assert_eq!(affine_traversal_delta(before), [1, 1, 3]);
+    });
+}
+
+fn repeated_auto_failure(
+    analyzer: &mut Analyzer<'_, '_>,
+    target: &AffineInequality,
+    facts: &FactState,
+    auto: &mut AffineAutoQuery<'_>,
+) {
+    let before = affine_traversal_counts();
+    for _ in 0..2 {
+        assert!(
+            analyzer
+                .reasoning()
+                .prepared_affine_target_proof(target, facts, None, auto)
+                .is_none()
+        );
+    }
+    // Every invalidation test first proves reuse was actually active. Turning
+    // reuse off gives [2, 2, 0], not a vacuously passing freshness check.
+    assert_eq!(affine_traversal_delta(before), [1, 1, 1]);
+}
+
+#[test]
+fn affine_failed_reuse_reprepares_intervals_after_changed_facts() {
+    with_analyzer(|analyzer| {
+        let affine = AffineFlowState::default();
+        let [a, b] = [0; 2].map(|_| analyzer.vocabulary.new_affine_atom(IntegerType::I32));
+        let datums = reuse_datums(analyzer, &affine, &[a.clone(), b.clone()]);
+        let target = reuse_target(
+            &a.add(&b, &mut AffineCheckState::new()).unwrap(),
+            &AffineForm::constant(0),
+            -1,
+        );
+        let mut facts = FactState::new();
+        let mut auto = AffineAutoQuery::new(&affine, &[]);
+        repeated_auto_failure(analyzer, &target, &facts, &mut auto);
+        cache_bound(analyzer, &mut facts, datums[0], ZERO, 0);
+        cache_bound(analyzer, &mut facts, datums[1], ZERO, -1);
+        let before = affine_traversal_counts();
+        let proof = analyzer
+            .reasoning()
+            .prepared_affine_target_proof(&target, &facts, None, &mut auto)
+            .unwrap();
+        // Reusing the failure loses the proof; clearing only failures while
+        // retaining stale intervals incorrectly enters the final L0 family.
+        assert_eq!(affine_traversal_delta(before), [0, 0, 0]);
+        let expected = analyzer
+            .reasoning()
+            .reference_affine_target_proof(&target, &[], ProofContext::new(&facts, &affine))
+            .unwrap();
+        assert_eq!(proof.parents, expected.parents);
+        assert_eq!(proof.premises, expected.premises);
+    });
+}
+
+#[test]
+fn affine_failed_reuse_reprepares_measure_associations_after_changed_images() {
+    with_analyzer(|analyzer| {
+        let affine = AffineFlowState::default();
+        let [a, b, c] = [0; 3].map(|_| analyzer.vocabulary.new_affine_atom(IntegerType::I32));
+        let datums = reuse_datums(analyzer, &affine, &[a, c.clone()]);
+        let target = reuse_target(
+            &b.add(&c, &mut AffineCheckState::new()).unwrap(),
+            &AffineForm::constant(0),
+            0,
+        );
+        let mut facts = FactState::new();
+        for &datum in &datums {
+            cache_bound(analyzer, &mut facts, datum, ZERO, 0);
+        }
+        let mut auto = AffineAutoQuery::new(&affine, &[]);
+        repeated_auto_failure(analyzer, &target, &facts, &mut auto);
+        // The FactState and term inventory are unchanged. Interior mutation
+        // moves x's bound from a to b; only the prepared candidate images differ.
+        affine.measure_atoms.borrow_mut().insert(datums[0], b);
+        let before = affine_traversal_counts();
+        let proof = analyzer
+            .reasoning()
+            .prepared_affine_target_proof(&target, &facts, None, &mut auto)
+            .unwrap();
+        assert_eq!(affine_traversal_delta(before), [0, 0, 0]);
+        let expected = analyzer
+            .reasoning()
+            .reference_affine_target_proof(&target, &[], ProofContext::new(&facts, &affine))
+            .unwrap();
+        assert_eq!(proof.parents, expected.parents);
+        assert_eq!(proof.premises, expected.premises);
+    });
+}
+
+#[test]
+fn affine_failed_reuse_invalidates_after_lazy_image_preparation() {
+    with_analyzer(|analyzer| {
+        let affine = AffineFlowState::default();
+        let a = analyzer.vocabulary.new_affine_atom(IntegerType::I32);
+        let target = reuse_target(&a, &AffineForm::constant(0), -1);
+        let facts = FactState::new();
+        let mut auto = AffineAutoQuery::new(&affine, &[]);
+        repeated_auto_failure(analyzer, &target, &facts, &mut auto);
+        let fresh = cache_measure(analyzer, 0);
+        assert!(!affine.measure_atoms.borrow().contains_key(&fresh));
+        // Lookup must form the new image before testing the failed set. The
+        // old failure is exhausted again against the newly enlarged inventory.
+        repeated_auto_failure(analyzer, &target, &facts, &mut auto);
+        assert!(affine.measure_atoms.borrow().contains_key(&fresh));
+    });
+}
+
+#[test]
+fn affine_failed_reuse_is_scoped_to_the_borrowed_premise_sequence() {
+    with_analyzer(|analyzer| {
+        let affine = AffineFlowState::default();
+        let a = analyzer.vocabulary.new_affine_atom(IntegerType::I32);
+        let target = reuse_target(&a, &AffineForm::constant(0), -1);
+        let facts = FactState::new();
+        let mut assumptions = Vec::new();
+        {
+            let mut auto = AffineAutoQuery::new(&affine, &assumptions);
+            repeated_auto_failure(analyzer, &target, &facts, &mut auto);
+        }
+        // A live evaluator immutably borrows the sequence, so changing a
+        // premise necessarily starts a new evaluator and an empty failed set.
+        assumptions.push(ActiveAffineFact {
+            inequality: target.clone(),
+            evidence: AffineFactEvidence::Source(SourceAffineFactRef::LoopInvariant(
+                SourceLoopInvariantRef {
+                    loop_id: CheckedLoopId(0),
+                    source_ordinal: 0,
+                },
+            )),
+        });
+        let mut auto = AffineAutoQuery::new(&affine, &assumptions);
+        let before = affine_traversal_counts();
+        let proof = analyzer
+            .reasoning()
+            .prepared_affine_target_proof(&target, &facts, None, &mut auto)
+            .unwrap();
+        assert_eq!(affine_traversal_delta(before), [0, 0, 0]);
+        let expected = analyzer
+            .reasoning()
+            .reference_affine_target_proof(
+                &target,
+                &assumptions,
+                ProofContext::new(&facts, &affine),
+            )
+            .unwrap();
+        assert_eq!(proof.parents, expected.parents);
+        assert_eq!(proof.premises, expected.premises);
+    });
+}
+
+#[test]
+fn affine_failed_reuse_is_scoped_to_borrowed_binding_images() {
+    with_integer_parameters(&[IntegerType::I32], |analyzer| {
+        let mut affine = AffineFlowState::default();
+        let [a, b] = [0; 2].map(|_| analyzer.vocabulary.new_affine_atom(IntegerType::I32));
+        affine.values.insert(BindingId(0), a);
+        let term = analyzer.reasoning().affine_l0_candidates(&affine)[1].term;
+        let mut facts = FactState::new();
+        cache_bound(analyzer, &mut facts, term, ZERO, 0);
+        let target = reuse_target(&b, &AffineForm::constant(0), 0);
+        {
+            let mut auto = AffineAutoQuery::new(&affine, &[]);
+            repeated_auto_failure(analyzer, &target, &facts, &mut auto);
+        }
+        affine.values.insert(BindingId(0), b);
+        let mut auto = AffineAutoQuery::new(&affine, &[]);
+        let before = affine_traversal_counts();
+        let proof = analyzer
+            .reasoning()
+            .prepared_affine_target_proof(&target, &facts, None, &mut auto)
+            .unwrap();
+        assert_eq!(affine_traversal_delta(before), [0, 0, 0]);
+        let expected = analyzer
+            .reasoning()
+            .reference_affine_target_proof(&target, &[], ProofContext::new(&facts, &affine))
+            .unwrap();
+        assert_eq!(proof.parents, expected.parents);
+    });
+}
+
+#[test]
+fn affine_failed_reuse_distinguishes_canonical_upper_bounds() {
+    with_analyzer(|analyzer| {
+        let affine = AffineFlowState::default();
+        let a = analyzer.vocabulary.new_affine_atom(IntegerType::I32);
+        let facts = FactState::new();
+        let mut auto = AffineAutoQuery::new(&affine, &[]);
+        for upper in [-1, -2] {
+            repeated_auto_failure(
+                analyzer,
+                &reuse_target(&a, &AffineForm::constant(0), upper),
+                &facts,
+                &mut auto,
+            );
+        }
+        let before = affine_traversal_counts();
+        assert!(
+            analyzer
+                .reasoning()
+                .prepared_affine_target_proof(
+                    &reuse_target(&a, &AffineForm::constant(0), i128::from(i32::MAX)),
+                    &facts,
+                    None,
+                    &mut auto,
+                )
+                .is_some()
+        );
+        assert_eq!(affine_traversal_delta(before), [0, 0, 0]);
+    });
+}
+
+#[test]
+fn affine_failed_reuse_keeps_later_distinct_bridge_success_and_parents() {
+    with_analyzer(|analyzer| {
+        let affine = AffineFlowState::default();
+        let [a, b, c, d, e, f] =
+            [0; 6].map(|_| analyzer.vocabulary.new_affine_atom(IntegerType::I32));
+        let mut check = AffineCheckState::new();
+        let cd = c.add(&d, &mut check).unwrap();
+        let ef = e.add(&f, &mut check).unwrap();
+        let remainder = a
+            .subtract(&cd, &mut check)
+            .unwrap()
+            .subtract(&ef, &mut check)
+            .unwrap();
+        let datums = reuse_datums(
+            analyzer,
+            &affine,
+            &[b.clone(), b.clone(), b.clone(), cd, ef, remainder],
+        );
+        let [r, d1, d2, m, n, p]: [TermId; 6] = datums.try_into().unwrap();
+        let mut facts = FactState::new();
+        for datum in [d1, d2] {
+            cache_bound(analyzer, &mut facts, datum, r, 0);
+            cache_bound(analyzer, &mut facts, r, datum, 0);
+        }
+        cache_bound(analyzer, &mut facts, m, r, 0);
+        cache_bound(analyzer, &mut facts, n, ZERO, 0);
+        cache_bound(analyzer, &mut facts, p, ZERO, -1);
+        let target = reuse_target(&a, &b, -1);
+        let context = ProofContext::new(&facts, &affine);
+        let before = affine_traversal_counts();
+        let expected = reference_numeric_bridge(analyzer, &target, r, context).unwrap();
+        assert_eq!(affine_traversal_delta(before), [5, 4, 0]);
+        let before = affine_traversal_counts();
+        let actual = analyzer
+            .reasoning()
+            .numeric_affine_proof(&target, Some(r), context)
+            .unwrap();
+        assert_eq!(affine_traversal_delta(before), [2, 1, 3]);
+        assert_eq!(actual.premises, expected.premises);
+        assert_eq!(actual.parents, expected.parents);
+        let closed = context.close(
+            &analyzer.vocabulary.terms,
+            &analyzer.vocabulary.goals,
+            &mut analyzer.vocabulary.derivations,
+        );
+        let bridge = closed
+            .bound_proof(m, r, 0, &mut analyzer.vocabulary.derivations)
+            .unwrap();
+        assert_eq!(
+            actual.parents.last(),
+            Some(&bridge),
+            "the successful bridge stays appended"
+        );
+    });
+}
+
 #[test]
 fn affine_index_cache_matches_full_rebuild_for_ordered_images() {
     with_integer_parameters(&[IntegerType::I32; 3], |analyzer| {
