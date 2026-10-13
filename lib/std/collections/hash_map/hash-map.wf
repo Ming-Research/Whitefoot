@@ -380,6 +380,9 @@ fn hash_map_shrink_after_remove<interface HashMapKey<K, E>, V, const ceiling: u6
       let target = 4_u64 * live;
       if target < 8_u64 {
         set target = 8_u64;
+        invariant floor_smaller: target < buckets;
+      } else {
+        invariant scaled_smaller: target < buckets;
       }
       invariant smaller: target < buckets;
       hash_map_migrate::<HashMapKey<K, E>, V, ceiling>(map: map, capacity: target, env: env);

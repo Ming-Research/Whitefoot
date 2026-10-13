@@ -507,7 +507,7 @@ fn hash_map_test_shrink_oscillation() -> result: u64 pure {
 }
 
 fn hash_map_test_shrink_empty_reuse() -> result: u64 pure {
-  doc "Removing the last pair must release all buckets and clear tombstones. The next insertion grows from capacity zero to one, so both the empty observation and reuse reject the old retained-capacity behavior.";
+  doc "Removing the last pair must release all buckets and clear tombstones. An unsuccessful removal must not rebuild the empty map. The next insertion grows from capacity zero to one, so both the empty observation and reuse reject the old retained-capacity behavior.";
   let seen = HashMapTestSeen(failures: 0_u64, consumed: 0_u64, key_sum: 0_u64, value_sum: 0_u64, visits: 0_u64, observed: 0_u64);
   let env = HashMapHashEnv(hostile: False());
   let map = hash_map_new::<u64, u64, 64>(capacity: 32_u64);
@@ -518,7 +518,6 @@ fn hash_map_test_shrink_empty_reuse() -> result: u64 pure {
     hash_map_test_growth_remove::<64>(map: &map, key: key, env: &env, seen: &seen);
   }
   hash_map_test_growth_shape::<64>(map: &map, capacity: 0_u64, length: 0_u64, vacated: 0_u64, seen: &seen);
-  // An unsuccessful removal is not a second empty rebuild.
   let missing_key = 99_u64;
   let missing = hash_map_remove::<HashMapIdentityKey, u64, 64>(map: &map, key: &missing_key, env: &env);
   match missing {

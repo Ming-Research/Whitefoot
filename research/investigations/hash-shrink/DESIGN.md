@@ -4,8 +4,10 @@ Status: proposed implementation in the worktree, 2026-10-13. The owner
 instructed implementation on the three recommended options while the board
 cards remain open: automatic shrinking, removal allowed to shrink a table
 reserved to its ceiling, and one-shot migration. These are adjustable proposed
-decisions, not approval records. No compilation, test or measurement result
-has been produced for the implementation. The owner commits, pushes and runs
+decisions, not approval records. Gate run 38396927995 on
+`2d0b6adf6762fb283773584a2f94d07d6aab201d` failed; its supplied log is
+discussed below. No passing acceptance or measurement result has been produced.
+The owner commits, pushes and runs
 CI; this session only reads and edits source.
 
 ## Implementation submitted for CI
@@ -36,10 +38,17 @@ from capacity policy rather than adding a runtime clamp, recount or fallback.
 The arithmetic certificate derives `8*n <= C-1` from `n <= floor((C-1)/8)`
 and the specification's division fact. This bounds exact `4*n` without
 overflow. Since n is nonzero in that branch, C is at least nine, so the
-eight-bucket floor is also smaller than C. The source records the final
-`target<C` invariant after the mutable-target branch. Its checker acceptance,
-like every new source obligation, awaits CI. No checker rejection or language
-gap has been observed in this session.
+eight-bucket floor is also smaller than C. The submitted source asserted
+`target<C` only after the mutable-target join, which CI refused with INV-1:
+the branches had not established a common retained fact. The repaired source
+proves that same conclusion inside each branch without a proof block. AUTO's
+one-premise family can subtract the sparse fact: the floor branch leaves
+`8-8*n<=0`, from `n>=1`; the scaled branch leaves `-4*n<=0`, from the unsigned
+domain. Explicit blocks would be redundant under PRF-1. Both publish the same
+difference bound before the join, so its intersection can retain it for the
+final invariant. These are erased proof steps, not additional runtime checks.
+Checker acceptance of the repair awaits CI; the initial refusal alone does
+not establish a language gap.
 
 Local take/place/index/swap/free obligations retain the existing pending-owner
 protocol. The library's inductive live-count invariant supplies the progress
@@ -619,45 +628,73 @@ board. Their texts below remain proposals, not recorded owner rulings. The
 instruction to implement their recommended options provisionally authorizes
 this worktree change while the owner may still choose otherwise.
 
-### 删除后默认缩容吗？
+### Should removal shrink automatically?
 
-**背景：** Firn 的集合使用标准库 HashMap。删除只留下墓碑，SPOP 在持锁期间扫描旧桶。
+**Background:** Firn's sets use the standard-library HashMap. Previously removal left tombstones, so SPOP scanned the old backing while holding the set.
 
-- A（推荐）：成功删除后，低于 1/8 占用时缩到每个成员四桶，非空最少八桶，空表归零。调用方不改代码；删除可能分配和搬迁。
-- B：只提供显式缩容。调用方控制时机，但必须接入每条删除路径，否则问题仍在。
-- C：自动和显式都提供。覆盖更多用途，但首轮多一个没有具体需求的接口。
+- A (recommended): After successful removal, shrink below 1/8 occupancy to four buckets per member, with a minimum of eight for nonempty maps; empty maps return to zero. Callers need no code change; removal may allocate and migrate.
+- B: Provide explicit shrinking only. Callers control timing but must cover every removal path or the problem remains.
+- C: Provide both. This covers more uses but adds an interface without a concrete first-round need.
 
-**把握 4/5：** 已核实调用链与表结构；尚未验证迁移证明和性能。
+**Confidence 4/5:** The call chain and representation were verified; migration proof acceptance and performance remain unverified.
 
-### 允许删除改变“预留到上限后不再分配”的承诺吗？
+### May removal change the reserved-ceiling allocation promise?
 
-**背景：** 现有设计承诺预留到上限的表不再分配。默认缩容需要临时新表，随后重新插入也可能增长。
+**Background:** The previous design promised no further allocation for a table reserved to its ceiling. Automatic shrinking needs a temporary backing, and later insertion may grow again.
 
-- A（推荐）：允许删除触发缩容；保留插入在当前容量等于上限时不重建的规则，并明确更新原承诺。
-- B：保留原承诺，采用显式缩容作为调用方主动放弃容量保留的入口；自动方案需重选，不能暗中豁免这类表。
+- A (recommended): Allow removal to shrink; retain insertion's no-rebuild rule when current capacity equals the ceiling, and explicitly update the promise.
+- B: Retain the promise, with explicit shrinking as the caller's opt-out from reserved capacity. Reconsider the automatic policy rather than silently exempting these tables.
 
-**把握 4/5：** 冲突可由源码与设计直接确认；依赖该承诺的全部调用方尚待审计。
+**Confidence 4/5:** Source and design establish the conflict; all consumers relying on the promise still need auditing.
 
-### 首轮采用一次性搬迁吗？
+### Should the first implementation use one-shot migration?
 
-**背景：** 一次性搬迁保留现有桶接口和增长路径，但会延长触发删除的持锁时间。增量搬迁需要跨调用保存两张表，并改造直接读桶的调用方。
+**Background:** One-shot migration retains the bucket interface and growth path but lengthens the triggering removal's hold. Incremental migration retains two backings between calls and requires changes to direct bucket readers.
 
-- A（推荐）：先做一次性搬迁；阈值跨越或整表弹出的 p99 若可重复变差，就返回此决策，不降低标准。
-- B：先设计增量搬迁及遍历接口；覆盖更多状态，且需单独证明增长路径没有额外成本。
+- A (recommended): Start with one-shot migration. Reopen this decision if threshold-crossing or full-drain p99 reproducibly regresses; do not lower the criterion.
+- B: Design incremental migration and traversal first. This adds states and requires separate evidence that the growth path incurs no extra cost.
 
-**把握 3/5：** 接口成本明确，最长持锁时间还没有测量。
+**Confidence 3/5:** Interface costs are understood; worst hold duration has not been measured.
 
-### 临时测量阶段可以先只报告预算吗？
+### May temporary measurement stages report budgets without enforcing them?
 
-**背景：** 临时 hosted 流程已写好，但新阶段没有同一 CPU 型号至少二十次运行的数据，不能按现行规则计算预算。流程默认停止，只有显式选择临时模式才运行；编译失败、错误结果、缺失输入和超时仍会失败。
+**Background:** The temporary hosted workflow exists, but its new stages lack at least twenty runs on the same CPU model from which the current rule derives budgets. It refuses execution by default and runs only with an explicit temporary-mode selection; compilation failures, incorrect results, missing inputs and timeouts still fail.
 
-- A（推荐）：允许本次手动实验暂时只报告预算。先运行小样本，按结果选规模，保留全部记录；准备合并前移除临时流程。此决定只处理临时阶段预算，不批准设计，也不把 hosted 数据当作精确性能验收。
-- B：暂不启用临时流程，先决定新阶段预算的形成办法。库实现和普通正确性 CI 可以先验证，性能比较等待该决定。
+- A (recommended): Permit report-only budgets for this manual experiment. Run a pilot, choose scale from its results, retain all records, and remove the temporary workflow before readiness. This decides only temporary stage budgets; it neither approves the design nor treats hosted data as precise performance acceptance.
+- B: Keep the workflow disabled until deciding how to establish new stage budgets. Library implementation and ordinary correctness CI can proceed; performance comparison waits.
 
-**把握 3/5：** 缺少数据和默认停止可从源码确认；临时政策仍需要主人裁定，不能由既有实验先例代替。
+**Confidence 3/5:** Source establishes missing data and default refusal; the temporary policy still needs an owner ruling, not an inference from prior experiments.
 
 ## Unverified and found along the way
 
+- The supplied failure log for gate run 38396927995 records three repairable
+  source defects: the post-join shrink proof described above, Han characters
+  in the research decision questions, and an unsupported `//` comment in the
+  ordinary HashMap fixture. Both the shrink and scan studies now use English
+  throughout; the fixture's sentence is retained in its existing declaration
+  `doc` field, with no test assertion or expected result changed.
+  Canonical-corpus checking reported exactly one unexpectedly underived file,
+  `hash-map-program.wf`, and zero unexpectedly noncanonical files. Its lexing
+  refusal was FORM-4, independent of the library's semantic INV-1 refusal.
+  The shared-receipt adapter reported 76 mismatches, all reaching INV-1;
+  its graph checks the carried standard-library modules, so the failing
+  HashMap module is the common displayed cause. No separate receipt-cache
+  defect is evidenced by that log. All repairs await the owner's CI rerun.
+- The committed implementation, compared with its study-only parent
+  `8f6a273ca53d6d1a2df56a35ab6093ff3a7165b1`, enlarged the existing fixture
+  from 1,037 to 1,370 lines (386 inserted, 53 deleted; net 333). It added five
+  invoked scenario functions and one borrowed-read callback, but no formal
+  files, Rust test functions or conformance manifest cases. The existing
+  harness still compiles two WF modes and builds/runs four native images.
+  Across those four runs the new million-entry scenario schedules 4,000,000
+  insertions, 3,996,000 removals and 4,000 survivor lookups, plus migrations
+  and release work. The committed library body grew from 433 to 465 lines.
+  This adds real gate work. In the failed run, fixture lexing stopped before
+  its new native loops executed; added parsing and library proof work still
+  can contribute. The corpus stage took 239.73 seconds against 235 seconds,
+  but no paired or phase-specific timing attributes the delta. It cannot be
+  called unrelated runner variance or assigned a precise added duration from
+  this evidence. Budgets are unchanged; corrected-run timings are required.
 - The research-only source review used `gpt-6.1-sol` at high effort, from the
   inspected Whitefoot HEAD to the original research file. It covered repository,
   documentation and reporting checks plus applicable design/correspondence
