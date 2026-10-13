@@ -2,7 +2,7 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 struct Entry {
-  writes: u64;
+  stores: u64;
   sequence: u64;
 }
 
@@ -21,10 +21,10 @@ fn set_key(space: &Keyspace, key: &[u8], timed: Bool) -> result: unit reads(spac
   let logged = space^.logging;
   let held = bor(logged, timed);
   atomic slot = &space^.keys[key], m = &space^.meta {
-    let writes = 1_u64;
+    let stores = 1_u64;
     match slot^ {
       Some(value: seen) => {
-        set writes = seen^.writes +wrap 1_u64;
+        set stores = seen^.stores +wrap 1_u64;
       }
       None() => {
       }
@@ -36,7 +36,7 @@ fn set_key(space: &Keyspace, key: &[u8], timed: Bool) -> result: unit reads(spac
       set m^.commits = m^.commits +wrap 1_u64;
       set sequence = next;
     }
-    let entry = Entry(writes: writes, sequence: sequence);
+    let entry = Entry(stores: stores, sequence: sequence);
     set slot^ = Some<Entry>(value: entry);
   }
   return unit;
@@ -79,7 +79,7 @@ fn check_key(space: &Keyspace, key_byte: u8, held: Bool) -> result: u8 reads(spa
   atomic slot = &space^.keys[key] {
     match slot^ {
       Some(value: seen) => {
-        if seen^.writes != 200_u64 {
+        if seen^.stores != 200_u64 {
           set wrong = 1_u8;
         }
         if held {

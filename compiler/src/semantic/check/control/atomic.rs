@@ -311,7 +311,7 @@ impl Checker<'_, '_> {
                 ledger_site: self
                     .types
                     .declarations
-                    .lock_ledger_site(declaration.origin().coordinate())?,
+                    .lock_ledger_site(declaration.origin().coordinate()),
                 binding,
                 handle: Box::new(target.expression),
                 borrowed,

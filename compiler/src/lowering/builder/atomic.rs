@@ -107,7 +107,7 @@ impl IrBuilder<'_> {
             .lock_ledger_sources
             .get(site)
             .cloned()
-            .ok_or(LoweringFailure::InvalidCheckedProgram)?;
+            .unwrap_or_else(|| "<unknown site>".to_owned());
         let ledger = Rc::new(RefCell::new(AtomicLedger::new(ledger_site.clone())));
         let guard_site = guard
             .and_then(CheckedExpression::carrier)
@@ -402,7 +402,7 @@ impl IrBuilder<'_> {
                 .ledger_path()
                 .and_then(|path| self.lock_ledger_sources.get(path))
                 .cloned()
-                .ok_or(LoweringFailure::InvalidCheckedProgram)?;
+                .unwrap_or_else(|| "<unknown site>".to_owned());
             let direct = reached
                 .into_iter()
                 .map(|group| (group, source.clone()))

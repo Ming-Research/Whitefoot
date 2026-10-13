@@ -11,6 +11,7 @@ mod frozen;
 mod generics;
 mod inventory;
 mod linearity;
+mod lock_ledger_sources;
 mod nominal_instances;
 mod nominals;
 mod obligations;
@@ -541,7 +542,7 @@ enum PreludeType {
 struct DeclarationInventory<'unit> {
     resolved: &'unit ResolvedSyntaxUnit,
     /// Lazily indexed source lines for non-normative lock-ledger locations.
-    ledger_line_starts: std::cell::RefCell<HashMap<crate::SourceId, Vec<usize>>>,
+    ledger_line_starts: lock_ledger_sources::SourceLines,
     /// [STOR-8, GRAM-2] whether this compilation unit wrote `program
     /// no_heap;`.
     ///
@@ -912,95 +913,11 @@ impl<'unit> DeclarationInventory<'unit> {
         let no_heap = Checker::declares_no_heap(&tree)?;
         Ok(Self {
             resolved,
-            ledger_line_starts: std::cell::RefCell::new(HashMap::new()),
+            ledger_line_starts: Default::default(),
             tree,
             no_heap,
         })
     }
-    fn lock_ledger_site(&self, coordinate: crate::SyntaxCoordinate) -> Result<String, CheckStop> {
-        let file = self
-            .resolved
-            .syntax()
-            .classified_bundle()
-            .source_bundle()
-            .file(coordinate.source())
-            .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-        let start = usize::try_from(coordinate.start().value())
-            .map_err(|_| SemanticCompilerFailure::CounterOverflow)?;
-        if start > file.bytes().len() {
-            return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
-        }
-        let mut sources = self.ledger_line_starts.borrow_mut();
-        let line_starts = sources.entry(coordinate.source()).or_insert_with(|| {
-            std::iter::once(0)
-                .chain(
-                    file.bytes()
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(offset, byte)| (*byte == b'\n').then_some(offset + 1)),
-                )
-                .collect()
-        });
-        let line = line_starts.partition_point(|offset| *offset <= start);
-        let prefix = &file.bytes()[line_starts[line - 1]..start];
-        let column = std::str::from_utf8(prefix)
-            .map_err(|_| SemanticCompilerFailure::InvalidSourceEncoding)?
-            .chars()
-            .count()
-            + 1;
-        Ok(format!("{}:{line}:{column}", file.display_path()))
-    }
-
-    /// Retain written locations only. Which lock is taken at a source site
-    /// remains entirely a lowering judgment over the executable program.
-    fn lock_ledger_sources(
-        &self,
-        functions: &[CheckedFunction],
-        executable_functions: &[FunctionId],
-    ) -> Result<HashMap<NodePath, String>, CheckStop> {
-        let mut statements = Vec::new();
-        for id in executable_functions {
-            let function = &functions[id.0 as usize];
-            if matches!(
-                function.body_disposition,
-                super::model::CheckedBodyDisposition::Inhabited
-            ) {
-                statements.extend(function.body.as_deref().unwrap_or_default());
-            }
-        }
-        let mut sources = HashMap::new();
-        while let Some(statement) = statements.pop() {
-            match statement {
-                CheckedStatement::Atomic { node_path, .. } => {
-                    if sources.contains_key(node_path) {
-                        continue;
-                    }
-                    let node = self
-                        .tree
-                        .node_with_path(node_path)
-                        .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-                    let mut descendants = vec![node];
-                    while let Some(descendant) = descendants.pop() {
-                        let path = self.tree.path(descendant)?.clone();
-                        let site = self.lock_ledger_site(self.tree.coordinate(descendant)?)?;
-                        sources.insert(path, site);
-                        descendants.extend(self.tree.children(descendant)?);
-                    }
-                }
-                CheckedStatement::Match { arms, .. }
-                | CheckedStatement::ValueMatchLet { arms, .. } => {
-                    for arm in arms {
-                        statements.extend(&arm.body);
-                    }
-                }
-                CheckedStatement::Loop { body, .. }
-                | CheckedStatement::CountedRange { body, .. } => statements.extend(body),
-                _ => {}
-            }
-        }
-        Ok(sources)
-    }
-
     pub(in crate::semantic::check) fn declaration_spelling(
         &self,
         declaration: DeclarationId,
@@ -1601,7 +1518,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         let lock_ledger_sources = self
             .types
             .declarations
-            .lock_ledger_sources(&functions, &executable_functions)?;
+            .lock_ledger_sources(&functions, &executable_functions);
 
         Ok(CheckedProgramData {
             nominals: self.types.nominals.clone(),

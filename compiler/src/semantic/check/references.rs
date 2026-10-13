@@ -2697,7 +2697,7 @@ mod tests {
         crate::resolution::with_each_declaration_role(|resolved| {
             let declarations = DeclarationInventory {
                 resolved,
-                ledger_line_starts: std::cell::RefCell::new(HashMap::new()),
+                ledger_line_starts: Default::default(),
                 no_heap: false,
                 tree: TreeView::new(resolved.syntax()).unwrap(),
             };
