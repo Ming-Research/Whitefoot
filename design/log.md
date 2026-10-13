@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 the owner's agent instructions own the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-13 A statement that cannot park queues a claim on the object it missed
+
+Nodes: compiler/waiting-contexts, compiler/waiting-contexts/state-locks
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the design-tree change of Whitefoot#388 (head commit 9040b5480) so that an atomic statement holding map entries that cannot park registers a first-come claim when it misses a shared object, bounding how often it is overtaken?" (translated); before it, on 2026-10-11, the owner chose option B on the mechanism card "a statement holding keys that takes a shared object is overtaken without bound (measured); which progress mechanism for phase two?" (translated): escalate to a hand-off after K overtakes, keep borrowing, and never wait behind a guard reservation.
+
+Summary: A statement that holds a table's entries or an earlier object cannot park, so when it missed its object it retried with no place and a stream of newcomers overtook it without bound (43 of 47 hosted macOS trials over 64 x N), which the progress promise for begun unguarded statements excludes. It now queues a first-come claim at its first confirmed miss (a provisional count of one), claims alternate with the parked queue so a claim waits at most h + 2q + 1 holders, only the oldest claim borrows a hold handed to a parked statement, a reservation never delays a claim, and the claims' queue lives in the claimants' stack records sharing the header's reservation slot. A ticket for every acquisition and one arbiter over parked statements, claims and reservations were rejected. Hosted sweeps on Linux and macOS kept every trial within the bound (at most one overtake), the control without claims failed at exactly 65, and the uncontended take measured 0.04 percent slower than the base on the 14900K against a 2 percent limit (research/investigations/shared-take-fairness/DESIGN.md).
+
 ## 2026-10-13 A written routed postcondition binds one field of any variant of an own enum result
 
 Nodes: language/checks-and-proofs, language/checks-and-proofs/automatic-facts, language/checks-and-proofs/range-facts, compiler/checker-facts
