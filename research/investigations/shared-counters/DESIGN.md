@@ -1491,7 +1491,7 @@ Against the owner's ruling: the hand-built array is not shown to be enough
 and the hardware add reaches 0.059 of the private rate at 8 P-cores, not
 half, so neither of the first two outcomes holds, and the third applies: implement
 the sharded state, with its specification change on its own approval card.
-The draft of that change is section 10, its design-tree decisions section 11
+The change is section 10, its design-tree decisions section 11
 and its implementation plan section 12. The maximum needs no language change
 (section 7), which section 9.4 now supports with a measurement.
 
