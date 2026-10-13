@@ -1,6 +1,6 @@
 # Temporary phase-3 call-frame comparison. Remove before this branch is ready.
 # research-boundary: manual-only
-# Runs on a push to this branch only when the commit message contains [14900k].
+# Runs on a push to this branch only when the commit message starts with the 14900K tag.
 # Both generators use this branch's compiler. No timing threshold selects a
 # verdict: the owner judges the paired gain against the old image's twin.
 name: v2h-call-frame
@@ -24,7 +24,7 @@ concurrency:
 
 jobs:
   compare:
-    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[14900k]')
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.event.head_commit.message, '[14900k]')
     runs-on: [self-hosted, 14900k]
     timeout-minutes: 60
     defaults:
