@@ -1266,8 +1266,7 @@ impl Reasoning<'_, '_, '_> {
 
         if let Some(request) = goal.request
             && let Some(left) = request.left
-        {
-            if let Some(derivation) = goal.affine_left.and_then(|affine_left| {
+            && let Some(derivation) = goal.affine_left.and_then(|affine_left| {
                 self.affine_bound_via_l0_right(
                     affine_left,
                     left,
@@ -1276,19 +1275,16 @@ impl Reasoning<'_, '_, '_> {
                     context.affine,
                     context.facts,
                 )
-            }) {
-                let derivation = self.vocabulary.goal_numeric_derivation(
-                    canonical,
-                    relation.as_ref(),
-                    derivation,
-                );
-                return ProofResult {
-                    disposition: ProofDisposition::Proved,
-                    route: Some(ProofRoute::Affine),
-                    derivation: Some(derivation),
-                    product_interval: None,
-                };
-            }
+            })
+        {
+            let derivation =
+                self.vocabulary.goal_numeric_derivation(canonical, relation.as_ref(), derivation);
+            return ProofResult {
+                disposition: ProofDisposition::Proved,
+                route: Some(ProofRoute::Affine),
+                derivation: Some(derivation),
+                product_interval: None,
+            };
         }
 
         if let Some(result) = self.bounded_relation_affine_step(

@@ -1,7 +1,7 @@
 alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
-struct Counter {
+nocopy struct Counter {
   doc "One count.";
   count: u64;
 }
@@ -9,9 +9,9 @@ struct Counter {
 fn advance(counter: &Counter, delta: u64, wild: u64) -> result: unit writes(counter) contract {
   requires counter^.count + delta <= 800_u64;
 } {
-  doc "The swap writes both of its targets, the count included, which kills the count's entry image; the count now holds wild, so the sum may overflow.";
-  let spare = wild;
-  swap(first: &counter^.count, second: &spare);
+  doc "The swap writes both of its targets, the whole struct holding the count included, which kills the count's entry image; the count now holds wild, so the sum may overflow.";
+  let spare = Counter(count: wild);
+  swap(first: counter, second: &spare);
   let count = counter^.count;
   let total = count + delta;
   set counter^.count = total;

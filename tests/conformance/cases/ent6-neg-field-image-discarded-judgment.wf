@@ -22,7 +22,8 @@ fn probe(counter: &Counter, bounded: u64, wild: u64) -> result: u64 writes(count
 } {
   doc "The first image of the count is formed inside a judgment in a branch the requirement makes unreachable, and that judgment's atoms are discarded. The call result formed next takes a fresh atom bounded by 800. The count's image must not survive the discarded judgment, or it would name that bounded atom and prove the postcondition about a count nothing bounds.";
   if 900_u64 < bounded {
-    if counter^.count - 0_u64 <= 5_u64 {
+    let seen = counter^.count;
+    if seen <= 5_u64 {
       set counter^.count = 0_u64;
     }
   }
