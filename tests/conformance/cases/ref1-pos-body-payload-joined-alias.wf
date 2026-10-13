@@ -1,0 +1,108 @@
+fn copy_joined_payload(first: &Option<u64>, second: &Option<u64>, flag: Bool) -> result: u64 reads(first), reads(second) {
+  doc "An alias formed before a dereferenced match shares its selected target; a captured payload binder also retains that identity for later borrow formation.";
+  let selected = if flag {
+    give first;
+  } else {
+    give second;
+  }
+  let kept = selected;
+  match selected^ {
+    None() => {
+      return 0_u64;
+    }
+    Some(value: inner) => {
+      let captured = &inner^;
+      let indirect = captured^;
+      let direct = kept^.Some.value;
+      if direct != indirect {
+        return 0_u64;
+      }
+      return direct;
+    }
+  }
+}
+
+fn copy_joined_payload_after_rebind(first: &Option<u64>, second: &Option<u64>, replacement: &Option<u64>, flag: Bool) -> result: u64 reads(first), reads(second) {
+  doc "Rebinding the origin holder writes no storage and cannot retarget its earlier alias or erase the old target's variant fact.";
+  let selected = if flag {
+    give first;
+  } else {
+    give second;
+  }
+  let kept = selected;
+  match &selected^ {
+    None() => {
+      return 0_u64;
+    }
+    Some(..) => {
+      set selected = &replacement^;
+      let direct = kept^.Some.value;
+      return direct;
+    }
+  }
+}
+
+fn sum_loop_alias_payloads(first: &Option<u64>, second: &Option<u64>, flag: Bool) -> result: u64 reads(first), reads(second) {
+  doc "Each loop iteration snapshots its header's selected target before matching, and the backedge rebinds only the origin holder.";
+  let selected = if flag {
+    give first;
+  } else {
+    give second;
+  }
+  let total = 0_u64;
+  for (round in 0_u64..2_u64) {
+    let kept = selected;
+    match &selected^ {
+      None() => {
+      }
+      Some(..) => {
+        let direct = kept^.Some.value;
+        set total = total +wrap direct;
+      }
+    }
+    set selected = &second^;
+  }
+  return total;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "Different candidate tags select seven or zero, zero or twenty-nine; aliases retain old targets after rebinding and snapshot each reentered loop header.";
+  let first = Some<u64>(value: 7_u64);
+  let second = Some<u64>(value: 29_u64);
+  let absent = None<u64>();
+  let pick_first = True();
+  let pick_second = False();
+  let left = copy_joined_payload(first: &first, second: &absent, flag: pick_first);
+  if left != 7_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  let right_absent = copy_joined_payload(first: &first, second: &absent, flag: pick_second);
+  if right_absent != 0_u64 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  let left_absent = copy_joined_payload(first: &absent, second: &second, flag: pick_first);
+  if left_absent != 0_u64 {
+    return std::process::exit_status(code: 3_u8);
+  }
+  let right = copy_joined_payload(first: &absent, second: &second, flag: pick_second);
+  if right != 29_u64 {
+    return std::process::exit_status(code: 4_u8);
+  }
+  let kept_left = copy_joined_payload_after_rebind(first: &first, second: &absent, replacement: &absent, flag: pick_first);
+  if kept_left != 7_u64 {
+    return std::process::exit_status(code: 5_u8);
+  }
+  let kept_right = copy_joined_payload_after_rebind(first: &absent, second: &second, replacement: &absent, flag: pick_second);
+  if kept_right != 29_u64 {
+    return std::process::exit_status(code: 6_u8);
+  }
+  let summed = sum_loop_alias_payloads(first: &first, second: &second, flag: pick_first);
+  if summed != 36_u64 {
+    return std::process::exit_status(code: 7_u8);
+  }
+  let present_then_absent = sum_loop_alias_payloads(first: &first, second: &absent, flag: pick_first);
+  if present_then_absent != 7_u64 {
+    return std::process::exit_status(code: 8_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

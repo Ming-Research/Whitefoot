@@ -32,10 +32,10 @@ use super::super::model::{
     BindingId, CheckedAffineExpression, CheckedAffineExpressionKind, CheckedAffineRelation,
     CheckedArrayRoot, CheckedBodyDisposition, CheckedBooleanOperation, CheckedConversionMode,
     CheckedEnumType, CheckedExpression, CheckedFunction, CheckedIntegerOperation, CheckedLoopId,
-    CheckedMatchArm, CheckedMeasure, CheckedMode, CheckedNominal, CheckedNominalKind,
-    CheckedNumericType, CheckedPlaceStep, CheckedRangeElementPlace, CheckedRangeSource,
-    CheckedSegmentSelect, CheckedSetTarget, CheckedStatement, CheckedType, CheckedValue,
-    IntegerType,
+    CheckedMatchArm, CheckedMatchSelection, CheckedMatchType, CheckedMeasure, CheckedMode,
+    CheckedNominal, CheckedNominalKind, CheckedNumericType, CheckedPlaceStep,
+    CheckedRangeElementPlace, CheckedRangeSource, CheckedSegmentSelect, CheckedSetTarget,
+    CheckedStatement, CheckedType, CheckedValue, IntegerType,
 };
 use super::super::places::PlaceRoot;
 use super::super::range_facts::{
@@ -800,12 +800,12 @@ impl<'program> Walker<'program> {
             }
             CheckedStatement::Match {
                 scrutinee,
-                enum_type,
+                match_type,
                 arms,
                 ..
             } => {
                 let fork = state.conds.len();
-                let arms_out = self.arms(&mut state, scrutinee, *enum_type, arms);
+                let arms_out = self.arms(&mut state, scrutinee, *match_type, arms);
                 join(&mut self.world, fork, arms_out)
             }
             CheckedStatement::ValueMatchLet {
@@ -813,14 +813,14 @@ impl<'program> Walker<'program> {
                 binding,
                 result_type,
                 scrutinee,
-                enum_type,
+                match_type,
                 arms,
                 ..
             } => {
                 self.cite = node_path.clone();
                 let fork = state.conds.len();
                 self.gives.push(Vec::new());
-                let _ = self.arms(&mut state, scrutinee, *enum_type, arms);
+                let _ = self.arms(&mut state, scrutinee, *match_type, arms);
                 let given = self.gives.pop().unwrap_or_default();
                 if given.is_empty() {
                     return None;
@@ -1054,7 +1054,7 @@ impl<'program> Walker<'program> {
         &mut self,
         state: &mut State,
         scrutinee: &CheckedExpression,
-        enum_type: CheckedEnumType,
+        match_type: CheckedMatchType,
         arms: &[CheckedMatchArm],
     ) -> Vec<State> {
         // A match borrows the selected storage for reference-mode payloads.
@@ -1071,14 +1071,61 @@ impl<'program> Walker<'program> {
         // of the payload, as a `let` of it would be.
         let copied = copies(scrutinee);
         let mut live = Vec::new();
-        match enum_type {
-            CheckedEnumType::Bool => {
+        match match_type {
+            CheckedMatchType::Integer(ty) => {
+                let selected = match value {
+                    Value::Int(value) => value,
+                    _ => self.world.opaque(integer_type(ty)),
+                };
+                let values: std::sync::Arc<[i128]> = arms
+                    .iter()
+                    .filter_map(|arm| match arm.selection {
+                        CheckedMatchSelection::Integer(value) => Some(value),
+                        _ => None,
+                    })
+                    .collect::<BTreeSet<_>>()
+                    .into_iter()
+                    .collect::<Vec<_>>()
+                    .into();
+                let exclusion = arms
+                    .iter()
+                    .any(|arm| arm.selection == CheckedMatchSelection::Else)
+                    .then(|| Literal::exclusion(selected.clone(), values.clone()));
+                for arm in arms {
+                    let reachable = !selected.is_constant()
+                        || match arm.selection {
+                            CheckedMatchSelection::Integer(value) => selected.constant == value,
+                            CheckedMatchSelection::Else => {
+                                values.binary_search(&selected.constant).is_err()
+                            }
+                            CheckedMatchSelection::Variant(_) => {
+                                unreachable!("checked integer match")
+                            }
+                        };
+                    self.region_reachability(&arm.node_path, reachable);
+                    if !reachable {
+                        continue;
+                    }
+                    let mut forked = state.clone();
+                    forked.conds.push(match arm.selection {
+                        CheckedMatchSelection::Integer(value) => {
+                            Literal::new(selected.clone(), Relation::Equal, Linear::constant(value))
+                        }
+                        CheckedMatchSelection::Else => exclusion.clone().expect("else exclusion"),
+                        CheckedMatchSelection::Variant(_) => unreachable!("checked integer match"),
+                    });
+                    if let Some(after) = self.block(forked, &arm.body) {
+                        live.push(after);
+                    }
+                }
+            }
+            CheckedMatchType::Enum(CheckedEnumType::Bool) => {
                 let (cond, tag) = match value {
                     Value::Bool(cond, tag) => (cond, Some(tag)),
                     _ => (Cond::Unknown, None),
                 };
                 for arm in arms {
-                    let truth = arm.tag == 1;
+                    let truth = arm.selection == CheckedMatchSelection::Variant(1);
                     self.region_reachability(&arm.node_path, !cond.excludes(truth));
                     if cond.excludes(truth) {
                         continue;
@@ -1099,7 +1146,7 @@ impl<'program> Walker<'program> {
                     }
                 }
             }
-            CheckedEnumType::Nominal(nominal) => {
+            CheckedMatchType::Enum(CheckedEnumType::Nominal(nominal)) => {
                 let variants = self.variant_count(CheckedType::Nominal(nominal));
                 let (location, fields, known) = match &value {
                     Value::Ref(view) => {
@@ -1126,11 +1173,14 @@ impl<'program> Walker<'program> {
                     _ => (None, None, None),
                 };
                 for arm in arms {
+                    let CheckedMatchSelection::Variant(variant_tag) = arm.selection else {
+                        unreachable!("checked enum match has variant selections");
+                    };
                     self.region_reachability(
                         &arm.node_path,
-                        !known.is_some_and(|variant| variant != arm.tag),
+                        !known.is_some_and(|variant| variant != variant_tag),
                     );
-                    if known.is_some_and(|variant| variant != arm.tag) {
+                    if known.is_some_and(|variant| variant != variant_tag) {
                         continue;
                     }
                     let mut forked = state.clone();
@@ -1152,7 +1202,7 @@ impl<'program> Walker<'program> {
                         forked.conds.push(literal(
                             tag,
                             Relation::Equal,
-                            Linear::constant(arm.tag as i128),
+                            Linear::constant(variant_tag as i128),
                         ));
                     }
                     if let Some(location) = &location {
@@ -1165,11 +1215,11 @@ impl<'program> Walker<'program> {
                             forked.conds.push(literal(
                                 tag,
                                 Relation::Equal,
-                                Linear::constant(arm.tag as i128),
+                                Linear::constant(variant_tag as i128),
                             ));
                         }
-                        forked.variants.insert(location.clone(), arm.tag);
-                        self.activate_routed_facts(&mut forked, location, arm.tag);
+                        forked.variants.insert(location.clone(), variant_tag);
+                        self.activate_routed_facts(&mut forked, location, variant_tag);
                     }
                     for binder in &arm.binders {
                         let element = match &value {
@@ -1181,7 +1231,7 @@ impl<'program> Walker<'program> {
                                 let mut projection = projection.clone();
                                 if let Some(path) = &mut projection {
                                     path.push(CheckedRangeProjection::Payload {
-                                        variant: arm.tag,
+                                        variant: variant_tag,
                                         variants,
                                         field: binder.field,
                                     });
@@ -1224,7 +1274,7 @@ impl<'program> Walker<'program> {
                                     .unwrap_or(Value::Unknown),
                                 (Some(location), None) => {
                                     let payload = location.child(Step::Payload {
-                                        variant: arm.tag,
+                                        variant: variant_tag,
                                         field: binder.field,
                                         variants,
                                     });
@@ -1569,6 +1619,23 @@ impl<'program> Walker<'program> {
                 (Target::Location(location), CheckedPlaceStep::Field(field)) => {
                     Target::Location(location.child(Step::Field(*field)))
                 }
+                (
+                    Target::Location(location),
+                    CheckedPlaceStep::Payload {
+                        nominal,
+                        variant,
+                        field,
+                    },
+                ) => match &self.nominals[nominal.0 as usize].kind {
+                    CheckedNominalKind::Enum { variants } => {
+                        Target::Location(location.child(Step::Payload {
+                            variant: *variant,
+                            field: *field,
+                            variants: variants.len() as u32,
+                        }))
+                    }
+                    _ => unreachable!(),
+                },
                 (Target::Location(location), CheckedPlaceStep::BoxReferent(_)) => {
                     Target::Location(location.child(Step::BoxContent))
                 }
@@ -1669,6 +1736,23 @@ impl<'program> Walker<'program> {
             CheckedPlaceStep::Field(field) => {
                 if let Some(path) = projection {
                     path.push(CheckedRangeProjection::Field(*field));
+                }
+            }
+            CheckedPlaceStep::Payload {
+                nominal,
+                variant,
+                field,
+            } => {
+                let CheckedNominalKind::Enum { variants } = &self.nominals[nominal.0 as usize].kind
+                else {
+                    unreachable!();
+                };
+                if let Some(path) = projection {
+                    path.push(CheckedRangeProjection::Payload {
+                        variant: *variant,
+                        field: *field,
+                        variants: variants.len() as u32,
+                    });
                 }
             }
             CheckedPlaceStep::BoxReferent(_) => {

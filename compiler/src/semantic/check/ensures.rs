@@ -2,7 +2,7 @@ use crate::semantic::check::CheckContext;
 use crate::semantic::check::FunctionContext;
 use crate::semantic::check::{DeclarationInventory, TypeContext};
 use crate::semantic::entailment::integer_value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::FixedTerminal;
 use crate::syntax::NodeId;
@@ -16,20 +16,20 @@ use crate::{
 use super::super::goal::{GoalOperation, GoalProjection};
 use super::super::model::{
     BindingId, CheckedArrayRoot, CheckedExpression, CheckedIntegerOperation, CheckedMode,
-    CheckedNominalKind, CheckedParameter, CheckedPlaceStep, CheckedStatement, CheckedType,
-    CheckedValue, FunctionId, IntegerType,
+    CheckedNominalKind, CheckedParameter, CheckedPlaceStep, CheckedRangeRoot, CheckedSegmentSelect,
+    CheckedSegmentSource, CheckedStatement, CheckedType, CheckedValue, FunctionId, IntegerType,
 };
 use super::super::places::{PlaceRoot, ResolvedPlace};
 use super::super::postcondition::{
     CheckedPostcondition, CheckedPostconditionSelector, NormalizedRelation, ParameterDenotation,
-    PayloadRoute, PostconditionConstantOrigin, PostconditionFieldIdentity, PostconditionPlace,
-    PostconditionPlaceRoot, PostconditionReturnDatum, PostconditionReturnPlace,
-    PostconditionReturnPlaceRoot, RelationDatum, RelationTemplate, RelationTerm,
-    SelectedPostconditionReturn,
+    PayloadRoute, PlaceDenotation, PostconditionConstantOrigin, PostconditionFieldIdentity,
+    PostconditionFormedPlace, PostconditionPlace, PostconditionPlaceRoot, PostconditionReturnDatum,
+    PostconditionReturnPlace, PostconditionReturnPlaceRoot, RelationDatum, RelationTemplate,
+    RelationTerm, SelectedPostconditionReturn,
 };
 use super::generics::GenericArgument;
 use super::publication;
-use super::requires::{ClauseKind, ExpandedClauseDatum, ExpandedClauseExpression};
+use super::requires::{ClauseKind, ClausePlaces, ExpandedClauseDatum, ExpandedClauseExpression};
 use super::{
     CheckStop, Checker, ControlCounters, ControlScope, FunctionSignature, LocalBinding,
     ParameterSignature,
@@ -73,6 +73,102 @@ pub(super) fn parameter_has_exit_state(
             .writes
             .iter()
             .any(|path| path.root == parameter.declaration)
+}
+
+/// [MSR-3, FN-9] the state the bases of one place a postcondition forms
+/// denote: every place of a parameter that has no exit state denotes its one
+/// state at entry, and a place of one that has denotes its entry image when
+/// it is written through `entry(parameter)`, whose subscripts' psuffix nodes
+/// `entry_suffixes` holds; a range element place is classified by the range
+/// parameter it indexes, as a container place is by its root. A place rooted
+/// at a named const and every other place of a written reference parameter
+/// are read where the return reads them.
+fn place_denotation(
+    function: &FunctionSignature,
+    bindings: &HashMap<DeclarationId, LocalBinding>,
+    place: &CheckedExpression,
+    entry_suffixes: &HashSet<crate::NodePath>,
+) -> PlaceDenotation {
+    let (binding, suffixes) = match place {
+        CheckedExpression::ContainerMeasure { root, .. }
+        | CheckedExpression::ReadStorage { root, .. } => (
+            root.binding(),
+            subscript_suffixes(&root.path).collect::<Vec<_>>(),
+        ),
+        CheckedExpression::RangeElementMeasure { place, .. }
+        | CheckedExpression::RangeIndex { place, .. } => (
+            Some(place.root.binding),
+            formation_suffixes(&place.root)
+                .into_iter()
+                .chain(std::iter::once(&place.obligation))
+                .chain(subscript_suffixes(&place.path))
+                .collect(),
+        ),
+        CheckedExpression::RangeMeasure { root, .. } => {
+            (Some(root.binding), formation_suffixes(root))
+        }
+        _ => return PlaceDenotation::Return,
+    };
+    let Some(binding) = binding else {
+        return PlaceDenotation::Return;
+    };
+    let Some(parameter) = function.parameters.iter().find(|parameter| {
+        bindings
+            .get(&parameter.declaration)
+            .is_some_and(|local| local.binding == binding)
+    }) else {
+        return PlaceDenotation::Return;
+    };
+    if !parameter_has_exit_state(function, parameter) {
+        PlaceDenotation::Entry
+    } else if suffixes
+        .iter()
+        .any(|suffix| entry_suffixes.contains(*suffix))
+    {
+        PlaceDenotation::EntryImage
+    } else {
+        PlaceDenotation::Return
+    }
+}
+
+/// The psuffix node of each subscript a page or segment selection in the
+/// clause evaluates: the container's, or the range element's, then the
+/// selector's.
+fn formation_suffixes(root: &CheckedRangeRoot) -> Vec<&crate::NodePath> {
+    let Some(CheckedExpression::BorrowSegment {
+        root: source,
+        segment,
+        ..
+    }) = root.formation.as_deref()
+    else {
+        return Vec::new();
+    };
+    let mut suffixes = match source {
+        CheckedSegmentSource::Storage(container) => {
+            subscript_suffixes(&container.path).collect::<Vec<_>>()
+        }
+        CheckedSegmentSource::Element(element) => {
+            let mut suffixes = formation_suffixes(&element.root);
+            suffixes.push(&element.obligation);
+            suffixes.extend(subscript_suffixes(&element.path));
+            suffixes
+        }
+    };
+    if let CheckedSegmentSelect::One(index) | CheckedSegmentSelect::Page(index) = segment {
+        suffixes.push(&index.obligation);
+    }
+    suffixes
+}
+
+/// The psuffix node of each subscript in one place path.
+fn subscript_suffixes(path: &[CheckedPlaceStep]) -> impl Iterator<Item = &crate::NodePath> {
+    path.iter().filter_map(|step| match step {
+        CheckedPlaceStep::Subscript(subscript) => Some(&subscript.obligation),
+        CheckedPlaceStep::Field(_)
+        | CheckedPlaceStep::Payload { .. }
+        | CheckedPlaceStep::BoxReferent(_)
+        | CheckedPlaceStep::Measure(_) => None,
+    })
 }
 
 /// [FN-9] a comparison's direction-normalized relation; no other
@@ -594,14 +690,17 @@ impl<'unit> Checker<'_, 'unit> {
         self.types.postcondition_selectors_from_source(signature)
     }
 
+    /// The clause's relation template, with the [ENT-2] clause (b) places
+    /// it forms at each return that selects it [FN-9].
     pub(super) fn check_postcondition_clause(
         &mut self,
         context: FunctionContext<'_, '_>,
         selector: &CheckedPostconditionSelector,
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         counters: &mut ControlCounters<'_>,
-    ) -> Result<RelationTemplate, CheckStop> {
-        let expanded = self.expand_postcondition_clause(context, selector, bindings, counters)?;
+    ) -> Result<(RelationTemplate, Vec<PostconditionFormedPlace>), CheckStop> {
+        let (expanded, places) =
+            self.expand_postcondition_clause(context, selector, bindings, counters)?;
         let clause = self
             .types
             .declarations
@@ -614,18 +713,24 @@ impl<'unit> Checker<'_, 'unit> {
             .tree
             .first_child_with(clause, Production::ClauseExpr)?
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-        self.types
-            .declarations
-            .postcondition_relation(expression, expanded, context.function)
+        let relation = self.types.declarations.postcondition_relation(
+            expression,
+            expanded,
+            context.function,
+        )?;
+        Ok((relation, places))
     }
 
+    /// The clause's alpha-expanded expression, with the [ENT-2] clause (b)
+    /// places it forms: those of the definitions its expansion reaches, each
+    /// offset read through a definition expanded, then its own [FN-8].
     pub(super) fn expand_postcondition_clause(
         &mut self,
         context: FunctionContext<'_, '_>,
         selector: &CheckedPostconditionSelector,
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         counters: &mut ControlCounters<'_>,
-    ) -> Result<ExpandedClauseExpression, CheckStop> {
+    ) -> Result<(ExpandedClauseExpression, Vec<PostconditionFormedPlace>), CheckStop> {
         let FunctionContext {
             check_context,
             function,
@@ -669,6 +774,7 @@ impl<'unit> Checker<'_, 'unit> {
         };
         {
             let mut expanded_bindings = HashMap::<BindingId, ExpandedClauseExpression>::new();
+            let mut clause_places = ClausePlaces::default();
             for (ordinal, parameter) in function.parameters.iter().enumerate() {
                 let local = bindings
                     .get(&parameter.declaration)
@@ -758,6 +864,7 @@ impl<'unit> Checker<'_, 'unit> {
                         .invalid_postcondition_relation(expression);
                 }
                 expanded_bindings.insert(*binding, expanded);
+                clause_places.define(*binding, value);
             }
             let expression = self
                 .types
@@ -801,7 +908,19 @@ impl<'unit> Checker<'_, 'unit> {
                 bindings,
                 &expanded_bindings,
             )?;
-            Ok(expanded)
+            // [ENT-2, FN-9] each clause forms every place its expansion
+            // reaches, at every return that selects it, each over the state
+            // it denotes [MSR-3].
+            let entry_suffixes = self.types.declarations.entry_former_suffixes(contract)?;
+            let places = clause_places
+                .clause(&condition.expression, &mut HashSet::new())
+                .into_iter()
+                .map(|expression| PostconditionFormedPlace {
+                    denotation: place_denotation(function, bindings, &expression, &entry_suffixes),
+                    expression,
+                })
+                .collect();
+            Ok((expanded, places))
         }
     }
 
@@ -1374,6 +1493,27 @@ impl<'unit> DeclarationInventory<'unit> {
             .map_or(context.result_type, |(_, ty)| ty);
         Ok(Some((usage.origin.clone(), ty)))
     }
+    /// The psuffix nodes of every place written through `entry(parameter)`
+    /// in one `contract_block` [MSR-3].
+    pub(super) fn entry_former_suffixes(
+        &self,
+        contract: NodeId,
+    ) -> Result<HashSet<crate::NodePath>, CheckStop> {
+        let mut suffixes = HashSet::new();
+        for base in self.tree.descendants_with(contract, Production::Pbase)? {
+            if !self.tree.has_fixed(base, FixedTerminal::Entry)? {
+                continue;
+            }
+            let Some(place) = self.tree.parent(base)? else {
+                continue;
+            };
+            for suffix in self.tree.children_with(place, Production::Psuffix)? {
+                suffixes.insert(self.tree.path(suffix)?.clone());
+            }
+        }
+        Ok(suffixes)
+    }
+
     /// `entry` selects proof state, never an executable place expression.
     /// Its argument is a reference parameter the row writes [MSR-3]; range
     /// postconditions read that same entry storage [RANGE-1].
@@ -1646,7 +1786,7 @@ impl<'unit> DeclarationInventory<'unit> {
                 .direct_token_with(*atom, crate::TerminalPredicate::Literal)?
         {
             let bytes = self.tree.token_bytes(literal)?;
-            if matches!(bytes, b"0_T" | b"1_T") {
+            if crate::syntax::terminal::is_generic_numeric_literal(bytes) {
                 let usage =
                     self.use_at(check_context, *atom, LexicalUseRole::GenericNumericSuffix)?;
                 let ResolvedTarget::Source {
@@ -1658,7 +1798,7 @@ impl<'unit> DeclarationInventory<'unit> {
                 };
                 return Ok(PostconditionConstantOrigin::GenericNumericIdentity {
                     type_parameter: declaration,
-                    one: bytes == b"1_T",
+                    one: bytes.first() == Some(&b'1'),
                 });
             }
         }
@@ -2216,6 +2356,19 @@ impl<'unit> TypeContext<'unit> {
                         .ok_or(SemanticCompilerFailure::InvalidResolution)?
                         .ty
                 }
+                CheckedPlaceStep::Payload { variant, field, .. } => {
+                    let CheckedType::Nominal(nominal) = ty else {
+                        return Err(SemanticCompilerFailure::InvalidResolution.into());
+                    };
+                    let CheckedNominalKind::Enum { variants } = &self.nominal(nominal)?.kind else {
+                        return Err(SemanticCompilerFailure::InvalidResolution.into());
+                    };
+                    variants
+                        .get(*variant as usize)
+                        .and_then(|variant| variant.fields.get(*field as usize))
+                        .ok_or(SemanticCompilerFailure::InvalidResolution)?
+                        .ty
+                }
                 CheckedPlaceStep::BoxReferent(nominal) => {
                     if ty != CheckedType::Nominal(*nominal) {
                         return Err(SemanticCompilerFailure::InvalidResolution.into());
@@ -2763,6 +2916,7 @@ impl<'unit> TypeContext<'unit> {
             const_substitutions,
             relation,
             selected_returns,
+            places: Vec::new(),
         })
     }
     #[allow(clippy::too_many_arguments)]
