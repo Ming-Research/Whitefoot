@@ -34,6 +34,7 @@ mod slice;
 mod storage_alias;
 mod union_enums;
 mod value_equality;
+mod wake;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Write;
@@ -2744,6 +2745,12 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 self.emit_box_new(result, ty, *nominal, *value)
             }
             IrOperation::SharedNew { nominal } => self.emit_shared_new(result, ty, *nominal),
+            IrOperation::DecisionCellNew { nominal } => {
+                self.emit_decision_cell_new(result, ty, *nominal)
+            }
+            IrOperation::DecisionCell { object, winner } => {
+                self.emit_decision_cell(result, ty, *object, *winner)
+            }
             IrOperation::SharedState { nominal, object } => {
                 self.emit_shared_state(result, ty, *nominal, *object)
             }
@@ -2751,13 +2758,15 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 self.emit_shared_retain(result, ty, *nominal, *object)
             }
             IrOperation::SharedAcquire { object } => {
-                self.emit_shared_wait(result, *object, "wf__shared_acquire", "acquire")
+                self.emit_shared_wait(result, *object, "wf__shared_acquire", "acquire", "")
             }
             IrOperation::SharedTake { object } => self.emit_shared_take(result, *object),
-            IrOperation::SharedWatch { object } => {
-                self.emit_shared_wait(result, *object, "wf__shared_watch", "watch")
+            IrOperation::SharedWatch { object, test } => {
+                self.emit_shared_watch(result, *object, test.as_ref())
             }
-            IrOperation::SharedUnlock { object } => self.emit_shared_unlock(result, *object),
+            IrOperation::SharedUnlock { object, wrote } => {
+                self.emit_shared_unlock(result, *object, *wrote)
+            }
             IrOperation::ConcurrentHashMapNew { nominal, capacity } => {
                 self.emit_keyed_table_new(result, ty, *nominal, *capacity)
             }
@@ -2766,9 +2775,13 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 index,
                 object,
                 hold,
-            } => self.emit_atomic_group_target(result, *record, *index, *object, *hold),
+                wrote,
+            } => self.emit_atomic_group_target(result, *record, *index, *object, *hold, *wrote),
             IrOperation::AtomicGroupTake { record } => {
                 self.emit_atomic_group_call(result, *record, None, true)
+            }
+            IrOperation::AtomicGroupAcquire { record } => {
+                self.emit_atomic_group_acquire(result, *record)
             }
             IrOperation::AtomicGroupRelease { record, nominal } => {
                 self.emit_atomic_group_call(result, *record, *nominal, false)
@@ -2874,9 +2887,11 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             IrOperation::WatchBegin { record } => {
                 self.emit_watch_call(result, *record, None, "wf__watch_begin")
             }
-            IrOperation::WatchObject { record, object } => {
-                self.emit_watch_call(result, *record, Some(*object), "wf__watch_object")
-            }
+            IrOperation::WatchObject {
+                record,
+                object,
+                test,
+            } => self.emit_watch_object(result, *record, *object, test.as_ref()),
             IrOperation::WatchTable { record, table } => {
                 self.emit_watch_call(result, *record, Some(*table), "wf__watch_table")
             }

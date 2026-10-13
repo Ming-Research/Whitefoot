@@ -3,6 +3,7 @@ mod behavior;
 mod cleanup;
 mod contract_reads;
 mod control;
+mod decision_cell;
 mod effect_repairs;
 mod ensures;
 pub(in crate::semantic::check) mod expressions;
@@ -536,6 +537,7 @@ enum PreludeType {
     DivError,
     NarrowError,
     ScanStep,
+    DecisionState,
 }
 
 /// Source declarations and syntax shared read-only by preflight and body checking.
@@ -1310,6 +1312,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             .map(|signature| {
                 Ok(PermissionSignature {
                     name: signature.name.clone(),
+                    decision_cell: self.types.decision_cell_boundary(signature.id)?,
                     parameter_declarations: signature
                         .parameters
                         .iter()

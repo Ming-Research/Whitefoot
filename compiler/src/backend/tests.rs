@@ -19,6 +19,7 @@ mod containers;
 /// The §9.1 cost census, every case of which compiles `wfgrep`.
 mod cost_shape;
 mod counted_ranges;
+mod decision_cell;
 mod deterministic_target;
 mod division_obligations;
 mod effect_attributes;
@@ -53,6 +54,7 @@ mod payload_enums;
 mod ranges;
 mod read_through;
 mod value_equality;
+mod wake;
 // Retired with [OWN-6] and [OWN-14]: the `reborrows` module's four tests all
 // had the reborrow as their subject - a callee taking `&uniq 'r T` and
 // returning `&uniq 'r target^`, the child chain through a `box<u64>`
