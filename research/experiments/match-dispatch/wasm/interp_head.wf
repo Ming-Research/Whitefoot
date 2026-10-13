@@ -27,8 +27,6 @@ struct Func {
   locals: u64;
   results: u64;
   host: u64;
-  cbase: u64;
-  cn: u64;
 }
 
 struct Target {
@@ -130,10 +128,10 @@ fn fill_memory(mem: &Box<Array<u8>>, dst: u64, value: u8, count: u64) -> ok: Boo
   return True();
 }
 
-fn enter(stack: &Box<Array<u64>>, consts: &Box<Slots<u64>>, fp: u64, at: u16, callee: Func, ret: u64) -> nf: u64 reads(consts), writes(stack.inner) contract {
+fn enter(stack: &Box<Array<u64>>, fp: u64, at: u16, params: u16, saved: u16, ret: u64) -> nf: u64 writes(stack.inner) contract {
   ensures stack^.inner.len == entry(stack)^.inner.len;
 } {
-  doc "Builds the frame of a call whose arguments are the callee's parameter slots from at: zeroes its locals, copies its constants after them, saves ret and the caller's frame base after those, and returns the callee's frame base, or the largest u64 when its 65536 slots do not fit in the stack.";
+  doc "Builds a callee frame at the caller's argument slots: zeroes only the declared locals from params to saved, saves ret and the caller's frame base at saved and saved + 1, and returns the callee's frame base, or the largest u64 when its layout or 65536 slots do not fit.";
   let ai = cvt::<u16, u64>(at);
   let base = fp +wrap ai;
   let len = stack^.inner.len;
@@ -144,43 +142,24 @@ fn enter(stack: &Box<Array<u64>>, consts: &Box<Slots<u64>>, fp: u64, at: u16, ca
   if base > room {
     return 18446744073709551615_u64;
   }
-  let params = callee.params;
-  let locals = callee.locals;
-  let cn = callee.cn;
-  if params >= 65536_u64 {
-    return 18446744073709551615_u64;
-  }
-  if locals >= 65536_u64 {
-    return 18446744073709551615_u64;
-  }
-  if cn >= 65536_u64 {
-    return 18446744073709551615_u64;
-  }
-  let pl = params + locals;
-  let l = pl + cn;
+  let p = cvt::<u16, u64>(params);
+  let l = cvt::<u16, u64>(saved);
   if l >= 65535_u64 {
     return 18446744073709551615_u64;
   }
-  let first = base + params;
-  let const_at = base + pl;
-  let saved = base + l;
-  let saved_fp = saved + 1_u64;
-  zero_range(stack: stack, from: first, to: const_at);
-  let cbase = callee.cbase;
-  for (k in 0_u64..cn) {
-    let ck = cbase +wrap k;
-    let sk = const_at + k;
-    if ck < consts^.inner.len {
-      let v = consts^.inner[ck];
-      set stack^.inner[sk] = v;
-    }
+  if p > l {
+    return 18446744073709551615_u64;
   }
-  set stack^.inner[saved] = ret;
+  let first = base + p;
+  let saved_at = base + l;
+  let saved_fp = saved_at + 1_u64;
+  zero_range(stack: stack, from: first, to: saved_at);
+  set stack^.inner[saved_at] = ret;
   set stack^.inner[saved_fp] = fp;
   return base;
 }
 
-fn run(code: &Box<Slots<Op>>, funcs: &Box<Slots<Func>>, brtab: &Box<Slots<Target>>, table: &Box<Slots<u64>>, consts: &Box<Slots<u64>>, stack: &Box<Array<u64>>, mem: &Box<Array<u8>>, globals: &Box<Slots<u64>>, pc0: u64, fp0: u64, acc0: u64) -> r: Outcome reads(code), reads(funcs), reads(brtab), reads(table), reads(consts), writes(stack), writes(mem), writes(globals) contract {
+fn run(code: &Box<Slots<Op>>, funcs: &Box<Slots<Func>>, brtab: &Box<Slots<Target>>, table: &Box<Slots<u64>>, stack: &Box<Array<u64>>, mem: &Box<Array<u8>>, globals: &Box<Slots<u64>>, pc0: u64, fp0: u64, acc0: u64) -> r: Outcome reads(code), reads(funcs), reads(brtab), reads(table), writes(stack), writes(mem), writes(globals) contract {
   requires pc0 < code^.inner.len;
   requires fp0 + 65536_u64 <= stack^.inner.len;
   requires forall brtable_span(j in 0_u64..code^.inner.len): code^.inner[j].BrTable.start + code^.inner[j].BrTable.count < brtab^.inner.len;
@@ -189,7 +168,7 @@ fn run(code: &Box<Slots<Op>>, funcs: &Box<Slots<Func>>, brtab: &Box<Slots<Target
   requires forall target_bound(j in 0_u64..brtab^.inner.len): brtab^.inner[j].t < code^.inner.len;
   requires forall move_bounds(j in 0_u64..brtab^.inner.len) when brtab^.inner[j].k != 0_u32: brtab^.inner[j].s < 65536_u64, brtab^.inner[j].d < 65536_u64;
 } {
-  doc "One operation per dispatch on frame slots: an operand names a slot by its distance from fp, below 65536, so the frame contract covers every slot access. Values are u64 words, an i32 kept zero-extended and a float as its bits; a frame is the parameters, locals and constants from fp, the caller's return pc and frame base after them, then the operand slots. acc carries a value from the operation that computed it to the next one, its single consumer, in place of a slot, or a local's value that an operation wrote to both the local's slot and acc, to the operations after it reading that local.";
+  doc "One operation per dispatch on frame slots: an operand names a slot by its distance from fp, below 65536, so the frame contract covers every slot access. Values are u64 words, an i32 kept zero-extended and a float as its bits; a frame is the parameters and declared locals from fp, the caller's return pc and frame base after them, then the operand slots. acc carries a value from the operation that computed it to the next one, its single consumer, in place of a slot, or a local's value that an operation wrote to both the local's slot and acc, to the operations after it reading that local.";
   let n = code^.inner.len;
   let pc = pc0;
   let fp = fp0;
@@ -335,20 +314,16 @@ fn run(code: &Box<Slots<Op>>, funcs: &Box<Slots<Func>>, brtab: &Box<Slots<Target
         }
         return trap(code: 1_u32, pc: pc);
       }
-      Call(f: fv, at: av) => {
-        let fi = cvt::<u32, u64>(fv^);
-        if fi < funcs^.inner.len {
-          let callee = funcs^.inner[fi];
-          let rp = pc + 1_u64;
-          let nf = enter(stack: stack, consts: consts, fp: fp, at: av^, callee: callee, ret: rp);
-          let room = stack^.inner.len - 65536_u64;
-          if nf <= room {
-            let begin = callee.start;
-            if begin < n {
-              set pc = begin;
-              set fp = nf;
-              continue;
-            }
+      Call(begin: bv, at: av, params: pv, saved: sv) => {
+        let rp = pc + 1_u64;
+        let nf = enter(stack: stack, fp: fp, at: av^, params: pv^, saved: sv^, ret: rp);
+        let room = stack^.inner.len - 65536_u64;
+        if nf <= room {
+          let begin = cvt::<u32, u64>(bv^);
+          if begin < n {
+            set pc = begin;
+            set fp = nf;
+            continue;
           }
         }
         return trap(code: 4_u32, pc: pc);
@@ -369,7 +344,19 @@ fn run(code: &Box<Slots<Op>>, funcs: &Box<Slots<Func>>, brtab: &Box<Slots<Target
             let good = band(local, same);
             if good {
               let rp = pc + 1_u64;
-              let nf = enter(stack: stack, consts: consts, fp: fp, at: av^, callee: callee, ret: rp);
+              if callee.params >= 65536_u64 {
+                return trap(code: 5_u32, pc: pc);
+              }
+              if callee.locals >= 65536_u64 {
+                return trap(code: 5_u32, pc: pc);
+              }
+              let saved = callee.params + callee.locals;
+              if saved >= 65535_u64 {
+                return trap(code: 5_u32, pc: pc);
+              }
+              let params16 = cvt::<u64, u16>(callee.params);
+              let saved16 = cvt::<u64, u16>(saved);
+              let nf = enter(stack: stack, fp: fp, at: av^, params: params16, saved: saved16, ret: rp);
               let room = stack^.inner.len - 65536_u64;
               if nf <= room {
                 let begin = callee.start;

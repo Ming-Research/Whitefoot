@@ -1590,7 +1590,56 @@ ordered the candidates:
 5. Branches on `and` and on not-`and`.
 
 Each step: CoreMark 2K on the 14900K against its base with a twin, adopted
-at +2% or more.
+at +2% or more under the original plan. The call-frame experiment below
+uses the owner's later criterion for that step.
+
+**Call-frame setup: question, comparison and rejection criterion.**
+
+The question is whether resolving direct callees during translation and
+removing per-call constant copies lowers CoreMark CPU time without adding
+complexity or maintenance cost. The supplied 2026-10-12 attribution measured
+v2h at 387.3 ms and wasmi at 357.6 ms on the 14900K
+([attribution run](https://github.com/Ming-Research/Whitefoot/actions/runs/38231805057)); calls and returns
+accounted for about 4.8 ms of the difference. This step is expected to save
+at most about 1% of total time, not to remove the whole remaining gap.
+In wasmi 2.0.0, the [translator bakes a function-entry address into the
+internal call](https://github.com/wasmi-labs/wasmi/blob/2970aa871cc1001b57b267ccecdcd1e42306199e/crates/wasmi/src/engine/translator/func/mod.rs#L1563),
+and the [executor reads its code and frame layout before entering the
+callee](https://github.com/wasmi-labs/wasmi/blob/2970aa871cc1001b57b267ccecdcd1e42306199e/crates/wasmi/src/engine/executor/handler/utils.rs#L844).
+The v2h candidate stores the code start, parameter count and saved-link
+offset directly in each call instruction after all bodies have been
+translated, so forward and recursive calls have the same resolved form.
+Indirect calls still resolve and check the table entry at runtime. Frames
+contain parameters, zeroed declared locals, saved return links and operand
+temporaries; constants no longer occupy a prefilled part of every frame.
+Constants use the translator's existing immediate provider and materialize
+through `Const` when a slot is needed, analogous to wasmi's
+[immediate-to-slot path](https://github.com/wasmi-labs/wasmi/blob/2970aa871cc1001b57b267ccecdcd1e42306199e/crates/wasmi/src/engine/translator/func/mod.rs#L851).
+This removes the constant-pool scan and copy machinery, but can add dispatches
+relative to the old pooled operands: it does not reintroduce the arithmetic
+immediate variants rejected in step 2, and is not an identical wasmi encoding.
+
+Before measuring, the comparison is fixed as old v2h from the selected main
+revision, its byte-copy twin, and this candidate, all built by this branch's
+compiler with the same settings. The temporary manual-only
+[`v2h-call-frame.yml`](../../../.github/workflows/v2h-call-frame.yml) runs
+CoreMark 2000 iterations on the 14900K's CPU 2 for seven interleaved rounds, rotating
+old/twin/new order. It records each process's user-plus-system CPU time,
+each round's new/old and twin/old ratios, exact source revisions and binary
+hashes, and requires every launch to exit successfully with the expected
+CoreMark CRCs. Before timing, independent guest assertions exercise forward,
+recursive and indirect calls, local initialization and preservation, and
+return values; deliberately wrong results and invalid indirect targets must
+trap. Lower ratios mean less CPU time; process time includes loading
+and translation as well as execution. Reject the step unless it is stably
+faster beyond the twin's noise, adds no complexity or maintenance cost, and
+is architecturally sound. A gain that changes sign across rounds or cannot
+be distinguished from the twin's variation is not adoption evidence. A
+refused or poorly compiled natural `loop { match }` form stops the experiment
+as a Whitefoot gap, with a minimal witness; it does not justify a different
+spelling or a runtime proof substitute. Compilation, generated-code quality
+and timing remain unverified until CI runs. Remove the temporary workflow
+before the branch is ready; this paragraph records a candidate, not adoption.
 
 **Step 0, observed** (hosted runner, run 37792262615, the branch's compiler
 at `9b9f14ac3`):

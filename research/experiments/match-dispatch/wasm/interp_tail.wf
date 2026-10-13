@@ -38,9 +38,6 @@ struct Trans {
   copy_s: u64;
   held: u64;
   failed: Bool;
-  cslot: u64;
-  cbase: u64;
-  cn: u64;
 }
 
 fn fail(r: &Reader) -> v: u64 writes(r) {
@@ -380,7 +377,7 @@ fn parse_imports(r: &Reader, bytes: &Box<Array<u8>>, types: &Box<Slots<FuncType>
     if module_name != 5630335187277993924_u64 {
       set id = 9_u64;
     }
-    let f = Func(canon: ft.canon, start: 0_u64, params: ft.params, locals: 0_u64, results: ft.results, host: id, cbase: 0_u64, cn: 0_u64);
+    let f = Func(canon: ft.canon, start: 0_u64, params: ft.params, locals: 0_u64, results: ft.results, host: id);
     push_func(cell: funcs, value: f);
   }
   let failed = r^.failed;
@@ -396,7 +393,7 @@ fn parse_functions(r: &Reader, bytes: &Box<Array<u8>>, types: &Box<Slots<FuncTyp
       return False();
     }
     let ft = types^.inner[ti];
-    let f = Func(canon: ft.canon, start: 0_u64, params: ft.params, locals: 0_u64, results: ft.results, host: 0_u64, cbase: 0_u64, cn: 0_u64);
+    let f = Func(canon: ft.canon, start: 0_u64, params: ft.params, locals: 0_u64, results: ft.results, host: 0_u64);
     push_func(cell: funcs, value: f);
   }
   let failed = r^.failed;
@@ -1535,7 +1532,7 @@ fn step_control(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, funcs: &
       emit_plain(st: st, code: code, op: o);
     } else {
       let f32v = narrow(value: fi);
-      let o = Op::Call(f: f32v, at: at16);
+      let o = Op::Call(begin: f32v, at: at16, params: 0_u16, saved: 0_u16);
       emit_plain(st: st, code: code, op: o);
     }
     set st^.held = 18446744073709551615_u64;
@@ -1579,7 +1576,7 @@ fn step_control(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, funcs: &
 
 fn set_local(st: &Trans, provs: &Box<Slots<Prov>>, code: &Box<Slots<Op>>, local: u64) -> ok: Bool writes(st), writes(provs), writes(code) {
   doc "local.set: the operation that computed the top operand into its temporary writes the local instead when it is the last one emitted, in its form also leaving the value in acc when it has one, acc then holding the local; otherwise a copy or a constant writes it.";
-  if local >= st^.cslot {
+  if local >= st^.l {
     return False();
   }
   if provs^.inner.len == 0_u64 {
@@ -1659,7 +1656,7 @@ fn set_local(st: &Trans, provs: &Box<Slots<Prov>>, code: &Box<Slots<Op>>, local:
   return True();
 }
 
-fn step_data(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, consts: &Box<Slots<u64>>, provs: &Box<Slots<Prov>>, code: &Box<Slots<Op>>) -> status: u64 reads(bytes), reads(consts), writes(st), writes(r), writes(provs), writes(code) {
+fn step_data(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, provs: &Box<Slots<Prov>>, code: &Box<Slots<Op>>) -> status: u64 reads(bytes), writes(st), writes(r), writes(provs), writes(code) {
   doc "Parametric, variable, memory and constant operations, 0x1a through 0x44: a local.get or a constant becomes the operand's provider and emits nothing.";
   if op == 26_u8 {
     pop_prov(st: st, provs: provs, count: 1_u64);
@@ -1702,7 +1699,7 @@ fn step_data(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, consts: &Bo
     if op <= 36_u8 {
       let index = read_uleb(r: r, bytes: bytes);
       if op == 32_u8 {
-        if index >= st^.cslot {
+        if index >= st^.l {
           return 2_u64;
         }
         let p = Prov(kind: 1_u64, value: index);
@@ -1871,11 +1868,7 @@ fn step_data(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, consts: &Bo
   } else {
     return 2_u64;
   }
-  let cs = const_slot(st: st, consts: consts, value: value);
-  if cs == 18446744073709551615_u64 {
-    return 2_u64;
-  }
-  let p = Prov(kind: 1_u64, value: cs);
+  let p = Prov(kind: 2_u64, value: value);
   push_prov(cell: provs, value: p);
   return 0_u64;
 }
@@ -1967,82 +1960,7 @@ fn step_numeric(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, provs: &
   }
 }
 
-fn add_const(consts: &Box<Slots<u64>>, cbase: u64, value: u64) -> r: unit writes(consts) {
-  doc "Adds value to the function's constant pool, the slots from cbase, unless it is there.";
-  let length = consts^.inner.len;
-  for (i in cbase..length) {
-    if i < consts^.inner.len {
-      if consts^.inner[i] == value {
-        return unit;
-      }
-    }
-  }
-  push_word(cell: consts, value: value);
-  return unit;
-}
-
-fn collect_consts(r: &Reader, bytes: &Box<Array<u8>>, types: &Box<Slots<FuncType>>, consts: &Box<Slots<u64>>) -> ok: Bool reads(r), reads(bytes), reads(types), writes(consts) {
-  doc "Scans a function body, from the reader's position to its end, for its distinct constants; the reader is not moved.";
-  let scan = Reader(pos: r^.pos, end: r^.end, failed: r^.failed);
-  let cbase = consts^.inner.len;
-  loop @ops {
-    if scan.pos >= scan.end {
-      break @ops;
-    }
-    let failed = scan.failed;
-    if failed {
-      return False();
-    }
-    let op = read_byte(r: &scan, bytes: bytes);
-    let opening = False();
-    if op == 2_u8 {
-      set opening = True();
-    }
-    if op == 3_u8 {
-      set opening = True();
-    }
-    if op == 4_u8 {
-      set opening = True();
-    }
-    if opening {
-      let (p, q) = block_type(r: &scan, bytes: bytes, types: types);
-    } else if op == 65_u8 {
-      let v = read_sleb(r: &scan, bytes: bytes);
-      let w = iand(v, 4294967295_u64);
-      add_const(consts: consts, cbase: cbase, value: w);
-    } else if op == 66_u8 {
-      let v = read_sleb(r: &scan, bytes: bytes);
-      add_const(consts: consts, cbase: cbase, value: v);
-    } else if op == 67_u8 {
-      let v = read_fixed(r: &scan, bytes: bytes, count: 4_u64);
-      add_const(consts: consts, cbase: cbase, value: v);
-    } else if op == 68_u8 {
-      let v = read_fixed(r: &scan, bytes: bytes, count: 8_u64);
-      add_const(consts: consts, cbase: cbase, value: v);
-    } else {
-      skip_immediates(r: &scan, bytes: bytes, op: op);
-    }
-  }
-  let failed = scan.failed;
-  return bnot(failed);
-}
-
-fn const_slot(st: &Trans, consts: &Box<Slots<u64>>, value: u64) -> slot: u64 reads(st), reads(consts) {
-  doc "The frame slot holding a constant of the function, or the largest u64.";
-  let cbase = st^.cbase;
-  let cn = st^.cn;
-  for (k in 0_u64..cn) {
-    let i = cbase +wrap k;
-    if i < consts^.inner.len {
-      if consts^.inner[i] == value {
-        return st^.cslot +wrap k;
-      }
-    }
-  }
-  return 18446744073709551615_u64;
-}
-
-fn translate(r: &Reader, bytes: &Box<Array<u8>>, fi: u64, funcs: &Box<Slots<Func>>, types: &Box<Slots<FuncType>>, code: &Box<Slots<Op>>, brtab: &Box<Slots<Target>>, ctls: &Box<Slots<Ctl>>, fixes: &Box<Slots<Pending>>, provs: &Box<Slots<Prov>>, consts: &Box<Slots<u64>>) -> ok: Bool reads(bytes), reads(types), writes(r), writes(funcs), writes(code), writes(brtab), writes(ctls), writes(fixes), writes(provs), writes(consts) {
+fn translate(r: &Reader, bytes: &Box<Array<u8>>, fi: u64, funcs: &Box<Slots<Func>>, types: &Box<Slots<FuncType>>, code: &Box<Slots<Op>>, brtab: &Box<Slots<Target>>, ctls: &Box<Slots<Ctl>>, fixes: &Box<Slots<Pending>>, provs: &Box<Slots<Prov>>) -> ok: Bool reads(bytes), reads(types), writes(r), writes(funcs), writes(code), writes(brtab), writes(ctls), writes(fixes), writes(provs) {
   doc "Translates one function body, the reader bounded to it, into register-form operations on frame slots.";
   if fi >= funcs^.inner.len {
     return False();
@@ -2064,14 +1982,7 @@ fn translate(r: &Reader, bytes: &Box<Array<u8>>, fi: u64, funcs: &Box<Slots<Func
       return False();
     }
   }
-  let cbase = consts^.inner.len;
-  let collected = collect_consts(r: r, bytes: bytes, types: types, consts: consts);
-  if bnot(collected) {
-    return False();
-  }
-  let cn = consts^.inner.len -wrap cbase;
-  let pl = f.params +wrap nl;
-  let l = pl +wrap cn;
+  let l = f.params +wrap nl;
   if l >= 65000_u64 {
     return False();
   }
@@ -2079,8 +1990,6 @@ fn translate(r: &Reader, bytes: &Box<Array<u8>>, fi: u64, funcs: &Box<Slots<Func
   if fi < funcs^.inner.len {
     set funcs^.inner[fi].locals = nl;
     set funcs^.inner[fi].start = begin;
-    set funcs^.inner[fi].cbase = cbase;
-    set funcs^.inner[fi].cn = cn;
   }
   loop @clear_ctls {
     if ctls^.inner.len == 0_u64 {
@@ -2102,7 +2011,7 @@ fn translate(r: &Reader, bytes: &Box<Array<u8>>, fi: u64, funcs: &Box<Slots<Func
   }
   let base = l +wrap 2_u64;
   let no = False();
-  let st = Trans(dead: no, skip: 0_u64, base: base, l: l, results: f.results, last: 18446744073709551615_u64, last_pos: 0_u64, copy_d: 0_u64, copy_s: 0_u64, held: 18446744073709551615_u64, failed: no, cslot: pl, cbase: cbase, cn: cn);
+  let st = Trans(dead: no, skip: 0_u64, base: base, l: l, results: f.results, last: 18446744073709551615_u64, last_pos: 0_u64, copy_d: 0_u64, copy_s: 0_u64, held: 18446744073709551615_u64, failed: no);
   let top = Ctl(kind: 0_u64, height: 0_u64, params: 0_u64, brk: f.results, results: f.results, target: 0_u64, fixes: 0_u64, else_at: 18446744073709551615_u64, c: 0_u64, cmp: 0_u64, fb: 0_u64);
   push_ctl(cell: ctls, value: top);
   loop @ops {
@@ -2149,7 +2058,7 @@ fn translate(r: &Reader, bytes: &Box<Array<u8>>, fi: u64, funcs: &Box<Slots<Func
       if op <= 17_u8 {
         set status = step_control(op: op, st: &st, r: r, bytes: bytes, funcs: funcs, types: types, provs: provs, code: code, brtab: brtab, ctls: ctls, fixes: fixes);
       } else if op <= 68_u8 {
-        set status = step_data(op: op, st: &st, r: r, bytes: bytes, consts: consts, provs: provs, code: code);
+        set status = step_data(op: op, st: &st, r: r, bytes: bytes, provs: provs, code: code);
       } else {
         set status = step_numeric(op: op, st: &st, r: r, bytes: bytes, provs: provs, code: code);
       }
@@ -2262,7 +2171,52 @@ fn refuse(why: u64) -> info: Loaded pure {
   return info;
 }
 
-fn load(bytes: &Box<Array<u8>>, size: u64, types: &Box<Slots<FuncType>>, funcs: &Box<Slots<Func>>, table: &Box<Slots<u64>>, globals: &Box<Slots<u64>>, code: &Box<Slots<Op>>, brtab: &Box<Slots<Target>>, consts: &Box<Slots<u64>>) -> info: Loaded reads(bytes), writes(types), writes(funcs), writes(table), writes(globals), writes(code), writes(brtab), writes(consts) {
+fn resolve_calls(code: &Box<Slots<Op>>, funcs: &Box<Slots<Func>>) -> ok: Bool reads(funcs), writes(code) {
+  doc "Resolves every direct call after all bodies have been translated, including forward and recursive calls: begin initially names the function, then becomes its code entry with the parameter count and saved-link offset beside it.";
+  let length = code^.inner.len;
+  for (i in 0_u64..length) {
+    if i < code^.inner.len {
+      let op = code^.inner[i];
+      match op {
+        Call(begin: fi32, at: at, params: unused_params, saved: unused_saved) => {
+          let fi = cvt::<u32, u64>(fi32);
+          if fi >= funcs^.inner.len {
+            return False();
+          }
+          let callee = funcs^.inner[fi];
+          if callee.host != 0_u64 {
+            return False();
+          }
+          if callee.start >= code^.inner.len {
+            return False();
+          }
+          if callee.start >= 4294967296_u64 {
+            return False();
+          }
+          if callee.params >= 65536_u64 {
+            return False();
+          }
+          if callee.locals >= 65536_u64 {
+            return False();
+          }
+          let saved = callee.params + callee.locals;
+          if saved >= 65535_u64 {
+            return False();
+          }
+          let begin32 = cvt::<u64, u32>(callee.start);
+          let params16 = cvt::<u64, u16>(callee.params);
+          let saved16 = cvt::<u64, u16>(saved);
+          let resolved = Op::Call(begin: begin32, at: at, params: params16, saved: saved16);
+          set code^.inner[i] = resolved;
+        }
+@@CALL_RESOLUTION_OTHER_ARMS@@
+      }
+    }
+  }
+  return True();
+}
+
+fn load(bytes: &Box<Array<u8>>, size: u64, types: &Box<Slots<FuncType>>, funcs: &Box<Slots<Func>>, table: &Box<Slots<u64>>, globals: &Box<Slots<u64>>, code: &Box<Slots<Op>>, brtab: &Box<Slots<Target>>) -> info: Loaded reads(bytes), writes(types), writes(funcs), writes(table), writes(globals), writes(code), writes(brtab) {
   doc "Decodes the module and translates every function body; data segments wait until memory exists.";
   let false_2 = False();
   let spans = box_array_filled::<u64>(count: 26_u64, value: 0_u64);
@@ -2371,11 +2325,15 @@ fn load(bytes: &Box<Array<u8>>, size: u64, types: &Box<Slots<FuncType>>, funcs: 
     let false_12 = False();
     let br = Reader(pos: at, end: body_end, failed: false_12);
     let fi = imported +wrap b;
-    let translated = translate(r: &br, bytes: bytes, fi: fi, funcs: funcs, types: types, code: code, brtab: brtab, ctls: &ctls, fixes: &fixes, provs: &provs, consts: consts);
+    let translated = translate(r: &br, bytes: bytes, fi: fi, funcs: funcs, types: types, code: code, brtab: brtab, ctls: &ctls, fixes: &fixes, provs: &provs);
     if bnot(translated) {
       return refuse(why: 7_u64);
     }
     set cr.pos = body_end;
+  }
+  let calls_ok = resolve_calls(code: code, funcs: funcs);
+  if bnot(calls_ok) {
+    return refuse(why: 7_u64);
   }
   let why = 0_u64;
   if bnot(elements_ok) {
@@ -2769,8 +2727,7 @@ fn execute(bytes: &Box<Array<u8>>, size: u64, args: &Args, files: &HandleFactory
   let globals = box_slots_new::<u64>(capacity: 64_u64);
   let code = box_slots_new::<Op>(capacity: 65536_u64);
   let brtab = box_slots_new::<Target>(capacity: 1024_u64);
-  let consts = box_slots_new::<u64>(capacity: 1024_u64);
-  let info = load(bytes: bytes, size: size, types: &types, funcs: &funcs, table: &table, globals: &globals, code: &code, brtab: &brtab, consts: &consts);
+  let info = load(bytes: bytes, size: size, types: &types, funcs: &funcs, table: &table, globals: &globals, code: &code, brtab: &brtab);
   if bnot(info.ok) {
     let r8 = cvt.wrap::<u64, u8>(info.reason);
     let shown = r8 +wrap 30_u8;
@@ -2807,7 +2764,11 @@ fn execute(bytes: &Box<Array<u8>>, size: u64, args: &Args, files: &HandleFactory
     return 68_u8;
   }
   let stack = box_array_filled::<u64>(count: 4194304_u64, value: 0_u64);
-  let first_frame = enter(stack: &stack, consts: &consts, fp: 0_u64, at: 0_u16, callee: entry_func, ret: 18446744073709551615_u64);
+  if entry_func.locals >= 65535_u64 {
+    return 69_u8;
+  }
+  let saved16 = cvt::<u64, u16>(entry_func.locals);
+  let first_frame = enter(stack: &stack, fp: 0_u64, at: 0_u16, params: 0_u16, saved: saved16, ret: 18446744073709551615_u64);
   if first_frame != 0_u64 {
     return 69_u8;
   }
@@ -2825,7 +2786,7 @@ fn execute(bytes: &Box<Array<u8>>, size: u64, args: &Args, files: &HandleFactory
     if fp > room {
       return 70_u8;
     }
-    let outcome = run(code: &code, funcs: &funcs, brtab: &brtab, table: &table, consts: &consts, stack: &stack, mem: &mem, globals: &globals, pc0: pc, fp0: fp, acc0: 0_u64);
+    let outcome = run(code: &code, funcs: &funcs, brtab: &brtab, table: &table, stack: &stack, mem: &mem, globals: &globals, pc0: pc, fp0: fp, acc0: 0_u64);
     match outcome {
       Done() => {
         return 0_u8;

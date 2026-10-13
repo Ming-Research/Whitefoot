@@ -206,7 +206,7 @@ FUSED = [(0x46, "Eq", "==", "u"), (0x47, "Ne", "!=", "u"), (0x48, "LtS", "<", "i
 NEGATE = {0x46: 0x47, 0x47: 0x46, 0x48: 0x4e, 0x4e: 0x48, 0x49: 0x4f, 0x4f: 0x49,
           0x4a: 0x4c, 0x4c: 0x4a, 0x4b: 0x4d, 0x4d: 0x4b, 0x45: 0xa8, 0xa8: 0x45}
 
-ARGS = "code: code, funcs: funcs, brtab: brtab, table: table, consts: consts, stack: stack, mem: mem, globals: globals"
+ARGS = "code: code, funcs: funcs, brtab: brtab, table: table, stack: stack, mem: mem, globals: globals"
 
 # The frame contract every handler and helper relies on: the 65536 slots
 # from fp lie inside the stack, so an operand slot (a u16) needs no check.
@@ -734,7 +734,7 @@ def count_dispatches(program):
     """The --count variant: a counter cell passed to the interpreter function
     and incremented at every dispatch, printed when _start returns."""
     sig = ("globals: &Box<Slots<u64>>, pc0: u64, fp0: u64, acc0: u64) -> r: Outcome reads(code), reads(funcs), "
-           "reads(brtab), reads(table), reads(consts), writes(stack), writes(mem), writes(globals) contract {")
+           "reads(brtab), reads(table), writes(stack), writes(mem), writes(globals) contract {")
     assert sig in program
     program = program.replace(sig, sig.replace("pc0: u64,", "counter: &Box<Array<u64>>, pc0: u64,")
                               .replace("writes(globals) contract", "writes(globals), writes(counter) contract"))
@@ -812,7 +812,7 @@ def profile_dispatches(program, variants):
 CONTROL = ["Unreachable()", "Jump(t: u32)", "Br(t: u32, s: u16, d: u16)", "BrIf(t: u32, c: u16)",
            "BrIfMove(c: u16, e: u32)", "BrUnless(t: u32, c: u16)", "BrTable(c: u16, start: u32, count: u32)",
            "BrTableN(c: u16, start: u32, count: u32)",
-           "Return(s: u16, k: u16, l: u16)", "Call(f: u32, at: u16)", "CallIndirect(canon: u32, at: u16, i: u16)",
+           "Return(s: u16, k: u16, l: u16)", "Call(begin: u32, at: u16, params: u16, saved: u16)", "CallIndirect(canon: u32, at: u16, i: u16)",
            "Host(id: u16, at: u16)", "Select(d: u16, a: u16, b: u16, c: u16)", "Copy(d: u16, s: u16)", "Copy2(d: u16, s: u16, e: u16, t: u16)",
            "GlobalGet(d: u16, i: u32)", "GlobalSet(s: u16, i: u32)", "MemorySize(d: u16)",
            "MemoryGrow(d: u16, s: u16)", "MemoryCopy(d: u16, s: u16, n: u16)",
@@ -1072,6 +1072,9 @@ tail_text = tail_text.replace("@@BRTABLE_VALIDATION_OTHER_ARMS@@", "\n".join(
     f"      {name}({'..' if fields else ''}) => {{\n      }}"
     for name, fields, _ in variants
     if name not in {"BrTable", "BrTableN", "BrTableNC"}))
+tail_text = tail_text.replace("@@CALL_RESOLUTION_OTHER_ARMS@@", "\n".join(
+    f"        {name}({'..' if fields else ''}) => {{\n        }}"
+    for name, fields, _ in variants if name != "Call"))
 aliases_end = head.index("\n\n") + 2
 helper_text = "\n".join(HELPERS).strip("\n")
 program = (head[:aliases_end] + OPS + "\n\n" + (helper_text + "\n\n" if helper_text else "")
