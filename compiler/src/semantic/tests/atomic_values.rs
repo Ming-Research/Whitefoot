@@ -187,6 +187,7 @@ fn aliases_and_helper_arguments_cannot_hide_an_operation() {
         r#"fn observe(value: &AtomicValue) -> result: unit pure {
   return unit;
 }
+
 fn work(first: &Shared<AtomicValue>) -> result: unit reads(first) waits {
   atomic a = &first^ {
     observe(value: a);
@@ -211,6 +212,7 @@ fn operations_are_refused_in_helpers_and_guards() {
         r#"fn atomic_guard(value: &AtomicValue) -> result: Bool pure {
   return True();
 }
+
 fn work(first: &Shared<AtomicValue>) -> result: unit reads(first) waits {
   atomic a = &first^ when atomic_guard(value: a) {
     atomic_raise(cell: a, value: 1_u64);
@@ -305,6 +307,7 @@ fn checked_atomic_targets_retain_their_kind_and_ordinary_read_authority() {
   }}
   return unit;
 }}
+
 fn update_shared(first: &Shared<AtomicValue>) -> result: unit reads(first) waits {{
   atomic a = &first^ {{
     atomic_add(cell: a, value: 1_u64);
