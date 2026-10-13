@@ -410,7 +410,8 @@ fn forbidden_atom_override(
     // [DIAG-1] row 2: a `call` start is a name followed by `(` or by the
     // `::` type-application or qualified-path delimiter, or `pkg ::` / `std ::`; a
     // `construct` start is a TYPEID followed by `(`, `<` or the `::` of a
-    // type-owned variant [TYPE-6]. `IDENT <` is a comparison, never a call.
+    // type-owned variant [TYPE-6]. A call marker is followed by FIRST(callee):
+    // IDENT, OPNAME, TYPEID, pkg or std. `IDENT <` is a comparison, never a call.
     let named_head =
         has(first, TerminalPredicate::Identifier) || has(first, TerminalPredicate::OperationName);
     let construct_head = has(first, TerminalPredicate::TypeIdentifier);
@@ -422,9 +423,16 @@ fn forbidden_atom_override(
         && (fixed(second, FixedTerminal::LeftParen)
             || fixed(second, FixedTerminal::LeftAngle)
             || fixed(second, FixedTerminal::ColonColon));
+    let marked_call_start = (fixed(first, FixedTerminal::Musttail)
+        || fixed(first, FixedTerminal::Spawn))
+        && (has(second, TerminalPredicate::Identifier)
+            || has(second, TerminalPredicate::OperationName)
+            || has(second, TerminalPredicate::TypeIdentifier)
+            || fixed(second, FixedTerminal::Pkg)
+            || fixed(second, FixedTerminal::Std));
     let nested_infix = (context.infix_operand || context.production == Production::InfixTail)
         && repairs::is_infix_operator(second);
-    if call_start || construct_start || nested_infix {
+    if call_start || construct_start || marked_call_start || nested_infix {
         return Some(SyntaxIssue {
             rule: SyntaxRule::Gram9,
             coordinate: SyntaxCoordinate::new(
@@ -433,9 +441,11 @@ fn forbidden_atom_override(
                 second.token().id().end(),
             ),
             expected,
-            // Construction is always inadmissible in definitions [FN-8],
-            // so even the conditional definition route is known to fail.
-            mechanical_fix: if construct_start && context.in_contract {
+            // A musttail call cannot be lifted to a let [FN-10], and spawn
+            // admission depends on the callee [WAIT-3]. No applicable marked
+            // call repair has been established. Construction is always
+            // inadmissible in definitions [FN-8], so that route also fails.
+            mechanical_fix: if marked_call_start || (construct_start && context.in_contract) {
                 None
             } else {
                 atom_repair(context, nested_infix)
@@ -582,6 +592,8 @@ struct Frontier {
     transparent_name: Option<NamePredicate>,
     transparent_disagreement: bool,
     atom_only: bool,
+    /// A maximal-prefix row has already matched a terminal of an atom.
+    matched_atom_prefix: bool,
 }
 
 fn frontier(
@@ -628,6 +640,7 @@ fn frontier(
     let mut transparent_name = None;
     let mut transparent_disagreement = false;
     let mut atom_only = false;
+    let mut matched_atom_prefix = false;
     for row in decision.rows() {
         work.spend(1).map_err(DiagnosticResult::Resource)?;
         if !contextual_row(decision, *row, continuation.clone(), work)? {
@@ -643,6 +656,8 @@ fn frontier(
             ))?;
         expected.insert(atom.predicate());
         atom_only |= atom.is_atom_only();
+        matched_atom_prefix |=
+            maximum > 0 && row.position(0).is_some_and(|first| first.is_atom_only());
         if let Some(name) = atom.transparent_name() {
             match transparent_name {
                 Some(previous) if previous != name => transparent_disagreement = true,
@@ -689,6 +704,7 @@ fn frontier(
         transparent_name,
         transparent_disagreement,
         atom_only,
+        matched_atom_prefix,
     })
 }
 
@@ -711,10 +727,25 @@ fn override_issue(
     {
         return Ok(Some(issue));
     }
+    // A matched delimiter can put the would-next-enter atom at position m,
+    // for example `, spawn` in an argument-list continuation. This is a new
+    // atom only when no maximal-prefix row has already matched an atom's
+    // terminal: `value spawn`, `& spawn` and `move spawn` have already begun
+    // the atom. Existing starts retain their original cursor in that case.
+    let atom_cursor = if frontier.atom_only
+        && !frontier.matched_atom_prefix
+        && site.tokens.get(boundary).is_some_and(|token| {
+            fixed(token, FixedTerminal::Musttail) || fixed(token, FixedTerminal::Spawn)
+        })
+    {
+        boundary
+    } else {
+        site.cursor
+    };
     if let Some(issue) = forbidden_atom_override(
         site.source,
         site.tokens,
-        site.cursor,
+        atom_cursor,
         ProbeContext {
             atom_only: context.atom_only || frontier.atom_only,
             ..context

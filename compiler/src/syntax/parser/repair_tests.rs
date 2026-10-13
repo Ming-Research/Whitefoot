@@ -135,6 +135,169 @@ fn nested_call_in_a_definition_keeps_the_definition_repair() {
 }
 
 #[test]
+fn marked_call_starts_keep_atom_attribution_and_frontier_expectations() {
+    for marker in ["musttail", "spawn"] {
+        for (callee, head) in [
+            ("inner()", "inner"),
+            ("ineg.checked(0_i32)", "ineg.checked"),
+            ("Packet(value: 0_u32)", "Packet"),
+            ("pkg::inner()", "pkg"),
+            ("std::inner()", "std"),
+        ] {
+            for (before, after) in [
+                ("outer(", ");"),
+                ("outer(0_u32, ", ");"),
+                ("outer(value: ", ");"),
+                ("return 0_u32 +wrap ", ";"),
+                ("return values[", "];"),
+                ("for (index in ", "..1_u64) {}"),
+                ("for (index in 0_u64..", ") {}"),
+            ] {
+                let source = format!("fn f() -> r: u32 pure {{ {before}{marker} {callee}{after} }}");
+                let result = outcome(source.as_bytes(), false);
+                let ParseOutcome::SourceIssue(issue) = result else {
+                    panic!("marked call in atom position must reject: {source}: {result:?}");
+                };
+                assert_eq!(issue.rule(), SyntaxRule::Gram9, "{source}");
+                assert_eq!(
+                    issue_bytes(source.as_bytes(), issue),
+                    format!("{marker} {head}").as_bytes(),
+                    "{source}"
+                );
+                // Hoisting musttail to a let fails FN-10; spawn admission
+                // needs the callee's WAIT-3 conditions. Neither has an
+                // established repair at this syntax-only stopping point.
+                assert_eq!(issue.mechanical_fix, None, "{source}");
+
+                // A noncallee follower reaches the same maximal-prefix
+                // frontier, but row 2 does not apply. Attribution must retain
+                // that frontier's expected set rather than inventing a new one.
+                let control = format!("fn f() -> r: u32 pure {{ {before}{marker} 0_u32{after} }}");
+                let result = outcome(control.as_bytes(), false);
+                let ParseOutcome::SourceIssue(control_issue) = result else {
+                    panic!("marked noncall must reject: {control}: {result:?}");
+                };
+                assert_eq!(control_issue.rule(), SyntaxRule::Form3, "{control}");
+                assert_eq!(
+                    issue_bytes(control.as_bytes(), control_issue),
+                    marker.as_bytes(),
+                    "{control}"
+                );
+                assert!(
+                    issue.expected.iter().eq(control_issue.expected.iter()),
+                    "{source}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn marked_atom_starts_require_a_callee_head() {
+    for marker in ["musttail", "spawn"] {
+        for follower in [
+            "0_u32",
+            "unit",
+            "\"text\"",
+            "move",
+            "entry",
+            "&",
+            "(",
+            "::",
+            "<",
+            "musttail",
+            "spawn",
+            "@label",
+            "+wrap",
+            "",
+        ] {
+            let source = format!("fn f() -> r: unit pure {{ outer({marker} {follower}); }}");
+            let result = outcome(source.as_bytes(), false);
+            let ParseOutcome::SourceIssue(issue) = result else {
+                panic!("noncallee head must reject: {source}: {result:?}");
+            };
+            // FIRST(callee) excludes these predicates; the fixed lowercase
+            // marker still fails the expected IDENT's spelling restrictions.
+            assert_eq!(issue.rule(), SyntaxRule::Form3, "{source}");
+            assert_eq!(
+                issue_bytes(source.as_bytes(), issue),
+                marker.as_bytes(),
+                "{source}"
+            );
+            assert_eq!(issue.mechanical_fix, None, "{source}");
+        }
+    }
+}
+
+#[test]
+fn a_marker_after_an_atom_prefix_does_not_start_another_atom() {
+    for marker in ["musttail", "spawn"] {
+        for (prefix, rule) in [
+            ("value", SyntaxRule::Gram5),
+            ("&", SyntaxRule::Form3),
+            ("move", SyntaxRule::Form3),
+        ] {
+            let source = format!("fn f() -> r: unit pure {{ outer({prefix} {marker} inner()); }}");
+            let result = outcome(source.as_bytes(), false);
+            let ParseOutcome::SourceIssue(issue) = result else {
+                panic!("marker after atom prefix must reject: {source}: {result:?}");
+            };
+            // DIAG-1 row 2 examines the atom occurrence's start, whose
+            // first token is the prefix above. The marker at position 1
+            // remains the ordinary frontier defect rather than a new atom.
+            assert_eq!(issue.rule(), rule, "{source}");
+            assert_eq!(
+                issue_bytes(source.as_bytes(), issue),
+                marker.as_bytes(),
+                "{source}"
+            );
+            assert_eq!(issue.mechanical_fix, None, "{source}");
+        }
+    }
+}
+
+#[test]
+fn marked_calls_outside_atom_only_positions_keep_their_derivations() {
+    for marker in ["musttail", "spawn"] {
+        for callee in [
+            "inner()",
+            "ineg.checked(0_i32)",
+            "Packet(value: 0_u32)",
+            "pkg::inner()",
+            "std::inner()",
+        ] {
+            let source = format!("fn f() -> r: u32 pure {{ return {marker} {callee}; }}");
+            assert!(
+                matches!(outcome(source.as_bytes(), false), ParseOutcome::Complete(_)),
+                "{source}"
+            );
+        }
+    }
+}
+
+#[test]
+fn marked_contract_calls_do_not_offer_a_definition_hoist() {
+    for marker in ["musttail", "spawn"] {
+        for clause in ["define value =", "requires"] {
+            let source = format!(
+                "fn f() -> r: u32 pure contract {{ {clause} outer({marker} inner()); }} {{ return 0_u32; }}"
+            );
+            let result = outcome(source.as_bytes(), false);
+            let ParseOutcome::SourceIssue(issue) = result else {
+                panic!("marked contract argument must reject: {source}: {result:?}");
+            };
+            assert_eq!(issue.rule(), SyntaxRule::Gram9, "{source}");
+            assert_eq!(
+                issue_bytes(source.as_bytes(), issue),
+                format!("{marker} inner").as_bytes(),
+                "{source}"
+            );
+            assert_eq!(issue.mechanical_fix, None, "{source}");
+        }
+    }
+}
+
+#[test]
 fn contract_definition_does_not_offer_to_hoist_a_constructor() {
     for constructor in ["Some<u8>(value: value)", "Packet(value: value)"] {
         let source = format!(

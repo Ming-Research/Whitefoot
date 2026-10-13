@@ -1843,8 +1843,17 @@ Its coordinate is the complete interval from the first IDENT through the second 
 An allowed suffix would already be one maximal OPNAME token, while a field place cannot be called or given targs.
 This bounded diagnostic window may include already recognized tokens, performs no operation-table or name lookup, consumes nothing, and does not enlarge recognition's two-token lookahead.
 2.
-If source-EBNF provenance reaches or would next enter an `atom` occurrence in `atom_list`, `fieldinit`, an `infix` operand, the subscript offset, or either endpoint of a `for_stmt`, and the two actual tokens at the start of that occurrence are `(IDENT, "(")`, `(IDENT, "::")`, `("pkg", "::")`, `("std", "::")`, `(OPNAME, "(")`, `(OPNAME, "::")`, `(TYPEID, "(")`, `(TYPEID, "<")`, or `(TYPEID, "::")`, the rejection cites [GRAM-9]; in an infix-operand occurrence, a two-token start whose second token is an `infix_op` or `compare_op` token — the forbidden nested-infix start — likewise cites [GRAM-9].
-These are exactly the `call` and constructor `call` starts forbidden in an atom-only position; no name lookup participates.
+If source-EBNF provenance reaches or would next enter an `atom` occurrence in `atom_list`, `fieldinit`, an `infix` operand, the subscript offset, or either endpoint of a `for_stmt`, and the two actual tokens at the start of that occurrence match a row in the following table, the rejection cites [GRAM-9].
+
+| First token predicate | Permitted second token predicates |
+| --- | --- |
+| `IDENT` or `OPNAME` | `"("` or `"::"` |
+| `"pkg"` or `"std"` | `"::"` |
+| `TYPEID` | `"("`, `"<"`, or `"::"` |
+| `"musttail"` or `"spawn"` | `IDENT`, `OPNAME`, `TYPEID`, `"pkg"`, or `"std"` |
+
+These are exactly the `call` and constructor `call` starts forbidden in an atom-only position; the second-token predicates after a call marker are `FIRST(callee)` under [GRAM-5], and no name lookup participates.
+In an infix-operand occurrence, a two-token start whose second token is an `infix_op` or `compare_op` token — the forbidden nested-infix start — likewise cites [GRAM-9].
 Its coordinate is the complete interval from the first through the second token of that forbidden call or construct start.
 3.
 If the boundary token has the raw shape admitted by an expected external predicate before that predicate's explicit spelling restrictions, and fails only those restrictions, the rejection cites that predicate's owner.
