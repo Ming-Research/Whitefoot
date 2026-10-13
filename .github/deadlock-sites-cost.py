@@ -620,6 +620,8 @@ class Protocol:
         self.write("attribution-ratios.json", json.dumps(attribution_ratios, indent=2) + "\n")
         self.write("attribution-panels.json", json.dumps(attribution_panels, indent=2) + "\n")
         self.write("summary.md", "\n".join(lines) + "\n")
+        # The run log keeps the verdict even when artifact upload fails.
+        print("\n".join(["== SUMMARY ==", *lines, "== END SUMMARY =="]), flush=True)
         return rejected
 
     def cleanup(self):
