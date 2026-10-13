@@ -9,6 +9,9 @@
 # timed once without counters, then repeated with WHITEFOOT_CHECK_WORK set to
 # dump the checker's work counters (compiler/src/semantic/entailment/work.rs
 # documents the columns). Remove this workflow before the branch is ready.
+# Halo and Snowghost additionally compare both compilers on identical pinned,
+# unmigrated sources. All-module verdicts continue past source rejections;
+# timing with errors present estimates checking work, not a migrated --check.
 name: op5-cost
 
 on:
@@ -32,6 +35,10 @@ jobs:
     env:
       MAIN_REVISION: 58743a931
       WHITEFOOT_CHECK_TIMEOUT: 3000
+      # Current main heads resolved for this extension with GitHub's
+      # branches/main API after git ls-remote failed DNS resolution locally.
+      HALO_REVISION: 56878ac4d607f7496c8e23a4c2ffe2d45e9cb552
+      SNOWGHOST_REVISION: 466e9843f7a0fe4926022be8718d4ab677cafed1
     steps:
       - uses: actions/checkout@v4
         with:
@@ -140,6 +147,138 @@ jobs:
           } > "$summary"
           cat "$summary"
           { echo '```'; cat "$summary"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - name: Fetch pinned Halo and Snowghost sources
+        run: |
+          out="$RUNNER_TEMP/op5"
+          mkdir -p "$out"
+          for project in halo snowghost; do
+            case $project in
+              halo) repository=Halo-wf revision=$HALO_REVISION ;;
+              snowghost) repository=Snowghost-wf revision=$SNOWGHOST_REVISION ;;
+            esac
+            git clone --quiet "https://github.com/Ming-Research/$repository.git" "$RUNNER_TEMP/$project"
+            git -C "$RUNNER_TEMP/$project" checkout --quiet --detach "$revision"
+            actual=$(git -C "$RUNNER_TEMP/$project" rev-parse HEAD)
+            [ "$actual" = "$revision" ]
+            printf '%s %s\n' "$repository" "$actual" | tee "$out/$project-source.txt"
+          done
+      # Halo's root Makefile builds the halo-e2e graph with entry test; it includes
+      # ../../../lib/halo and fpconv. Snowghost's renderer Makefile checks
+      # modules separately because pending interfaces prevent entry builds
+      # (layout_oracle is its renderer entry). --check-modules checks every
+      # module AND every declared entry without emitting code or using a cache.
+      # Pending entry composition can therefore produce non-OP-5 rejections.
+      - name: Time the same downstream sources with both compilers
+        run: |
+          out="$RUNNER_TEMP/op5"
+          for project in halo snowghost; do
+            case $project in
+              halo) graph="$RUNNER_TEMP/halo/research/experiments/halo-e2e/modules.wfg" ;;
+              snowghost) graph="$RUNNER_TEMP/snowghost/renderer/modules.wfg" ;;
+            esac
+            for round in 1 2 3; do
+              for variant in main branch; do
+                case $variant in
+                  main) compiler="$RUNNER_TEMP/main/compiler/target/gate/whitefootc" ;;
+                  branch) compiler="$PWD/compiler/target/gate/whitefootc" ;;
+                esac
+                label="downstream-$project-$variant-$round"
+                status=0
+                perl .github/run-check.pl "op5-$label" \
+                  /usr/bin/time -q -f '%e %x' -o "$out/$label.time" \
+                  "$compiler" --check-modules --report --graph "$graph" \
+                  > "$out/$label.log" 2>&1 || status=$?
+                printf '%s\n' "$status" > "$out/$label.status"
+                grep -E '^== END ' "$out/$label.log" || echo "== $label: no END line =="
+                echo "$label: exit $status"
+              done
+            done
+          done
+      - name: Summarize downstream checking cost
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import collections
+          import json
+          import math
+          import os
+          import pathlib
+          import statistics
+          import sys
+
+          out = pathlib.Path(os.environ["RUNNER_TEMP"]) / "op5"
+          out.mkdir(exist_ok=True)
+          results, errors = {}, []
+          for project in ("halo", "snowghost"):
+              subjects = None
+              for variant in ("main", "branch"):
+                  runs = []
+                  for round in (1, 2, 3):
+                      label = f"downstream-{project}-{variant}-{round}"
+                      try:
+                          seconds, timed_status = (out / f"{label}.time").read_text().split()
+                          seconds, timed_status = float(seconds), int(timed_status)
+                          status = int((out / f"{label}.status").read_text())
+                          if status not in (0, 1) or timed_status != status:
+                              raise ValueError(f"unexpected exit: wrapper={status}, compiler={timed_status}")
+                          if not math.isfinite(seconds) or seconds <= 0:
+                              raise ValueError(f"invalid elapsed time: {seconds}")
+                          log = (out / f"{label}.log").read_text()
+                          if f"== END op5-{label}:" not in log or "== STOP " in log:
+                              raise ValueError("missing END or interrupted command")
+                          verdicts = [json.loads(line) for line in log.splitlines() if line.startswith("{")]
+                          current = [("module", v["module"]) if "module" in v else ("entry", v["entry"])
+                                     for v in verdicts]
+                          if not current or len(set(current)) != len(current):
+                              raise ValueError("missing or duplicate module/entry verdicts")
+                          if subjects is None:
+                              subjects = current
+                          if current != subjects:
+                              raise ValueError("module/entry coverage differs between runs or compilers")
+                          if any(v["verdict"] not in ("accepted", "rejected") for v in verdicts):
+                              raise ValueError("unknown verdict")
+                          rejected = [v for v in verdicts if v["verdict"] == "rejected"]
+                          if status != int(bool(rejected)):
+                              raise ValueError("exit status disagrees with source verdicts")
+                          # Entry composition can repeat module diagnostics: count each
+                          # source site/function/failure once, separately for each rule.
+                          tasks = {(t["rule"], t["file"], t["line"], t["column"], t["function"], t["failure"])
+                                   for v in rejected for t in v["tasks"]}
+                          counts = collections.Counter(t[0] or "no rule" for t in tasks)
+                          incomplete = sum(not v["complete"] for v in rejected)
+                          runs.append((seconds, status, counts, incomplete))
+                      except (OSError, ValueError, KeyError, TypeError) as error:
+                          errors.append(f"{label}: {error}")
+                  if len(runs) == 3:
+                      if any(r[1:] != runs[0][1:] for r in runs[1:]):
+                          errors.append(f"{project}/{variant}: status or diagnostic counts changed between rounds")
+                      results[project, variant] = runs
+
+          lines = ["## Halo and Snowghost checking cost",
+                   "Same pinned sources; 3 interleaved runs per compiler; seconds exclude wrapper overhead.",
+                   "Errors remain: this estimates checking work, including every declared entry.",
+                   "Snowghost pending entry composition may produce non-OP-5 rejections; these are listed separately."]
+          if errors:
+              lines += ["Measurement invalid; no timing comparison reported.", *errors]
+          else:
+              lines += ["", "| Project | Main median s | Branch median s | Branch/main | Main min-max s | Branch min-max s | OP-5 errors main/branch |",
+                        "|---|---:|---:|---:|---|---|---:|"]
+              for project in ("halo", "snowghost"):
+                  main, branch = (results[project, v] for v in ("main", "branch"))
+                  a, b = ([r[0] for r in runs] for runs in (main, branch))
+                  lines.append(f"| {project} | {statistics.median(a):.2f} | {statistics.median(b):.2f} | {statistics.median(b)/statistics.median(a):.3f} | {min(a):.2f}-{max(a):.2f} | {min(b):.2f}-{max(b):.2f} | {main[0][2]['OP-5']}/{branch[0][2]['OP-5']} |")
+              lines += ["", "| Project/compiler | Exit statuses (rounds 1-3) | Other rejection rules (unique diagnostics) | Incomplete verdicts per run |",
+                        "|---|---|---|---:|"]
+              for (project, variant), runs in results.items():
+                  other = {rule: count for rule, count in sorted(runs[0][2].items()) if rule != "OP-5"}
+                  lines.append(f"| {project}/{variant} | {','.join(str(r[1]) for r in runs)} | {json.dumps(other, sort_keys=True)} | {runs[0][3]} |")
+          summary = "\n".join(lines) + "\n"
+          (out / "downstream-summary.md").write_text(summary)
+          print(summary)
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as file:
+              file.write(summary)
+          sys.exit(bool(errors))
+          PY
       - uses: actions/upload-artifact@v4
         if: always()
         with:
