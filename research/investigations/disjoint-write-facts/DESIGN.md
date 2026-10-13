@@ -139,17 +139,28 @@ construction can change vocabulary and recursively invoke proof; their
 invalidation needs a separate argument if collection deduplication still
 fails the cost criterion.
 
-## Validation still required
+## Validation
 
-The owner reported that the pre-optimization Linux unit, corpus and static
-groups pass on `62bdc50a7`. The optimization has no execution evidence yet.
-CI must retain those verdicts, check required mixed literal/symbolic
-preservation and its proof replay, and repeat
-the same-source timing comparison against both base and the unoptimized
-candidate. The expected reduction is duplicate endpoint allocation, sorting,
-path resolution, and candidate collection. Existing work counters do not
-measure those operations: all submitted questions and their order remain
-the same, so closure, snapshot, interning, affine, and join counters should
-remain unchanged against the unoptimized candidate. A timing reduction with
-unchanged counters would support this attribution. No reduction below 1.03
-is established yet; facts must not be weakened to meet that criterion.
+The Linux gate groups (static, unit, corpus, runtime) pass on `307c23418`
+([run 38420968087](https://github.com/Ming-Research/Whitefoot/actions/runs/38420968087)),
+including the mixed literal/symbolic preservation case and its proof replay.
+
+A temporary same-source workflow
+([run 38420967928](https://github.com/Ming-Research/Whitefoot/actions/runs/38420967928))
+recorded the base (`5850a7e0e`) verdicts: the symbolic, nested and
+literal/symbolic positives reject with OP-4 on base and accept on the branch;
+the two range-call positives accept on both (existing call-argument
+separation); the rebound-index and one-arm-join negatives reject with OP-4 on
+both. The workflow's file selection missed
+`ent5-neg-overlapping-symbolic-index-write`, so its base verdict is not
+recorded; the branch verdict comes from the full corpus run.
+
+Halo `--check-module pkg::vm`, gate profile, five interleaved rounds,
+compiler CPU on a hosted runner: branch/base 1.0213 (min 1.0147, max 1.0277),
+byte-identical base twin 0.9980. The unoptimized candidate `62bdc50a7`
+measured 1.0341 (min 1.0116, max 1.0372; twin 1.0043) in an earlier run.
+Work counters are identical between the two candidates, as predicted. The
+two candidates were not timed in one panel, so the reduction is attributed to
+the collection changes only by this cross-run comparison. Firn was not
+measured: its current main source names a local `held`, a keyword since
+v0.147, which the base compiler rejects.
