@@ -125,7 +125,7 @@ jobs:
         run: |
           groups=$(make --no-print-directory --silent check-groups MAIN_PUSH="$MAIN_PUSH")
           matrix=$(jq -cn --argjson groups "$groups" --argjson platforms "$CHECK_PLATFORMS" \
-            '[$groups[] as $group | $platforms[] as $os | select($group.linux_only != true or $os == "ubuntu-24.04") | $group + {os: $os}]')
+            '[$groups[] | .os as $os | select($platforms | index($os))]')
           echo "groups=$groups" >> "$GITHUB_OUTPUT"
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
           echo "Correctness groups: $groups" >> "$GITHUB_STEP_SUMMARY"
@@ -331,8 +331,8 @@ jobs:
           perl .github/run-check.pl --budget-verdict "$WHITEFOOT_TIME_BUDGET_RECORD"
 
   # The merge precondition, read from the revision's own check runs rather
-  # than from this run's matrix: regular groups green on both platforms and
-  # Linux-only groups on Linux. Draft
+  # than from this run's selected matrix: every Make-owned platform entry
+  # must be green. Draft
   # pushes and unchecked revisions skip it, so its success marks a revision
   # that may be merged. A cancelled run skips it too: a later push in its
   # concurrency group supersedes it, and a verdict read from cancelled jobs
@@ -351,7 +351,7 @@ jobs:
           GATE_GROUPS: ${{ needs.groups.outputs.groups }}
         run: |
           set -euo pipefail
-          groups=$(jq -er '[.[] as $group | ["ubuntu-24.04", "macos-15"][] as $os | select($group.linux_only != true or $os == "ubuntu-24.04") | "\($group.name) (\($os))"][]' <<< "$GATE_GROUPS")
+          groups=$(jq -er '.[] | "\(.name) (\(.os))"' <<< "$GATE_GROUPS")
           test -n "$groups"
           # Only jobs of this workflow's runs for the revision count; a job
           # re-run in a later attempt or run supersedes the earlier one.

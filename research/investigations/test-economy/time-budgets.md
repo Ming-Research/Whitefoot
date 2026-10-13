@@ -951,6 +951,21 @@ This removes repeated startup rather than reducing checked properties; the
 next hosted run must confirm the under-0.5 s self-test and the unchanged
 25 s repository-invariants budget.
 
+### macOS without self-queueing
+
+At the [main-receipt scheduling revision](https://github.com/Ming-Research/Whitefoot/commit/9ea0797a8556da3341d7402fde8d202ccc846e95),
+the [PR gate](https://github.com/Ming-Research/Whitefoot/actions/runs/38454996504)
+was reported green in 4 min 46 s. A throwaway branch's
+[forced main-push matrix trial](https://github.com/Ming-Research/Whitefoot/actions/runs/38455013023)
+was green on Linux and macOS, including the whole receipt-cache job in
+3 min 48 s and the final platform qualification, but took about 12 min.
+The account allowed at most five concurrent hosted macOS jobs, while the
+sharded matrix requested eight: macOS corpus 2/3 started at +3.5 min, runtime
+at +5.9 min and corpus 1/3 at +6.2 min from the run's start. Before sharding,
+its four macOS jobs did not queue on themselves. Keep the Linux shards and
+restore four whole macOS groups; the optional main-push receipt job remains
+Linux-only. The new scheduling still needs a gate run on the changed revision.
+
 ## Daily loop
 
 One edit, measured in the local container with the new defaults: an unused

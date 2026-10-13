@@ -21,10 +21,12 @@ RESEARCH_CARGO_TARGET := $(WHITEFOOT_SCRATCH_ROOT)/whitefoot-research-tests-targ
 # The _check-<group> recipes below own the commands on both paths. CI reads
 # check-groups and invokes check-group; it keeps no second command inventory.
 CHECK_GROUPS := static unit corpus runtime
+CHECK_HOSTS := ubuntu-24.04 macos-15
 CHECK_MAIN_GROUPS := receipts-whole
 CHECK_NAME_receipts-whole := proof receipts, all cases
-CHECK_SHARDS_unit := 3
-CHECK_SHARDS_corpus := 3
+CHECK_HOST_receipts-whole := ubuntu-24.04
+CHECK_SHARDS_ubuntu-24.04_unit := 3
+CHECK_SHARDS_ubuntu-24.04_corpus := 3
 SHARD ?= 1/1
 ifeq ($(strip $(CHECK_GROUPS)),)
 $(error the correctness group inventory must not be empty)
@@ -59,23 +61,26 @@ _check:
 	@echo "== WHITEFOOT ALL TESTS GREEN =="
 
 # JSON is consumed directly by the GitHub Actions matrix. This is a view of
-# CHECK_GROUPS, plus main-push-only coverage, not another command inventory.
+# CHECK_GROUPS on each host, plus main-push-only coverage. Platform selection
+# in CI filters this complete inventory and introduces no shard rules.
 check-groups:
 	@printf '['; separator=''; \
-	for entry in $(foreach group,$(CHECK_GROUPS),$(group):$(if $(filter undefined,$(origin CHECK_SHARDS_$(group))),1,$(CHECK_SHARDS_$(group)))); do \
+	for entry in $(foreach host,$(CHECK_HOSTS),$(foreach group,$(CHECK_GROUPS),$(host):$(group):$(if $(filter undefined,$(origin CHECK_SHARDS_$(host)_$(group))),1,$(CHECK_SHARDS_$(host)_$(group))))); do \
+		os=$${entry%%:*}; entry=$${entry#*:}; \
 		group=$${entry%:*}; count=$${entry#*:}; \
 		perl .github/shard-tests.pl --validate "1/$$count" || exit 1; \
 		shard=1; while test "$$shard" -le "$$count"; do \
 			name="$$group"; test "$$count" -eq 1 || name="$$group $$shard/$$count"; \
-			printf '%s{"group":"%s","shard":"%s/%s","name":"%s"}' \
-				"$$separator" "$$group" "$$shard" "$$count" "$$name"; separator=,; \
+			printf '%s{"group":"%s","shard":"%s/%s","name":"%s","os":"%s"}' \
+				"$$separator" "$$group" "$$shard" "$$count" "$$name" "$$os"; separator=,; \
 			shard=$$((shard + 1)); \
 		done; \
 	done; \
-	for entry in $(foreach group,$(if $(filter true,$(MAIN_PUSH)),$(CHECK_MAIN_GROUPS)),"$(group)|$(CHECK_NAME_$(group))"); do \
+	for entry in $(foreach group,$(if $(filter true,$(MAIN_PUSH)),$(CHECK_MAIN_GROUPS)),"$(CHECK_HOST_$(group))|$(group)|$(CHECK_NAME_$(group))"); do \
+		os=$${entry%%|*}; entry=$${entry#*|}; \
 		group=$${entry%%|*}; name=$${entry#*|}; \
-		printf '%s{"group":"%s","shard":"1/1","name":"%s","linux_only":true}' \
-			"$$separator" "$$group" "$$name"; separator=,; \
+		printf '%s{"group":"%s","shard":"1/1","name":"%s","os":"%s"}' \
+			"$$separator" "$$group" "$$name" "$$os"; separator=,; \
 	done; printf ']\n'
 
 check-group:

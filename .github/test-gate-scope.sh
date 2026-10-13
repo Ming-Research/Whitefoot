@@ -29,28 +29,40 @@ sub names_equal {
     join("\n", sort @$actual) eq join("\n", sort @$expected)
         or die "gate matrix: $name has missing or extra jobs\n";
 }
-my @ordinary = (
-    {group => 'ordinary', shard => '1/3', name => 'ordinary 1/3'},
-    {group => 'stable', shard => '1/1', name => 'stable'},
-);
+my @ordinary;
+for my $group ('static', 'runtime') {
+    push @ordinary, {group => $group, shard => '1/1', name => $group, os => 'ubuntu-24.04'};
+}
+for my $group ('unit', 'corpus') {
+    for my $index (1 .. 3) {
+        push @ordinary, {group => $group, shard => "$index/3",
+            name => "$group $index/3", os => 'ubuntu-24.04'};
+    }
+}
+for my $group ('static', 'unit', 'corpus', 'runtime') {
+    push @ordinary, {group => $group, shard => '1/1', name => $group, os => 'macos-15'};
+}
 my @expected = (
-    'ordinary 1/3 (ubuntu-24.04)', 'ordinary 1/3 (macos-15)',
-    'stable (ubuntu-24.04)', 'stable (macos-15)',
+    'static (ubuntu-24.04)', 'runtime (ubuntu-24.04)',
+    'unit 1/3 (ubuntu-24.04)', 'unit 2/3 (ubuntu-24.04)', 'unit 3/3 (ubuntu-24.04)',
+    'corpus 1/3 (ubuntu-24.04)', 'corpus 2/3 (ubuntu-24.04)', 'corpus 3/3 (ubuntu-24.04)',
+    'static (macos-15)', 'unit (macos-15)', 'corpus (macos-15)', 'runtime (macos-15)',
 );
 for my $main (0, 1) {
     my @groups = @ordinary;
     my @required = @expected;
     if ($main) {
         push @groups, {group => 'whole', shard => '1/1',
-            name => 'proof receipts, all cases', linux_only => JSON::PP::true};
+            name => 'proof receipts, all cases', os => 'ubuntu-24.04'};
         push @required, 'proof receipts, all cases (ubuntu-24.04)';
     }
     my $jobs = decode_json(jq('-cn', '--argjson', 'groups', encode_json(\@groups),
         '--argjson', 'platforms', '["ubuntu-24.04","macos-15"]', $matrix));
     names_equal([map { "$_->{name} ($_->{os})" } @$jobs], \@required, "main=$main matrix");
-    my %groups = map { $_->{group} => $_ } @groups;
+    my %groups = map { join("\0", $_->{group}, $_->{os}, $_->{shard}) => $_ } @groups;
     for my $job (@$jobs) {
-        my $source = $groups{$job->{group}} or die "gate matrix: unknown command group\n";
+        my $source = $groups{join("\0", $job->{group}, $job->{os}, $job->{shard})}
+            or die "gate matrix: unknown platform, group or shard\n";
         $job->{shard} eq $source->{shard} && $job->{name} eq $source->{name}
             or die "gate matrix: matrix changed the Make-owned group or shard\n";
     }
@@ -61,7 +73,16 @@ for my $main (0, 1) {
 my $draft = decode_json(jq('-cn', '--argjson', 'groups', encode_json(\@ordinary),
     '--argjson', 'platforms', '["ubuntu-24.04"]', $matrix));
 names_equal([map { "$_->{name} ($_->{os})" } @$draft],
-    ['ordinary 1/3 (ubuntu-24.04)', 'stable (ubuntu-24.04)'], 'draft Linux-only matrix');
+    [grep { /\(ubuntu-24\.04\)$/ } @expected], 'draft eight-job Linux matrix');
+my $macos = decode_json(jq('-cn', '--argjson', 'groups', encode_json(\@ordinary),
+    '--argjson', 'platforms', '["macos-15"]', $matrix));
+names_equal([map { "$_->{name} ($_->{os})" } @$macos],
+    ['static (macos-15)', 'unit (macos-15)', 'corpus (macos-15)', 'runtime (macos-15)'],
+    'four whole macOS groups');
+for my $job (@$macos) {
+    $job->{shard} eq '1/1' && $job->{name} eq $job->{group}
+        or die "gate matrix: macOS must run whole groups with unsharded names\n";
+}
 print "gate matrix: regular platforms, main-only Linux group and qualification agree\n";
 MATRIX
 }
