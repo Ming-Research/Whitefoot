@@ -43,9 +43,8 @@ use whitefoot::{
     BuildCache, CheckOutcome, CompilationFailure, CompilationFailureKind, CompilerLimits,
     DiagnosticFormat, HOST_LINK_LIBRARIES, HOST_OPTIMIZATION_ARGUMENTS, ModuleEntry,
     ModuleProgramFailure, SourceInput, check, check_module_entry, check_module_program,
-    check_with_cache, compile,
-    compile_module_program, discover_module_sources, entry_verdict, form_module_program_graph,
-    module_verdict,
+    check_module_program_with_cache, check_with_cache, compile, compile_module_program,
+    discover_module_sources, entry_verdict, form_module_program_graph,
 };
 
 use crate::support::{PROGRAM_DEADLINE, ProgramChild, append_runtime_objects};
@@ -411,8 +410,8 @@ fn rejected_diagnostic(failure: &CompilationFailure) -> RejectedDiagnostic {
 
 /// [MOD-8] one case's source verdict reached with proof receipts from
 /// `cache`: a one-record case through the cached check, a module-form case
-/// through each module's verdict in row order and then each named entry's
-/// composition verdict, the order `reach` judges them in.
+/// through the cached program check, which admits syntax across every module
+/// before judging module verdicts, and then each named entry's composition.
 fn reach_with_receipts(case: &Case, cache: &BuildCache) -> Verdict {
     let limits = CompilerLimits::default();
     let Some(root) = case.module_root() else {
@@ -437,20 +436,10 @@ fn reach_with_receipts(case: &Case, cache: &BuildCache) -> Verdict {
                 .in_module(source.module, source.role)
         })
         .collect();
-    let mut verdicts = Vec::new();
-    for record in graph.modules() {
-        match module_verdict(
-            &graph,
-            &inputs,
-            &record.qualified_name(),
-            false,
-            limits,
-            Some(cache),
-        ) {
-            Ok(verdict) => verdicts.push(verdict),
-            Err(failure) => return failure_verdict(&failure),
-        }
+    if let Err(failure) = check_module_program_with_cache(&graph, &inputs, limits, cache) {
+        return failure_verdict(&failure);
     }
+    let mut verdicts = Vec::new();
     for entry in graph.entries() {
         match entry_verdict(
             &graph,
@@ -458,7 +447,7 @@ fn reach_with_receipts(case: &Case, cache: &BuildCache) -> Verdict {
             ModuleEntry::Named(entry.name()),
             limits,
             Some(cache),
-            &verdicts,
+            &[],
         ) {
             Ok(verdict) => verdicts.push(verdict),
             Err(failure) => return failure_verdict(&failure),

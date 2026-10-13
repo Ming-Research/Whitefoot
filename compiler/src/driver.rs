@@ -9,6 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 mod cache;
 mod diagnostic;
+mod module_syntax;
 mod packages;
 mod reads;
 mod segments;
@@ -748,8 +749,9 @@ fn with_library_records<'input>(
 
 /// Checks every module of a module program's own package and of the
 /// packages it binds against its dependencies' interfaces, in package and
-/// row order, without selecting an entry, and returns the first rejected
-/// module's failure [MOD-8, MOD-11]. Standard library modules are checked
+/// row order, without selecting an entry. DIAG-1 first reports every source
+/// segment rejection together; later stages return the first rejected module's
+/// failure [MOD-8, MOD-11]. Standard library modules are checked
 /// with the library.
 ///
 /// `inputs` are the modules' interface and implementation records, each
@@ -762,6 +764,25 @@ pub fn check_module_program(
     let inputs = &with_library_records(graph, inputs);
     let modules = graph.program_modules().collect::<Vec<_>>();
     require_module_verdicts(graph, inputs, &modules, limits, None)
+}
+
+/// Checks a module program through the same DIAG-1 program-wide syntax gate
+/// and MOD-8 module verdicts as [`check_module_program`], retaining accepted
+/// module verdicts and proof receipts in `cache`.
+///
+/// # Errors
+///
+/// Returns every independent syntax-segment rejection together, or the first
+/// failure of a later stage, exactly as the uncached program check does.
+pub fn check_module_program_with_cache(
+    graph: &crate::ModuleGraph,
+    inputs: &[SourceInput<'_>],
+    limits: CompilerLimits,
+    cache: &BuildCache,
+) -> Result<(), CompilationFailure> {
+    let inputs = &with_library_records(graph, inputs);
+    let modules = graph.program_modules().collect::<Vec<_>>();
+    require_module_verdicts(graph, inputs, &modules, limits, Some(cache))
 }
 
 /// Checks one module against the interfaces it may name [MOD-8]: the
@@ -1024,8 +1045,20 @@ pub fn module_verdict(
     let inputs = &with_library_records(graph, inputs);
     let target = registered_module(graph, module)?;
     let check = ModuleCheck::new(graph, inputs, target, interface_only);
+    module_verdict_using(graph, inputs, module, &check, limits, cache, None)
+}
+
+fn module_verdict_using(
+    graph: &crate::ModuleGraph,
+    inputs: &[SourceInput<'_>],
+    module: &str,
+    check: &ModuleCheck<'_>,
+    limits: CompilerLimits,
+    cache: Option<&BuildCache>,
+    prepared: Option<CanonicalSyntaxUnit>,
+) -> Result<CheckVerdict, CompilationFailure> {
     if let Some(cache) = cache
-        && let Some(pending) = validated_acceptance(graph, inputs, &check, limits, cache)?
+        && let Some(pending) = validated_acceptance(graph, inputs, check, limits, cache)?
     {
         return Ok(CheckVerdict {
             subject: module.to_owned(),
@@ -1039,7 +1072,7 @@ pub fn module_verdict(
         cache,
         MODULE_VERDICTS,
         (&check.material, &check.reading),
-        || match check.run(graph, limits, cache) {
+        || match check.run_using(graph, limits, cache, prepared) {
             Ok(checked) => {
                 judged = checked;
                 let pending = judged
@@ -1049,7 +1082,7 @@ pub fn module_verdict(
                 Ok(CheckOutcome::Accepted { pending })
             }
             Err(failure) if failure.kind() == CompilationFailureKind::Source => {
-                module_rejection(graph, &check, &failure, limits, cache)
+                module_rejection(graph, check, &failure, limits, cache)
             }
             Err(failure) => Err(failure),
         },
@@ -1057,7 +1090,7 @@ pub fn module_verdict(
     if let Some(cache) = cache
         && !judged.is_empty()
     {
-        record_acceptances(graph, inputs, &check, &judged, limits, cache);
+        record_acceptances(graph, inputs, check, &judged, limits, cache);
     }
     Ok(verdict)
 }
@@ -1396,31 +1429,36 @@ impl<'input> ModuleCheck<'input> {
     /// read of other modules, then the same for the interface of every
     /// module of its dependency closure, whose judgments the accepted check
     /// also made; or the check's failure.
-    fn run(
+    fn run_using(
         &self,
         graph: &crate::ModuleGraph,
         limits: CompilerLimits,
         cache: Option<&BuildCache>,
+        prepared: Option<CanonicalSyntaxUnit>,
     ) -> Result<Vec<Judged>, CompilationFailure> {
-        with_checked_program_using(
-            &self.selected,
-            Some(graph.modules()),
-            limits,
-            cache,
-            |_, resolved| {
-                let reads = reads::DeclarationReads::new(resolved);
-                Ok(std::iter::once(self.target)
-                    .chain(graph.dependency_closure(self.target))
-                    .map(|module| Judged {
-                        module,
-                        pending: pending_declarations(resolved, module),
-                        read: reads
-                            .as_ref()
-                            .and_then(|reads| reads.read_declarations(module)),
-                    })
-                    .collect())
-            },
-        )
+        let continuation = |_: CheckedProgram, resolved: &ResolvedSyntaxUnit| {
+            let reads = reads::DeclarationReads::new(resolved);
+            Ok(std::iter::once(self.target)
+                .chain(graph.dependency_closure(self.target))
+                .map(|module| Judged {
+                    module,
+                    pending: pending_declarations(resolved, module),
+                    read: reads
+                        .as_ref()
+                        .and_then(|reads| reads.read_declarations(module)),
+                })
+                .collect())
+        };
+        match prepared {
+            Some(canonical) => with_canonical_program_using(canonical, cache, continuation),
+            None => with_checked_program_using(
+                &self.selected,
+                Some(graph.modules()),
+                limits,
+                cache,
+                continuation,
+            ),
+        }
     }
 
     /// Records an acceptance under the module's own records and graph facts,
@@ -1683,7 +1721,8 @@ fn validated_acceptance(
 /// [MOD-8] a composition holds only while every selected module's own
 /// verdict does. Each module is checked against its dependencies' interfaces
 /// alone, in row order, reusing an acceptance a cache recorded for exactly
-/// its inputs, and the first rejected module's failure is the composition's.
+/// its inputs. DIAG-1 admits syntax across all selected records first; the
+/// first subsequent rejected module's failure is the composition's.
 fn require_module_verdicts(
     graph: &crate::ModuleGraph,
     inputs: &[SourceInput<'_>],
@@ -1691,10 +1730,14 @@ fn require_module_verdicts(
     limits: CompilerLimits,
     cache: Option<&BuildCache>,
 ) -> Result<(), CompilationFailure> {
-    for module in modules {
-        let check = ModuleCheck::new(graph, inputs, *module, false);
+    let checks = modules
+        .iter()
+        .map(|module| ModuleCheck::new(graph, inputs, *module, false))
+        .collect::<Vec<_>>();
+    let prepared = module_syntax::prepare(graph, inputs, &checks, limits, cache)?;
+    for (check, canonical) in checks.iter().zip(prepared) {
         if let Some(cache) = cache
-            && validated_acceptance(graph, inputs, &check, limits, cache)?.is_some()
+            && validated_acceptance(graph, inputs, check, limits, cache)?.is_some()
         {
             continue;
         }
@@ -1707,9 +1750,9 @@ fn require_module_verdicts(
         }
         // A rejection is left to a module check, which records it with its
         // impact report; a build needs only its first failure.
-        let judged = check.run(graph, limits, cache)?;
+        let judged = check.run_using(graph, limits, cache, canonical)?;
         if let Some(cache) = cache {
-            record_acceptances(graph, inputs, &check, &judged, limits, cache);
+            record_acceptances(graph, inputs, check, &judged, limits, cache);
             let pending = judged
                 .first()
                 .map(|judged| judged.pending.clone())
@@ -1883,7 +1926,9 @@ pub fn entry_verdict(
         (&modules, &selected),
         RecordOrder::Sorted,
     );
-    let mut reading = rejection_reading(graph, &selected);
+    // Program-wide syntax diagnostics retain the input unit's source ordinals,
+    // so even records outside this entry fix their mapping in a cached rejection.
+    let mut reading = rejection_reading(graph, inputs);
     // A named entry's rejection quotes where the graph writes it.
     if let Some(place) = selection.written {
         let mut fields = Fields::default();
@@ -1915,18 +1960,35 @@ pub fn entry_verdict(
         || {
             // Each module's verdict reads only its own records and its
             // dependencies' interfaces, so the verdicts are independent and
-            // run concurrently. The first rejection or failure in module
-            // order is the one reported; unlike a sequential walk, every
-            // module is checked even after an earlier one rejects, and a
-            // panic in any of them propagates.
-            let verdicts = crate::in_parallel(&modules, |module| {
-                let name = graph
-                    .modules()
-                    .get(module.index())
-                    .map_or_else(String::new, crate::ModuleRecord::qualified_name);
+            // run concurrently after program-wide syntax admission. The first
+            // later-stage rejection or failure in module order is reported.
+            // Every module is checked even after an earlier one rejects,
+            // and a panic in any of them propagates.
+            let checks = modules
+                .iter()
+                .map(|module| ModuleCheck::new(graph, inputs, *module, false))
+                .collect::<Vec<_>>();
+            let prepared = match module_syntax::prepare(graph, inputs, &checks, limits, cache) {
+                Ok(prepared) => prepared,
+                Err(failure) => return outcome_of(Err(failure), inputs),
+            };
+            let work = checks
+                .iter()
+                .zip(prepared.into_iter().map(std::sync::Mutex::new))
+                .collect::<Vec<_>>();
+            let verdicts = crate::in_parallel(&work, |(check, prepared)| {
+                let name = module_name(graph, check.target);
                 match known.iter().find(|verdict| verdict.subject == name) {
                     Some(verdict) => Ok(verdict.clone()),
-                    None => module_verdict(graph, inputs, &name, false, limits, cache),
+                    None => module_verdict_using(
+                        graph,
+                        inputs,
+                        &name,
+                        check,
+                        limits,
+                        cache,
+                        prepared.lock().expect("one owner per prepared module").take(),
+                    ),
                 }
             });
             for verdict in verdicts {
@@ -2747,6 +2809,17 @@ fn canonical_syntax(
     limits: CompilerLimits,
     graph: bool,
 ) -> Result<CanonicalSyntaxUnit, CompilationFailure> {
+    let parsed = segment_syntax(bundle, limits, graph)??;
+    finish_syntax(bundle, parsed, limits)
+}
+
+/// Establishes segment admission while retaining the complete derivation,
+/// whose failure is selected only after every segment has been judged.
+fn segment_syntax(
+    bundle: &SourceBundle,
+    limits: CompilerLimits,
+    graph: bool,
+) -> Result<Result<crate::ParsedBundle, CompilationFailure>, CompilationFailure> {
     let parsed = derive_syntax(bundle, limits, graph, false);
     if !parsed
         .as_ref()
@@ -2757,7 +2830,7 @@ fn canonical_syntax(
         // likewise cannot select a diagnostic before the independent segments.
         segments::check(bundle, limits, graph)?;
     }
-    finish_syntax(bundle, parsed?, limits)
+    Ok(parsed)
 }
 
 fn derive_syntax(
@@ -2964,6 +3037,21 @@ where
     }
     .map_err(CompilationFailure::source_envelope)?;
     let canonical = canonical_syntax(&bundle, limits, false)?;
+    with_canonical_program_using(canonical, receipts, continuation)
+}
+
+/// Resumes the ordinary front end after all records have passed DIAG-1's
+/// syntax stages. Module-program admission retains this capability so the
+/// module verdict uses its original derivation rather than parsing again.
+fn with_canonical_program_using<T, F>(
+    canonical: CanonicalSyntaxUnit,
+    receipts: Option<&BuildCache>,
+    continuation: F,
+) -> Result<T, CompilationFailure>
+where
+    F: FnOnce(CheckedProgram, &ResolvedSyntaxUnit) -> Result<T, CompilationFailure>,
+{
+    let bundle = canonical.classified_bundle().source_bundle().clone();
     let resolved = match resolve(canonical) {
         ResolutionOutcome::Complete(complete) => complete,
         ResolutionOutcome::SourceIssue { issue, .. } => {
