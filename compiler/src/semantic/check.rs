@@ -2205,8 +2205,24 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 },
             );
         }
+        // [TYPE-11, FN-2] generated promises follow the written clauses in
+        // both concrete and symbolic instances. A known invariant struct
+        // supplies its ordinary integer relations even while another type
+        // remains symbolic. Schema admission and renamed-instance reuse
+        // must retain those clauses with the written ones, so FN-4's actual
+        // premises have the FN-9 summaries a bound call requires.
+        for (invariant, subject, selector) in
+            self.type_invariant_postcondition_selectors(signature)?
+        {
+            postcondition_selectors.push(selector);
+            postcondition_relations.push(type_invariants::substitute_relation(
+                &invariant.relation,
+                subject,
+            ));
+            postcondition_places.push(Vec::new());
+        }
         let postconditions = if signature.substitution.is_concrete(&self.types.elements) {
-            let mut postconditions = postcondition_selectors
+            postcondition_selectors
                 .into_iter()
                 .zip(postcondition_relations)
                 .zip(postcondition_places)
@@ -2224,16 +2240,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                     postcondition.places = places;
                     Ok::<_, CheckStop>(postcondition)
                 })
-                .collect::<Result<Vec<_>, _>>()?;
-            postconditions.extend(self.type_invariant_postconditions(
-                FunctionContext {
-                    check_context,
-                    function: signature,
-                },
-                &parameters,
-                &checked.statements,
-            )?);
-            postconditions
+                .collect::<Result<Vec<_>, _>>()?
         } else {
             let source_admitted = summary_source
                 .and_then(|source| self.analysis.symbolic_admitted.get(&source))
