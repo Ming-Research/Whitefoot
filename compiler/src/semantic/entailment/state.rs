@@ -3901,9 +3901,13 @@ impl FactState {
 /// bounds, including reversal at MIN. This is not an unbounded integer
 /// representation: a written clause's constants are formed exactly and a
 /// clause whose formation leaves i128 is rejected where it is formed
-/// [INV-1, MSR-5], and every term lies within plus or minus 2^66, so
-/// clamping a stored constant at an i128 endpoint never changes whether
-/// its fact holds.
+/// [INV-1, MSR-5]. Every term lies within plus or minus 2^66: a constant
+/// term is interned only from a fragment-typed value, a type limit or a
+/// length, while a clause constant, which may be any i128 value, folds
+/// through Z into a fact's constant and never becomes a term [ENT-2]. A
+/// fact whose constant is at least 2^67 then holds outright and one below
+/// -2^67 fails outright, so clamping a stored or composed constant at an
+/// i128 endpoint never changes whether its fact holds.
 pub(crate) type DistinctKey = (TermId, TermId, i128);
 
 pub(crate) fn distinct_key(left: TermId, right: TermId, difference: i128) -> DistinctKey {
@@ -5221,9 +5225,14 @@ fn for_each_implicit_bound(
                 emit(ZERO, id, lower, ImplicitBoundKind::TypeMinimum);
             }
         }
+        // `Z - c <= -c` at `c = i128::MIN` states a bound outside i128; it
+        // is omitted, which only under-derives, since clamping it to
+        // `i128::MAX` would state the false `c >= -i128::MAX`.
         TermKind::Constant(value) => {
             emit(id, ZERO, *value, ImplicitBoundKind::Constant);
-            emit(ZERO, id, -value, ImplicitBoundKind::Constant);
+            if let Some(lower) = value.checked_neg() {
+                emit(ZERO, id, lower, ImplicitBoundKind::Constant);
+            }
         }
         TermKind::Place(_, ty) | TermKind::ConstParameter(_, ty) => {
             let (minimum, maximum) = type_range(*ty);
@@ -5252,7 +5261,9 @@ fn for_each_implicit_bound(
             match terms.measure_bound(id) {
                 Some(MeasureBound::Constant(value)) => {
                     emit(id, ZERO, value, ImplicitBoundKind::StandingMeasure);
-                    emit(ZERO, id, -value, ImplicitBoundKind::StandingMeasure);
+                    if let Some(lower) = value.checked_neg() {
+                        emit(ZERO, id, lower, ImplicitBoundKind::StandingMeasure);
+                    }
                 }
                 Some(MeasureBound::Equal(other)) => {
                     emit(id, other, 0, ImplicitBoundKind::StandingMeasure);
@@ -9387,6 +9398,32 @@ pub(crate) mod tests {
                     }
                 }
             }
+        }
+    }
+
+    /// [ENT-2] a constant term `c` carries `c - Z <= c` and `Z - c <= -c`.
+    /// At `c = i128::MIN` the second bound lies outside i128: it is omitted,
+    /// neither negated with overflow nor clamped to the false
+    /// `Z - c <= i128::MAX`, which with the first bound would close to a
+    /// contradiction. Each closure reading is either absent or true.
+    #[test]
+    fn constant_terms_at_the_i128_endpoints_close_to_true_bounds() {
+        let goals = GoalTable::default();
+        for value in [i128::MIN, i128::MAX] {
+            let mut terms = TermTable::new();
+            let constant = terms.intern(TermKind::Constant(value));
+            let mut ledger = DerivationLedger::default();
+            let every = with_every_term(|| close(&FactState::new(), &terms, &goals, &mut ledger));
+            assert!(!every.contradictory(), "{value}");
+            assert_eq!(every.tight_bound(constant, ZERO), Some(value));
+            assert_eq!(every.tight_bound(ZERO, constant), value.checked_neg());
+            let elided = close(&FactState::new(), &terms, &goals, &mut ledger);
+            assert!(!elided.contradictory(), "{value}");
+            let upper = elided.tight_bound(constant, ZERO);
+            let lower = elided.tight_bound(ZERO, constant);
+            assert!(upper.is_none_or(|bound| bound >= value), "{value}");
+            let negated = value.checked_neg();
+            assert!(lower.is_none_or(|bound| negated.is_some_and(|least| bound >= least)));
         }
     }
 

@@ -322,6 +322,14 @@ impl Reasoning<'_, '_, '_> {
     /// using the existing source normalizer rather than the current value's
     /// coefficient vector. The displacement already belongs to the target
     /// inequality, so only the term is needed by Step 6.
+    ///
+    /// A constant side folds through Z [ENT-2], so its term is Z. Interning
+    /// the constant as a term instead would put a clause constant, which may
+    /// be any i128 value [INV-1, MSR-5], into every later closure, whose
+    /// saturating arithmetic is exact only for terms near the fragment
+    /// ranges: a constant term at `i128::MAX` beside an `i64` place `x`
+    /// composes `c - x <= i128::MAX + 2^63`, saturates to `c - x <=
+    /// i128::MAX` and then derives the false `Z - x <= 0`.
     pub(super) fn checked_affine_right_term(
         &mut self,
         expression: &CheckedAffineExpression,
@@ -342,16 +350,12 @@ impl Reasoning<'_, '_, '_> {
         let Relation::Bound {
             left: ZERO,
             right,
-            bound,
+            ..
         } = self.checked_affine_relation_l0(&source)?
         else {
             return None;
         };
-        if right == ZERO {
-            Some(self.vocabulary.terms.intern(TermKind::Constant(bound)))
-        } else {
-            Some(right)
-        }
+        Some(right)
     }
 
     /// Projects the exact source relation into L0 when its normalized binding
