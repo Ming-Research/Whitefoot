@@ -643,6 +643,69 @@ race machinery. Run the smallest focused CI case first, then the required
 Linux/macOS/Windows gates on the proposed implementation. No such validation
 was run for this research-only task, and no acceptance row is marked passed.
 
+## Windows as built
+
+Phase 2 of the host-path change (2026-10-13) implements the Windows rows of
+the interface above; PRE-2 states the resulting rules. This note records how
+the implementation meets the feasibility conditions this study left open. It
+was written before any Windows run; the CI results on the pull request are
+its evidence.
+
+* **Encoding.** NativeBytes is UTF-16LE code units: an odd byte count or a
+  zero code unit is InvalidPath, unpaired surrogates pass through. Utf8 is
+  validated and converted to UTF-16 in the ordinary library before the open
+  is submitted. A HostString argument is already UTF-16 and is passed in
+  place. The limit is 32767 code units, the longest `UNICODE_STRING`.
+* **Dialect.** The worker in
+  [windows_runtime.c](../../../compiler/src/backend/windows_runtime.c)
+  classifies the path: `\\?\` becomes `\??\` plus the rest, unnormalized; a
+  device path (`\\.\`, `//?/` and the like) is ERROR_INVALID_NAME; every other
+  form goes through the host's own `GetFullPathNameW` after its starting
+  point, so slash conversion, `.`/`..` removal clamped at the root and
+  trailing-dot trimming are the host's code, not a reimplementation. A
+  normalized result the host turns into a device path (a reserved name such
+  as `CON`) is ERROR_INVALID_NAME rather than an open of the device.
+* **Base and renames.** The existing representation keeps a directory as a
+  HANDLE that NtCreateFile accepts as `RootDirectory`, and NTFS resolves no
+  `..` below such a handle. A relative path is therefore normalized after the
+  spelling `GetFinalPathNameByHandleW` reports for base at the open; when the
+  result is base or below it, the remainder is opened from base's handle, so
+  a rename of base or its parents, before or during the open, cannot redirect
+  it. Only a path that climbs above base (or a root-relative path) is opened
+  by its full spelling, which a concurrent rename of base between the
+  spelling query and the open could redirect. This is the Win32 meaning of
+  `..` (textual, after base's current spelling); no physical-parent lookup
+  exists to preserve. A base with no DOS spelling (a volume mounted without a
+  drive letter or folder) makes relative opens fail with the host's error.
+* **Drive context.** A drive-relative path on another drive than base's uses
+  `GetFullPathNameW`'s per-drive current directory, read at the open. Whitefoot
+  has no operation that changes the process working directory or the
+  per-drive environment entries, so this equals the context at startup; the
+  value is not copied into `HostPaths`, which stays empty.
+* **Links.** Host-path opens omit FILE_OPEN_REPARSE_POINT, so NT follows
+  symbolic links and junctions; a reparse attribute left on the opened object
+  is a tag resolved in place (deduplication, cloud placeholders) and its kind
+  is the object's own. Single-name opens keep FILE_OPEN_REPARSE_POINT and the
+  refusal of every reparse kind, as the owner chose.
+* **Kinds and pair.** A directory open passes FILE_DIRECTORY_FILE, so a
+  non-directory is the host's ERROR_DIRECTORY (NotDirectory with its code);
+  an intermediate regular file is ERROR_PATH_NOT_FOUND (NotFound), unlike
+  POSIX ENOTDIR. The write half is `_dup` of the read half, one directory
+  object, registered as a directory root; a refused duplicate closes the read
+  half and returns both credits.
+* **Scratch.** The worker's spelling and normalization buffers come from the
+  process heap, as the descriptor registry's do, and are freed before the
+  worker returns; the window copy is the ordinary library's runtime-pool
+  block, as on POSIX.
+
+Coverage: the conformance adapter is POSIX-only, so the `syshostpath` cases do
+not run on Windows. The program test `programs::host_paths` runs on the
+Windows io-hosts job: drive-absolute, relative, `..`, root-relative,
+same-drive drive-relative and extended argument paths, a missing directory
+not created, a file as the directory, and UTF-8 and UTF-16 byte windows with
+their invalid forms. Symbolic links and junctions are not exercised on
+Windows: creating a symbolic link needs a privilege or developer mode.
+
 ## Recommendation, uncertainties and rule delta
 
 Choose A with byte-window opens and an explicit base. It makes host namespace

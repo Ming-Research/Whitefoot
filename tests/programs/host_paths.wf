@@ -212,7 +212,7 @@ fn open_data(args: &std::text::Args, factory: &HandleFactory, paths: &HostPaths,
 }
 
 fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
-  doc "Opens the existing directory its argument names by host path, keeps only the write half, and publishes an append-only log in it as a synced temporary file renamed over the log name followed by a directory sync. A refused open exits 9 plus its error kind: 10 NotFound, 11 PermissionDenied, 12 NotDirectory.";
+  doc "Opens the existing directory its argument names by host path, keeps only the write half, and publishes an append-only log in it as a synced temporary file renamed over the log name followed by a directory sync. A refused open exits 9 plus its error kind: 10 NotFound, 11 PermissionDenied, 12 NotDirectory, 14 InvalidPath.";
   let std::process::Inputs(args: args, cwd: directory, handles: factory, host_paths: host_paths, ..) = move inputs;
   let std::fs::Directory(read: reader, write: writer) = move directory;
   std::fs::close_directory_write(factory: &factory, directory: move writer);
