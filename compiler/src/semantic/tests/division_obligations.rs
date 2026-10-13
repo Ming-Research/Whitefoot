@@ -1050,6 +1050,70 @@ fn main() -> status: std::process::ExitStatus pure {
             } if residual == "values[offset] +defined 1_u8"
         ));
     });
+    let unchanged = std::str::from_utf8(source)
+        .expect("test source is UTF-8")
+        .replace("    set offset = 0_u64;\n", "");
+    with_semantics(unchanged.as_bytes(), |outcome| {
+        let SemanticOutcome::Complete(checked) = outcome else {
+            panic!("the unchanged selector retains the guarded element goal: {outcome:?}");
+        };
+        validate_derivations(
+            &named(&checked.data.functions, "increment_after_index_write").entailment,
+        );
+    });
+}
+
+#[test]
+fn a_constant_element_goal_tracks_its_projected_selector_without_killing_siblings() {
+    let template = r#"struct Cursor {
+  index: u64;
+  sibling: u64;
+}
+
+const values: Array<u8, 2> =[0_u8, 0_u8];
+
+fn probe() -> result: u8 pure {
+  let cursor = Cursor(index: 1_u64, sibling: 0_u64);
+  if values[cursor.index] +defined 1_u8 {
+    WRITE
+    return values[cursor.index] + 1_u8;
+  } else {
+    return 0_u8;
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    for (write, accepted) in [
+        ("set cursor.index = 0_u64;", false),
+        ("", true),
+        ("set cursor.sibling = 0_u64;", true),
+    ] {
+        let source = template.replace("WRITE", write);
+        with_semantics(source.as_bytes(), |outcome| {
+            if accepted {
+                let SemanticOutcome::Complete(checked) = outcome else {
+                    panic!("an unchanged selector keeps the selected element goal: {outcome:?}");
+                };
+                validate_derivations(&named(&checked.data.functions, "probe").entailment);
+            } else {
+                let SemanticOutcome::SourceIssue { issue, .. } = outcome else {
+                    panic!("writing the selector must kill the old element goal: {outcome:?}");
+                };
+                assert_eq!(issue.rule(), SemanticRule::Op2);
+                assert!(matches!(
+                    issue.kind(),
+                    SemanticIssueKind::UndischargedIntegerDomainObligation {
+                        disposition: StaticObligationDisposition::Unproved,
+                        residual,
+                        ..
+                    } if residual == "values[cursor.index] +defined 1_u8"
+                ));
+            }
+        });
+    }
 }
 
 #[test]

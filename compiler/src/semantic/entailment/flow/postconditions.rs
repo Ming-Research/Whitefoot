@@ -302,8 +302,11 @@ impl Input<'_, '_> {
                 root, projections, ..
             }) => {
                 let support = GoalSupport {
-                    root: *root,
-                    projections: projections.clone(),
+                    place: ResolvedPlace {
+                        root: PlaceRoot::Binding(*root),
+                        path: projections.iter().map(GoalProjection::place_step).collect(),
+                        atomic_aliases: Vec::new(),
+                    },
                     measure: None,
                 };
                 let (_, image_holders) = self.resolve_goal_support(&support);
@@ -661,8 +664,11 @@ impl Input<'_, '_> {
                     )
                     .expect("checked postcondition selector must resolve");
                 let support = GoalSupport {
-                    root: parameter.binding,
-                    projections,
+                    place: ResolvedPlace {
+                        root: PlaceRoot::Binding(parameter.binding),
+                        path: projections.iter().map(GoalProjection::place_step).collect(),
+                        atomic_aliases: Vec::new(),
+                    },
                     measure: datum.measure,
                 };
                 let (place, holders) = self.resolve_goal_support(&support);
@@ -1629,16 +1635,8 @@ impl Reasoning<'_, '_, '_> {
                 holders.extend(self.postcondition_term_live_holders(*right));
             }
             TermKind::Place(place, _) | TermKind::Measure(_, place) => {
-                let PlaceRoot::Binding(root) = place.root else {
-                    return holders;
-                };
                 let support = GoalSupport {
-                    root,
-                    projections: place
-                        .path
-                        .iter()
-                        .map_while(goal_projection_of_step)
-                        .collect(),
+                    place: place.clone(),
                     measure: match self.vocabulary.terms.kind(term) {
                         TermKind::Measure(measure, _) => Some(*measure),
                         _ => None,

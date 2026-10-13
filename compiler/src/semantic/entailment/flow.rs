@@ -2135,8 +2135,11 @@ mod indexed_goal_kill_tests {
             None,
             None,
             vec![GoalSupport {
-                root: BindingId(0),
-                projections,
+                place: ResolvedPlace {
+                    root: PlaceRoot::Binding(BindingId(0)),
+                    path: projections.iter().map(GoalProjection::place_step).collect(),
+                    atomic_aliases: Vec::new(),
+                },
                 measure: None,
             }],
         );

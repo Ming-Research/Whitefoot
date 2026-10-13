@@ -339,26 +339,13 @@ impl Input<'_, '_> {
         &self,
         support: &GoalSupport,
     ) -> (ResolvedPlace, Vec<BindingId>) {
-        let mut resolved = ResolvedPlace {
-            atomic_aliases: Vec::new(),
-            root: PlaceRoot::Binding(support.root),
-            path: Vec::new(),
+        let resolved = support.place.clone();
+        // An immutable constant root has no mutable holder, but its path's
+        // selectors retain the ordinary support inspected by event kills.
+        let holders = match resolved.root {
+            PlaceRoot::Binding(binding) if self.places.is_reference(binding) => vec![binding],
+            _ => Vec::new(),
         };
-        // Goal support is already in body-place form. A reference root is the
-        // holder of that place, while every projection is a real step below
-        // its referent and must remain part of the support.
-        let holders = self
-            .places
-            .is_reference(support.root)
-            .then_some(support.root)
-            .into_iter()
-            .collect::<Vec<_>>();
-        resolved.path.extend(
-            support
-                .projections
-                .iter()
-                .map(|projection| projection.place_step()),
-        );
         (resolved, holders)
     }
 

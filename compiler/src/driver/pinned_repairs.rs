@@ -1349,6 +1349,43 @@ fn main() -> status: std::process::ExitStatus pure {
             "\n  mechanical_fix: `i < h^.Some.value.items.len` is not proved here: when facts that reach the access imply it, prove it with an `invariant` whose `use` steps name them (a loop's header `invariant` for a value the loop computes); or guard the access with `if i < h^.Some.value.items.len` where skipping it is the intended behavior\n",
         ],
         repaired: &[
+            // Four independently available premises require written use
+            // steps; AUTO's two-listed-premise family cannot cancel all three
+            // extra parameter differences in this bound.
+            br#"struct Holder {
+  items: Slots<u64, 4>;
+  tag: u64;
+}
+
+fn get(h: &Option<Holder>, i: u64, a: u64, b: u64, c: u64, d: u64, e: u64) -> result: u64 reads(h) contract {
+  requires i + a + b < c + d + e;
+  requires c <= a;
+  requires d <= b;
+} {
+  match &h^ {
+    Some(value: v) => {
+      if e <= v^.items.len {
+        invariant bounded: i < v^.items.len {
+          use (i + a + b < c + d + e);
+          use (c <= a);
+          use (d <= b);
+          use (e <= v^.items.len);
+        }
+        let x = v^.items[i];
+        return x;
+      }
+      return 0_u64;
+    }
+    None() => {
+      return 0_u64;
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
             br#"struct Holder {
   items: Slots<u64, 4>;
   tag: u64;
@@ -3620,12 +3657,10 @@ fn contradictory_successes(name: &str, source: &[u8]) -> Result<Vec<String>, Str
     .map_err(|failure| failure.to_string())
 }
 
-/// Each pinned repair is carried out by its programs [DIAG-1]: each
-/// alternative is accepted, and its construct runs in a state that is not
-/// contradictory.
-#[test]
-fn each_pinned_repair_is_carried_out_by_its_programs() {
-    for pair in REPAIRS
+/// Every repair pair in the shared harness's stable order. Family-local
+/// regression checks use the same inventory when locating another pair.
+fn repair_pairs() -> impl Iterator<Item = &'static RepairPair> {
+    REPAIRS
         .iter()
         .chain(range_lengths::RANGE_LENGTHS)
         .chain(REPAIRS_AFTER_RANGES)
@@ -3641,7 +3676,14 @@ fn each_pinned_repair_is_carried_out_by_its_programs() {
         .chain(interface_applications::INTERFACE_APPLICATIONS)
         .chain(selector_scope::SELECTOR_SCOPE)
         .chain(collisions_and_killed_facts::COLLISIONS_AND_KILLED_FACTS)
-    {
+}
+
+/// Each pinned repair is carried out by its programs [DIAG-1]: each
+/// alternative is accepted, and its construct runs in a state that is not
+/// contradictory.
+#[test]
+fn each_pinned_repair_is_carried_out_by_its_programs() {
+    for pair in repair_pairs() {
         let failure = compile(
             &[SourceInput::new(pair.name, pair.rejected)],
             CompilerLimits::default(),

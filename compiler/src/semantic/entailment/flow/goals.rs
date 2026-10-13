@@ -1215,7 +1215,8 @@ impl Reasoning<'_, '_, '_> {
         let projection = self.goal_projection(&expression);
         let normalization = self.goal_normalization(&expression);
         let mut support = Vec::new();
-        collect_goal_support(&expression, None, &mut support);
+        self.input
+            .collect_goal_support(&expression, None, &mut support);
         let goal = self
             .vocabulary
             .goals
@@ -1874,37 +1875,42 @@ pub(super) fn record_value_initializer_origin(frame: &GiveFrame, state: &mut Fac
     }
 }
 
-pub(super) fn collect_goal_support(
-    expression: &GoalExpression,
-    measure: Option<CheckedMeasure>,
-    support: &mut Vec<GoalSupport>,
-) {
-    match expression {
-        GoalExpression::Datum(GoalDatum::Place {
-            root, projections, ..
-        }) => support.push(GoalSupport {
-            root: *root,
-            projections: projections.clone(),
-            measure,
-        }),
-        GoalExpression::Datum(
-            GoalDatum::Parameter { .. }
-            | GoalDatum::NamedConst { .. }
-            | GoalDatum::EvaluatedValue { .. }
-            | GoalDatum::Literal(_),
-        ) => {}
-        GoalExpression::Operation { row, arguments, .. } => {
-            // [MSR-2] every measure of one place has the same support,
-            // P's descriptor storage; the selected measure only says that
-            // this node is a measure node rather than a place node.
-            let node_measure = match row {
-                GoalOperation::ArrayMeasure { measure, .. }
-                | GoalOperation::BufferMeasure { measure, .. }
-                | GoalOperation::ContainerMeasure { measure, .. } => Some(*measure),
-                _ => None,
-            };
-            for argument in arguments {
-                collect_goal_support(argument, node_measure, support);
+impl Input<'_, '_> {
+    pub(super) fn collect_goal_support(
+        &self,
+        expression: &GoalExpression,
+        measure: Option<CheckedMeasure>,
+        support: &mut Vec<GoalSupport>,
+    ) {
+        match expression {
+            GoalExpression::Datum(
+                datum @ (GoalDatum::Place { .. } | GoalDatum::NamedConst { .. }),
+            ) => {
+                support.push(GoalSupport {
+                    place: self
+                        .goal_place_path(datum)
+                        .expect("a concrete place goal has its checked storage identity"),
+                    measure,
+                });
+            }
+            GoalExpression::Datum(
+                GoalDatum::Parameter { .. }
+                | GoalDatum::EvaluatedValue { .. }
+                | GoalDatum::Literal(_),
+            ) => {}
+            GoalExpression::Operation { row, arguments, .. } => {
+                // [MSR-2] every measure of one place has the same support,
+                // P's descriptor storage; the selected measure only says that
+                // this node is a measure node rather than a place node.
+                let node_measure = match row {
+                    GoalOperation::ArrayMeasure { measure, .. }
+                    | GoalOperation::BufferMeasure { measure, .. }
+                    | GoalOperation::ContainerMeasure { measure, .. } => Some(*measure),
+                    _ => None,
+                };
+                for argument in arguments {
+                    self.collect_goal_support(argument, node_measure, support);
+                }
             }
         }
     }

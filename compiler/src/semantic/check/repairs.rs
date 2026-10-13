@@ -120,7 +120,7 @@ pub(super) enum GoalTerms {
 #[derive(Clone, Copy, Debug)]
 pub(super) struct GoalReads {
     pub(super) terms: GoalTerms,
-    /// Some read goes through a reference parameter [EFF-2].
+    /// A guard may need an additional reference-parameter read entry [EFF-2].
     pub(super) referenced: bool,
     /// Some read is of a value a user call returned, which that callee's
     /// `ensures` can bound [FN-9].
@@ -177,8 +177,9 @@ struct Reads<'a> {
     /// Some measure read is the `len` of a range formed at the call.
     range_length: bool,
     argument: Option<u32>,
-    /// Some read goes through a reference parameter, which executable code
-    /// that repeats it must declare in the row [EFF-2].
+    /// Some reference-parameter read may need a row entry when a guard
+    /// repeats it [EFF-2]. An arm-selected payload whose whole root is
+    /// already covered needs no additional entry.
     referenced: bool,
     /// Every binding a read is rooted at.
     bindings: Vec<BindingId>,
@@ -220,6 +221,28 @@ impl<'a> Reads<'a> {
             self.parameter = true;
         } else {
             self.computed = true;
+        }
+    }
+
+    /// [REF-1, ENT-3.S15] a payload selected in an arm cannot be read by a
+    /// function-entry requirement. A guard stays in that refined scope;
+    /// a whole-root row already covers every read that guard could add.
+    fn payload_binding(&mut self, binding: BindingId) {
+        self.bindings.push(binding);
+        self.computed = true;
+        let parameter = self
+            .function
+            .parameters
+            .iter()
+            .find(|parameter| parameter.binding == binding);
+        if let Some(parameter) = parameter.filter(|parameter| parameter.mode.is_reference()) {
+            let covered = self
+                .function
+                .declared_state_reads
+                .iter()
+                .chain(&self.function.declared_state_writes)
+                .any(|path| path.root == parameter.declaration && path.steps.is_empty());
+            self.referenced |= !covered;
         }
     }
 
@@ -283,8 +306,18 @@ impl<'a> Reads<'a> {
                 });
             self.projection_reads(projections);
         }
-        if let GoalDatum::Place { root, .. } = datum {
-            self.binding(*root);
+        if let GoalDatum::Place {
+            root, projections, ..
+        } = datum
+        {
+            if projections
+                .iter()
+                .any(|step| matches!(step, GoalProjection::Payload { .. }))
+            {
+                self.payload_binding(*root);
+            } else {
+                self.binding(*root);
+            }
         }
         match datum {
             GoalDatum::Literal(_) => {}
@@ -319,8 +352,18 @@ impl<'a> Reads<'a> {
         {
             self.projection_reads(projections);
         }
-        if let GoalExpression::Datum(GoalDatum::Place { root, .. }) = place {
-            self.binding(*root);
+        if let GoalExpression::Datum(GoalDatum::Place {
+            root, projections, ..
+        }) = place
+        {
+            if projections
+                .iter()
+                .any(|step| matches!(step, GoalProjection::Payload { .. }))
+            {
+                self.payload_binding(*root);
+            } else {
+                self.binding(*root);
+            }
         }
         match place {
             GoalExpression::Datum(GoalDatum::NamedConst { projections, .. })
@@ -352,6 +395,7 @@ impl<'a> Reads<'a> {
                     self.selector(&range.start);
                     self.selector(&range.end);
                 }
+                GoalProjection::Payload { .. } => self.computed = true,
                 _ => {}
             }
         }
@@ -378,8 +422,17 @@ impl<'a> Reads<'a> {
     }
 
     fn place(&mut self, place: &super::super::places::ResolvedPlace) {
+        let selected_payload = place
+            .path
+            .iter()
+            .any(|step| matches!(step, PlaceStep::Payload { .. }));
+        self.computed |= selected_payload;
         if let PlaceRoot::Binding(binding) = place.root {
-            self.binding(binding);
+            if selected_payload {
+                self.payload_binding(binding);
+            } else {
+                self.binding(binding);
+            }
         }
         for step in &place.path {
             match step {
@@ -787,7 +840,7 @@ pub(super) fn total_forms(goal: &GoalExpression) -> Option<&'static str> {
 pub(super) struct GoalCase<'a> {
     pub(super) disposition: Disposition,
     pub(super) terms: GoalTerms,
-    /// The goal reads through a reference parameter [EFF-2].
+    /// A guard may need an additional reference-parameter read entry [EFF-2].
     pub(super) referenced: bool,
     /// The goal reads a value a user call returned [FN-9].
     pub(super) called: bool,

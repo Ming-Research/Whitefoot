@@ -699,8 +699,7 @@ fn recursive_repairs_are_exact_substitutions_and_acyclic_text_is_unchanged() {
         };
         assert_eq!(applied.as_bytes(), pair.repaired[0], "{}", pair.name);
     }
-    let pair = super::REPAIRS
-        .iter()
+    let pair = super::repair_pairs()
         .find(|pair| pair.name == "declared-row-is-narrower-than-the-body.wf")
         .expect("existing non-recursive EFF-2 pair");
     let failure = super::super::check(

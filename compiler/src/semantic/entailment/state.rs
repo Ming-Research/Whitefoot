@@ -11,11 +11,11 @@ use std::collections::{HashMap, HashSet};
 use std::mem::{size_of, size_of_val};
 use std::rc::Rc;
 
-use super::super::goal::{GoalExpression, GoalOperation, GoalProjection};
+use super::super::goal::{GoalExpression, GoalOperation};
 use super::super::model::{
     BindingId, CheckedBooleanOperation, CheckedLoopId, CheckedMeasure, CheckedValue, IntegerType,
 };
-use super::super::places::{CapturedRange, CapturedValue};
+use super::super::places::{CapturedRange, CapturedValue, ResolvedPlace};
 use super::VerifiedPostconditionSummaryRef;
 use super::affine::{AffineForm, AffineInequality};
 use super::term::{MeasureBound, TermId, TermKind, TermTable, ZERO, type_range};
@@ -2247,12 +2247,12 @@ fn remap_node(node: &mut DerivationNode, remap: &[Option<DerivationId>]) {
     }
 }
 
-/// One place read by a complete goal. `length` records ENT-5's fixed-length
-/// boundary: an element write does not invalidate a `len_of(P)` observation.
+/// One complete storage path read by a goal. A constant root is immutable,
+/// while its current selectors retain ordinary ENT-5 support. The measure
+/// qualifier preserves MSR-2's descriptor-versus-element boundary.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct GoalSupport {
-    pub(crate) root: BindingId,
-    pub(crate) projections: Vec<GoalProjection>,
+    pub(crate) place: ResolvedPlace,
     /// Which [MSR-1] measure of the place this support belongs to, when the
     /// node is a measure node; `None` is the ordinary place node. Every
     /// measure of one place has the same support, P's descriptor storage
@@ -8047,6 +8047,7 @@ fn join_at_once(
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::semantic::goal::GoalProjection;
     use std::cell::Cell;
 
     #[derive(Clone, Copy, Debug)]
@@ -11004,8 +11005,7 @@ pub(crate) mod tests {
                 None,
                 None,
                 vec![GoalSupport {
-                    root: BindingId(101),
-                    projections: Vec::new(),
+                    place: ResolvedPlace::binding(BindingId(101)),
                     measure: None,
                 }],
             );
