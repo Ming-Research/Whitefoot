@@ -154,6 +154,19 @@ fn host_convention() -> (&'static str, usize) {
     }
 }
 
+/// The symbol a part of a split dispatch loop names for an ordinary call to
+/// the source function `name`, whose result is a value or goes through the
+/// caller's destination: its call entry where the host generates the
+/// entry's convention, and the function itself otherwise
+/// (compiler/match-dispatch-lowering).
+pub(super) fn part_callee(name: &str) -> String {
+    if crate::toolchain::facts().preserve_most {
+        format!("wf__most_{name}")
+    } else {
+        format!("wf_{name}")
+    }
+}
+
 fn assert_split(module: &str, base: &str, arms: usize) {
     assert_split_with_table_slots(module, base, arms, arms);
 }
@@ -1535,12 +1548,10 @@ fn a_reference_handed_to_a_content_writer_keeps_its_box() {
         !some_part_reloads_a_box(&module, "wf_content", 4),
         "no part reloads a box a content writer cannot replace: {module}"
     );
+    let call = format!("@{}(ptr %wf.pin.", part_callee("touch_content"));
     let handed = (0..4).any(|arm| {
         let part = definition(&module, &format!("wf_content.arm.{arm}"));
-        part.contains("= alloca ptr")
-            && part
-                .lines()
-                .any(|line| line.contains("@wf_touch_content(ptr %wf.pin."))
+        part.contains("= alloca ptr") && part.lines().any(|line| line.contains(&call))
     });
     assert!(handed, "a part hands the callee its pin slot: {module}");
     let output = compile_and_run(&module);
@@ -1669,10 +1680,11 @@ fn a_read_only_reference_handed_to_a_reader_keeps_its_box() {
         !some_part_reloads_a_box(&module, "wf_reader", 4),
         "no part reloads a box a reader cannot replace: {module}"
     );
+    let call = format!("@{}(ptr %wf.pin.", part_callee("peek"));
     let handed = (0..4).any(|arm| {
         definition(&module, &format!("wf_reader.arm.{arm}"))
             .lines()
-            .any(|line| line.contains("@wf_peek(ptr %wf.pin."))
+            .any(|line| line.contains(&call))
     });
     assert!(handed, "the arm hands the reader its pin slot: {module}");
     let output = compile_and_run(&module);
@@ -2883,516 +2895,417 @@ fn main() -> status: std::process::ExitStatus pure waits {
     assert!(output.status.success(), "{output:?}");
 }
 
-/// The pointer every call of `callee` in `part` passes first.
-fn first_pointer_arguments<'part>(part: &'part str, callee: &str) -> Vec<&'part str> {
-    let call = format!("@{callee}(ptr ");
-    part.lines()
-        .filter_map(|line| line.split_once(call.as_str()))
-        .map(|(_, arguments)| {
-            arguments
-                .split([',', ')'])
-                .next()
-                .expect("a pointer operand")
-        })
-        .collect()
+/// A loop over `Step` whose arms call one helper of each result ABI:
+/// `scale` returns a scalar, `three` a record in registers through its
+/// internal body and `four`, which takes two values, a record through the
+/// caller's destination. `run` before its loop and `main` call `scale`
+/// outside every part. `run` returns 1557, which swapping `four`'s
+/// arguments or losing a result would change.
+const PART_CALLS: &[u8] = br#"struct Three {
+  a: u64;
+  b: u64;
+  c: u64;
 }
 
-/// Whether `part` reaches the frame slot `pointer` through the shared frame,
-/// deriving it from `%wf.frame`, rather than allocating it itself.
-fn reached_through_frame(part: &str, pointer: &str) -> bool {
-    let defined = format!("{pointer} = ");
-    let definition = part
-        .lines()
-        .map(str::trim_start)
-        .find_map(|line| line.strip_prefix(defined.as_str()))
-        .unwrap_or_else(|| panic!("{pointer} is defined in the part: {part}"));
-    if definition.starts_with("alloca ") {
-        return false;
-    }
-    assert!(
-        definition.starts_with("getelementptr inbounds {")
-            && definition.contains(", ptr %wf.frame, i32 0, i32 "),
-        "{pointer} is the part's own or the shared frame's: {part}"
-    );
-    true
-}
-
-/// An interpreter whose looping arms fall through to one join after the
-/// `match`, the shape of Halo's `run`: the join calls `checked_step`, whose
-/// `Result` of a four-word `Cursor` comes back through a destination, and
-/// continues from the `Ok` cursor. `Inc 3; Skip; Inc 10; Halt` from 5
-/// counts three steps and returns 18 + 3 = 21.
-const JOIN_INTERPRETER: &[u8] = br#"alias ExitStatus = std::process::ExitStatus;
-alias exit_status = std::process::exit_status;
-
-enum Op {
-  Inc(k: u64);
-  Skip();
-  Halt();
-}
-
-struct Cursor {
-  pc: u64;
-  acc: u64;
-  steps: u64;
-  spare: u64;
-}
-
-fn checked_step(next: u64, acc: u64, steps: u64, n: u64) -> result: Result<Cursor, u64> pure {
-  if next < n {
-    let cursor = Cursor(pc: next, acc: acc, steps: steps, spare: 0_u64);
-    return Ok<Cursor, u64>(value: cursor);
-  }
-  return Err<Cursor, u64>(error: acc);
-}
-
-fn run(code: &Box<Slots<Op>>, start: u64, seed: u64) -> r: u64 reads(code) contract {
-  requires start < code^.inner.len;
-} {
-  let n = code^.inner.len;
-  let pc = start;
-  let acc = seed;
-  let steps = 0_u64;
-  loop (
-    invariant code_bound: pc < n
-  ) {
-    let next = pc + 1_u64;
-    let updated = acc;
-    match code^.inner[pc] {
-      Inc(k: kv) => {
-        set updated = acc +wrap kv^;
-      }
-      Skip() => {
-      }
-      Halt() => {
-        let tally = acc +wrap steps;
-        return tally;
-      }
-    }
-    let counted = steps +wrap 1_u64;
-    match checked_step(next: next, acc: updated, steps: counted, n: n) {
-      Ok(value: cursor) => {
-        let target = cursor.pc;
-        if target < n {
-          set pc = target;
-          set acc = cursor.acc;
-          set steps = cursor.steps;
-          continue;
-        }
-        return 1_u64;
-      }
-      Err(error: last) => {
-        return last;
-      }
-    }
-  }
-}
-
-fn push(code: &Box<Slots<Op>>, op: Op) -> ok: Bool writes(code) {
-  if code^.inner.len < code^.inner.cap {
-    place_back(window: &code^.inner, value: op);
-    return True();
-  }
-  return False();
-}
-
-fn main() -> status: ExitStatus pure {
-  let code = box_slots_new::<Op>(capacity: 4_u64);
-  let c0 = Op::Inc(k: 3_u64);
-  let p0 = push(code: &code, op: c0);
-  let c1 = Op::Skip();
-  let p1 = push(code: &code, op: c1);
-  let c2 = Op::Inc(k: 10_u64);
-  let p2 = push(code: &code, op: c2);
-  let c3 = Op::Halt();
-  let p3 = push(code: &code, op: c3);
-  if code.inner.len > 0_u64 {
-    let r = run(code: &code, start: 0_u64, seed: 5_u64);
-    if r == 21_u64 {
-      return exit_status(code: 0_u8);
-    }
-    return exit_status(code: 1_u8);
-  }
-  return exit_status(code: 2_u8);
-}
-"#;
-
-#[test]
-fn a_join_s_temporaries_are_each_arm_s_own_allocation() {
-    // The join's `Result` is written and read within each arm that holds a
-    // copy of the join, so no transfer carries it. Counting the parts that
-    // use it, both looping arms, kept it in the shared frame, which fails
-    // the arms' assertion below.
-    let module = emit(JOIN_INTERPRETER);
-    let (convention, _) = host_convention();
-    let verdict = verdict(&module, "wf_run");
-    assert!(
-        convention.is_empty() || verdict.starts_with("split"),
-        "{verdict}"
-    );
-    if verdict.starts_with("split") {
-        assert_split(&module, "wf_run", 3);
-        let mut joins = 0;
-        for arm in 0..3 {
-            let part = definition(&module, &format!("wf_run.arm.{arm}"));
-            for result in first_pointer_arguments(part, "wf_checked_step") {
-                joins += 1;
-                assert!(
-                    !reached_through_frame(part, result),
-                    "the join's Result is the arm's own allocation: {part}"
-                );
-            }
-        }
-        assert_eq!(joins, 2, "both looping arms hold the join: {module}");
-    }
-    let output = compile_and_run(&module);
-    assert!(output.status.success(), "{output:?}");
-}
-
-/// A loop whose values cross transfers in both directions a split has: the
-/// header builds `snapshot` in the dispatch function and the arms read it
-/// after the tail call into them, and `Shift` writes `carried` before its
-/// tail call of the dispatch function while `Mix` and `Halt` read it in a
-/// later part. With `weigh(make_quad(a, b))` equal to 2a + 3b + 1,
-/// `Shift 1; Shift 2; Mix; Halt` from 5 returns 447 + 181 = 628.
-const CARRIED_QUADS: &[u8] = br#"alias ExitStatus = std::process::ExitStatus;
-alias exit_status = std::process::exit_status;
-
-enum Op {
-  Shift(k: u64);
-  Mix();
-  Halt();
-}
-
-struct Quad {
+struct Four {
   a: u64;
   b: u64;
   c: u64;
   d: u64;
 }
 
-fn make_quad(a: u64, b: u64) -> result: Quad pure {
-  let c = a +wrap b;
-  let d = b +wrap 1_u64;
-  return Quad(a: a, b: b, c: c, d: d);
+enum Step {
+  Again(left: u64);
+  Other(left: u64);
+  Done();
 }
 
-fn weigh(quad: Quad) -> result: u64 pure {
-  let ab = quad.a +wrap quad.b;
-  let cd = quad.c +wrap quad.d;
-  return ab +wrap cd;
+fn scale(x: u64) -> result: u64 pure {
+  return x *wrap 3_u64;
 }
 
-fn run(code: &Box<Slots<Op>>, start: u64, seed: u64) -> r: u64 reads(code) contract {
-  requires start < code^.inner.len;
-} {
-  let n = code^.inner.len;
-  let pc = start;
-  let acc = seed;
-  let carried = make_quad(a: seed, b: 1_u64);
-  loop (
-    invariant code_bound: pc < n
-  ) {
-    let next = pc + 1_u64;
-    let snapshot = make_quad(a: pc, b: acc);
-    match code^.inner[pc] {
-      Shift(k: kv) => {
-        let weight = weigh(quad: snapshot);
-        let total = acc +wrap weight;
-        let shift = kv^;
-        let fresh = make_quad(a: total, b: shift);
-        if next < n {
-          set pc = next;
-          set acc = total;
-          set carried = fresh;
-          continue;
+fn three(x: u64) -> result: Three pure {
+  let b = x +wrap 1_u64;
+  let c = x +wrap 2_u64;
+  return Three(a: x, b: b, c: c);
+}
+
+fn four(x: u64, y: u64) -> result: Four pure {
+  let c = x +wrap 2_u64;
+  let d = y +wrap 3_u64;
+  return Four(a: x, b: y, c: c, d: d);
+}
+
+fn run(first: Step, seed: u64) -> result: u64 pure {
+  let step = first;
+  let acc = scale(x: seed);
+  loop @steps {
+    match step {
+      Again(left: n) => {
+        let left = n;
+        if left == 0_u64 {
+          return acc;
         }
-        return 0_u64;
+        let next = left -wrap 1_u64;
+        let scaled = scale(x: acc);
+        let small = three(x: scaled);
+        set acc = small.c;
+        set step = Step::Other(left: next);
+        continue;
       }
-      Mix() => {
-        let weight = weigh(quad: snapshot);
-        let kept = weigh(quad: carried);
-        let total = weight +wrap kept;
-        if next < n {
-          set pc = next;
-          set acc = total;
-          continue;
-        }
-        return 0_u64;
+      Other(left: n) => {
+        let left = n;
+        let large = four(x: acc, y: left);
+        let low = large.a;
+        let high = large.d;
+        let scaled = scale(x: low);
+        set acc = scaled +wrap high;
+        set step = Step::Again(left: left);
+        continue;
       }
-      Halt() => {
-        let kept = weigh(quad: carried);
-        let total = acc +wrap kept;
-        return total;
+      Done() => {
+        break @steps;
       }
     }
   }
+  return acc;
 }
 
-fn push(code: &Box<Slots<Op>>, op: Op) -> ok: Bool writes(code) {
-  if code^.inner.len < code^.inner.cap {
-    place_back(window: &code^.inner, value: op);
-    return True();
+fn main() -> status: std::process::ExitStatus pure {
+  let outside = scale(x: 2_u64);
+  let first = Step::Again(left: 2_u64);
+  let result = run(first: first, seed: outside);
+  if result == 1557_u64 {
+    return std::process::exit_status(code: 0_u8);
   }
-  return False();
-}
-
-fn main() -> status: ExitStatus pure {
-  let code = box_slots_new::<Op>(capacity: 4_u64);
-  let c0 = Op::Shift(k: 1_u64);
-  let p0 = push(code: &code, op: c0);
-  let c1 = Op::Shift(k: 2_u64);
-  let p1 = push(code: &code, op: c1);
-  let c2 = Op::Mix();
-  let p2 = push(code: &code, op: c2);
-  let c3 = Op::Halt();
-  let p3 = push(code: &code, op: c3);
-  if code.inner.len > 0_u64 {
-    let r = run(code: &code, start: 0_u64, seed: 5_u64);
-    if r == 628_u64 {
-      return exit_status(code: 0_u8);
-    }
-    return exit_status(code: 1_u8);
-  }
-  return exit_status(code: 2_u8);
+  return std::process::exit_status(code: 1_u8);
 }
 "#;
 
+/// The text of every arm of `wf_run`'s split.
+fn run_arms(module: &str) -> String {
+    (0..3)
+        .map(|arm| definition(module, &format!("wf_run.arm.{arm}")))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// compiler/match-dispatch-lowering: an ordinary call made from a part goes
+/// to the callee's `preserve_most` entry, one per callee however many calls
+/// name it, an out-of-line `noinline` function whose body is one
+/// C-convention call of the callee; the callee keeps the C convention, a call outside the parts is unchanged, a call of
+/// a register-returned callee keeps the C convention, and where the host
+/// lacks the entries' convention every call keeps the C convention.
+///
+/// Deciding the rule for every call puts an entry in `main` and in `run`'s
+/// enclosing body; one entry per call site defines `wf__most_scale` twice;
+/// an entry that is not `noinline`, or that carries `alwaysinline`, fails the
+/// attribute checks; covering
+/// register-returned callees gives `three` an entry; ignoring the probe's
+/// answer leaves entries in the fallback.
 #[test]
-fn a_slot_read_after_a_transfer_stays_in_the_shared_frame() {
-    // `snapshot` is written by the dispatch function and read by the arm it
-    // tail-calls, and only the storage plan's analysis keeps its slot
-    // shared: made part-local, the slot is an allocation of the dispatch
-    // function's own, which fails the assertion on that function below.
-    // `carried` is written by one arm and read by a later one, but the
-    // enclosing function writes its slot before the loop, which keeps it in
-    // the shared frame whatever the analysis decides, so its reads guard
-    // only that; `the_storage_plan_names_the_slots_a_split_s_transfers_carry`
-    // reads the analysis's answer for a header parameter directly.
-    let module = emit(CARRIED_QUADS);
-    let (convention, _) = host_convention();
-    let verdict = verdict(&module, "wf_run");
-    assert!(
-        convention.is_empty() || verdict.starts_with("split"),
-        "{verdict}"
-    );
-    if verdict.starts_with("split") {
+fn calls_from_parts_go_through_one_preserve_most_entry_per_callee() {
+    super::system::with_ir(PART_CALLS, |program| {
+        let module = crate::backend::emitter::emit_llvm_with_call_entries(program, true)
+            .expect("the part-call fixture emits")
+            .into_string();
         assert_split(&module, "wf_run", 3);
-        let dispatch = definition(&module, "wf_run.dispatch");
-        let built = first_pointer_arguments(dispatch, "wf_make_quad");
-        assert_eq!(
-            built.len(),
-            1,
-            "the header builds the snapshot once per dispatch: {dispatch}"
-        );
-        assert!(
-            reached_through_frame(dispatch, built[0]),
-            "the snapshot the arms read is in the shared frame: {dispatch}"
-        );
-        let mut reads = 0;
-        for arm in 0..3 {
-            let part = definition(&module, &format!("wf_run.arm.{arm}"));
-            for read in first_pointer_arguments(part, "wf_weigh") {
-                reads += 1;
-                assert!(
-                    reached_through_frame(part, read),
-                    "a value written before a transfer is read through the frame: {part}"
-                );
-            }
+        let arms = run_arms(&module);
+        for (entry, result, original, count) in [
+            ("wf__most_scale", "i64", "wf_scale", 2),
+            ("wf__most_four", "void", "wf_four", 1),
+        ] {
+            assert_eq!(
+                arms.matches(&format!("call preserve_mostcc {result} @{entry}("))
+                    .count(),
+                count,
+                "the arms call {original} through its entry: {arms}"
+            );
+            assert_eq!(
+                arms.matches(&format!("@{entry}(")).count(),
+                count,
+                "every call of {entry} is in its convention: {arms}"
+            );
+            assert!(
+                !arms.contains(&format!("@{original}(")),
+                "no arm calls {original} directly: {arms}"
+            );
+            let defines = |line: &str| {
+                line.starts_with("define internal preserve_mostcc ")
+                    && line.contains(&format!(" @{entry}("))
+            };
+            let definitions = module.lines().filter(|&line| defines(line)).count();
+            assert_eq!(definitions, 1, "{entry} is defined once: {module}");
+            let callee = definition(&module, original);
+            let header = callee.lines().next().unwrap_or_default();
+            assert!(
+                !header.contains("preserve_mostcc"),
+                "the callee keeps the C convention: {callee}"
+            );
         }
-        assert_eq!(reads, 4, "four Quads are weighed: {module}");
-    }
-    let output = compile_and_run(&module);
-    assert!(output.status.success(), "{output:?}");
-}
-
-/// A loop whose `Quad`s each meet one kind of transfer, or none: `state`, a
-/// header parameter only the header reads, is written by each looping arm
-/// before its tail call of the dispatch function; `snapshot` is built by the
-/// header and read by `Mix` after the tail call into it; `probe` is built
-/// and read within `Mix`. With `weigh(make_quad(a, b))` equal to
-/// 2a + 3b + 1, `Shift 4; Mix; Halt` from 5 returns 120 + 364 = 484.
-const CROSSINGS: &[u8] = br#"alias ExitStatus = std::process::ExitStatus;
-alias exit_status = std::process::exit_status;
-
-enum Op {
-  Shift(k: u64);
-  Mix();
-  Halt();
-}
-
-struct Quad {
-  a: u64;
-  b: u64;
-  c: u64;
-  d: u64;
-}
-
-fn make_quad(a: u64, b: u64) -> result: Quad pure {
-  let c = a +wrap b;
-  let d = b +wrap 1_u64;
-  return Quad(a: a, b: b, c: c, d: d);
-}
-
-fn probe_quad(a: u64, b: u64) -> result: Quad pure {
-  let c = a +wrap 2_u64;
-  return Quad(a: a, b: b, c: c, d: b);
-}
-
-fn weigh(quad: Quad) -> result: u64 pure {
-  let ab = quad.a +wrap quad.b;
-  let cd = quad.c +wrap quad.d;
-  return ab +wrap cd;
-}
-
-fn run(code: &Box<Slots<Op>>, start: u64, seed: u64) -> r: u64 reads(code) contract {
-  requires start < code^.inner.len;
-} {
-  let n = code^.inner.len;
-  let pc = start;
-  let acc = seed;
-  let state = make_quad(a: seed, b: 1_u64);
-  loop (
-    invariant code_bound: pc < n
-  ) {
-    let next = pc + 1_u64;
-    let base = weigh(quad: state);
-    let snapshot = make_quad(a: pc, b: acc);
-    match code^.inner[pc] {
-      Shift(k: kv) => {
-        let shift = kv^;
-        let fresh = make_quad(a: base, b: shift);
-        if next < n {
-          set pc = next;
-          set state = fresh;
-          continue;
-        }
-        return 0_u64;
-      }
-      Mix() => {
-        let weight = weigh(quad: snapshot);
-        let probe = probe_quad(a: weight, b: base);
-        let mixed = weigh(quad: probe);
-        let renewed = make_quad(a: mixed, b: base);
-        if next < n {
-          set pc = next;
-          set acc = mixed;
-          set state = renewed;
-          continue;
-        }
-        return 0_u64;
-      }
-      Halt() => {
-        let total = acc +wrap base;
-        return total;
-      }
-    }
-  }
-}
-
-fn push(code: &Box<Slots<Op>>, op: Op) -> ok: Bool writes(code) {
-  if code^.inner.len < code^.inner.cap {
-    place_back(window: &code^.inner, value: op);
-    return True();
-  }
-  return False();
-}
-
-fn main() -> status: ExitStatus pure {
-  let code = box_slots_new::<Op>(capacity: 3_u64);
-  let c0 = Op::Shift(k: 4_u64);
-  let p0 = push(code: &code, op: c0);
-  let c1 = Op::Mix();
-  let p1 = push(code: &code, op: c1);
-  let c2 = Op::Halt();
-  let p2 = push(code: &code, op: c2);
-  if code.inner.len > 0_u64 {
-    let r = run(code: &code, start: 0_u64, seed: 5_u64);
-    if r == 484_u64 {
-      return exit_status(code: 0_u8);
-    }
-    return exit_status(code: 1_u8);
-  }
-  return exit_status(code: 2_u8);
-}
-"#;
-
-#[test]
-fn the_storage_plan_names_the_slots_a_split_s_transfers_carry() {
-    // Read from the storage plan itself: in the emitted split the enclosing
-    // function's write of `state` before the loop keeps its slot shared
-    // whatever the analysis decides, so only this reading fails when the
-    // analysis leaves a header parameter out.
-    super::system::with_ir(CROSSINGS, |program| {
-        let run = program
-            .functions()
-            .iter()
-            .find(|function| function.name() == "run")
-            .expect("the fixture's run");
-        let header = crate::backend::emitter::dispatch::storage_parts(run)
-            .expect("run's storage parts")
-            .iter()
-            .position(Option::is_none)
-            .expect("run's loop is a dispatch loop");
-        let plan = crate::backend::storage::FunctionStoragePlan::build(program, run)
-            .expect("run's storage plan");
-        let across = plan
-            .allocations_across(program, run, header, false)
-            .expect("the allocations run's transfers carry");
-        let allocation = |value: crate::IrValueId| {
-            plan.allocation_root(plan.slot(value).expect("a Quad is held in a slot"))
-        };
-        let calls = |callee: &str| {
-            let mut found = Vec::new();
-            for (index, block) in run.blocks().iter().enumerate() {
-                for instruction in block.instructions() {
-                    if let crate::IrInstruction::Define {
-                        result,
-                        operation: crate::IrOperation::Call { function, .. },
-                        ..
-                    } = instruction
-                        && program
-                            .functions()
-                            .get(*function as usize)
-                            .is_some_and(|called| called.name() == callee)
-                    {
-                        found.push((index, *result));
-                    }
-                }
-            }
-            found
-        };
-        let held: Vec<crate::IrValueId> = run.blocks()[header]
-            .parameters()
-            .iter()
-            .map(|(value, _)| *value)
-            .filter(|value| plan.slot(*value).is_some())
-            .collect();
-        let [state] = held.as_slice() else {
-            panic!("`state` is the header's one parameter held in a slot");
-        };
-        let snapshot = calls("make_quad")
-            .into_iter()
-            .find_map(|(block, result)| (block == header).then_some(result))
-            .expect("the header builds `snapshot`");
-        let probes = calls("probe_quad");
-        let [(_, probe)] = probes.as_slice() else {
-            panic!("`Mix` builds one `probe`");
-        };
         assert!(
-            across.contains(&allocation(*state)),
-            "a header parameter crosses into the header: {across:?}"
+            arms.contains("@wf_three(") && !module.contains("wf__most_three"),
+            "a register-returned callee is called directly: {module}"
         );
+        let scale = definition(&module, "wf__most_scale");
+        let scale_header = scale.lines().next().unwrap_or_default();
         assert!(
-            across.contains(&allocation(snapshot)),
-            "a value the header builds crosses into the arm reading it: {across:?}"
+            scale.contains("%wf.entry = call i64 @wf_scale(i64 %v")
+                && scale_header.contains(" noinline")
+                && !scale.contains("alwaysinline"),
+            "the scalar entry is a noinline call of the callee: {scale}"
         );
+        let four = definition(&module, "wf__most_four");
+        let header = four.lines().next().unwrap_or_default();
         assert!(
-            !across.contains(&allocation(*probe)),
-            "a value written and read within one arm stays in it: {across:?}"
+            header.contains("(ptr %wf.result, ")
+                && header.contains(" noinline")
+                && four.contains("call void @wf_four(ptr %wf.result, ")
+                && !four.contains("alwaysinline"),
+            "the destination entry passes its destination on: {four}"
+        );
+        for outside in ["main", "run"] {
+            let body = emitted_body(&module, outside);
+            assert!(
+                body.contains("= call i64 @wf_scale(") && !body.contains("wf__most_"),
+                "{outside} calls scale outside every part, in the C convention: {body}"
+            );
+        }
+
+        let fallback = crate::backend::emitter::emit_llvm_with_call_entries(program, false)
+            .expect("the part-call fixture emits")
+            .into_string();
+        assert_split(&fallback, "wf_run", 3);
+        assert!(
+            !fallback.contains("preserve_mostcc") && !fallback.contains("wf__most_"),
+            "without the convention no entry exists: {fallback}"
+        );
+        let arms = run_arms(&fallback);
+        assert!(
+            arms.contains("= call i64 @wf_scale(")
+                && arms.contains("@wf_three(")
+                && arms.contains("call void @wf_four("),
+            "without the convention the arms call every callee directly: {arms}"
         );
     });
-    let module = emit(CROSSINGS);
+}
+
+/// The convention the host's probe found decides whether the parts call
+/// through entries, and the program computes the same result either way.
+#[test]
+fn the_host_probe_selects_part_call_entries_and_the_program_runs() {
+    let module = emit(PART_CALLS);
+    assert_eq!(
+        module.contains("call preserve_mostcc i64 @wf__most_scale("),
+        crate::toolchain::facts().preserve_most,
+        "{module}"
+    );
+    let output = compile_and_run(&module);
+    assert!(output.status.success(), "{output:?}");
+}
+
+/// A fragment build defines each entry once, wherever its callers' fragments
+/// place a local definition, as a `noinline` call of the callee in the C
+/// convention; the entry holds no copy of the callee's body.
+#[test]
+fn a_fragment_build_defines_each_part_call_entry_once() {
+    let inputs = [crate::SourceInput::new("part-calls.wf", PART_CALLS)];
+    let (whole, _) = crate::compile_for_emission(
+        &inputs,
+        crate::CompilerLimits::default(),
+        crate::OverlapLowering::Off,
+        None,
+        true,
+    )
+    .expect("the part-call fixture compiles for fragments");
+    let fragments = crate::split_module(&whole, crate::FragmentGranularity::Function)
+        .expect("the module splits");
+    if !crate::toolchain::facts().preserve_most {
+        assert!(
+            fragments.iter().all(|fragment| !fragment.contains("wf__most_")),
+            "{fragments:#?}"
+        );
+        return;
+    }
+    for (entry, original) in [("wf__most_scale", "wf_scale"), ("wf__most_four", "wf_four")] {
+        let defines = |line: &str| {
+            line.starts_with("define ")
+                && line.contains(" preserve_mostcc ")
+                && line.contains(&format!(" @{entry}("))
+        };
+        let defining = fragments
+            .iter()
+            .filter(|fragment| fragment.lines().any(&defines))
+            .collect::<Vec<_>>();
+        assert_eq!(defining.len(), 1, "{entry}: {fragments:#?}");
+        let text = defining[0];
+        let header = text.lines().find(|line| defines(line)).unwrap_or_default();
+        assert!(header.contains(" noinline"), "{header}");
+        assert!(
+            text.contains(&format!("call i64 @{original}("))
+                || text.contains(&format!("call void @{original}(")),
+            "{entry} calls its callee: {text}"
+        );
+        assert!(
+            !text.contains(&format!("define i64 @{original}("))
+                && !text.contains(&format!("define void @{original}(")),
+            "{entry} holds no copy of the callee: {text}"
+        );
+    }
+}
+
+/// Rounds of `mix`'s squaring chain: each adds a multiplication and an
+/// addition, which with 96 rounds puts the callee far past the host's
+/// inlining threshold for a function with two call sites.
+const MIX_ROUNDS: u64 = 96;
+
+/// A loop over `Step` whose two looping arms each call `mix`, a chain of
+/// [`MIX_ROUNDS`] squarings returning a four-word record through the
+/// caller's destination, with its arguments in opposite orders. `main`
+/// checks `run`'s result against the same arithmetic computed here.
+fn mixing_calls() -> String {
+    let mut chain = String::new();
+    let mut last = "x".to_owned();
+    for round in 0..MIX_ROUNDS {
+        chain.push_str(&format!(
+            "  let p{round} = {last} *wrap {last};\n  let s{round} = p{round} +wrap {}_u64;\n",
+            2 * round + 1
+        ));
+        last = format!("s{round}");
+    }
+    let mix = |x: u64, y: u64| {
+        let mut square = x;
+        for round in 0..MIX_ROUNDS {
+            square = square.wrapping_mul(square).wrapping_add(2 * round + 1);
+        }
+        (square, y, y.wrapping_add(1))
+    };
+    let (mut again, mut left, mut acc) = (true, 3_u64, 7_u64);
+    let expected = loop {
+        if again {
+            if left == 0 {
+                break acc;
+            }
+            let (a, c, _) = mix(acc, left);
+            acc = a.wrapping_add(c);
+            left -= 1;
+        } else {
+            let (a, _, d) = mix(left, acc);
+            acc = a.wrapping_add(d);
+        }
+        again = !again;
+    };
+    format!(
+        r#"struct Four {{
+  a: u64;
+  b: u64;
+  c: u64;
+  d: u64;
+}}
+
+enum Step {{
+  Again(left: u64);
+  Other(left: u64);
+  Done();
+}}
+
+fn mix(x: u64, y: u64) -> result: Four pure {{
+{chain}  let d = y +wrap 1_u64;
+  return Four(a: {last}, b: x, c: y, d: d);
+}}
+
+fn run(first: Step, seed: u64) -> result: u64 pure {{
+  let step = first;
+  let acc = seed;
+  loop @steps {{
+    match step {{
+      Again(left: n) => {{
+        let left = n;
+        if left == 0_u64 {{
+          return acc;
+        }}
+        let next = left -wrap 1_u64;
+        let mixed = mix(x: acc, y: left);
+        let a = mixed.a;
+        let c = mixed.c;
+        set acc = a +wrap c;
+        set step = Step::Other(left: next);
+        continue;
+      }}
+      Other(left: n) => {{
+        let left = n;
+        let mixed = mix(x: left, y: acc);
+        let a = mixed.a;
+        let d = mixed.d;
+        set acc = a +wrap d;
+        set step = Step::Again(left: left);
+        continue;
+      }}
+      Done() => {{
+        break @steps;
+      }}
+    }}
+  }}
+  return acc;
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  let first = Step::Again(left: 3_u64);
+  let result = run(first: first, seed: 7_u64);
+  if result == {expected}_u64 {{
+    return std::process::exit_status(code: 0_u8);
+  }}
+  return std::process::exit_status(code: 1_u8);
+}}
+"#
+    )
+}
+
+/// The entry of a callee stays an out-of-line function after the host
+/// optimizes: the arms call it in the entry's convention, it survives as a
+/// definition whose only call is a C-convention call of `wf_mix`, and the
+/// record it returns through the caller's destination arrives intact.
+///
+/// An entry holding a copy of the callee's body, or one the host may inline,
+/// is inlined into each arm and leaves no entry definition or no
+/// `preserve_mostcc` call there; a destination lost or misplaced across the
+/// convention changes `run`'s result and `main` exits 1.
+#[test]
+fn a_call_the_host_keeps_out_of_line_crosses_in_the_entry_convention() {
+    let module = emit(mixing_calls().as_bytes());
+    assert_split(&module, "wf_run", 3);
+    if crate::toolchain::facts().preserve_most {
+        for arm in 0..2 {
+            let body = definition(&module, &format!("wf_run.arm.{arm}"));
+            assert!(
+                body.contains("call preserve_mostcc void @wf__most_mix(")
+                    && !body.contains("@wf_mix("),
+                "arm {arm} calls the large callee through the entry: {body}"
+            );
+        }
+        // The host inlines the arms and folds the whole loop into `main`,
+        // so the optimized module is checked for what survives: the calls
+        // that remain cross in the entry's convention, none in the C one.
+        let optimized = super::host_optimized_module(&module);
+        assert!(
+            optimized
+                .matches("call preserve_mostcc void @wf__most_mix(")
+                .count()
+                >= 2,
+            "the arms keep calling the entry in its convention: {optimized}"
+        );
+        let entry = definition(&optimized, "wf__most_mix");
+        assert!(
+            entry.starts_with("define internal preserve_mostcc ")
+                && entry.contains("call void @wf_mix("),
+            "the entry survives and calls the callee in the C convention: {entry}"
+        );
+        assert_eq!(
+            optimized.matches("call void @wf_mix(").count(),
+            entry.matches("call void @wf_mix(").count(),
+            "the entry holds the only call of the callee: {optimized}"
+        );
+    }
     let output = compile_and_run(&module);
     assert!(output.status.success(), "{output:?}");
 }
