@@ -1242,7 +1242,7 @@ fn loop_headers_reject_a_trailing_comma_at_the_closing_delimiter() {
 }
 
 /// Returns the exact source bytes a grammar rejection selected.
-fn issue_bytes(source: &'static [u8], issue: super::SyntaxIssue) -> &'static [u8] {
+fn issue_bytes(source: &[u8], issue: super::SyntaxIssue) -> &[u8] {
     let start = usize::try_from(issue.coordinate().start().value()).unwrap_or(usize::MAX);
     let end = usize::try_from(issue.coordinate().end().value()).unwrap_or(usize::MAX);
     &source[start..end]
