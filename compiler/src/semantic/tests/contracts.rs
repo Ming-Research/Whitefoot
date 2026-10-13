@@ -1998,7 +1998,7 @@ fn long_sum_relation(terms: usize) -> String {
         .step_by(50)
         .map(|start| format!("({})", vec!["0_i64"; (terms - start).min(50)].join(" + ")))
         .collect();
-    format!("x <= {}", groups.join(" + "))
+    format!("x <={}", groups.join(" +"))
 }
 
 /// [MSR-5] counts the 4096 scheduled expression nodes over the whole clause,

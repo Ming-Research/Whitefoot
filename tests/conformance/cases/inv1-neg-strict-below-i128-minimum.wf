@@ -1,15 +1,12 @@
-struct Held {
-  x: i64;
-  invariant below_minimum(h): h.x < -9223372036854775808_i64 * 9223372036854775807_i64 + -9223372036854775808_i64 * 9223372036854775807_i64 + -9223372036854775808_i64 + -9223372036854775808_i64;
+fn pass(x: i64) -> result: i64 pure {
+  doc "The header invariant bound folds exactly to -2^127; x < -2^127 normalizes to x <= -2^127 - 1, whose right-hand constant lies outside i128, so INV-1 rejects the invariant where it is formed.";
+  loop (
+    invariant below_minimum: x < -9223372036854775808_i64 * 9223372036854775807_i64 + -9223372036854775808_i64 * 9223372036854775807_i64 + -9223372036854775808_i64 + -9223372036854775808_i64
+  ) {
+    return x;
+  }
 }
 
 fn main() -> status: std::process::ExitStatus pure {
-  doc "The invariant bound folds exactly to -2^127; h.x < -2^127 normalizes to h.x <= -2^127 - 1, whose right-hand constant lies outside i128, so the invariant is rejected where it is formed.";
-  let item = Held(x: 7_i64);
-  let value = item.x;
-  if value == 7_i64 {
-    return std::process::exit_status(code: 0_u8);
-  } else {
-    return std::process::exit_status(code: 1_u8);
-  }
+  return std::process::exit_status(code: 0_u8);
 }
