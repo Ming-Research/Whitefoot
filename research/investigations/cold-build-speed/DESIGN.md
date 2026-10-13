@@ -456,9 +456,27 @@ Prior criteria, fixed before the run:
   no batched object differs from its single-call object.
 - F3 is kept if the `all` link takes at most 85% of the default and of its
   repeat, and all executables are identical.
+  Results for F1 and F3 are pending the owner's attribution comparison;
+  correctness CI does not establish either performance criterion, and no
+  measured saving is claimed for the implementation.
 - F7 goes to the owner as a card only if every `release` run is faster than
   every `gate` run and the median is at least 10% lower, with identical
   LLVM.
+
+The implementation shares one in-process budget for additional workers
+beyond existing caller threads. A fragment worker returns its share when
+its work ends, and ThinLTO reacquires the free share for the lifetime of its
+link process. Independently created root caller threads and separate
+compiler processes are not counted by that existing mechanism. If a
+consumer needs coordinated concurrent builds, the proposed follow-up is
+participation in the caller's [Cargo](https://doc.rust-lang.org/cargo/reference/build-scripts.html#jobserver)
+or [Make jobserver](https://www.gnu.org/software/make/manual/html_node/Job-Slots.html):
+shared tokens constrain the aggregate work, whereas a fixed per-process
+environment limit would require the caller to divide capacity among its
+processes. Cross-process coordination belongs in the backlog rather than
+this change; it requires a concrete invoking build system, safe token
+inheritance and return, and a separate design for independently created
+root callers. No cross-process mechanism is implemented here.
 
 Completion, for the fixes once built: the median of three cold runs of
 `sg-cold-build.yml`'s command at or below 120 s on the hosted 4-vCPU runner,
