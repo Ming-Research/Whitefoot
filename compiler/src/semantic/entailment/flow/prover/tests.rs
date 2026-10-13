@@ -23,6 +23,7 @@ fn with_integer_parameters(types: &[IntegerType], check: impl FnOnce(&mut Analyz
         contract_queries: &[],
         verified_postconditions: &[],
         verified_postcondition_proofs: &[],
+        component_postconditions: &[],
         binding_names: &[],
     };
     let function = CheckedFunction {
@@ -55,6 +56,7 @@ fn with_integer_parameters(types: &[IntegerType], check: impl FnOnce(&mut Analyz
         declared_state_reads: Vec::new(),
         requirements: Vec::new(),
         requirement_places: Vec::new(),
+        routed_requirements: Vec::new(),
         postconditions: Vec::new(),
         range_facts: Default::default(),
         body: None,
@@ -70,6 +72,39 @@ fn with_integer_parameters(types: &[IntegerType], check: impl FnOnce(&mut Analyz
     let mut analyzer = Analyzer::new(&context, &function);
     analyzer.input.collect_bindings();
     check(&mut analyzer);
+}
+
+#[test]
+fn projected_contract_measure_has_the_operation_forms_affine_image() {
+    with_analyzer(|analyzer| {
+        let integer = CheckedType::Integer(IntegerType::U64);
+        let projected = goal_binding_place(
+            BindingId(0),
+            [GoalProjection::Measure(CheckedMeasure::Length)],
+            integer,
+        );
+        let operation = GoalExpression::Operation {
+            row: GoalOperation::ContainerMeasure {
+                measure: CheckedMeasure::Length,
+                measured: MeasuredKind::KeySet,
+                element: None,
+                constant: None,
+            },
+            type_arguments: Vec::new(),
+            const_arguments: Vec::new(),
+            result: integer,
+            arguments: vec![goal_binding_place(BindingId(0), [], CheckedType::KeySet)],
+        };
+        let state = AffineFlowState::default();
+        let expected = analyzer
+            .reasoning()
+            .affine_goal_value(&operation, &state)
+            .expect("the ordinary measure operation has an affine image");
+        assert_eq!(
+            analyzer.reasoning().affine_goal_value(&projected, &state),
+            Some(expected)
+        );
+    });
 }
 
 #[test]
@@ -1582,6 +1617,30 @@ fn offset_extremes_survive_delivery_and_call_term_replacement() {
             );
         }
     }
+}
+
+/// A judgment window that is rolled back discards the atoms it minted, and the
+/// next atom reuses the first discarded index. A power atom or product record
+/// that survived the rollback would then name that unrelated value; with the
+/// rollback reduced to truncating the atom table, the product-record
+/// assertion and the final distinct-atom assertion both fail.
+#[test]
+fn discarded_atoms_leave_no_record_naming_a_reused_index() {
+    with_analyzer(|analyzer| {
+        let vocabulary = &mut analyzer.vocabulary;
+        let amount = vocabulary.new_affine_atom(IntegerType::U32);
+        let start = vocabulary.affine_atoms.len();
+        let discarded = vocabulary.power_atom(&amount, IntegerType::U64).unwrap();
+        let power = discarded.unit_term().unwrap();
+        let shift = amount.unit_term().unwrap();
+        vocabulary.product_atoms.insert(power, (shift, shift));
+        vocabulary.discard_atoms_from(start);
+        let unrelated = vocabulary.new_affine_atom(IntegerType::U64);
+        assert_eq!(unrelated, discarded);
+        assert!(!vocabulary.product_atoms.contains_key(&power));
+        let fresh = vocabulary.power_atom(&amount, IntegerType::U64).unwrap();
+        assert_ne!(fresh, unrelated);
+    });
 }
 
 // Allocating traversal retained from the base revision. It deliberately keeps

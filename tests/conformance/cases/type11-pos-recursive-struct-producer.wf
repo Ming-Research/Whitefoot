@@ -1,0 +1,20 @@
+struct BoundedSource {
+  values: Box<Array<u32>>;
+  invariant limit(owner): owner.values.inner.len <= 1073741824_u64;
+}
+
+fn source_length(source: &BoundedSource) -> length: u64 reads(source) {
+  return source^.values.inner.len;
+}
+
+fn make_source(nested: Bool) -> made: BoundedSource pure {
+  if nested {
+    let no = False();
+    let inner = make_source(nested: no);
+    let length = source_length(source: &inner);
+    return move inner;
+  }
+  let values = box_array_filled::<u32>(count: 1_u64, value: 0_u32);
+  let source = BoundedSource(values: move values);
+  return move source;
+}
