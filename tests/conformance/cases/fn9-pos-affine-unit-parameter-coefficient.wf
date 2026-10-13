@@ -1,4 +1,4 @@
-fn unchanged(base: u64, limit: u64) -> after: u64 pure contract {
+fn unchanged_left(base: u64, limit: u64) -> after: u64 pure contract {
   ensures after <= base + 1_u64 * limit;
 } {
   doc "A literal unit coefficient preserves the extra parameter's coefficient one; the prior checker rejected all datum multiplication at FN-9 formation.";
@@ -21,7 +21,7 @@ fn account(before: u64, left: u64) -> remaining: u64 pure {
 }
 
 fn main() -> status: std::process::ExitStatus pure {
-  let after = unchanged(base: 18446744073709551615_u64, limit: 7_u64);
+  let after = unchanged_left(base: 18446744073709551615_u64, limit: 7_u64);
   let remaining = account(before: after, left: 7_u64);
   if remaining == 7_u64 {
     return std::process::exit_status(code: 42_u8);

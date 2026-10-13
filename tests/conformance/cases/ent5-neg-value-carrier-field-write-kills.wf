@@ -1,0 +1,29 @@
+struct Header {
+  width: u32;
+  height: u32;
+}
+
+fn make_header() -> made: Header pure contract {
+  ensures made.width <= 64_u32;
+} {
+  let header = Header(width: 8_u32, height: 4_u32);
+  return header;
+}
+
+fn needs_narrow(width: u32) -> result: unit pure contract {
+  requires width <= 64_u32;
+} {
+  return unit;
+}
+
+fn rewritten_width(first: Bool, wide: u32) -> result: unit pure {
+  let chosen = if first {
+    let found = make_header();
+    give found;
+  } else {
+    give make_header();
+  }
+  set chosen.width = wide;
+  needs_narrow(width: chosen.width);
+  return unit;
+}

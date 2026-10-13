@@ -569,6 +569,7 @@ fn analyzed_rendering(function: &CheckedFunction) -> String {
         declared_state_reads,
         requirements,
         requirement_places,
+        routed_requirements,
         postconditions,
         range_facts,
         body,
@@ -585,7 +586,7 @@ fn analyzed_rendering(function: &CheckedFunction) -> String {
         "{formal_hypothesis:?}\n{id:?}\n{declaration:?}\n{module:?}\n{name:?}\n{symbol:?}\n\
          {function_actuals:?}\n{region_parameters:?}\n{parameters:?}\n{result_mode:?}\n\
          {result:?}\n{declared_state_writes:?}\n{declared_state_reads:?}\n{requirements:?}\n\
-         {requirement_places:?}\n\
+         {requirement_places:?}\n{routed_requirements:?}\n\
          {postconditions:?}\n{range_facts:?}\n{body:?}\n{reference_origins:?}\n\
          {body_disposition:?}\n{call_separations:?}\n{permission_separation_queries:?}\n\
          {waiting:?}"
@@ -613,7 +614,7 @@ fn claims_rendering(function: &CheckedFunction) -> String {
         })
         .collect::<Vec<_>>();
     format!(
-        "{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{postconditions:?}\n{:?}\n{:?}\n{:?}",
+        "{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{postconditions:?}\n{:?}\n{:?}\n{:?}",
         function.formal_hypothesis,
         function.symbol,
         function.module,
@@ -623,6 +624,7 @@ fn claims_rendering(function: &CheckedFunction) -> String {
         function.declared_state_writes,
         function.declared_state_reads,
         function.requirements,
+        function.routed_requirements,
         function.function_actuals,
         function.range_facts.requirements,
         function.range_facts.postconditions,
@@ -787,8 +789,8 @@ impl Checker<'_, '_> {
                 IdKind::Nominal => {
                     let nominal = self.types.nominals.get(position)?;
                     format!(
-                        "nominal\n{:?}\n{:?} {:?}",
-                        nominal.kind, nominal.linear, nominal.nocopy
+                        "nominal\n{:?}\n{:?} {:?} {:?}",
+                        nominal.kind, nominal.linear, nominal.nocopy, nominal.type_invariant
                     )
                 }
                 IdKind::Element => {
@@ -987,6 +989,7 @@ impl<'unit> DeclarationInventory<'unit> {
                     relation_ordinal: u32::try_from(ordinal).ok()?,
                     summary: None,
                     exits: Vec::new(),
+                    vacuous: postcondition.selector.vacuous_when_unselected(),
                     aggregate: PostconditionAggregate {
                         discharged: true,
                         derivation: None,

@@ -1782,8 +1782,8 @@ impl<'unit> Checker<'_, 'unit> {
                         };
                         GenericArgument::Type(self.parse_type_with(check_context, ty, caller)?)
                     }
-                    GenericParameter::Const { .. } => {
-                        let Some(value) = self
+                    GenericParameter::Const { ty, .. } => {
+                        let Some(written) = self
                             .types
                             .declarations
                             .tree
@@ -1795,11 +1795,10 @@ impl<'unit> Checker<'_, 'unit> {
                                 "a const argument occupies this parameter position",
                             );
                         };
-                        GenericArgument::Const(self.parse_const_expression_with(
-                            check_context,
-                            value,
-                            caller,
-                        )?)
+                        let value =
+                            self.parse_const_expression_with(check_context, written, caller)?;
+                        self.check_const_argument(check_context, written, value, ty)?;
+                        GenericArgument::Const(value)
                     }
                     GenericParameter::Function { .. } => GenericArgument::Function(
                         self.parse_function_argument(check_context, source, caller)?,
@@ -1941,9 +1940,9 @@ impl<'unit> TypeContext<'unit> {
             .find_map(|(candidate, ty)| (candidate == declaration).then_some(ty))
             .ok_or_else(|| SemanticCompilerFailure::InvalidResolution.into())
     }
-    /// The declared type of each const parameter, before any caller supplies
-    /// it to a differently typed const formal or uses it as a storage extent.
-    /// ENT-2's symbolic constant identity remains its declaration in each use.
+    /// The declared type of each const parameter. [CONST-1] forwards it only
+    /// to a formal or storage extent of that same type, and ENT-2's symbolic
+    /// constant identity remains its declaration in each use.
     pub(super) fn const_generic_types(
         &self,
     ) -> impl Iterator<Item = (DeclarationId, IntegerType)> + '_ {
@@ -2312,6 +2311,7 @@ impl<'unit> TypeContext<'unit> {
                         PreludeType::DivError => out.push_str("DivError"),
                         PreludeType::NarrowError => out.push_str("NarrowError"),
                         PreludeType::ScanStep => out.push_str("ScanStep"),
+                        PreludeType::DecisionState => out.push_str("DecisionState"),
                     }
                     if ordering {
                         out.push(')');

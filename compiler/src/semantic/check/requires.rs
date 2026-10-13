@@ -722,6 +722,17 @@ impl<'unit> DeclarationInventory<'unit> {
         entry: NodeId,
         expression: NodeId,
     ) -> Result<(), CheckStop> {
+        // [RANGE-1] the grammar retains this shape to diagnose its misplaced use.
+        if self.tree.has_fixed(expression, FixedTerminal::Unchanged)? {
+            return self.issue_node(
+                SemanticRule::Range1,
+                expression,
+                SemanticIssueKind::InvalidRangeClause {
+                    reason: "unchanged occurs in an ordinary relation",
+                    mechanical_fix: "state unchanged in an ensures forall conclusion",
+                },
+            );
+        }
         match self.tree.children(expression)? {
             [side] => {
                 let side = *side;

@@ -225,6 +225,7 @@ impl<'unit> TypeContext<'unit> {
             linear: false,
             // [PRE-1] `opaque nocopy struct Box<T>`.
             nocopy: true,
+            type_invariant: false,
         });
         self.nominal_nodes.push(None);
         self.nominal_states.push(2);
@@ -263,6 +264,7 @@ impl<'unit> TypeContext<'unit> {
             kind: CheckedNominalKind::Struct { fields },
             linear: false,
             nocopy: false,
+            type_invariant: false,
         });
         self.nominal_nodes.push(None);
         self.nominal_states.push(2);
@@ -282,6 +284,7 @@ impl<'unit> TypeContext<'unit> {
         self.intern_prelude_nominal(PreludeType::DivError)?;
         self.intern_prelude_nominal(PreludeType::NarrowError)?;
         self.intern_prelude_nominal(PreludeType::ScanStep)?;
+        self.intern_prelude_nominal(PreludeType::DecisionState)?;
         Ok(())
     }
     pub(super) fn intern_prelude_nominal(
@@ -373,6 +376,22 @@ impl<'unit> TypeContext<'unit> {
                     },
                 ],
             ),
+            PreludeType::DecisionState => (
+                "DecisionState".to_owned(),
+                [
+                    ("Open", BuiltinPreludeId::OPEN, 0),
+                    ("Written", BuiltinPreludeId::WRITTEN, 1),
+                    ("Killed", BuiltinPreludeId::KILLED, 2),
+                ]
+                .into_iter()
+                .map(|(name, constructor, tag)| CheckedVariant {
+                    name: name.to_owned(),
+                    constructor: CheckedConstructor::Prelude(constructor),
+                    tag,
+                    fields: Vec::new(),
+                })
+                .collect(),
+            ),
             PreludeType::ScanStep => (
                 "ScanStep".to_owned(),
                 vec![
@@ -414,6 +433,7 @@ impl<'unit> TypeContext<'unit> {
             kind: CheckedNominalKind::Enum { variants },
             linear: false,
             nocopy: false,
+            type_invariant: false,
         });
         self.nominal_nodes.push(None);
         self.nominal_states.push(2);

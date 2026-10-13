@@ -1,0 +1,37 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+opaque struct Token {
+  value: u64;
+}
+
+opaque struct Holder {
+  item: Box<u8>;
+}
+
+fn read_value(token: Token) -> result: u64 pure {
+  doc "A field of a program-declared opaque struct is read like any ordinary field.";
+  return token.value;
+}
+
+fn write_through(token: &Token) -> result: unit writes(token) {
+  doc "A field of a program-declared opaque struct is written through a reference parameter whose row writes the path [SET-1, EFF-1].";
+  set token^.value = 9_u64;
+  return unit;
+}
+
+fn write_owned(token: Token) -> result: u64 pure {
+  doc "A field of a program-declared opaque struct is written in an own-mode parameter binding [SET-1].";
+  set token.value = 9_u64;
+  return token.value;
+}
+
+fn take_item(holder: Holder) -> result: Box<u8> pure {
+  doc "A move out of a field the opaque struct owns is the ordinary consume [WIN-3].";
+  return move holder.item;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "TYPE-2: an opaque struct's fields obey the ordinary field, ownership, and release rules, so reading, writing and moving out of them are accepted. No value of either struct is formed, so the program only declares the functions.";
+  return exit_status(code: 0_u8);
+}

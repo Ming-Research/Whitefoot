@@ -1,0 +1,21 @@
+struct Span {
+  start: u64;
+  end: u64;
+  invariant ordered(span): span.start <= span.end;
+}
+
+fn pop_last<T: drop>(window: &Slots<T, 4>) -> result: T writes(window.last), writes(window.len) contract {
+  requires window^.len > 0_u64;
+} {
+  let got = take_back(window: window);
+  return move got;
+}
+
+fn caller() -> result: u64 pure {
+  let span = Span(start: 1_u64, end: 2_u64);
+  let spans = slots_new::<Span, 4>();
+  place_back(window: &spans, value: span);
+  let back = pop_last::<Span>(window: &spans);
+  let a = back.start;
+  return a;
+}

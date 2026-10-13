@@ -1,8 +1,10 @@
 # Does skipping the handle count make a value handle as fast as a reference?
 
-Status: registered before any result. The experiment's files are in
-[`research/experiments/handle-count/`](../../experiments/handle-count/); its
-workflow `tmp-handle-count.yml` is temporary and is removed after the run.
+Status: registered before any result, then run; see [Results](#results). The
+experiment's files are in
+[`research/experiments/handle-count/`](../../experiments/handle-count/); the
+temporary workflow `tmp-handle-count.yml` that ran them was removed after the
+run and is in this branch's history.
 
 The decision under test is in
 [`design/compiler/waiting-contexts.md`](../../../design/compiler/waiting-contexts.md):
@@ -119,4 +121,28 @@ the arms are what their names say, independently of the timings.
 
 ## Results
 
-(empty until the run)
+Run [38380956279](https://github.com/Ming-Research/Whitefoot/actions/runs/38380956279)
+on the i9-14900K (Linux 7.0.0-38-generic, governor `performance`, turbo on,
+Ubuntu clang 22.1.8), main mode with 36 blocks: pull request compiler
+`aec381cec`, base compiler `bfa06a7d0` (its merge base with main).
+
+| Reading | Value | Criterion |
+|---|---|---|
+| Structural check: `wf__shared_share` calls, PR V / PR R / base V / base R | 3 / 3 / 4 / 3 | PR V = PR R, base R = PR R, base V > base R: holds |
+| Twin deviation \|PRR2/PRR - 1\|, median and largest | 0.024 and 0.139 | a block above 0.03 is void |
+| Blocks kept | 21 of 36 | at least 6 |
+| Falsifier BV/PRR, median over kept blocks | 0.562 | at most 0.95: the count is visible |
+| V/R = PRV/PRR, median over kept blocks | 0.994, 95% interval [0.971, 1.036] | at least 0.95 |
+
+Verdict: **PASS**. With the count skipped, an atomic statement through a value
+handle runs at the speed of the read-only reference form, and the base
+compiler's counted value handle runs at 0.562 of it. The result covers one map
+workload with distinct keys, 8 contexts on 8 drivers, one machine and one pair
+of compiler revisions.
+
+The first main run, [38380246773](https://github.com/Ming-Research/Whitefoot/actions/runs/38380246773),
+used the registered 12 blocks without the pilot that sets the block count; 7
+of its blocks had a twin deviation above 0.03, leaving 5, so it was void under
+the rules above (its kept blocks read V/R 0.971 and BV/PRR 0.590). The block
+count was then raised to 36 with every rule unchanged; each arm-run lasts
+about one second, which is where the twin spread comes from.

@@ -1,0 +1,47 @@
+fn main() -> status: std::process::ExitStatus pure {
+  let open = Open();
+  let written = Written();
+  let killed = Killed();
+  let write_cell = decision_cell_new();
+  let before = decision_cell_read(cell: &write_cell);
+  if before != open {
+    return std::process::exit_status(code: 1_u8);
+  }
+  let write_winner = claim_written(cell: &write_cell);
+  let write_again = claim_written(cell: &write_cell);
+  let late_kill = claim_killed(cell: &write_cell);
+  let after_write = decision_cell_read(cell: &write_cell);
+  if write_winner != written {
+    return std::process::exit_status(code: 2_u8);
+  }
+  if write_again != written {
+    return std::process::exit_status(code: 3_u8);
+  }
+  if late_kill != written {
+    return std::process::exit_status(code: 4_u8);
+  }
+  if after_write != written {
+    return std::process::exit_status(code: 5_u8);
+  }
+  if before != open {
+    return std::process::exit_status(code: 6_u8);
+  }
+  let kill_cell = decision_cell_new();
+  let kill_winner = claim_killed(cell: &kill_cell);
+  let kill_again = claim_killed(cell: &kill_cell);
+  let late_write = claim_written(cell: &kill_cell);
+  let after_kill = decision_cell_read(cell: &kill_cell);
+  if kill_winner != killed {
+    return std::process::exit_status(code: 7_u8);
+  }
+  if kill_again != killed {
+    return std::process::exit_status(code: 8_u8);
+  }
+  if late_write != killed {
+    return std::process::exit_status(code: 9_u8);
+  }
+  if after_kill != killed {
+    return std::process::exit_status(code: 10_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

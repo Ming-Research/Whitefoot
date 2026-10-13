@@ -152,6 +152,13 @@ pub(crate) enum CheckedAffineExpressionKind {
     /// automatic derivation already carries an atom for; the invariant
     /// evaluates nothing and reads no storage [INV-1].
     Measure(Box<CheckedExpression>),
+    /// [INV-1, ENT-6] one tracked field place written as an affine factor:
+    /// a binding, its `^` exactly when it is a `&T` reference, and one or
+    /// more field selections ending at an integer field. The inner expression is exactly the read
+    /// the ordinary place checker forms for that spelling, so the affine
+    /// domain reaches the same [ENT-2] term whose current image the flow
+    /// carries; the invariant evaluates nothing and reads no storage.
+    Field(Box<CheckedExpression>),
     Add(Box<CheckedAffineExpression>, Box<CheckedAffineExpression>),
     Subtract(Box<CheckedAffineExpression>, Box<CheckedAffineExpression>),
     MultiplyByConstant {
@@ -1055,6 +1062,11 @@ pub(crate) enum CheckedNominalKind {
 pub(crate) struct CheckedTarget {
     pub(crate) lock_order: Vec<String>,
     pub(crate) node_path: NodePath,
+    /// Source presentation for the non-normative lowering lock ledger.
+    pub(crate) ledger_name: String,
+    pub(crate) ledger_state: String,
+    /// The target binder's exact one-based `path:line:column` location.
+    pub(crate) ledger_site: String,
     pub(crate) binding: BindingId,
     pub(crate) handle: Box<CheckedExpression>,
     /// [SHARE-1] whether the handle place keeps the object live until the
@@ -1123,6 +1135,10 @@ pub(crate) struct CheckedNominal {
     /// capability alone: the written `nocopy` modifier and the cell nominals
     /// this compiler interns for declarations [PRE-1] writes `nocopy`.
     pub(crate) nocopy: bool,
+    /// [TYPE-11] whether this is a struct that declares affine type
+    /// invariants, which an enum payload of its type carries across a
+    /// function boundary.
+    pub(crate) type_invariant: bool,
 }
 
 impl CheckedNominal {
@@ -2435,6 +2451,10 @@ pub(crate) enum CheckedExpression {
         /// Filled from the complete phase-A inventory before entailment runs,
         /// in callee `requires_clause` source order.
         requirements: Vec<super::goal::CheckedCallRequirement>,
+        /// [TYPE-11] the callee's requirements over its parameters' enum
+        /// payloads, each owed in its argument's conditional context for its
+        /// route [ENT-5]; filled with `requirements`.
+        routed_requirements: Vec<super::postcondition::CheckedRoutedRequirement>,
         result: CheckedType,
         /// For a borrow-mode result admitted under the reborrow extension:
         /// the caller-side storage the result borrow is conservatively rooted
@@ -2931,6 +2951,8 @@ pub(crate) enum CheckedStatement {
         drops: Vec<CheckedDrop>,
     },
     Match {
+        /// The complete written `match` or `if`, including a chained `else if`.
+        node_path: NodePath,
         scrutinee: CheckedExpression,
         enum_type: CheckedEnumType,
         arms: Vec<CheckedMatchArm>,
@@ -3016,6 +3038,31 @@ pub(crate) enum CheckedStatement {
         /// Whether the block can reach its end [FN-1].
         continues: bool,
     },
+}
+
+impl CheckedStatement {
+    /// Source presentation for the non-normative lowering lock ledger.
+    /// Proof statements are erased and have no executable first-use site.
+    pub(crate) fn ledger_path(&self) -> Option<&NodePath> {
+        match self {
+            Self::Let { node_path, .. }
+            | Self::DestructuringLet { node_path, .. }
+            | Self::PropagateLet { node_path, .. }
+            | Self::Set { node_path, .. }
+            | Self::Evaluate { node_path, .. }
+            | Self::DropExpression { node_path, .. }
+            | Self::Return { node_path, .. }
+            | Self::Match { node_path, .. }
+            | Self::ValueMatchLet { node_path, .. }
+            | Self::Give { node_path, .. }
+            | Self::Loop { node_path, .. }
+            | Self::CountedRange { node_path, .. }
+            | Self::Break { node_path, .. }
+            | Self::Continue { node_path, .. }
+            | Self::Atomic { node_path, .. } => Some(node_path),
+            Self::Proof(_) => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -3130,6 +3177,10 @@ pub(crate) struct CheckedFunction {
     /// at body entry in the state holding the requirements before it, where
     /// its subscripts owe [OP-4]. A hypothetical premise set forms none.
     pub(crate) requirement_places: Vec<Vec<CheckedExpression>>,
+    /// [TYPE-11] the type invariants of each struct a parameter's enum
+    /// carries in a variant field, each restricted to that variant, in
+    /// parameter order and then variant, field and declaration order.
+    pub(crate) routed_requirements: Vec<super::postcondition::CheckedRoutedRequirement>,
     /// Verified-relation surfaces in `ensures_clause` source order. H1
     /// constructs this metadata; the shared entailment flow proves every
     /// clause at every selected exit.
@@ -3421,6 +3472,11 @@ pub(crate) struct CheckedProgramData {
     /// compile, and no mandatory record, no normative output, and no lowering
     /// decision reads it.
     pub(crate) permission_ledger: Vec<super::permission_ledger::LedgerLine>,
+    /// Source nodes beneath executable atomic statements, including statement
+    /// and expression carriers, rendered as one-based `path:line:column`.
+    /// Lowering uses these only to present its non-normative lock ledger;
+    /// they retain no lock timing, permission or acceptance judgment.
+    pub(crate) lock_ledger_sources: std::collections::HashMap<NodePath, String>,
 }
 
 impl CheckedProgramData {

@@ -15,5 +15,5 @@ which registers the question, the arms and the decision rule.
 - `run.sh --out DIR --bins DIR`: runs the arms interleaved and writes `raw.tsv`.
 - `summarize.py [--smoke | --pilot] RAW.tsv`: the registered reading.
 
-`.github/workflows/tmp-handle-count.yml` runs them; it is removed after the
-run.
+The temporary workflow `.github/workflows/tmp-handle-count.yml` ran them on
+the i9-14900K and was removed after the run; it is in git history.

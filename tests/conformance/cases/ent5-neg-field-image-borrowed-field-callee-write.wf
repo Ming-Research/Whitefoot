@@ -1,0 +1,28 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Counter {
+  doc "One count.";
+  count: u64;
+}
+
+fn store(value: &u64, wild: u64) -> result: unit writes(value) {
+  doc "Stores wild into the referenced cell.";
+  set value^ = wild;
+  return unit;
+}
+
+fn advance(counter: &Counter, delta: u64, wild: u64) -> result: unit writes(counter) contract {
+  requires counter^.count + delta <= 800_u64;
+} {
+  doc "The count is passed by reference to a callee that writes it. That projected write kills the count's entry image, so the count read afterward is unbounded and the sum may overflow.";
+  store(value: &counter^.count, wild: wild);
+  let count = counter^.count;
+  let total = count + delta;
+  set counter^.count = total;
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

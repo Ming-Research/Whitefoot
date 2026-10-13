@@ -131,9 +131,13 @@ relation over `len` and `cap`. `Array` has only `len`.
 
 A readonly integer field reached through subscripts is a term just as a
 measure is [ENT-2]. In an index-based tree, declare per-node structure such as
-`readonly count: u64;` and use `nodes^[i].count` directly as a counted
-endpoint, in a `requires`, or as a `let` source equal to its copy. Mark a
-field readonly when only whole-element replacement should change it; an
+`public readonly count: u64;` and use `nodes^[i].count` directly as a counted
+endpoint, in a `requires`, or as a `let` source equal to its copy. A field is
+readonly only together with `public`, and `public` is written only in an
+interface record [MOD-6]; inside its declaring module the field stays an
+ordinary assignable field; code outside that module cannot write a path
+through it directly, and changes it only by replacing the whole element or by
+calling a function of the declaring module [TYPE-2]. An
 ordinary field below a subscript is no term, so copy it with `let` before
 relying on it. Replacing or exchanging the element, a window operation that
 moves elements, a call whose row writes the storage, and a write to the index
@@ -640,9 +644,12 @@ The maintained [stdin_echo.wf](../tests/programs/stdin_echo.wf) shows an inline
 window passed to `read_next` and `write_once`, with the invocation's owners
 consumed explicitly.
 
-Every host function that acquires, transfers or closes waits, so a function
-that calls one writes `waits` after its effect row, and so does each function
-that calls that one, up to an entry that waits [WAIT-1]. Keep the computation
+Most host functions that acquire, transfer or close a resource wait, but not
+all: for example `stop_listen`, `cancel_source` and `close_cancel_source` do
+not.
+Read the callee's declaration [PRE-2]: a function that calls one declared
+`waits` writes `waits` after its effect row, and so does each function that
+calls that one, up to an entry that waits [WAIT-1]. Keep the computation
 in functions that do not wait: only they can be overlapped [PAR-1, PAR-2].
 
 ## P12. Use fixed arrays for immutable tables
@@ -733,16 +740,13 @@ independence fails there instead of slowing the program.
 For byte classification and scanner state, keep predicates in `Bool`, combine
 them with `band`, `bor`, `bxor`, and `bnot`, and update the state directly.
 When a numeric contribution is needed, select it with a value-producing
-`match`:
+`if`; a `match` on a `Bool` is rejected [GRAM-6]:
 
 ```whitefoot
-let increment = match starts_word {
-  True() => {
-    give 1_u64;
-  }
-  False() => {
-    give 0_u64;
-  }
+let increment = if starts_word {
+  give 1_u64;
+} else {
+  give 0_u64;
 }
 ```
 
@@ -751,8 +755,8 @@ program alternatives. Use an exact integer operation when overflow is excluded
 by proof, and a `.wrap` operation only when modular arithmetic is the intended
 result [OP-2]. A `give` of a literal, a named const or a bare integer binding
 delivers the binding's equality to it, so `increment <= 1` holds after the
-`match`, and a value-producing `if` keeps every bound that each branch's given
-value is known to satisfy, as two returns would [ENT-5].
+`if`: a value-producing `if` keeps every bound that each branch's given value
+is known to satisfy, as two returns would [ENT-5].
 
 ## Known gaps
 
@@ -902,8 +906,8 @@ input after widening does not discharge a later bare `cvt` of that input.
 
 ## P17. Share state between contexts through one object
 
-A spawn takes only value parameters [WAIT-3], so two contexts reach one piece
-of state only through a shared object [SHARE-1]. Move the state into it with
+A spawn takes only value parameters [WAIT-3]. For general mutable state,
+give the contexts handles to a shared object [SHARE-1]. Move the state into it with
 `shared_new`, give each context its own handle made with `shared_share`, and
 change the state only inside an atomic statement, whose block holds its targets together [SHARE-2, SHARE-3]:
 
@@ -922,6 +926,23 @@ between them. Copy out what the rest of the function needs into a local; the
 binding and every reference formed from it end with the block [REF-2], and so
 does every fact about the state.
 
+For a race between cancellation and an irrevocable step, use a `DecisionCell`
+[PRE-1]. Make a second handle with `decision_cell_share` before transferring
+one into each context. Call `claim_written` before accepting the step and
+continue only when it returns `Written`; the cancelling context calls
+`claim_killed` and succeeds only when it returns `Killed`. Repeated claims
+return the existing winner. A no-op write still needs the claim if accepting
+it counts as the irrevocable step in the application.
+
+The claims and `decision_cell_read` are nonwaiting, so they can run while an
+atomic block holds keys. Their verdict is independently visible before that
+block ends [SHARE-3]; it does not expose the block's intermediate data. Keep
+an independent handle for the observer, since fetching a handle from the
+held object would first require access to that object. An earlier `Open`
+snapshot is no promise that a later claim will succeed. These calls and
+helpers whose boundaries can reach a cell cannot be atomic guards [SHARE-2];
+use ordinary shared state for a condition on which a context must wait.
+
 The block cannot wait [SHARE-2], so do the waiting outside it: read or receive
 first, then change the object, then send. To wait for the state itself, write
 the condition as a guard; the statement takes effect only where the guard
@@ -932,6 +953,31 @@ atomic items = &queue when items^.len > 0_u64 {
   set got = take_front(window: items);
 }
 ```
+
+A guard is woken only by a write to its targets' states, so it cannot wait
+for a time: a guard that reads a clock or the memory meter is refused
+[SHARE-2, PRE-2]. To wait until a deadline, call `std::time::sleep_until`
+before the statement. To wait for the state or the deadline, whichever comes
+first, spawn a context that sleeps until the deadline and then fires a
+cancellation source, and let the guard read that source's state:
+
+```whitefoot
+fn ready_or_stopped(count: &u64, stop: &std::time::CancelState) -> result: Bool reads(count), reads(stop) {
+  let ready = count^ > 0_u64;
+  let either = bor(ready, stop^.fired);
+  return either;
+}
+```
+
+```whitefoot
+spawn timer(source: move source, deadline: deadline);
+atomic count = &pending, stop = &stopped when ready_or_stopped(count: count, stop: stop) {
+  set timed_out = stop^.fired;
+}
+```
+
+Here `timer` waits with `sleep_until` and then calls `cancel_fire`, and
+`stopped` is the `cancel_state` of a watch on the same source.
 
 A map's entries and accompanying metadata can be held by one statement:
 
@@ -984,7 +1030,10 @@ Every function taking a `Table` or a `&Table` receives the relation at entry,
 which here proves `t^.slots[at]` in bounds, and owes it back where it hands the
 value on: at its returns and its `propagate` error exits when it writes the
 value, at each call passing it, and at `shared_new`. Every construction owes it
-too. Between two field writes of
+too. A generic function's instance at `Table` takes it the same way through a
+parameter or result written as its type parameter, while an element of a
+storage carries none, so a library container of `Table` is refused where it
+hands an element out or compares two. Between two field writes of
 one body the relation may be false, since no other code can see the value
 there. A shared object's state keeps it the same way: each atomic block
 receives it at entry and owes it at every edge that leaves the block.
@@ -1027,7 +1076,7 @@ between them; pass two operations through one owner when their order matters
 
 A bound spawn is joined at the beginning of the first later statement that
 names its binding or may leave its block, such as an `if` holding a `return`
-or a `?`, and otherwise at the block's end [WAIT-3]. A statement that makes
+or a `let` with `propagate`, and otherwise at the block's end [WAIT-3]. A statement that makes
 the spawned call's guard true therefore stands before that statement in the
 block, not inside it: inside, it would run only after the join, which waits
 for the guard.

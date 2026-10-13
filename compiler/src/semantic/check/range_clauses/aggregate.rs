@@ -1,10 +1,10 @@
-//! Value equality and bare Bool guards in range clauses [RANGE-1].
+//! Value equality and variant relations in range clauses [RANGE-1].
 
 use super::*;
 use crate::semantic::range_facts::MAX_RANGE_ATOMS;
 
 /// A noninteger operand survives until its enclosing comparison decides
-/// whether to expand it, or a bare guard selects its Bool tag. Other uses
+/// whether to expand it, or a variant relation selects its tag. Other uses
 /// leave a concrete generic clause unformed and reject a nongeneric clause
 /// under RANGE-1.
 pub(super) struct RangeOperand {
@@ -26,35 +26,71 @@ impl RangeOperand {
         &self.term
     }
 
-    /// [RANGE-1, PRE-1] Bool is True first, False second. Reuse the tag
-    /// projection of value equality, with the ordinary read domain retained.
-    pub(super) fn bool_guard(
+    /// Identity framing is admitted for every type, without equality expansion [RANGE-1].
+    pub(super) fn into_term(self) -> CheckedRangeTerm {
+        self.term
+    }
+
+    /// [RANGE-1] `e is V` holds where e's versioned tag equals V's
+    /// declaration-order number, and `e is not V` where it differs. The tag
+    /// projection is value equality's, so the tag read keeps e's own
+    /// selections and payload steps as its read domain.
+    pub(super) fn variant_relation(
         self,
         checker: &Checker<'_, '_>,
         node: NodeId,
+        variant: &str,
+        negated: bool,
     ) -> Result<Vec<CheckedRangeRelation>, CheckStop> {
-        if self.aggregate != Some(CheckedType::Bool)
-            || !matches!(
-                self.term,
-                CheckedRangeTerm::Read { .. } | CheckedRangeTerm::Value(_)
-            )
-        {
+        let operand = matches!(
+            self.term,
+            CheckedRangeTerm::Read { .. } | CheckedRangeTerm::Value(_)
+        );
+        // [PRE-1] Bool is True first, False second.
+        let variants: Option<Vec<(String, u32)>> = match self.aggregate {
+            Some(CheckedType::Bool) => Some(vec![("True".to_owned(), 0), ("False".to_owned(), 1)]),
+            Some(CheckedType::Nominal(nominal)) => match &checker.types.nominal(nominal)?.kind {
+                CheckedNominalKind::Enum { variants } => Some(
+                    variants
+                        .iter()
+                        .map(|variant| (variant.name.clone(), variant.tag))
+                        .collect(),
+                ),
+                _ => None,
+            },
+            _ => None,
+        };
+        let Some(variants) = variants.filter(|_| operand) else {
             return checker.invalid_range(
                 SemanticRule::Range1,
                 node,
-                "a bare range guard is not a Bool element projection or live own-mode Bool binding",
-                "write one Bool element projection or own-mode binding, or compare integer range terms",
+                "a variant relation tests a value that is not an enum element projection or live own-mode enum binding",
+                "test one element projection or own-mode binding whose type is an enum",
             );
-        }
+        };
+        let Some(&(_, tag)) = variants.iter().find(|(name, _)| name == variant) else {
+            return checker.invalid_range(
+                SemanticRule::Range1,
+                node,
+                "a variant relation names no variant of the tested value's enum",
+                "name a variant the tested value's enum declares",
+            );
+        };
+        let count =
+            u32::try_from(variants.len()).map_err(|_| SemanticCompilerFailure::CounterOverflow)?;
         Ok(vec![CheckedRangeRelation {
             node: checker.types.declarations.tree.path(node)?.clone(),
             left: projected(
                 self.term,
-                Some(CheckedRangeProjection::Tag(2)),
+                Some(CheckedRangeProjection::Tag(count)),
                 IntegerType::U64,
             ),
-            comparison: RangeComparison::Equal,
-            right: CheckedRangeTerm::Constant(0),
+            comparison: if negated {
+                RangeComparison::NotEqual
+            } else {
+                RangeComparison::Equal
+            },
+            right: CheckedRangeTerm::Constant(i128::from(tag)),
             projected: false,
         }])
     }
