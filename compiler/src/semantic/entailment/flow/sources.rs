@@ -626,12 +626,14 @@ impl Reasoning<'_, '_, '_> {
         state: &mut ProofFlowState,
     ) -> Option<MeasureCarry> {
         let source = self.input.placement_source_place(value)?;
+        let source_consumed = self.input.placement_consumes_source(value, &source);
         self.mint_measure_datums(
             node_path,
             ordinal,
             MeasurePlacement::Rebind,
             source,
             value.ty(),
+            source_consumed,
             state,
         )
     }
@@ -702,6 +704,21 @@ impl Input<'_, '_> {
         }))
         .then_some(source)
     }
+
+    /// Only an actual root consume makes a placement's source unavailable
+    /// to later comparisons. Copies and checked read wrappers keep it live.
+    fn placement_consumes_source(
+        &self,
+        value: &CheckedExpression,
+        source: &ResolvedPlace,
+    ) -> bool {
+        let mut kills = Vec::new();
+        self.collect_expression_kills(value, &mut kills);
+        kills.iter().any(|kill| {
+            matches!(kill, KillEvent::Consume { binding, .. }
+                if source.root == PlaceRoot::Binding(*binding))
+        })
+    }
 }
 
 impl Reasoning<'_, '_, '_> {
@@ -718,8 +735,8 @@ impl Reasoning<'_, '_, '_> {
     /// the source.
     ///
     /// `ordinal` separates the placements one statement carries — a
-    /// construct's field, a destructuring's binder, a target list's target,
-    /// the displaced and the stored halves of one `replace`.
+    /// construct's field, a destructuring's binder, or a target list's target.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn mint_measure_datums(
         &mut self,
         node_path: &crate::NodePath,
@@ -727,6 +744,7 @@ impl Reasoning<'_, '_, '_> {
         placement: MeasurePlacement,
         source: ResolvedPlace,
         ty: CheckedType,
+        source_consumed: bool,
         state: &mut ProofFlowState,
     ) -> Option<MeasureCarry> {
         let mut carried = Vec::new();
@@ -737,6 +755,29 @@ impl Reasoning<'_, '_, '_> {
             let constant = super::type_constant(measured_type);
             let mut place = source.clone();
             place.path.extend(path.iter().copied());
+            // [MSR-3] an unmentioned descendant of a consumed source has
+            // only standing facts, which hold at its destination without
+            // transport. A surviving source still needs its equality to the
+            // destination, including when its extent has no standing term.
+            // Any tracked family member retains the whole family's transport.
+            if source_consumed
+                && ![
+                    CheckedMeasure::Length,
+                    CheckedMeasure::Capacity,
+                    CheckedMeasure::Head,
+                    CheckedMeasure::Pages,
+                    CheckedMeasure::Bytes,
+                ]
+                .into_iter()
+                .any(|measure| {
+                    self.vocabulary
+                        .terms
+                        .interned(&TermKind::Measure(measure, place.clone()))
+                        .is_some()
+                })
+            {
+                continue;
+            }
             let event = self
                 .vocabulary
                 .proof_event(FlowEventKind::S5, Some(node_path));
@@ -2851,7 +2892,16 @@ impl Reasoning<'_, '_, '_> {
         } else {
             MeasurePlacement::Rebind
         };
-        self.mint_measure_datums(node_path, ordinal, placement, source, value.ty(), state)
+        let source_consumed = self.input.placement_consumes_source(value, &source);
+        self.mint_measure_datums(
+            node_path,
+            ordinal,
+            placement,
+            source,
+            value.ty(),
+            source_consumed,
+            state,
+        )
     }
 
     /// [MSR-3] the construct placement: the datums one `construct`'s field
@@ -2938,12 +2988,14 @@ impl Reasoning<'_, '_, '_> {
             let Some(source) = self.input.placement_source_place(field) else {
                 continue;
             };
+            let source_consumed = self.input.placement_consumes_source(field, &source);
             if let Some(carry) = self.mint_measure_datums(
                 node_path,
                 ordinal,
                 MeasurePlacement::Construct,
                 source,
                 field.ty(),
+                source_consumed,
                 state,
             ) {
                 carried.push((destination, carry));
@@ -2975,10 +3027,9 @@ impl Reasoning<'_, '_, '_> {
     /// [MSR-3] the payload placement: the datums a `match` over an own enum
     /// place carries out of that place's payload.
     ///
-    /// The `match` consumes the scrutinee, so a measure of the payload dies
-    /// with it; the datum minted here is the value that measure had
-    /// immediately before the consume, and the arm binder that names the
-    /// payload receives it on its own arm.
+    /// A consuming `match` kills the payload's source measures; a copying
+    /// `match` keeps them. The datum retains the measure's pre-transfer value,
+    /// and the arm binder receives it on its own arm in either case.
     pub(super) fn mint_payload_placements(
         &mut self,
         scrutinee: &CheckedExpression,
@@ -2988,6 +3039,7 @@ impl Reasoning<'_, '_, '_> {
         let Some(base) = self.input.placement_source_place(scrutinee) else {
             return Vec::new();
         };
+        let source_consumed = self.input.placement_consumes_source(scrutinee, &base);
         let Some(node_path) = scrutinee.carrier() else {
             return Vec::new();
         };
@@ -3023,6 +3075,7 @@ impl Reasoning<'_, '_, '_> {
                     MeasurePlacement::Payload,
                     source,
                     field.ty,
+                    source_consumed,
                     state,
                 ) {
                     carried.push((field_ordinal, carry));
@@ -3058,6 +3111,7 @@ impl Reasoning<'_, '_, '_> {
         let Some(base) = self.input.placement_source_place(value) else {
             return Vec::new();
         };
+        let source_consumed = self.input.placement_consumes_source(value, &base);
         let mut carried = Vec::new();
         // [MSR-3] the destructuring placement's source is the field the
         // binder names, which the rest marker makes a written ordinal rather
@@ -3072,6 +3126,7 @@ impl Reasoning<'_, '_, '_> {
                 MeasurePlacement::Destructuring,
                 source,
                 *ty,
+                source_consumed,
                 state,
             ) {
                 carried.push((ordinal, carry));

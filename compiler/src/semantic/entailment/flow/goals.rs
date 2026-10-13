@@ -639,6 +639,47 @@ impl Input<'_, '_> {
         self.body_goal_expression(&requirement.template.root)
     }
 
+    /// A declaration template's projections below the parameter `binding`
+    /// as this callable's body names them: [`Self::body_projections`] with
+    /// every formal-valued offset instantiated [`Self::body_formal_offsets`].
+    pub(super) fn body_template_projections(
+        &self,
+        binding: BindingId,
+        projections: &[GoalProjection],
+    ) -> Option<Vec<GoalProjection>> {
+        self.body_formal_offsets(self.body_projections(PlaceRoot::Binding(binding), projections))
+    }
+
+    /// A declaration template's projections with every formal-valued offset
+    /// replaced by the offset this callable's body reads.
+    ///
+    /// [MSR-1, ENT-2] a formal-valued subscript names a value parameter of
+    /// this same callable, so inside the body it is that parameter's own
+    /// binding: `rows^[i].len` written in a clause and written in the body
+    /// are one term because their canonical spellings are byte-identical
+    /// there. The requirement and postcondition readers both use it [FN-8,
+    /// FN-9].
+    pub(super) fn body_formal_offsets(
+        &self,
+        projections: &[GoalProjection],
+    ) -> Option<Vec<GoalProjection>> {
+        projections
+            .iter()
+            .map(|projection| {
+                projection.instantiate_formal(|ordinal| {
+                    let offset = self.function.parameters.get(ordinal as usize)?;
+                    Some(
+                        CapturedValue::new(
+                            CaptureId::source(u32::MAX),
+                            CapturedTerm::Binding(offset.binding),
+                        )
+                        .goal_identity(),
+                    )
+                })
+            })
+            .collect()
+    }
+
     pub(super) fn body_goal_expression(
         &self,
         expression: &GoalExpression,
@@ -651,35 +692,7 @@ impl Input<'_, '_> {
             }) => {
                 let parameter = self.function.parameters.get(*ordinal as usize)?;
                 let binding = parameter.binding;
-                // [MSR-1, ENT-2] a formal-valued subscript names a value
-                // parameter of this same callable, so inside the body it is
-                // that parameter's own binding: `rows^[i].len` written
-                // in the clause and written in the body are one term because
-                // their canonical spellings are byte-identical there.
-                let projections = self
-                    .body_projections(PlaceRoot::Binding(binding), projections)
-                    .iter()
-                    .map(|projection| match projection {
-                        GoalProjection::FormalSubscript { ordinal }
-                        | GoalProjection::FormalPage { ordinal } => self
-                            .function
-                            .parameters
-                            .get(*ordinal as usize)
-                            .map(|offset| {
-                                let offset = CapturedValue::new(
-                                    CaptureId::source(u32::MAX),
-                                    CapturedTerm::Binding(offset.binding),
-                                )
-                                .goal_identity();
-                                if matches!(projection, GoalProjection::FormalPage { .. }) {
-                                    GoalProjection::Page(offset)
-                                } else {
-                                    GoalProjection::Subscript(offset)
-                                }
-                            }),
-                        other => Some(*other),
-                    })
-                    .collect::<Option<Vec<_>>>()?;
+                let projections = self.body_template_projections(binding, projections)?;
                 let mut admission = if parameter.mode.is_range() {
                     GoalAdmission::plain_range(parameter.ty)
                 } else {

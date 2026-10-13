@@ -855,7 +855,7 @@ impl Report for SemanticIssueKind {
             ConstEvalOverflow { operation };
             ConstArgumentOutOfRange { parameter_type, value };
             ConstRuntimeArithmeticMode { mechanical_fix };
-            TypeMismatch { expected, found };
+            TypeMismatch { expected, found, mechanical_fix };
             UnadmittedOperandShape { expected, mechanical_fix };
             BehaviorArgumentMismatch { expected, mechanical_fix };
             UnforwardedGroupApplication { mechanical_fix };
@@ -876,8 +876,8 @@ impl Report for SemanticIssueKind {
             ReadonlyWriteTarget { spelling, mechanical_fix };
             FrozenForbiddenPart { part, mechanical_fix };
             FrozenContentConsume { mechanical_fix };
-            MoveOfCopy { mechanical_fix };
-            BareAffineUse { mechanical_fix };
+            MoveOfCopy { binding, ty, reason, mechanical_fix };
+            BareAffineUse { binding, ty, reason, mechanical_fix };
             ContainerConstruction { nominal, mechanical_fix };
             UseAfterMove { mechanical_fix };
             InvalidReferenceUse { binder, event, mechanical_fix };
@@ -889,7 +889,7 @@ impl Report for SemanticIssueKind {
             MissingDereference { mechanical_fix };
             RangeReferentUse { mechanical_fix };
             MoveOuterBindingInLoop { binding, mechanical_fix };
-            InvalidOperation;
+            InvalidOperation { operation, operand_types, mechanical_fix };
             InvalidEqualityType { mechanical_fix };
             InvalidPredicateCondition;
             RedundantCondition { residual, decided, facts, mechanical_fix };
@@ -955,7 +955,7 @@ impl Report for SemanticIssueKind {
             InvalidMatchFields { variant, declared_fields };
             ForeignMatchVariant;
             NonExhaustiveMatch { missing_variants };
-            InvalidPropagation;
+            InvalidPropagation { enclosing_return_type, operand_type, mechanical_fix };
             InvalidGive;
             EmptyDeliverySet { binding, mechanical_fix };
             InvalidEffectRow { reason, mechanical_fix };
