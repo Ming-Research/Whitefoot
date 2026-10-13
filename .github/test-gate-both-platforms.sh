@@ -154,7 +154,7 @@ want f '::error::gh api call failed 5 times: list gate.yml runs for abc123'
 # success supersedes an earlier failure, and a later failure an earlier
 # success, as a re-run or a later run of the same revision does.
 newcase g1
-jobs "$FAKE_DIR/jobs.1" 'unit (macos-15)=cancelled'
+jobs "$FAKE_DIR/jobs.1" 'unit (macos-15)=failure'
 printf '2026-10-13T11:00:00Z\tunit (macos-15)\tsuccess\n' >> "$FAKE_DIR/jobs.1"
 gate
 [ "$status" -eq 0 ] || fail 'g1: expected the later success to decide'
@@ -165,5 +165,23 @@ printf '2026-10-13T11:00:00Z\tunit (macos-15)\tfailure\n' >> "$FAKE_DIR/jobs.1"
 gate
 [ "$status" -ne 0 ] || fail 'g2: expected the later failure to decide'
 want g2 '^MISSING unit (macos-15): failure$'
+
+# (h) A cancelled job is no result: one cancelled after a success of the same
+# name, as a duplicate run cancelled a second after the run it duplicates
+# finished that job, leaves the success deciding; a name whose only job was
+# cancelled is listed again and then fails as having no gate job.
+newcase h1
+jobs "$FAKE_DIR/jobs.1"
+printf '2026-10-13T11:00:00Z\tunit (macos-15)\tcancelled\n' >> "$FAKE_DIR/jobs.1"
+gate
+[ "$status" -eq 0 ] || fail 'h1: expected the earlier success to decide over a later cancellation'
+[ "$listings" -eq 1 ] || fail "h1: expected 1 listing, got $listings"
+want h1 '^ok      unit (macos-15)$'
+newcase h2
+jobs "$FAKE_DIR/jobs.1" 'unit (macos-15)=cancelled'
+gate
+[ "$status" -ne 0 ] || fail 'h2: expected a failure'
+[ "$listings" -eq 4 ] || fail "h2: expected 4 listings, got $listings"
+want h2 '^MISSING unit (macos-15): no gate job$'
 
 echo 'test-gate-both-platforms: ok'

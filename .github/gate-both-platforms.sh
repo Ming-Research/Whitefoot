@@ -15,9 +15,9 @@
 #   jobs) is listed again after GATE_RELIST_WAIT seconds (default 30), up to 4
 #   listings in all, before judging; a job still without an entry after the
 #   last listing fails as "no gate job";
-# - a job with an entry that did not succeed (failure, cancelled, timed_out)
-#   is a real result: it fails the step at once, with no further listing, after
-#   every group's line is printed.
+# - a job with an entry that did not succeed (failure, timed_out) is a real
+#   result: it fails the step at once, with no further listing, after every
+#   group's line is printed; a cancelled job is no entry (see list).
 #
 # It reads GH_TOKEN, HEAD_SHA, GATE_GROUPS (a JSON array of group names) and
 # GITHUB_REPOSITORY, uses RUNNER_TEMP (or a fresh temporary directory) for
@@ -59,6 +59,10 @@ api() {
 }
 
 # list: rebuild $work/jobs.tsv from the runs of gate.yml for the revision.
+# A cancelled job belongs to a run that was superseded or stopped, not to a
+# result, so it is left out: it neither decides a name nor hides a result that
+# came before it, as when a duplicate run is cancelled a second after the run
+# it duplicates finished that job.
 list() {
     api "list gate.yml runs for $HEAD_SHA" --paginate \
         "repos/$GITHUB_REPOSITORY/actions/workflows/gate.yml/runs?head_sha=$HEAD_SHA&per_page=100" \
@@ -71,7 +75,7 @@ list() {
             --jq '.jobs[] | select(.completed_at != null) | [.completed_at, .name, .conclusion] | @tsv'
         cat "$work/answer" >> "$work/jobs.tsv"
     done
-    sort -r "$work/jobs.tsv" > "$work/sorted.tsv"
+    awk -F '\t' '$3 != "cancelled"' "$work/jobs.tsv" | sort -r > "$work/sorted.tsv"
 }
 
 # judge: print a line per expected job; set absent (no entry) and failed
