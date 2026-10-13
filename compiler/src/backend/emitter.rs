@@ -420,6 +420,7 @@ fn emit_module(
             );
         }
     }
+    functions.append(wake::callbacks(program, &clones)?);
     let has_matches = program.functions().iter().any(|function| {
         function
             .blocks()

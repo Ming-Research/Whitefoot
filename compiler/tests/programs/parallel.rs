@@ -6,7 +6,7 @@ use std::process::Output;
 use super::support::{
     build_program, build_program_from_fragments, compile_program, compile_program_with_overlap,
 };
-use whitefoot::{FragmentGranularity, module_requires_parallel_runtime};
+use whitefoot::{FragmentGranularity, module_requires_parallel_runtime, split_module};
 
 /// The recursive corpus program publishes one byte sequence whatever the
 /// recursion budget cuts, and whatever width it was cut for.
@@ -423,6 +423,69 @@ fn shared_objects_keep_every_update_on_one_driver_and_on_four() {
                 "drivers {drivers}, round {round}: {output:?}"
             );
         }
+    }
+}
+
+/// A multi-statement guard with an if, match and nested helper call captures
+/// each sequence separately. The writer changes an unrelated field before
+/// advancing written; refusing that relevant write leaves both contexts
+/// waiting and fails the shared harness's deadline/progress check. The C
+/// guard test separately guarantees registration before each false/true
+/// write; these source rendezvous do not expose watch-registration timing.
+#[test]
+fn full_helper_guard_callbacks_admit_relevant_writes_on_one_driver_and_on_two() {
+    let llvm = compile_program("helper_guard_wake.wf");
+    assert!(
+        llvm.as_str().contains(".wake_filter("),
+        "a multi-statement helper guard must register a callable filter"
+    );
+    let fragments = split_module(&llvm, FragmentGranularity::Function)
+        .expect("the guard callback remains splittable with its dependencies");
+    let registration = fragments
+        .iter()
+        .find(|fragment| {
+            fragment.lines().any(|line| {
+                line.contains("store ptr @") && line.contains(".wake_filter,")
+            })
+        })
+        .expect("one fragment registers the full guard callback");
+    let adapter_symbol = registration
+        .lines()
+        .find_map(|line| {
+            let (_, rest) = line.split_once("store ptr @")?;
+            let (symbol, _) = rest.split_once(", ptr ")?;
+            symbol.ends_with(".wake_filter").then_some(symbol)
+        })
+        .expect("the registration stores the callback function pointer");
+    assert!(
+        registration.lines().any(|line| {
+            line.starts_with("declare ") && line.contains(&format!("@{adapter_symbol}("))
+        }),
+        "registration records its function-pointer dependency: {registration}"
+    );
+    let adapter = fragments
+        .iter()
+        .find(|fragment| {
+            fragment.lines().any(|line| {
+                line.starts_with("define ") && line.contains(&format!("@{adapter_symbol}("))
+            })
+        })
+        .expect("the adapter has a definition in its own function fragment");
+    let thunk_symbol = adapter_symbol
+        .strip_suffix(".wake_filter")
+        .expect("adapter names its guard thunk");
+    assert!(
+        adapter.lines().any(|line| {
+            line.starts_with("declare ") && line.contains(&format!("@{thunk_symbol}("))
+        }) && adapter.contains(&format!("call i1 @{thunk_symbol}(")),
+        "adapter records and calls its guard thunk dependency: {adapter}"
+    );
+    let program = build_program(&llvm);
+    for drivers in ["1", "2"] {
+        let output = program.run_with_settings(None, &[("WF_DRIVERS", drivers)]);
+        assert_eq!(output.status.code(), Some(0), "drivers {drivers}: {output:?}");
+        assert!(output.stdout.is_empty(), "drivers {drivers}: {output:?}");
+        assert!(output.stderr.is_empty(), "drivers {drivers}: {output:?}");
     }
 }
 
