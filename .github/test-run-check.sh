@@ -50,9 +50,11 @@ use warnings;
 use Cwd qw(getcwd);
 use JSON::PP qw(encode_json);
 open my $log, '>>', $ENV{SHARD_ARGV} or die $!;
-print {$log} join("\t", @ARGV), "\n";
+print {$log} "case-shard=", $ENV{WHITEFOOT_CASE_SHARD} // '<absent>', "\t",
+    join("\t", @ARGV), "\n";
 close $log;
 if ($ARGV[0] eq 'metadata') {
+    !exists $ENV{WHITEFOOT_CASE_SHARD} or die 'case shard leaked into metadata';
     my $root = getcwd();
     print encode_json({workspace_root => $root, packages => [
         {manifest_path => "$root/Cargo.toml", targets => [
@@ -71,23 +73,58 @@ for my $i (0 .. $#ARGV - 1) {
 }
 @names = qw(a::test d::ignored) if $target eq 'whitefootc';
 @names = () if $target eq 'discovered';
+my $ordinary_adapter = 'conformance::adapter::the_corpus_reaches_its_declared_verdict_through_the_ordinary_compiler_path';
+my $cached_adapter = 'conformance::adapter::a_shared_proof_receipt_cache_reaches_every_declared_source_verdict';
+my $renamed_reader = 'conformance::adapter::renamed_case_reader';
+my $fixture = $ENV{SHARD_CASE_TESTS} // '';
+my @case_tests;
+if ($target eq 'corpus' && $fixture ne '') {
+    @case_tests = ($ordinary_adapter, $cached_adapter);
+    @case_tests = ($cached_adapter) if $fixture eq 'renamed';
+    @case_tests = () if $fixture eq 'absent';
+    push @names, @case_tests;
+    push @names, $renamed_reader if $fixture eq 'renamed' || $fixture eq 'absent';
+}
+# The same allowlisted spelling in another Cargo target is still ordinary.
+@names = ($ordinary_adapter) if $target eq 'discovered' && $fixture ne '';
 my ($tail) = grep { $ARGV[$_] eq '--' } 0 .. $#ARGV;
 defined $tail or die 'missing test arguments';
 my @args = @ARGV[$tail + 1 .. $#ARGV];
 if ($args[0] eq '--list') {
+    !exists $ENV{WHITEFOOT_CASE_SHARD} or die 'case shard leaked into listing';
     join(' ', @args) eq '--list --format terse' or die 'wrong list command';
     print "$_: test\n" for @names;
     exit 0;
 }
 shift(@args) eq '--exact' or die 'missing exact filters';
+my $case_shard = $ENV{WHITEFOOT_CASE_SHARD};
+if (defined $case_shard) {
+    $target eq 'corpus' && $case_shard eq $ENV{SHARD_EXPECTED_CASE}
+        or die 'case shard leaked into an ordinary invocation';
+    pop(@args) eq '--nocapture' or die 'missing repeated-test diagnostics';
+    join(' ', sort @args) eq join(' ', sort @case_tests)
+        or die 'repeated filters must match only present case tests';
+} else {
+    !grep { $_ eq '--nocapture' } @args or die 'changed ordinary output handling';
+    if ($target eq 'corpus') {
+        my %repeated = map { $_ => 1 } @case_tests;
+        !grep { $repeated{$_} } @args or die 'case tests stayed in the ordinary partition';
+    }
+}
 my %selected = map { $_ => 1 } @args;
 my @ran = grep { $selected{$_} } @names;
+print "full case list: $renamed_reader\n" if grep { $_ eq $renamed_reader } @ran;
+# A listed test which no longer reads the variable repeats its full work;
+# the allowlist can add work in this situation but cannot lose coverage.
+print "nonreading test ran in full\n"
+    if $fixture eq 'nonreading' && grep { $_ eq $ordinary_adapter } @ran;
 my $ignored = grep { /ignored$/ } @ran;
 my $passed = @ran - $ignored;
 my $mode = $ENV{SHARD_RESULT} // '';
 exit 0 if $mode eq 'missing';
 $passed++ if $mode eq 'extra';
 $passed = $ignored = 0 if $mode eq 'unmatched';
+$passed = $ignored = 0 if $mode eq 'repeated-unmatched' && defined $case_shard;
 my $failed = $mode eq 'failed' ? $passed-- && 1 : 0;
 my $summary = "test result: " . ($failed ? 'FAILED' : 'ok')
     . ". $passed passed; $failed failed; $ignored ignored; 0 measured; 0 filtered out; finished in 0.00s\n";
@@ -119,6 +156,32 @@ CARGO
             failed) test "$status" -eq 17; grep -q 'completeness checked: 3 reported' "$work/shard-$mode.log" ;;
         esac
     done
+    for fixture in both renamed absent nonreading; do
+        : > "$work/full-readers"
+        i=1
+        while test "$i" -le 3; do
+            SHARD_CASE_TESTS=$fixture SHARD_EXPECTED_CASE=$i/3 WHITEFOOT_CASE_SHARD=invalid-inherited \
+                perl "$shards" corpus "$i/3" "$work/cargo-stand-in" > "$work/case-$fixture-$i.log"
+            case "$fixture" in
+                both|nonreading) grep -q 'repeats 2 case-sharded tests' "$work/case-$fixture-$i.log" ;;
+                renamed) grep -q 'repeats 1 case-sharded tests' "$work/case-$fixture-$i.log" ;;
+                absent) if grep -q 'repeats .*case-sharded tests' "$work/case-$fixture-$i.log"; then exit 1; fi ;;
+            esac
+            if grep 'full case list:' "$work/case-$fixture-$i.log" >> "$work/full-readers"; then :; fi
+            grep -q -- '--test discovered' "$work/case-$fixture-$i.log"
+            test "$fixture" != nonreading || grep -q 'nonreading test ran in full' "$work/case-$fixture-$i.log"
+            i=$((i + 1))
+        done
+        case "$fixture" in
+            renamed|absent) test "$(wc -l < "$work/full-readers" | tr -d ' ')" -eq 1 ;;
+            *) test ! -s "$work/full-readers" ;;
+        esac
+    done
+    status=0
+    SHARD_CASE_TESTS=both SHARD_EXPECTED_CASE=2/3 SHARD_RESULT=repeated-unmatched \
+        perl "$shards" corpus 2/3 "$work/cargo-stand-in" > "$work/repeated-unmatched.log" 2>&1 || status=$?
+    test "$status" -ne 0
+    grep -q 'completeness mismatch: selected 2 names, libtest reported 0' "$work/repeated-unmatched.log"
     echo 'test shards: partition, exact filters, target discovery, ignored counts and completeness pass'
 }
 test_shards

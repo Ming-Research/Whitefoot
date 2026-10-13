@@ -27,9 +27,9 @@
 //! The corpus-wide run is an ordinary test in the shared source-corpus
 //! executable. It obtains every case's verdict and executes each run case.
 //! `make conformance-run` selects it for focused use; the full gate reaches
-//! it once through the normal corpus tests, with no ignored opt-in. The
-//! adapter excludes no case, weakens no expectation, and skips nothing;
-//! running it prints the complete tally.
+//! it once per case through the normal corpus tests, with no ignored opt-in.
+//! Gate shards partition manifest positions; together they exclude no case
+//! and weaken no expectation. Each invocation prints its selected tally.
 
 use std::collections::BTreeMap;
 use std::io::Write;
@@ -378,7 +378,7 @@ fn outcome(case: &Case, reached: &Verdict) -> Outcome {
 
 #[test]
 fn the_corpus_reaches_its_declared_verdict_through_the_ordinary_compiler_path() {
-    let cases = corpus::load();
+    let cases = corpus::case_shard(corpus::load());
     assert!(
         !cases.is_empty(),
         "the conformance manifest declared no case"
@@ -487,17 +487,17 @@ fn reach_with_receipts(case: &Case, cache: &BuildCache) -> Verdict {
 }
 
 /// [MOD-8] proof receipts change the work a check does and never its
-/// verdict. The whole corpus is checked through one receipt cache, in
-/// reverse manifest order and then in manifest order, so every case is
-/// checked both after and before the receipts its neighbours record: a key
-/// that missed an input a case's analysis reads would carry a neighbour's
-/// acceptance into it. Every source verdict must be the declared one; a run
-/// case must be accepted, since executing it reads no receipt, and an
-/// unsupported case, whose capability gap may lie past checking, is left to
-/// the ordinary run.
+/// verdict. The selected cases are checked through one receipt cache, in
+/// reverse manifest order and then in manifest order, so every selected case
+/// is checked both after and before the receipts its selected neighbours
+/// record: a key that missed an input a case's analysis reads would carry a
+/// neighbour's acceptance into it. Every source verdict must be the declared
+/// one; a run case must be accepted, since executing it reads no receipt,
+/// and an unsupported case, whose capability gap may lie past checking, is
+/// left to the ordinary run.
 #[test]
 fn a_shared_proof_receipt_cache_reaches_every_declared_source_verdict() {
-    let cases = corpus::load();
+    let cases = corpus::case_shard(corpus::load());
     let directory = std::env::temp_dir().join(format!(
         "whitefoot-conformance-receipts-{}",
         std::process::id()

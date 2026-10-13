@@ -1,6 +1,10 @@
 #!/usr/bin/env perl
-# libtest has no shard option. Use its own list and exact filters, preserving
-# one test process per Cargo target and checking its native summary.
+# libtest has no shard option. Use its own list and exact filters, keeping
+# selected names together in each invocation and checking its native summary.
+# Only the named corpus tests receive a case shard, in a separate invocation.
+# A stale name is intersected with libtest's list; an unlisted reader runs
+# its whole case list once in its ordinary name shard. A listed nonreader
+# repeats its full work on every shard; drift can add work, never omit cases.
 use strict;
 use warnings;
 use JSON::PP qw(decode_json);
@@ -29,6 +33,11 @@ if ($mode eq '--partition') {
 }
 @ARGV == 3 && ($mode eq 'unit' || $mode eq 'corpus') or die $usage;
 $| = 1;
+delete $ENV{WHITEFOOT_CASE_SHARD};
+my %case_tests = map { $_ => 1 } (
+    'conformance::adapter::the_corpus_reaches_its_declared_verdict_through_the_ordinary_compiler_path',
+    'conformance::adapter::a_shared_proof_receipt_cache_reaches_every_declared_source_verdict',
+);
 
 # Read stdout without a shell pipeline; close reports Cargo's own status.
 # Running output is copied immediately so the gate's completion gaps survive.
@@ -43,6 +52,30 @@ sub command {
     close $output;
     my $status = $?;
     return ($text, ($status & 127) ? 128 + ($status & 127) : $status >> 8);
+}
+
+sub run_tests {
+    my ($target, $selected, $case_shard) = @_;
+    my @test = ($cargo, 'test', '--profile', 'gate', @$target, '--locked', '--offline');
+    # An empty exact filter cannot match a nonempty Rust test name. Omitting
+    # filters instead would run the entire target on an empty shard.
+    my @filters = @$selected ? @$selected : ('');
+    local $ENV{WHITEFOOT_CASE_SHARD};
+    if (defined $case_shard) {
+        $ENV{WHITEFOOT_CASE_SHARD} = $case_shard;
+    } else {
+        delete $ENV{WHITEFOOT_CASE_SHARD};
+    }
+    my ($result, $status) = command(1, @test, '--', '--exact', @filters,
+        defined $case_shard ? ('--nocapture') : ());
+    my @reported = $result =~ /^test result: (?:ok|FAILED)\. (\d+) passed; (\d+) failed; (\d+) ignored;/mg;
+    @reported == 3 or die "test shards: @$target $shard expected one libtest summary, found "
+        . (@reported / 3) . "\n";
+    my $reported = $reported[0] + $reported[1] + $reported[2];
+    $reported == @$selected or die "test shards: @$target $shard completeness mismatch: selected "
+        . scalar(@$selected) . " names, libtest reported $reported (passed + failed + ignored)\n";
+    print "test shards: @$target $shard completeness checked: $reported reported\n";
+    exit $status if $status;
 }
 
 my @targets = (['--lib']);
@@ -80,18 +113,15 @@ for my $target (@targets) {
     }
     # Terse lists include ignored tests without a marker. No ignore override
     # is passed when running, so their native ignored verdict stays unchanged.
-    my @selected = partition(@names);
+    my @repeated = @$target == 2 && $target->[0] eq '--test' && $target->[1] eq 'corpus'
+        ? grep { $case_tests{$_} } @names : ();
+    my %repeated = map { $_ => 1 } @repeated;
+    my @selected = partition(grep { !$repeated{$_} } @names);
     print "test shards: @$target $shard selected ", scalar(@selected),
         " of ", scalar(@names), " names\n";
-    # An empty exact filter cannot match a nonempty Rust test name. Omitting
-    # filters instead would run the entire target on an empty shard.
-    my ($result, $status) = command(1, @test, '--', '--exact', @selected ? @selected : ('') );
-    my @reported = $result =~ /^test result: (?:ok|FAILED)\. (\d+) passed; (\d+) failed; (\d+) ignored;/mg;
-    @reported == 3 or die "test shards: @$target $shard expected one libtest summary, found "
-        . (@reported / 3) . "\n";
-    my $reported = $reported[0] + $reported[1] + $reported[2];
-    $reported == @selected or die "test shards: @$target $shard completeness mismatch: selected "
-        . scalar(@selected) . " names, libtest reported $reported (passed + failed + ignored)\n";
-    print "test shards: @$target $shard completeness checked: $reported reported\n";
-    exit $status if $status;
+    run_tests($target, \@selected, undef);
+    if (@repeated) {
+        print "test shards: @$target $shard repeats ", scalar(@repeated), " case-sharded tests\n";
+        run_tests($target, \@repeated, $shard);
+    }
 }

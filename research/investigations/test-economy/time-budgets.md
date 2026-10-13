@@ -854,6 +854,61 @@ request opened after its branch's last push gets no run of its own either;
 that head cannot merge until `main` is merged into it, and the push that
 does so is checked.
 
+## Six-minute gate with test and case shards
+
+The question is whether three independently built unit shards and three corpus
+shards can finish the complete correctness gate within 360 s without runner
+queueing. A trial rejects the scheduling proposal if the gate exceeds 360 s,
+any correctness check fails, or a test's partitions omit or repeat a case
+across shards. The
+comparison keeps the existing compiler profile, cases, verdicts and assertions.
+
+Gate-log measurements collected for this goal summarize the five most recent
+successful main gates on Linux hosted runners before the first sharded trial:
+
+| Group | Job wall median | Setup | Compilation | Test execution |
+|---|---:|---:|---:|---:|
+| unit | 349 s | 43 s | 160 s | 143 s |
+| corpus | 341 s | 37 s | 103 s | 194 s |
+
+Static and runtime job-wall medians were 103 s and 66 s. These are separate
+medians, so the phase values need not sum to the job median. Completion gaps
+were at most 14 s for corpus and 6 s for unit. Caching had been tried without
+saving compilation: the compiler crate recompiled on every push. These logs
+motivated paying compilation independently in parallel and dividing test
+names, with an estimated slowest job of about 250 s; they were a scheduling
+estimate, not a same-source compiler-performance comparison.
+
+The first trial, [gate run for the sharding PR](https://github.com/Ming-Research/Whitefoot/actions/runs/38446419397)
+at the [initial sharding revision](https://github.com/Ming-Research/Whitefoot/commit/96442488c575fd0daf56d57a8f5bb995e7eb7c17),
+was reported green with complete counts: unit selected 908 + 908 + 908 of
+2724 names; the CLI selected 9 + 9 + 8 of 26; the corpus integration target
+selected 57 + 57 + 56 of 170, including one ignored test. Its reported total
+was 394 s, exceeding the 360 s goal.
+
+| Corpus shard | Test execution |
+|---|---:|
+| 1/3 | 26 s |
+| 2/3 | 196 s |
+| 3/3 | 36 s |
+
+Both `the_corpus_reaches_its_declared_verdict_through_the_ordinary_compiler_path`
+and `a_shared_proof_receipt_cache_reaches_every_declared_source_verdict` landed
+in shard 2/3. Each walked the complete conformance manifest on one test thread
+and took roughly 190 s, bounding that shard. A completion gap is a lower bound,
+not a bound on a test's duration, so the short gaps had concealed these walks.
+
+The next trial partitions ordinary names as before and invokes these two
+tests in every corpus shard with disjoint manifest-position subsets. The
+receipt-cache test retains reverse and forward passes over each subset and
+its reuse assertion. The loader appends case-bearing manifest lines in file
+order, without directory or hash iteration. Source inspection finds 2842
+cases, so the three case subsets should contain 948, 947 and 947 cases for
+each adapter test. The supplied log summary above is the evidence for the
+first trial; the case-sharded revision still needs a complete CI run and the
+360 s check. No case, manifest entry, expected verdict or existing assertion
+changes in this comparison.
+
 ## Daily loop
 
 One edit, measured in the local container with the new defaults: an unused
