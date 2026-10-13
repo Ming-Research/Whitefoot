@@ -328,6 +328,12 @@ impl Reasoning<'_, '_, '_> {
         for step in steps {
             match step {
                 CheckedPlaceStep::Field(field) => base.path.push(PlaceStep::Field(*field)),
+                CheckedPlaceStep::Payload { variant, field, .. } => {
+                    base.path.push(PlaceStep::Payload {
+                        variant: *variant,
+                        field: *field,
+                    });
+                }
                 CheckedPlaceStep::BoxReferent(_) => base.path.push(PlaceStep::Deref),
                 CheckedPlaceStep::Measure(measure) => base.path.push(PlaceStep::Measure(*measure)),
                 CheckedPlaceStep::Subscript(subscript) => {
