@@ -2780,6 +2780,14 @@ fn condition_view_rejects_an_existing_negation_origin_class() {
             );
         }
         let context = ProofContext::new(&state.facts, &state.affine);
+        // Check the class guard independently of the outer guard that also
+        // rejects a contradictory enlarged view.
+        assert!(
+            analyzer
+                .reasoning()
+                .try_condition_origin_view(context, &condition_not(x.clone()))
+                .is_none()
+        );
         let expected = analyzer.reasoning().prove(
             context,
             ProofGoal::Signed {

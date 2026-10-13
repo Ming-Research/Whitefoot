@@ -10780,8 +10780,12 @@ pub(crate) mod tests {
 
     /// Filling metadata on an existing goal is not append-only growth: its
     /// new projection may prove the opposite of an entering opaque sign.
+    /// A harmless appended goal must not hide that older metadata change
+    /// behind the suffix-only contradiction check.
     #[test]
     fn existing_goal_metadata_invalidates_a_remembered_closed_view() {
+        use super::super::super::goal::GoalDatum;
+
         let (plain, _) = integer_goal_views();
         let mut terms = TermTable::new();
         let term = terms.intern(TermKind::Place(
@@ -10804,6 +10808,15 @@ pub(crate) mod tests {
         let first = close(&state, &terms, &goals, &mut ledger);
         assert!(!first.contradictory());
         assert_eq!(goals.intern(plain, Some(relation), None, vec![]), goal);
+        let harmless = goals.intern(
+            GoalExpression::Datum(GoalDatum::Literal(CheckedValue::Bool(true))),
+            None,
+            None,
+            vec![],
+        );
+        goals.mark_metadata_complete(harmless);
+        assert!(first.derives_goal(harmless, GoalSign::Positive, &goals));
+        assert!(!first.derives_goal(harmless, GoalSign::Negative, &goals));
         let second = close(&state, &terms, &goals, &mut ledger);
         assert!(!Rc::ptr_eq(&first, &second));
         assert!(second.contradictory());
