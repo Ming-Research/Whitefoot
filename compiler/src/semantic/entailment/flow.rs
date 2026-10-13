@@ -753,13 +753,61 @@ struct AffineL0Index {
     by_terms: WordHashMap<Box<[AffineCoefficient]>, usize>,
 }
 
+/// The retained L0 inputs of one function-local affine query.
+///
+/// Equal retained stores and term revision give exactly the same numeric
+/// closure: signed-goal reconstruction adds no L0 relation [ENT-4]. Keeping
+/// the stores alive forces an L0 or source-proof edit to copy them, so a view
+/// that adds only signed facts may reuse the index. The index keeps pair
+/// identities and bounds, never proof IDs; every selected parent is read from
+/// the current closure, preserving its witness even if signed reconstruction
+/// changed the closure's term inventory or implicit-proof materialization.
+#[derive(Clone)]
+struct AffineL0Content {
+    bounds: Rc<super::state::BoundStore>,
+    distinct: Rc<super::state::WordHashSet<super::state::DistinctKey>>,
+    distinct_proofs: Rc<WordHashMap<super::state::DistinctKey, DerivationId>>,
+    terms: usize,
+    term_revision: usize,
+    ledger: usize,
+    contradictory: bool,
+    contradiction: Option<DerivationId>,
+}
+
+impl AffineL0Content {
+    fn new(
+        facts: &FactState,
+        terms: &TermTable,
+        ledger: &DerivationLedger,
+        closed: &ClosedState,
+    ) -> Self {
+        Self {
+            bounds: Rc::clone(&facts.bounds),
+            distinct: Rc::clone(&facts.distinct),
+            distinct_proofs: Rc::clone(&facts.distinct_proofs),
+            terms: std::ptr::from_ref(terms) as usize,
+            term_revision: terms.revision(),
+            ledger: std::ptr::from_ref(ledger) as usize,
+            contradictory: closed.contradictory(),
+            contradiction: closed.contradiction_proof(),
+        }
+    }
+
+    fn matches(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.bounds, &other.bounds)
+            && Rc::ptr_eq(&self.distinct, &other.distinct)
+            && Rc::ptr_eq(&self.distinct_proofs, &other.distinct_proofs)
+            && self.terms == other.terms
+            && self.term_revision == other.term_revision
+            && self.ledger == other.ledger
+            && self.contradictory == other.contradictory
+            && self.contradiction == other.contradiction
+    }
+}
+
 /// One function-local query memo, including the full ordered value images.
-/// Keeping the closed Rc alive makes its allocation identity unambiguous;
-/// FactState::close changes that identity after facts or inventories change.
-/// The index stores no derivation IDs: selected parents still come from this
-/// view and the vocabulary's one ledger at the point of the query.
 struct AffineL0Cache {
-    closed: Rc<ClosedState>,
+    l0: AffineL0Content,
     index: Rc<LazyAffineL0Index>,
 }
 
@@ -1360,6 +1408,7 @@ impl<'check, 'unit> Analyzer<'check, 'unit> {
                 terms: TermTable::new(),
                 goals: GoalTable::default(),
                 derivations: DerivationLedger::default(),
+                origin_queries: origin_transport::OriginQueryCache::default(),
                 affine_l0_cache: None,
                 affine_models: Vec::new(),
                 affine_atoms: Vec::new(),
@@ -1758,6 +1807,7 @@ struct Vocabulary {
     terms: TermTable,
     goals: GoalTable,
     derivations: DerivationLedger,
+    origin_queries: origin_transport::OriginQueryCache,
     /// Only the most recent view is held, rather than one quadratic index
     /// per program point. Ordinary queries and certificates share this memo.
     affine_l0_cache: Option<AffineL0Cache>,

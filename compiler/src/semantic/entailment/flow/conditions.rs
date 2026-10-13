@@ -38,9 +38,10 @@ impl Judging<'_, '_, '_> {
             );
             if !closed.contradictory() {
                 super::super::work::condition();
+                let mut views = HashMap::new();
                 for truth in [true, false] {
                     if let Some((residual, proofs)) =
-                        self.decided_condition(origins, context, truth)
+                        self.decided_condition(origins, context, truth, &mut views)
                     {
                         outcome.decided = Some(truth);
                         outcome.residual = residual;
@@ -67,6 +68,7 @@ impl Judging<'_, '_, '_> {
         origins: &ArmFacts,
         context: ProofContext<'_>,
         truth: bool,
+        views: &mut HashMap<GoalId, FactState>,
     ) -> Option<(String, Vec<DerivationId>)> {
         let mut proofs = Vec::new();
         let mut residual = None;
@@ -75,18 +77,10 @@ impl Judging<'_, '_, '_> {
             if residual.is_none() {
                 residual = Some(self.input.render_concrete_goal(&expression));
             }
-            let goal = if truth {
-                expression
-            } else {
-                GoalExpression::Operation {
-                    row: GoalOperation::Boolean(CheckedBooleanOperation::Not),
-                    type_arguments: Vec::new(),
-                    const_arguments: Vec::new(),
-                    result: CheckedType::Bool,
-                    arguments: vec![expression],
-                }
-            };
-            let result = self.condition_query(&goal, context);
+            super::super::work::condition_query();
+            let result = self
+                .reasoning()
+                .prove_condition_origin(context, origin, truth, views);
             match (result.disposition, result.derivation) {
                 (ProofDisposition::Proved, Some(proof)) => proofs.push(proof),
                 _ => return None,
@@ -112,24 +106,6 @@ impl Judging<'_, '_, '_> {
             }
         }
         Some((residual.unwrap_or_default(), proofs))
-    }
-
-    fn condition_query(
-        &mut self,
-        expression: &GoalExpression,
-        context: ProofContext<'_>,
-    ) -> ProofResult {
-        super::super::work::condition_query();
-        let affine = self
-            .reasoning()
-            .affine_goal_ordering_target(expression, context.affine);
-        self.reasoning().prove(
-            context,
-            ProofGoal::Signed {
-                expression,
-                affine: affine.as_ref(),
-            },
-        )
     }
 
     /// Renders the source premises of one deciding proof before the ledger

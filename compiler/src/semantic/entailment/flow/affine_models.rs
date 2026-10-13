@@ -27,8 +27,8 @@
 
 use super::*;
 
-/// The ordinary and origin-transport views of one query alternate, and a
-/// condition's two truths query both, so two views avoid rebuilding either.
+/// Ordinary and origin-transport queries can alternate between two numeric
+/// premise sets; two slots avoid rebuilding either while they remain resident.
 const MODEL_VIEWS: usize = 2;
 
 /// Points kept per view, the least and greatest included; a point found once
@@ -41,7 +41,6 @@ const MODEL_ROUNDS: usize = 8;
 
 /// The premises of one query view, in atom positions, with the points found.
 pub(super) struct AffineModelCache {
-    closed: Rc<ClosedState>,
     index: Rc<LazyAffineL0Index>,
     assumptions: Vec<AffineInequality>,
     /// `None` when the upward search from every atom's minimum finds no
@@ -181,7 +180,6 @@ impl Reasoning<'_, '_, '_> {
             models.remove(0);
         }
         models.push(AffineModelCache {
-            closed: Rc::clone(closed),
             index: Rc::clone(index),
             assumptions: assumptions
                 .iter()
@@ -203,13 +201,20 @@ impl AffineModelCache {
             .map(|refutation| &refutation.target)
     }
 
+    /// An index residency fixes the retained L0 content and ordered value
+    /// images (`AffineL0Content`), so its identity and the explicit numerical
+    /// premises fix every model constraint. Signed-only origin additions may
+    /// change the closed-state allocation but cannot change a satisfying
+    /// point. Models retain no derivations; a refutation only skips a search
+    /// whose exhaustive result is already unproved. Atom rollbacks still
+    /// clear every model, preventing reuse with changed intrinsic ranges.
     fn matches(
         &self,
         closed: &Rc<ClosedState>,
         index: &Rc<LazyAffineL0Index>,
         assumptions: &[ActiveAffineFact],
     ) -> bool {
-        Rc::ptr_eq(&self.closed, closed)
+        !closed.contradictory()
             && Rc::ptr_eq(&self.index, index)
             && self.assumptions.len() == assumptions.len()
             && self

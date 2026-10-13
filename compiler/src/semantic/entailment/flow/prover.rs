@@ -462,8 +462,85 @@ impl Reasoning<'_, '_, '_> {
             _ => None,
         };
         let view = self.origin_query_view(context, submitted.as_ref());
+        self.prove_in_origin_view(context, goal, ordinary, &view)
+    }
+
+    /// R1: the extra `bnot X` class may contain only its new root and term
+    /// view. It then has no entering sign or transport edge to an old member;
+    /// introduction never decomposes its derived sign. Thus its positive
+    /// affine proof cannot feed any old class. We also reject a contradictory
+    /// shared view: the new root could itself supply a different contradiction
+    /// parent when opposite affine proofs are found in the same pass. With
+    /// neither effect, old fixed-point proofs and True stay unchanged. An
+    /// existing class must use the two specified collections (a transported
+    /// `+bnot X` can otherwise
+    /// make only the enlarged collection contradictory).
+    ///
+    /// The memo belongs to one condition judgment, with unchanged entering
+    /// facts and affine images. Both truths still try the ordinary route first
+    /// and keep its result whenever the view leaves its disposition unchanged.
+    pub(super) fn prove_condition_origin(
+        &mut self,
+        context: ProofContext<'_>,
+        origin: GoalId,
+        truth: bool,
+        views: &mut HashMap<GoalId, FactState>,
+    ) -> ProofResult {
+        let expression = self.vocabulary.goals.expression(origin).clone();
+        let negated = GoalExpression::Operation {
+            row: GoalOperation::Boolean(CheckedBooleanOperation::Not),
+            type_arguments: Vec::new(),
+            const_arguments: Vec::new(),
+            result: CheckedType::Bool,
+            arguments: vec![expression.clone()],
+        };
+        let expression = if truth { &expression } else { &negated };
+        let affine = self.affine_goal_ordering_target(expression, context.affine);
+        let goal = ProofGoal::Signed {
+            expression,
+            affine: affine.as_ref(),
+        };
+        let ordinary = {
+            let _timed = super::super::work::timed(super::super::work::Phase::OrdinaryProve);
+            self.prove_prepared(
+                ProofContext {
+                    origin_view: OriginView::Ordinary,
+                    ..context
+                },
+                goal,
+            )
+        };
+        if ordinary.disposition == ProofDisposition::Proved || context.facts.goal_origins.is_empty()
+        {
+            return ordinary;
+        }
+        if truth && let Some(view) = self.try_condition_origin_view(context, &negated) {
+            let closed = close(
+                &view,
+                &self.vocabulary.terms,
+                &self.vocabulary.goals,
+                &mut self.vocabulary.derivations,
+            );
+            if !closed.contradictory() {
+                views.insert(origin, view);
+            }
+        }
+        if let Some(view) = views.get(&origin) {
+            return self.prove_in_origin_view(context, goal, ordinary, view);
+        }
+        let view = self.origin_query_view(context, Some(expression));
+        self.prove_in_origin_view(context, goal, ordinary, &view)
+    }
+
+    fn prove_in_origin_view(
+        &mut self,
+        context: ProofContext<'_>,
+        goal: ProofGoal<'_>,
+        ordinary: ProofResult,
+        view: &FactState,
+    ) -> ProofResult {
         let prepared = ProofContext {
-            facts: &view,
+            facts: view,
             affine: context.affine,
             closed: None,
             origin_view: OriginView::Prepared,
@@ -3194,9 +3271,10 @@ impl Reasoning<'_, '_, '_> {
         None
     }
 
-    /// Reuse the demanded index entries only for exactly the same closed
-    /// facts and candidate images. Candidate formation comes first: it may
-    /// register a term or mint a current measure image. Exact vector equality
+    /// Reuse the demanded index entries only for exactly the same L0
+    /// inputs and candidate images (see `AffineL0Content`). Candidate formation
+    /// comes first: it may register a term or mint a current measure image.
+    /// Exact vector equality
     /// includes term identity, coefficients, constants and traversal order;
     /// equal lengths or an unchanged L0 closure alone are insufficient.
     pub(super) fn affine_query_view(
@@ -3209,8 +3287,14 @@ impl Reasoning<'_, '_, '_> {
             &self.vocabulary.goals,
             &mut self.vocabulary.derivations,
         );
+        let l0 = AffineL0Content::new(
+            context.facts,
+            &self.vocabulary.terms,
+            &self.vocabulary.derivations,
+            &closed,
+        );
         if let Some(cached) = &self.vocabulary.affine_l0_cache
-            && Rc::ptr_eq(&cached.closed, &closed)
+            && cached.l0.matches(&l0)
             && cached.index.candidates == candidates
         {
             super::super::work::affine_query(true);
@@ -3219,7 +3303,7 @@ impl Reasoning<'_, '_, '_> {
         super::super::work::affine_query(false);
         let index = Rc::new(LazyAffineL0Index::new(candidates));
         self.vocabulary.affine_l0_cache = Some(AffineL0Cache {
-            closed: Rc::clone(&closed),
+            l0,
             index: Rc::clone(&index),
         });
         (closed, index)

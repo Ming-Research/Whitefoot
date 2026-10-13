@@ -25,7 +25,7 @@
 //! - `function` also aggregates affine work: `affine_attempts` counts query
 //!   preparations (ordinary targets and certificate residuals);
 //!   `affine_memo_hits` and `affine_memo_misses` partition those attempts by
-//!   closed-state identity and complete ordered candidate equality.
+//!   retained L0 content and complete ordered candidate equality.
 //!   `affine_cold_demands` counts distinct vector requests before promotion,
 //!   including absent vectors and the request that triggers promotion.
 //!   `affine_left_candidates_scanned` counts left candidates visited by lazy

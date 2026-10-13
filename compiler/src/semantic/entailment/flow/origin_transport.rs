@@ -23,6 +23,7 @@ struct Expansion {
     key: usize,
     origins: Vec<DerivationId>,
     datum: Option<GoalDatum>,
+    allocation_order: Vec<usize>,
 }
 
 #[derive(Default)]
@@ -32,17 +33,33 @@ struct OriginKeys {
     ids: HashMap<OriginNode, usize>,
     memo: HashMap<GoalExpression, Vec<(GoalExpression, Expansion)>>,
     following: HashSet<BindingId>,
+    allocation_order: Vec<usize>,
+    collection_order: HashMap<usize, usize>,
 }
 
 impl OriginKeys {
+    fn visit_key(&mut self, key: usize) {
+        let next = self.collection_order.len();
+        self.collection_order.entry(key).or_insert(next);
+        self.allocation_order.push(key);
+    }
+
     fn intern(&mut self, node: OriginNode) -> usize {
-        if let Some(key) = self.ids.get(&node) {
-            return *key;
-        }
-        let key = self.nodes.len();
-        self.nodes.push(node.clone());
-        self.ids.insert(node, key);
+        let key = if let Some(key) = self.ids.get(&node) {
+            *key
+        } else {
+            let key = self.nodes.len();
+            self.nodes.push(node.clone());
+            self.ids.insert(node, key);
+            key
+        };
+        self.visit_key(key);
         key
+    }
+
+    fn start_collection(&mut self) {
+        self.allocation_order.clear();
+        self.collection_order.clear();
     }
 
     fn expansion(&mut self, expression: &GoalExpression) -> Expansion {
@@ -51,8 +68,13 @@ impl OriginKeys {
                 .iter()
                 .find(|(view, _)| view.same_admission_view(expression))
         }) {
-            return expansion.clone();
+            let expansion = expansion.clone();
+            for &key in &expansion.allocation_order {
+                self.visit_key(key);
+            }
+            return expansion;
         }
+        let allocation_start = self.allocation_order.len();
         let mut origins = Vec::new();
         let mut expanded_datum = None;
         let key = match expression {
@@ -132,10 +154,14 @@ impl OriginKeys {
         };
         origins.sort_unstable();
         origins.dedup();
+        let mut allocation_order = self.allocation_order[allocation_start..].to_vec();
+        let mut seen = HashSet::new();
+        allocation_order.retain(|key| seen.insert(*key));
         let expansion = Expansion {
             key,
             origins,
             datum: expanded_datum,
+            allocation_order,
         };
         self.memo
             .entry(expression.clone())
@@ -176,6 +202,82 @@ impl OriginKeys {
             },
             GoalExpression::Datum(_) => expression.clone(),
         }
+    }
+}
+
+type EnteringOrigin = (GoalId, GoalSign, DerivationId, bool);
+
+#[derive(Clone)]
+struct OriginCollection {
+    entering: Vec<EnteringOrigin>,
+    expressions: Vec<GoalExpression>,
+    seen: HashMap<GoalExpression, Vec<GoalExpression>>,
+    numeric_views: HashMap<GoalExpression, Vec<GoalExpression>>,
+}
+
+/// The expansion DAG survives exactly an unchanged live-definition map;
+/// the source collection additionally requires unchanged ordered signed
+/// sources (including proof and numeric-admission identity). Thus a hit
+/// reproduces the same preorder trees and transport parents. Replaying each
+/// expansion's allocation trace restores fresh-build class order, so cached
+/// node identities cannot change which retained proof is selected.
+#[derive(Default)]
+pub(super) struct OriginQueryCache {
+    origins: Vec<(BindingId, GoalId, DerivationId)>,
+    keys: OriginKeys,
+    collection: Option<OriginCollection>,
+}
+
+impl OriginQueryCache {
+    fn set_origins(&mut self, origins: Vec<(BindingId, GoalId, DerivationId)>) {
+        if self.origins != origins {
+            self.origins = origins;
+            self.keys = OriginKeys::default();
+            self.collection = None;
+        }
+        self.keys.start_collection();
+    }
+
+    fn source_collection(
+        &mut self,
+        goals: &GoalTable,
+        entering: &[EnteringOrigin],
+    ) -> OriginCollection {
+        if self
+            .collection
+            .as_ref()
+            .is_none_or(|collection| collection.entering != entering)
+        {
+            let mut expressions = Vec::new();
+            let mut seen = HashMap::new();
+            for &(binding, goal, proof) in &self.origins {
+                let definition = goals.expression(goal).clone();
+                self.keys
+                    .definitions
+                    .insert(binding, (definition.clone(), proof));
+                collect(
+                    goal_binding_place(binding, [], definition.ty()),
+                    &mut expressions,
+                    &mut seen,
+                );
+                collect(definition, &mut expressions, &mut seen);
+            }
+            let mut numeric_views = seen.clone();
+            for (goal, _, _, numeric) in entering {
+                let expression = goals.expression(*goal).clone();
+                if *numeric {
+                    collect(expression.clone(), &mut Vec::new(), &mut numeric_views);
+                }
+                collect(expression, &mut expressions, &mut seen);
+            }
+            self.collection = Some(OriginCollection {
+                entering: entering.to_vec(),
+                expressions,
+                seen,
+                numeric_views,
+            });
+        }
+        self.collection.as_ref().unwrap().clone()
     }
 }
 
@@ -245,24 +347,38 @@ impl Reasoning<'_, '_, '_> {
         context: ProofContext<'_>,
         submitted: Option<&GoalExpression>,
     ) -> FactState {
+        self.build_origin_query_view(context, submitted, false)
+            .expect("ordinary origin views always build")
+    }
+
+    /// Share the two OP-5 truths only when the newly submitted negation has
+    /// no distinct spelling to receive its inferred sign. Its sole extra
+    /// member and term view cannot transport a fact into an entering class;
+    /// a nontrivial class requires the two specification-defined inventories.
+    pub(super) fn try_condition_origin_view(
+        &mut self,
+        context: ProofContext<'_>,
+        negated: &GoalExpression,
+    ) -> Option<FactState> {
+        self.build_origin_query_view(context, Some(negated), true)
+    }
+
+    fn build_origin_query_view(
+        &mut self,
+        context: ProofContext<'_>,
+        submitted: Option<&GoalExpression>,
+        require_new_class: bool,
+    ) -> Option<FactState> {
         let build = super::super::work::timed(super::super::work::Phase::OriginViewBuild);
-        let mut keys = OriginKeys::default();
-        let mut expressions = Vec::new();
-        let mut seen = HashMap::new();
-        let mut definitions = context.facts.goal_origins.iter().collect::<Vec<_>>();
-        definitions.sort_by_key(|(binding, _)| binding.0);
-        for (binding, origin) in definitions {
-            let definition = self.vocabulary.goals.expression(origin.goal).clone();
-            keys.definitions
-                .insert(*binding, (definition.clone(), origin.proof));
-            collect(
-                goal_binding_place(*binding, [], definition.ty()),
-                &mut expressions,
-                &mut seen,
-            );
-            collect(definition, &mut expressions, &mut seen);
-        }
-        let mut numeric_views = seen.clone();
+        let mut cache = std::mem::take(&mut self.vocabulary.origin_queries);
+        let mut origins = context
+            .facts
+            .goal_origins
+            .iter()
+            .map(|(binding, origin)| (*binding, origin.goal, origin.proof))
+            .collect::<Vec<_>>();
+        origins.sort_by_key(|(binding, _, _)| binding.0);
+        cache.set_origins(origins);
         let mut entering = context
             .facts
             .opaque_sources
@@ -289,13 +405,13 @@ impl Reasoning<'_, '_, '_> {
             }
         }
         entering.sort_by_key(|(goal, sign, _, _)| (goal.0, *sign == GoalSign::Negative));
-        for (goal, _, _, numeric) in &entering {
-            let expression = self.vocabulary.goals.expression(*goal).clone();
-            if *numeric {
-                collect(expression.clone(), &mut Vec::new(), &mut numeric_views);
-            }
-            collect(expression, &mut expressions, &mut seen);
-        }
+        let OriginCollection {
+            mut expressions,
+            mut seen,
+            mut numeric_views,
+            ..
+        } = cache.source_collection(&self.vocabulary.goals, &entering);
+        let keys = &mut cache.keys;
         if let Some(submitted) = submitted {
             collect(submitted.clone(), &mut Vec::new(), &mut numeric_views);
             collect(submitted.clone(), &mut expressions, &mut seen);
@@ -322,7 +438,7 @@ impl Reasoning<'_, '_, '_> {
                     .entry(expansion.key)
                     .or_insert_with(|| expression.clone());
                 integer_classes
-                    .entry(expansion.key)
+                    .entry(keys.collection_order[&expansion.key])
                     .or_default()
                     .push((goal, term, offset));
             }
@@ -344,9 +460,39 @@ impl Reasoning<'_, '_, '_> {
             }
             let goal = self.intern_goal_expression(expression.clone());
             let expansion = keys.expansion(expression);
-            classes.entry(expansion.key).or_default().push(goal);
+            classes
+                .entry(keys.collection_order[&expansion.key])
+                .or_default()
+                .push(goal);
             expansions.insert(goal, expansion);
         }
+        if require_new_class {
+            let submitted = submitted.expect("sharing requires the submitted negation");
+            let expansion = keys.expansion(submitted);
+            let term_view = keys.term_view(submitted, &representatives);
+            let allowed = [
+                self.vocabulary.goals.id(submitted),
+                self.vocabulary.goals.id(&term_view),
+            ];
+            let class_was_present = cache
+                .collection
+                .as_ref()
+                .unwrap()
+                .expressions
+                .iter()
+                .filter(|expression| expression.ty() == CheckedType::Bool)
+                .any(|expression| keys.expansion(expression).key == expansion.key);
+            if class_was_present
+                || classes[&keys.collection_order[&expansion.key]]
+                    .iter()
+                    .any(|goal| !allowed.contains(&Some(*goal)))
+            {
+                self.vocabulary.origin_queries = cache;
+                return None;
+            }
+        }
+        let class_keys = keys.collection_order.clone();
+        self.vocabulary.origin_queries = cache;
         let mut view = context.facts.clone();
         for members in integer_classes.values() {
             let (left, left_term, left_offset) = members[0];
@@ -393,7 +539,7 @@ impl Reasoning<'_, '_, '_> {
         // Only entering sources supply projected relations. A derived sign
         // below never becomes another numeric/AUTO premise.
         for (from, sign, parent, _) in entering {
-            for &goal in &classes[&expansions[&from].key] {
+            for &goal in &classes[&class_keys[&expansions[&from].key]] {
                 let proof = self.transport_origin_sign(from, goal, sign, parent, &expansions);
                 view.establish_derived_goal(goal, sign, proof, &self.vocabulary.goals);
                 if self.vocabulary.goals.canonical(from) != self.vocabulary.goals.canonical(goal)
@@ -418,12 +564,10 @@ impl Reasoning<'_, '_, '_> {
             }
         }
 
-        super::super::work::origin_view(
-            expressions.len(),
-            classes.values().map(Vec::len).sum(),
-        );
+        super::super::work::origin_view(expressions.len(), classes.values().map(Vec::len).sum());
         drop(build);
-        let _fixed_point = super::super::work::timed(super::super::work::Phase::OriginViewFixedPoint);
+        let _fixed_point =
+            super::super::work::timed(super::super::work::Phase::OriginViewFixedPoint);
         // Monotone finite signed closure. Every changing pass installs at
         // least one of exactly two signs per collected Boolean member.
         loop {
@@ -435,7 +579,7 @@ impl Reasoning<'_, '_, '_> {
                 &mut self.vocabulary.derivations,
             );
             if closed.contradictory() {
-                return view;
+                return Some(view);
             }
             let mut additions = Vec::new();
             for members in classes.values() {
@@ -466,7 +610,7 @@ impl Reasoning<'_, '_, '_> {
                             let result = self.prove_signed(prepared, &expression, affine.as_ref());
                             if result.route == Some(ProofRoute::Contradiction) {
                                 view.promote_to_contradiction(result.derivation);
-                                return view;
+                                return Some(view);
                             }
                             if result.disposition == ProofDisposition::Proved {
                                 parent = result.derivation;
@@ -493,7 +637,7 @@ impl Reasoning<'_, '_, '_> {
                 }
             }
             if additions.is_empty() {
-                return view;
+                return Some(view);
             }
             for (goal, sign, proof) in additions {
                 if !view
@@ -503,6 +647,98 @@ impl Reasoning<'_, '_, '_> {
                     view.establish_derived_goal(goal, sign, proof, &self.vocabulary.goals);
                 }
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn boolean(binding: u32) -> GoalExpression {
+        goal_binding_place(BindingId(binding), [], CheckedType::Bool)
+    }
+
+    fn raw_goal(goals: &mut GoalTable, expression: GoalExpression) -> GoalId {
+        goals.intern(expression, None, None, Vec::new())
+    }
+
+    #[test]
+    fn origin_memo_invalidates_changed_definition_and_transport_parent() {
+        let mut goals = GoalTable::default();
+        let old = raw_goal(&mut goals, boolean(1));
+        let new = raw_goal(&mut goals, boolean(2));
+        let mut cache = OriginQueryCache::default();
+        cache.set_origins(vec![(BindingId(0), old, DerivationId(7))]);
+        cache.source_collection(&goals, &[]);
+        assert_eq!(cache.keys.expansion(&boolean(0)).origins, [DerivationId(7)]);
+
+        cache.set_origins(vec![(BindingId(0), new, DerivationId(8))]);
+        let collection = cache.source_collection(&goals, &[]);
+        assert_eq!(collection.expressions, [boolean(0), boolean(2)]);
+        let expanded = cache.keys.expansion(&boolean(0));
+        assert_eq!(expanded.key, cache.keys.expansion(&boolean(2)).key);
+        assert_ne!(expanded.key, cache.keys.expansion(&boolean(1)).key);
+        assert_eq!(expanded.origins, [DerivationId(8)]);
+
+        // Even an identical RHS needs the current introduction as its parent.
+        cache.set_origins(vec![(BindingId(0), new, DerivationId(9))]);
+        cache.source_collection(&goals, &[]);
+        assert_eq!(cache.keys.expansion(&boolean(0)).origins, [DerivationId(9)]);
+
+        cache.set_origins(Vec::new());
+        assert!(cache.source_collection(&goals, &[]).expressions.is_empty());
+        assert!(cache.keys.expansion(&boolean(0)).origins.is_empty());
+    }
+
+    #[test]
+    fn origin_collection_invalidates_changed_entering_source_and_numeric_view() {
+        let mut goals = GoalTable::default();
+        let first = raw_goal(&mut goals, boolean(1));
+        let second = raw_goal(&mut goals, boolean(2));
+        let mut cache = OriginQueryCache::default();
+        cache.set_origins(Vec::new());
+        let first_sources = [(first, GoalSign::Positive, DerivationId(3), true)];
+        let collection = cache.source_collection(&goals, &first_sources);
+        assert_eq!(collection.expressions, [boolean(1)]);
+        assert!(collection.numeric_views.contains_key(&boolean(1)));
+
+        let second_sources = [(second, GoalSign::Negative, DerivationId(4), false)];
+        let collection = cache.source_collection(&goals, &second_sources);
+        assert_eq!(collection.expressions, [boolean(2)]);
+        assert!(!collection.numeric_views.contains_key(&boolean(2)));
+        assert_eq!(collection.entering, second_sources);
+
+        let numeric_sources = [(second, GoalSign::Negative, DerivationId(5), true)];
+        let collection = cache.source_collection(&goals, &numeric_sources);
+        assert!(collection.numeric_views.contains_key(&boolean(2)));
+        assert_eq!(collection.entering, numeric_sources);
+    }
+
+    #[test]
+    fn cached_expansions_keep_fresh_class_order_after_query_order_changes() {
+        let negated = GoalExpression::Operation {
+            row: GoalOperation::Boolean(CheckedBooleanOperation::Not),
+            type_arguments: Vec::new(),
+            const_arguments: Vec::new(),
+            result: CheckedType::Bool,
+            arguments: vec![boolean(1)],
+        };
+        let expressions = [boolean(2), negated, boolean(1)];
+        let mut cached = OriginKeys::default();
+        for expression in expressions.iter().rev() {
+            cached.expansion(expression);
+        }
+        cached.start_collection();
+        let mut fresh = OriginKeys::default();
+        for expression in &expressions {
+            let cached_expansion = cached.expansion(expression);
+            let fresh_expansion = fresh.expansion(expression);
+            assert_eq!(
+                cached.collection_order[&cached_expansion.key],
+                fresh.collection_order[&fresh_expansion.key],
+                "persistent node ids must not reorder the fixed-point classes"
+            );
         }
     }
 }

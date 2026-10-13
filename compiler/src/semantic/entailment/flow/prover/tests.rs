@@ -745,6 +745,161 @@ fn affine_index_cache_rebuilds_after_facts_kills_and_joins() {
 }
 
 #[test]
+fn affine_caches_share_signed_only_views_and_reject_new_numeric_premises() {
+    with_analyzer(|analyzer| {
+        let affine = AffineFlowState::default();
+        let x = cache_measure(analyzer, 0);
+        let mut facts = FactState::new();
+        cache_bound(analyzer, &mut facts, x, ZERO, 9);
+        let a = analyzer.vocabulary.measure_atom(x, &affine);
+        let target = AffineInequality::from_bounded_forms(
+            &a,
+            &AffineForm::constant(0),
+            8,
+            &mut AffineCheckState::new(),
+        )
+        .unwrap();
+        let (ordinary, index) = analyzer
+            .reasoning()
+            .affine_query_view(ProofContext::new(&facts, &affine));
+        assert!(
+            analyzer
+                .reasoning()
+                .affine_model_refutes(&target, &[], &ordinary, &index)
+        );
+        assert_eq!(analyzer.vocabulary.affine_models.len(), 1);
+
+        let goal = analyzer
+            .reasoning()
+            .intern_goal_expression(GoalExpression::Datum(GoalDatum::Literal(
+                CheckedValue::Bool(true),
+            )));
+        let mut view = facts.clone();
+        let event = analyzer
+            .vocabulary
+            .derivations
+            .event(FlowEventKind::S1, None);
+        view.establish_goal(
+            goal,
+            GoalSign::Positive,
+            &analyzer.vocabulary.goals,
+            &mut analyzer.vocabulary.derivations,
+            event,
+        );
+        let (signed, shared) = analyzer
+            .reasoning()
+            .affine_query_view(ProofContext::new(&view, &affine));
+        assert!(
+            !Rc::ptr_eq(&ordinary, &signed),
+            "the signed view has its own closure"
+        );
+        assert!(
+            Rc::ptr_eq(&index, &shared),
+            "signed facts add no numeric premise"
+        );
+        assert!(
+            analyzer
+                .reasoning()
+                .affine_model_refutes(&target, &[], &signed, &shared)
+        );
+        assert_eq!(
+            analyzer.vocabulary.affine_models.len(),
+            1,
+            "the same model was reused"
+        );
+
+        // A new explicit affine premise must not retain the old falsifying
+        // point even though the L0 index is unchanged.
+        let assumptions = [affine_premise(target.clone(), 0)];
+        assert!(!analyzer.reasoning().affine_model_refutes(
+            &target,
+            &assumptions,
+            &signed,
+            &shared
+        ));
+        assert_eq!(analyzer.vocabulary.affine_models.len(), 2);
+
+        // An origin equality/projection that changes L0 must miss both
+        // caches: the old point x = 9 no longer satisfies the view.
+        cache_bound(analyzer, &mut view, x, ZERO, 8);
+        let (stronger, rebuilt) = analyzer
+            .reasoning()
+            .affine_query_view(ProofContext::new(&view, &affine));
+        assert!(!Rc::ptr_eq(&shared, &rebuilt));
+        assert!(
+            !analyzer
+                .reasoning()
+                .affine_model_refutes(&target, &[], &stronger, &rebuilt)
+        );
+        let observed = analyzer
+            .reasoning()
+            .affine_target_proof(&target, &[], ProofContext::new(&view, &affine))
+            .unwrap();
+        analyzer.vocabulary.affine_l0_cache = None;
+        analyzer.vocabulary.affine_models.clear();
+        let fresh = analyzer
+            .reasoning()
+            .affine_target_proof(&target, &[], ProofContext::new(&view, &affine))
+            .unwrap();
+        assert_eq!(observed.parents, fresh.parents);
+        assert_eq!(observed.premises, fresh.premises);
+    });
+}
+
+#[test]
+fn affine_cache_reads_current_parents_for_equal_bounds_with_different_proofs() {
+    with_analyzer(|analyzer| {
+        let affine = AffineFlowState::default();
+        let x = cache_measure(analyzer, 0);
+        let a = analyzer.vocabulary.measure_atom(x, &affine);
+        let target = AffineInequality::from_bounded_forms(
+            &a,
+            &AffineForm::constant(0),
+            9,
+            &mut AffineCheckState::new(),
+        )
+        .unwrap();
+        let mut first = FactState::new();
+        cache_bound(analyzer, &mut first, x, ZERO, 9);
+        let (closed, index) = analyzer
+            .reasoning()
+            .affine_query_view(ProofContext::new(&first, &affine));
+        let parent = closed
+            .bound_proof(x, ZERO, 9, &mut analyzer.vocabulary.derivations)
+            .unwrap();
+        let mut second = FactState::new();
+        cache_bound(analyzer, &mut second, x, ZERO, 9);
+        let (changed, rebuilt) = analyzer
+            .reasoning()
+            .affine_query_view(ProofContext::new(&second, &affine));
+        let next_parent = changed
+            .bound_proof(x, ZERO, 9, &mut analyzer.vocabulary.derivations)
+            .unwrap();
+        assert_ne!(
+            parent, next_parent,
+            "equal bounds retain their own source event"
+        );
+        assert!(
+            !Rc::ptr_eq(&index, &rebuilt),
+            "different L0 proof stores are not shared"
+        );
+        let observed = analyzer
+            .reasoning()
+            .affine_target_proof(&target, &[], ProofContext::new(&second, &affine))
+            .unwrap();
+        assert!(observed.parents.contains(&next_parent));
+        assert!(!observed.parents.contains(&parent));
+        analyzer.vocabulary.affine_l0_cache = None;
+        let fresh = analyzer
+            .reasoning()
+            .affine_target_proof(&target, &[], ProofContext::new(&second, &affine))
+            .unwrap();
+        assert_eq!(observed.parents, fresh.parents);
+        assert_eq!(observed.premises, fresh.premises);
+    });
+}
+
+#[test]
 fn affine_index_cache_keys_complete_current_images_even_with_a_closed_context() {
     with_integer_parameters(&[IntegerType::I32; 2], |analyzer| {
         let facts = FactState::new();
@@ -881,7 +1036,10 @@ fn affine_index_cache_rebuilds_on_inventory_revisions_and_contradiction() {
         assert_eq!(view.tight_bound(fresh, ZERO), Some(i128::from(u64::MAX)));
         assert!(!view.derives_bound(fresh, ZERO, 2));
         assert!(view.derives_goal(goal, GoalSign::Positive, &analyzer.vocabulary.goals));
-        assert!(!Rc::ptr_eq(&before, &projected));
+        assert!(
+            Rc::ptr_eq(&before, &projected),
+            "goal metadata adds no L0 relation"
+        );
         facts.establish_goal(
             goal,
             GoalSign::Negative,
@@ -988,7 +1146,12 @@ fn affine_index_cache_preserves_direct_auto_families_and_selected_parents() {
             // as success; an incomplete final-image family must fail here.
             let full = affine_l0_index(&primed.candidates, &closed, &mut check);
             analyzer.vocabulary.affine_l0_cache = Some(AffineL0Cache {
-                closed: Rc::clone(&closed),
+                l0: AffineL0Content::new(
+                    &facts,
+                    &analyzer.vocabulary.terms,
+                    &analyzer.vocabulary.derivations,
+                    &closed,
+                ),
                 index: Rc::new(full_affine_query_index(primed.candidates.clone(), &full)),
             });
             let rebuilt = analyzer
@@ -1260,7 +1423,12 @@ fn affine_index_cache_promoted_final_family_keeps_disjoint_images_and_late_winne
         let full = affine_l0_index(&candidates, &closed, &mut check);
         for upper in [0, -1] {
             analyzer.vocabulary.affine_l0_cache = Some(AffineL0Cache {
-                closed: Rc::clone(&closed),
+                l0: AffineL0Content::new(
+                    &facts,
+                    &analyzer.vocabulary.terms,
+                    &analyzer.vocabulary.derivations,
+                    &closed,
+                ),
                 index: Rc::clone(&lazy),
             });
             let target = AffineInequality::from_bounded_forms(
@@ -1283,7 +1451,12 @@ fn affine_index_cache_promoted_final_family_keeps_disjoint_images_and_late_winne
             );
             assert!(lazy.exact.borrow().is_empty());
             analyzer.vocabulary.affine_l0_cache = Some(AffineL0Cache {
-                closed: Rc::clone(&closed),
+                l0: AffineL0Content::new(
+                    &facts,
+                    &analyzer.vocabulary.terms,
+                    &analyzer.vocabulary.derivations,
+                    &closed,
+                ),
                 index: Rc::new(full_affine_query_index(candidates.clone(), &full)),
             });
             let expected = analyzer
@@ -2510,4 +2683,372 @@ pub(super) fn reference_first_two_premise_candidate<T>(
         }
     }
     None
+}
+
+fn condition_not(expression: GoalExpression) -> GoalExpression {
+    GoalExpression::Operation {
+        row: GoalOperation::Boolean(CheckedBooleanOperation::Not),
+        type_arguments: Vec::new(),
+        const_arguments: Vec::new(),
+        result: CheckedType::Bool,
+        arguments: vec![expression],
+    }
+}
+
+#[test]
+fn condition_view_rejects_an_existing_negation_origin_class() {
+    use crate::semantic::entailment::state::GoalOrigin;
+
+    with_integer_parameters(&[IntegerType::I32; 2], |analyzer| {
+        let ty = CheckedType::Integer(IntegerType::I32);
+        let compare = |binding| GoalExpression::Operation {
+            row: GoalOperation::Integer {
+                operation: CheckedIntegerOperation::LessEqual,
+                operand_type: ty,
+            },
+            type_arguments: Vec::new(),
+            const_arguments: Vec::new(),
+            result: CheckedType::Bool,
+            arguments: vec![
+                goal_binding_place(BindingId(binding), [], ty),
+                GoalExpression::Datum(GoalDatum::Literal(CheckedValue::Integer {
+                    ty: IntegerType::I32,
+                    bits: 0,
+                })),
+            ],
+        };
+        // z's integer operand is an ordinary-let alias of x's operand.
+        // Only x's operand still has an affine image. Numeric term views
+        // choose the alias, collected before its definition, so no term
+        // view of `bnot z` introduces the absent `bnot x`.
+        let x = compare(0);
+        let z = compare(1);
+        let w = goal_binding_place(BindingId(2), [], CheckedType::Bool);
+        let negative_conjunction = GoalExpression::Operation {
+            row: GoalOperation::Boolean(CheckedBooleanOperation::And),
+            type_arguments: Vec::new(),
+            const_arguments: Vec::new(),
+            result: CheckedType::Bool,
+            arguments: vec![condition_not(z), w.clone()],
+        };
+        let mut state = ProofFlowState::default();
+        state
+            .affine
+            .values
+            .insert(BindingId(0), AffineForm::constant(1));
+        let definition = analyzer
+            .reasoning()
+            .intern_goal_expression(goal_binding_place(BindingId(0), [], ty));
+        let event = analyzer
+            .vocabulary
+            .derivations
+            .event(FlowEventKind::LetOrigin, None);
+        let proof = analyzer
+            .vocabulary
+            .derivations
+            .intern(DerivationNode::LetOrigin {
+                binding: BindingId(1),
+                value: definition,
+                event,
+            });
+        state.facts.goal_origins.insert(
+            BindingId(1),
+            GoalOrigin {
+                goal: definition,
+                proof,
+            },
+        );
+        let conjunction = analyzer
+            .reasoning()
+            .intern_goal_expression(negative_conjunction);
+        let w_goal = analyzer.reasoning().intern_goal_expression(w);
+        let x_goal = analyzer.reasoning().intern_goal_expression(x.clone());
+        let event = analyzer
+            .vocabulary
+            .derivations
+            .event(FlowEventKind::S1, None);
+        for (goal, sign) in [
+            (conjunction, GoalSign::Negative),
+            (w_goal, GoalSign::Positive),
+        ] {
+            state.facts.establish_goal(
+                goal,
+                sign,
+                &analyzer.vocabulary.goals,
+                &mut analyzer.vocabulary.derivations,
+                event,
+            );
+        }
+        let context = ProofContext::new(&state.facts, &state.affine);
+        let expected = analyzer.reasoning().prove(
+            context,
+            ProofGoal::Signed {
+                expression: &x,
+                affine: None,
+            },
+        );
+        assert_eq!(expected.disposition, ProofDisposition::Unknown);
+        let mut views = HashMap::new();
+        let actual = analyzer
+            .reasoning()
+            .prove_condition_origin(context, x_goal, true, &mut views);
+        assert_eq!(actual.disposition, expected.disposition);
+        assert_eq!(actual.route, expected.route);
+        assert_eq!(actual.derivation, expected.derivation);
+        assert!(views.is_empty(), "the old bnot z member prohibits sharing");
+
+        // Demonstrate the fault, rather than merely checking the guard:
+        // +bnot x is affine, transports to bnot z, and contradicts the
+        // entering -band(bnot z,w) together with +w.
+        let wrong = analyzer
+            .reasoning()
+            .origin_query_view(context, Some(&condition_not(x.clone())));
+        let closed = close(
+            &wrong,
+            &analyzer.vocabulary.terms,
+            &analyzer.vocabulary.goals,
+            &mut analyzer.vocabulary.derivations,
+        );
+        assert!(
+            closed.contradictory(),
+            "unrestricted sharing would decide True"
+        );
+        let wrong_answer = analyzer.reasoning().prove(
+            ProofContext {
+                facts: &wrong,
+                affine: &state.affine,
+                closed: None,
+                origin_view: OriginView::Prepared,
+            },
+            ProofGoal::Signed {
+                expression: &x,
+                affine: None,
+            },
+        );
+        assert_eq!(wrong_answer.disposition, ProofDisposition::Proved);
+        assert_eq!(wrong_answer.route, Some(ProofRoute::Contradiction));
+
+        // True fails on x; False fails on w. The complete judgment admits
+        // the condition, whereas using the contradictory view for True
+        // would discharge both positive origins and reject it.
+        analyzer.judging().judge_condition(
+            &crate::NodePath {
+                components: Vec::new(),
+            },
+            &ArmFacts {
+                goals: vec![x_goal, w_goal],
+                ..ArmFacts::default()
+            },
+            &state,
+        );
+        assert_eq!(analyzer.output.conditions.last().unwrap().decided, None);
+    });
+}
+
+#[test]
+fn condition_new_negation_class_keeps_dispositions_and_selected_parents() {
+    use crate::semantic::entailment::state::GoalOrigin;
+
+    with_analyzer(|analyzer| {
+        let x = goal_binding_place(BindingId(0), [], CheckedType::Bool);
+        let y = goal_binding_place(BindingId(1), [], CheckedType::Bool);
+        let x_goal = analyzer.reasoning().intern_goal_expression(x.clone());
+        let y_goal = analyzer.reasoning().intern_goal_expression(y);
+        let event = analyzer
+            .vocabulary
+            .derivations
+            .event(FlowEventKind::LetOrigin, None);
+        let proof = analyzer
+            .vocabulary
+            .derivations
+            .intern(DerivationNode::LetOrigin {
+                binding: BindingId(0),
+                value: y_goal,
+                event,
+            });
+        let mut facts = FactState::new();
+        facts.goal_origins.insert(
+            BindingId(0),
+            GoalOrigin {
+                goal: y_goal,
+                proof,
+            },
+        );
+        let affine = AffineFlowState::default();
+        // Unknown under both truths exercises actual reuse on False; adding
+        // +y exercises the retained origin-transport parent on True.
+        for established in [false, true] {
+            if established {
+                let event = analyzer
+                    .vocabulary
+                    .derivations
+                    .event(FlowEventKind::S1, None);
+                facts.establish_goal(
+                    y_goal,
+                    GoalSign::Positive,
+                    &analyzer.vocabulary.goals,
+                    &mut analyzer.vocabulary.derivations,
+                    event,
+                );
+            }
+            let context = ProofContext::new(&facts, &affine);
+            let mut views = HashMap::new();
+            for truth in [true, false] {
+                let expression = if truth {
+                    x.clone()
+                } else {
+                    condition_not(x.clone())
+                };
+                let expected = analyzer.reasoning().prove(
+                    context,
+                    ProofGoal::Signed {
+                        expression: &expression,
+                        affine: None,
+                    },
+                );
+                let actual = analyzer
+                    .reasoning()
+                    .prove_condition_origin(context, x_goal, truth, &mut views);
+                assert_eq!(actual.disposition, expected.disposition);
+                assert_eq!(actual.route, expected.route);
+                assert_eq!(actual.derivation, expected.derivation);
+                assert!(
+                    views.contains_key(&x_goal),
+                    "a new negation class is shared"
+                );
+            }
+        }
+    });
+}
+
+#[test]
+fn condition_new_negation_class_rejects_a_changed_contradiction_parent() {
+    use crate::semantic::entailment::state::GoalOrigin;
+
+    with_integer_parameters(&[IntegerType::I32; 2], |analyzer| {
+        let ty = CheckedType::Integer(IntegerType::I32);
+        let literal = |bits| {
+            GoalExpression::Datum(GoalDatum::Literal(CheckedValue::Integer {
+                ty: IntegerType::I32,
+                bits,
+            }))
+        };
+        let x_value = goal_binding_place(BindingId(0), [], ty);
+        let z_value = goal_binding_place(BindingId(1), [], ty);
+        let doubled = GoalExpression::Operation {
+            row: GoalOperation::Integer {
+                operation: CheckedIntegerOperation::MultiplyExact,
+                operand_type: ty,
+            },
+            type_arguments: Vec::new(),
+            const_arguments: Vec::new(),
+            result: ty,
+            arguments: vec![literal(2), x_value.clone()],
+        };
+        let x = GoalExpression::Operation {
+            row: GoalOperation::Integer {
+                operation: CheckedIntegerOperation::LessEqual,
+                operand_type: ty,
+            },
+            type_arguments: Vec::new(),
+            const_arguments: Vec::new(),
+            result: CheckedType::Bool,
+            arguments: vec![doubled, literal(0)],
+        };
+        let mut state = ProofFlowState::default();
+        state
+            .affine
+            .values
+            .insert(BindingId(0), AffineForm::constant(1));
+        let definition = analyzer.reasoning().intern_goal_expression(x_value);
+        let event = analyzer
+            .vocabulary
+            .derivations
+            .event(FlowEventKind::LetOrigin, None);
+        let proof = analyzer
+            .vocabulary
+            .derivations
+            .intern(DerivationNode::LetOrigin {
+                binding: BindingId(1),
+                value: definition,
+                event,
+            });
+        state.facts.goal_origins.insert(
+            BindingId(1),
+            GoalOrigin {
+                goal: definition,
+                proof,
+            },
+        );
+        let z = analyzer.reasoning().goal_side(&z_value).unwrap().0;
+        cache_bound(analyzer, &mut state.facts, z, ZERO, 0);
+        let x_goal = analyzer.reasoning().intern_goal_expression(x.clone());
+        assert!(
+            analyzer.vocabulary.goals.projection(x_goal).is_none(),
+            "coefficient two excludes the ordinary L0 projection"
+        );
+        let target = analyzer
+            .reasoning()
+            .affine_goal_ordering_target(&x, &state.affine)
+            .unwrap();
+        let context = ProofContext::new(&state.facts, &state.affine);
+        let ordinary = analyzer.reasoning().prove(
+            ProofContext {
+                origin_view: OriginView::Ordinary,
+                ..context
+            },
+            ProofGoal::Signed {
+                expression: &x,
+                affine: Some(&target),
+            },
+        );
+        assert_eq!(ordinary.disposition, ProofDisposition::Unknown);
+
+        // The origin equality supplies x <= 0. Its affine image is the false
+        // constant inequality 1 <= 0, used twice to prove 2*x <= 0. That proof
+        // stays a signed affine consequence: it adds no numeric contradiction.
+        let original = analyzer.reasoning().origin_query_view(context, Some(&x));
+        let closed = close(
+            &original,
+            &analyzer.vocabulary.terms,
+            &analyzer.vocabulary.goals,
+            &mut analyzer.vocabulary.derivations,
+        );
+        assert!(!closed.contradictory());
+        let expected = analyzer.reasoning().prove(
+            context,
+            ProofGoal::Signed {
+                expression: &x,
+                affine: Some(&target),
+            },
+        );
+        assert_eq!(expected.disposition, ProofDisposition::Proved);
+        assert_eq!(expected.route, Some(ProofRoute::OriginTransport));
+
+        // The new negation class has no old alias, but +bnot X is also
+        // affine-provable (0 < 2). Alongside +X it makes the enlarged view
+        // contradictory and would replace True's retained affine parent.
+        let negated = condition_not(x.clone());
+        let widened = analyzer
+            .reasoning()
+            .origin_query_view(context, Some(&negated));
+        let widened_closed = close(
+            &widened,
+            &analyzer.vocabulary.terms,
+            &analyzer.vocabulary.goals,
+            &mut analyzer.vocabulary.derivations,
+        );
+        assert!(widened_closed.contradictory());
+        let mut views = HashMap::new();
+        let actual = analyzer
+            .reasoning()
+            .prove_condition_origin(context, x_goal, true, &mut views);
+        assert_eq!(actual.disposition, expected.disposition);
+        assert_eq!(actual.route, expected.route);
+        assert_eq!(actual.derivation, expected.derivation);
+        assert!(
+            views.is_empty(),
+            "a contradictory enlarged view cannot be shared"
+        );
+    });
 }
