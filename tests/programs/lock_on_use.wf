@@ -89,10 +89,8 @@ fn check_key(space: &Keyspace, key_byte: u8, held: Bool) -> result: u8 reads(spa
           if seen^.sequence > 600_u64 {
             set wrong = 1_u8;
           }
-        } else {
-          if seen^.sequence != 0_u64 {
-            set wrong = 1_u8;
-          }
+        } else if seen^.sequence != 0_u64 {
+          set wrong = 1_u8;
         }
       }
       None() => {
