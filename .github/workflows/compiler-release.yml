@@ -58,10 +58,10 @@
 # host uses that same major, which Whitefoot-kit installs from the manifest's
 # linux_llvm_major (compiler/downstream-releases).
 #
-# A push that changes this file runs it as a dry run: it builds, smoke-tests
-# and packages the pushed commit and keeps the files as a workflow artifact,
-# publishing nothing, so a change to the release path runs before it reaches
-# main.
+# A push that changes this file, package-acceptance.yml or .github/toolchain runs it as a dry run: it builds, smoke-tests
+# and packages the pushed commit as a bundled package, runs that package's
+# acceptance and keeps the files as a workflow artifact, publishing nothing,
+# so a change to the release path runs before it reaches main.
 name: compiler-release
 
 on:
@@ -82,6 +82,8 @@ on:
   push:
     paths:
       - .github/workflows/compiler-release.yml
+      - .github/workflows/package-acceptance.yml
+      - .github/toolchain/**
 
 permissions:
   contents: write
@@ -129,7 +131,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REQUESTED: ${{ inputs.commit }}
           EXPERIMENT: ${{ inputs.experiment }}
-          BUNDLE_TOOLCHAIN: ${{ inputs.bundle_toolchain }}
+          # A push dry run takes the bundled path, the one with acceptance
+          # jobs, so a change to it is qualified before anything is published.
+          BUNDLE_TOOLCHAIN: ${{ inputs.bundle_toolchain || github.event_name == 'push' }}
         run: |
           set -euo pipefail
           git fetch --no-tags --prune origin +refs/heads/main:refs/remotes/origin/main
