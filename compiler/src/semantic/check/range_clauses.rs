@@ -1108,14 +1108,6 @@ impl Checker<'_, '_> {
             .declarations
             .tree
             .has_fixed(pbase, FixedTerminal::Entry)?;
-        if entry && check_context.active_postcondition.is_none() {
-            return self.invalid_range(
-                SemanticRule::Range1,
-                pbase,
-                "an entry range place occurs outside a postcondition",
-                "read entry storage in an ensures forall clause",
-            );
-        }
         let mut suffixes = self
             .types
             .declarations

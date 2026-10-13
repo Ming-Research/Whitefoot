@@ -5,6 +5,22 @@ Newest first. One entry per approved change of the tree: a dated title,
 the owner's agent instructions own the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-13 Definitions are substituted into every clause before its range terms are checked
+
+Nodes: language/checks-and-proofs/requires-entry-contract
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the specification change (v0.150 to v0.151) and design-tree change in Whitefoot#475 (head 8f8f66726): a define name in a per-element clause is first replaced by its definition, then the range terms are checked?" (translated).
+
+Summary: The changed decision substitutes a define into every clause before that clause's range terms are checked, so the range-term restriction holds independently of abbreviation spelling (a linear index admitted, a product of two parameters refused, in requires and ensures alike), instead of refusing a range term because it uses a define name.
+
+## 2026-10-13 Conformance rejections pin their byte range, and an out-of-order requirement is moved rather than restated
+
+Nodes: compiler/verification, compiler/diagnostic-repairs
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve these two decisions" (translated), on the card "approve the two decisions Whitefoot#445 (rejections cite the rule and location the specification gives) adds to the design tree?" (translated), whose background named head commit 4c3e0252f, no specification change, and the two added decisions with their refused alternatives.
+
+Summary: A single-file conformance rejection case may declare an expected byte range in its manifest, and the Python runner and the native adapter compare file, range and rule from the same rejection, instead of accepting any rejection whose rule matches, because a rule match alone missed a misplaced report such as a capability-bound failure marked at the type argument rather than the whole instantiating call. When an equivalent requirement is already written but after the requirement that needs it, the repair moves the existing clause ahead, keeping the definitions it uses before it, and suggests a new clause only when no equivalent one exists, because requirements take effect in written order and restating one hides the ordering error; equivalence is judged by meaning after expanding definitions and evaluating constants, in a diagnostic-only state, instead of by spelling, and implicit type invariants are never offered as clauses to move.
+
 ## 2026-10-13 Match branches on integer constant values, with one exclusion fact for `else` and one switch
 
 Nodes: compiler/checker-facts, compiler/match-dispatch-lowering, compiler/range-judgment, compiler/structured-emission, language/checks-and-proofs/automatic-facts, language/checks-and-proofs/range-facts, language/dispatch, language/grammar, language/name-resolution, language/surface-form/match-form
