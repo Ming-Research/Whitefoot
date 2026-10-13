@@ -64,4 +64,4 @@ public struct OpenFilesLimit {
 
 public fn open_files_limit(factory: &HandleFactory) -> result: Result<OpenFilesLimit, IoError> reads(factory) doc "Returns the soft and hard limits on the files the process may hold open, as specified by PRE-2.";
 
-public fn raise_open_files_limit(factory: &HandleFactory, wanted: u64) -> result: Result<OpenFilesLimit, IoError> writes(factory) doc "Raises the soft limit on the files the process may hold open to wanted when it is lower, adds the handle credits PRE-2 gives the new limit to the budget factory draws on, and returns the limits after the call.";
+public fn raise_open_files_limit(factory: &HandleFactory, wanted: u64) -> result: Result<OpenFilesLimit, IoError> writes(factory) doc "Raises the soft limit on the files the process may hold open to wanted, as specified by PRE-2.";

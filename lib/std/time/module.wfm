@@ -27,7 +27,7 @@ public fn unix_nanoseconds(clock: &WallClock) -> result: i64 reads(clock) doc "R
 public fn local_offset_seconds(clock: &WallClock, at: i64) -> result: Option<i64> reads(clock) contract {
   ensures when Some(value: offset): -86400_i64 < offset;
   ensures when Some(value: offset): offset < 86400_i64;
-} doc "Returns Some with the seconds by which local time is ahead of UTC at the second containing at nanoseconds since 1970-01-01T00:00:00Z, less than one day either way, or None when the host gives no local time for that second or one a day or more away.";
+} doc "Returns the local time offset of the second containing at, as specified by PRE-2.";
 
 public opaque struct CancelSource {
   state: Shared<CancelState>;

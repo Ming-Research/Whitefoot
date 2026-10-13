@@ -1270,8 +1270,6 @@ static void subdirectory_probe(wf_inputs *inputs, wf_probe_open_directory_write 
     assert(wf_rmdir("ordinary-subdir") == 0);
 }
 
-/* [PRE-2] two reads through one clock do not go back, a sleep outside every
- * context lasts until its deadline, and every instant operation is total. */
 /* [PRE-2] each local offset equals the host C library's own answer for the
  * same second: `tm_gmtoff` from `localtime_r` on POSIX, and on Windows the
  * `_localtime64_s` date and time read back as UTC by `_mkgmtime64`. The
@@ -1353,11 +1351,31 @@ static void local_offset_probe(wf_inputs *inputs) {
 #endif
 }
 
-/* [PRE-2] the open-files limit. On POSIX a reading equals getrlimit's, a
- * raise above the hard limit is InvalidInput carrying EINVAL with origin 11
- * and leaves the budget alone, a raise to at most the soft limit changes
- * nothing, and a raise from 128 to 256 adds c(256) - c(128) = 128 credits to
- * the invocation's budget. Every other host answers Unsupported. */
+/* c(n) of [PRE-2], restated for the probe. */
+static uint64_t probe_limit_credits(uint64_t soft) {
+    uint64_t bounded = soft > (UINT64_C(1) << 20) ? (UINT64_C(1) << 20) : soft;
+    return bounded > 64 ? bounded - 64 : 0;
+}
+
+/* The limits getrlimit reports now, unlimited read as 2^64 - 1. */
+static void probe_limits_now(uint64_t *soft, uint64_t *hard) {
+    struct rlimit now;
+    assert(getrlimit(RLIMIT_NOFILE, &now) == 0);
+    *soft = now.rlim_cur == RLIM_INFINITY ? UINT64_MAX : (uint64_t)now.rlim_cur;
+    *hard = now.rlim_max == RLIM_INFINITY ? UINT64_MAX : (uint64_t)now.rlim_max;
+}
+
+/* [PRE-2] the open-files limit. On POSIX a reading equals getrlimit's; a
+ * raise above the hard limit is the host's refusal, which Linux and macOS
+ * give as InvalidInput carrying EINVAL, with origin 11, leaving the limits
+ * and the budget alone; a raise to at most the soft limit changes nothing;
+ * and a successful raise reports the limits getrlimit reads after it and
+ * adds the credits of the soft limit the host then holds, so a raise from
+ * 128 to 256 adds c(256) - c(128) = 128 credits to the invocation's budget.
+ * Under an unlimited hard limit a finite request of 2^63, which a host
+ * whose RLIM_INFINITY is 2^63 - 1 sets as unlimited, is either refused with
+ * nothing changed or reports what the host then holds. Every other host
+ * answers Unsupported. */
 static void open_files_probe(wf_inputs *inputs) {
     wf_limit_result outcome;
 #if defined(_WIN32)
@@ -1369,7 +1387,7 @@ static void open_files_probe(wf_inputs *inputs) {
     assert(outcome.err.error.code == 0 && outcome.err.error.origin == 0);
 #else
     struct rlimit saved;
-    uint64_t before;
+    uint64_t before, soft, hard;
     assert(getrlimit(RLIMIT_NOFILE, &saved) == 0);
     wf__body_open_files_limit(&outcome, &inputs->handles);
     assert(outcome.tag == 0);
@@ -1381,6 +1399,25 @@ static void open_files_probe(wf_inputs *inputs) {
         assert(outcome.tag == 1 && outcome.err.error.tag == WF_IO_INVALID_INPUT);
         assert(outcome.err.error.code == (uint32_t)EINVAL && outcome.err.error.origin == 11);
         assert(WF_PROBE_INPUT_BUDGET == before);
+        probe_limits_now(&soft, &hard);
+        assert(soft == (saved.rlim_cur == RLIM_INFINITY ? UINT64_MAX : (uint64_t)saved.rlim_cur));
+        assert(hard == (uint64_t)saved.rlim_max);
+    } else if (saved.rlim_cur != RLIM_INFINITY && (uint64_t)saved.rlim_cur < (UINT64_C(1) << 63)) {
+        uint64_t old_soft = (uint64_t)saved.rlim_cur;
+        before = WF_PROBE_INPUT_BUDGET;
+        wf__body_raise_open_files_limit(&outcome, &inputs->handles, UINT64_C(1) << 63);
+        probe_limits_now(&soft, &hard);
+        if (outcome.tag == 0) {
+            assert(outcome.ok.value.soft == soft && outcome.ok.value.hard == hard);
+            assert(WF_PROBE_INPUT_BUDGET - before ==
+                   probe_limit_credits(soft) - probe_limit_credits(old_soft));
+            WF_PROBE_INPUT_BUDGET = before;
+            assert(setrlimit(RLIMIT_NOFILE, &saved) == 0);
+        } else {
+            assert(outcome.err.error.origin == 11 && outcome.err.error.code != 0);
+            assert(soft == old_soft && hard == UINT64_MAX);
+            assert(WF_PROBE_INPUT_BUDGET == before);
+        }
     }
     if (saved.rlim_cur != RLIM_INFINITY && saved.rlim_cur >= 256) {
         struct rlimit lowered = saved;
@@ -1391,7 +1428,9 @@ static void open_files_probe(wf_inputs *inputs) {
         assert(outcome.tag == 0 && outcome.ok.value.soft == 128u);
         assert(WF_PROBE_INPUT_BUDGET == before);
         wf__body_raise_open_files_limit(&outcome, &inputs->handles, 256u);
-        assert(outcome.tag == 0 && outcome.ok.value.soft == 256u);
+        probe_limits_now(&soft, &hard);
+        assert(outcome.tag == 0 && outcome.ok.value.soft == 256u && soft == 256u);
+        assert(outcome.ok.value.hard == hard);
         assert(WF_PROBE_INPUT_BUDGET == before + 128u);
         WF_PROBE_INPUT_BUDGET -= 128u;
         assert(setrlimit(RLIMIT_NOFILE, &saved) == 0);
@@ -1399,6 +1438,8 @@ static void open_files_probe(wf_inputs *inputs) {
 #endif
 }
 
+/* [PRE-2] two reads through one clock do not go back, a sleep outside every
+ * context lasts until its deadline, and every instant operation is total. */
 static void time_probe(wf_inputs *inputs) {
     wf_instant first, second, deadline, later, latest;
     wf_sleep_result slept;

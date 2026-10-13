@@ -2080,17 +2080,28 @@ void wf__body_raise_open_files_limit(wf_limit_result *result, wf_value *factory,
     } else {
         uint64_t soft = wf_limit_value(limit.rlim_cur);
         uint64_t hard = wf_limit_value(limit.rlim_max);
-        if (wanted > hard) {
-            failure = EINVAL;
-        } else if (wanted > soft) {
+        if (wanted > soft) {
+            /* A request above the hard limit goes to the host too, which
+             * refuses a soft limit above the hard one (POSIX: EINVAL). The
+             * limits reported and the credits added are those the host
+             * holds after the call, read back, since a finite request may
+             * map to RLIM_INFINITY or the host may adjust it. */
             struct rlimit raised = limit;
             raised.rlim_cur = wanted >= (uint64_t)RLIM_INFINITY ? RLIM_INFINITY : (rlim_t)wanted;
             if (setrlimit(RLIMIT_NOFILE, &raised) != 0) {
                 failure = errno;
             } else {
-                uint64_t gained = wf_limit_credits(wanted) - wf_limit_credits(soft);
-                __atomic_add_fetch(wf_factory_budget(factory), gained, __ATOMIC_ACQ_REL);
-                soft = wanted;
+                struct rlimit after;
+                uint64_t before_credits = wf_limit_credits(soft);
+                uint64_t after_credits;
+                if (getrlimit(RLIMIT_NOFILE, &after) != 0) after = raised;
+                soft = wf_limit_value(after.rlim_cur);
+                hard = wf_limit_value(after.rlim_max);
+                after_credits = wf_limit_credits(soft);
+                if (after_credits > before_credits) {
+                    __atomic_add_fetch(wf_factory_budget(factory), after_credits - before_credits,
+                                       __ATOMIC_ACQ_REL);
+                }
             }
         }
         result->ok.value.soft = soft;
