@@ -12,20 +12,33 @@
 #   BLOCKS      blocks of the main run (default 6, provisional)
 #   CONTEXTS    contexts or threads each arm starts (default 64)
 #   MILLIS      milliseconds each cell lasts (default 5000)
-#   ARMS        arms to run, in rotation order (default
-#               "W0 W1 W2 W2t W2r W6 W3 W3rd W5 W5p")
+#   ARMS        arms to build and run, in rotation order (default
+#               "W0 W1 W2 W2t W2r W6 W3 W3rd W5 W5p"); the C model's run
+#               (DESIGN.md section 8.6) is ARMS="W5p W5pN W7 W7t W7rd", which
+#               builds with clang alone and needs no WHITEFOOTC
 #   CPU_LISTS   taskset CPU lists (default "0,2 0,2,4,6 0,2,4,6,8,10,12,14 0-15")
+#   ORDER       rotate: each block starts the arm order one position later
+#               than the block before (default, section 8.3); alternate: the
+#               same rotation, run backwards in odd blocks, so that each pair
+#               of arms runs in both orders equally often (section 8.6)
+#   READER_CPU  the CPU W7rd's reader thread is pinned to, outside every CPU
+#               list (default 16, the first E-core of the i9-14900K)
+#   CLANG       the C compiler (default /usr/bin/clang)
+#
+# W5pN, W7, W7t and W7rd start one thread per CPU of the list; every other
+# arm starts CONTEXTS contexts or threads.
 #
 # The build writes DIR/bin/ and DIR/host.txt. The run appends one row per cell
 # to DIR/raw.tsv:
 #   block pos arm cpus drivers contexts ops ns ops_per_s check reads read_ns
-#   read_max_ns user_frac sys_frac
+#   read_max_ns user_frac sys_frac read_med_ns read_p99_ns
 # where user_frac and sys_frac are the shares of the listed CPUs' time that
 # /proc/stat counts as user (user and nice) and system (system, irq and
-# softirq) between just before and just after the cell. Each cell's standard
-# output and error are kept in DIR/runs/. A cell that fails, or reports a
-# driver count other than the list's, is reported on standard error, leaves no
-# row, and makes the script exit 1 after the remaining cells ran.
+# softirq) between just before and just after the cell, and a field an arm
+# does not print is 0. Each cell's standard output and error are kept in
+# DIR/runs/. A cell that fails, or reports a driver count other than the
+# list's, is reported on standard error, leaves no row, and makes the script
+# exit 1 after the remaining cells ran.
 # Linux only: it needs taskset and /proc/stat.
 set -eu
 
@@ -50,6 +63,12 @@ CONTEXTS=${CONTEXTS:-64}
 MILLIS=${MILLIS:-5000}
 ARMS=${ARMS:-"W0 W1 W2 W2t W2r W6 W3 W3rd W5 W5p"}
 CPU_LISTS=${CPU_LISTS:-"0,2 0,2,4,6 0,2,4,6,8,10,12,14 0-15"}
+ORDER=${ORDER:-rotate}
+READER_CPU=${READER_CPU:-16}
+case $ORDER in
+    rotate | alternate) ;;
+    *) echo "ORDER must be rotate or alternate" >&2; exit 2 ;;
+esac
 if [ "$PILOT" = 1 ]; then
     BLOCKS=1
     CPU_LISTS="0,2,4,6,8,10,12,14"
@@ -69,21 +88,59 @@ binary_of() {
         W3) echo w_shards ;;
         W3rd) echo w_shards_reader ;;
         W5) echo w5 ;;
-        W5p) echo w5p ;;
+        W5p | W5pN) echo w5p ;;
+        W7 | W7rd) echo w7 ;;
+        W7t) echo w7_twin ;;
         *) echo "unknown arm $1" >&2; exit 2 ;;
     esac
 }
 
+# The threads or contexts an arm starts on a list of DRIVERS CPUs: the C
+# model and its comparison W5pN one thread per CPU, as the planned runtime
+# has one shard writer per driver (DESIGN.md section 8.6); the rest CONTEXTS.
+threads_of() {
+    case $1 in
+        W5pN | W7 | W7t | W7rd) echo "$2" ;;
+        *) echo "$CONTEXTS" ;;
+    esac
+}
+
+# Arguments after the thread count and the milliseconds.
+extra_of() {
+    case $1 in
+        W7rd) echo "$READER_CPU" ;;
+        *) echo ;;
+    esac
+}
+
+# Whether ARMS names arm $1.
+has_arm() {
+    case " $ARMS " in
+        *" $1 "*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+for arm in $ARMS; do binary_of "$arm" > /dev/null; done
+
 if [ "$build" = 1 ]; then
-    : "${WHITEFOOTC:?WHITEFOOTC names the compiler to build the arms with}"
     clang=${CLANG:-/usr/bin/clang}
+    built=" "
     for arm in $ARMS; do
         bin=$(binary_of "$arm")
+        case $built in *" $bin "*) continue ;; esac
+        built="$built$bin "
         case $arm in
             W5) "$clang" -O2 -pthread -o "$out/bin/$bin" "$here/w5.c" ;;
-            W5p) "$clang" -O2 -pthread -DPADDED=1 -o "$out/bin/$bin" "$here/w5.c" ;;
-            W2t) "$WHITEFOOTC" --full-lto --graph "$here/modules.wfg" --entry w_shared -o "$out/bin/$bin" ;;
-            *) "$WHITEFOOTC" --full-lto --graph "$here/modules.wfg" --entry "$bin" -o "$out/bin/$bin" ;;
+            W5p | W5pN) "$clang" -O2 -pthread -DPADDED=1 -o "$out/bin/$bin" "$here/w5.c" ;;
+            # W7t is W7's source built a second time into its own binary.
+            W7 | W7t | W7rd) "$clang" -O2 -pthread -o "$out/bin/$bin" "$here/w7.c" ;;
+            W2t)
+                : "${WHITEFOOTC:?WHITEFOOTC names the compiler to build the Whitefoot arms with}"
+                "$WHITEFOOTC" --full-lto --graph "$here/modules.wfg" --entry w_shared -o "$out/bin/$bin" ;;
+            *)
+                : "${WHITEFOOTC:?WHITEFOOTC names the compiler to build the Whitefoot arms with}"
+                "$WHITEFOOTC" --full-lto --graph "$here/modules.wfg" --entry "$bin" -o "$out/bin/$bin" ;;
         esac
     done
 
@@ -97,9 +154,19 @@ if [ "$build" = 1 ]; then
             { echo unavailable; return 0; }
         grep -c 'call void @wf__shared_share(' "$out/bin/$1.ll" || true
     }
-    share_record="wf__shared_share calls: shared=$(share_calls w_shared) shared_param=$(share_calls w_shared_param) shards=$(share_calls w_shards) shards_reader=$(share_calls w_shards_reader)"
+    share_record="wf__shared_share calls: not recorded (no Whitefoot arm selected)"
+    if [ -n "${WHITEFOOTC:-}" ]; then
+        share_record="wf__shared_share calls: shared=$(share_calls w_shared) shared_param=$(share_calls w_shared_param) shards=$(share_calls w_shards) shards_reader=$(share_calls w_shards_reader)"
+    fi
 
-    twin_record="W2 and its twin: $(sha256sum "$out/bin/w_shared" "$out/bin/w_shared_twin" | awk '{print $1}' | tr '\n' ' ')"
+    twin_record="W2 and its twin: not built"
+    if has_arm W2 && has_arm W2t; then
+        twin_record="W2 and its twin: $(sha256sum "$out/bin/w_shared" "$out/bin/w_shared_twin" | awk '{print $1}' | tr '\n' ' ')"
+    fi
+    model_twin_record="W7 and its twin: not built"
+    if has_arm W7t && { has_arm W7 || has_arm W7rd; }; then
+        model_twin_record="W7 and its twin: $(sha256sum "$out/bin/w7" "$out/bin/w7_twin" | awk '{print $1}' | tr '\n' ' ')"
+    fi
     {
         echo "kernel: $(uname -srvmo)"
         echo "cpus: $(nproc)"
@@ -111,9 +178,13 @@ if [ "$build" = 1 ]; then
         echo "clang: $("$clang" --version | head -n 1)"
         echo "$share_record"
         echo "$twin_record"
-        echo "contexts: $CONTEXTS  millis: $MILLIS  blocks: $BLOCKS  pilot: $PILOT"
+        echo "$model_twin_record"
+        echo "contexts: $CONTEXTS  millis: $MILLIS  blocks: $BLOCKS  pilot: $PILOT  order: $ORDER"
         echo "arms: $ARMS"
         echo "cpu lists: $CPU_LISTS"
+        if has_arm W7rd; then
+            echo "W7rd reader cpu: $READER_CPU (its core and clock are in the cpu map below)"
+        fi
         echo "cpu map (CPU, core, max MHz):"
         lscpu -e=CPU,CORE,MAXMHZ 2>/dev/null || echo unavailable
     } | tee "$out/host.txt"
@@ -140,15 +211,21 @@ cpu_times() {
 }
 
 raw="$out/raw.tsv"
-printf 'block\tpos\tarm\tcpus\tdrivers\tcontexts\tops\tns\tops_per_s\tcheck\treads\tread_ns\tread_max_ns\tuser_frac\tsys_frac\n' > "$raw"
+printf 'block\tpos\tarm\tcpus\tdrivers\tcontexts\tops\tns\tops_per_s\tcheck\treads\tread_ns\tread_max_ns\tuser_frac\tsys_frac\tread_med_ns\tread_p99_ns\n' > "$raw"
 failed=0
 read -r -a arms <<< "$ARMS"
 count=${#arms[@]}
-# Each block starts its arm order one position later than the block before.
+# Each block starts its arm order one position later than the block before;
+# with ORDER=alternate, odd blocks run that order backwards.
 for block in $(seq 0 $((BLOCKS - 1))); do
     order=
     for pos in $(seq 0 $((count - 1))); do
-        order="$order ${arms[$(((pos + block) % count))]}"
+        next=${arms[$(((pos + block) % count))]}
+        if [ "$ORDER" = alternate ] && [ $((block % 2)) = 1 ]; then
+            order="$next $order"
+        else
+            order="$order $next"
+        fi
     done
     for list in $CPU_LISTS; do
         drivers=$(expand_list "$list" | wc -l | tr -d ' ')
@@ -156,11 +233,15 @@ for block in $(seq 0 $((BLOCKS - 1))); do
         for arm in $order; do
             pos=$((pos + 1))
             bin=$(binary_of "$arm")
+            threads=$(threads_of "$arm" "$drivers")
+            extra=$(extra_of "$arm")
             name="b$block-$drivers-$pos-$arm"
             before=$(cpu_times "$list")
             status=0
+            # $extra is empty or one number, so it is left unquoted.
+            # shellcheck disable=SC2086
             WF_DRIVERS=$drivers WF_SCHED_REPORT=2 timeout $((MILLIS / 1000 + 120)) \
-                taskset -c "$list" "$out/bin/$bin" "$CONTEXTS" "$MILLIS" \
+                taskset -c "$list" "$out/bin/$bin" "$threads" "$MILLIS" $extra \
                 > "$out/runs/$name.out" 2> "$out/runs/$name.err" || status=$?
             after=$(cpu_times "$list")
             line=$(cat "$out/runs/$name.out")
@@ -175,15 +256,17 @@ for block in $(seq 0 $((BLOCKS - 1))); do
                 -v drivers="$drivers" -v before="$before" -v after="$after" '
                 {
                     for (i = 1; i <= NF; i++) { split($i, kv, "="); v[kv[1]] = kv[2] }
+                    if (!("read_med_ns" in v)) v["read_med_ns"] = 0
+                    if (!("read_p99_ns" in v)) v["read_p99_ns"] = 0
                     split(before, b, " "); split(after, a, " ")
                     total = a[3] - b[3]
                     rate = v["ops_per_s"]
                     if (rate == "?") rate = sprintf("%.0f", v["ops"] / (v["ns"] / 1e9))
                     user = 0; sys = 0
                     if (total > 0) { user = (a[1] - b[1]) / total; sys = (a[2] - b[2]) / total }
-                    printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%.4f\t%.4f\n", block, pos, arm, list,
+                    printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%.4f\t%.4f\t%s\t%s\n", block, pos, arm, list,
                         drivers, v["contexts"], v["ops"], v["ns"], rate, v["check"], v["reads"],
-                        v["read_ns"], v["read_max_ns"], user, sys
+                        v["read_ns"], v["read_max_ns"], user, sys, v["read_med_ns"], v["read_p99_ns"]
                 }' >> "$raw"
         done
     done

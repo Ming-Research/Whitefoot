@@ -1,0 +1,263 @@
+# Temporary: runs the C model of the sharded state, arms W5p, W5pN, W7, W7t
+# and W7rd of research/experiments/shared-counters, under the procedure and
+# decision rule registered in section 8.6 of research/investigations/
+# shared-counters/DESIGN.md, before any compiler or runtime implementation.
+# It needs no Whitefoot compiler. Removed after the run, with the results
+# copied into the investigation's record.
+#
+#   gh workflow run tmp-shared-counters.yml --ref <branch> -f mode=smoke
+#   gh workflow run tmp-shared-counters.yml --ref <branch> -f mode=pilot
+#   gh workflow run tmp-shared-counters.yml --ref <branch> -f mode=main
+#
+# smoke builds the arms and runs every one briefly on a GitHub-hosted runner
+# to check the wiring; its numbers decide nothing. pilot (one block at the
+# 8-P-core list) and main (the registered blocks at all four lists) run only
+# on the 14900K runner and refuse any other host.
+#
+# The heavy steps run under .github/run-check.pl, which holds the host-wide
+# lock so that no other heavy command shares the machine. Their labels have
+# no row in .github/time-budgets.txt and no budget record is named here, so
+# the budget comparison is skipped for them; a dispatch-only measurement is
+# not a gate stage.
+#
+# research-boundary: manual-only
+# Explicitly requested measurement; no push or pull-request trigger.
+name: tmp-shared-counters
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: smoke checks the wiring on a GitHub-hosted runner (no verdict); pilot is one block at the 8-P-core list and main the registered interleaved blocks, both on the 14900K
+        type: choice
+        options: [smoke, pilot, main]
+        default: smoke
+      blocks:
+        description: Blocks of the main run (registered as 12, DESIGN.md section 8.6)
+        type: string
+        default: "12"
+
+defaults:
+  run:
+    shell: bash
+
+permissions:
+  contents: read
+
+env:
+  ARMS: "W5p W5pN W7 W7t W7rd"
+  ORDER: alternate
+
+jobs:
+  smoke:
+    if: ${{ inputs.mode == 'smoke' }}
+    name: shared-counters C model (smoke, GitHub-hosted, no verdict)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      MILLIS: "200"
+      BLOCKS: "2"
+      PILOT: "0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Name the output directory and pick the host's CPU lists
+        run: |
+          echo "OUT=$RUNNER_TEMP/shared-counters" >> "$GITHUB_ENV"
+          # The reader's CPU must lie outside every list.
+          cpus=$(nproc)
+          if [ "$cpus" -ge 4 ]; then
+            echo "CPU_LISTS=0 0,2" >> "$GITHUB_ENV"
+            echo "READER_CPU=3" >> "$GITHUB_ENV"
+          else
+            echo "CPU_LISTS=0" >> "$GITHUB_ENV"
+            echo "READER_CPU=1" >> "$GITHUB_ENV"
+          fi
+          echo "cpus: $cpus"
+
+      - name: Check the host's tools
+        run: |
+          command -v clang >/dev/null || { sudo apt-get update && sudo apt-get install -y --no-install-recommends clang; }
+          echo "CLANG=$(command -v clang)" >> "$GITHUB_ENV"
+          missing=
+          for tool in clang taskset python3 sha256sum awk lscpu timeout perl /usr/bin/time; do
+            command -v "$tool" >/dev/null || missing="$missing $tool"
+          done
+          if [ -n "$missing" ]; then
+            echo "missing:$missing"
+            exit 1
+          fi
+          clang --version
+
+      - name: Build the arms
+        run: |
+          perl .github/run-check.pl shared-counters/build \
+            bash research/experiments/shared-counters/run.sh --out "$OUT" --build-only
+
+      # A reader on a writer's CPU would take CPU time from the writers it
+      # measures, so w7 refuses it; this shows the refusal works.
+      - name: Check that the C model refuses a reader inside the writers' list
+        run: |
+          status=0
+          taskset -c 0 "$OUT/bin/w7" 1 100 0 || status=$?
+          if [ "$status" != 2 ]; then
+            echo "w7 with its reader on CPU 0 of list 0 exited $status, not 2"
+            exit 1
+          fi
+
+      - name: Run the cells
+        run: |
+          perl .github/run-check.pl shared-counters/cells \
+            bash research/experiments/shared-counters/run.sh --out "$OUT" --skip-build
+
+      - name: Summarize
+        if: always()
+        run: |
+          test -s "$OUT/raw.tsv" || { echo "no rows were written"; exit 1; }
+          python3 -B research/experiments/shared-counters/summarize.py --smoke "$OUT/raw.tsv" > "$OUT/summary.txt"
+          cat "$OUT/summary.txt"
+          grep -q '^C model' "$OUT/summary.txt" || { echo "the summary has no C-model section"; exit 1; }
+          {
+            echo "## shared-counters C model (smoke, no verdict)"
+            echo
+            echo '```text'
+            cat "$OUT/host.txt" 2>/dev/null
+            echo
+            cat "$OUT/summary.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: shared-counters-c-model-smoke-${{ github.run_id }}
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/shared-counters/raw.tsv
+            ${{ runner.temp }}/shared-counters/summary.txt
+            ${{ runner.temp }}/shared-counters/host.txt
+            ${{ runner.temp }}/shared-counters/runs/
+
+  measure:
+    if: ${{ inputs.mode != 'smoke' }}
+    name: shared-counters C model (${{ inputs.mode }}, 14900K)
+    runs-on: [self-hosted, 14900k]
+    # Main: 12 blocks x 4 lists x 5 arms x ~5.2 s is about 21 minutes of
+    # cells, plus two clang builds. Bounds a stuck runner only.
+    timeout-minutes: 60
+    # One run at a time on the 14900K, queued rather than cancelled.
+    concurrency:
+      group: tmp-shared-counters-14900k
+      cancel-in-progress: false
+    env:
+      MODE: ${{ inputs.mode }}
+      BLOCKS: ${{ inputs.blocks }}
+      PILOT: ${{ inputs.mode == 'pilot' && '1' || '0' }}
+      CLANG: /usr/bin/clang
+      MILLIS: "5000"
+      CPU_LISTS: "0,2 0,2,4,6 0,2,4,6,8,10,12,14 0-15"
+      # The first E-core, outside every list (DESIGN.md section 8.6).
+      READER_CPU: "16"
+    steps:
+      # The timed modes measure the 14900K's P-cores; any other host would
+      # give numbers that answer nothing, so it stops here.
+      - name: Refuse any host but the 14900K
+        run: |
+          model=$(awk -F': ' '/^model name/ {print $2; exit}' /proc/cpuinfo)
+          echo "runner: $RUNNER_NAME ($RUNNER_ENVIRONMENT); model: $model; cpus: $(nproc)"
+          if [ "$RUNNER_ENVIRONMENT" != self-hosted ]; then
+            echo "the $MODE mode runs only on the self-hosted 14900K runner; use mode=smoke on a GitHub-hosted runner"
+            exit 1
+          fi
+          case $model in
+            *i9-14900K*) ;;
+            *) echo "this host is not an i9-14900K; the CPU lists name that machine's cores"; exit 1 ;;
+          esac
+          if [ "$(nproc)" != 32 ]; then
+            echo "expected 32 CPUs (8 P-cores with two hyperthreads, 16 E-cores), found $(nproc)"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+
+      - name: Name the output directory
+        run: echo "OUT=$RUNNER_TEMP/shared-counters" >> "$GITHUB_ENV"
+
+      - name: Check the inputs and the host's tools
+        run: |
+          [[ "$BLOCKS" =~ ^[1-9][0-9]?$ ]] || { echo "blocks must be a number from 1 to 99"; exit 1; }
+          missing=
+          for tool in /usr/bin/clang taskset python3 sha256sum awk lscpu timeout perl /usr/bin/time; do
+            command -v "$tool" >/dev/null || missing="$missing $tool"
+          done
+          if [ -n "$missing" ]; then
+            echo "missing:$missing"
+            exit 1
+          fi
+          /usr/bin/clang --version
+
+      # A cancelled earlier run can leave its arms running, or the host-wide
+      # lock of run-check.pl behind; stop them and say so. Then the machine
+      # must be idle: under 5% busy on all CPUs over 5 s.
+      - name: Stop leftovers and check that the host is idle
+        run: |
+          ps -eo pid,args | grep -E '/shared-counters/bin/w' | grep -v grep | tee "$RUNNER_TEMP/leftover.txt" || true
+          awk '{print $1}' "$RUNNER_TEMP/leftover.txt" | xargs -r kill 2>/dev/null || true
+          lock=/tmp/whitefoot-check-$(id -u).lock
+          if [ -e "$lock" ]; then
+            owner=$(head -1 "$lock/pid" 2>/dev/null)
+            if [ -z "$owner" ] || ! kill -0 "$owner" 2>/dev/null; then
+              echo "removing stale lock of $owner: $(cat "$lock/command" 2>/dev/null)"
+              rm -rf "$lock"
+            fi
+          fi
+          sleep 2
+          sample() { awk '/^cpu / {idle = $5 + $6; total = 0; for (i = 2; i <= NF; i++) total += $i; print idle, total}' /proc/stat; }
+          read -r idle_before total_before < <(sample)
+          sleep 5
+          read -r idle_after total_after < <(sample)
+          busy=$(awk -v ib="$idle_before" -v tb="$total_before" -v ia="$idle_after" -v ta="$total_after" 'BEGIN { printf "%.4f", 1 - (ia - ib) / (ta - tb) }')
+          echo "load: $(cat /proc/loadavg); busy share over 5 s: $busy"
+          ps -eo pid,pcpu,args --sort=-pcpu | head -n 8
+          awk -v busy="$busy" 'BEGIN { exit !(busy > 0.05) }' && { echo "the host is not idle; stop its other work first"; exit 1; } || true
+
+      - name: Build the arms
+        run: |
+          perl .github/run-check.pl shared-counters/build \
+            bash research/experiments/shared-counters/run.sh --out "$OUT" --build-only
+
+      - name: Run the cells
+        env:
+          # The main run's cells take about 21 minutes; run-check.pl's default
+          # limit is 30.
+          WHITEFOOT_CHECK_TIMEOUT: "3000"
+        run: |
+          perl .github/run-check.pl shared-counters/cells \
+            bash research/experiments/shared-counters/run.sh --out "$OUT" --skip-build
+
+      - name: Summarize
+        if: always()
+        run: |
+          test -s "$OUT/raw.tsv" || { echo "no rows were written"; exit 0; }
+          python3 -B research/experiments/shared-counters/summarize.py "$OUT/raw.tsv" > "$OUT/summary.txt"
+          cat "$OUT/summary.txt"
+          {
+            echo "## shared-counters C model ($MODE)"
+            echo
+            echo '```text'
+            cat "$OUT/host.txt" 2>/dev/null
+            echo
+            cat "$OUT/summary.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: shared-counters-c-model-${{ inputs.mode }}-${{ github.run_id }}
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/shared-counters/raw.tsv
+            ${{ runner.temp }}/shared-counters/summary.txt
+            ${{ runner.temp }}/shared-counters/host.txt
+            ${{ runner.temp }}/shared-counters/runs/

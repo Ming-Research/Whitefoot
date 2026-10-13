@@ -54,7 +54,9 @@ state at most 1.25 times the array's rate at every CPU count (R2), waits for
 that implementation. The criteria the implementation must meet, and a C model
 that gates it, were registered on 2026-10-12 before any implementation or
 C-model measurement, replacing the earlier prediction P1
-([section 8.5](#85-criteria-for-the-implementation-registered-2026-10-12)).
+([section 8.5](#85-criteria-for-the-implementation-registered-2026-10-12)),
+and the C model's arms, procedure and decision rule were registered before it
+ran ([section 8.6](#86-c-model-run-registered-2026-10-12-before-measurement)).
 
 Firn then asked that each driver's shard can own a buffer or a queue and that
 one statement can swap out every shard's content (Firn's analysis of writes
@@ -987,6 +989,8 @@ Firn-wf runtime-contention harness (`6c0e973`: its gate, deadline, batches of
 | W6 `read-shared` | read-only statement on one `Shared<u64>` | ties the reported row 3 to a source |
 | W7 `c-model` | C model of the planned layout: a lock word and a value on each thread's own line, plus a reader of the total every 1 ms (added 2026-10-12, [section 8.5](#85-criteria-for-the-implementation-registered-2026-10-12)) | gate before any implementation, against W5p |
 | W7t | W7 built twice from the same source | noise control for W7 |
+| W7rd | W7 with its 1 ms reader of the total; W7 itself runs without one (added 2026-10-12, [section 8.6](#86-c-model-run-registered-2026-10-12-before-measurement)) | the reader criteria of section 8.5 on the C model |
+| W5pN | W5p's binary run with one thread per CPU of the list instead of 64 (added 2026-10-12, section 8.6) | W7's comparison at W7's thread count |
 
 W3, W4 and W4r run with and without one extra reader context that every
 millisecond reads the total at one point (W3: its 16-target statement; W4: a
@@ -1150,6 +1154,149 @@ is complete and visible, and then reads or swaps the shards. macOS
 has no such call, so its mechanism is open and is derived only if this step is
 reached. The cost moves to the whole target, which becomes a system call per
 read, and the C model measures that cost again before the design is chosen.
+
+### 8.6 C model run (registered 2026-10-12, before measurement)
+
+Registered on 2026-10-12, before the C model was built on the 14900K or run
+anywhere. It fixes how step 1 of
+[section 8.5](#85-criteria-for-the-implementation-registered-2026-10-12) is
+measured and read; section 8.5's thresholds are unchanged.
+
+**Question.** Does the planned shard update, a first-come lock taken and
+released around an add on the thread's own cache line, keep at least half the
+rate of C own-line, each thread adding to its own line with one atomic add, at
+2, 4 and 8 P-cores? The C model does only what the planned lean shard path
+does, with no Whitefoot runtime around it, so its rate bounds the
+implementation's from above: if W7 stays below half of C own-line, W4 cannot
+reach it either, and the locked design is replaced before it is built.
+
+**The model** (`research/experiments/shared-counters/w7.c`):
+
+- One allocation: a header line holding the handle count and the number of
+  shards `len`, then `len` shards, each a 64-byte line holding a ticket lock
+  (two 32-bit words, the next ticket and the ticket being served) and a
+  64-bit count. Nothing writes the header after it is made.
+- `len` is twice the number of CPUs in the list, as section 12 sets it to the
+  threads that may run contexts, twice the drivers. The shards above the
+  writers' numbers stand for the spare threads; only the reader takes their
+  locks.
+- One writer thread per CPU of the list, standing for the drivers: writer `i`
+  has map-user number `i` in a thread-local and selects shard `i mod len`,
+  reading `len` from the header on every update; since `i < len`, the
+  division is skipped, as generated code may skip it. Each update draws a
+  ticket with one atomic fetch-and-add (acquire), waits until the served
+  ticket equals it (one load when uncontended), adds 1 to the count with a
+  plain load and store, and releases by storing the next ticket (release),
+  then does the harness's local step, as W5 and W5p do after their add.
+  The threads are confined to the list with `taskset`, as W5p's are, and not
+  pinned one to a CPU, since the Whitefoot runtime does not pin its drivers.
+- W7rd adds one reader thread pinned to CPU 16, the first E-core, outside
+  every list, so that it takes no CPU time from the writers and the
+  comparison W7rd / W7 prices only its locks; in Whitefoot the reader would be
+  a context on a driver, whose CPU cost W4's reader arm measures. Every
+  millisecond (absolute 1 ms ticks; a reader more than one period late starts
+  its period again) it takes every shard's lock in index order, sums the
+  counts, releases every lock, and records the time from before the first
+  lock to after the last release. Per cell it reports the number of reads,
+  their mean, median, 99th percentile and longest time.
+- A cell fails, and leaves no row, if the shards' counts do not sum exactly
+  to the writers' operations, if a whole read sees a smaller total than the
+  read before it, or if the reader made no read or did not run on its CPU.
+
+**Arms**, each cell 5 s, built with `/usr/bin/clang -O2 -pthread` as W5 and
+W5p were: W5p (the same source, flags and 64 threads as the measured W5p,
+unchanged), W5pN (W5p's binary with one thread per CPU), W7, W7t (W7's
+source built a second time into its own binary) and W7rd (W7's binary with
+the reader).
+
+**Thread count.** W7 has one writer per CPU, because in the planned runtime a
+shard has exactly one writer, the thread running its driver; 64 C threads on
+fewer CPUs would put several writers on a shard and measure a design that is
+not planned. The gate therefore compares W7 with W5pN, C own-line at the same
+thread count. W5p at 64 threads, the number section 8.5 quotes, runs in the
+same blocks; W7 / W5p and W5pN / W5p are reported, not decided.
+
+**CPU lists and procedure.** The lists of section 8.3: `0,2`, `0,2,4,6` and
+`0,2,4,…,14` (one hyperthread of each of 2, 4 and 8 P-cores) decide; `0-15`
+(8 P-cores, both hyperthreads) is reported only. The 14900K runner through CI
+only, checked idle (under 5% busy over 5 s), every heavy step under the
+host-wide lock of `run-check.pl`. A smoke run on a GitHub-hosted runner first
+checks the wiring and decides nothing. A pilot, one block of every arm at the
+8-P-core list, shows the run length and that the host runs the arms; it does
+not change the number of blocks. The main run is 12 blocks, more than section
+8.3's six because the interval below is formed over blocks, and costs about
+the time of the earlier six-block run of ten arms. Each block runs every arm
+once per list; the arm order starts one position later in each block and runs
+backwards in odd blocks, so that W7 runs before its twin in half the blocks
+and after it in the other half.
+
+**Decision rule, per CPU list.** Ratios are paired within a block: for each
+block, the ratio of the two arms' rates in that block on that list. A
+ratio's reading is the median of its block ratios and a 95% percentile
+bootstrap interval of that median: 10,000 resamples of the block ratios,
+drawn with replacement by Python's `random.Random(20261012)`, the interval
+running from the 251st to the 9,750th of the sorted resample medians
+(`summarize.py`).
+
+- **Twin.** The interval of W7t / W7 must contain 1; otherwise the list is
+  void, and none of its readings count. With identical binaries and a
+  correctly covering interval, a list is void by chance about 5% of the time,
+  and one of the three lists about 14% of the time; the one rerun below
+  exists for that.
+- **Gate**, W7 / W5pN against 0.5: met when the interval's lower bound is at
+  least 0.5, not met when its upper bound is below 0.5, otherwise
+  inconclusive.
+- **Reader**, decided at the same three lists: W7rd / W7 against 0.95 in the
+  same way; and the median whole read, taken per block as the cell's median
+  read time, against 50 µs: met when the interval's upper bound is at most
+  50 µs, not met when its lower bound exceeds it. The 99th percentile and the
+  longest read are reported, not decided: the longest read of a 5 s cell on a
+  general-purpose kernel measures interrupts as much as the lock.
+- Fewer than six paired blocks at a list decide nothing there.
+
+**Outcome.** The gate is met when it is met at all three lists: implement the
+compiler and the runtime. It is not met when it is not met at any list that is
+not void: switch to the writer side without an atomic instruction (section
+8.5). Otherwise, inconclusive or void at a list with none not met, the whole
+main run is repeated once, and the repeat's reading decides alone; both runs
+are reported, and a repeat that is still undecided goes to the owner with the
+data. A reader criterion not met by the C model does not change the gate,
+since the gate is about the update path, but it shows that the locked design
+cannot meet section 8.5's reader criteria either, and it goes to the owner as
+a decision before the implementation starts.
+
+**Predictions.** W7 / W5pN between 0.6 and 0.9 at each of 2, 4 and 8
+P-cores, and within 0.05 of the same value at all three. Reason: C own-line
+spends about 23 cycles per update (249 million updates a second per core,
+Table 9.3), nearly all of it the locked add. The model's update is one locked
+add of the same kind on the same private line, plus an uncontended load of
+the served ticket, a plain store of the count and a plain release store; the
+locked instruction of the next update must first drain those two stores to a
+line already in the core's cache, so the update costs one locked add plus a
+few cycles. Neither touches another core's line, so the ratio should not fall
+with more cores. W7t / W7 within 0.01 of 1. With the reader: W7rd / W7 at
+least 0.99, and a median whole read of 1 to 10 µs at 8 P-cores: each of the
+eight written shards costs about two line transfers to and from the reader
+(its ticket and its release), each of the order of 100 ns, and the eight
+spare shards stay in the reader's cache.
+
+**Falsifiers.**
+
+- W7 / W5pN below 0.5 at any list (the prediction fails, and so does the
+  gate): the locked add is not the dominant cost, or the lock's other steps
+  cost far more than estimated.
+- W7 / W5pN above 1: the model does less than it states (for example, the
+  compiler removed the lock), which is a model defect to fix before the
+  result counts.
+- W7's rate per writer at 8 P-cores below 0.9 times its rate at 2 P-cores,
+  where W5p's per-thread rate stays within 0.2% (Table 9.3): a line shared
+  between writers sits on the update path, a model defect, or the header line
+  is not read-only as intended.
+- W5pN / W5p further than 0.05 from 1: the thread-count convention matters,
+  and the choice of W5pN as the comparison is reported with both ratios.
+- W7rd / W7 below 0.95, or a median whole read above 50 µs: the reader's
+  locks interfere more than estimated (the reader criteria fail on the
+  model).
 
 ## 9. Results: the arms that need no language change
 
@@ -1542,9 +1689,9 @@ Not implemented on this branch. The order follows the gate: the checker first,
 so the reject cases pass, then lowering and the runtime, so the run cases
 pass, then the measurement.
 
-**Gate before any of it.** The C model of section 8.5 (W7) runs first; below
-0.5 × W5p the plan below is replaced by the design without a writer-side
-atomic instruction.
+**Gate before any of it.** The C model of section 8.5 (W7) runs first, under
+the procedure and decision rule of section 8.6; below 0.5 × W5p the plan
+below is replaced by the design without a writer-side atomic instruction.
 
 **Prerequisite.** A shard statement must not write the object header. Today
 every statement through a value handle counts the handle on the header

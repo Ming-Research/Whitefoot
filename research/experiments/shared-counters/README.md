@@ -5,9 +5,10 @@ The arms of the registered experiment in
 (section 8) that run on today's language and compiler: how fast 64 contexts
 update one count through one shared object, through their own objects, and
 through a writer-built array of 16 shared objects, and what a single hardware
-add costs against private increments. The arms that need the sharded state
-(W4, W4r, the maximum arms M1-M4 and the Firn arms) are not here; they wait
-for an implementation.
+add costs against private increments. It also holds the C model of the
+planned sharded state (W7, DESIGN.md sections 8.5 and 8.6), which gates its
+implementation. The arms that need the sharded state (W4, W4r, the maximum
+arms M1-M4 and the Firn arms) are not here; they wait for an implementation.
 
 The harness is ported from the runtime-contention witnesses of Firn-wf, branch
 `claude/witness-contention`, directory
@@ -28,7 +29,8 @@ port's addition (zero except for W3rd) and carry the reader context's counts.
 
 ## Arms
 
-Each cell is 64 contexts (threads for W5) for 5 s.
+Each cell is 64 contexts (threads for W5 and W5p) for 5 s; W5pN and the C
+model's arms W7, W7t and W7rd start one thread per CPU of the list instead.
 
 | Arm | Entry or file | Per operation | Role |
 |---|---|---|---|
@@ -42,6 +44,10 @@ Each cell is 64 contexts (threads for W5) for 5 s.
 | W3rd | `w_shards_reader` (`shards_reader.wf`) | as W3, plus one extra reader context | the reader sleeps about 1 ms, then reads all 16 objects in one atomic statement naming 16 targets, and times it; its reads, total nanoseconds and longest read are the last three output fields |
 | W5 | `w5.c` | `atomic_fetch_add` (sequentially consistent) on one 64-byte-aligned `_Atomic uint64_t`, 64 threads | prices DESIGN.md candidate (a) without implementing it |
 | W5p | `w5.c` built with `-DPADDED=1` | the same, each thread on its own padded line | the private ceiling for W5 |
+| W5pN | W5p's binary | as W5p, one thread per CPU of the list instead of 64 | C own-line at the C model's thread count; the gate's comparison |
+| W7 | `w7.c` | one writer thread per CPU, each taking its shard's ticket lock, adding 1 to the count beside it and releasing; `len` = twice the CPUs | the C model of the planned shard update (DESIGN.md section 8.6) |
+| W7t | `w7.c` again | as W7 | the same source built a second time as a separate binary: the C model's noise control; `host.txt` records both hashes |
+| W7rd | W7's binary | as W7, plus one reader thread pinned to `READER_CPU` (default 16, an E-core) outside the list | every 1 ms the reader takes every shard's lock in index order, sums, releases and times the whole read; reads, total, longest, median and 99th percentile are the output's reader fields |
 
 W3's source form. The target `&shards[slot]` is refused (SHARE-2,
 `AtomicTargetNotShared`: the checker reads the index step as a map step on the
@@ -74,6 +80,15 @@ so more threads than CPUs time-slice, where the Whitefoot arms run 64
 contexts on as many drivers as the list has CPUs. The comparison is of the
 cost of a contended or private increment, not of the schedulers.
 
+W5pN, W7, W7t and W7rd start one thread per CPU of the list, because in the
+planned runtime a shard has exactly one writer, the thread running a driver
+(DESIGN.md section 8.6 gives the reasons and the decision rule). `w7.c` prints
+the harness's line with `shards=`, `read_med_ns=`, `read_p99_ns=` and
+`reader_cpu=` added, and exits 1 if the shards' counts do not sum to the
+writers' operations, if a whole read sees a smaller total than the one before
+it, or if the reader made no read or ran on another CPU; it refuses (exit 2)
+a reader CPU inside the writers' list.
+
 ## Files
 
 - `modules.wfg`, `module.wfm`: one module program with an entry per
@@ -81,14 +96,19 @@ cost of a contended or private increment, not of the schedulers.
 - `harness.wf`: argument reading, the start gate, the totals object, the
   local operation, the report line. Shared by every arm.
 - `base.wf`, `private.wf`, `shared.wf`, `shared_param.wf`, `read_shared.wf`,
-  `shards.wf`, `shards_reader.wf`: one arm each. `w5.c`: W5 and W5p.
-- `run.sh`: builds the arms (every Whitefoot arm with `--full-lto`, `w5.c`
-  with `clang -O2 -pthread`) and runs them under `taskset -c`. CPU lists `0,2`,
+  `shards.wf`, `shards_reader.wf`: one arm each. `w5.c`: W5, W5p and W5pN.
+  `w7.c`: W7, W7t and W7rd.
+- `run.sh`: builds the arms named in `ARMS` (every Whitefoot arm with
+  `--full-lto`, `w5.c` and `w7.c` with `clang -O2 -pthread`; a selection of C
+  arms alone, such as the C model's `ARMS="W5p W5pN W7 W7t W7rd"`, needs no
+  Whitefoot compiler) and runs them under `taskset -c`. CPU lists `0,2`,
   `0,2,4,6`, `0,2,4,6,8,10,12,14` (one hyperthread of each of 2, 4 and 8
   P-cores) and `0-15` (8 P-cores, both hyperthreads), `WF_DRIVERS` equal to
   the list's CPU count. `PILOT=1` runs one block at the 8-P-core list only.
   Otherwise it runs six blocks (`BLOCKS`, provisional): each block runs every
-  arm once per list, the arm order rotated by one position per block. It
+  arm once per list, the arm order rotated by one position per block
+  (`ORDER=alternate` also runs odd blocks' order backwards, as the C model's
+  run does). It
   writes `raw.tsv` (one row per cell, columns in the script's header) and each
   cell's standard output and error. `host.txt` records the kernel, the CPU
   model and map, the governor, the compiler release and the twin's hashes.
@@ -105,6 +125,14 @@ cost of a contended or private increment, not of the schedulers.
   - P3: W5/W5p at 8 P-cores at most 0.25.
   Not decided here: P1, P2, P4, P5, R1, R4, R5 and the descriptive M1-M4 and
   F-heap arms.
+
+  With the C model's arms present it also prints, per list, the ratios
+  W7t / W7, W7 / W5pN, W7 / W5p, W5pN / W5p and W7rd / W7 paired within
+  blocks with their medians and 95% bootstrap intervals, the reader's median,
+  99th-percentile and longest whole read, and the readings of section 8.6:
+  the twin's validity, the gate W7 / W5pN against 0.5 at 2, 4 and 8 P-cores,
+  the reader criteria, and the outcome. `--smoke` labels a wiring run on
+  another host as no verdict.
 
 ## Results
 
@@ -156,3 +184,27 @@ the download and the builds. Copy the new `raw.tsv`, `host.txt` and
 the workflow again before the branch is ready. This directory stays as the
 record of the arms until the sharded-state arms join it or the investigation
 closes.
+
+## Running the C model
+
+The C model (W5p, W5pN, W7, W7t, W7rd; DESIGN.md section 8.6) runs through
+the temporary dispatch-only workflow `.github/workflows/tmp-shared-counters.yml`,
+which replaced the one above on the work branch and needs no compiler release:
+
+```
+gh workflow run tmp-shared-counters.yml --ref <branch> -f mode=smoke
+gh workflow run tmp-shared-counters.yml --ref <branch> -f mode=pilot
+gh workflow run tmp-shared-counters.yml --ref <branch> -f mode=main
+```
+
+`smoke` runs on a GitHub-hosted runner: it builds the arms, checks that `w7`
+refuses a reader inside the writers' list, runs two blocks of 0.2 s cells on
+the host's own CPUs and summarizes with `--smoke`; it decides nothing.
+`pilot` (one block at the 8-P-core list, about half a minute of cells) and
+`main` (`blocks`, default 12, at the four lists, about 21 minutes of cells:
+12 blocks times 4 lists times 5 arms times about 5.2 s) run only on the
+14900K runner and stop on any other host. They check that the host is idle,
+build and run under `.github/run-check.pl`, and upload `raw.tsv`,
+`summary.txt`, `host.txt` and the cells' output. Tell the other sessions
+before a timed run, copy the results into `results/<run id>/` and remove the
+workflow before the branch is ready.
