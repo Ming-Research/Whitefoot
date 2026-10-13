@@ -385,6 +385,48 @@ fn main() -> status: std::process::ExitStatus pure {
         ],
     },
     // -------------------------------------------------------------------
+    // [CONST-1] a const argument against its const parameter's type: each
+    // IDENT term declares exactly that type, and the value lies in its range.
+    // -------------------------------------------------------------------
+    Probe {
+        name: "const-argument-outside-parameter-range.wf",
+        source: br#"fn get<const n: u8>() -> r: u8 pure {
+  return n;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let v = get::<300>();
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "CONST-1",
+        sentences: &[
+            "]: ConstArgumentOutOfRange\n",
+            "\n  parameter_type: u8\n  value: 300\n",
+        ],
+    },
+    Probe {
+        name: "const-argument-term-of-another-type.wf",
+        source: br#"fn get<const n: u64>() -> r: u64 pure {
+  return n;
+}
+
+fn next<const m: u8>() -> r: u64 pure {
+  return get::<m + 1>();
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let v = next::<3>();
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "CONST-1",
+        sentences: &[
+            "]: TypeMismatch\n",
+            "\n  expected: u64\n  found: u8\n",
+        ],
+    },
+    // -------------------------------------------------------------------
     // [TYPE-5] generic argument lists and [FN-3] bounds.
     // -------------------------------------------------------------------
     Probe {

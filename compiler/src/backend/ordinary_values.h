@@ -194,6 +194,7 @@ void wf__body_host_copy_bytes(wf_copy_result *result, const wf_value *value, wf_
 /* DescriptionError has CopyError's layout: tag 0 carries required, tag 1
  * denotes an unavailable description. Result shares wf_copy_result's layout. */
 void wf__body_error_copy_description(wf_copy_result *result, const wf_io_error *error, wf_view *destination, uint64_t start, uint64_t end);
+void wf__body_error_copy_class_description(wf_copy_result *result, const wf_io_error *error, wf_view *destination, uint64_t start, uint64_t end);
 void wf__body_host_utf8_len(wf_utf8_result *result, const wf_value *value);
 void wf__body_host_copy_utf8(wf_copy_result *result, const wf_value *value, wf_view *destination, uint64_t start, uint64_t end);
 void wf__body_relative_path(wf_value_result *result, const wf_value *value);

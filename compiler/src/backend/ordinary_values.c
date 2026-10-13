@@ -114,6 +114,10 @@ static void wf_description_copy(wf_copy_result *result, const char *text,
     result->ok.value = start + length;
 }
 
+static void wf_host_code_description(wf_copy_result *result, uint32_t code,
+                                     wf_view *destination,
+                                     uint64_t start, uint64_t end);
+
 void wf__body_error_copy_description(wf_copy_result *result,
                                      const wf_io_error *error,
                                      wf_view *destination,
@@ -143,6 +147,90 @@ void wf__body_error_copy_description(wf_copy_result *result,
                             destination, start, end);
         return;
     }
+    wf_host_code_description(result, code, destination, start, end);
+}
+
+/* [PRE-2] each IoError class's code on this host, indexed by tag; zero is a
+ * class with no code here, which has no description. */
+static const uint32_t wf_class_codes[WF_IO_OTHER + 1] = {
+#if defined(_WIN32)
+    [WF_IO_NOT_FOUND] = ERROR_FILE_NOT_FOUND,
+    [WF_IO_PERMISSION_DENIED] = ERROR_ACCESS_DENIED,
+    [WF_IO_ALREADY_EXISTS] = ERROR_ALREADY_EXISTS,
+    [WF_IO_NOT_DIRECTORY] = ERROR_DIRECTORY,
+    [WF_IO_DIRECTORY_NOT_EMPTY] = ERROR_DIR_NOT_EMPTY,
+    [WF_IO_READ_ONLY] = ERROR_WRITE_PROTECT,
+    [WF_IO_RESOURCE_BUSY] = ERROR_BUSY,
+    [WF_IO_INVALID_INPUT] = ERROR_INVALID_PARAMETER,
+    [WF_IO_INVALID_PATH] = ERROR_INVALID_NAME,
+    [WF_IO_UNSUPPORTED] = ERROR_NOT_SUPPORTED,
+    [WF_IO_TIMED_OUT] = ERROR_SEM_TIMEOUT,
+    [WF_IO_BROKEN_PIPE] = ERROR_BROKEN_PIPE,
+    [WF_IO_CONNECTION_REFUSED] = ERROR_CONNECTION_REFUSED,
+    [WF_IO_CONNECTION_RESET] = ERROR_NETNAME_DELETED,
+    [WF_IO_CONNECTION_ABORTED] = ERROR_REQUEST_ABORTED,
+    [WF_IO_NOT_CONNECTED] = ERROR_NOT_CONNECTED,
+    [WF_IO_ADDRESS_IN_USE] = 10048, /* WSAEADDRINUSE. */
+    [WF_IO_ADDRESS_UNAVAILABLE] = 10049, /* WSAEADDRNOTAVAIL. */
+    [WF_IO_RESOURCE_EXHAUSTED] = ERROR_TOO_MANY_OPEN_FILES,
+    [WF_IO_FILE_TOO_LARGE] = ERROR_FILE_TOO_LARGE,
+    [WF_IO_NO_SPACE] = ERROR_DISK_FULL,
+    [WF_IO_QUOTA_EXCEEDED] = ERROR_NOT_ENOUGH_QUOTA,
+    [WF_IO_CROSS_DEVICE] = ERROR_NOT_SAME_DEVICE,
+    [WF_IO_DEVICE_FAILURE] = ERROR_IO_DEVICE,
+#else
+    [WF_IO_NOT_FOUND] = ENOENT,
+    [WF_IO_PERMISSION_DENIED] = EACCES,
+    [WF_IO_ALREADY_EXISTS] = EEXIST,
+    [WF_IO_NOT_DIRECTORY] = ENOTDIR,
+    [WF_IO_IS_DIRECTORY] = EISDIR,
+    [WF_IO_DIRECTORY_NOT_EMPTY] = ENOTEMPTY,
+    [WF_IO_READ_ONLY] = EROFS,
+    [WF_IO_RESOURCE_BUSY] = EBUSY,
+    [WF_IO_INVALID_INPUT] = EINVAL,
+    [WF_IO_INVALID_PATH] = ENAMETOOLONG,
+    [WF_IO_UNSUPPORTED] = ENOTSUP,
+    [WF_IO_TIMED_OUT] = ETIMEDOUT,
+    [WF_IO_BROKEN_PIPE] = EPIPE,
+    [WF_IO_CONNECTION_REFUSED] = ECONNREFUSED,
+    [WF_IO_CONNECTION_RESET] = ECONNRESET,
+    [WF_IO_CONNECTION_ABORTED] = ECONNABORTED,
+    [WF_IO_NOT_CONNECTED] = ENOTCONN,
+    [WF_IO_ADDRESS_IN_USE] = EADDRINUSE,
+    [WF_IO_ADDRESS_UNAVAILABLE] = EADDRNOTAVAIL,
+    [WF_IO_RESOURCE_EXHAUSTED] = EMFILE,
+    [WF_IO_FILE_TOO_LARGE] = EFBIG,
+    [WF_IO_NO_SPACE] = ENOSPC,
+#ifdef EDQUOT
+    [WF_IO_QUOTA_EXCEEDED] = EDQUOT,
+#endif
+    [WF_IO_CROSS_DEVICE] = EXDEV,
+    [WF_IO_DEVICE_FAILURE] = EIO,
+#endif
+};
+
+/* The class's description is the host text of its code, the same text
+ * error_copy_description gives a variant carrying that code; the error's own
+ * code and origin are not read. */
+void wf__body_error_copy_class_description(wf_copy_result *result,
+                                           const wf_io_error *error,
+                                           wf_view *destination,
+                                           uint64_t start, uint64_t end) {
+    memset(result, 0, sizeof(*result));
+    result->tag = 1;
+    result->err.error.tag = 1;
+    if (error->tag > WF_IO_OTHER) return;
+    const uint32_t code = wf_class_codes[error->tag];
+    if (code == 0) return;
+    wf_host_code_description(result, code, destination, start, end);
+}
+
+/* The host's message for a nonzero code, copied under the description window
+ * contract. The caller has set result to DescriptionUnavailable, which every
+ * failure before the final copy keeps. */
+static void wf_host_code_description(wf_copy_result *result, uint32_t code,
+                                     wf_view *destination,
+                                     uint64_t start, uint64_t end) {
 #if defined(_WIN32)
     WCHAR local_wide[128];
     WCHAR *wide = local_wide;

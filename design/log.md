@@ -5,6 +5,29 @@ Newest first. One entry per approved change of the tree: a dated title,
 the owner's agent instructions own the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-13 A const argument is judged where it is written; a symbolic integer constant keeps its exact type
+
+Nodes: language/generics, compiler/checker-facts
+
+Owner-approved: On the shared status board on 2026-10-12, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the specification revision and design-tree change of Whitefoot#390 at commit c80159911?" (translated), whose background listed the added generics decision (a const argument is admitted when each name in it has exactly the parameter's integer type and its value lies in that type's range, judged at the argument when it names no const generic and at each concrete instance when it does, with six refused alternatives) and the changed reason of the checker-facts decision that a symbolic integer constant keeps its declaration's identity and exact type.
+
+Summary: A u8 const parameter given 300 was truncated to 44 in code generation while the checker reasoned from the written type's range facts, which allowed an out-of-bounds read. A const argument is therefore admitted only when its names have exactly the parameter's integer type and its value lies in the parameter's range, judged where the argument is written or, for an operation over a const generic, at each instance, where the unsigned 64-bit domain is already judged. The refused alternatives are checking only at instantiation, requiring literals to carry the exact type, restricting const parameters to u64, admitting narrower names, and two ways of admitting operations over names of other types. The checker-facts decision keeps its choice and now gives the sharper reason: a use taking its consumer's type would read a const generic with bounds its own instances never checked.
+
+## 2026-10-12 A guard reaches no self-changing host handle; an IoError's class description; what concurrency promises about progress
+
+Nodes: language/parallelism, language/system-interface, language/waiting/shared-objects
+
+Owner-approved: On the shared status board on 2026-10-12, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve Whitefoot#392 (head commit 70aca3925)'s specification v0.136 change and three design decisions?" (translated), whose background listed the three decisions: a guard reads no self-changing host handle, listed in a specification table instead of a declaration marker; the class description by variant alone; and the concurrency progress promise with its refused alternative.
+
+Summary: A guard reads or writes no path that is or holds a self-changing host handle, and PRE-2 lists those handles in one table instead of marking their types, because a guard is woken only by writes and these handles change with no write. `error_copy_class_description` describes an `IoError` by its variant alone, ignoring its code and origin, through PRE-2's class-to-code table. Concurrency promises no failure that one driver would not show: apart from the driver count a program reads, an execution on several drivers is one the language permits on one; a context that does not wait eventually takes its next step while every context keeps reaching its completion or a wait; and a program in which every unfinished context waits for a false guard or another context, with no host operation outstanding, may be stopped with a report on any number of drivers, which the runtime does. It does not promise freedom from deadlock, because the owner set the bar at behaviour equal to or better than one thread; refusing programs whose guard may never become true is rejected, since whether a guard eventually holds depends on what other contexts do at run time.
+## 2026-10-12 Cache keys carry no host path
+
+Nodes: compiler/incremental-compilation
+
+Owner-approved: On the shared status board on 2026-10-12, written in Chinese, the owner chose option A, "approve" (translated), on the card cache-key-logical-identity, "approve the design tree decision that cache keys contain no host path? (Whitefoot#383, head commit 1821dc02d42d)" (translated), whose background listed the new decision and the new Rejected item.
+
+Summary: No build-cache key contains the host path an invocation read a record from; a key identifies each record by its stable resolved module identity and logical path with the content its query reads, and a recorded rejection is reused only while the host paths its diagnostic prints are unchanged, because a graph reached through a relative path, an absolute path or a path with a `..` component is the same input whose acceptances and built modules should be reused, while its diagnostics must still name this invocation's paths. Keying every verdict on display paths, which rebuilt an unchanged graph whenever the spelling changed, is replaced; rewriting the paths inside a recorded rejection's text is rejected because a rendering quotes several paths in free text beside quoted source.
+
 ## 2026-10-12 A heap reading loads the pool counter without the pool lock
 
 Nodes: language/system-interface/memory-statistics
