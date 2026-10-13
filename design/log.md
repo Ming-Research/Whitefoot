@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 the owner's agent instructions own the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-13 Linux time budgets are set per CPU model, and macOS overruns are reported only
+
+Nodes: compiler/verification
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A (translated: "set Linux budgets per CPU model at the maximum of at least the 20 most recent runs plus 10%, the slowest model's budget for an unseen model, flagged in the report; macOS budgets only mark an overrun in the report and no longer fail the gate") on the card "change the gate's time budgets: Linux set per CPU model, macOS only reports its time and no longer fails on an overrun?" (translated).
+
+Summary: The budget decision now keeps one row per stage with one Linux column per CPU model of at least 20 recorded runs, each the maximum plus 10% rounded up to 5 s, and an unmapped model takes the stage's largest Linux budget with a note. The [197-run Linux sample](../research/investigations/test-economy/time-budgets.md#per-cpu-sample-on-2026-10-13) records corpus-group medians of 280.7 s on EPYC 7763 and 181.6 s on EPYC 9V45; a single Linux budget can hide growth on faster classes. Refused were one budget recomputed at the observed maximum (blind to growth on fast runners) and no change (re-run on every overrun). macOS overruns are recorded and shown but fail no verdict. The [44-run macOS sample](../research/investigations/test-economy/time-budgets.md#macos-sample-on-2026-10-13) records four corpus-group overruns and five corpus-case overruns on the reported Apple M1 (Virtual) model; this one morning's spread does not isolate machine variation from differences among revisions. The 10 s floor is retained from the earlier rule, not part of the 2026-10-13 ruling. Edits that change no decision: the former single decision is split into the budget rule, the verdict rule and the overrun-judgment rule, and the fixed 10 s raise now applies to Windows budgets, the only ones still set by the former rule.
+
 ## 2026-10-13 A call result may take the storage of a copied argument no longer read
 
 Nodes: compiler/storage-placement
