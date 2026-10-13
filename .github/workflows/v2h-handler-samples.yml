@@ -1,0 +1,114 @@
+# Temporary phase-3 per-handler CPU sampling. Remove workflow and its wired
+# handler_samples.py collector and time-budgets.txt row before this branch is ready.
+# research-boundary: manual-only
+# The coordinator dispatches this later through the 14900K queue. No push job.
+name: v2h-handler-samples
+
+on:
+  workflow_dispatch:
+    inputs:
+      iterations:
+        description: CoreMark iterations; 2000 matches the earlier attribution
+        type: choice
+        options: ["2000", "20000"]
+        default: "2000"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v2h-handler-samples-14900k
+  cancel-in-progress: false
+
+jobs:
+  samples:
+    runs-on: [self-hosted, 14900k]
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    env:
+      LC_ALL: C
+      CARGO_INCREMENTAL: "0"
+      CARGO_TERM_COLOR: never
+      ITERATIONS: ${{ inputs.iterations }}
+      WASMI_REV: 2970aa871cc1001b57b267ccecdcd1e42306199e
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Record protocol and inspect the existing runner lock
+        run: |
+          set -euo pipefail
+          if [ -d "$HOME/.cargo/bin" ]; then echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"; export PATH="$HOME/.cargo/bin:$PATH"; fi
+          [[ "$ITERATIONS" = 2000 || "$ITERATIONS" = 20000 ]]
+          for tool in cargo rustc perl python3 git nm taskset perf sha256sum /usr/bin/clang; do command -v "$tool"; done
+          taskset -c 2 true
+          lock="/tmp/whitefoot-check-$(id -u).lock"
+          if [ -d "$lock" ]; then
+            cat "$lock/pid" "$lock/command"
+            pid=$(cat "$lock/pid")
+            [[ "$pid" =~ ^[0-9]+$ ]] && ps -p "$pid" -o pid,args || true
+            echo "Runner lock exists; coordinator must inspect it. Nothing removed."
+            exit 75
+          fi
+          out="$RUNNER_TEMP/v2h-handler-samples-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          mkdir -p "$out"
+          echo "SAMPLES_OUT=$out" >> "$GITHUB_ENV"
+          {
+            echo 'One cpu-clock profile per engine, fixed order v2h then wasmi; CPU 2, frequency 20000 Hz.'
+            echo "CoreMark 0x0 0x0 0x66 $ITERATIONS; exclusive physical-symbol attribution."
+            echo 'Sample denominator: ALL cpu-clock sample records per engine, including helper/non-handler/unknown samples.'
+            echo 'Small: strictly <0.3% sample-count share (samples*1000 < total_samples*3).'
+            echo 'Zero sampled is not evidence of zero execution. Period-weighted shares are separate.'
+            echo 'Aliases spanning multiple handler names stay ambiguous; no name-based family aggregation.'
+            echo 'All reports are unfiltered, native perf.data and record diagnostics are retained.'
+            echo 'Builds: compiler profile gate; gen.py default; whitefootc --dispatch-ledger; wasmi_cli release/locked.'
+            echo 'No timing/ratio threshold is a verdict; source, mapping or profiler failures fail the job.'
+            echo 'CRC oracle: list e714, matrix 1fd7, state 8e3a; final 4983 at 2000 / 382f at 20000.'
+            echo 'Earlier acquisition workflow: 78c6c599dcea13bfe15754031d962b257acfea87 compute-bench.yml v2h-perf.'
+            echo "Source $(git rev-parse HEAD); wasmi $WASMI_REV; Silverfir-nano 5f248e44."
+          } > "$out/protocol.txt"
+      - name: Build both engines and collect unfiltered CPU samples under one host lock
+        run: |
+          set -euo pipefail
+          perl .github/run-check.pl v2h-handler-samples bash -euo pipefail <<'SH'
+          out="$SAMPLES_OUT"
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
+          cargo build --manifest-path compiler/Cargo.toml --profile gate --bin whitefootc --locked --offline
+          python3 research/experiments/match-dispatch/wasm/gen.py "$out/v2h.wf"
+          compiler/target/gate/whitefootc --dispatch-ledger "$out/v2h.wf" -o "$out/v2h" > "$out/v2h-compile.log" 2>&1 || { status=$?; cat "$out/v2h-compile.log"; exit "$status"; }
+          git clone --quiet https://github.com/wasmi-labs/wasmi "$out/wasmi-source"
+          git -C "$out/wasmi-source" checkout --quiet "$WASMI_REV"
+          test "$(git -C "$out/wasmi-source" rev-parse HEAD)" = "$WASMI_REV"
+          cargo build --manifest-path "$out/wasmi-source/Cargo.toml" --release --locked --package wasmi_cli > "$out/wasmi-build.log" 2>&1
+          git clone --quiet https://github.com/mbbill/Silverfir-nano "$out/sf"
+          git -C "$out/sf" checkout --quiet 5f248e44
+          cp "$out/sf/benchmarks/wasi/coremark/coremark.wasm" "$out/coremark.wasm"
+          {
+            git rev-parse HEAD
+            git -C "$out/sf" rev-parse HEAD
+            rustc -vV
+            cargo --version
+            /usr/bin/clang --version
+            perf --version
+            lscpu
+            cat /proc/sys/kernel/perf_event_paranoid
+            cat /proc/sys/kernel/perf_event_max_sample_rate
+            printf 'RUSTFLAGS=%s\nCARGO_ENCODED_RUSTFLAGS=%s\n' "${RUSTFLAGS-}" "${CARGO_ENCODED_RUSTFLAGS-}"
+            sha256sum compiler/target/gate/whitefootc "$out/v2h" "$out/v2h.wf" "$out/wasmi-source/target/release/wasmi" "$out/coremark.wasm"
+          } > "$out/inputs.txt"
+          cp compiler/Cargo.toml compiler/Cargo.lock "$out/"
+          cp "$out/wasmi-source/Cargo.lock" "$out/wasmi-Cargo.lock"
+          python3 research/experiments/match-dispatch/wasm/handler_samples.py "$out" --iterations "$ITERATIONS"
+          SH
+      - name: Retain raw profiles, every row and mapping evidence
+        if: always() && env.SAMPLES_OUT != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: v2h-handler-samples-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.SAMPLES_OUT }}/*.*
+            ${{ env.SAMPLES_OUT }}/v2h
+            ${{ env.SAMPLES_OUT }}/wasmi-source/target/release/wasmi
+          if-no-files-found: error

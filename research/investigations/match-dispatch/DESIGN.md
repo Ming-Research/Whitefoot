@@ -2068,6 +2068,71 @@ their membership in the below-cutoff residual: variant names and the two
 engines' sample reports are not supplied. This remains an inventory of the
 examined candidates, not a claim to cover the exact small-handler group.
 
+**Planned individual-handler collection (no new data yet).** The question is
+which of these 17 native bodies receives CPU samples on CoreMark, and whether
+the actual sampled work supports the instruction differences below. The
+locally available attribution branch is
+`origin/claude/v2h-attribution-1012` at
+`73f237aa115340d8815bb82e600968def5b499c8`; it is cited, not merged.
+Its deleted temporary collection is readable in the
+[earlier workflow](https://github.com/Ming-Research/Whitefoot/blob/78c6c599dcea13bfe15754031d962b257acfea87/.github/workflows/compute-bench.yml).
+That job ran three task-clock acquisitions and one CPU-clock profile per
+engine at 2000 iterations, CPU 2 and 20000 Hz. It retained only symbol reports
+filtered at 0.3% and truncated to 80 lines, not the raw profiles. Its initial
+enum-order arm names also needed correction to constructor/handler order.
+Consequently absence from that report cannot classify an individual candidate.
+
+The temporary [manual workflow](../../../.github/workflows/v2h-handler-samples.yml)
+and its [collector](../../experiments/match-dispatch/wasm/handler_samples.py)
+will build this branch's compiler and default generated v2h, and the same
+wasmi revision used for the machine-code inventory
+(`2970aa871cc1001b57b267ccecdcd1e42306199e`, release `wasmi_cli`, binary `wasmi`).
+Both receive the Silverfir-nano `5f248e44` CoreMark module and arguments
+`0x0 0x0 0x66 ITERATIONS`. The sole dispatch input is `iterations`, a choice
+of `2000` (default, matching the earlier attribution) or `20000`. One exclusive
+`cpu-clock` profile per engine runs on CPU 2 at 20000 Hz, in fixed order v2h
+then wasmi, under one host lock. There are no unprofiled timing repetitions.
+CoreMark CRCs must match the existing oracle; compilation, missing candidate
+bodies, malformed records and failed acquisition fail the job.
+
+Before acquisition, the job records this protocol and both symbol inventories.
+It maps v2h arms from the generated `run` match order and wasmi's executor
+handler symbols from their demangled names. It preserves every sample record,
+raw `perf.data`, both executables, generated source, input hashes, symbol/alias
+maps and unfiltered reports. Attribution is exclusive to the sampled physical
+body; helper, kernel, unknown and unresolved executor samples remain separate
+and are never charged to their callers. Same-address aliases spanning distinct
+handlers form an explicitly ambiguous combined row, not invented individual
+counts. If the backend inlines or removes a required candidate body, this
+symbol-based collection fails instead of claiming coverage.
+
+The predeclared cutoff is strictly below **0.3% of all recorded samples for
+that engine**: `handler_samples * 1000 < all_samples * 3`; equality belongs
+above the cutoff. This is not 0.3% of the total v2h-minus-wasmi CPU gap. Every
+handler row is retained, including zero-sampled rows; zero samples do not
+prove zero execution. The output gives both integers, sample-count percent,
+summed sample periods and a separate period-weighted percent, without mixing
+the two estimators. Lost/throttled samples or insufficient counts near the
+cutoff make a precise classification unresolved; inspect retained profiler
+diagnostics before interpreting the rows. A longer, separately queued dispatch
+may be needed, rather than silently increasing the run.
+
+The comparison is each candidate's native-body count/share and sampled IPs
+against its listed wasmi counterpart and the actual machine code of these
+new binaries. The static claim "this handler's extra instructions explain
+its share" is rejected as an established explanation if the body identity
+is ambiguous, the guest executes a different operand/result sequence, or
+the apparent excess lies in common instructions or separately recorded
+helpers rather than the identified extra work. A statistically unresolved
+excess supplies no support. Percentages with different engine denominators
+cannot be subtracted to obtain a share of the total CPU gap; differing dispatch
+mixes and slot/register destinations must be accounted for. This collection
+locates candidates and can contradict a proposed attribution; it does not
+by itself prove causation or an optimization's speedup. The earlier published
+engine CPU times sum to about 0.745 seconds for a 2000-iteration pair, but
+build/setup and profiler wall time are unknown. The 60-minute job timeout
+and 30-minute acquisition-stage cap are limits, not runtime predictions.
+
 Pairing preserves operand sources: slot forms use wasmi's slot inputs,
 Eqz uses an encoded zero immediate, and EqzA uses an accumulator input.
 Result destinations differ: these v2h forms write a slot, while the listed

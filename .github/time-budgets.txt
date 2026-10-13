@@ -68,3 +68,8 @@ performance-slow-control        55     -      -
 performance-shifted-images      10     -      -
 performance-placement-control   45     -      -
 performance-comparison          45     -      -
+
+# Temporary v2h-handler-samples.yml, 14900K manual research acquisition.
+# Provisional 30-minute acquisition cap, not a calibrated gate budget or
+# performance criterion. Remove this row with the workflow before ready.
+v2h-handler-samples             1800   -      -
