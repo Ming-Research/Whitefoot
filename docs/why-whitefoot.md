@@ -560,8 +560,8 @@ The verbosity price is real, and Part VI states it. The purchase is zero irregul
 
 ## 9. A closed, taught catalog of architectures; data-oriented layout by default
 
-*Current status: this is the seeded D6 design doctrine in `docs/patterns.md`;
-it is not yet ratified as normative writer doctrine.*
+*Current status: this is design doctrine taught by Whitefoot-kit's
+[writing guide](https://github.com/Ming-Research/Whitefoot-kit/blob/main/docs/writing.md); it is not normative language doctrine.*
 
 At statement level, Whitefoot forces one loop form and one conditional. It applies the same policy at architecture level: the set of blessed program-scale patterns is closed and taught up front, and the catalog meets two tests. It stays complete, so every task is modelable inside it and a gap is a documentation defect to fix rather than a writer error; and it stays efficient, so each pattern names the machine property or fact channel that makes it fast.
 
@@ -744,5 +744,5 @@ Every number above, with its committed record. Protocols, machines, and caveats 
 | Queue: exhaustive model check, all 4 weakened-ordering mutants caught; zero-RMW hot path; latency vs throughput vs `rtrb` | `archive/research/systems-performance-coverage/m6a-spsc-dryrun/RESULTS.md` |
 | Reproducibility direction and the absence of a complete object claim | [Reproducible compiler outputs](ideas.md#reproducible-compiler-outputs) |
 | Source-language rules cited (one spelling; reject-not-reformat; checked effects; static contracts; exact integer domains; prove-or-reject partial operations; source invariants and finite use steps) | `spec/kernel-spec.md` |
-| Pattern doctrine (command buffer, SoA pool, boolean classifier, proof at the maintained boundary) | `docs/patterns.md` |
+| Pattern doctrine (command buffer, SoA pool, boolean classifier, proof at the maintained boundary) | [Whitefoot-kit writing guide](https://github.com/Ming-Research/Whitefoot-kit/blob/main/docs/writing.md) |
 | Founding evidence for the premise (escape analysis conditionality, JIT recovery machinery, non-interference as the central enabler, IR semantics preservation) | `archive/research/phase2-notes/verified-findings.md`, `archive/research/phase2-notes/phase2-jit-findings.jsonl`, `archive/research/debates/round1-static-vs-profile.md` |
