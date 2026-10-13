@@ -801,13 +801,12 @@ fn follows_in_production(node: GrammarNodeId, token: Option<&ClassifiedToken>) -
                     }
                 }
             }
-            GrammarNodeKind::RepeatZero | GrammarNodeKind::RepeatOne => {
+            GrammarNodeKind::RepeatZero | GrammarNodeKind::RepeatOne
                 if children
                     .get(*index)
-                    .is_some_and(|body| first_accepts(*body, token).0)
-                {
-                    return true;
-                }
+                    .is_some_and(|body| first_accepts(*body, token).0) =>
+            {
+                return true;
             }
             _ => {}
         }
