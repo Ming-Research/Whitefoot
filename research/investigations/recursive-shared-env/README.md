@@ -58,12 +58,14 @@ slots. On AArch64, with eight registers, only the with-table chain does.
 ## Risks the measurement must see
 
 - A member whose branches each read a different borrowed input pays one
-  load per slot it reads. The loads are emitted once in the entry block and
-  rely on the host sinking them into the branch that uses them; an argument
-  past the registers was already a load from the stack, so the record should
-  cost no more there, but a member whose words all fit loses nothing to the
-  stack and only gains loads. The profitability rule keeps such a group out
-  only when every member fits.
+  load per slot it reads. The revised emission loads a slot once before its
+  first use in each block, with phi operands loaded in their predecessors.
+  The record pointer is `noalias readonly` and nothing writes the record,
+  so these loads are equivalent; GVN and LICM can remove dominated
+  duplicates and hoist loads out of loops. An argument past the registers
+  was already a load from the stack, but a member whose words all fit gains
+  record loads. The profitability rule keeps such a group out only when
+  every member fits.
 - A pointer loaded from the record carries `nonnull` and `dereferenceable`
   but cannot carry `noalias`, which the parameter had. Only read-only
   borrows enter the record, so every write still goes through a `noalias`
@@ -72,11 +74,13 @@ slots. On AArch64, with eight registers, only the with-table chain does.
 
 ## Later downstream check
 
-Snowghost's renderer has a function whose 36 arms each read a different
-borrowed input. Its base scan entry with the table against without it has
-a timing ratio of 0.9047; after this change is adopted downstream the target
-is at least 0.98. This check is pending. It runs in Snowghost-wf with a
-released compiler and is not part of this record's decision.
+Snowghost's renderer has a function with a 36-arm dispatch whose borrowed
+inputs each serve several arms. The aligned-order version was measured
+downstream and missed the renderer target; the block-local load revision
+has not yet been measured. The
+[renderer attribution](#renderer-attribution-and-load-placement-prediction--2026-10-12)
+records the result and the next prediction. This check runs in Snowghost-wf
+with a released compiler and is not part of the minimal witness's decision.
 
 ## First measurement
 
@@ -157,9 +161,40 @@ top-level call for the whole chain. Both branch copies were identical.
   without-table test passed all 6 words in registers and needed no such
   record load.
 
+## Renderer attribution and load-placement prediction — 2026-10-12
+
+Snowghost [run 38346501498](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38346501498)
+was compared with [base run 38317465865](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38317465865)
+on ecma262, on the hosted runner, with callgrind. The renderer's with-table
+against without-table ratio rose from 0.9047 to 0.9763, below the target of
+at least 0.98. Callgrind, optimized IR and disassembly attribute the remaining
+6.30 instructions per selector call as follows:
+
+| Source of the gap | Instructions per selector call |
+| --- | ---: |
+| `style_element`: the outside caller rebuilds the record per rule | 4.00 |
+| `instr_matches`: entry loads | 2.20 |
+| nth/class | 0.10 |
+
+`instr_matches`, the member with 36 match arms, ran four record loads at
+offsets 0x8, 0x10, 0x18 and 0x20 on every one of its 115.2 million calls.
+The hot Class arm, 83% of calls, used only one slot. Each slot served several
+blocks (12, 4, 7 and 6), so LLVM did not sink the loads. The minimal witness
+had not exposed this cost because each slot was used in only one arm.
+
+The without-table copy cost 0.94% more than its base: `instr_matches`' entry
+went from one move to one move plus two loads.
+
+Prediction, recorded before measuring the block-local load change: about
+5.7 fewer instructions per selector call with the table and 1.9 fewer
+without it, giving a ratio of about 0.990. This is a prediction, not a
+measured result. Rebuilding the record in each caller loop iteration, the
+4.00 contribution above, is not addressed by this change.
+
 ## Status
 
 The first two versions crossed a rejection bound. The third, with aligned
 positions, is in the undecided band under the pre-registered criteria; the
 decision on that band goes to the owner. The
-[Snowghost renderer check](#later-downstream-check) remains pending.
+[Snowghost renderer check](#later-downstream-check) missed its target with
+entry loads; measurement of the block-local load revision remains pending.

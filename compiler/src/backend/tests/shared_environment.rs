@@ -42,6 +42,20 @@ fn parameters<'header>(header: &'header str, symbol: &str) -> Vec<&'header str> 
     header[start..end].split(", ").collect()
 }
 
+/// The actual LLVM blocks, including blocks introduced inside an IR block.
+fn blocks(function: &str) -> Vec<(&str, String)> {
+    let mut blocks: Vec<(&str, String)> = Vec::new();
+    for line in function.lines().skip(1) {
+        if let Some(label) = line.strip_suffix(':') {
+            blocks.push((label, String::new()));
+        } else if let Some((_, text)) = blocks.last_mut() {
+            text.push_str(line);
+            text.push('\n');
+        }
+    }
+    blocks
+}
+
 #[test]
 fn a_recursive_group_passes_its_unchanged_borrows_in_one_record() {
     let llvm = compile(PROGRAM.as_bytes());
@@ -79,18 +93,20 @@ fn a_recursive_group_passes_its_unchanged_borrows_in_one_record() {
         2,
         "{descend}"
     );
-    // The body loads each slot once from the record, under the names an
-    // ordinary body receives it by.
-    assert_eq!(
-        weigh.matches("load ptr, ptr %wf.env.v").count(),
-        3,
-        "{weigh}"
-    );
-    assert_eq!(
-        weigh.matches("load i64, ptr %wf.env.v").count(),
-        1,
-        "{weigh}"
-    );
+    // Each physical block loads a slot at most once. Whole-function counts
+    // encoded the former entry-load decision: separate branches can now
+    // load the same immutable slot independently.
+    for (_, block) in blocks(weigh) {
+        let mut fields = std::collections::BTreeSet::new();
+        for line in block.lines().filter(|line| {
+            line.contains("getelementptr inbounds") && line.contains("ptr %wf.env,")
+        }) {
+            let field = line.rsplit(", i32 ").next().expect("a record field");
+            assert!(fields.insert(field), "slot loaded twice in {block}");
+        }
+    }
+    assert!(weigh.contains("load ptr, ptr %wf.env.v"), "{weigh}");
+    assert!(weigh.contains("load i64, ptr %wf.env.v"), "{weigh}");
     // The public symbol is the entry from outside: it keeps external
     // linkage, builds the record of the three unchanged borrows in its own
     // frame (window, which descend narrows on one edge, stays out) and calls
@@ -111,6 +127,197 @@ fn a_recursive_group_passes_its_unchanged_borrows_in_one_record() {
     let main = emitted_function(&llvm, "main");
     assert!(main.contains("@wf_weigh("), "{main}");
     assert!(!main.contains("@wf__env_"), "{main}");
+}
+
+#[test]
+fn a_record_slot_is_loaded_only_in_the_branch_that_uses_it() {
+    let llvm = compile(PROGRAM.as_bytes());
+    let weigh = emitted_function(&llvm, "_env_weigh");
+    let blocks = blocks(weigh);
+    let (_, entry) = blocks.first().expect("weigh has an entry block");
+    // depth == 0 returns total without reading any recorded borrow. The
+    // old emitter loaded every slot at entry, so this assertion fails before
+    // block-local definitions even though the nonzero branch needs left.
+    assert!(!entry.contains("ptr %wf.env"), "{entry}");
+    let left_load = blocks.iter().skip(1).find(|(_, block)| {
+        block.lines().any(|line| {
+            line.contains("getelementptr inbounds")
+                && line.contains("ptr %wf.env,")
+                && line.ends_with(", i32 0, i32 0")
+        })
+    });
+    let (_, using_branch) = left_load.expect("the nonzero branch reads left's record slot");
+    let lines: Vec<_> = using_branch.lines().collect();
+    let address = lines
+        .iter()
+        .find(|line| {
+            line.contains("getelementptr inbounds")
+                && line.contains("ptr %wf.env,")
+                && line.ends_with(", i32 0, i32 0")
+        })
+        .expect("left's field address")
+        .split_whitespace()
+        .next()
+        .expect("field address result");
+    let (load_at, loaded) = lines
+        .iter()
+        .enumerate()
+        .find_map(|(at, line)| {
+            line.contains(&format!(" = load ptr, ptr {address},"))
+                .then(|| (at, line.split_whitespace().next().expect("loaded pointer")))
+        })
+        .expect("left's pointer is loaded in its using branch");
+    assert!(
+        lines[load_at + 1..].iter().any(|line| {
+            line.split(|character: char| {
+                character.is_ascii_whitespace()
+                    || matches!(character, ',' | '[' | ']' | '(' | ')')
+            })
+            .any(|operand| operand == loaded)
+        }),
+        "left's loaded pointer must be consumed later in the same block: {using_branch}"
+    );
+    let early_return = blocks.iter().find(|(_, block)| {
+        block.lines().any(|line| {
+            line.trim_start()
+                .strip_prefix("ret i64 ")
+                .is_some_and(|operand| traced(weigh, operand) == "%v7")
+        })
+    });
+    let (_, unused_branch) = early_return.expect("depth == 0 returns total");
+    assert!(!unused_branch.contains("ptr %wf.env"), "{unused_branch}");
+}
+
+#[test]
+fn recorded_array_borrows_load_only_in_the_equality_loop_body() {
+    let source = r#"fn compare_first(left: &Array<u64, SIZE>, right: &Array<u64, SIZE>, spare: &u64, depth: u64, x: u64, y: u64, z: u64, p: u64, q: u64) -> result: Bool reads(left), reads(right), reads(spare) {
+  doc "Compare borrowed arrays after the recursive chain ends.";
+  if depth == 0_u64 {
+    return left^ == right^;
+  }
+  let below = depth -wrap 1_u64;
+  let same = compare_second(left: left, right: right, spare: spare, depth: below, x: x, y: y, z: z, p: p, q: q);
+  return same;
+}
+
+fn compare_second(left: &Array<u64, SIZE>, right: &Array<u64, SIZE>, spare: &u64, depth: u64, x: u64, y: u64, z: u64, p: u64, q: u64) -> result: Bool reads(left), reads(right), reads(spare) {
+  doc "Forward the same borrowed arrays back to the first member.";
+  let same = compare_first(left: left, right: right, spare: spare, depth: depth, x: x, y: y, z: z, p: p, q: q);
+  return same;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let left = array_filled::<u64, SIZE>(value: 11_u64);
+  let right = array_filled::<u64, SIZE>(value: 11_u64);
+  let spare = 0_u64;
+  let same = compare_first(left: &left, right: &right, spare: &spare, depth: 2_u64, x: 1_u64, y: 2_u64, z: 3_u64, p: 4_u64, q: 5_u64);
+  if same {
+    return std::process::exit_status(code: 0_u8);
+  }
+  return std::process::exit_status(code: 1_u8);
+}
+"#;
+    for size in [0, 2] {
+        let source = source.replace("SIZE", &size.to_string());
+        let llvm = compile(source.as_bytes());
+        let first = emitted_function(&llvm, "_env_compare_first");
+        let loads: Vec<_> = blocks(first)
+            .into_iter()
+            .filter(|(_, block)| block.contains("load ptr, ptr %wf.env.v"))
+            .collect();
+        if size == 0 {
+            // Empty-array equality has no read. Eagerly resolving its
+            // read-through storage requests two otherwise unused slot loads.
+            assert!(loads.is_empty(), "{first}");
+        } else {
+            // Resolving value_place before recursive comparison used to put
+            // these loads before the array loop. Their first real consumers
+            // are the element GEPs in its synthetic body block.
+            assert_eq!(loads.len(), 1, "{first}");
+            let (label, body) = &loads[0];
+            assert!(
+                label.starts_with("eq.") && label.ends_with(".body"),
+                "{first}"
+            );
+            assert_eq!(
+                body.matches("load ptr, ptr %wf.env.v").count(),
+                2,
+                "{body}"
+            );
+            assert!(
+                body.contains("getelementptr inbounds [2 x i64]"),
+                "{body}"
+            );
+        }
+        let second = emitted_function(&llvm, "_env_compare_second");
+        assert!(!second.contains("load ptr, ptr %wf.env.v"), "{second}");
+    }
+}
+
+#[test]
+fn recorded_loop_capture_loads_after_indexed_setup_in_the_call_block() {
+    let source = br#"fn count_first(left: &u64, right: &u64, spare: &u64, depth: u64, x: u64, y: u64, z: u64, p: u64, q: u64) -> result: u64 reads(left), reads(right), reads(spare) {
+  doc "The recursive edge forwards borrows; the base case uses them only in an indexed loop.";
+  if depth != 0_u64 {
+    let below = depth -wrap 1_u64;
+    let counted = count_second(left: left, right: right, spare: spare, depth: below, x: x, y: y, z: z, p: p, q: q);
+    return counted;
+  }
+  let counts = box_array_filled::<u64>(count: 8_u64, value: 0_u64);
+  for (i in 0_u64..64_u64) {
+    let bucket = i % 8_u64;
+    let added = left^ +wrap right^;
+    set counts.inner[bucket] = counts.inner[bucket] +wrap added;
+  }
+  return counts.inner[0_u64];
+}
+
+fn count_second(left: &u64, right: &u64, spare: &u64, depth: u64, x: u64, y: u64, z: u64, p: u64, q: u64) -> result: u64 reads(left), reads(right), reads(spare) {
+  doc "Close the cycle without otherwise consuming the borrowed words.";
+  let counted = count_first(left: left, right: right, spare: spare, depth: depth, x: x, y: y, z: z, p: p, q: q);
+  return counted;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let left = 3_u64;
+  let right = 2_u64;
+  let spare = 0_u64;
+  let counted = count_first(left: &left, right: &right, spare: &spare, depth: 2_u64, x: 1_u64, y: 2_u64, z: 3_u64, p: 4_u64, q: 5_u64);
+  if counted != 40_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let llvm = super::emit_lowered(
+        source,
+        crate::OverlapLowering::OnWithRecursionBudget {
+            budget: crate::RecursionBudget::Off,
+            call_grain: crate::CallGrain::WorkUnit,
+            sequential_refusal: false,
+        },
+    );
+    let first = emitted_function(&llvm, "_env_count_first");
+    // These assertions make an unselected indexed path fail the test rather
+    // than allowing an ordinary loop to satisfy the placement check.
+    assert!(first.contains("@wf__par_split_budget("), "{first}");
+    assert!(first.contains(".fill.head:"), "{first}");
+    assert!(first.contains("@wf__par_split_"), "{first}");
+    let loads: Vec<_> = blocks(first)
+        .into_iter()
+        .filter(|(_, block)| block.contains("load ptr, ptr %wf.env.v"))
+        .collect();
+    // Eager argument preparation queued these two pointer loads before the
+    // budget query. Their first uses are the capture operands of the call
+    // after indexed preparation has constructed its join block.
+    assert_eq!(loads.len(), 1, "{first}");
+    let (label, body) = &loads[0];
+    assert!(
+        label.starts_with("indexed.") && label.ends_with(".join"),
+        "{first}"
+    );
+    assert_eq!(body.matches("load ptr, ptr %wf.env.v").count(), 2, "{body}");
+    assert!(body.contains("@wf__par_split_"), "{body}");
 }
 
 #[test]
@@ -401,35 +608,35 @@ fn full_forwarded_classes_precede_classes_missing_from_a_member() {
   list: Box<Array<u64>>;
 }
 
-fn first(left: &Words, right: &Words, scale: &[u64], x: u64, id: u64, depth: u64) -> result: u64 reads(left), reads(right), reads(scale) {
+fn first(left: &Words, right: &Words, scale: &[u64], spare: &[u64], x: u64, id: u64, depth: u64) -> result: u64 reads(left), reads(right), reads(scale), reads(spare) {
   doc "Forward x and id to the second member.";
   if depth == 0_u64 {
     let total = x +wrap id;
     return total;
   }
   let below = depth -wrap 1_u64;
-  let result = second(left: left, right: right, scale: scale, x: x, id: id, depth: below);
+  let result = second(left: left, right: right, scale: scale, spare: spare, x: x, id: id, depth: below);
   return result;
 }
 
-fn second(left: &Words, right: &Words, scale: &[u64], x: u64, id: u64, depth: u64) -> result: u64 reads(left), reads(right), reads(scale) {
+fn second(left: &Words, right: &Words, scale: &[u64], spare: &[u64], x: u64, id: u64, depth: u64) -> result: u64 reads(left), reads(right), reads(scale), reads(spare) {
   doc "Only id reaches the third member.";
   if depth == 0_u64 {
     let total = x +wrap id;
     return total;
   }
   let below = depth -wrap 1_u64;
-  let result = third(left: left, right: right, scale: scale, id: id, depth: below);
+  let result = third(left: left, right: right, scale: scale, spare: spare, id: id, depth: below);
   return result;
 }
 
-fn third(left: &Words, right: &Words, scale: &[u64], id: u64, depth: u64) -> result: u64 reads(left), reads(right), reads(scale) {
+fn third(left: &Words, right: &Words, scale: &[u64], spare: &[u64], id: u64, depth: u64) -> result: u64 reads(left), reads(right), reads(scale), reads(spare) {
   doc "Close the cycle with a fresh x and the same id.";
   if depth == 0_u64 {
     return id;
   }
   let below = depth -wrap 1_u64;
-  let result = first(left: left, right: right, scale: scale, x: 0_u64, id: id, depth: below);
+  let result = first(left: left, right: right, scale: scale, spare: spare, x: 0_u64, id: id, depth: below);
   return result;
 }
 
@@ -437,7 +644,7 @@ fn main() -> status: std::process::ExitStatus pure {
   let list = box_array_filled::<u64>(count: 1_u64, value: 0_u64);
   let words = Words(list: move list);
   let values = array_filled::<u64, 1>(value: 0_u64);
-  let walked = first(left: &words, right: &words, scale: &values[0_u64..1_u64], x: 7_u64, id: 9_u64, depth: 2_u64);
+  let walked = first(left: &words, right: &words, scale: &values[0_u64..1_u64], spare: &values[0_u64..1_u64], x: 7_u64, id: 9_u64, depth: 2_u64);
   if walked != 9_u64 {
     return std::process::exit_status(code: 1_u8);
   }
@@ -445,14 +652,14 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "#;
     let llvm = compile(source);
-    // x's partial class starts at first's parameter 3, before id's full
-    // class at parameter 4. Ordering solely by that index puts id second
+    // x's partial class starts at first's parameter 4, before id's full
+    // class at parameter 5. Ordering solely by that index puts id second
     // after the record in first and second, but first in third. Full
     // classes must come first so id always immediately follows the record.
     for (name, id, rest) in [
-        ("first", 4, &["i64 %v3", "i64 %v5"][..]),
-        ("second", 4, &["i64 %v3", "i64 %v5"][..]),
-        ("third", 3, &["i64 %v4"][..]),
+        ("first", 5, &["i64 %v4", "i64 %v6"][..]),
+        ("second", 5, &["i64 %v4", "i64 %v6"][..]),
+        ("third", 4, &["i64 %v5"][..]),
     ] {
         let internal = header(emitted_function(&llvm, &format!("_env_{name}")));
         let declared = parameters(internal, &format!("wf__env_{name}"));
@@ -469,9 +676,9 @@ fn main() -> status: std::process::ExitStatus pure {
         let arguments = call_operands(calls[0]);
         assert_eq!(arguments.len(), count, "{function}");
         assert_eq!(arguments[0], "%wf.env", "{function}");
-        assert_eq!(traced(function, arguments[1]), "%v4", "{function}");
+        assert_eq!(traced(function, arguments[1]), "%v5", "{function}");
         if caller == "first" {
-            assert_eq!(traced(function, arguments[2]), "%v3", "{function}");
+            assert_eq!(traced(function, arguments[2]), "%v4", "{function}");
         }
     }
 }

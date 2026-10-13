@@ -40,7 +40,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Write;
 
 use super::abi::{FunctionAbi, ParameterAbi, ResultAbi};
-use super::emission::{FunctionBody, Linkage, Module, Parameter, References, Signature};
+use super::emission::{DeferredPart, FunctionBody, Linkage, Module, Parameter, References, Signature};
 pub use super::runtime::*;
 use super::storage::{FunctionStoragePlan, IncomingSnapshots, is_stored_aggregate};
 use crate::target::{
@@ -2058,17 +2058,15 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             module.text("\n");
             return Ok(module);
         }
-        // A group member's slot parameters arrive in the record and are
-        // loaded first, under the names the parameters would have had, so
-        // they dominate everything the frame and the reassembly below emit.
-        let loads = self.environment_loads()?;
-        self.entry_prelude.insert_str(0, &loads);
-        // A range reference arrives as its element pointer and count; the
-        // body reads its ordinary `{ ptr, i64 }` pair, reassembled once in
+        // Packed parameters are defined only in the LLVM blocks that use
+        // them. Register their load/reassembly recipes before binding names.
+        self.register_environment_operands()?;
+        // An unpacked range reference arrives as its element pointer and
+        // count; the body reads its ordinary `{ ptr, i64 }` pair, reassembled once in
         // the entry block beside the frame's slots, where it dominates every
         // use, including a self-tail transfer's parameterized body entry.
         for ((value, _), parameter) in self.function.parameters().iter().zip(abi.parameters()) {
-            if !parameter.is_range() {
+            if !parameter.is_range() || self.is_environment_parameter(*value) {
                 continue;
             }
             let (pointer, count) = incoming_range_parts(*value);
@@ -2403,8 +2401,14 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 if edge_index != 0 {
                     self.output.push_str(", ");
                 }
-                self.output
-                    .incoming(self.value_name(argument), edge.predecessor);
+                // A packed incoming operand belongs to the predecessor's
+                // actual exit block, not this phi's block.
+                let operand = if self.is_environment_parameter(argument) {
+                    value_name(argument)
+                } else {
+                    self.value_name(argument)
+                };
+                self.output.incoming(operand, edge.predecessor);
             }
             self.output.push('\n');
         }
@@ -2521,6 +2525,22 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             // bytes for equality and scalarize large arrays before BoxNew's
             // typed storage copy can be emitted.
             IrOperation::BoxNew { .. } | IrOperation::ValueEquality { .. } => {}
+            // The splitter helper owns its operand preparation: indirect
+            // inputs are passed by address, not first-class snapshots, and
+            // pointer-only arguments bind after indexed setup opens blocks.
+            IrOperation::LoopSplit { .. } => {}
+            IrOperation::BufferProbeSkip {
+                index,
+                limit,
+                needles,
+                ..
+            } => {
+                // The probe consumes its buffer by address in its guarded
+                // load block; only scalar inputs need snapshots here.
+                self.materialize_operands(
+                    [*index, *limit].into_iter().chain(needles.iter().copied()),
+                )?;
+            }
             IrOperation::BufferFill { length, .. } => {
                 self.materialize_operands([*length])?;
             }
@@ -3021,6 +3041,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         self.prepare_snapshot_use(block, self.block(block)?.instructions().len())?;
         match terminator {
             IrTerminator::Unreachable => {
+                self.output.terminator();
                 writeln!(self.output, "  unreachable").map_err(|_| BackendFailure::TextEmission)
             }
             IrTerminator::Jump {
@@ -3044,6 +3065,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 if self.emit_cursor_join_edge(block, *target, arguments)? {
                     return Ok(());
                 }
+                self.output.terminator();
                 writeln!(self.output, "  br label %{}", block_label(*target))
                     .map_err(|_| BackendFailure::TextEmission)
             }
@@ -3054,6 +3076,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 }
                 self.store_value_at(*value, RESULT_POINTER)?;
                 self.emit_drops(drops)?;
+                self.output.terminator();
                 self.emit_frame_return()
             }
             IrTerminator::Return { value, drops } => {
@@ -3066,10 +3089,12 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 if abi.result().uses_destination() {
                     self.store_value_at(*value, RESULT_POINTER)?;
                     self.emit_drops(drops)?;
+                    self.output.terminator();
                     return writeln!(self.output, "  ret void")
                         .map_err(|_| BackendFailure::TextEmission);
                 }
                 self.emit_drops(drops)?;
+                self.output.terminator();
                 {
                     let emitted_type_0 = self.output.type_name(self.program, abi.result().ty())?;
                     writeln!(
@@ -3091,6 +3116,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 }
                 self.materialize_operands([*scrutinee])?;
                 let (tag, tag_ty) = self.match_tag(*scrutinee, *enum_type)?;
+                self.output.terminator();
                 writeln!(
                     self.output,
                     "  switch {tag_ty} {tag}, label %{} [",
@@ -3118,6 +3144,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                     // tags, so no execution reaches this default
                     // (compiler/backend-facts).
                     self.output.open_block(emission_argument_0.to_string());
+                    self.output.terminator();
                     writeln!(self.output, "  unreachable")?;
                     Ok::<_, BackendFailure>(())
                 }
@@ -3330,7 +3357,10 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             .get(&value)
             .or_else(|| self.materialized.get(&value))
             .cloned()
-            .unwrap_or_else(|| value_name(value))
+            .unwrap_or_else(|| {
+                let canonical = value_name(value);
+                self.output.block_operand(&canonical).unwrap_or(canonical)
+            })
     }
 }
 

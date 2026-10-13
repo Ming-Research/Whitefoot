@@ -5,7 +5,22 @@
 
 use super::*;
 
+/// A whole evaluated operand keeps its storage binding deferred until an
+/// active comparison block projects or reads it. Derived pointers are already
+/// emitted SSA values and retain their dominating definition.
+enum EqualityPlace {
+    Value(IrValueId),
+    Pointer(String),
+}
+
 impl FunctionEmitter<'_, '_> {
+    fn equality_place(&mut self, place: &EqualityPlace) -> Result<String, BackendFailure> {
+        match place {
+            EqualityPlace::Value(value) => self.value_place(*value),
+            EqualityPlace::Pointer(pointer) => Ok(pointer.clone()),
+        }
+    }
+
     pub(super) fn emit_value_equality(
         &mut self,
         result: IrValueId,
@@ -47,8 +62,8 @@ impl FunctionEmitter<'_, '_> {
             )?;
             return Ok(());
         }
-        let left = self.value_place(arguments[0])?;
-        let right = self.value_place(arguments[1])?;
+        let left = EqualityPlace::Value(arguments[0]);
+        let right = EqualityPlace::Value(arguments[1]);
         let unique = self.next_temporary()?;
         let mismatch = format!("eq.{unique}.different");
         let matched = format!("eq.{unique}.same");
@@ -88,19 +103,21 @@ impl FunctionEmitter<'_, '_> {
         Ok(())
     }
 
-    /// The two pointers select values of the same type. Only a scalar leaf is
+    /// The two places select values of the same type. Only a scalar leaf is
     /// loaded; an aggregate's address is projected to its actual parts.
     fn compare_value_parts(
         &mut self,
         ty: IrType,
-        left: &str,
-        right: &str,
+        left: &EqualityPlace,
+        right: &EqualityPlace,
         mismatch: &str,
     ) -> Result<(), BackendFailure> {
         if ty == IrType::Unit {
             return Ok(());
         }
         if matches!(ty, IrType::Integer { .. }) || is_tag_only_type(self.program, ty)? {
+            let left = self.equality_place(left)?;
+            let right = self.equality_place(right)?;
             let llvm = self.output.type_name(self.program, ty)?;
             let a = self.next_temporary()?;
             let b = self.next_temporary()?;
@@ -117,15 +134,24 @@ impl FunctionEmitter<'_, '_> {
                 match self.nominal(id)?.kind().clone() {
                     IrNominalKind::Struct { fields } => {
                         for (index, field) in fields.iter().enumerate() {
-                            let a = self.aggregate_field_pointer(ty, left, index)?;
-                            let b = self.aggregate_field_pointer(ty, right, index)?;
-                            self.compare_value_parts(field.ty(), &a, &b, mismatch)?;
+                            let left = self.equality_place(left)?;
+                            let right = self.equality_place(right)?;
+                            let a = self.aggregate_field_pointer(ty, &left, index)?;
+                            let b = self.aggregate_field_pointer(ty, &right, index)?;
+                            self.compare_value_parts(
+                                field.ty(),
+                                &EqualityPlace::Pointer(a),
+                                &EqualityPlace::Pointer(b),
+                                mismatch,
+                            )?;
                         }
                     }
                     IrNominalKind::Enum { variants } => {
                         let tag_ty = enum_tag_type(self.nominal(id)?)?;
-                        let a = self.aggregate_field_pointer(ty, left, 0)?;
-                        let b = self.aggregate_field_pointer(ty, right, 0)?;
+                        let left_tag = self.equality_place(left)?;
+                        let right_tag = self.equality_place(right)?;
+                        let a = self.aggregate_field_pointer(ty, &left_tag, 0)?;
+                        let b = self.aggregate_field_pointer(ty, &right_tag, 0)?;
                         let tag_a = self.next_temporary()?;
                         let tag_b = self.next_temporary()?;
                         writeln!(
@@ -157,11 +183,18 @@ impl FunctionEmitter<'_, '_> {
                                     .map_err(|_| BackendFailure::CounterOverflow)?;
                                 // The common helper selects a union's typed
                                 // variant view or a product's field index.
+                                let left = self.equality_place(left)?;
+                                let right = self.equality_place(right)?;
                                 let a =
-                                    self.variant_field_pointer(id, variant.tag(), index, left)?;
+                                    self.variant_field_pointer(id, variant.tag(), index, &left)?;
                                 let b =
-                                    self.variant_field_pointer(id, variant.tag(), index, right)?;
-                                self.compare_value_parts(field.ty(), &a, &b, mismatch)?;
+                                    self.variant_field_pointer(id, variant.tag(), index, &right)?;
+                                self.compare_value_parts(
+                                    field.ty(),
+                                    &EqualityPlace::Pointer(a),
+                                    &EqualityPlace::Pointer(b),
+                                    mismatch,
+                                )?;
                             }
                             writeln!(self.output, "  br label %{done}")?;
                         }
@@ -203,6 +236,8 @@ impl FunctionEmitter<'_, '_> {
                     "  %{index} = phi i64 [0, %{entry}], [%{next}, %{latch}]\n  %{in_range} = icmp ult i64 %{index}, {length}\n  br i1 %{in_range}, label %{body}, label %{done}"
                 )?;
                 self.output.open_block(body);
+                let left = self.equality_place(left)?;
+                let right = self.equality_place(right)?;
                 let logical = format!("%{index}");
                 let address_index = self.element_address_index(element, &logical)?;
                 let a = self.next_temporary()?;
@@ -211,7 +246,12 @@ impl FunctionEmitter<'_, '_> {
                     self.output,
                     "  %{a} = getelementptr inbounds {llvm}, ptr {left}, i64 0, i64 {address_index}\n  %{b} = getelementptr inbounds {llvm}, ptr {right}, i64 0, i64 {address_index}"
                 )?;
-                self.compare_value_parts(element, &format!("%{a}"), &format!("%{b}"), mismatch)?;
+                self.compare_value_parts(
+                    element,
+                    &EqualityPlace::Pointer(format!("%{a}")),
+                    &EqualityPlace::Pointer(format!("%{b}")),
+                    mismatch,
+                )?;
                 writeln!(self.output, "  br label %{latch}")?;
                 self.output.open_block(latch);
                 // The largest index entering this block is length - 1, so

@@ -31,10 +31,11 @@
 //!
 //! Inside the group a member's body is defined under its internal symbol and
 //! receives one pointer to the record in place of its slot parameters,
-//! loading each slot once at entry. Its public symbol becomes the group's
-//! entry from outside: it stores its slot parameters into a record in its
-//! own frame and calls the internal form, which the host can inline into
-//! each outside caller. A group uses the record only when it pays: the slots
+//! loading each slot once in each block that uses it. Its public symbol
+//! becomes the group's entry from outside: it stores its slot parameters
+//! into a record in its own frame and calls the internal form, which the
+//! host can inline into each outside caller. A group uses the record only
+//! when it pays: the slots
 //! must replace at least two argument words with the one pointer, and some
 //! member must pass more argument words than the selected target's integer
 //! argument registers, since below that budget every argument already
@@ -826,29 +827,42 @@ impl FunctionEmitter<'_, '_> {
         Ok((record, found))
     }
 
-    /// The entry-block loads that give an internal body its slot parameters
-    /// under the names an ordinary body receives them by, or nothing for a
-    /// function outside every group.
+    pub(super) fn is_environment_parameter(&self, value: IrValueId) -> bool {
+        self.environment.as_ref().is_some_and(|member| {
+            self.function
+                .parameters()
+                .iter()
+                .zip(&member.parameter_slots)
+                .any(|((parameter, _), slot)| *parameter == value && slot.is_some())
+        })
+    }
+
+    /// Register each packed parameter's block-local definition. The printing
+    /// model binds local names to the actual LLVM block at each use, including
+    /// incoming operands whose load belongs to the predecessor's exit block.
     ///
     /// The loaded pointer carries what the parameter's attributes would
     /// have said and a load can say: it is nonnull, and a reference is
     /// dereferenceable for its referent's extent. `noalias` has no load
     /// form, which is why only read-only borrows enter the record.
-    pub(super) fn environment_loads(&self) -> Result<String, BackendFailure> {
+    pub(super) fn register_environment_operands(&mut self) -> Result<(), BackendFailure> {
         if self.environment.is_none() {
-            return Ok(String::new());
+            return Ok(());
         }
         let (record, slots) = self.slot_parameters()?;
-        let mut text = String::new();
         for (value, kind, start) in slots {
+            let mut definition = Vec::new();
             for (field, (operand, ty)) in kind.operands(value).iter().zip(kind.fields()).enumerate()
             {
                 let address = format!("%wf.env.v{}.{field}", value.ordinal());
-                writeln!(
-                    text,
-                    "  {address} = getelementptr inbounds {record}, ptr {ENVIRONMENT}, i32 0, i32 {}",
-                    start + field
-                )?;
+                definition.extend([
+                    DeferredPart::Text("  ".to_owned()),
+                    DeferredPart::Local(address.clone()),
+                    DeferredPart::Text(format!(
+                        " = getelementptr inbounds {record}, ptr {ENVIRONMENT}, i32 0, i32 {}\n",
+                        start + field
+                    )),
+                ]);
                 let mut facts = String::new();
                 if field == 0 {
                     facts.push_str(", !nonnull !{}");
@@ -863,13 +877,51 @@ impl FunctionEmitter<'_, '_> {
                         write!(facts, ", !dereferenceable !{{i64 {}}}", layout.size())?;
                     }
                 }
-                writeln!(
-                    text,
-                    "  {operand} = load {ty}, ptr {address}, align 8, !noundef !{{}}{facts}"
-                )?;
+                definition.extend([
+                    DeferredPart::Text("  ".to_owned()),
+                    DeferredPart::Local(operand.clone()),
+                    DeferredPart::Text(format!(" = load {ty}, ptr ")),
+                    DeferredPart::Local(address),
+                    DeferredPart::Text(format!(", align 8, !noundef !{{}}{facts}\n")),
+                ]);
             }
+            // A packed range/run's ordinary aggregate value is reassembled
+            // beside its loads, rather than eagerly in the function entry.
+            if !matches!(kind, SlotKind::Reference) {
+                let ty = self.value_type(value).ok_or(BackendFailure::InvalidIr)?;
+                let pair = self.output.type_name(self.program, ty)?;
+                let name = value_name(value);
+                let fields = kind.operands(value);
+                for (field, operand) in fields.iter().enumerate() {
+                    let result = if field + 1 == fields.len() {
+                        name.clone()
+                    } else {
+                        format!("{name}.field{field}")
+                    };
+                    definition.extend([
+                        DeferredPart::Text("  ".to_owned()),
+                        DeferredPart::Local(result),
+                        DeferredPart::Text(format!(" = insertvalue {pair} ")),
+                    ]);
+                    if field == 0 {
+                        definition.push(DeferredPart::Text("poison".to_owned()));
+                    } else {
+                        definition.push(DeferredPart::Local(format!(
+                            "{name}.field{}",
+                            field - 1
+                        )));
+                    }
+                    definition.extend([
+                        DeferredPart::Text(format!(", {} ", kind.fields()[field])),
+                        DeferredPart::Local(operand.clone()),
+                        DeferredPart::Text(format!(", {field}\n")),
+                    ]);
+                }
+            }
+            self.output
+                .register_block_operand(value_name(value), definition);
         }
-        Ok(text)
+        Ok(())
     }
 
     /// This member's public symbol as the group's entry from outside: the

@@ -468,19 +468,23 @@ writeln!(self.output, "  %{pointer} = getelementptr inbounds {}, ptr {address}, 
                 .map_err(|_| BackendFailure::TextEmission)?;
                 let zero = "0".to_owned();
                 let first = self.buffer_element_pointer(block, &address, &zero)?;
-                (format!("%{length}"), first)
+                (format!("%{length}"), Some(first))
             }
             Some(IrType::Address(IrAddressed::Array {
                 element,
                 length: count,
             })) if self.program.element(element) == Some(u8_type) => {
-                (count.to_string(), self.value_name(buffer))
+                // The constant extent needs no pointer before the guards.
+                // Bind the borrowed array only in the block that reads it.
+                (count.to_string(), None)
             }
             Some(IrType::Array {
                 element,
                 length: count,
             }) if self.program.element(element) == Some(u8_type) => {
-                (count.to_string(), self.value_place(buffer)?)
+                // A by-value array can read through an immutable borrow;
+                // resolve that place only after the guards as well.
+                (count.to_string(), None)
             }
             _ => return Err(BackendFailure::InvalidIr),
         };
@@ -507,6 +511,13 @@ writeln!(self.output, "  %{pointer} = getelementptr inbounds {}, ptr {address}, 
             self.output.open_block(emission_argument_4.to_string());
             write!(self.output, "  %{edge} = sub i64 %{window}, 16\n  %{fits} = icmp ule i64 {emission_argument_5}, %{edge}\n  br i1 %{fits}, label %{emission_argument_6}, label %{emission_argument_7}\n").map_err(|_| BackendFailure::TextEmission)?;
             self.output.open_block(emission_argument_8.to_string());
+            let first_element = match first_element {
+                Some(pointer) => pointer,
+                None if matches!(self.value_type(buffer), Some(IrType::Array { .. })) => {
+                    self.value_place(buffer)?
+                }
+                None => self.value_name(buffer),
+            };
             write!(self.output, "  %{address} = getelementptr inbounds i8, ptr {first_element}, i64 {emission_argument_9}\n  %{vector} = load <16 x i8>, ptr %{address}, align 1\n").map_err(|_| BackendFailure::TextEmission)?;
         };
         let mut accumulated: Option<String> = None;
