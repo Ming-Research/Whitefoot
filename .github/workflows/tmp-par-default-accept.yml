@@ -1,0 +1,13 @@
+# Temporary stub: registers this workflow path so the manual-only
+# acceptance workflow that replaces it in the next commit can be dispatched.
+name: tmp-par-default-accept
+
+on:
+  push:
+    branches: [claude/par-demand-default]
+
+jobs:
+  register:
+    runs-on: ubuntu-24.04
+    steps:
+      - run: echo registered
