@@ -1,0 +1,597 @@
+# Temporary hosted experiment; remove before the branch is ready.
+# No emitter change: only scratch IR probe attributes are replaced. Fixtures
+# and signal/record expectations come from the maintained native floor tests.
+name: Darwin stack-probe qualification
+
+on:
+  push:
+    branches: [claude/bundled-clang]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: darwin-probe-qualify-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+  LLVM_VERSION: 22.1.8
+  LLVM_ARCHIVE: LLVM-22.1.8-macOS-ARM64.tar.xz
+  LLVM_SHA256: f260f4f7c0d430828a81ae8a3826a1d63fc0963ec2459489308cc23b1f7eab4f
+  WHITEFOOT_CHECK_TIMEOUT: 1800
+
+jobs:
+  qualify:
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      QUALIFY_DIR: ${{ runner.temp }}/darwin-probe-qualify
+      WHITEFOOT_TIME_BUDGET_FILE: ${{ runner.temp }}/darwin-probe-budgets.txt
+      WHITEFOOT_TIME_BUDGET_RECORD: ${{ runner.temp }}/darwin-probe-qualify/budgets.tsv
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Record host and provisional experiment limits
+        run: |
+          set -euo pipefail
+          mkdir -p "$QUALIFY_DIR"
+          test "$(uname -m)" = arm64
+          # Provisional safety deadlines, not measurements or gate budgets.
+          # macOS budget comparisons are report-only; record costs on this run.
+          cat > "$WHITEFOOT_TIME_BUDGET_FILE" <<'EOF'
+          label macos windows
+          darwin-probe/compiler-build 1800 -
+          darwin-probe/experiment 1800 -
+          EOF
+          {
+            uname -a
+            sw_vers
+            git rev-parse HEAD
+            /usr/bin/clang --version
+            xcrun --show-sdk-path
+            xcrun --find ld
+          } > "$QUALIFY_DIR/host.txt"
+          cat "$QUALIFY_DIR/host.txt"
+          echo "SDKROOT=$(xcrun --show-sdk-path)" >> "$GITHUB_ENV"
+          echo "SYSTEM_LD=$(xcrun --find ld)" >> "$GITHUB_ENV"
+
+      - name: Install the exact official upstream LLVM archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api "repos/llvm/llvm-project/releases/tags/llvmorg-$LLVM_VERSION" > "$QUALIFY_DIR/llvm-release.json"
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          root = Path(os.environ['QUALIFY_DIR'])
+          release = json.loads((root / 'llvm-release.json').read_text())
+          assets = [a for a in release['assets'] if a['name'] == os.environ['LLVM_ARCHIVE']]
+          assert len(assets) == 1, 'exact official macOS ARM64 archive is missing or ambiguous'
+          asset = assets[0]
+          wanted = 'sha256:' + os.environ['LLVM_SHA256']
+          published = asset.get('digest')
+          if published:
+              assert published == wanted, f'publisher digest changed: {published} != {wanted}'
+          expected_url = ('https://github.com/llvm/llvm-project/releases/download/'
+                          'llvmorg-' + os.environ['LLVM_VERSION'] + '/' + os.environ['LLVM_ARCHIVE'])
+          assert asset['browser_download_url'] == expected_url
+          (root / 'archive-metadata.json').write_text(json.dumps(asset, indent=2) + '\n')
+          (root / 'checksum-source.txt').write_text(
+              f'Pinned SHA256: {wanted}\nPublisher digest: {published or "not supplied in release metadata"}\n')
+          PY
+          curl --fail --location --retry 3 \
+            "https://github.com/llvm/llvm-project/releases/download/llvmorg-$LLVM_VERSION/$LLVM_ARCHIVE" \
+            -o "$RUNNER_TEMP/$LLVM_ARCHIVE"
+          printf '%s  %s\n' "$LLVM_SHA256" "$RUNNER_TEMP/$LLVM_ARCHIVE" > "$QUALIFY_DIR/archive.sha256"
+          shasum -a 256 -c "$QUALIFY_DIR/archive.sha256" > "$QUALIFY_DIR/checksum.log"
+          cat "$QUALIFY_DIR/checksum.log"
+          mkdir -p "$RUNNER_TEMP/upstream-llvm-$LLVM_VERSION"
+          tar -xJf "$RUNNER_TEMP/$LLVM_ARCHIVE" -C "$RUNNER_TEMP/upstream-llvm-$LLVM_VERSION" --strip-components=1
+          test -x "$RUNNER_TEMP/upstream-llvm-$LLVM_VERSION/bin/clang"
+          test -x "$RUNNER_TEMP/upstream-llvm-$LLVM_VERSION/bin/llvm-objdump"
+          "$RUNNER_TEMP/upstream-llvm-$LLVM_VERSION/bin/clang" --version > "$QUALIFY_DIR/upstream-version.txt"
+          cat "$QUALIFY_DIR/upstream-version.txt"
+          grep -F "clang version $LLVM_VERSION" "$QUALIFY_DIR/upstream-version.txt"
+          echo "UPSTREAM_ROOT=$RUNNER_TEMP/upstream-llvm-$LLVM_VERSION" >> "$GITHUB_ENV"
+          # Never add upstream LLVM to PATH or replace /usr/bin/clang: the CLI's
+          # current capability probes deliberately retain the Apple consumer.
+
+      - name: Fetch locked compiler dependencies
+        run: |
+          rustup default stable
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
+
+      - name: Build the unchanged compiler with the normal gate profile
+        id: build
+        run: |
+          set +e
+          perl .github/run-check.pl darwin-probe/compiler-build \
+            cargo build --manifest-path compiler/Cargo.toml --profile gate --locked --offline --bin whitefootc \
+            > "$QUALIFY_DIR/compiler-build.log" 2>&1
+          status=$?
+          printf '%s\n' "$status" > "$QUALIFY_DIR/compiler-build.status"
+          cat "$QUALIFY_DIR/compiler-build.log"
+          exit "$status"
+
+      - name: Prepare the scratch qualification instrument
+        run: |
+          cat > "$RUNNER_TEMP/darwin-probe-qualify.py" <<'PY'
+          # Experiment-only instrument. No compiler or maintained fixture edit.
+          import difflib, json, os, re, resource, shutil, subprocess, sys, time, traceback
+          from pathlib import Path
+
+          root = Path(os.environ['QUALIFY_DIR'])
+          repo = Path.cwd()
+          backend = repo / 'compiler/src/backend'
+          upstream = Path(os.environ['UPSTREAM_ROOT'])
+          compiler = repo / 'compiler/target/gate/whitefootc'
+          sdk = os.environ['SDKROOT']
+          ld = os.environ['SYSTEM_LD']
+          resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+          rows, failures = [], []
+          record = b'{"resource":"stack"}\n'
+          opt = ['-O2', '-falign-functions=64']
+          toolchains = {'upstream': upstream / 'bin/clang', 'Apple': Path('/usr/bin/clang')}
+
+          def result(step, toolchain, okay, text):
+              rows.append((step, toolchain, ('PASS: ' if okay else 'FAIL: ') + text))
+              (root / 'results.tsv').write_text(''.join('\t'.join(r) + '\n' for r in rows))
+              print(f'{step} [{toolchain}]: {rows[-1][2]}', flush=True)
+              if not okay:
+                  failures.append(f'{step} [{toolchain}]: {text}')
+
+          def run(label, command, *, timeout=120, env=None):
+              path = root / label
+              path.parent.mkdir(parents=True, exist_ok=True)
+              started = time.monotonic()
+              metadata = {'argv': [str(x) for x in command], 'cwd': str(repo)}
+              try:
+                  p = subprocess.run(metadata['argv'], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                     timeout=timeout, env=env)
+                  metadata.update(returncode=p.returncode, elapsed_seconds=time.monotonic() - started)
+                  path.with_suffix('.stdout').write_bytes(p.stdout)
+                  path.with_suffix('.stderr').write_bytes(p.stderr)
+                  return p
+              except subprocess.TimeoutExpired as error:
+                  metadata.update(timeout_seconds=timeout, elapsed_seconds=time.monotonic() - started)
+                  path.with_suffix('.stdout').write_bytes(error.stdout or b'')
+                  path.with_suffix('.stderr').write_bytes(error.stderr or b'')
+                  raise
+              finally:
+                  path.with_suffix('.command.json').write_text(json.dumps(metadata, indent=2) + '\n')
+
+          def must_run(label, command):
+              p = run(label, command)
+              assert p.returncode == 0, f'{label}: exit {p.returncode}; see saved stderr'
+              return p
+
+          def floor_outcome(p, status, stdout, stderr):
+              # Python receives direct Unix signal status, unlike a shell's
+              # ambiguous 128+signal representation. Exact bytes match the
+              # maintained assert_resource_record; no substring verdict.
+              assert p.returncode == status, f'status={p.returncode}, expected={status}'
+              assert p.stdout == stdout, f'stdout={p.stdout!r}, expected={stdout!r}'
+              assert p.stderr == stderr, f'stderr={p.stderr!r}, expected={stderr!r}'
+
+          def oracle_controls():
+              from types import SimpleNamespace
+              valid = SimpleNamespace(returncode=-6, stdout=b'', stderr=record)
+              floor_outcome(valid, -6, b'', record)
+              wrong = [SimpleNamespace(returncode=-10, stdout=b'', stderr=record),
+                       SimpleNamespace(returncode=-6, stdout=b'', stderr=b''),
+                       SimpleNamespace(returncode=-6, stdout=b'', stderr=record + b'extra\n'),
+                       SimpleNamespace(returncode=-6, stdout=b'extra\n', stderr=record)]
+              for observation in wrong:
+                  try:
+                      floor_outcome(observation, -6, b'', record)
+                  except AssertionError:
+                      continue
+                  raise AssertionError('floor checker accepted an injected wrong observation')
+              try:
+                  raw_constant('', 'LARGE_FRAME_SPINE')
+              except AssertionError:
+                  pass
+              else:
+                  raise AssertionError('fixture extractor accepted missing input')
+              result('floor oracle and missing-input controls', 'instrument', True,
+                     'correct result accepted; wrong signal, absent/extra record, extra stdout and missing fixture rejected')
+              # Verify the native-code recognizer against both printer formats
+              # before trusting it on generated code. A one-shot decrement
+              # with an unrelated comparison/branch must never count as a walk.
+              assembly = ('Lprobe:\n\tsub sp, sp, #1, lsl #12\n'
+                          '\tstr xzr, [sp]\n\tcmp sp, x9\n\tb.ne Lprobe\nLafter:\n\tret\n')
+              disassembly = ('0000000000001000 <_wf_spine>:\n'
+                             '1000: sub sp, sp, #0x1, lsl #12\n'
+                             '1004: str xzr, [sp]\n1008: cmp sp, x9, uxtx\n'
+                             '100c: b.ne 0x1000 <_wf_spine>\n1010: ret\n')
+              for text, linked, touch, stride, backedge, forward in [
+                  (assembly, False, '\tstr xzr, [sp]\n', '#1, lsl #12', 'b.ne Lprobe', 'b.ne Lafter'),
+                  (disassembly, True, '1004: str xzr, [sp]\n', '#0x1, lsl #12', 'b.ne 0x1000', 'b.ne 0x1010'),
+              ]:
+                  assert inline_walk(text, linked=linked), 'recognizer rejected its valid loop control'
+                  flawed = [text.replace(touch, touch.replace('str xzr, [sp]', 'nop')), text.replace(stride, '#2, lsl #12'),
+                            text.replace(backedge, forward), text.replace('cmp sp,', 'cmp x10,')]
+                  for bad in flawed:
+                      assert not inline_walk(bad, linked=linked), 'recognizer accepted a flawed page-walk control'
+              result('native page-walk recognizer controls', 'instrument', True,
+                     'assembly/disassembly loops accepted; missing touch, wrong stride, forward branch and non-SP compare rejected')
+
+          def exact_replace(text, old, new):
+              assert text.count(old) == 1, f'fixture shape changed: {old!r}'
+              return text.replace(old, new, 1)
+
+          def raw_constant(text, name):
+              matches = re.findall(r'const\s+' + re.escape(name) + r'\s*:[^=]*=\s*b?r#"(.*?)"#;', text, re.S)
+              assert len(matches) == 1, f'missing/ambiguous maintained constant {name}'
+              return matches[0]
+
+          def formatted_fixture(text, name, **parameters):
+              start = text.index('pub(crate) fn ' + name + '(')
+              tail = text[start:]
+              matches = re.search(r'format!\(\s*r#"(.*?)"#\s*\)', tail, re.S)
+              assert matches, f'fixture format changed: {name}'
+              source = matches.group(1)
+              for key, value in parameters.items():
+                  assert '{' + key + '}' in source
+                  source = source.replace('{' + key + '}', str(value))
+              # Only Rust format escapes and the explicitly supplied constants.
+              source = source.replace('{{', '{').replace('}}', '}')
+              assert not re.search(r'\{(?:depth|slots)\}', source)
+              return source
+
+          def expose(module, large):
+              # Same entry substitution as exhaustion.rs / stack_ledger.rs.
+              # Save raw compiler IR separately; these are C observer adapters.
+              module = exact_replace(module, 'define i32 @wf__main_body(', 'define i32 @wf__unused_main_body(')
+              module = exact_replace(module, 'define i32 @main(', 'define i32 @wf__unused_main(')
+              if large:
+                  module = module.replace('define internal i64 @wf_spine(', 'define i64 @wf_spine(', 1)
+                  module = exact_replace(module, 'define i64 @wf_read_pad(', 'define i64 @wf_read_pad(')
+                  lines = module.splitlines()
+                  readers = [i for i, line in enumerate(lines) if line.startswith('define i64 @wf_read_pad(')]
+                  assert len(readers) == 1
+                  i = readers[0]
+                  lines[i] = exact_replace(lines[i], ' #0 align 64 {', ' noinline #0 align 64 {')
+                  module = '\n'.join(lines)
+              assert len(re.findall(r'^define (?:internal )?(?:i64|double) @wf_spine\(', module, re.M)) == 1
+              return module + '\ndeclare i32 @wf__main_body(i32, ptr)\n'
+
+          def inline_candidate(original):
+              old = '"probe-stack"="__chkstk_darwin"'
+              new = '"probe-stack"="inline-asm" "stack-probe-size"="4096"'
+              assert original.count(old) == 1 and '"stack-probe-size"' not in original
+              candidate = original.replace(old, new)
+              assert candidate.replace(new, old) == original, 'candidate changed more than probe attributes'
+              return candidate
+
+          def negative(module):
+              # Exactly the maintained negative: isolate only array_filled,
+              # remove only spine's group, and suppress Apple default probing.
+              assert 'attributes #1 =' not in module
+              lines = module.splitlines()
+              fills = [i for i, line in enumerate(lines) if line.startswith('define void @wf_array_filled$instance$')]
+              assert len(fills) == 1
+              i = fills[0]
+              lines[i] = exact_replace(lines[i], ' #0 align 64 {', ' noinline #0 align 64 {')
+              spines = [i for i, line in enumerate(lines) if line.startswith('define ') and '@wf_spine(' in line]
+              assert len(spines) == 1
+              i = spines[0]
+              lines[i] = exact_replace(lines[i], ' #0 align 64 {', ' #1 align 64 {')
+              return '\n'.join(lines) + '\nattributes #1 = { "no-stack-arg-probe" }\n'
+
+          def cflags(clang):
+              return [clang, '-isysroot', sdk] + opt
+
+          # Normal support.rs link order; concurrent_map.c is included by
+          # keyed_table.c, never compiled twice. The runtime itself is unchanged.
+          units = ['wf_floor.c', 'sched/core.c', 'sched/prim_host.c', 'sched/entry.c',
+                   'completion/runtime.c', 'completion/wait_host.c', 'completion/file_adapter.c',
+                   'completion/file_posix.c', 'completion/bridge.c', 'completion/stop_signals.c',
+                   'completion/linux_io_uring.c', 'keyed_table.c', 'ordinary_values.c',
+                   'ordinary_values.ll', 'heap.c']
+          runtimes = {}
+
+          def runtime_objects(tc, small):
+              key = (tc, small)
+              if key in runtimes:
+                  return runtimes[key]
+              directory = root / tc / ('runtime-1MiB' if small else 'runtime-normal')
+              directory.mkdir(parents=True, exist_ok=True)
+              floor = directory / 'wf_floor.c'
+              text = (backend / 'wf_floor.c').read_text()
+              if small:
+                  definitions = re.findall(r'^#define WF_FLOOR_STACK_BYTES .*$', text, re.M)
+                  assert len(definitions) == 1
+                  text = exact_replace(text, definitions[0], '#define WF_FLOOR_STACK_BYTES ((size_t)1048576u)')
+              floor.write_text(text)
+              objects = []
+              for i, unit in enumerate(units):
+                  # Normal and 1 MiB stacks differ only in floor's reservation.
+                  # Reuse immutable non-floor objects from this same compiler.
+                  if unit != 'wf_floor.c' and (tc, not small) in runtimes:
+                      objects.append(runtimes[(tc, not small)][i])
+                      continue
+                  obj = directory / f'unit-{i}.o'
+                  source = floor if unit == 'wf_floor.c' else backend / unit
+                  command = cflags(toolchains[tc]) + ['-pthread', '-I', backend, '-I', backend / 'completion']
+                  if unit.endswith('.ll'):
+                      command += ['-x', 'ir', '-Wno-override-module']
+                  else:
+                      command += ['-std=c11', '-x', 'c']
+                  must_run(f'{tc}/{directory.name}/unit-{i}', command + [source, '-c', '-o', obj])
+                  objects.append(obj)
+              runtimes[key] = objects
+              return objects
+
+          def build_image(tc, name, ir, observer, *, wide=False, small=False):
+              directory = root / tc / name
+              directory.mkdir(parents=True, exist_ok=True)
+              ll, assembly = directory / 'module.ll', directory / 'module.s'
+              ll.write_text(ir)
+              command = cflags(toolchains[tc]) + ['-Wno-override-module', '-x', 'ir', ll]
+              must_run(f'{tc}/{name}/assembly', command + ['-S', '-fstack-usage', '-o', assembly])
+              # Link the identical assembly whose .su frame report is measured.
+              binary = directory / 'program'
+              link = cflags(toolchains[tc]) + ['--ld-path=' + ld, '-pthread', '-x', 'assembler', assembly,
+                      '-x', 'c', observer, '-I', backend, '-I', backend / 'completion',
+                      '-DWF_TEST_WIDE=' + str(int(wide)), '-x', 'none']
+              link += runtime_objects(tc, small) + ['-lm', '-o', binary]
+              must_run(f'{tc}/{name}/link', link)
+              disassembly = must_run(f'{tc}/{name}/disassembly', [upstream / 'bin/llvm-objdump', '--disassemble', '--no-show-raw-insn', binary])
+              (directory / 'program.disasm').write_bytes(disassembly.stdout)
+              return binary, assembly, directory / 'module.su'
+
+          def machine_body(text):
+              matches = re.findall(r'^_wf_spine:.*?\n(.*?)-- End function', text, re.S | re.M)
+              assert len(matches) == 1, 'exact spine machine function missing/ambiguous'
+              return matches[0]
+
+          def inline_walk(text, *, linked=False):
+              # Expected LLVM 22.1.8 AArch64FrameLowering.cpp,
+              # inlineStackProbeLoopExactMultiple: contiguous SUB/STR/CMP/B.NE.
+              # Assembly labels resolve to instruction indices; linked branch
+              # addresses must equal the actual decrement's address. Unknown
+              # formats fail closed rather than accepting scattered substrings.
+              instructions, labels = [], {}
+              selected = not linked
+              for original_line in text.lower().splitlines():
+                  line = original_line.split(';', 1)[0].split('//', 1)[0].strip()
+                  if not line:
+                      continue
+                  address = None
+                  if linked:
+                      symbol = re.fullmatch(r'(?:[0-9a-f]+\s+)?<([^>]+)>:', line)
+                      if symbol is None:
+                          symbol = re.fullmatch(r'(_[a-z0-9_.$]+):', line)
+                      if symbol:
+                          name = symbol.group(1)
+                          if name == '_wf_spine':
+                              if selected:
+                                  return False
+                              selected = True
+                              continue
+                          if selected and not name.startswith('_wf_spine+'):
+                              break
+                          continue
+                      if not selected:
+                          continue
+                      machine = re.fullmatch(r'([0-9a-f]+):\s+(.+)', line)
+                      if machine is None:
+                          return False
+                      address, line = int(machine.group(1), 16), machine.group(2)
+                      if instructions and address != instructions[-1][0] + 4:
+                          return False
+                  else:
+                      label = re.fullmatch(r'([a-z_.$][a-z0-9_.$]*):', line)
+                      if label:
+                          if label.group(1) in labels:
+                              return False
+                          labels[label.group(1)] = len(instructions)
+                          continue
+                      if line.startswith('.'):
+                          continue  # assembler/CFI directives emit no instruction
+                  instruction = re.fullmatch(r'([a-z][a-z0-9.]*)\s*(.*)', line)
+                  if instruction is None:
+                      return False
+                  mnemonic, operands = instruction.groups()
+                  operands = re.sub(r'\s+', '', operands)
+                  operands = re.sub(r'#0x([0-9a-f]+)', lambda m: '#' + str(int(m.group(1), 16)), operands)
+                  instructions.append((address, mnemonic, operands))
+              for index in range(len(instructions) - 3):
+                  sub, store, compare, branch = instructions[index:index + 4]
+                  if sub[1] != 'sub' or sub[2] not in ['sp,sp,#4096', 'sp,sp,#1,lsl#12']:
+                      continue
+                  if store[1:] != ('str', 'xzr,[sp]'):
+                      continue
+                  if compare[1] != 'cmp' or not re.fullmatch(r'sp,x(?:[0-9]|[12][0-9]|30)(?:,uxtx(?:#0)?)?', compare[2]):
+                      continue
+                  if branch[1] != 'b.ne':
+                      continue
+                  if linked:
+                      target = re.fullmatch(r'(?:0x)?([0-9a-f]+)(?:<[^>]+>)?', branch[2])
+                      if target and int(target.group(1), 16) == sub[0]:
+                          return True
+                  elif labels.get(branch[2]) == index:
+                      return True
+              return False
+
+          def assert_probe(tc, positive, negative_assembly, binary):
+              pos, neg = machine_body(positive.read_text()), machine_body(negative_assembly.read_text())
+              (positive.parent / 'spine.s').write_text(pos)
+              (negative_assembly.parent / 'spine.s').write_text(neg)
+              if tc == 'upstream':
+                  assert inline_walk(pos), 'large positive spine has no recognized 4096-byte inline page walk'
+                  assert not inline_walk(neg), 'large negative spine still has an inline page walk'
+                  final = run(f'{tc}/large/final-spine', [upstream / 'bin/llvm-objdump', '--disassemble',
+                              '--no-show-raw-insn', '--disassemble-symbols=_wf_spine', binary])
+                  assert final.returncode == 0
+                  (positive.parent / 'spine.disasm').write_bytes(final.stdout)
+                  assert inline_walk(final.stdout.decode(), linked=True), 'linked spine disassembly does not retain the inline page walk'
+              else:
+                  assert 'chkstk' in pos and 'chkstk' not in neg, 'Apple helper positive/negative comparison failed'
+
+          def check_large(tc, original, observer):
+              selected = inline_candidate(original) if tc == 'upstream' else original
+              positive, pos_asm, _ = build_image(tc, 'large', selected, observer)
+              unprobed, neg_asm, _ = build_image(tc, 'large-unprobed', negative(selected), observer)
+              assert_probe(tc, pos_asm, neg_asm, positive)
+              p = run(f'{tc}/large/execution', [positive])
+              floor_outcome(p, -6, b'', record)
+              p = run(f'{tc}/large-unprobed/execution', [unprobed])
+              floor_outcome(p, -10, b'', b'')
+              result('large-frame containment and ablation', tc, True, 'SIGABRT + exact stack record; ablation SIGBUS + no record; native probe checked')
+
+          def check_recursion(tc, name, original, observer):
+              selected = inline_candidate(original) if tc == 'upstream' else original
+              binary, assembly, usage = build_image(tc, name, selected, observer, wide=name == 'wide', small=True)
+              rows_su = [line.split('\t') for line in usage.read_text().splitlines()]
+              frames = [int(fields[1]) for fields in rows_su if len(fields) == 3
+                        and fields[0].split(':')[-1].lstrip('_') == 'wf_spine' and fields[2] == 'static']
+              assert len(frames) == 1 and frames[0] > 0, 'retained recursion requires one positive static frame'
+              frame = frames[0]  # arm64 ledger correction is zero.
+              assert 'bl\t_wf_spine' in machine_body(assembly.read_text()), 'recursion optimized away'
+              if name == 'wide':
+                  assert frame >= 2048, f'wide live array disappeared: {frame} < 256*8'
+              environment = dict(os.environ, WF_WORKERS='4')
+              for thread in ['entry', 'worker']:
+                  bounds = run(f'{tc}/{name}/bounds-{thread}', [binary, 'bounds-' + thread, '0'], env=environment)
+                  assert bounds.returncode == 0 and bounds.stderr == b''
+                  assert bounds.stdout.startswith((thread + '\n').encode())
+                  values = {key: int(value) for key, value in re.findall(r'(room|stack|page)=(\d+)', bounds.stdout.decode())}
+                  assert len(values) == 3 and values['stack'] >= 1048576
+                  room, page = values['room'], values['page']
+                  allowance = 2 * page + 4096 + 2 * frame
+                  assert allowance < room / 10, 'fixture overhead exceeds maintained ten-percent bound'
+                  levels, slack = room // frame, (allowance + frame - 1) // frame
+                  assert levels > slack
+                  (assembly.parent / f'{thread}-boundary.json').write_text(json.dumps(
+                      dict(values, frame=frame, levels=levels, slack=slack, allowance=allowance), indent=2) + '\n')
+                  for depth, exhausted in [(levels - slack, False), (levels + slack, True)]:
+                      p = run(f'{tc}/{name}/{thread}-{depth}', [binary, thread, str(depth)], env=environment)
+                      floor_outcome(p, -6 if exhausted else 0, (thread + '\n').encode(), record if exhausted else b'')
+              result(name + ' recursion floor boundary', tc, True, 'entry/worker below boundary succeed; above abort with exact record; retained measured frame')
+
+          def attempt(step, tc, action):
+              try:
+                  action()
+              except Exception as error:
+                  result(step, tc, False, str(error))
+                  (root / (tc + '-' + re.sub(r'[^a-z0-9]+', '-', step.lower()) + '.exception.txt')).write_text(traceback.format_exc())
+
+          def experiment():
+              oracle_controls()
+              fixture_text = (backend / 'tests/exhaustion.rs').read_text()
+              source_text = (repo / 'compiler/tests/support/native.rs').read_text()
+              sources = {'large': raw_constant(fixture_text, 'LARGE_FRAME_SPINE'),
+                         'narrow': formatted_fixture(source_text, 'spine_source', depth=0),
+                         'wide': formatted_fixture(source_text, 'wide_frame_source', depth=0, slots=256)}
+              observer = root / 'large-observer.c'
+              observer.write_text(raw_constant(fixture_text, 'LARGE_FRAME_BODY'))
+              boundary = root / 'stack_boundary.c'
+              shutil.copyfile(backend / 'tests/stack_boundary.c', boundary)
+              originals = {}
+              for name, source in sources.items():
+                  directory = root / 'fixtures' / name
+                  directory.mkdir(parents=True, exist_ok=True)
+                  wf, raw = directory / 'fixture.wf', directory / 'compiler-raw.ll'
+                  wf.write_text(source)
+                  must_run(f'fixtures/{name}/emit', [compiler, '--emit-llvm', '-o', raw, wf])
+                  text = expose(raw.read_text(), large=name == 'large')
+                  originals[name] = text
+                  (directory / 'original.ll').write_text(text)
+                  candidate = inline_candidate(text)
+                  (directory / 'inline.ll').write_text(candidate)
+                  (directory / 'probe-only.diff').write_text(''.join(difflib.unified_diff(
+                      text.splitlines(True), candidate.splitlines(True), fromfile='original.ll', tofile='inline.ll')))
+              # Small feasibility sample first; do not build all runtime units
+              # until a real compiler-emitted candidate reaches object code.
+              for name in ['narrow', 'large', 'wide']:
+                  directory = root / 'fixtures' / name
+                  p = run(f'upstream/{name}/reported-failure', cflags(toolchains['upstream']) +
+                          ['-Wno-override-module', '-x', 'ir', directory / 'original.ll', '-c', '-o', directory / 'original.o'])
+                  diagnostic = b'Unsupported stack probing method'
+                  okay = p.returncode != 0 and diagnostic in p.stderr
+                  result(name + ' reported failure reproduction', 'upstream', okay,
+                         f'exit {p.returncode}; ' + ('exact backend error observed' if okay else
+                         'expected backend error absent; inspect stderr for an independent capability/IR blocker'))
+                  p = run(f'upstream/{name}/candidate-screen', cflags(toolchains['upstream']) +
+                          ['-Wno-override-module', '-x', 'ir', directory / 'inline.ll', '-c', '-o', directory / 'inline.o'])
+                  result(name + ' probe-only candidate object', 'upstream', p.returncode == 0,
+                         f'exit {p.returncode}; no intrinsic/type or other IR rewrite permitted')
+              for tc in ['Apple', 'upstream']:
+                  attempt('large-frame containment and ablation', tc,
+                          lambda tc=tc: check_large(tc, originals['large'], observer))
+                  for name in ['narrow', 'wide']:
+                      attempt(name + ' recursion floor boundary', tc,
+                              lambda tc=tc, name=name: check_recursion(tc, name, originals[name], boundary))
+
+          try:
+              experiment()
+          except Exception as error:
+              result('experiment setup', 'host', False, str(error))
+              (root / 'setup.exception.txt').write_text(traceback.format_exc())
+          (root / 'experiment-verdict.json').write_text(json.dumps({'failures': failures, 'passed': not failures}, indent=2) + '\n')
+          sys.exit(bool(failures))
+          PY
+          cp "$RUNNER_TEMP/darwin-probe-qualify.py" "$QUALIFY_DIR/instrument.py"
+
+      - name: Compare the original Apple path and upstream probe-only candidate
+        id: experiment
+        run: |
+          set +e
+          ulimit -c 0
+          perl .github/run-check.pl darwin-probe/experiment python3 "$RUNNER_TEMP/darwin-probe-qualify.py" \
+            > "$QUALIFY_DIR/experiment.log" 2>&1
+          status=$?
+          printf '%s\n' "$status" > "$QUALIFY_DIR/experiment.status"
+          cat "$QUALIFY_DIR/experiment.log"
+          exit "$status"
+
+      - name: Check the experiment budget record
+        if: always()
+        run: |
+          if [ -f "$WHITEFOOT_TIME_BUDGET_RECORD" ]; then
+            perl .github/run-check.pl --budget-verdict "$WHITEFOOT_TIME_BUDGET_RECORD"
+          fi
+
+      - name: Write the qualification summary
+        if: always()
+        env:
+          BUILD_OUTCOME: ${{ steps.build.outcome }}
+          EXPERIMENT_OUTCOME: ${{ steps.experiment.outcome }}
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          root = Path(os.environ['QUALIFY_DIR'])
+          rows = [('compiler build', 'gate profile / Apple host', os.environ['BUILD_OUTCOME']),
+                  ('qualification command', 'upstream 22.1.8 / Apple', os.environ['EXPERIMENT_OUTCOME'])]
+          if (root / 'results.tsv').exists():
+              rows.extend(tuple(line.split('\t', 2)) for line in (root / 'results.tsv').read_text().splitlines())
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+              summary.write('Temporary arm64 Darwin stack-probe qualification. This is not package or LTO acceptance.\n\n')
+              run_url = os.environ['GITHUB_SERVER_URL'] + '/' + os.environ['GITHUB_REPOSITORY'] + '/actions/runs/' + os.environ['GITHUB_RUN_ID']
+              summary.write('[Run](' + run_url + ') at `' + os.environ['GITHUB_SHA'] + '`.\n\n')
+              summary.write('| Step | Toolchain | Result |\n| --- | --- | --- |\n')
+              for row in rows:
+                  summary.write('| ' + ' | '.join(cell.replace('|', '\\|').replace('\n', ' ') for cell in row) + ' |\n')
+              summary.write('\nArtifact contains raw compiler IR, observer-adapted original IR, the probe-only diff, assembly/stack reports, final disassembly, direct signal/record outcomes, commands and logs. An unrelated IR capability error rejects this run; it is never rewritten away.\n')
+          PY
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: darwin-probe-qualify-${{ github.sha }}
+          path: ${{ runner.temp }}/darwin-probe-qualify
+          if-no-files-found: error
+          retention-days: 14

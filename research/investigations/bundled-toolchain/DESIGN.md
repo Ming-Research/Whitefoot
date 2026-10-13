@@ -412,6 +412,34 @@ with a scoped CI feasibility sample. New stage budgets require actual CI
 evidence and the repository's budget procedure. No precision timing on this
 MacBook or a new 14900K measurement is needed for this design.
 
+## Qualification run
+
+Run pending: [the temporary Darwin qualification workflow](../../../.github/workflows/darwin-probe-qualify.yml)
+uses hosted `macos-15` arm64, official upstream LLVM 22.1.8 with its published
+SHA-256, and Apple's maintained clang as the comparison. It emits the existing
+large-frame and narrow/wide recursion fixtures with the current compiler,
+keeps the original IR, and changes only probe attributes for the upstream
+inline candidate. Fixture exposure and the isolated negative control follow
+the maintained tests; they are recorded separately from the candidate rewrite.
+
+Accept this arm64 non-LTO candidate only if the original IR reproduces
+`Unsupported stack probing method`, the attribute-only candidate compiles and
+links using the system SDK/ld, and its exact large-frame function has a 4096
+byte descent-and-touch walk. The large-frame positive must end with SIGABRT
+and exactly `{"resource":"stack"}\n`; the ablated control must have no probe
+in that function, end with Darwin's SIGBUS, and write no resource record.
+Narrow and wide recursion on both entry and worker stacks must succeed just
+below their measured bounds and abort with the exact stack record above them.
+Apple must pass the corresponding unchanged-IR maintained comparison.
+
+Any missing check, different signal or record, lost native probe, unresolved
+link, or unrelated IR incompatibility leaves qualification failed or blocked;
+the experiment must not rewrite coroutine intrinsics to conceal another
+toolchain gap. The workflow summary and artifact will supply the run URL,
+revision, toolchain versions, SDK/linker identity, IR, disassembly and logs.
+No run result is recorded yet. A passing run does not qualify x86-64 Darwin,
+LTO, release packages, or the host-clang isolation requirement.
+
 ## Recommended ordered delivery plan
 
 1. **Set the release support boundary.** Confirm Linux x86-64/macOS arm64,
