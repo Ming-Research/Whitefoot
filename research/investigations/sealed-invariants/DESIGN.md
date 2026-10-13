@@ -227,13 +227,17 @@ T4 **Local move and copy.** `let y = move p;`, `let y = p;` of a copy
 struct, a by-value `match` binder, a destructuring binder [PROV-6], the
 `Ok` continuation of `propagate`, and a SET-1 commit `set y = p;` or
 `set y = move p;` whose target y is a complete own local binding are not
-hand-offs. In that order: first every debt anchored at or below y is
-dropped, because y's old value is released or overwritten whole [WIN-3];
-then each debt that may be at or below the source p is rebased onto the
-destination, the part of its anchor below p appended to y. A copy
-duplicates the debts; a move leaves them with y and the source root dead
-[OWN-1]. A field moved out consumes its whole owner [WIN-3], so debts
-anchored at the owner die with it. So `set a.value = 31_u64; let b =
+hand-offs. In this order: (1) take the set S of every debt that may be at
+or below the source p, each rebased onto the destination, the part of its
+anchor below p appended to y; (2) drop every debt *proved* at or below y
+(equal steps, equal captured offsets), because y's old value is released
+or overwritten whole [WIN-3]; (3) add S. Taking S before the drop matters
+when p lies below y: `set y = move y.Some.value.inner.next;` must keep the
+debts of the nodes it moves up. A debt only possibly at or below p is
+copied onto y and also stays where it is; a debt proved at or below p is
+moved for a `move` (the source root is dead [OWN-1]) and copied for a
+copy. A field moved out consumes its whole owner [WIN-3], so debts proved
+rooted at the owner die with it. So `set a.value = 31_u64; let b =
 Index(value: 4_u64); set b = move a;` leaves b with a's debt, and a later
 `table[b.value]` is refused.
 
@@ -258,7 +262,14 @@ invariant: `swap` [OP-11], whose two arguments only exchange their values
 (T10 governs it), and the value-discarding rows `release` and `map_clear`
 [PRE-1, SHARE-1], whose values are released, as a scope exit releases
 them, with no user action on release [STOR-3]. Their arguments owe nothing
-here, and the debts at or below a released value die with it. This list is
+here. **Release and root death.** When a value is released (`release`,
+`map_clear`, a scope exit) or its root binding dies, only the debts
+*proved* at or below the released place or rooted at the dead binding
+(equal steps, equal captured offsets, the same root) are dropped; a debt
+only possibly there stays. A local binding is its own root, so its scope
+exit drops exactly its debts. Two whole targets of one atomic statement
+whose state types unify may be one root [SHARE-2], so `map_clear` on one of
+them drops no debt that was created through the other. This list is
 closed; every other prelude or host row is an ordinary call.
 
 At a hand-off, every debt that may be at or below the handed place must be
@@ -310,9 +321,16 @@ coarsens a debt: the widened anchor overlaps everything the old one did.
 [points for the owner](#points-for-the-owner); it is not part of this
 rule.)
 
-T10 **Swap.** `swap` exchanges the debts anchored at or below its two
-targets (rebasing each onto the other target); when the two targets may be
-the same place, both receive the union. T2 adds debts above each target.
+T10 **Swap.** For `swap(first: &f, second: &s)`: a debt *proved* at or below
+f (equal steps, equal captured offsets) is moved onto s, rebased, and one
+proved at or below s onto f. A debt that only may be at or below f — an
+index not proved equal to f's, a reference whose path set holds several
+targets — stays where it is and a rebased copy is added at s; likewise
+for s. When the two targets may be the same place, both receive the union.
+T2 adds debts above each target. So after `let r = &c[j]; set r^.value =
+31_u64; let x = Index(value: 1_u64); swap(first: &c[i], second: &x);`,
+with i not proved equal to j, c keeps the debt at `c[j]` and x receives a
+copy.
 
 T11 **Join.** At a merge of control inputs, in this order:
 
@@ -412,10 +430,15 @@ program, every activation's abstract state paired with its runtime state.
   T3 removes a debt only when the store is proved to have replaced that very
   anchor's value with a value already sealed: a hand-off, a call result or a
   construction, never a place read or move, whose debts T4 carries instead.
-  T4 drops the destination's old debts only because its old value is gone,
-  and then moves the source's debts with the value. A released value (scope
-  exit, `release`, `map_clear`) takes its debts with it. A root
-  that dies takes its anchors with it; a consumed value continues as the
+  T4 takes the source's debts first, then drops only the destination's
+  debts proved at or below it (its old value is gone), then adds the taken
+  set, so a source below the destination keeps its debts. Every removal or
+  transfer at a release, a dead root or a `swap` (T5 note, T10) applies only
+  to debts *proved* at or below the place, by equal steps, equal captured
+  offsets and the same root; a debt only possibly there stays, and a `swap`
+  copies it to the other target, so an unproved alias can never carry a
+  debt away from the place it may denote. A root that dies takes its proved
+  anchors with it; a consumed value continues as the
   destination's (T4) or reaches a hand-off (T5).
 - *Widening.* T9 replaces a debt by one that overlaps at least the same
   anchors, so SI's premise only weakens.
@@ -844,6 +867,10 @@ other verdicts accept.
 | `type11-pos-move-carries-debt` | `set a.value = 99_u64; let b = move a; set b.value = 3_u64;` then the hand-off of `b` | accept |
 | `type11-neg-loop-reference-cover` | a reference rebound along a chain inside a loop writes through each target and is rebound before restoring; hand-off after the loop | reject FN-8 |
 | `type11-pos-public-unread-field` | the study's module program writing `state.count` from another module | accept (with the field rule) |
+| `type11-neg-swap-possible-alias-keeps-debt` | `let r = &c[j]; set r^.value = 31_u64; let x = Index(value: 1_u64); swap(first: &c[i], second: &x);` with i not proved equal to j, then `pass(xs: &c)` | reject FN-8 |
+| `type11-neg-swap-joined-reference-keeps-debt` | the same with the first target a reference `value_if` choosing `&a` or `&b`, a debt on only one of them | reject FN-8 |
+| `type11-neg-map-clear-other-target` | `atomic m1 = &h1, m2 = &h2 { ... break the payload of an entry through m2 ...; map_clear(map: m1); }` with h1, h2 handles of one map type | reject TYPE-11 at the atomic statement |
+| `type11-neg-move-up-list-keeps-debt` | `struct L { v: u64; next: Option<Box<L>>; invariant ok(l): l.v < 16_u64; }`; break the second node's v through y, then `set y = move y.Some.value.inner.next;` and hand off y | reject FN-8 |
 | `type11-neg-local-set-move-carries-debt` | `set a.value = 31_u64; let b = Index(value: 4_u64); set b = move a;` then `table[b.value]` (T3/T4 order) | reject OP-4 |
 | `type11-neg-join-unrefined-payload` | `struct Never { v: u64; invariant impossible(n): n.v < 0_u64; }`, `enum E { A(n: Never), B() }`, e always `B`; `match &e { A(n: n) => { set n^.v = 5_u64; set x = 1_u64; } B() => { set x = 9_u64; } }`, then `table[x]` with a 2-element table (no edge may receive the payload's instance) | reject OP-4 |
 | `type11-pos-swap-broken-then-restore` | break `indexes[0]` through a reference, `swap` it with `indexes[1]`, restore through a reference to `indexes[1]`, then hand off `&indexes` | accept |
@@ -891,12 +918,15 @@ Existing cases whose verdict or rule changes with the specification:
    a debt at the cursor's *current target identity* plus the finite suffix
    below it, both of which REF-1 already retains for a summarized
    description; restore it through the cursor's terms (`cursor^.f`); attempt
-   restoration before the cursor is rebound or leaves scope (T8 point 2);
+   restoration before the cursor is rebound or leaves scope, and before any
+   write that may change which place its current target identity names (a
+   write to a prefix of that target, which REF-2 already treats as
+   invalidating) (T8 point 2);
    widen to the cover only if that fails. It is sound because one target
    identity denotes one place for as long as it is current, which is the
    same fact REF-2 uses to keep the cursor valid. It costs one more key form
-   per cursor, so the bound of result 3 holds with C counting identities as
-   well as covers. Recommendation: in scope, because Snowghost's tree and
+   per cursor, so if adopted the bound of result 3 holds with C counting
+   cursor target identities as well as covers. Recommendation: in scope, because Snowghost's tree and
    arena walks use this shape and the data already exists; it adds one
    positive case (restored before rebinding) and one negative case (rebound
    before restoring, today's `type11-neg-loop-reference-cover`).
