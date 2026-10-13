@@ -38,6 +38,57 @@
 //!   that session's fixed binding images and automatic premises. These hits
 //!   execute no final-family traversal. Cold scans are aggregated per request;
 //!   all affine counters are aggregated per function before emission.
+//! - Additional `function` affine observations (all emitted even when zero):
+//!   `affine_auto_calls_initial` counts initial numeric/bounded-relation AUTO
+//!   submissions; `affine_auto_calls_bridge` counts Step-6 residual submissions
+//!   in both numeric and bounded-relation routes; `affine_auto_calls_other`
+//!   counts other standalone AUTO (including quotient targets). Submissions
+//!   include failed-query reuse hits, which perform no DIRECT search.
+//!   `affine_direct_initial`, `affine_direct_single`, `affine_direct_pair`,
+//!   `affine_direct_final_l0` count actual DIRECT calls in each AUTO family;
+//!   `affine_direct_other` counts DIRECT calls outside an AUTO family. Initial
+//!   here means DIRECT(T) of every AUTO, including a bridge-origin AUTO.
+//!   Tightened variants count in the same family; unformable residuals do not.
+//!   `affine_tightenings_formed` counts representable integer tightenings in
+//!   the shared candidate scratch path, even if an earlier variant succeeds.
+//!   `affine_overflow_pair` counts discarded pair sums; `_tightening` counts
+//!   overflowing factor computations or tightening formations; `_residual`
+//!   counts discarded candidate residuals; `_direct` counts DIRECT returning
+//!   arithmetic overflow; `_bridge` counts discarded bridge image/target
+//!   formations; `_index` counts discarded L0 image formations in lazy or
+//!   complete index preparation. These are operations, not unique queries.
+//!   `affine_overflow_residual_bound_up` and `_bound_down` are subsets of
+//!   `_residual`: final bound subtraction overflow toward MAX or MIN. They
+//!   exclude coefficient overflow before bound subtraction. Non-overflow
+//!   arithmetic errors and failed inverse lookup keys are not counted.
+//!   `affine_interval_construction_probes` and `_warm_probes` partition the
+//!   endpoint-map membership probes in DIRECT: absent (construct) or present
+//!   (reuse). Dot-product and successful-parent endpoint reads are excluded.
+//! - The `affine_shadow_*` counters observe numeric proofs entering Step 6
+//!   after complete initial AUTO failure. `groups` partitions into
+//!   `would_certify`, `rejected` (all fixed assignments fail validation or do
+//!   not violate the target), and `unknown` (stale/unavailable inputs,
+//!   arithmetic uncertainty without a surviving model, or a work cutoff).
+//!   `assignments` counts attempted zero-clamped, all-minimum and all-maximum
+//!   vectors, in that order. They must satisfy every canonical automatic
+//!   premise, strongest indexed L0 image and strongest atom interval and
+//!   violate the target. The view is rechecked after ordinary bridge setup
+//!   and every actual AUTO, and every submitted bridge/residual is validated.
+//!   `bridge_calls` and `final_exhaustions` count actual residual submissions
+//!   (including reuse hits) and actual final-family exhaustions only inside
+//!   completely certified groups. They exclude the initial AUTO. Other
+//!   bounded-relation Step-6 routes contribute no shadow group.
+//!   `operations` counts charged observer units: visited/copied atom records,
+//!   images/coefficients, endpoint queries, vector entries, inequality checks,
+//!   scalar lookup/multiply/add and a conservative key-sorting allowance. It
+//!   is not an instruction count; closure lookup internals are not expanded.
+//!   Storage/scans are charged before allocation or traversal. At most
+//!   100,000 units per group and 2,000,000 per function invocation are allowed;
+//!   `group_cutoffs` and `function_cutoffs` count the first refused charge per
+//!   affected group. A cutoff only invalidates this observer, never AUTO.
+//!   With cutoffs/unknowns, measured certified coverage is a lower bound.
+//!   No shadow snapshot, allocation or probe executes without an active
+//!   counter scope. The probe owns detached data and publishes no proof.
 //! - `join`: ordinal identifies a pass; `join` identifies its enclosing
 //!   `join_at` call. `inputs` includes contradictory predecessors;
 //!   `union_rows` counts contributing closure rows plus requested extra rows
@@ -113,6 +164,186 @@ struct AffineWork {
     final_family_starts: u64,
     final_family_exhaustions: u64,
     failed_reuse_hits: u64,
+    extra: [u64; AffineMetric::Count as usize],
+}
+
+/// Observer-only affine metrics. Names are shared by TSV emission and tests.
+#[derive(Clone, Copy)]
+pub(super) enum AffineMetric {
+    AutoCallsInitial,
+    AutoCallsBridge,
+    AutoCallsOther,
+    DirectInitial,
+    DirectSingle,
+    DirectPair,
+    DirectFinalL0,
+    DirectOther,
+    TighteningsFormed,
+    OverflowPair,
+    OverflowTightening,
+    OverflowResidual,
+    OverflowResidualBoundUp,
+    OverflowResidualBoundDown,
+    OverflowDirect,
+    OverflowBridge,
+    OverflowIndex,
+    IntervalConstructionProbes,
+    IntervalWarmProbes,
+    ShadowGroups,
+    ShadowWouldCertify,
+    ShadowRejected,
+    ShadowUnknown,
+    ShadowGroupCutoffs,
+    ShadowFunctionCutoffs,
+    ShadowAssignments,
+    ShadowOperations,
+    ShadowBridgeCalls,
+    ShadowFinalExhaustions,
+    Count,
+}
+
+impl AffineMetric {
+    const NAMES: [&'static str; Self::Count as usize] = [
+        "affine_auto_calls_initial",
+        "affine_auto_calls_bridge",
+        "affine_auto_calls_other",
+        "affine_direct_initial",
+        "affine_direct_single",
+        "affine_direct_pair",
+        "affine_direct_final_l0",
+        "affine_direct_other",
+        "affine_tightenings_formed",
+        "affine_overflow_pair",
+        "affine_overflow_tightening",
+        "affine_overflow_residual",
+        "affine_overflow_residual_bound_up",
+        "affine_overflow_residual_bound_down",
+        "affine_overflow_direct",
+        "affine_overflow_bridge",
+        "affine_overflow_index",
+        "affine_interval_construction_probes",
+        "affine_interval_warm_probes",
+        "affine_shadow_groups",
+        "affine_shadow_would_certify",
+        "affine_shadow_rejected",
+        "affine_shadow_unknown",
+        "affine_shadow_group_cutoffs",
+        "affine_shadow_function_cutoffs",
+        "affine_shadow_assignments",
+        "affine_shadow_operations",
+        "affine_shadow_bridge_calls",
+        "affine_shadow_final_exhaustions",
+    ];
+}
+
+pub(super) fn affine_result<T>(
+    result: Result<T, super::affine::AffineCheckError>,
+    metric: AffineMetric,
+) -> Result<T, super::affine::AffineCheckError> {
+    if matches!(
+        result,
+        Err(super::affine::AffineCheckError::ArithmeticOverflow)
+    ) {
+        affine_metric(metric);
+    }
+    result
+}
+
+pub(super) fn affine_metric(metric: AffineMetric) {
+    affine_add(metric, 1);
+}
+
+pub(super) fn affine_add(metric: AffineMetric, amount: u64) {
+    update(|work| {
+        let value = &mut work.affine.extra[metric as usize];
+        *value = value.saturating_add(amount);
+    });
+}
+
+/// No allocation, snapshot or probe runs without an active counter scope.
+pub(super) fn affine_observing() -> bool {
+    if !enabled() {
+        return false;
+    }
+    ACTIVE.with(|active| active.borrow().is_some())
+}
+
+pub(super) fn affine_exhaustions() -> u64 {
+    if !affine_observing() {
+        return 0;
+    }
+    ACTIVE.with(|active| {
+        active
+            .borrow()
+            .as_ref()
+            .unwrap()
+            .affine
+            .final_family_exhaustions
+    })
+}
+
+pub(super) const SHADOW_FUNCTION_OPERATIONS: u64 = 2_000_000;
+
+/// Charges only observer work, never the affine checker's arithmetic state.
+pub(super) fn shadow_charge(amount: u64) -> bool {
+    let mut charged = false;
+    update(|work| {
+        let count = &mut work.affine.extra[AffineMetric::ShadowOperations as usize];
+        if amount <= SHADOW_FUNCTION_OPERATIONS.saturating_sub(*count) {
+            *count += amount;
+            charged = true;
+        }
+    });
+    charged
+}
+
+fn enabled() -> bool {
+    #[cfg(test)]
+    if let Some(enabled) = TEST_ENABLED.with(std::cell::Cell::get) {
+        return enabled;
+    }
+    ENABLED.load(Ordering::Relaxed)
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_ENABLED: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+}
+
+/// Installs a test-only thread-local sink without touching the process output
+/// OnceLock, environment, or another test's active invocation.
+#[cfg(test)]
+pub(super) struct AffineTestScope(Option<FunctionWork>, Option<bool>);
+
+#[cfg(test)]
+impl AffineTestScope {
+    pub(super) fn new() -> Self {
+        let previous = ACTIVE.with(|active| active.replace(Some(FunctionWork::new("test"))));
+        Self(
+            previous,
+            TEST_ENABLED.with(|enabled| enabled.replace(Some(true))),
+        )
+    }
+
+    pub(super) fn disabled() -> Self {
+        let previous = ACTIVE.with(|active| active.replace(None));
+        Self(
+            previous,
+            TEST_ENABLED.with(|enabled| enabled.replace(Some(false))),
+        )
+    }
+
+    pub(super) fn rows(&self) -> String {
+        ACTIVE.with(|active| active.borrow().as_ref().unwrap().text())
+    }
+}
+
+#[cfg(test)]
+impl Drop for AffineTestScope {
+    fn drop(&mut self) {
+        ACTIVE.with(|active| active.replace(self.0.take()));
+        TEST_ENABLED.with(|enabled| enabled.set(self.1));
+    }
 }
 
 struct FunctionWork {
@@ -130,7 +361,7 @@ struct FunctionWork {
 }
 
 fn update(f: impl FnOnce(&mut FunctionWork)) {
-    if !ENABLED.load(Ordering::Relaxed) {
+    if !enabled() {
         return;
     }
     ACTIVE.with(|active| {
@@ -163,21 +394,7 @@ pub(super) fn function(name: &str) -> FunctionScope {
         return FunctionScope(None, false);
     }
     ENABLED.store(true, Ordering::Relaxed);
-    let previous = ACTIVE.with(|active| {
-        active.replace(Some(FunctionWork {
-            run: NEXT_RUN.fetch_add(1, Ordering::Relaxed),
-            name: name.replace(['\t', '\r', '\n'], " "),
-            joins: 0,
-            passes: Vec::new(),
-            active_pass: None,
-            snapshots: Sizes::default(),
-            closures: Sizes::default(),
-            probes: Sizes::default(),
-            closure_cache_hits: 0,
-            intern_calls: 0,
-            affine: AffineWork::default(),
-        }))
-    });
+    let previous = ACTIVE.with(|active| active.replace(Some(FunctionWork::new(name))));
     FunctionScope(previous, true)
 }
 
@@ -343,7 +560,23 @@ pub(super) fn affine_final_family_exhausted() {
 }
 
 impl FunctionWork {
-    fn write(&self) {
+    fn new(name: &str) -> Self {
+        Self {
+            run: NEXT_RUN.fetch_add(1, Ordering::Relaxed),
+            name: name.replace(['\t', '\r', '\n'], " "),
+            joins: 0,
+            passes: Vec::new(),
+            active_pass: None,
+            snapshots: Sizes::default(),
+            closures: Sizes::default(),
+            probes: Sizes::default(),
+            closure_cache_hits: 0,
+            intern_calls: 0,
+            affine: AffineWork::default(),
+        }
+    }
+
+    fn text(&self) -> String {
         use std::fmt::Write as _;
         let mut text = String::new();
         let mut row = |kind: &str, ordinal: usize, metric: &str, value: u64| {
@@ -381,6 +614,9 @@ impl FunctionWork {
         ] {
             row("function", 0, metric, value);
         }
+        for (metric, value) in AffineMetric::NAMES.iter().zip(self.affine.extra) {
+            row("function", 0, metric, value);
+        }
         for (kind, sizes) in [
             ("snapshot", &self.snapshots),
             ("closure", &self.closures),
@@ -409,6 +645,11 @@ impl FunctionWork {
                 row("join", index, metric, value);
             }
         }
+        text
+    }
+
+    fn write(&self) {
+        let text = self.text();
         if let Some(Some(output)) = OUTPUT.get()
             && let Ok(mut file) = output.lock()
             && let Err(error) = file.write_all(text.as_bytes())

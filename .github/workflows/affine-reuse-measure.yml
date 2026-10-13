@@ -130,10 +130,23 @@ jobs:
           out.mkdir(exist_ok=True)
           lines = ['## AUTO failed-query reuse on Halo VM', '',
                    f"Earlier steps: {os.environ['JOB_STATUS']}. Base `{os.environ.get('BASE_REVISION', 'unresolved')}`; head `{os.environ.get('HEAD_REVISION', 'unresolved')}`.",
-                   'Hosted Ubuntu 24.04; same pinned Halo source and compiler build settings. Three uninstrumented rounds alternate order; work counters use one separate run per compiler.',
+                   'Hosted Ubuntu 24.04; same pinned Halo source and compiler build settings. Three uninstrumented rounds alternate order; work counters use one separate run per compiler. The head counter run also observes the bounded shadow countermodel probe; the six timing runs leave it disabled.',
                    'CPU ratios are exploratory hosted-runner observations, not a performance gate or a measurement on the 14900K.', '']
           errors = [] if os.environ['JOB_STATUS'] == 'success' else ['An earlier measurement step failed']
           reuse = 'affine_failed_reuse_hits'
+          observed = {
+              'affine_auto_calls_initial', 'affine_auto_calls_bridge', 'affine_auto_calls_other',
+              'affine_direct_initial', 'affine_direct_single', 'affine_direct_pair',
+              'affine_direct_final_l0', 'affine_direct_other', 'affine_tightenings_formed',
+              'affine_overflow_pair', 'affine_overflow_tightening', 'affine_overflow_residual',
+              'affine_overflow_residual_bound_up', 'affine_overflow_residual_bound_down',
+              'affine_overflow_direct', 'affine_overflow_bridge', 'affine_overflow_index',
+              'affine_interval_construction_probes', 'affine_interval_warm_probes',
+              'affine_shadow_groups', 'affine_shadow_would_certify', 'affine_shadow_rejected',
+              'affine_shadow_unknown', 'affine_shadow_group_cutoffs', 'affine_shadow_function_cutoffs',
+              'affine_shadow_assignments', 'affine_shadow_operations',
+              'affine_shadow_bridge_calls', 'affine_shadow_final_exhaustions'}
+          additive = observed | {reuse}
           expected = {
               'function': {'joins', 'join_passes', 'intern_calls', 'closure_cache_hits',
                            'affine_attempts', 'affine_memo_hits', 'affine_memo_misses',
@@ -168,9 +181,10 @@ jobs:
               require(len(verdicts) == 8 and len(set(verdicts)) == 1,
                       'Module verdict text or pending-contract list changed between runs')
 
-          def parse_counters(text, has_reuse):
+          def parse_counters(text, additions):
+              require(set(additions) <= additive, 'Unknown additive counter schema')
               schema = {kind: metrics.copy() for kind, metrics in expected.items()}
-              if has_reuse: schema['function'].add(reuse)
+              schema['function'].update(additions)
               runs = collections.defaultdict(dict)
               for row in csv.reader(io.StringIO(text), delimiter='\t'):
                   require(len(row) == 7, 'Counter row must have seven fields')
@@ -201,11 +215,15 @@ jobs:
                       key = f'{kind}.{metric}'
                       previous = data[name].get(key, 0)
                       data[name][key] = max(previous, value) if metric.endswith('_max') else previous + value
-                  if not has_reuse:
-                      # The recorded base source must lack this new counter.
-                      # No other absent field is treated as a zero measurement.
-                      data[name][f'function.{reuse}'] = 0
+                  # Only known additive metrics proved absent from the recorded
+                  # source are represented as zero; missing emitted rows fail above.
+                  for metric in additive - set(additions):
+                      data[name][f'function.{metric}'] = 0
               return data, counts
+
+          def require_run(data):
+              require('run' in data, 'Head counter run lacks the Halo run function')
+              return data['run']
 
           def pairs(rows):
               require(len(rows) == 6, 'Need exactly three paired timing rounds')
@@ -231,11 +249,18 @@ jobs:
           # verdicts fail, instead of merely demonstrating successful parsing.
           fixture = '\n'.join(f'1\t0\twitness\t{k}\t0\t{m}\t0'
                               for k, metrics in expected.items() if k != 'join' for m in sorted(metrics)) + '\n'
-          parse_counters(fixture, False)
-          parse_counters(fixture + f'1\t0\twitness\tfunction\t0\t{reuse}\t0\n', True)
-          expect_invalid(lambda: parse_counters('', False))
-          expect_invalid(lambda: parse_counters(fixture, True))
-          expect_invalid(lambda: parse_counters('\n'.join(r for r in fixture.splitlines() if '\taffine_attempts\t' not in r), False))
+          head_fixture = fixture.replace('witness', 'run') + ''.join(
+              f'1\t0\trun\tfunction\t0\t{metric}\t0\n' for metric in sorted(additive))
+          parse_counters(fixture, set())
+          parsed_head, _ = parse_counters(head_fixture, additive)
+          require_run(parsed_head)
+          expect_invalid(lambda: parse_counters('', set()))
+          for metric in sorted(additive):
+              missing = '\n'.join(row for row in head_fixture.splitlines() if f'\t{metric}\t' not in row)
+              expect_invalid(lambda: parse_counters(missing, additive))
+          expect_invalid(lambda: require_run(parse_counters(head_fixture.replace('\trun\t', '\twitness\t'), additive)[0]))
+          expect_invalid(lambda: parse_counters(head_fixture + '1\t0\trun\tfunction\t0\tunknown_metric\t0\n', additive))
+          expect_invalid(lambda: parse_counters('\n'.join(r for r in fixture.splitlines() if '\taffine_attempts\t' not in r), set()))
           expect_invalid(lambda: accepted([0] * 7 + [1]))
           expect_invalid(lambda: accepted([0] * 7))
           same_verdicts(['pkg::vm: accepted'] * 8)
@@ -245,7 +270,7 @@ jobs:
           expect_invalid(lambda: verdict_text('real 1.0\n'))
           expect_invalid(lambda: verdict_text('pkg::vm: accepted\npkg::vm: accepted\n'))
           expect_invalid(lambda: pairs([]))
-          lines.append('Evidence validators reject missing counter input, missing required metrics, incomplete timings, a changed or missing status, and changed pending contracts even when both statuses are zero.\n')
+          lines.append('Evidence validators reject missing counter input, each missing additive metric, an absent Halo run function, unknown metrics, incomplete timings, a changed or missing status, and changed pending contracts even when both statuses are zero.\n')
 
           def table(title, headers, rows):
               lines.extend([f'### {title}', '', '| ' + ' | '.join(headers) + ' |',
@@ -290,11 +315,28 @@ jobs:
           def counters():
               results, invocations = {}, {}
               for which in ('base', 'head'):
-                  has_reuse = f'"{reuse}"' in (out / f'{which}-work-schema.rs').read_text()
-                  require(which != 'head' or has_reuse, 'Head source lacks failed-reuse counter')
-                  results[which], invocations[which] = parse_counters((out / f'{which}-work.tsv').read_text(), has_reuse)
-                  if not has_reuse:
-                      lines.append('The recorded base counter schema predates affine_failed_reuse_hits; only that absent base field is deliberately reported as zero.\n')
+                  source = (out / f'{which}-work-schema.rs').read_text()
+                  additions = {metric for metric in additive if f'"{metric}"' in source}
+                  require(which != 'head' or additions == additive,
+                          'Head source lacks required AUTO observation counters')
+                  results[which], invocations[which] = parse_counters((out / f'{which}-work.tsv').read_text(), additions)
+                  absent = sorted(additive - additions)
+                  if absent:
+                      lines.append('Recorded ' + which + ' source lacks these additive metrics; only these absent fields are deliberately reported as zero, not measured zero: ' + ', '.join(f'`{m}`' for m in absent) + '.\n')
+              run_work = require_run(results['head'])
+              run_rows = [[metric, run_work[f'function.{metric}']] for metric in sorted(observed)]
+              write_tsv('work-run-observations.tsv', ['metric', 'head'], run_rows)
+              table('Head AUTO observations for Halo run', ['Metric', 'Head count'], run_rows)
+              lines.append(f"The run table sums all {invocations['head']['run']} head analysis invocations of the exact function name `run`; individual invocation IDs remain in head-work.tsv. The shadow probe is counter-only: three fixed assignments (clamped zero, minimum, maximum), at most 100,000 validation operations per group and 2,000,000 per function invocation. Cutoffs make observed certification coverage a lower bound.\n")
+              coverage = []
+              for label, numerator, denominator in (
+                  ('Groups certified', 'affine_shadow_would_certify', 'affine_shadow_groups'),
+                  ('Bridge AUTO calls inside certified groups', 'affine_shadow_bridge_calls', 'affine_auto_calls_bridge'),
+                  ('Certified-group bridge exhaustions / all AUTO exhaustions', 'affine_shadow_final_exhaustions', 'affine_final_family_exhaustions')):
+                  n, d = run_work[f'function.{numerator}'], run_work[f'function.{denominator}']
+                  coverage.append([label, n, d, f'{100 * n / d:.2f}%' if d else 'not observed'])
+              table('Shadow countermodel coverage in Halo run', ['Observed subset', 'Subset count', 'All count', 'Share'], coverage)
+              lines.append('Low certified bridge-call or exhaustion coverage is evidence against this fixed assignment set only when probe coverage is complete or adequate; many unknown outcomes or group/function cutoffs leave an inconclusive lower bound. The exhaustion denominator includes initial and other AUTO queries as well as Step-6 bridges. affine_shadow_operations counts validation work, not CPU cost: these counters cannot establish net savings, and a future CI cost attribution must determine whether validation consumes the covered search cost.\n')
               names = results['base'].keys() | results['head'].keys()
               metrics = sorted({m for side in results.values() for fn in side.values() for m in fn})
               totals, differences = [], []

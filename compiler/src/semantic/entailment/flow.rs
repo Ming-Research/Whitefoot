@@ -816,6 +816,7 @@ struct AffineDirectQuery<'a> {
     intervals: WordHashMap<AffineTermId, AffineAtomInterval>,
     measures: Option<WordHashMap<AffineTermId, Vec<TermId>>>,
     residual: AffineResidualScratch,
+    direct_metric: super::work::AffineMetric,
 }
 
 impl<'a> AffineDirectQuery<'a> {
@@ -831,6 +832,7 @@ impl<'a> AffineDirectQuery<'a> {
             intervals: WordHashMap::default(),
             measures: None,
             residual: AffineResidualScratch::default(),
+            direct_metric: super::work::AffineMetric::DirectOther,
         }
     }
 }

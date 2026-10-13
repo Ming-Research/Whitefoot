@@ -723,6 +723,137 @@ fn reference_numeric_bridge(
     None
 }
 
+// Uses the production TSV formatter; observer tests do not mutate the process
+// environment or the output OnceLock shared with concurrent tests.
+pub(super) fn affine_metric_value(rows: &str, metric: &str) -> u64 {
+    let matching = rows
+        .lines()
+        .filter_map(|line| {
+            let fields = line.split('\t').collect::<Vec<_>>();
+            (fields[3] == "function" && fields[5] == metric)
+                .then(|| fields[6].parse::<u64>().unwrap())
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(matching.len(), 1, "exactly one emitted metric {metric}");
+    matching[0]
+}
+
+#[test]
+fn affine_shadow_certifies_only_fixed_assignments_satisfying_all_premises() {
+    for (exclude_fixed_assignments, distinct_bridge) in
+        [(false, false), (true, false), (false, true)]
+    {
+        with_analyzer(|analyzer| {
+            let mut affine = AffineFlowState::default();
+            let [a, b, x] = [0; 3].map(|_| analyzer.vocabulary.new_affine_atom(IntegerType::I32));
+            let images = if distinct_bridge {
+                vec![b.clone(), x.clone()]
+            } else {
+                vec![b.clone(), b.clone(), b.clone()]
+            };
+            let datums = reuse_datums(analyzer, &affine, &images);
+            let r = datums[0];
+            let mut facts = FactState::new();
+            for &datum in &datums[1..] {
+                cache_bound(analyzer, &mut facts, datum, r, 0);
+                cache_bound(analyzer, &mut facts, r, datum, 0);
+            }
+            if exclude_fixed_assignments {
+                // x == 5 is consistent, but zero and both I32 endpoints all
+                // violate at least one premise. The target is independent.
+                for inequality in [
+                    reuse_target(&x, &AffineForm::constant(0), 5),
+                    reuse_target(&AffineForm::constant(0), &x, -5),
+                ] {
+                    affine.facts.push(ActiveAffineFact {
+                        inequality,
+                        evidence: AffineFactEvidence::Source(SourceAffineFactRef::LoopInvariant(
+                            SourceLoopInvariantRef {
+                                loop_id: CheckedLoopId(0),
+                                source_ordinal: 0,
+                            },
+                        )),
+                    });
+                }
+            }
+            let target = reuse_target(&a, &b, -1);
+            let scope = work::AffineTestScope::new();
+            assert!(
+                analyzer
+                    .reasoning()
+                    .numeric_affine_proof(&target, Some(r), ProofContext::new(&facts, &affine),)
+                    .is_none()
+            );
+            let rows = scope.rows();
+            let count = |name| affine_metric_value(&rows, name);
+            assert_eq!(count("affine_shadow_groups"), 1);
+            assert_eq!(count("affine_shadow_assignments"), 3);
+            assert_eq!(
+                count("affine_shadow_would_certify"),
+                u64::from(!exclude_fixed_assignments)
+            );
+            assert_eq!(
+                count("affine_shadow_rejected"),
+                u64::from(exclude_fixed_assignments)
+            );
+            assert_eq!(count("affine_shadow_unknown"), 0);
+            assert_eq!(
+                count("affine_shadow_bridge_calls"),
+                if exclude_fixed_assignments {
+                    0
+                } else if distinct_bridge {
+                    2
+                } else {
+                    3
+                }
+            );
+            assert_eq!(
+                count("affine_shadow_final_exhaustions"),
+                u64::from(distinct_bridge)
+            );
+            assert_eq!(count("affine_auto_calls_initial"), 1);
+            assert_eq!(
+                count("affine_auto_calls_bridge"),
+                if distinct_bridge { 2 } else { 3 }
+            );
+            assert_eq!(
+                count("affine_failed_reuse_hits"),
+                if distinct_bridge { 1 } else { 3 }
+            );
+            assert!(count("affine_shadow_operations") > 0);
+            assert_eq!(count("affine_shadow_group_cutoffs"), 0);
+            assert_eq!(count("affine_shadow_function_cutoffs"), 0);
+        });
+    }
+}
+
+#[test]
+fn affine_shadow_discards_a_group_after_measure_image_change() {
+    with_analyzer(|analyzer| {
+        let affine = AffineFlowState::default();
+        let [a, b, c] = [0; 3].map(|_| analyzer.vocabulary.new_affine_atom(IntegerType::I32));
+        let datum = reuse_datums(analyzer, &affine, &[b.clone()])[0];
+        let target = reuse_target(&a, &b, -1);
+        let facts = FactState::new();
+        let assumptions = Vec::new();
+        let mut auto = AffineAutoQuery::new(&affine, &assumptions);
+        repeated_auto_failure(analyzer, &target, &facts, &mut auto);
+        let scope = work::AffineTestScope::new();
+        let mut group = shadow::Group::start(&analyzer.vocabulary, &auto, &target).unwrap();
+        let closed = Rc::clone(&auto.prepared.as_ref().unwrap().closed);
+        group.prepare(&analyzer.reasoning(), &auto, &target, &closed);
+        // This mutates an existing association, so counts and atom inventory
+        // alone would miss it. The observer must invalidate its whole group.
+        affine.measure_atoms.borrow_mut().insert(datum, c);
+        group.observe_view(&analyzer.vocabulary, &auto, &closed);
+        group.finish();
+        let rows = scope.rows();
+        assert_eq!(affine_metric_value(&rows, "affine_shadow_unknown"), 1);
+        assert_eq!(affine_metric_value(&rows, "affine_shadow_would_certify"), 0);
+        assert_eq!(affine_metric_value(&rows, "affine_shadow_rejected"), 0);
+    });
+}
+
 #[test]
 fn affine_failed_reuse_exhausts_identical_integer_datum_bridges_once() {
     with_analyzer(|analyzer| {
@@ -997,11 +1128,43 @@ fn affine_failed_reuse_keeps_later_distinct_bridge_success_and_parents() {
         let expected = reference_numeric_bridge(analyzer, &target, r, context).unwrap();
         assert_eq!(affine_traversal_delta(before), [5, 4, 0]);
         let before = affine_traversal_counts();
-        let actual = analyzer
+        let actual = {
+            let _scope = work::AffineTestScope::disabled();
+            analyzer
+                .reasoning()
+                .numeric_affine_proof(&target, Some(r), context)
+                .unwrap()
+        };
+        assert_eq!(affine_traversal_delta(before), [2, 1, 3]);
+        let state_before = (
+            analyzer.vocabulary.terms.revision(),
+            analyzer.vocabulary.goals.revision(),
+            analyzer.vocabulary.affine_atoms.clone(),
+            affine.measure_atoms.borrow().clone(),
+        );
+        let before = affine_traversal_counts();
+        let scope = work::AffineTestScope::new();
+        let observed = analyzer
             .reasoning()
             .numeric_affine_proof(&target, Some(r), context)
             .unwrap();
         assert_eq!(affine_traversal_delta(before), [2, 1, 3]);
+        assert_eq!(observed.parents, actual.parents);
+        assert_eq!(observed.premises, actual.premises);
+        assert_eq!(
+            state_before,
+            (
+                analyzer.vocabulary.terms.revision(),
+                analyzer.vocabulary.goals.revision(),
+                analyzer.vocabulary.affine_atoms.clone(),
+                affine.measure_atoms.borrow().clone(),
+            )
+        );
+        let rows = scope.rows();
+        assert_eq!(affine_metric_value(&rows, "affine_shadow_groups"), 1);
+        assert_eq!(affine_metric_value(&rows, "affine_shadow_would_certify"), 0);
+        assert_eq!(affine_metric_value(&rows, "affine_auto_calls_bridge"), 4);
+        assert_eq!(affine_metric_value(&rows, "affine_shadow_bridge_calls"), 0);
         assert_eq!(actual.premises, expected.premises);
         assert_eq!(actual.parents, expected.parents);
         let closed = context.close(

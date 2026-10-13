@@ -2,8 +2,11 @@
 //! its routes: the L0 closure, the fixed affine and interval rules, the
 //! integer-domain and separation proofs, and the measure terms they read.
 
+use super::super::work::{self, AffineMetric as Metric};
 use super::*;
 use std::cell::Ref;
+
+mod shadow;
 
 impl Vocabulary {
     pub(super) fn intern_measure(
@@ -1276,7 +1279,8 @@ impl Reasoning<'_, '_, '_> {
             })
         {
             let derivation =
-                self.vocabulary.goal_numeric_derivation(canonical, relation.as_ref(), derivation);
+                self.vocabulary
+                    .goal_numeric_derivation(canonical, relation.as_ref(), derivation);
             return ProofResult {
                 disposition: ProofDisposition::Proved,
                 route: Some(ProofRoute::Affine),
@@ -1340,9 +1344,9 @@ impl Reasoning<'_, '_, '_> {
         } else {
             return None;
         };
-        let derivation =
-            self.vocabulary
-                .goal_numeric_derivation(canonical, relation, derivation);
+        let derivation = self
+            .vocabulary
+            .goal_numeric_derivation(canonical, relation, derivation);
         Some(ProofResult {
             disposition: ProofDisposition::Proved,
             route: Some(ProofRoute::Affine),
@@ -1389,8 +1393,12 @@ impl Reasoning<'_, '_, '_> {
         facts: &FactState,
     ) -> Option<DerivationId> {
         let assumptions = affine_facts(affine);
-        let proof =
-            self.affine_target_proof(target, &assumptions, ProofContext::new(facts, affine))?;
+        let proof = self.affine_target_proof_observed(
+            target,
+            &assumptions,
+            ProofContext::new(facts, affine),
+            Metric::AutoCallsBridge,
+        )?;
         Some(
             self.vocabulary
                 .derivations
@@ -1421,7 +1429,8 @@ impl Reasoning<'_, '_, '_> {
             right: bridge.middle,
             bound: bridge.left_to_middle_bound,
         };
-        let proof = self.affine_step_proof(step, bridge.target, ProofContext::new(facts, affine))?;
+        let proof =
+            self.affine_step_proof(step, bridge.target, ProofContext::new(facts, affine))?;
         let first = self
             .vocabulary
             .derivations
@@ -1525,6 +1534,7 @@ impl Reasoning<'_, '_, '_> {
     ) -> Option<AffineConsequenceProof> {
         let assumptions = affine_facts(context.affine);
         let mut auto = AffineAutoQuery::new(context.affine, &assumptions);
+        work::affine_metric(Metric::AutoCallsInitial);
         if let Some(proof) =
             self.prepared_affine_target_proof(target, context.facts, context.closed, &mut auto)
         {
@@ -1592,7 +1602,12 @@ impl Reasoning<'_, '_, '_> {
         match step {
             AffineStep::Auto => {
                 let assumptions = affine_facts(context.affine);
-                self.affine_target_proof(target, &assumptions, context)
+                self.affine_target_proof_observed(
+                    target,
+                    &assumptions,
+                    context,
+                    Metric::AutoCallsInitial,
+                )
             }
             AffineStep::QuotientBound => self.quotient_bound_proof(target, context),
         }
@@ -1607,34 +1622,61 @@ impl Reasoning<'_, '_, '_> {
         context: ProofContext<'_>,
         auto: &mut AffineAutoQuery<'_>,
     ) -> Option<AffineConsequenceProof> {
-        let right_value = self.vocabulary.affine_term_value(right, context.affine)?;
+        let mut shadow = shadow::Group::start(self.vocabulary, auto, target);
+        let Some(right_value) = self.vocabulary.affine_term_value(right, context.affine) else {
+            if let Some(mut shadow) = shadow {
+                shadow.unavailable();
+                shadow.finish();
+            }
+            return None;
+        };
         let candidates = self.affine_right_bridge_candidates(context.affine);
         let closed = context.close(
             &self.vocabulary.terms,
             &self.vocabulary.goals,
             &mut self.vocabulary.derivations,
         );
+        if let Some(shadow) = &mut shadow {
+            shadow.prepare(self, auto, target, &closed);
+        }
         for candidate in candidates {
             let Some(bound) = closed.tight_bound(candidate.term, right) else {
                 continue;
             };
             let mut check = AffineCheckState::new();
-            let Ok(image) = AffineInequality::from_bounded_forms(
+            let image = match AffineInequality::from_bounded_forms(
                 &candidate.value,
                 &right_value,
                 bound,
                 &mut check,
-            ) else {
-                continue;
+            ) {
+                Ok(image) => image,
+                Err(error) => {
+                    if error == AffineCheckError::ArithmeticOverflow {
+                        work::affine_metric(Metric::OverflowBridge);
+                    }
+                    continue;
+                }
             };
-            let Ok(residual) = AffineInequality::residual_after(target, &image, &mut check) else {
-                continue;
+            let residual = match AffineInequality::residual_after(target, &image, &mut check) {
+                Ok(residual) => residual,
+                Err(error) => {
+                    if error == AffineCheckError::ArithmeticOverflow {
+                        work::affine_metric(Metric::OverflowBridge);
+                    }
+                    continue;
+                }
             };
-            let Some(mut proof) =
-                self.prepared_affine_target_proof(&residual, context.facts, context.closed, auto)
-            else {
-                continue;
-            };
+            if let Some(shadow) = &mut shadow {
+                shadow.bridge(&image, &residual);
+            }
+            work::affine_metric(Metric::AutoCallsBridge);
+            let proof =
+                self.prepared_affine_target_proof(&residual, context.facts, context.closed, auto);
+            if let Some(shadow) = &mut shadow {
+                shadow.observe_view(self.vocabulary, auto, &closed);
+            }
+            let Some(mut proof) = proof else { continue };
             let Some(bridge) = closed.bound_proof(
                 candidate.term,
                 right,
@@ -1644,7 +1686,13 @@ impl Reasoning<'_, '_, '_> {
                 continue;
             };
             proof.parents.push(bridge);
+            if let Some(shadow) = shadow {
+                shadow.finish();
+            }
             return Some(proof);
+        }
+        if let Some(shadow) = shadow {
+            shadow.finish();
         }
         None
     }
@@ -1683,17 +1731,22 @@ impl Reasoning<'_, '_, '_> {
                 continue;
             };
             let Some(affine_bound) = requested.checked_sub(bridge) else {
+                work::affine_metric(Metric::OverflowBridge);
                 continue;
             };
-            let Ok(right) = middle_value.add(
-                &AffineForm::constant(affine_bound),
-                &mut AffineCheckState::new(),
+            let Ok(right) = work::affine_result(
+                middle_value.add(
+                    &AffineForm::constant(affine_bound),
+                    &mut AffineCheckState::new(),
+                ),
+                Metric::OverflowBridge,
             ) else {
                 continue;
             };
-            let Ok(target) =
-                AffineInequality::from_forms(left, &right, &mut AffineCheckState::new())
-            else {
+            let Ok(target) = work::affine_result(
+                AffineInequality::from_forms(left, &right, &mut AffineCheckState::new()),
+                Metric::OverflowBridge,
+            ) else {
                 continue;
             };
             let relation = Relation::Bound {
@@ -3150,8 +3203,10 @@ impl Reasoning<'_, '_, '_> {
         for coefficient in inequality.terms() {
             let atom_id = coefficient.term();
             if query.intervals.contains_key(&atom_id) {
+                work::affine_metric(Metric::IntervalWarmProbes);
                 continue;
             }
+            work::affine_metric(Metric::IntervalConstructionProbes);
             let atom = *self
                 .vocabulary
                 .affine_atoms
@@ -3251,17 +3306,24 @@ impl Reasoning<'_, '_, '_> {
         query: &mut AffineDirectQuery<'_>,
         check: &mut AffineCheckState,
     ) -> Result<Option<Vec<DerivationId>>, AffineCheckError> {
-        let inequality = inequality.into();
-        if query.closed.contradictory() {
-            return Ok(query.closed.contradiction_proof().map(|proof| vec![proof]));
+        work::affine_metric(query.direct_metric);
+        let result = (|| {
+            let inequality = inequality.into();
+            if query.closed.contradictory() {
+                return Ok(query.closed.contradiction_proof().map(|proof| vec![proof]));
+            }
+            if let Some(parents) =
+                self.vocabulary
+                    .affine_l0_proof(inequality, query.l0, query.closed, check)?
+            {
+                return Ok(Some(parents));
+            }
+            self.affine_interval_proof(inequality, query, check)
+        })();
+        if matches!(result, Err(AffineCheckError::ArithmeticOverflow)) {
+            work::affine_metric(Metric::OverflowDirect);
         }
-        if let Some(parents) =
-            self.vocabulary
-                .affine_l0_proof(inequality, query.l0, query.closed, check)?
-        {
-            return Ok(Some(parents));
-        }
-        self.affine_interval_proof(inequality, query, check)
+        result
     }
 
     /// Checks the fixed `DIRECT(T - S)` residual of one accumulated candidate
@@ -3304,6 +3366,7 @@ impl Reasoning<'_, '_, '_> {
         query: &mut AffineDirectQuery<'_>,
         check: &mut AffineCheckState,
     ) -> Option<Vec<DerivationId>> {
+        query.direct_metric = Metric::DirectFinalL0;
         super::super::work::affine_final_family_start();
         let l0 = query.l0;
         let mut ordinal = 0;
@@ -3368,6 +3431,17 @@ impl Reasoning<'_, '_, '_> {
         assumptions: &[ActiveAffineFact],
         context: ProofContext<'_>,
     ) -> Option<AffineConsequenceProof> {
+        self.affine_target_proof_observed(target, assumptions, context, Metric::AutoCallsOther)
+    }
+
+    fn affine_target_proof_observed(
+        &mut self,
+        target: &AffineInequality,
+        assumptions: &[ActiveAffineFact],
+        context: ProofContext<'_>,
+        origin: Metric,
+    ) -> Option<AffineConsequenceProof> {
+        work::affine_metric(origin);
         let (closed, l0) = self.affine_query_view(context);
         let mut query = AffineDirectQuery::new(&l0, context.affine, &closed);
         self.evaluate_affine_target(target, assumptions, &mut query)
@@ -3420,6 +3494,7 @@ impl Reasoning<'_, '_, '_> {
             intervals: std::mem::take(&mut prepared.intervals),
             measures: prepared.measures.take(),
             residual: std::mem::take(&mut prepared.residual),
+            direct_metric: Metric::DirectOther,
         };
         let result = self.evaluate_affine_target(target, auto.assumptions, &mut query);
         prepared.intervals = query.intervals;
@@ -3439,6 +3514,7 @@ impl Reasoning<'_, '_, '_> {
         assumptions: &[ActiveAffineFact],
         query: &mut AffineDirectQuery<'_>,
     ) -> Result<Option<AffineConsequenceProof>, AffineCheckError> {
+        query.direct_metric = Metric::DirectInitial;
         let mut check = AffineCheckState::new();
         if let Ok(Some(parents)) = self.affine_residual_proof(target, query, &mut check) {
             return Ok(Some(AffineConsequenceProof {
@@ -3451,6 +3527,7 @@ impl Reasoning<'_, '_, '_> {
         // Preserve the complete coefficient-one single-premise route. Every
         // premise is tried independently; an arithmetic error in one candidate
         // cannot suppress a later source or value-image fact.
+        query.direct_metric = Metric::DirectSingle;
         for (index, assumption) in automatic.iter().enumerate() {
             // A candidate that cannot participate in an i128 residual grants
             // no authority, but it must not hide a later independently
@@ -3473,6 +3550,7 @@ impl Reasoning<'_, '_, '_> {
         // pairs, including one premise used twice. There is no greedy state,
         // backtracking cutoff, or cumulative work budget: fact order changes
         // only which successful derivation is retained, never acceptance.
+        query.direct_metric = Metric::DirectPair;
         if let Some((first, second, parents)) =
             first_two_premise_candidate(&automatic, &mut check, |sum, check| {
                 self.affine_candidate_residual_proof(target, sum, query, check)
@@ -3519,8 +3597,14 @@ pub(super) fn first_two_premise_candidate<T>(
     for first in 0..premises.len() {
         for second in first..premises.len() {
             let pair = [&premises[first].inequality, &premises[second].inequality];
-            let Ok(sum) = scratch.sum(&pair, check) else {
-                continue;
+            let sum = match scratch.sum(&pair, check) {
+                Ok(sum) => sum,
+                Err(error) => {
+                    if error == AffineCheckError::ArithmeticOverflow {
+                        work::affine_metric(Metric::OverflowPair);
+                    }
+                    continue;
+                }
             };
             if let Some(proof) = prove(sum, check) {
                 return Some((first, second, proof));
@@ -3590,9 +3674,10 @@ impl LazyAffineL0Index {
                 let Some(bound) = closed.tight_bound(left.term, right.term) else {
                     continue;
                 };
-                let Ok(inequality) =
-                    AffineInequality::from_bounded_forms(&left.value, &right.value, bound, check)
-                else {
+                let Ok(inequality) = work::affine_result(
+                    AffineInequality::from_bounded_forms(&left.value, &right.value, bound, check),
+                    Metric::OverflowIndex,
+                ) else {
                     continue;
                 };
                 if selected
@@ -3645,9 +3730,10 @@ impl LazyAffineL0Index {
                 let Some(bound) = closed.tight_bound(left.term, right.term) else {
                     continue;
                 };
-                let Ok(inequality) =
-                    AffineInequality::from_bounded_forms(&left.value, &right.value, bound, check)
-                else {
+                let Ok(inequality) = work::affine_result(
+                    AffineInequality::from_bounded_forms(&left.value, &right.value, bound, check),
+                    Metric::OverflowIndex,
+                ) else {
                     continue;
                 };
                 let ordinal = *index

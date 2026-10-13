@@ -398,3 +398,32 @@ representative wrong result fails. A reduction with unchanged operation
 counts, too few qualifying failures or no recovery beyond base/twin spread
 is rejected as a performance remedy even when its equivalence argument holds.
 These are proposed measurements only; this research task runs none of them.
+
+## Counter-only follow-up protocol
+
+The next observation uses the existing `WHITEFOOT_CHECK_WORK` path; its metric
+definitions belong to [work.rs](../../../compiler/src/semantic/entailment/work.rs).
+The shadow countermodel probe runs only in an active counter scope, after a
+complete initial AUTO failure enters Step 6. It tries three assignments in
+fixed order: zero clamped to each strongest interval, all interval minima,
+then all maxima. It validates the complete affine input set through detached
+read-only data. It neither supplies a proof nor suppresses any ordinary AUTO
+call. A group contributes covered bridge calls and exhaustions only when its
+model and every observed bridge remain valid under the same input view.
+
+The probe has an initial observation ceiling of 100,000 charged operations per
+group and 2,000,000 per function-analysis invocation, including snapshot and
+validation work. These are experiment limits, never acceptance limits.
+Arithmetic overflow, unavailable or changed inputs, and exhausted observation
+budgets produce unknown observations. The operations counter is an abstract
+work measure, not an instruction count or elapsed-time estimate.
+
+For the fixed assignment set, few would-certify groups covering little actual
+bridge work would reject its usefulness on Halo when probe coverage is
+adequate. Many unknowns or budget cutoffs instead make the measured coverage
+a lower bound and leave that conclusion open. A would-certify group followed
+by a successful bridge under identical inputs would invalidate the probe's
+certificate argument. Useful certification coverage still needs subsequent
+CI cost attribution: validation work consuming the avoided searches would
+reject it as a performance remedy. No counter results for this follow-up are
+claimed here.
