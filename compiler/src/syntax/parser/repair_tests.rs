@@ -270,8 +270,81 @@ fn marked_atom_starts_require_a_callee_head() {
                 marker.as_bytes(),
                 "{source}"
             );
-            assert_eq!(issue.mechanical_fix, None, "{source}");
+            // Only with nothing after the marker does a name written in its
+            // place derive, `outer(name)`, so only there is the marker read
+            // as a name and the reserved-name rename offered [FORM-3]; every
+            // other follower leaves no IDENT row that a rename would match.
+            let rename = follower.is_empty().then(|| {
+                let start = source.find(marker).expect("the marker is written");
+                let offset = |at: usize| crate::ByteOffset::new(u64::try_from(at).expect("small"));
+                SyntaxRepair::ReservedName(crate::syntax::SyntaxCoordinate::new(
+                    issue.coordinate().source(),
+                    offset(start),
+                    offset(start + marker.len()),
+                ))
+            });
+            assert_eq!(issue.mechanical_fix, rename, "{source}");
         }
+    }
+}
+
+/// [FORM-3] a fixed grammar word written where a name is declared is
+/// rejected at that word with the rename that frees it, and the rename's
+/// sentence says what in the grammar takes the word.
+#[test]
+fn a_fixed_word_in_a_name_slot_offers_the_reserved_name_rename() {
+    for (source, word, fresh) in [
+        (
+            "fn f() -> r: u8 pure { let copy = 1_u8; return copy; }",
+            "copy",
+            "copy_value",
+        ),
+        (
+            "fn f(is: u8) -> r: u8 pure { return is; }",
+            "is",
+            "is_value",
+        ),
+        ("struct Gauge { held: u8; }", "held", "held_value"),
+        (
+            "fn f(choice: Option<u8>) -> r: u8 pure { match choice { Some(value: held) => { return held; } None() => { return 0_u8; } } }",
+            "held",
+            "held_value",
+        ),
+        (
+            "fn f() -> r: u8 pure { let copy = 1_u8; let copy_value = copy; return copy_value; }",
+            "copy",
+            "copy_value2",
+        ),
+    ] {
+        let result = outcome(source.as_bytes(), false);
+        let ParseOutcome::SourceIssue(issue) = result else {
+            panic!("a reserved name must reject: {source}: {result:?}");
+        };
+        assert_eq!(issue.rule(), SyntaxRule::Form3, "{source}");
+        assert_eq!(
+            issue_bytes(source.as_bytes(), issue),
+            word.as_bytes(),
+            "{source}"
+        );
+        assert!(
+            matches!(issue.mechanical_fix, Some(SyntaxRepair::ReservedName(_))),
+            "{source}: {:?}",
+            issue.mechanical_fix
+        );
+        let sentence = issue
+            .mechanical_fix
+            .and_then(|fix| fix.sentence(source.as_bytes()))
+            .expect("the rename has words");
+        assert!(
+            sentence.starts_with(&format!(
+                "`{word}` is reserved: it is a fixed word of the grammar of "
+            )),
+            "{sentence}"
+        );
+        assert!(
+            sentence.ends_with(&format!("such as `{fresh}`")),
+            "{sentence}"
+        );
     }
 }
 

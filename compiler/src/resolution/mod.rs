@@ -21,6 +21,10 @@ use crate::{CanonicalSyntaxUnit, NodePath, SyntaxCoordinate};
 
 pub use engine::resolve;
 
+#[cfg(test)]
+pub(crate) use catalog::MODE_WORDS;
+pub(crate) use catalog::{OPERATION_FAMILIES, reserved_name};
+
 pub use kernel::{
     CELL_NOMINAL, CELL_NOMINAL_ID, CONTAINER_NOMINAL_CLASS, CONTAINER_NOMINAL_CLASSES,
     CONTAINER_NOMINALS, ContainerNominal, ContainerNominalId, ContainerShape, container_nominal,
@@ -1132,6 +1136,11 @@ pub enum ResolutionIssueKind {
         class: ReservedNameClass,
         /// Ordinal inside that reserved set.
         inventory_ordinal: u16,
+        /// The rename that frees the declaration: what the reserved set
+        /// takes the spelling for, and a spelling no declaration of the unit
+        /// uses [FORM-3, OP-1]. Every reserved spelling has one; the
+        /// reserved-name wording tests hold that.
+        mechanical_fix: Option<String>,
     },
     /// GRAM-10 freshness failed before the binder became a declaration.
     MatchBinderFreshness {

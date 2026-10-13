@@ -646,6 +646,22 @@ fn raw_restriction_owner(
     None
 }
 
+/// The rename a fixed lowercase word in an IDENT slot admits [FORM-3].
+///
+/// [`raw_restriction_owner`] cites FORM-3 only for a lowercase word that
+/// IDENT excludes, which is a fixed grammar word, where IDENT is expected.
+/// The rename is offered only where an IDENT in that place lets the
+/// frontier's row match the token after it: `outer(musttail 0_u32)` meant a
+/// call marker, and no name written in place of `musttail` derives there.
+fn reserved_name_repair(
+    rule: SyntaxRule,
+    identifier_continues: bool,
+    coordinate: SyntaxCoordinate,
+) -> Option<SyntaxRepair> {
+    (rule == SyntaxRule::Form3 && identifier_continues)
+        .then_some(SyntaxRepair::ReservedName(coordinate))
+}
+
 /// Whether the expected set is exactly a `const`'s own two alternatives.
 fn is_const_position(expected: super::ExpectedTerminals) -> bool {
     expected.iter().eq([
@@ -741,6 +757,10 @@ struct Frontier {
     atom_only: bool,
     /// A maximal-prefix row has already matched a terminal of an atom.
     matched_atom_prefix: bool,
+    /// A maximal-prefix row expects IDENT at the boundary and admits the
+    /// token after it, so writing a fresh IDENT in place of the boundary
+    /// token lets this frontier's row match [FORM-3, DIAG-1].
+    identifier_continues: bool,
 }
 
 fn frontier(
@@ -788,6 +808,7 @@ fn frontier(
     let mut transparent_disagreement = false;
     let mut atom_only = false;
     let mut matched_atom_prefix = false;
+    let mut identifier_continues = false;
     for row in decision.rows() {
         work.spend(1).map_err(DiagnosticResult::Resource)?;
         if !contextual_row(decision, *row, continuation.clone(), work)? {
@@ -802,6 +823,13 @@ fn frontier(
                 ParseCompilerFailure::InvalidGrammarData,
             ))?;
         expected.insert(atom.predicate());
+        if atom.predicate() == LookaheadPredicate::Terminal(TerminalPredicate::Identifier) {
+            identifier_continues |= match row.position(usize::from(maximum) + 1) {
+                Some(next) => accepts(next.predicate(), tokens, cursor, usize::from(maximum) + 1)
+                    .map_err(DiagnosticResult::Compiler)?,
+                None => true,
+            };
+        }
         atom_only |= atom.is_atom_only();
         matched_atom_prefix |=
             maximum > 0 && row.position(0).is_some_and(|first| first.is_atom_only());
@@ -852,6 +880,7 @@ fn frontier(
         transparent_disagreement,
         atom_only,
         matched_atom_prefix,
+        identifier_continues,
     })
 }
 
@@ -904,18 +933,23 @@ fn override_issue(
     }
     if let Some(token) = site.tokens.get(boundary) {
         if let Some(rule) = raw_restriction_owner(token, frontier.expected) {
+            let coordinate = boundary_coordinate(
+                site.source,
+                site.source_len,
+                site.tokens,
+                site.cursor,
+                usize::from(frontier.maximum),
+            )
+            .map_err(DiagnosticResult::Compiler)?;
             return Ok(Some(SyntaxIssue {
                 rule,
-                coordinate: boundary_coordinate(
-                    site.source,
-                    site.source_len,
-                    site.tokens,
-                    site.cursor,
-                    usize::from(frontier.maximum),
-                )
-                .map_err(DiagnosticResult::Compiler)?,
+                coordinate,
                 expected: frontier.expected,
-                mechanical_fix: None,
+                mechanical_fix: reserved_name_repair(
+                    rule,
+                    frontier.identifier_continues,
+                    coordinate,
+                ),
             }));
         }
         if let Some((rule, admitted)) = name_slot_owner(
@@ -1108,15 +1142,18 @@ fn direct_mismatch_inner(
     }
     if let Some(token) = site.tokens.get(site.cursor) {
         if let Some(rule) = raw_restriction_owner(token, expected) {
+            let coordinate = SyntaxCoordinate::new(
+                site.source,
+                token.token().id().start(),
+                token.token().id().end(),
+            );
+            // A direct mismatch has one terminal to match: an IDENT written
+            // here matches it whatever follows.
             return DiagnosticResult::Issue(SyntaxIssue {
                 rule,
-                coordinate: SyntaxCoordinate::new(
-                    site.source,
-                    token.token().id().start(),
-                    token.token().id().end(),
-                ),
+                coordinate,
                 expected,
-                mechanical_fix: None,
+                mechanical_fix: reserved_name_repair(rule, true, coordinate),
             });
         }
         let transparent = [
