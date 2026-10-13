@@ -11,6 +11,14 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-13 v0.142: a tracked integer field place has a current image, a quotient's upper bound follows from its dividend and divisor, and `ishl(1, s)` is named
+
+Rules: changed ENT-3, ENT-6, MSR-4, INV-1
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the specification and design-tree changes of Whitefoot#406: every tracked integer field place has a current image, a quotient's upper bound follows from its dividend and divisor, and `ishl(1, s)` has its own name? (head commit f722d963a)". The revision merged here differs from f722d963a only by the removal of a temporary measurement workflow and the merge of main.
+
+Summary: A bound written on an integer field in a requirement, type invariant or call result's postcondition reached no read, addition or commit of that field, so the floating-point text module could not prove its digit counts and buffer positions. ENT-6 now defines a tracked field place (one admitted root binding, at most one `^` when the root is a reference, then struct fields ending at an integer; subscripts, `Box` contents, enum payloads and named consts excluded) with one current immutable affine image that a SET-1 commit to the field replaces and every ENT-5 event killing its supporting L0 facts removes; joins keep it only when both sides agree. ENT-3 gives a copied read the field's current image and orders a field commit like a whole-binding `set`; MSR-4's candidates and INV-1's affine factors include tracked field places. ENT-3.S7 captures an unsigned `let`/`set` division or variable right shift, and the new MSR-4 step 7 proves `q <= k` from `a - (k+1)*d <= -1`, exact in mathematical integers because the divisor is proved at least one; ENT-6 names `ishl(1, s)` by one power atom per body over [1, 2^(K-1)] once the shift's `s <= K - 1` obligation succeeds, so a mask written from it and the shift's divisor are the same term. The owner chose this quotient rule over product terms or a new proof step because it states only the upper bound the module needs and adds nothing a writer must spell.
+
 ## 2026-10-13 v0.141: a fact some arms hold survives their join, and a joined value is free where its join was bypassed
 
 Rules: changed RANGE-2, RANGE-3

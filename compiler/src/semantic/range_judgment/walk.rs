@@ -3263,7 +3263,8 @@ impl<'program> Walker<'program> {
                 .affine(state, value)?
                 .scaled(*constant)
                 .ok_or(GoalFailure::Arithmetic),
-            CheckedAffineExpressionKind::Measure(expression) => {
+            CheckedAffineExpressionKind::Measure(expression)
+            | CheckedAffineExpressionKind::Field(expression) => {
                 match self.eval(state, expression) {
                     Value::Int(value) => Ok(value),
                     _ => Err(GoalFailure::Unrepresentable),

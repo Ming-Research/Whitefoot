@@ -12,6 +12,13 @@ Nodes: compiler/downstream-releases
 Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A on Whitefoot-kit's card "how do the specification and the standard library interfaces get into kit: ask Whitefoot to pack them into every release, and kit downloads them with the compiler into the same directory, so the specification always matches the compiler version the project pins?" (translated), whose option A read "Whitefoot adds one package to its release workflow, the specification and the standard library interfaces, also in SHA256SUMS" (translated).
 
 Summary: The provisional decision that a release carries no documents for writers is replaced. A release now also holds `whitefoot-language.tar.gz` with its commit's specification, standard library module table and module interface files at their repository paths, listed in the manifest and the checksums, because downstreams pin different releases while the specification changes almost daily, and an external user has only the release. Refused: a copy of the newest specification in Whitefoot-kit, which differs from what each downstream pins, and fetching the files from this repository at the pinned commit, which ties writers to this repository's layout and access.
+## 2026-10-13 A tracked integer field place has a current image, and a quotient's upper bound follows from its dividend and divisor
+
+Nodes: language/checks-and-proofs/automatic-facts
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the specification and design-tree changes of Whitefoot#406: every tracked integer field place has a current image, a quotient's upper bound follows from its dividend and divisor, and `ishl(1, s)` has its own name? (head commit f722d963a)". The revision merged here differs from f722d963a only by the removal of a temporary measurement workflow and the merge of main.
+
+Summary: One decision is added: every tracked integer field place, whether its root holds the value or is a reference, carries a current affine image that only a commit to the field replaces and every event invalidating its supporting facts removes, instead of limiting images to fields reached through reference parameters, which the owner widened on an earlier card. The same change states the quotient upper bound as dividend below (k+1) divisors with the divisor proved at least one, and treats a variable right shift as division by the named power `ishl(1, s)`, instead of product terms or a writer-supplied proof step.
 
 ## 2026-10-13 A fact some arms hold survives their join, and a joined value is free where its join was bypassed
 

@@ -1,0 +1,41 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Inner {
+  doc "One count.";
+  count: u64;
+}
+
+struct Outer {
+  doc "A label and a count held one struct down.";
+  label: u64;
+  inner: Inner;
+}
+
+fn advance(outer: &Outer, delta: u64) -> result: unit writes(outer) contract {
+  requires outer^.inner.count + delta <= 800_u64;
+} {
+  doc "Adds delta to the nested count; the requirement bounds the sum through the nested field's entry image.";
+  let count = outer^.inner.count;
+  let total = count + delta;
+  set outer^.inner.count = total;
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "Advances a nested count from 5 by 7 after checking its room.";
+  let inner = Inner(count: 5_u64);
+  let outer = Outer(label: 1_u64, inner: inner);
+  let held = outer.inner.count;
+  if held <= 793_u64 {
+  } else {
+    return exit_status(code: 1_u8);
+  }
+  advance(outer: &outer, delta: 7_u64);
+  let count = outer.inner.count;
+  if count == 12_u64 {
+  } else {
+    return exit_status(code: 2_u8);
+  }
+  return exit_status(code: 0_u8);
+}
