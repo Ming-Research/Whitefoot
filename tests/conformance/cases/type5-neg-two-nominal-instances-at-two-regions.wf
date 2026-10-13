@@ -5,9 +5,9 @@ struct Chunk<const n: u64> {
   page: Slots<u8, n>;
 }
 
-fn chunk_take(held: Chunk<4>, other: Chunk<4>) -> width: u64 pure {
+fn chunk_take(observed: Chunk<4>, other: Chunk<4>) -> width: u64 pure {
   doc "Takes two chunks of one declared capacity.";
-  let left = held.page.len;
+  let left = observed.page.len;
   let right = other.page.len;
   let same = left == right;
   if same {
@@ -20,9 +20,9 @@ fn main() -> status: ExitStatus pure {
   doc "TYPE-5: two instances of one generic nominal written with different const arguments are two types, decided by the exact identity TYPE-5 already performs. Both runs are well formed and the call relates its two parameters to one instance, so passing a Chunk<8> beside a Chunk<4> is a type-identity mismatch and never a conversion question.";
   let one = slots_new::<u8, 4>();
   let two = slots_new::<u8, 8>();
-  let held = Chunk<4>(page: move one);
+  let observed = Chunk<4>(page: move one);
   let other = Chunk<8>(page: move two);
-  let width = chunk_take(held: move held, other: move other);
+  let width = chunk_take(observed: move observed, other: move other);
   if width == 0_u64 {
     return exit_status(code: 0_u8);
   }

@@ -63,8 +63,8 @@ fn contend(state: Shared<State>, clock: Clock, id: u64, rounds: u64) -> measured
     set checksum = hold_work(seed: seed);
     atomic p = &state {
       let returned = std::time::now(clock: &clock);
-      let held = std::time::nanoseconds_from(earlier: acquired, later: returned);
-      set hold_ns = hold_ns +sat held;
+      let kept = std::time::nanoseconds_from(earlier: acquired, later: returned);
+      set hold_ns = hold_ns +sat kept;
       set p^.counter = p^.counter +sat 1_u64;
       set p^.checksum = ixor(p^.checksum, checksum);
       set p^.out = 0_u64;

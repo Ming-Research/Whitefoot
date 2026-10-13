@@ -709,11 +709,11 @@ fn run_config(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
     let spelled_length = array_filled::<u64, 22>(value: 0_u64);
     for @arguments (index in 2_u64..count) {
       let parameter = arg(args: args, index: index);
-      let held = before_zero(input: input, span: parameter);
-      let globbing = has_glob(input: input, start: parameter.start, length: held);
+      let observed = before_zero(input: input, span: parameter);
+      let globbing = has_glob(input: input, start: parameter.start, length: observed);
       let length = parameter.length;
       if globbing {
-        set length = held;
+        set length = observed;
       }
       for @parameters (which in 0_u64..22_u64) {
         let unseen = found[which] == 0_u64;

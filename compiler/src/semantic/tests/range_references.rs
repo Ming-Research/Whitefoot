@@ -1022,9 +1022,9 @@ fn run(values: &Array<Pair, 8>, lo: u64, hi: u64, k: u64) -> result: u64 writes(
   requires {bound};
   requires k < 8_u64;
 }} {{
-  let held = &values^[k].x;
+  let observed_state = &values^[k].x;
   zero(part: &values^[lo..hi], at: 0_u64);
-  let seen = held^;
+  let seen = observed_state^;
   return seen;
 }}
 

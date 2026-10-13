@@ -1,0 +1,5 @@
+fn prepare(sequence: &Shared<u64>) -> result: Result<std::snapshot::Reserve, std::snapshot::PrepareError> reads(sequence) waits {
+  atomic held_cut = &sequence^ {
+    return std::snapshot::prepare(scratch_bytes: held_cut^, output_bytes: 1024_u64);
+  }
+}

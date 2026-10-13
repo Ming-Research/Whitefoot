@@ -622,6 +622,13 @@ impl<'unit> Checker<'_, 'unit> {
             }
         }
         self.check_call_pairwise_disjointness(node, signature, &compared, bindings)?;
+        self.check_held_call(node, function, signature, &actual_paths, bindings)?;
+        let selected = self.types.signatures.get(target.0 as usize)
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        self.qualify_snapshot_selection(node, selected.declaration, &selected.substitution)?;
+        for entry in substituted.iter().filter(|entry| entry.write) {
+            self.record_held_write(node, &entry.place);
+        }
         self.types.invalidate_call_references(
             node,
             &substituted,
@@ -961,6 +968,7 @@ impl<'unit> Checker<'_, 'unit> {
                             CheckedSeparationOccasion::Call
                         },
                         reference_use: None,
+                        held_use: None,
                         positions,
                         contract_indices: left
                             .contract_indices
