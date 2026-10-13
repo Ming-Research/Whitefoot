@@ -11,7 +11,7 @@ fn change_content(cell: &Option<u64>) -> result: u64 reads(cell), writes(cell.So
   }
 }
 
-fn write_after_content_change(cell: &Option<u64>) -> result: unit reads(cell), writes(cell) {
+fn write_after_content_change(cell: &Option<u64>) -> result: unit writes(cell) {
   doc "The set target is captured before the right-hand side; a primitive content write cannot prevent its valid commit.";
   match &cell^ {
     None() => {

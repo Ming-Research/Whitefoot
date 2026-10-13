@@ -1,4 +1,4 @@
-fn replace_alias(cell: &Option<u64>) -> result: u64 reads(cell), writes(cell) {
+fn replace_alias(cell: &Option<u64>) -> result: u64 writes(cell) {
   doc "A whole-enum write through an alias invalidates the matched variant at the original reference.";
   let same = cell;
   match &cell^ {

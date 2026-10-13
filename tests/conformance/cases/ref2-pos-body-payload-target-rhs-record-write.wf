@@ -1,0 +1,47 @@
+struct NumberState {
+  number: u64;
+}
+
+fn change_record(cell: &Option<NumberState>) -> result: u64 reads(cell), writes(cell.Some.value) {
+  doc "Replacing the selected inline record changes its contents while preserving the captured payload place.";
+  match &cell^ {
+    None() => {
+      return 0_u64;
+    }
+    Some(..) => {
+      set cell^.Some.value = NumberState(number: 41_u64);
+      return 11_u64;
+    }
+  }
+}
+
+fn write_record_field(cell: &Option<NumberState>) -> result: unit writes(cell) {
+  doc "The target's trailing inline field remains valid when its right-hand side replaces the record payload contents.";
+  match &cell^ {
+    None() => {
+      return unit;
+    }
+    Some(..) => {
+      set cell^.Some.value.number = change_record(cell: cell);
+      return unit;
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "The final field value must be the outer commit's 11, after the record replacement's 41.";
+  let record = NumberState(number: 7_u64);
+  let cell = Some<NumberState>(value: record);
+  let changed = write_record_field(cell: &cell);
+  match &cell {
+    None() => {
+      return std::process::exit_status(code: 1_u8);
+    }
+    Some(value: observed) => {
+      if observed^.number == 11_u64 {
+        return std::process::exit_status(code: 0_u8);
+      }
+      return std::process::exit_status(code: 2_u8);
+    }
+  }
+}

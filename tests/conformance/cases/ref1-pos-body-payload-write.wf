@@ -1,4 +1,4 @@
-fn write_selected(cell: &Option<u64>) -> result: unit reads(cell), writes(cell) {
+fn write_selected(cell: &Option<u64>) -> result: unit writes(cell) {
   doc "A current Some fact admits a writable payload target through a reference whose row writes the enum.";
   match &cell^ {
     None() => {

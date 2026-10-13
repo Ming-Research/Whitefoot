@@ -2,7 +2,7 @@ struct PayloadOwner {
   option: Option<u64>;
 }
 
-fn replace_owner(owner: &PayloadOwner) -> result: u64 reads(owner), writes(owner) {
+fn replace_owner(owner: &PayloadOwner) -> result: u64 writes(owner) {
   doc "Replacing the containing owner invalidates the selected enum reference, so the later payload read must prove reference validity at its use.";
   let cell = &owner^.option;
   match &cell^ {

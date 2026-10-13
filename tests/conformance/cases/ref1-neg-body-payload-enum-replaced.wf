@@ -1,4 +1,4 @@
-fn broken(cell: &Option<u64>) -> result: u64 reads(cell), writes(cell) {
+fn broken(cell: &Option<u64>) -> result: u64 writes(cell) {
   doc "Replacing the matched enum kills the current Some fact even though the reference to the enum remains valid.";
   match &cell^ {
     None() => {

@@ -1,5 +1,5 @@
-fn overwrite_payload(cell: &Option<u64>) -> result: u64 reads(cell), writes(cell) {
-  doc "An overlapping payload-field write kills the current variant fact; selecting the payload again requires a fresh match.";
+fn overwrite_payload(cell: &Option<u64>) -> result: u64 writes(cell) {
+  doc "The primitive payload write leaves the runtime tag unchanged, but its overlapping support kills the current variant fact; selecting again requires a fresh match.";
   match &cell^ {
     None() => {
       return 0_u64;
