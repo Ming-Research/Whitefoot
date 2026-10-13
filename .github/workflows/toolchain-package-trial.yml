@@ -1,4 +1,4 @@
-# Temporary step-4 packaging trial; remove before release-workflow integration.
+# Keep this packaging trial for now; the owner removes it after qualification.
 # Downloads, archive operations and a few tiny C compilations only, so no
 # step runs under run-check.pl.
 name: Toolchain package trial
@@ -23,21 +23,33 @@ jobs:
           - os: ubuntu-24.04
             platform: linux-x86_64
             machine: x86_64
-            asset: LLVM-22.1.8-Linux-X64.tar.xz
-            sha256: df0e1ecf16caf3489a272a5eea4eec9b0d82878f6477fa309504f918a0006384
           - os: macos-15
             platform: macos-arm64
             machine: arm64
-            asset: LLVM-22.1.8-macOS-ARM64.tar.xz
-            sha256: f260f4f7c0d430828a81ae8a3826a1d63fc0963ec2459489308cc23b1f7eab4f
     defaults:
       run:
         shell: bash
-    env:
-      ASSET: ${{ matrix.asset }}
-      PUBLISHED_SHA256: ${{ matrix.sha256 }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Select the pinned LLVM source
+        id: llvm
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib
+          metadata = json.loads(pathlib.Path(".github/toolchain/llvm-assets.json").read_text())
+          platform = metadata["platforms"][os.environ["PLATFORM"]]
+          values = {"ASSET": platform["asset"], "PUBLISHED_SHA256": platform["sha256"],
+                    "LLVM_VERSION": metadata["llvm_version"], "LLVM_TAG": metadata["llvm_tag"],
+                    "CHECKSUM_SOURCE": metadata["checksum_source"]}
+          with open(os.environ["GITHUB_ENV"], "a") as stream:
+              for key, value in values.items():
+                  stream.write(f"{key}={value}\n")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as stream:
+              stream.write(f'asset={platform["asset"]}\n')
+          PY
 
       # The runner context is not available in job-level env.
       - name: Set scratch paths
@@ -54,26 +66,26 @@ jobs:
 
       - uses: actions/cache@v4
         with:
-          path: ${{ runner.temp }}/llvm-archives/${{ matrix.asset }}
-          key: official-llvm-${{ matrix.asset }}
+          path: ${{ runner.temp }}/llvm-archives/${{ steps.llvm.outputs.asset }}
+          key: official-llvm-${{ steps.llvm.outputs.asset }}
 
       - name: Download and verify the official release archive
         run: |
           set -euo pipefail
           mkdir -p "$ARCHIVE_DIR" "$REPORT_DIR" "$TRIAL_DIR"
-          base=https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.8
+          base="https://github.com/llvm/llvm-project/releases/download/$LLVM_TAG"
           archive="$ARCHIVE_DIR/$ASSET"
           if [ ! -f "$archive" ]; then
             curl --fail --location --retry 3 --max-time 600 \
               "$base/$ASSET" -o "$archive.part"
             mv "$archive.part" "$archive"
           fi
-          # Publisher SHA-256 values pinned from the release's asset listing:
-          # https://github.com/llvm/llvm-project/releases/expanded_assets/llvmorg-22.1.8
+          # Publisher SHA-256 values and their source listing are owned by
+          # .github/toolchain/llvm-assets.json, shared with compiler-release.yml.
           # Revalidate cache hits too. A signature sidecar is not itself a hash
           # check, nor do we claim trusted-signer authentication in this trial.
           python3 - "$archive" "$PUBLISHED_SHA256" "$REPORT_DIR/source-verification.txt" <<'PY'
-          import hashlib, pathlib, sys
+          import hashlib, os, pathlib, sys
           archive, expected, report = sys.argv[1:]
           digest = hashlib.sha256()
           with open(archive, "rb") as stream:
@@ -84,6 +96,7 @@ jobs:
               raise SystemExit(f"Publisher checksum mismatch: {actual} != {expected}")
           text = (f"Source asset: {pathlib.Path(archive).name}\n"
                   f"SHA-256: {actual}\n"
+                  f'Publisher listing: {os.environ["CHECKSUM_SOURCE"]}\n'
                   "Verified against the publisher SHA-256 pinned from the official release asset listing.\n"
                   "The .jsonl attestation and .sig sidecars are retained as evidence; signatures are not authenticated.\n")
           pathlib.Path(report).write_text(text)
@@ -102,7 +115,7 @@ jobs:
           for component in llvm clang lld compiler-rt; do
             mkdir -p "$LICENSE_DIR/$component"
             curl --fail --location --retry 3 --max-time 120 \
-              "https://raw.githubusercontent.com/llvm/llvm-project/llvmorg-22.1.8/$component/LICENSE.TXT" \
+              "https://raw.githubusercontent.com/llvm/llvm-project/$LLVM_TAG/$component/LICENSE.TXT" \
               -o "$LICENSE_DIR/$component/LICENSE.TXT"
           done
           python3 - "$LICENSE_DIR" <<'PY'

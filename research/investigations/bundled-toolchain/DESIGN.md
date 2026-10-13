@@ -1,12 +1,13 @@
 # A bundled native toolchain for Whitefoot's first external release
 
-Status: implementation direction selected; arm64 non-LTO candidate evidence
-is recorded below. Release-package qualification remains open.
+Status: packaging, toolchain resolution and Darwin probe implementation
+selected; arm64 non-LTO candidate evidence is recorded below. External-package
+acceptance remains outstanding.
 The owner has committed to bundling clang and lld at the gate's LLVM major and
 to preserving macOS stack probing with upstream LLVM. This document records
-the qualified arm64 non-LTO probe candidate and
-selects package candidates and rejection checks; it does not claim a qualified
-release package.
+those implementation choices, the qualified arm64 non-LTO probe candidate and
+the remaining package acceptance checks; it does not claim a qualified release
+package.
 
 ## Question and fixed requirements
 
@@ -263,19 +264,24 @@ and Microsoft SDK/CRT redistribution are outside this proposed bundle.
 
 ### Resolution and capability probes
 
-Resolve `current_exe()` once. A sibling `clang[.exe]` selects packaged mode;
-without one, source builds retain their current defaults, `/usr/bin/clang`
-on Unix and PATH `clang` on Windows. Source-build CI does not need to stage
-a package, and there is no public toolchain override. Carry the selected
-toolchain through native compilation, runtime C builds, capability probes,
+Resolve `current_exe()` through symlinks once. A sibling `clang[.exe]` selects
+packaged mode. The package root's `toolchain-manifest.json`, above `bin/`, also
+marks a bundled installation: deleting clang there must produce a toolchain
+error naming its expected path, never host fallback. Marker existence suffices,
+even for a broken symlink or inaccessible marker; its contents are not a
+selection override. With no sibling and no marker, source builds and existing
+lightweight releases retain `/usr/bin/clang` on Unix and PATH `clang` on Windows.
+Source-build CI does not need to stage a package, and there is no public
+toolchain override. Carry the selected toolchain through native compilation,
+runtime C builds, capability probes,
 stack reports, full LTO and fragment links. Handle paths as OS paths and
 arguments, not shell strings; test spaces, relocation and invocation through
 a symlink. The selected contract is recorded in
 [toolchain resolution](../../../design/compiler/toolchain-resolution.md).
 
-Once a sibling clang selects packaged mode, an unusable clang or missing
-required bundled linker reports the expected path and a toolchain error;
-neither condition selects a host replacement. On Linux require bundled lld
+Once a sibling clang or the root manifest identifies packaged mode, a missing
+or unusable clang or missing required bundled linker reports the expected path
+and a toolchain error; no missing component selects a host replacement. On Linux require bundled lld
 and its `ld.lld` driver alias; pass the absolute alias path by `--ld-path` on
 every ordinary, full-LTO and cached ThinLTO link so its name selects the ELF
 driver and PATH cannot select another major. Packaged macOS uses the discovered
@@ -407,7 +413,7 @@ another run solely to mark acceptance complete.
 | Linux no clang | In a clean runtime/development container with no clang/LLVM packages or host toolchain mounts, copy only the package and maintained witness. Inventory installed packages; verify no host clang paths exist. Build/link/run; trace executed paths to prove bundled clang/lld handled probes and compilation. Missing resources/dependencies fail. | Reuse the release compiler; one small container per declared baseline. No Rust/LLVM rebuild inside it. |
 | Wrong host major | Repeat with a known different LLVM major, record both toolchain identities, assert the majors differ, set host clang first on PATH, and instrument calls. Host `/usr/bin/clang` must also be different on Linux. Success requires expected program output and zero host-clang invocations, not just a successful build. | A second container image on Linux; use the existing Apple clang on macOS only when its LLVM lineage establishes a different major. Otherwise provision a known different-major upstream host clang; an Apple marketing version or vendor difference alone is insufficient. |
 | macOS host-clang isolation | Retain real CLT SDK/ld, deny host-clang execution using a validated disposable-runner sandbox/fixture, then run the package witness. First prove the denial by an attempted host invocation. Invalid SDKROOT/missing selected SDK or ld must fail with the intended diagnostic. | One hosted macOS job; denial mechanism still needs a feasibility check. If a hosted runner cannot enforce it, report unverified and use an isolated CI VM, not a PATH-only substitute. |
-| Relocation and completeness | Move the unpacked tree to a path containing spaces, invoke through a symlink and from an unrelated cwd. In disposable copies, leave an unusable sibling clang or remove the bundled linker, resource input, or macOS libLTO individually; each exercised partial package must fail without a host replacement. Removing the sibling clang entirely selects source-build defaults, so archive inventory independently requires its presence. Inspect dynamic dependency paths. | Small additional invocations reusing artifacts; LTO negative case needed for libLTO. |
+| Relocation and completeness | Move the unpacked tree to a path containing spaces, invoke through a symlink and from an unrelated cwd. In disposable copies, delete the bundled clang, linker, resource input, and macOS libLTO individually while preserving the root manifest; each exercised partial package must fail without a host replacement. The manifest identifies packaged mode even after clang is deleted, so that case must name the missing clang as a toolchain error. Inspect dynamic dependency paths. | Small additional invocations reusing artifacts; LTO negative case needed for libLTO. |
 | Final release qualification | Gate the exact implementation revision on both platforms; dry-run the release workflow and qualify its exact archives before publication. Record compiler/package hashes, LLVM patch/major, SDK/linker, selected test cases and exit status. | Existing full gate plus package jobs; publishing remains a later owner action. |
 
 The task calls the witness “await.” In this tree the source form is `waits`
@@ -537,25 +543,70 @@ implementation. Qualification of that implementation is pending.
    Reject/replace the acquisition candidate if relocation fails.
 5. **Unify compiler toolchain resolution.** Select sibling clang when present
    for every probe and native path, with explicit packaged lld on Linux and
-   macOS SDK/system linker; retain source-build defaults when no sibling exists.
+   macOS SDK/system linker; a package-root manifest also identifies a bundle
+   whose missing clang must fail. Retain source-build/lightweight-release
+   defaults only when both sibling clang and the marker are absent.
    Retain dynamic capability probes and coherent native-cache identity.
    Deliver partial-package errors without host fallback, unchanged source-build
    selection, and ordinary/full/ThinLTO success.
 6. **Prove release acceptance with the actual archives.** After steps 3–5,
-   run coroutine witnesses in clang-absent and wrong-major environments,
-   macOS isolation, relocation and package-completeness checks. Deliver the
-   exact CI artifacts/results and every remaining platform limitation.
-7. **Integrate the release contract and review.** Update downstream-release,
-   backend-facts, exhaustion-floor and verification decisions where their
-   grounds change; bring release notes/manifest/consumer extraction guidance
-   current. File Whitefoot-kit/Firn changes to their responsible sessions.
-   Run independent review and the exact-revision gate. Obtain owner approvals,
-   then record approvals and prepare the release for owner-authorized delivery.
+   run the reusable bundled acceptance workflow on the exact candidate archive
+   bytes produced by the release jobs, before publication. Run coroutine
+   witnesses in clang-absent and wrong-major environments, macOS isolation,
+   relocation and package-completeness checks; deleting clang with the root
+   manifest still present must fail with a named toolchain error. The same
+   workflow supports a manual run against an existing release. Deliver archive
+   hashes, CI artifacts/results and every remaining platform limitation.
+   Failed or unverified required checks, including macOS host-clang denial,
+   block publication rather than turning a workflow artifact into qualification.
+   This integration is proposed implementation; no acceptance run of these
+   compiler-selected final bundles has been recorded here.
+7. **Integrate the release contract and review.** Add `bundle_toolchain`, a
+   boolean release input defaulting to false. False preserves today's small
+   releases, tags, asset names and host-clang prerequisites. True produces
+   `wf-<12 hex digits>-bundled` or `wf-exp-<12 hex digits>-bundled`, with
+   `whitefootc-<platform>-bundled.tar.gz` for `linux-x86_64` and `macos-arm64`.
+   Bundles contain the relocatable `bin/` toolchain, resource tree, dependencies,
+   licenses, toolchain manifest and matching language files. Preserve Windows's
+   current source-build behavior; add no Windows release lane. Reuse step 6's
+   acceptance artifact on the exact archive bytes before publication.
+   Bring downstream-release decisions, release notes/manifest and consumer
+   extraction guidance current. File Whitefoot-kit/Firn changes to their
+   responsible sessions. Run independent review and the exact-revision gate.
+   Obtain owner approvals, then record approvals and prepare the release for
+   owner-authorized delivery.
 
-No upstream or downstream repository is changed by this investigation. A
-single compiler-only tar extraction consumer will need adaptation for the new
-layout; keep that dependency visible rather than retaining a second package
-path that continues to use host clang.
+The proposed opt-in dispatch retains the existing commit/gate and experiment
+rules. Replace `COMMIT` with the revision qualified by the gate:
+
+```sh
+gh workflow run compiler-release.yml -R Ming-Research/Whitefoot \
+  -f commit=COMMIT -f bundle_toolchain=true
+# For an unmerged revision with its qualifying gate result, also pass:
+# -f experiment=true
+```
+
+For a manual check of an existing bundled release, replace `RELEASE_TAG` with
+its complete `wf-<12 hex digits>-bundled` or
+`wf-exp-<12 hex digits>-bundled` tag:
+
+```sh
+gh workflow run package-acceptance.yml -R Ming-Research/Whitefoot \
+  -f release_tag=RELEASE_TAG
+```
+
+Before publication, the release calls this same reusable workflow with the
+internal `source_commit` and `artifact_name` inputs for its candidate archive;
+it does not require publishing a tag to make acceptance possible. The acceptance
+artifact belongs to those exact bytes, and an unverified required check blocks
+publication.
+
+These are proposed release-integration commands, not invocations run in this
+investigation. Bundling remains opt-in while the existing lightweight release
+path keeps its consumers unchanged. A consumer selecting a bundled asset must
+extract its complete tree and invoke `bin/whitefootc`; update those downstream
+consumers in their own repositories. No upstream or downstream repository is
+changed by this investigation.
 
 ## Owner decisions needed before implementation
 

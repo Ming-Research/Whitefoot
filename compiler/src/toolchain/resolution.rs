@@ -38,6 +38,12 @@ impl Toolchain {
         match fs::symlink_metadata(&clang) {
             Ok(_) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                if package_manifest_present(directory) {
+                    return Err(format!(
+                        "missing packaged clang {}; toolchain-manifest.json marks this installation as a bundled package",
+                        clang.display()
+                    ));
+                }
                 return Ok(Self {
                     clang: PathBuf::from(clang_executable()),
                     linker: None,
@@ -137,6 +143,19 @@ impl Toolchain {
             self.linker.as_deref(),
             self.sdk.as_deref(),
         ))
+    }
+}
+
+// Existence is enough to identify the root/bin installation contract; the
+// manifest is not parsed to select compiler behavior. A broken symlink or an
+// inaccessible marker must not enable a fallback to an unrelated host clang.
+fn package_manifest_present(directory: &Path) -> bool {
+    let Some(root) = directory.parent() else {
+        return false;
+    };
+    match fs::symlink_metadata(root.join("toolchain-manifest.json")) {
+        Ok(_) => true,
+        Err(error) => error.kind() != std::io::ErrorKind::NotFound,
     }
 }
 
@@ -327,6 +346,43 @@ mod tests {
         assert_eq!(toolchain.clang(), Path::new(clang_executable()));
         assert!(!toolchain.packaged);
         assert!(toolchain.linker.is_none() && toolchain.sdk.is_none());
+    }
+
+    #[test]
+    fn a_bundle_manifest_requires_its_sibling_clang() {
+        let root = super::super::ProbeDirectory::new().expect("scratch directory");
+        let directory = root.0.join("bin");
+        fs::create_dir(&directory).expect("package bin directory");
+        fs::write(root.0.join("toolchain-manifest.json"), "{}").expect("package marker");
+        let error = Toolchain::from_executable_directory(&directory)
+            .expect_err("a bundle with deleted clang must not select the host");
+        assert!(error.contains("missing packaged clang"), "{error}");
+        assert!(
+            error.contains(
+                &directory
+                    .join(if cfg!(target_os = "windows") {
+                        "clang.exe"
+                    } else {
+                        "clang"
+                    })
+                    .display()
+                    .to_string()
+            ),
+            "{error}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_broken_manifest_marker_still_requires_packaged_clang() {
+        let root = super::super::ProbeDirectory::new().expect("scratch directory");
+        let directory = root.0.join("bin");
+        fs::create_dir(&directory).expect("package bin directory");
+        std::os::unix::fs::symlink("missing-manifest", root.0.join("toolchain-manifest.json"))
+            .expect("broken package marker");
+        let error = Toolchain::from_executable_directory(&directory)
+            .expect_err("a broken package marker must not enable host fallback");
+        assert!(error.contains("missing packaged clang"), "{error}");
     }
 
     #[cfg(unix)]
