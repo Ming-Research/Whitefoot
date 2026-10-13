@@ -78,11 +78,9 @@ fn section_matches(input: &[u8], start: u64, length: u64, which: u64) -> matched
   if which < 13_u64 {
     set last = section_ends[which];
   }
-  if last <= 105_u64 {
-    if first <= last {
-      let matched = name_is(input: input, start: start, length: length, word: &section_names[first..last]);
-      return matched;
-    }
+  if first <= last {
+    let matched = name_is(input: input, start: start, length: length, word: &section_names[first..last]);
+    return matched;
   }
   return False();
 }

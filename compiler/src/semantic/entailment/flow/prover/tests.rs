@@ -1270,9 +1270,11 @@ fn affine_index_cache_promoted_final_family_keeps_disjoint_images_and_late_winne
                 &mut check,
             )
             .unwrap();
+            // The exhaustive traversal: a refuting point would end the
+            // failing search before the final family promotes the index.
             let observed = analyzer
                 .reasoning()
-                .affine_target_proof(&target, &[], context)
+                .affine_target_search(&target, &[], context, false)
                 .map(|proof| (proof.premises, proof.parents));
             assert_eq!(observed.is_some(), upper == 0);
             assert!(
@@ -1286,13 +1288,108 @@ fn affine_index_cache_promoted_final_family_keeps_disjoint_images_and_late_winne
             });
             let expected = analyzer
                 .reasoning()
-                .affine_target_proof(&target, &[], context)
+                .affine_target_search(&target, &[], context, false)
                 .map(|proof| (proof.premises, proof.parents));
             assert_eq!(observed, expected);
+            let refutable = analyzer
+                .reasoning()
+                .affine_target_proof(&target, &[], context)
+                .map(|proof| (proof.premises, proof.parents));
+            assert_eq!(observed, refutable, "a refuting point changes no result");
         }
         assert_eq!(
             lazy.entry(b.terms(), &closed, &mut check).unwrap().left,
             candidates[3].term
+        );
+    });
+}
+
+#[test]
+fn affine_refuting_point_ends_only_searches_the_traversal_fails() {
+    with_integer_parameters(&[IntegerType::I32; 2], |analyzer| {
+        let mut affine = AffineFlowState::default();
+        let a = analyzer.vocabulary.new_affine_atom(IntegerType::I32);
+        let b = analyzer.vocabulary.new_affine_atom(IntegerType::I32);
+        affine.values.insert(BindingId(0), a.clone());
+        affine.values.insert(BindingId(1), b.clone());
+        let candidates = analyzer.reasoning().affine_l0_candidates(&affine);
+        let mut facts = FactState::new();
+        // a < b <= 10, so a <= 9 holds and nothing tighter does.
+        cache_bound(
+            analyzer,
+            &mut facts,
+            candidates[1].term,
+            candidates[2].term,
+            -1,
+        );
+        cache_bound(analyzer, &mut facts, candidates[2].term, ZERO, 10);
+        let context = ProofContext::new(&facts, &affine);
+        let mut check = AffineCheckState::new();
+        let zero = AffineForm::constant(0);
+        let a_less_b = a.subtract(&b, &mut check).unwrap();
+        let b_less_a = b.subtract(&a, &mut check).unwrap();
+        let mut at_most = |form: &AffineForm, upper| {
+            AffineInequality::from_bounded_forms(form, &zero, upper, &mut check).unwrap()
+        };
+        let cases = [
+            (at_most(&a, 9), true),
+            (at_most(&a, 8), false),
+            (at_most(&a_less_b, -1), true),
+            (at_most(&a_less_b, -2), false),
+            (at_most(&b_less_a, 0), false),
+        ];
+        for (target, provable) in cases {
+            analyzer.vocabulary.affine_l0_cache = None;
+            analyzer.vocabulary.affine_models.clear();
+            let (_, lazy) = analyzer.reasoning().affine_query_view(context);
+            let refuting = analyzer
+                .reasoning()
+                .affine_target_proof(&target, &[], context)
+                .map(|proof| (proof.premises, proof.parents));
+            assert_eq!(refuting.is_some(), provable, "{target:?}");
+            assert_eq!(
+                analyzer
+                    .vocabulary
+                    .affine_models
+                    .iter()
+                    .any(|cache| cache.refuted_target() == Some(&target)),
+                !provable,
+                "a point falsifies exactly the unprovable targets: {target:?}"
+            );
+            // The exhaustive traversal of an unprovable target always ends
+            // in the final family, which promotes the index.
+            assert!(
+                lazy.complete.borrow().is_none(),
+                "a refuted search never enters the final family: {target:?}"
+            );
+            analyzer.vocabulary.affine_l0_cache = None;
+            let (_, exhaustive_index) = analyzer.reasoning().affine_query_view(context);
+            let exhaustive = analyzer
+                .reasoning()
+                .affine_target_search(&target, &[], context, false)
+                .map(|proof| (proof.premises, proof.parents));
+            assert_eq!(
+                exhaustive_index.complete.borrow().is_some(),
+                !provable,
+                "{target:?}"
+            );
+            assert_eq!(refuting, exhaustive, "{target:?}");
+        }
+        // Step 6 over the right term Z reads the bridge images a <= 9 and
+        // b <= 10, which hold at the point falsifying a <= 8.
+        let unprovable = at_most(&a, 8);
+        let provable = at_most(&a, 9);
+        assert!(
+            analyzer
+                .reasoning()
+                .numeric_affine_proof(&unprovable, Some(ZERO), context)
+                .is_none()
+        );
+        assert!(
+            analyzer
+                .reasoning()
+                .numeric_affine_proof(&provable, Some(ZERO), context)
+                .is_some()
         );
     });
 }

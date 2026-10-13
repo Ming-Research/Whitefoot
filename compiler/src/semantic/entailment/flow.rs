@@ -26,6 +26,7 @@
 //! [PRF-1] [`certificates`], the [`walk`], the [`loop_summary`], and
 //! canonical [`render`]ing.
 
+mod affine_models;
 mod certificates;
 mod conditions;
 mod conversions;
@@ -1358,6 +1359,7 @@ impl<'check, 'unit> Analyzer<'check, 'unit> {
                 goals: GoalTable::default(),
                 derivations: DerivationLedger::default(),
                 affine_l0_cache: None,
+                affine_models: Vec::new(),
                 affine_atoms: Vec::new(),
                 measure_terms_seen: Vec::new(),
                 measure_terms_scanned: 0,
@@ -1757,6 +1759,9 @@ struct Vocabulary {
     /// Only the most recent view is held, rather than one quadratic index
     /// per program point. Ordinary queries and certificates share this memo.
     affine_l0_cache: Option<AffineL0Cache>,
+    /// The integer points of the most recent query views, which let a
+    /// failing affine search end without exhausting its families.
+    affine_models: Vec<affine_models::AffineModelCache>,
     /// Function-local mathematical atoms allocated in structural execution
     /// order. They are ordinary checker state and are discarded with the
     /// analysis.

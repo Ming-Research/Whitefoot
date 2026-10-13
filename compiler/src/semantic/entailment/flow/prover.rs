@@ -1474,6 +1474,19 @@ impl Reasoning<'_, '_, '_> {
             &self.vocabulary.goals,
             &mut self.vocabulary.derivations,
         );
+        // Each residual below is the target less one bridge image, so the
+        // point that falsified the target and satisfies every bridge image
+        // falsifies every residual: no candidate can succeed.
+        if self.affine_bridges_refuted(
+            target,
+            &assumptions,
+            &closed,
+            right,
+            &right_value,
+            &candidates,
+        ) {
+            return None;
+        }
         for candidate in candidates {
             let Some(bound) = closed.tight_bound(candidate.term, right) else {
                 continue;
@@ -3210,6 +3223,23 @@ impl Reasoning<'_, '_, '_> {
         assumptions: &[ActiveAffineFact],
         context: ProofContext<'_>,
     ) -> Option<AffineConsequenceProof> {
+        self.affine_target_search(target, assumptions, context, true)
+    }
+
+    /// `DIRECT`, then `AUTO`'s families in their fixed order [MSR-4]. With
+    /// `refute`, a target the premise families leave open is checked against
+    /// the view's integer points (`affine_models`) before the final family: a
+    /// point satisfying every premise the families read and falsifying the
+    /// target ends a search no family can win. A search without such a point
+    /// runs unchanged, so the result and its retained parents are the
+    /// traversal's.
+    pub(super) fn affine_target_search(
+        &mut self,
+        target: &AffineInequality,
+        assumptions: &[ActiveAffineFact],
+        context: ProofContext<'_>,
+        refute: bool,
+    ) -> Option<AffineConsequenceProof> {
         let values = context.affine;
         let mut check = AffineCheckState::new();
         let (closed, l0) = self.affine_query_view(context);
@@ -3260,6 +3290,12 @@ impl Reasoning<'_, '_, '_> {
             return Some(affine_consequence_from_residual(
                 &selected, &automatic, parents,
             ));
+        }
+
+        // The final family visits every indexed L0 image; a falsifying point
+        // shows that none can close the target.
+        if refute && self.affine_model_refutes(target, assumptions, &closed, &l0) {
+            return None;
         }
 
         // Ordinary L0 relations remain outside the affine premise set. This

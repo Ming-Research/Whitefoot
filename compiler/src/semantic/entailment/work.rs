@@ -35,7 +35,12 @@
 //!   `affine_final_family_starts` counts entry into AUTO's final L0 family;
 //!   `affine_final_family_exhaustions` counts those traversals returning no
 //!   proof after all entries. Repeated traversals count separately even when
-//!   the complete index is reused. Cold scans are aggregated per request;
+//!   the complete index is reused. `affine_model_views` counts the query
+//!   views whose premises were gathered for a refuting integer point,
+//!   `affine_refutations` and `affine_refutation_misses` partition the
+//!   searches `DIRECT` left open by whether such a point falsified the
+//!   target, and `affine_bridge_refutations` counts step-6 loops that point
+//!   also ended. Cold scans are aggregated per request;
 //!   all affine counters are aggregated per function before emission.
 //! - `join`: ordinal identifies a pass; `join` identifies its enclosing
 //!   `join_at` call. `inputs` includes contradictory predecessors;
@@ -111,6 +116,10 @@ struct AffineWork {
     promotions: u64,
     final_family_starts: u64,
     final_family_exhaustions: u64,
+    model_views: u64,
+    refutations: u64,
+    refutation_misses: u64,
+    bridge_refutations: u64,
 }
 
 struct FunctionWork {
@@ -324,6 +333,27 @@ pub(super) fn affine_final_family_exhausted() {
     });
 }
 
+pub(super) fn affine_model_view() {
+    update(|work| work.affine.model_views = work.affine.model_views.saturating_add(1));
+}
+
+pub(super) fn affine_refutation(refuted: bool) {
+    update(|work| {
+        let affine = &mut work.affine;
+        if refuted {
+            affine.refutations = affine.refutations.saturating_add(1);
+        } else {
+            affine.refutation_misses = affine.refutation_misses.saturating_add(1);
+        }
+    });
+}
+
+pub(super) fn affine_bridge_refutation() {
+    update(|work| {
+        work.affine.bridge_refutations = work.affine.bridge_refutations.saturating_add(1);
+    });
+}
+
 impl FunctionWork {
     fn write(&self) {
         use std::fmt::Write as _;
@@ -367,6 +397,10 @@ impl FunctionWork {
                 "affine_final_family_exhaustions",
                 self.affine.final_family_exhaustions,
             ),
+            ("affine_model_views", self.affine.model_views),
+            ("affine_refutations", self.affine.refutations),
+            ("affine_refutation_misses", self.affine.refutation_misses),
+            ("affine_bridge_refutations", self.affine.bridge_refutations),
         ] {
             row("function", 0, metric, value);
         }

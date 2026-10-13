@@ -593,23 +593,20 @@ fn rightmost(node: &OrderedNode<Rank, unit>) -> found: Option<Rank> reads(node) 
     return None<Rank>();
   }
   let last = count -wrap 1_u64;
-  if last < node^.entries.len {
-    if node^.entries[last].after.len > 0_u64 {
-      let below = rightmost(node: &node^.entries[last].after[0_u64].inner);
-      match move below {
-        Some(value: rank) => {
-          return Some<Rank>(value: move rank);
-        }
-        None() => {
-        }
+  if node^.entries[last].after.len > 0_u64 {
+    let below = rightmost(node: &node^.entries[last].after[0_u64].inner);
+    match move below {
+      Some(value: rank) => {
+        return Some<Rank>(value: move rank);
+      }
+      None() => {
       }
     }
-    let final = &node^.entries[last].pair.key;
-    let member = copy_key(key: &final^.member);
-    let rank = Rank(score: final^.score, member: move member);
-    return Some<Rank>(value: move rank);
   }
-  return None<Rank>();
+  let final = &node^.entries[last].pair.key;
+  let member = copy_key(key: &final^.member);
+  let rank = Rank(score: final^.score, member: move member);
+  return Some<Rank>(value: move rank);
 }
 
 fn lowest(sorted: &Sorted) -> found: Option<Rank> reads(sorted) {
