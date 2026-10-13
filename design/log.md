@@ -12,6 +12,13 @@ Nodes: language/system-interface/socket-addresses
 Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A on the card "批准 Whitefoot#402（头提交 3cd02e6d4）的规范改动和设计决定", ruling 「选 A：批准 Whitefoot#402（头提交 3cd02e6d4）的规范改动和设计决定，让 Whitefoot 程序能读出套接字地址的各部分和连接本端的地址」.
 
 Summary: A new node records four decisions. The family and components of a `SocketAddress` are read by the nonwaiting `socket_address_ip`, which returns the enum `IpAddress` with the constructors' own components, because a pattern match yields them with no proof, instead of a byte-window copy, a per-byte reader, a fixed 16-byte array or formatted text. The port is read by `socket_address_port`. An IPv6 address keeps only address and port, as a provisional choice reopened when a program must reconnect to or print a link-local peer. The local address is `local_address` on the receiving half, returning `Result<SocketAddress, IoError>` with the new origin 10, instead of a field of `AcceptedConnection`, a query on `TcpConnection` or on each half, or an infallible query, each refused with its reason in the node.
+## 2026-10-13 A split-dispatch frame slot whose contents never cross a transfer belongs to each part
+
+Nodes: compiler/match-dispatch-lowering
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve; I write the design-tree change log, mark the PR ready and hand it to the coordinator's merge queue" (translated), on the card "approve Whitefoot#405's change to the design tree: in split dispatch, frame slots whose contents do not cross a transfer between parts belong to each part (head commit 3605cbec0640)?" (translated), whose background stated the changed shared-frame decision, the added refused alternative and the Halo fib(32) measurement.
+
+Summary: A frame slot of a split `loop { match }` stays in the shared frame only when its contents cross a transfer between parts (the outer function's call into dispatch, a part's tail call or a part's return) or its address can reach another part; every other slot belongs to each part that uses it. The join after a `match` is copied into every arm, so the refused rule of keeping a slot local only when exactly one part uses it put the join's slots in the shared frame and cost Halo 14 dead stores per Lua call; with the new rule Halo's fib(32) fell from 862.53 to 841.53 executed instructions per Lua call ([the join's slots in each arm](../research/investigations/halo-call-path/DESIGN.md#the-joins-slots-in-each-arm)). Slots holding an element address stay shared because the analysis does not track derived addresses.
 ## 2026-10-12 The gate runs for revisions that can merge
 
 Nodes: compiler/verification
