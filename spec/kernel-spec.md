@@ -1,4 +1,4 @@
-# Kernel Specification v0.149
+# Kernel Specification v0.150
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -1492,6 +1492,7 @@ A measure member or fragment-integer place rooted at a reference parameter whose
 No proof-required exact operation, computed arithmetic result, subscript, occurrence-local evaluated-value datum, Boolean connective, result projection outside [CALL-4]'s admitted data, or body local becomes a relation datum; a clause side's own `+`, `-`, and `*` are the mathematical integer expression [MSR-5] fixes and perform no operation.
 The comparison normalizes to one finite L0 RelationTemplate whose two terms carry their displacements as one folded constant; a side with the additional parameter uses [ENT-2]'s sum term, and equality's two bounds remain one relation occurrence.
 A parameter datum denotes what [MSR-3]'s table gives its position: the exit state for a bare measure member or fragment-integer place of a reference parameter whose row declares a write rooted at that parameter, and the function-entry image for every other.
+A parameter written as a subscript offset of a clause place is a referenced parameter datum of that clause and denotes its function-entry image: a selected return reads it under the entry-image stability rule below, and a call substitutes its actual for it under M(c,q).
 The template retains parameter ordinals and projections, result ordinals and projections, route declarations, named-const identity, literals, substitutions, comparison row, operand order, and normalized relation, while excluding result/route/definition spellings, definition sharing, and callee identity.
 Its occurrence is `(concrete function instance, ensures_clause NodePath)`.
 
@@ -3501,6 +3502,8 @@ Term identity thus under-approximates aliasing, while kills [ENT-5] use [OWN-7]'
 A readonly field below a subscript is a term because every event that changes one writes a place containing its storage: outside its declaring module it is never a write target [TYPE-2], so the event is a replaced value holding it [SET-1], an element exchanged or updated with it [OP-11, OP-12], a window part an [OP-10] operation moves, or the field itself under a row that writes it [EFF-2], and inside that module an assignment to it writes its own place; the ordinary [ENT-5] kill reaches every term over it in either case.
 Each subscript in a clause (b) place is an [OP-4] occurrence like every other and owes that rule's own obligation against the base it indexes, submitted to [MSR-4] where the place is formed; a place whose subscripts are not all discharged is no term, exactly as an undischarged subscript in read position is no value.
 A requirement forms its places at body entry, in the state holding the requirements written before its clause [FN-8], and a definition's places are formed in the first requirement whose expansion reaches them, so `requires k < rows^[i].len;` needs `i < rows^.len` from an earlier requirement.
+A postcondition forms its places, those of every definition its expansion reaches included, at each of its selected returns, in the context that return proves the clause in, and judges each subscript over what [FN-9] makes its operands denote: a parameter offset is read at its function-entry value even where the body has since rebound the parameter, and a base is read in the state the place denotes, so a base of an entry datum is judged against its length at function entry and a base of an exit term against its length at the return.
+So `ensures r <= rows^[i].len;` with `rows` only read needs the entry value of `i` below the entry `rows^.len`, from a requirement or from the facts at each of those returns, and `ensures r <= entry(rows)^[i].len;` is not discharged by an element the body appends.
 Each offset occurring inside a clause (b) place is itself a clause (a) or clause (c) term, because the place's identity is decided over its offsets [OWN-7] and [ENT-5] kills a term only through its support, which takes in each offset's own: an offset of any other form, such as an element read or a computed value, could come to select another element with no event killing the term.
 A place carrying any other offset is no term, and reading it remains an ordinary read.
 An implementation that cannot represent an admitted offset reports the place as an unsupported compiler capability, never as a source rejection [DIAG-1].

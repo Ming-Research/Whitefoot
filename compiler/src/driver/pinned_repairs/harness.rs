@@ -51,6 +51,7 @@ pub(super) fn run_pairs() {
         .chain(super::selector_scope::SELECTOR_SCOPE)
         .chain(super::enum_routed_ensures::ENUM_ROUTED_ENSURES)
         .chain(super::collisions_and_killed_facts::COLLISIONS_AND_KILLED_FACTS)
+        .chain(super::postcondition_places::POSTCONDITION_PLACES)
         .chain(super::common_syntax::COMMON_SYNTAX)
     {
         let failure = compile(

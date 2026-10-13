@@ -20,6 +20,7 @@ mod floats;
 mod harness;
 mod interface_applications;
 mod lexical_syntax;
+mod postcondition_places;
 mod prelude_opaque;
 mod qualified_constants;
 mod qualified_names;
