@@ -442,14 +442,28 @@ jobs:
               cmd+=("$a")
             done
             rm -rf "$RUNNER_TEMP/ltocache"
+            # Stream diagnostics while retaining the complete log, even if a
+            # link exhausts the runner before reaching the final report. The
+            # command itself is not in a pipe: its exit code is read directly.
+            {
+              printf '%q' "$cc"
+              printf ' %q' "${cmd[@]}" -Wl,--thinlto-cache-dir="$RUNNER_TEMP/ltocache" "${extra[@]}"
+              printf '\n'
+            } > "$out/link-$variant.command.txt"
+            printf 'link-%s: %s, %s arguments; command: %s\n' \
+              "$variant" "$cc" "${#cmd[@]}" "$out/link-$variant.command.txt"
+            exec {link_log_fd}> >(tee "$out/link-$variant.log")
+            link_logger=$!
             if perl "$GITHUB_WORKSPACE/.github/run-check.pl" "attribution-link-$variant" \
               /usr/bin/time -f "LINK $variant wall=%e user=%U sys=%S maxrss_kb=%M" \
               "$cc" "${cmd[@]}" -Wl,--thinlto-cache-dir="$RUNNER_TEMP/ltocache" "${extra[@]}" \
-              > "$out/link-$variant.log" 2>&1; then rc=0; else rc=$?; fi
+              >&"$link_log_fd" 2>&1; then rc=0; else rc=$?; fi
+            exec {link_log_fd}>&-
+            if wait "$link_logger"; then logger_rc=0; else logger_rc=$?; fi
             echo "link-$variant exit $rc" >> "$out/status.txt"
+            echo "link-$variant logger exit $logger_rc" >> "$out/status.txt"
             cat "$out/link-$variant.log" >> "$out/link.txt"
-            cat "$out/link-$variant.log"
-            if (( rc != 0 )); then failed=1; fi
+            if (( rc != 0 || logger_rc != 0 )); then failed=1; fi
           done
           for v in jobs-all jobs-1 default-again trace; do
             if cmp -s "$RUNNER_TEMP/link-default" "$RUNNER_TEMP/link-$v"; then rc=0; else rc=$?; fi

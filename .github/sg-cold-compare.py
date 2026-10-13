@@ -16,9 +16,11 @@ import os
 from pathlib import Path
 import platform
 import re
+import shlex
 import statistics
 import subprocess
 import sys
+import tempfile
 
 
 PHASES = ("front_end_ms", "split_ms", "compile_ms", "link_ms")
@@ -276,6 +278,7 @@ def replay_summary(replay_text, status_text, link_logs, link_text):
         links, comparisons = {}, {}
         for variant in ("default", *compared):
             status("link-" + variant)
+            status("link-" + variant + " logger")
             wall, user, system, rss = exact_record(link_logs[variant], rf"LINK {variant} wall=(\S+) user=(\S+) sys=(\S+) maxrss_kb=(\S+)", "LINK " + variant)
             links[variant] = {"wall_s": number(float(wall), variant + " wall", positive=True),
                               "user_s": number(float(user), variant + " user"),
@@ -345,6 +348,19 @@ def write_results(output, samples, summary):
     (output / "samples.tsv").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def build_diagnostics(sample, directory):
+    lines = [f"cwd: {sample['cwd']}", f"command: {shlex.join(sample['command'])}"]
+    for channel in ("stderr", "stdout"):
+        lines.append(f"--- round {sample['round']} {sample['variant']} {channel} ---")
+        path = directory / f"{channel}.log"
+        try:
+            text = path.read_text(errors="replace")
+        except OSError as error:
+            text = f"cannot read {path}: {error}"
+        lines.append(text if text else "(empty)")
+    return "\n".join(lines)
+
+
 def run_sample(round_number, variant, compiler, renderer, output, subtracts_split):
     directory = output / "samples" / f"r{round_number}-{variant}"
     # exist_ok=False prevents an accidentally warm rerun under the same output directory.
@@ -381,6 +397,9 @@ def run_sample(round_number, variant, compiler, renderer, output, subtracts_spli
         sample["errors"].append("successful executable missing")
     if sample["errors"]:
         print(f"round {round_number} {variant}: INVALID: {'; '.join(sample['errors'])}", flush=True)
+        # Keep failed commands reviewable without downloading artifacts. These
+        # files remain the raw evidence; printing happens after the timed build.
+        print(build_diagnostics(sample, directory), flush=True)
     else:
         print(f"round {round_number} {variant}: phases_ms={sample['phases_ms']} raw_compile_ms={sample['raw_build']['compile_ms']} "
               f"time={sample['time']} counters={ {key: sample['raw_build'][key] for key in COUNTERS} } "
@@ -390,6 +409,10 @@ def run_sample(round_number, variant, compiler, renderer, output, subtracts_spli
 
 def self_test():
     """Synthetic qualification, CI only: wrong/missing inputs cannot pass."""
+    from contextlib import redirect_stdout
+    import io
+    from unittest.mock import patch
+
     checks = 0
 
     def expect(condition, message):
@@ -460,9 +483,40 @@ def self_test():
     rejects(lambda: parse_build([json.dumps({"build": incomplete})]), "missing phase")
     rejects(lambda: parse_time(json.dumps({**timing, "wall_s": float("nan")})), "invalid elapsed time")
     rejects(lambda: parse_time(json.dumps({**timing, "command_status": 1})), "nonzero command status")
+    with tempfile.TemporaryDirectory() as temporary:
+        directory = Path(temporary)
+        diagnostic_sample = {"round": 1, "variant": "base", "cwd": "/renderer path",
+                             "command": ["/compiler path", "--entry", "layout_oracle"]}
+        (directory / "stderr.log").write_text("distinct build failure", encoding="utf-8")
+        (directory / "stdout.log").write_text("", encoding="utf-8")
+        diagnostics = build_diagnostics(diagnostic_sample, directory)
+        expect("distinct build failure" in diagnostics and "cwd: /renderer path" in diagnostics
+               and "command: '/compiler path' --entry layout_oracle" in diagnostics,
+               "failed build diagnostics must show stderr and invocation context")
+        expect("stdout ---\n(empty)" in diagnostics, "empty diagnostic channel must be explicit")
+        (directory / "stderr.log").unlink()
+        expect("cannot read" in build_diagnostics(diagnostic_sample, directory),
+               "missing failure log must be visible without hiding the original failure")
+        # Exercise run_sample's real logging branch without launching a command.
+        # Removing its diagnostic print must fail, even if the helper is intact.
+        def failed_build(command, *, cwd, stdout, stderr, check):
+            stdout.write(b"distinct failed stdout")
+            stderr.write(b"distinct failed stderr")
+            Path(command[command.index("-o") + 1]).write_text(
+                json.dumps({**timing, "command_status": 1}), encoding="utf-8")
+            return subprocess.CompletedProcess(command, 1)
+
+        emitted = io.StringIO()
+        with patch.object(subprocess, "run", side_effect=failed_build), redirect_stdout(emitted):
+            failed_sample = run_sample(1, "base", Path("/compiler path"), Path("/renderer path"), directory, False)
+        expect("build command exited 1" in failed_sample["errors"], "failed sample retains direct command status")
+        expect("distinct failed stderr" in emitted.getvalue() and "distinct failed stdout" in emitted.getvalue()
+               and "cwd: /renderer path" in emitted.getvalue() and "command: '/compiler path'" in emitted.getvalue(),
+               "actual failed sample must print both diagnostic channels and its invocation")
     replay = "REPLAY serial wall_ms=100 objects=10 exit=0\nREPLAY p4 wall_ms=49 objects=10 exit=0\nREPLAY serial-again wall_ms=102 objects=10 exit=0"
     statuses = "\n".join([f"REPLAY {mode} exit 0" for mode in ("serial", "p4", "serial-again")] +
-                         [f"link-{variant} exit 0" for variant in ("default", "jobs-all", "jobs-1", "default-again", "trace")])
+                         [f"link-{variant}{suffix} exit 0" for variant in ("default", "jobs-all", "jobs-1", "default-again", "trace")
+                          for suffix in ("", " logger")])
     link_logs = {variant: f"LINK {variant} wall={wall} user=1 sys=0 maxrss_kb=1000" for variant, wall in
                  (("default", 100), ("jobs-all", 80), ("jobs-1", 200), ("default-again", 102), ("trace", 110))}
     comparisons = "\n".join(f"link-{variant} identical" for variant in ("jobs-all", "jobs-1", "default-again", "trace"))
@@ -477,6 +531,7 @@ def self_test():
     expect(replay_result(r=replay.replace("p4 wall_ms=49 objects=10", "p4 wall_ms=49 objects=9"))["F1"]["verdict"] == "INVALID", "incomplete replay object count")
     expect(replay_result(s=statuses.replace("REPLAY p4 exit 0", "REPLAY p4 exit 1"))["F1"]["verdict"] == "INVALID", "failed replay status")
     expect(replay_result(s=statuses.replace("link-jobs-all exit 0", "link-jobs-all exit 1"))["F3"]["verdict"] == "INVALID", "failed link status")
+    expect(replay_result(s=statuses.replace("link-jobs-all logger exit 0", "link-jobs-all logger exit 1"))["F3"]["verdict"] == "INVALID", "failed link log capture")
     expect(replay_result(c=comparisons.replace("link-jobs-all identical", "link-jobs-all DIFFERS"))["F3"]["verdict"] == "FAIL", "different optimized executable")
     expect(replay_result(c=comparisons.replace("link-default-again identical", "link-default-again DIFFERS"))["F3"]["verdict"] == "INCONCLUSIVE", "unstable replay byte control")
     expect(replay_result(c=comparisons.replace("link-jobs-all identical", "link-jobs-all comparison error exit 2"))["F3"]["verdict"] == "INVALID", "comparison IO error")
