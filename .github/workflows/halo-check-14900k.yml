@@ -2,7 +2,7 @@
 # research-boundary: manual-only
 # This explicitly requested timing panel is independent of the correctness gate.
 # Wrapper budgets are report-only; samples have not established stage budgets.
-# A push to this branch whose commit message contains [14900k] runs it; the
+# A push to this branch whose commit message starts with the 14900K tag runs it; the
 # head under test is read from .github/halo-check-14900k.head when not dispatched.
 name: halo-check-14900k
 
@@ -29,7 +29,7 @@ concurrency:
 
 jobs:
   compare:
-    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[14900k]')
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.event.head_commit.message, '[14900k]')
     runs-on: [self-hosted, 14900k]
     timeout-minutes: 180
     defaults:
