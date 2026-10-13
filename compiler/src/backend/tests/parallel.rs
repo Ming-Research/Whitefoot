@@ -1476,29 +1476,62 @@ fn the_sequential_clone_is_the_sequential_lowering() {
         );
     }
 
-    for symbol in &cloned {
-        let clone = function_body(&overlapped, symbol);
-        let original = symbol.replace("@wf__par_seq_", "@wf_");
-        let actual_entity = overlapped
-            .model
-            .entities
+    let imported = overlapped
+        .model
+        .entities
+        .iter()
+        .filter(|entity| {
+            !entity.global && super::canonical_compute::ordinary_symbol(&entity.name).is_some()
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        imported
             .iter()
-            .find(|entity| entity.name == symbol.trim_start_matches('@'))
-            .unwrap();
+            .any(|entity| entity.name.starts_with("wf__par_seq.wf.drop.")),
+        "the fixture must exercise imported local cleanup helpers"
+    );
+    let ordinary_targets = imported
+        .iter()
+        .map(|entity| super::canonical_compute::ordinary_symbol(&entity.name).unwrap())
+        .collect::<Vec<_>>();
+    for actual_entity in imported {
+        let symbol = format!("@{}", actual_entity.name);
+        let clone = function_body(&overlapped, &symbol);
+        let original = format!(
+            "@{}",
+            super::canonical_compute::ordinary_symbol(&actual_entity.name).unwrap()
+        );
         let expected_entity = sequential
             .model
             .entities
             .iter()
             .find(|entity| entity.name == original.trim_start_matches('@'))
             .unwrap();
-        let restored = super::canonical_compute::restore_metadata(
+        assert_eq!(
+            actual_entity
+                .references
+                .symbols
+                .iter()
+                .map(|name| {
+                    super::canonical_compute::ordinary_symbol(name).unwrap_or_else(|| name.clone())
+                })
+                .collect::<std::collections::BTreeSet<_>>(),
+            expected_entity.references.symbols,
+            "{symbol} must preserve the ordinary dependency graph"
+        );
+        for forbidden in &ordinary_targets {
+            assert!(
+                !actual_entity.references.symbols.contains(forbidden),
+                "{symbol} must not reenter split target {forbidden}"
+            );
+        }
+        let restored = super::canonical_compute::restore_definition(
             &overlapped.model,
             &sequential.model,
             actual_entity,
             expected_entity,
             clone,
-        )
-        .replace("@wf__par_seq_", "@wf_");
+        );
         let reference = function_body(&sequential, &original);
         assert_eq!(
             restored, reference,
@@ -1525,7 +1558,7 @@ fn the_sequential_clone_is_the_sequential_lowering() {
 /// the cases that pin them, cannot be disturbed by it.
 #[test]
 fn the_bootstrap_selects_one_world_once() {
-    let overlapped = fold_module(true);
+    let overlapped = fold_emission(true);
 
     // Asked once, in the one place that runs once and is inside no loop and no
     // recursion.
@@ -1568,11 +1601,24 @@ fn the_bootstrap_selects_one_world_once() {
 
     // The complete ordinary closure never reenters split computation; shared
     // native hooks and resource support retain their original identities.
-    let cloned = clone_symbols(&overlapped);
-    for symbol in &cloned {
-        let body = function_body(&overlapped, symbol);
-        for other in &cloned {
-            let forbidden = format!(" @{}(", other.replace("@wf__par_seq_", "wf_"));
+    let imported = overlapped
+        .model
+        .entities
+        .iter()
+        .filter(|entity| {
+            !entity.global && super::canonical_compute::ordinary_symbol(&entity.name).is_some()
+        })
+        .collect::<Vec<_>>();
+    for entity in &imported {
+        let symbol = format!("@{}", entity.name);
+        let body = function_body(&overlapped, &symbol);
+        for other in &imported {
+            let original = super::canonical_compute::ordinary_symbol(&other.name).unwrap();
+            assert!(
+                !entity.references.symbols.contains(&original),
+                "{symbol} records a dependency on split target {original}"
+            );
+            let forbidden = format!(" @{original}(");
             assert!(
                 !body.contains(&forbidden),
                 "{symbol} calls the overlapped{forbidden}, so the clone world re-enters the \
@@ -1599,7 +1645,7 @@ fn the_bootstrap_selects_one_world_once() {
         bootstrap_free = bootstrap_free.replace(variant, "");
     }
     assert!(
-        !bootstrap_free.contains("@wf__par_seq_"),
+        !mentions_ordinary_function(&bootstrap_free),
         "only the bootstrap and the budget family may name a clone:\n{bootstrap_free}"
     );
 }
@@ -2129,14 +2175,25 @@ fn budget_symbols(module: &str) -> Vec<String> {
         .collect()
 }
 
-/// The module with every sequential clone definition removed, leaving the
-/// overlapped world and everything the two worlds share.
+fn mentions_ordinary_function(text: &str) -> bool {
+    [
+        "@wf__par_seq_",
+        "@wf__par_seq.",
+        "@\"wf__par_seq_",
+        "@\"wf__par_seq.",
+    ]
+    .iter()
+    .any(|prefix| text.contains(prefix))
+}
+
+/// The module with every ordinary source and generated helper definition
+/// removed, leaving the overlapped world and shared computation support.
 fn without_clones(module: &str) -> String {
     let mut kept = String::with_capacity(module.len());
     let mut skipping = false;
     for line in module.split_inclusive('\n') {
         if line.starts_with("define ") {
-            skipping = line.contains(" @wf__par_seq_");
+            skipping = mentions_ordinary_function(line);
         }
         if !skipping {
             kept.push_str(line);
@@ -2157,12 +2214,26 @@ fn world_observers_keep_adjacent_function_boundaries() {
     let caller = "define i64 @wf__par_seq_main() {\nentry:\n  %v0 = call i64 @wf__par_seq_leaf()\n  ret i64 %v0\n}\n";
     let parallel_caller =
         "define i64 @wf_main() {\nentry:\n  %v0 = call i64 @wf_leaf()\n  ret i64 %v0\n}\n";
-    let module = format!("{ordinary}{parallel}{caller}{parallel_caller}");
+    let helper = "define internal void @wf__par_seq.wf.drop.cell() {\nentry:\n  ret void\n}\n";
+    let module = format!("{ordinary}{helper}{parallel}{caller}{parallel_caller}");
     assert_eq!(
         without_clones(&module),
         format!("{parallel}{parallel_caller}")
     );
     assert_eq!(super::emitted_function(&module, "_par_seq_leaf"), ordinary);
+    let outside = without_clones(&module);
+    assert!(!mentions_ordinary_function(&outside));
+    let wrong_caller = parallel_caller.replace(
+        "  %v0 = call i64 @wf_leaf()",
+        "  call void @wf__par_seq.wf.drop.cell()\n  %v0 = call i64 @wf_leaf()",
+    );
+    let wrong_module = format!("{ordinary}{helper}{parallel}{caller}{wrong_caller}");
+    let wrong_outside = without_clones(&wrong_module);
+    assert_eq!(wrong_outside, format!("{parallel}{wrong_caller}"));
+    assert!(
+        mentions_ordinary_function(&wrong_outside),
+        "removing ordinary definitions must retain and reject a split caller's ordinary-helper edge"
+    );
 }
 
 /// The definition that carries `symbol`'s emitted body: its own definition,

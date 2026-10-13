@@ -37,6 +37,111 @@ fn assert_metadata(
     }
 }
 
+/// Restore only identities allocated to the imported ordinary closure.
+/// Instruction operands, calling conventions and layouts remain exact.
+pub(super) fn ordinary_symbol(name: &str) -> Option<String> {
+    name.strip_prefix("wf__par_seq_")
+        .map(|suffix| format!("wf_{suffix}"))
+        .or_else(|| name.strip_prefix("wf__par_seq.").map(str::to_owned))
+        .or_else(|| name.strip_prefix(".wf__par_seq_global.").map(str::to_owned))
+}
+
+pub(super) fn restore_symbols(module: &crate::backend::emission::Module, text: &str) -> String {
+    let mapping = module
+        .entities
+        .iter()
+        .filter_map(|entity| ordinary_symbol(&entity.name).map(|name| (entity.name.as_str(), name)))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let bytes = text.as_bytes();
+    let mut result = String::new();
+    let mut at = 0;
+    while at < bytes.len() {
+        let start = at;
+        let symbol = bytes[at] == b'@';
+        if symbol {
+            at += 1;
+        }
+        if bytes[at] == b'"' {
+            at += 1;
+            let name_start = at;
+            while bytes[at] != b'"' {
+                at += if bytes[at] == b'\\' { 3 } else { 1 };
+            }
+            let name = &text[name_start..at];
+            at += 1;
+            if symbol && let Some(restored) = mapping.get(name) {
+                result.push_str(&format!("@\"{restored}\""));
+            } else {
+                result.push_str(&text[start..at]);
+            }
+        } else if symbol {
+            let name_start = at;
+            while at < bytes.len()
+                && (bytes[at].is_ascii_alphanumeric() || b"-.$_".contains(&bytes[at]))
+            {
+                at += 1;
+            }
+            let name = &text[name_start..at];
+            result.push('@');
+            result.push_str(mapping.get(name).map_or(name, String::as_str));
+        } else if bytes[at] == b';' {
+            while at < bytes.len() && bytes[at] != b'\n' {
+                at += 1;
+            }
+            result.push_str(&text[start..at]);
+        } else {
+            let character = text[at..].chars().next().unwrap();
+            result.push(character);
+            at += character.len_utf8();
+        }
+    }
+    result
+}
+
+#[test]
+fn ordinary_symbol_restoration_keeps_literals_and_unrecorded_targets() {
+    use crate::backend::emission::{FunctionBody, Module, References, Signature};
+    let mut module = Module::default();
+    for name in ["wf__par_seq_main", "wf__par_seq.wf.drop.cell"] {
+        let mut body = FunctionBody::default();
+        body.open_block("entry".to_owned());
+        body.instructions("  ret void\n", &[]);
+        module.define(
+            Signature::new(name, "void", Vec::new())
+                .define(body, "")
+                .unwrap(),
+        );
+    }
+    module.global(
+        ".wf__par_seq_global.table".to_owned(),
+        "constant",
+        "ptr".to_owned(),
+        "@wf__par_seq_main".to_owned(),
+        None,
+        References::default(),
+    );
+    let actual = "@wf__par_seq_main @\"wf__par_seq.wf.drop.cell\" @.wf__par_seq_global.table @wf__par_seq_main.extra @wf_main \"@wf__par_seq_main\" ; @wf__par_seq_main\n";
+    let expected = "@wf_main @\"wf.drop.cell\" @table @wf__par_seq_main.extra @wf_main \"@wf__par_seq_main\" ; @wf__par_seq_main\n";
+    assert_eq!(restore_symbols(&module, actual), expected);
+    assert_ne!(
+        restore_symbols(&module, "call void @wf__par_seq.wf.drop.cell()"),
+        "call void @wf.drop.cell(i64 1)"
+    );
+}
+
+pub(super) fn restore_definition(
+    actual: &crate::backend::emission::Module,
+    expected: &crate::backend::emission::Module,
+    actual_entity: &crate::backend::emission::Entity,
+    expected_entity: &crate::backend::emission::Entity,
+    text: &str,
+) -> String {
+    restore_symbols(
+        actual,
+        &restore_metadata(actual, expected, actual_entity, expected_entity, text),
+    )
+}
+
 /// Only metadata IDs vary: prove an injective graph correspondence, including
 /// distinct/self edges, before substituting tokens in the instruction text.
 pub(super) fn restore_metadata(
@@ -236,7 +341,7 @@ fn canonical_source_closure_precedes_loop_synthesis_and_preserves_parallel_bodie
         for name in ["paired", "helper"] {
             let clone = function_body(&before, &format!("@wf__par_seq_{name}"));
             assert_eq!(
-                clone.replace("@wf__par_seq_", "@wf_"),
+                restore_symbols(&before.model, clone),
                 function_body(&ordinary, &format!("@wf_{name}")),
                 "{name} must be the complete ordinary computation, not a synthesized chunk call"
             );
@@ -387,8 +492,7 @@ fn main() -> status: std::process::ExitStatus pure {
                 (&clone.body, &reference.body),
             ] {
                 assert_eq!(
-                    restore_metadata(&combined.model, &ordinary.model, clone, reference, actual)
-                        .replace("@wf__par_seq_", "@wf_"),
+                    restore_definition(&combined.model, &ordinary.model, clone, reference, actual),
                     *expected,
                     "complete canonical entity {name}"
                 );
@@ -410,7 +514,7 @@ fn main() -> status: std::process::ExitStatus pure {
                     .references
                     .symbols
                     .iter()
-                    .map(|name| name.replacen("wf__par_seq_", "wf_", 1))
+                    .map(|name| ordinary_symbol(name).unwrap_or_else(|| name.clone()))
                     .collect::<std::collections::BTreeSet<_>>(),
                 reference.references.symbols
             );

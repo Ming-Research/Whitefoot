@@ -2129,8 +2129,7 @@ fn paired_cell(cell: &Cell) -> result: u32 reads(cell) {
             let ordinary_module =
                 crate::backend::emitter::emit_prepared_llvm(&ordinary, target).unwrap();
             assert_eq!(
-                canonical_dispatch_definition(&module, &ordinary_module)
-                    .replace("@wf__par_seq_", "@wf_"),
+                canonical_dispatch_definition(&module, &ordinary_module),
                 definition(&ordinary_module, "wf_run.dispatch")
             );
             let split = definition(&module, "wf_run.dispatch");
@@ -2142,12 +2141,12 @@ fn paired_cell(cell: &Cell) -> result: u32 reads(cell) {
                 .expect("split dispatch has its own handler table");
             for arm in 0..3 {
                 assert!(
-                    table.body.contains(&format!("ptr @wf_run.arm.{arm}")),
+                    table.header.contains(&format!("ptr @wf_run.arm.{arm}")),
                     "split table must bind split handlers: {}",
-                    table.body
+                    table.header
                 );
             }
-            assert!(!table.body.contains("@wf__par_seq_"), "{}", table.body);
+            assert!(!table.header.contains("@wf__par_seq_"), "{}", table.header);
             // A spare argument register carries the table base from the
             // enclosing function instead of rematerializing it in each part.
             let table_operand = if split
@@ -2325,9 +2324,7 @@ fn canonical_world_keeps_the_explicit_fragment_dispatch_mode() {
         }
         assert!(!module.threaded_layout);
         assert_eq!(
-            canonical_dispatch_definition(&module, &ordinary_module)
-                .replace("@wf__par_seq_", "@wf_")
-                .replace("@.wf__par_seq_global.", "@"),
+            canonical_dispatch_definition(&module, &ordinary_module),
             definition(&ordinary_module, "wf_run.dispatch")
         );
     });
@@ -2349,7 +2346,7 @@ fn canonical_dispatch_definition(
         .iter()
         .find(|entity| entity.name == "wf_run.dispatch")
         .unwrap();
-    super::canonical_compute::restore_metadata(
+    super::canonical_compute::restore_definition(
         &module.model,
         &ordinary.model,
         actual,

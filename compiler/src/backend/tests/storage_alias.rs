@@ -1027,14 +1027,13 @@ fn paired_copy(source: &Box<Array<u8>>, first: &Box<Slots<u8>>, second: &Box<Slo
         );
     }
     assert_eq!(
-        super::canonical_compute::restore_metadata(
+        super::canonical_compute::restore_definition(
             &parallel.model,
             &ordinary.model,
             actual,
             expected,
             &actual.body
-        )
-        .replace("@wf__par_seq_", "@wf_"),
+        ),
         expected.body,
         "the real emitter must record, import and remap every instruction attachment"
     );
