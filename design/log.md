@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 the owner's agent instructions own the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-13 Linux time budgets are set per CPU model, and macOS overruns are reported only
+
+Nodes: compiler/verification
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A (translated: "set Linux budgets per CPU model at the maximum of at least the 20 most recent runs plus 10%, the slowest model's budget for an unseen model, flagged in the report; macOS budgets only mark an overrun in the report and no longer fail the gate") on the card "change the gate's time budgets: Linux set per CPU model, macOS only reports its time and no longer fails on an overrun?" (translated).
+
+Summary: The budget decision now keeps one row per stage with one Linux column per CPU model of at least 20 recorded runs, each the maximum plus 10% rounded up to 5 s, and an unmapped model takes the stage's largest Linux budget with a note, because 44 gate runs showed Linux stage time set by the runner's processor (EPYC 7763 about 1.6 times the 9V45), so one budget either tripped on the slow model's noise or hid growth on the fast one; refused were one budget recomputed at the observed maximum (blind to growth on fast runners) and no change (re-run on every overrun). macOS overruns are recorded and shown but fail no verdict, because one virtual M1 type varied 1.8 times within a morning. Edits that change no decision: the former single decision is split into the budget rule, the verdict rule and the overrun-judgment rule, and the fixed 10 s raise now applies to Windows budgets, the only ones still set by the former rule.
+
 ## 2026-10-13 The lock ledger reports when each atomic target group is taken
 
 Nodes: compiler/waiting-contexts/state-locks
