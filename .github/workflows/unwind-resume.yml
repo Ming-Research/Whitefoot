@@ -98,11 +98,12 @@ jobs:
             # --emit-llvm cannot combine with --full-lto; this is the same
             # source before host optimization, not the final split resume IR.
             compiler/target/gate/whitefootc --emit-llvm research/experiments/unwind-resume/witness.wf -o "$UNWIND_EVIDENCE/raw.ll"
+            /usr/bin/clang -O2 -g0 research/experiments/unwind-resume/control.c -o "$UNWIND_EVIDENCE/control"
+            /usr/bin/clang -O2 -g0 -fuse-ld=lld research/experiments/unwind-resume/control.c -o "$UNWIND_EVIDENCE/control-lld"
           ' > "$UNWIND_EVIDENCE/compile.log" 2>&1
           cat "$UNWIND_EVIDENCE/compile.log"
-          /usr/bin/clang -O2 -g0 research/experiments/unwind-resume/control.c -o "$UNWIND_EVIDENCE/control"
           cp research/experiments/unwind-resume/control.c "$UNWIND_EVIDENCE/"
-          sha256sum "$UNWIND_EVIDENCE/witness" "$UNWIND_EVIDENCE/raw.ll" "$UNWIND_EVIDENCE/control" "$UNWIND_EVIDENCE/control.c" >> "$UNWIND_EVIDENCE/inputs.sha256"
+          sha256sum "$UNWIND_EVIDENCE/witness" "$UNWIND_EVIDENCE/raw.ll" "$UNWIND_EVIDENCE/control" "$UNWIND_EVIDENCE/control-lld" "$UNWIND_EVIDENCE/control.c" >> "$UNWIND_EVIDENCE/inputs.sha256"
 
       - name: Inspect frames, calibrate a small sample, and compare call graphs
         shell: bash
@@ -121,19 +122,54 @@ jobs:
           binary = str(root / 'witness')
           perf = os.environ['UNWIND_PERF']
 
-          def capture(name, command):
+          def command_log(name, command, started, exit_code, **details):
+              with (root / 'commands.jsonl').open('a') as output:
+                  output.write(json.dumps(dict(artifact=name, argv=command,
+                      seconds=time.monotonic() - started, exit=exit_code, **details)) + '\n')
+
+          def capture(name, command, optional=False, timeout=10, discard_stdout=False):
+              started = time.monotonic()
               with (root / name).open('w') as output:
-                  result = subprocess.run(command, stdout=output, stderr=subprocess.STDOUT)
+                  try:
+                      result = subprocess.run(command, stdout=subprocess.DEVNULL if discard_stdout else output,
+                          stderr=output if discard_stdout else subprocess.STDOUT, timeout=timeout)
+                      command_log(name, command, started, result.returncode, optional=optional,
+                                  stdout_discarded=discard_stdout, timeout_seconds=timeout)
+                  except (subprocess.TimeoutExpired, OSError) as error:
+                      output.write(f'\nDiagnostic command unavailable or timed out: {error}\n')
+                      command_log(name, command, started, None, optional=optional, error=str(error),
+                                  outcome='timeout' if isinstance(error, subprocess.TimeoutExpired) else 'unavailable',
+                                  timeout_seconds=timeout)
+                      if not optional:
+                          raise
+                      print(f'::warning::{name}: diagnostic unavailable or timed out; see commands.jsonl and artifact.', flush=True)
+                      return ''
               if result.returncode:
-                  raise RuntimeError(f'{name}: exit {result.returncode}; see artifact')
+                  if not optional:
+                      raise RuntimeError(f'{name}: exit {result.returncode}; see artifact')
+                  print(f'::warning::{name}: diagnostic exit {result.returncode}; see commands.jsonl and artifact.', flush=True)
               return (root / name).read_text()
 
-          nm = capture('symbols.txt', ['nm', '-nS', '--defined-only', binary])
-          frames = capture('readelf-frames.txt', ['readelf', '--debug-dump=frames', binary])
-          capture('readelf-cfa.txt', ['readelf', '-wF', binary])
-          capture('objdump-frames.txt', ['objdump', '--dwarf=frames', binary])
-          capture('elf-sections.txt', ['readelf', '-SW', binary])
-          disassembly = capture('disassembly.txt', ['objdump', '-d', binary])
+          # Backend identity and load-segment biases are essential to interpreting
+          # a recovered PC. Optional diagnostics never replace the baseline verdict.
+          capture('perf-build-options.txt', [perf, 'version', '--build-options'], optional=True, timeout=5)
+          capture('perf-libraries.txt', ['ldd', perf], optional=True, timeout=5)
+
+          def inspect_elf(executable, prefix=''):
+              symbols = capture(prefix + 'symbols.txt', ['nm', '-nS', '--defined-only', executable])
+              frames = capture(prefix + 'readelf-frames.txt', ['readelf', '--debug-dump=frames', executable])
+              capture(prefix + 'readelf-cfa.txt', ['readelf', '-wF', executable])
+              capture(prefix + 'objdump-frames.txt', ['objdump', '--dwarf=frames', executable])
+              capture(prefix + 'elf-header.txt', ['readelf', '-hW', executable])
+              capture(prefix + 'elf-sections.txt', ['readelf', '-SW', executable])
+              capture(prefix + 'elf-segments.txt', ['readelf', '-lW', executable])
+              capture(prefix + 'eh-frame-header.txt', ['readelf', '-x', '.eh_frame_hdr', executable])
+              disassembly = capture(prefix + 'disassembly.txt', ['objdump', '-d', executable])
+              return symbols, frames, disassembly
+
+          nm, frames, disassembly = inspect_elf(binary)
+          inspect_elf(str(root / 'control'), 'control-')
+          inspect_elf(str(root / 'control-lld'), 'control-lld-')
           raw_ir = (root / 'raw.ll').read_text()
           (root / 'ir-attributes.txt').write_text('\n'.join(
               line for line in raw_ir.splitlines()
@@ -272,47 +308,143 @@ jobs:
               raise RuntimeError('Zero-hot-sample parser control failed')
           (root / 'parser-controls.json').write_text(json.dumps(control, indent=2) + '\n')
 
+          # Inspect only descendants of the perf process launched below, and
+          # require the exact executable's device/inode identity. No global name
+          # search, ptrace, signal or change to the workload argv is involved.
+          def snapshot_maps(recording, executable, label, started):
+              expected = Path(executable).stat()
+              deadline = time.monotonic() + 1
+              attempts, errors, identified_at = 0, [], None
+              while recording.poll() is None and time.monotonic() < deadline:
+                  attempts += 1
+                  pending, seen = [recording.pid], set()
+                  while pending:
+                      pid = pending.pop()
+                      if pid in seen:
+                          continue
+                      seen.add(pid)
+                      process = Path('/proc') / str(pid)
+                      try:
+                          # Read every thread's child list in case perf delegates.
+                          tasks = list((process / 'task').iterdir())
+                          for task in tasks:
+                              pending.extend(int(child) for child in (task / 'children').read_text().split())
+                          actual = (process / 'exe').stat()
+                          if (actual.st_dev, actual.st_ino) != (expected.st_dev, expected.st_ino):
+                              continue
+                          if identified_at is None:
+                              identified_at = time.monotonic()
+                          # Wait after identifying the actual child, allowing
+                          # floor/worker startup while the workload proceeds.
+                          if time.monotonic() - identified_at < 0.2:
+                              continue
+                          before = time.monotonic()
+                          maps = (process / 'maps').read_text()
+                          status = (process / 'status').read_text()
+                          task_ids = sorted(int(task.name) for task in (process / 'task').iterdir())
+                          resolved = str((process / 'exe').resolve(strict=True))
+                          after = time.monotonic()
+                          (root / f'{label}.maps').write_text(maps)
+                          (root / f'{label}.process-status').write_text(status)
+                          metadata = dict(status='captured', perf_pid=recording.pid, pid=pid,
+                              task_ids=task_ids, executable=resolved, device=actual.st_dev, inode=actual.st_ino,
+                              wall_time_ns=time.time_ns(), clock='CLOCK_MONOTONIC',
+                              record_start_monotonic_seconds=started, identified_monotonic_seconds=identified_at,
+                              snapshot_monotonic_seconds=[before, after],
+                              since_record_start_seconds=[before - started, after - started],
+                              attempts=attempts, errors=errors)
+                          (root / f'{label}.maps.json').write_text(json.dumps(metadata, indent=2) + '\n')
+                          return
+                      except OSError as error:
+                          if len(errors) < 8:
+                              errors.append(f'{process}: {error}')
+                  time.sleep(0.01)
+              metadata = dict(status='missing', perf_pid=recording.pid, executable=executable,
+                  clock='CLOCK_MONOTONIC', record_start_monotonic_seconds=started,
+                  identified_monotonic_seconds=identified_at, diagnostic_monotonic_seconds=time.monotonic(),
+                  since_record_start_seconds=time.monotonic() - started, attempts=attempts, errors=errors,
+                  reason='No live descendant with the exact executable identity yielded a complete maps/status snapshot within 1 second.')
+              (root / f'{label}.maps.json').write_text(json.dumps(metadata, indent=2) + '\n')
+              print(f'::warning::{label}: process maps snapshot missing; see maps.json.', flush=True)
+
+          def record_profile(label, graph, invocation):
+              command = [perf, 'record', '-e', 'cpu-clock:u', '-F', '499', '--call-graph', graph,
+                         '-o', str(root / f'{label}.data'), '--'] + invocation
+              started = time.monotonic()
+              with (root / f'{label}.stdout').open('w') as out, (root / f'{label}.stderr').open('w') as err:
+                  with subprocess.Popen(command, stdout=out, stderr=err) as recording:
+                      try:
+                          snapshot_maps(recording, invocation[0], label, started)
+                          exit_code = recording.wait(timeout=max(0.01, 20 - (time.monotonic() - started)))
+                      except BaseException as error:
+                          # Preserve the existing record ceiling even if maps
+                          # discovery or artifact writing fails before wait().
+                          # Normal observation never signals the process.
+                          if recording.poll() is None:
+                              recording.kill()
+                          recording.wait()
+                          command_log(label, command, started, recording.returncode,
+                              timed_out=isinstance(error, subprocess.TimeoutExpired),
+                              error=f'{type(error).__name__}: {error}')
+                          raise
+              elapsed = time.monotonic() - started
+              command_log(label, command, started, exit_code)
+              with (root / 'record-runs.jsonl').open('a') as output:
+                  output.write(json.dumps(dict(mode=label, seconds=elapsed, exit=exit_code, argv=command)) + '\n')
+              if exit_code:
+                  raise RuntimeError(f'{label}: perf record exit {exit_code}; see stderr')
+              return elapsed, exit_code
+
+          def profile_artifacts(label, mode):
+              data = str(root / f'{label}.data')
+              script = capture(f'{label}.script', [perf, 'script', '--no-demangle', '-i', data])
+              capture(f'{label}.header', [perf, 'report', '--header-only', '-i', data])
+              if mode.startswith('dwarf'):
+                  capture(f'{label}.registers.script', [perf, 'script', '--no-demangle', '-i', data,
+                      '-F', 'comm,pid,tid,time,event,ip,sym,period,uregs'], optional=True, timeout=5)
+                  # Raw tool output retains stack bytes without a new perf.data parser.
+                  capture(f'{label}.raw-dump.txt', [perf, 'script', '-D', '-i', data], optional=True, timeout=5)
+                  capture(f'{label}.unwind-trace.stderr', [perf, 'script', '-vv', '--no-demangle', '-i', data],
+                      optional=True, timeout=5, discard_stdout=True)
+              return script
+
           rows = []
           # Software sampling avoids requiring a hardware PMU on hosted VMs.
           # Every mode uses the same user-space event, frequency, binary, argv.
           profiles = [('dwarf16384', 'dwarf,16384'), ('dwarf65528', 'dwarf,65528'), ('fp', 'fp')]
           for mode, graph in profiles:
-              started = time.monotonic()
-              with (root / f'{mode}.stdout').open('w') as out, (root / f'{mode}.stderr').open('w') as err:
-                  result = subprocess.run([perf, 'record', '-e', 'cpu-clock:u', '-F', '499', '--call-graph', graph,
-                                           '-o', str(root / f'{mode}.data'), '--'] + argv,
-                                          stdout=out, stderr=err, timeout=20)
-              elapsed = time.monotonic() - started
-              with (root / 'record-runs.jsonl').open('a') as output:
-                  output.write(json.dumps({'mode': mode, 'seconds': elapsed, 'exit': result.returncode}) + '\n')
-              if result.returncode:
-                  raise RuntimeError(f'{mode}: perf record exit {result.returncode}; see stderr')
-              script = capture(f'{mode}.script', [perf, 'script', '--no-demangle', '-i', str(root / f'{mode}.data')])
-              capture(f'{mode}.header', [perf, 'report', '--header-only', '-i', str(root / f'{mode}.data')])
+              elapsed, exit_code = record_profile(mode, graph, argv)
+              script = profile_artifacts(mode, mode)
               counts = sample_counts(script, set(families['leaf']), set(families['resume']), set(families['ordinary']))
               warning_lines = [line for line in (root / f'{mode}.stderr').read_text().splitlines()
                                if re.search(r'lost|drop|warn|error|fail', line, re.I)]
-              row = dict(mode=mode, seconds=elapsed, exit=result.returncode, counts=counts, warnings=warning_lines)
+              row = dict(mode=mode, seconds=elapsed, exit=exit_code, counts=counts, warnings=warning_lines)
               rows.append(row)
               (root / 'counts.json').write_text(json.dumps(rows, indent=2) + '\n')
 
-          # C control: same perf modes and event on clang -O2 output with
-          # default unwind tables and frame-pointer omission.
-          control_binary = str(root / 'control')
-          def control_trial(batches, label):
-              started = time.monotonic()
-              with (root / f'{label}.stdout').open('w') as out, (root / f'{label}.stderr').open('w') as err:
-                  result = subprocess.run([control_binary] + ['batch'] * batches, stdout=out, stderr=err, timeout=20)
-              elapsed = time.monotonic() - started
-              if result.returncode:
-                  raise RuntimeError(f'{label}: control exit {result.returncode}')
-              return elapsed
-          control_duration = control_trial(16, 'control-sample-16')
-          control_batches = max(1, min(5000, math.ceil(16 * 3.5 / max(control_duration, 0.001))))
-          control_duration = control_trial(control_batches, 'control-selected')
-          control_argv = [control_binary] + ['batch'] * control_batches
-          (root / 'control-invocation.json').write_text(json.dumps({'argv': control_argv,
-              'unprofiled_seconds': control_duration}, indent=2) + '\n')
+          # Same C source and optimization; isolate the selected native linker.
+          # Keep the original default-linker build and its calibration unchanged.
+          def control_invocation(executable, prefix):
+              timings = []
+              def control_trial(batches, label):
+                  command = [executable] + ['batch'] * batches
+                  started = time.monotonic()
+                  with (root / f'{label}.stdout').open('w') as out, (root / f'{label}.stderr').open('w') as err:
+                      result = subprocess.run(command, stdout=out, stderr=err, timeout=20)
+                  elapsed = time.monotonic() - started
+                  command_log(label, command, started, result.returncode)
+                  timings.append(dict(trial=label, batches=batches, seconds=elapsed, exit=result.returncode))
+                  (root / f'{prefix}-calibration.json').write_text(json.dumps(timings, indent=2) + '\n')
+                  if result.returncode:
+                      raise RuntimeError(f'{label}: control exit {result.returncode}')
+                  return elapsed
+              duration = control_trial(16, f'{prefix}-sample-16')
+              batches = max(1, min(5000, math.ceil(16 * 3.5 / max(duration, 0.001))))
+              duration = control_trial(batches, f'{prefix}-selected')
+              invocation = [executable] + ['batch'] * batches
+              (root / f'{prefix}-invocation.json').write_text(json.dumps(dict(argv=invocation,
+                  unprofiled_seconds=duration, target_seconds=[2, 5], within_target=2 <= duration <= 5), indent=2) + '\n')
+              return invocation
 
           def control_counts(script):
               counts = dict(hot=0, caller_loop=0, main=0)
@@ -333,28 +465,30 @@ jobs:
           if probe != dict(hot=2, caller_loop=1, main=1):
               raise RuntimeError(f'Control parser probe failed: {probe}')
 
-          control_rows = []
-          for mode, graph in profiles:
-              started = time.monotonic()
-              with (root / f'control-{mode}.stdout').open('w') as out, (root / f'control-{mode}.stderr').open('w') as err:
-                  result = subprocess.run([perf, 'record', '-e', 'cpu-clock:u', '-F', '499', '--call-graph', graph,
-                                           '-o', str(root / f'control-{mode}.data'), '--'] + control_argv,
-                                          stdout=out, stderr=err, timeout=20)
-              elapsed = time.monotonic() - started
-              if result.returncode:
-                  raise RuntimeError(f'control {mode}: perf record exit {result.returncode}; see stderr')
-              script = capture(f'control-{mode}.script', [perf, 'script', '--no-demangle', '-i', str(root / f'control-{mode}.data')])
-              control_rows.append(dict(mode=mode, seconds=elapsed, counts=control_counts(script)))
-              (root / 'control-counts.json').write_text(json.dumps(control_rows, indent=2) + '\n')
-          control_table = ['C control (clang -O2)',
-                           'mode | hot samples | caller_loop | main | seconds',
-                           '--- | ---: | ---: | ---: | ---:']
-          for row in control_rows:
-              counts = row['counts']
-              hot = counts['hot']
-              cells = [f'{counts[c]}/{hot} ({counts[c] / hot:.1%})' if hot else 'inconclusive (0 hot samples)' for c in ('caller_loop', 'main')]
-              control_table.append(f"{row['mode']} | {hot} | " + ' | '.join(cells) + f" | {row['seconds']:.3f}")
-          control_table.extend(['', 'Same event (cpu-clock:u, 499 Hz), modes and host as the Whitefoot table; only samples whose first IP is hot_leaf count.'])
+          control_tables = []
+          for prefix, description in [('control', 'C control (clang -O2 -g0, default linker)'),
+                                      ('control-lld', 'C control (same source, clang -O2 -g0 -fuse-ld=lld)')]:
+              control_argv = control_invocation(str(root / prefix), prefix)
+              control_rows = []
+              for mode, graph in profiles:
+                  label = f'{prefix}-{mode}'
+                  elapsed, exit_code = record_profile(label, graph, control_argv)
+                  script = profile_artifacts(label, mode)
+                  warnings = [line for line in (root / f'{label}.stderr').read_text().splitlines()
+                              if re.search(r'lost|drop|warn|error|fail', line, re.I)]
+                  control_rows.append(dict(mode=mode, seconds=elapsed, exit=exit_code,
+                                           counts=control_counts(script), warnings=warnings))
+                  (root / f'{prefix}-counts.json').write_text(json.dumps(control_rows, indent=2) + '\n')
+              control_table = [description, '', 'mode | hot samples | caller_loop | main | seconds / exit',
+                               '--- | ---: | ---: | ---: | ---']
+              for row in control_rows:
+                  counts = row['counts']
+                  hot = counts['hot']
+                  cells = [f'{counts[c]}/{hot} ({counts[c] / hot:.1%})' if hot else 'inconclusive (0 hot samples)' for c in ('caller_loop', 'main')]
+                  control_table.append(f"{row['mode']} | {hot} | " + ' | '.join(cells) + f" | {row['seconds']:.3f} / {row['exit']}")
+              control_table.extend(['', 'Same event (cpu-clock:u, 499 Hz), modes and host as the Whitefoot table; only samples whose first IP is hot_leaf count.',
+                                    'Each linker build has its own recorded calibrated invocation; inspect ELF segments before interpreting this comparison.'])
+              control_tables.extend([''] + control_table)
 
           columns = ['ordinary', 'resume', 'native_main', 'wf_main_resume', 'wf_main_body', 'floor_entry', 'thread_start', 'beyond_resume']
           table = ['mode | hot samples | ' + ' | '.join(columns) + ' | seconds / exit',
@@ -368,7 +502,7 @@ jobs:
                         'it runs on another thread, so absence is expected rather than an unwind failure.',
                         'wf_main_resume is a logical caller and may be absent after suspension; floor/thread entries are physical ancestors.',
                         'Lost/drop warnings are retained in counts.json and complete per-mode stderr; inspect them before interpreting ratios.'])
-          table.extend([''] + control_table)
+          table.extend(control_tables)
           (root / 'table.md').write_text('\n'.join(table) + '\n')
           print((root / 'table.md').read_text(), flush=True)
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as output:

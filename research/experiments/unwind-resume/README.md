@@ -1,8 +1,8 @@
 # Unwinding through a waiting function's resume code
 
-This protocol is written before collecting data. No compiler acceptance,
-elapsed time, unwind-table result or profiling result has been observed for
-this witness. The temporary workflow must supply that evidence in CI.
+The initial protocol below was written before collecting data. The retained
+source run and the current follow-up are distinguished explicitly: observations
+from the source run do not establish the result of the additional diagnostics.
 
 Firn reported that `perf record -g --call-graph dwarf,16384` on its LTO-built
 server, compiled with release `wf-af7665be672d`, stops at a Whitefoot waiting
@@ -69,14 +69,16 @@ The waiting signature adds `presplitcoroutine`
 ([frames.rs:483](../../../compiler/src/backend/emitter/frames.rs#L483)). Every
 emitted definition uses attribute group zero
 ([emission.rs:413](../../../compiler/src/backend/emission.rs#L413)), which the
-emitter defines with `probe-stack`
-([emitter.rs:694](../../../compiler/src/backend/emitter.rs#L694)). These paths
-do not explicitly request `uwtable` or a frame pointer. That absence motivates
-inspection of the generated resume function's actual FDE and prologue; it does
-not prove LLVM emits no unwind information. `nounwind` describes exception
-behavior and, by itself, would not establish the absence of unwind tables.
-The experiment uses compiler-produced full LTO without patching IR or adding
-unwind, frame-pointer or inlining overrides.
+emitter defines with `probe-stack` and, on this work branch, `uwtable`
+([emitter.rs:694](../../../compiler/src/backend/emitter.rs#L694)). The branch
+explicitly requests unwind tables; it does not explicitly request a frame
+pointer. Inspect the generated resume function's actual FDE and prologue,
+rather than inferring final CFI from raw IR attributes. `nounwind` describes
+exception behavior and does not establish the absence of unwind tables. The
+experiment uses compiler-produced full LTO without patching IR or overriding
+frame-pointer or inlining behavior. This branch's `uwtable` addition is an
+experimental change to emitted attributes, so its binary does not establish
+the unwind behavior of Firn's original compiler release.
 
 The runtime starts the program body on a pthread
 ([wf_floor.c:308](../../../compiler/src/backend/wf_floor.c#L308),
@@ -96,11 +98,11 @@ the downstream native build path with full LTO. Record the compiler revision,
 command, LLVM version, kernel, perf version and executable symbol inventory.
 All three modes sample the software event `cpu-clock:u` at 499 Hz, so the
 hosted runner does not need hardware performance counters.
-Disassembly must show retained resume, ordinary and leaf functions and actual
-non-tail resume-to-ordinary and ordinary-to-leaf call edges. If optimization
-erases a target or its call edge, this binary cannot answer the proposed
-question; preserve the artifacts and report the run as inconclusive rather
-than altering compiler attributes to produce an artificial baseline.
+Disassembly must show a retained resume and leaf with a non-tail native call
+chain between them. The ordinary function can survive as an intermediate
+caller or be inlined into resume, leaving a direct resume-to-leaf call. If
+optimization erases that physical call chain, preserve the artifacts and
+report the run as inconclusive rather than adding inlining overrides.
 
 For each retained target, map its native address range to frame-description
 entries (FDEs) in `readelf --debug-dump=frames`, `readelf -wF` and
@@ -136,12 +138,114 @@ is expected and says little about DWARF correctness.
 
 These explanations can coexist. No positive result for this small program
 proves Firn's release has correct CFI, and no absent logical caller establishes
-that the active resume frame itself lacks CFI. This experiment proposes no
-compiler or language change. The temporary workflow is removed before the
+that the active resume frame itself lacks CFI. The initial protocol selected no
+language change. The work branch additionally requests `uwtable`; the retained
+evidence alone does not establish that attribute's effect against its base.
+The temporary workflow is removed before the
 branch is ready, together with its three temporary rows in
 `.github/time-budgets.txt`. Their 600/120/180-second limits are unsampled
 initial operational ceilings, not budgets derived from twenty CPU-class
 runs. The witness and protocol remain the reproducible inputs to the retained
 CI evidence.
 
-[`control.c`](control.c) is a C control compiled with `clang -O2 -g0` and sampled in the same job with the same three modes and event: if it shows a similar missing fraction under `cpu-clock:u`, the residual hot-leaf samples without ancestors are a sampling artifact of this host, not a Whitefoot unwind defect; if it reaches about 100%, the residual is Whitefoot-specific.
+## Retained source-run observations
+
+CI run `38422018983` produced the observed artifacts for revision
+`0ebd5e22545689163345311c3a73604e2864eaae`. Its `revision.txt`, `table.md`,
+`perf.data` files, frame dumps, disassembly and executable are the evidence;
+the follow-up diagnostics below were not part of that run.
+
+| Mode | Hot-leaf samples | Resume recovered | Physical caller beyond resume |
+| --- | ---: | ---: | ---: |
+| DWARF, 16,384 requested bytes | 1,672 | 1,485 (88.8%) | 0 |
+| DWARF, 65,528 requested bytes | 1,681 | 1,496 (89.0%) | 0 |
+| Frame pointer | 1,673 | 0 | 0 |
+
+The default-linker C control recovered `caller_loop` and `main` in all 1,673
+and 1,671 hot-leaf samples in the two DWARF modes, respectively. Its
+frame-pointer mode recovered neither. This comparison does not isolate
+Whitefoot semantics: the linkers produced different executable segment
+layouts.
+
+The earlier interpretation that the same sampled PC sometimes succeeded and
+sometimes failed is incorrect. In both DWARF recordings, every sample that
+recovered resume had a leaf offset at most `+0xfd`; every sample without resume
+had an offset from `+0x104` through `+0x127`. No PC occurs in both groups. The
+187 and 185 missing-resume samples therefore form a PC-dependent boundary,
+rather than evidence of an intermittent failure at the same instruction.
+
+The leaf has an FDE for ELF virtual addresses `0xd980..0xdab7`, with CFA
+`rsp+8`. Resume has an FDE for `0xf2c0..0xf801`, with CFA `rsp+80` at the two
+hot calls. The saved executable's `.text` virtual address is `0x4f40` and its
+file offset is `0x3f40`, a `0x1000` difference. The recorded executable mapping
+has the same load-segment difference; its build ID matches the saved ELF.
+The default-linker C control's executable load segment has equal virtual
+address and file offset (`0x1000`).
+
+Raw-stack reconstruction of all 3,353 DWARF hot-leaf samples finds both
+physical return addresses: `[SP]` is binary base plus `0xf73e` or `0xf74f`,
+and `[SP+80]` is base plus `0xe8ae`, a return into `wf__main_body`. Applying
+that caller's frame rules also finds its return into `wf__floor_entry` at
+`[SP+528]`, base plus `0x5397`. The copies contain 16,384 or 65,280 bytes
+(65,280 is the observed larger copy size, despite the 65,528-byte request),
+so these physical frames are present in both recordings. Sampled RBP values
+are unmapped 32-bit values; disassembly uses EBP for the integer mixing state in resume.
+These observations oppose insufficient copied stack and missing logical
+continuation frames as causes of the first physical unwind failures.
+
+One hypothesis explains both boundaries: an unwind lookup using a
+file-relative PC where an ELF virtual address is needed. Subtracting
+`0x1000` from leaf PCs moves successful samples into an unrelated FDE at
+`0xc940..0xca82`, whose CFA is also `rsp+8`, and moves every unsuccessful
+sample into the FDE gap `0xca82..0xcac0`. Applying the same bias to the resume
+return PCs selects `wf__main_body` rules using `rbp+16`, although the active
+resume frame needs `rsp+80`. The `.eh_frame_hdr` entries for the actual leaf
+and resume are ordered and point to their correct FDEs. This is a hypothesis
+about address translation during unwinding, not identification of a proven
+bug in a particular perf or unwind-library component.
+
+## Current follow-up and rejection criterion
+
+The current workflow keeps the baseline modes, event, frequency and Whitefoot
+invocation protocol. It additionally retains ELF headers, load segments and
+`.eh_frame_hdr` bytes for Whitefoot and both C controls; perf build options
+and linked libraries; and, for each DWARF recording, explicit PID, TID, time,
+IP, symbol, period and user-register output, perf's raw event dump and verbose
+unwind stderr. These diagnostics use the recorded data and add no profiling
+mode. The raw dump retains stack bytes without a new binary-data parser.
+
+During each recording, it reads `/proc/<pid>/maps`, process status and task
+IDs from the launched perf process's descendants, accepting only a child with
+the exact executable's device and inode. Snapshot metadata records the PID,
+executable identity, wall time, absolute monotonic timestamps before and
+after the snapshot, elapsed interval since recording began and read failures.
+Collection waits 0.2 seconds after identifying the exact child to allow worker
+startup, and overlaps the unchanged workload. No complete snapshot within
+one second is an explicit missing-snapshot diagnostic. A snapshot is not a
+guarantee that every sampled stack address was mapped at that instant; align
+its timestamps with sample times and the recorded MMAP2 events before using
+it as evidence. This process identification changes neither the workload
+argument vector nor its behavior.
+
+[`control.c`](control.c) remains compiled with `clang -O2 -g0` and the default
+linker. A second build of the same source adds only `-fuse-ld=lld`. Both use
+the same three call-graph modes and `cpu-clock:u` at 499 Hz, with each binary's
+own retained calibration and selected argument vector. Interpret the LLD
+control against its own load-segment bias and FDE coverage; do not predict
+Whitefoot's exact missing fraction for a different layout. Reproducing a
+bias-dependent lookup failure in this C build would oppose a
+Whitefoot-language-specific explanation. A successful LLD control alone
+would not reject the hypothesis without checking whether its shifted PCs
+still fall in usable FDEs.
+
+The rejection criterion is a trace that shows failed PCs being translated to
+their correct ELF virtual addresses and using the correct covering FDE/CFA
+rules, or a failure pattern inconsistent with that binary's measured load
+bias and shifted FDE coverage. A trace showing a missing or wrong lookup at
+the predicted shifted addresses supports the hypothesis and can identify
+which component is responsible. If the available perf build exposes no such
+trace, report the component attribution as unresolved. Diagnostic commands
+retain argv, elapsed time and exit status; an unavailable field, unsupported
+option or timeout is recorded explicitly and does not replace a successful
+baseline comparison. All commands remain under the temporary workflow's
+existing operational ceilings.
