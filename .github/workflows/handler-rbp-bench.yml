@@ -1,0 +1,287 @@
+# Temporary same-source handler-RBP comparison. Remove this workflow and its
+# handler-rbp-bench/* time-budget rows before the branch is ready.
+# research-boundary: manual-only
+# No timing threshold selects a verdict; compare the candidate's paired CPU
+# gain with the separately compiled base twin's noise.
+name: handler-rbp-bench
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: handler-rbp-bench-14900k
+  cancel-in-progress: false
+
+jobs:
+  compare:
+    runs-on: [self-hosted, 14900k]
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    env:
+      LC_ALL: C
+      V2H_CPUS: "2"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Record inputs and check the host is available
+        run: |
+          set -euo pipefail
+          # Use the runner's installed toolchain, exactly as v2h-call-frame.yml.
+          if [ -d "$HOME/.cargo/bin" ]; then
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+          taskset -c "$V2H_CPUS" true
+          lock="/tmp/whitefoot-check-$(id -u).lock"
+          if [ -d "$lock" ]; then
+            cat "$lock/pid" "$lock/command"
+            pid=$(cat "$lock/pid")
+            ps -p "$pid" -o pid=,args= || true
+            echo 'Inspect the existing lock owner; this comparison will not remove it.' >&2
+            exit 75
+          fi
+          out="$RUNNER_TEMP/handler-rbp-bench-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          mkdir -p "$out"
+          echo "HANDLER_RBP_BENCH_OUT=$out" >> "$GITHUB_ENV"
+          echo "WHITEFOOT_TIME_BUDGET_RECORD=$out/time-budget-overruns.txt" >> "$GITHUB_ENV"
+          baseline=$(git merge-base HEAD origin/main)
+          printf '%s\n' "$baseline" > "$out/baseline-sha.txt"
+          {
+            printf 'candidate/compiler %s\nbaseline/compiler %s\norigin/main %s\n' \
+              "$(git rev-parse HEAD)" "$baseline" "$(git rev-parse origin/main)"
+            printf 'source: one HEAD-generated v2h.wf for all three images\n'
+            printf 'iterations 2000\nrounds 7\npreflight samples 1 per image (excluded from rounds)\n'
+            printf 'CPU time child user + system seconds\naffinity CPU %s\n' "$V2H_CPUS"
+            printf 'comparison: candidate/base; noise control: twin/base\n'
+            uname -a
+            lscpu
+            /usr/bin/clang --version
+            rustc --version
+            cargo --version
+          } > "$out/inputs.txt"
+          cat "$out/inputs.txt"
+          git worktree add --detach "$out/base-worktree" "$baseline"
+
+      - name: Build the merge-base and branch compilers with the gate profile
+        run: |
+          set -euo pipefail
+          out="$HANDLER_RBP_BENCH_OUT"
+          # Separate target directories prevent a self-hosted checkout's old
+          # binary or the other revision's incremental products from being used.
+          for revision in base candidate; do
+            if [ "$revision" = base ]; then
+              tree="$out/base-worktree"
+            else
+              tree="$PWD"
+            fi
+            perl .github/run-check.pl "handler-rbp-bench/fetch-$revision" \
+              cargo fetch --locked --manifest-path "$tree/compiler/Cargo.toml"
+            perl .github/run-check.pl "handler-rbp-bench/build-$revision" \
+              env CARGO_TARGET_DIR="$out/target-$revision" \
+              cargo build --manifest-path "$tree/compiler/Cargo.toml" \
+              --profile gate --bin whitefootc --locked --offline \
+              > "$out/build-$revision.log" 2>&1 \
+              || { status=$?; cat "$out/build-$revision.log"; exit "$status"; }
+            cat "$out/build-$revision.log"
+          done
+          sha256sum "$out"/target-*/gate/whitefootc > "$out/compiler-sha256.txt"
+
+      - name: Generate one source and independently produce base, twin and candidate
+        run: |
+          set -euo pipefail
+          out="$HANDLER_RBP_BENCH_OUT"
+          wrapper="$PWD/.github/run-check.pl"
+          perl "$wrapper" handler-rbp-bench/generate \
+            python3 research/experiments/match-dispatch/wasm/gen.py "$out/v2h.wf"
+          for image in base twin candidate; do
+            if [ "$image" = candidate ]; then
+              revision=candidate
+              tree="$PWD"
+            else
+              revision=base
+              tree="$out/base-worktree"
+            fi
+            mkdir -p "$out/tmp-$image"
+            # No --cache: each invocation checks, lowers and links afresh.
+            # The twin is a second base compilation, not a copied executable.
+            (
+              cd "$tree"
+              perl "$wrapper" "handler-rbp-bench/compile-$image" \
+                env TMPDIR="$out/tmp-$image" "$out/target-$revision/gate/whitefootc" \
+                --dispatch-ledger "$out/v2h.wf" -o "$out/v2h-$image"
+            ) > "$out/compile-$image.log" 2>&1 \
+              || { status=$?; cat "$out/compile-$image.log"; exit "$status"; }
+            cat "$out/compile-$image.log"
+          done
+          sha256sum "$out/v2h.wf" "$out"/v2h-* > "$out/image-sha256.txt"
+          perl .github/run-check.pl handler-rbp-bench/module \
+            git clone --quiet https://github.com/mbbill/Silverfir-nano "$out/sf"
+          git -C "$out/sf" checkout --quiet 5f248e44
+          git -C "$out/sf" rev-parse HEAD > "$out/module-repository-sha.txt"
+          # Keep CoreMark in its own directory; v2h accepts a relative module
+          # name, not an absolute module path.
+          sha256sum "$out/sf/benchmarks/wasi/coremark/coremark.wasm" >> "$out/image-sha256.txt"
+
+      - name: Prepare the CPU-time instrument and CRC oracle
+        run: |
+          set -euo pipefail
+          out="$HANDLER_RBP_BENCH_OUT"
+          cp .github/handler-rbp.py "$out/handler-rbp.py"
+          cat > "$out/measure.py" <<'PY'
+          import csv
+          import importlib.util
+          import math
+          import pathlib
+          import resource
+          import statistics
+          import subprocess
+          import sys
+
+          out = pathlib.Path(sys.argv[1])
+          cpus, mode = sys.argv[2:]
+          module_dir = out / "sf/benchmarks/wasi/coremark"
+          names = ["base", "twin", "candidate"]
+          spec = importlib.util.spec_from_file_location("handler_rbp", out / "handler-rbp.py")
+          oracle = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(oracle)
+
+          # Exercise the reused validator with a good result and every missing
+          # or wrong CRC, plus a failed process, before observing any timings.
+          good = "".join(f"[0]{name}: {value}\n" for name, value in oracle.EXPECTED_CRC.items())
+          if oracle.crc_failure(0, good):
+              raise RuntimeError("CRC oracle rejected its positive control")
+          corruptions = [(1, good)]
+          for name, value in oracle.EXPECTED_CRC.items():
+              corruptions.extend([
+                  (0, good.replace(value, "0xffff")),
+                  (0, good.replace(f"[0]{name}: {value}\n", "")),
+              ])
+          if any(oracle.crc_failure(status, text) is None for status, text in corruptions):
+              raise RuntimeError("CRC oracle accepted a damaged result")
+
+          def launch(name, stem):
+              before = resource.getrusage(resource.RUSAGE_CHILDREN)
+              process = subprocess.run(
+                  ["taskset", "-c", cpus, str(out / f"v2h-{name}"),
+                   "coremark.wasm", "0x0", "0x0", "0x66", "2000"],
+                  cwd=module_dir, capture_output=True, text=True, timeout=120, check=False)
+              after = resource.getrusage(resource.RUSAGE_CHILDREN)
+              user = after.ru_utime - before.ru_utime
+              system = after.ru_stime - before.ru_stime
+              cpu = user + system
+              (out / f"{stem}.stdout").write_text(process.stdout)
+              (out / f"{stem}.stderr").write_text(process.stderr)
+              failure = oracle.crc_failure(process.returncode, process.stdout)
+              if failure:
+                  raise ValueError(f"{stem}: {failure}")
+              if not math.isfinite(cpu) or cpu <= 0:
+                  raise ValueError(f"{stem}: invalid CPU time {cpu}")
+              print(f"{stem}: user {user:.9f} s, system {system:.9f} s, CPU {cpu:.9f} s", flush=True)
+              return user, system, cpu, process.returncode
+
+          if mode == "sample":
+              samples = []
+              with (out / "samples.tsv").open("w", newline="") as record:
+                  rows = csv.writer(record, delimiter="\t")
+                  rows.writerow(["image", "user_seconds", "system_seconds", "cpu_seconds", "exit_status"])
+                  for name in names:
+                      result = launch(name, f"sample-{name}")
+                      rows.writerow([name, *result])
+                      record.flush()
+                      samples.append(result[2])
+              text = (f"Preflight CPU seconds: min {min(samples):.9f}, max {max(samples):.9f}; "
+                      f"seven-round CPU projection {7 * sum(samples):.9f} s.\n"
+                      "Preflight samples validate all images and expose duration before the fixed seven-round panel; "
+                      "they are excluded from the comparison.\n")
+              (out / "preflight.txt").write_text(text)
+              print(text, end="", flush=True)
+          elif mode == "measure":
+              timings = {name: [] for name in names}
+              pairs = {name: [] for name in ["candidate/base", "twin/base"]}
+              with (out / "runs.tsv").open("w", newline="") as raw, (out / "ratios.tsv").open("w", newline="") as paired:
+                  runs = csv.writer(raw, delimiter="\t")
+                  ratios = csv.writer(paired, delimiter="\t")
+                  runs.writerow(["round", "position", "image", "user_seconds", "system_seconds", "cpu_seconds", "exit_status"])
+                  ratios.writerow(["round", "order", "base_cpu_seconds", "twin_cpu_seconds", "candidate_cpu_seconds", "candidate/base", "twin/base"])
+                  for round_index in range(7):
+                      offset = round_index % len(names)
+                      order = names[offset:] + names[:offset]
+                      times = {}
+                      for position, name in enumerate(order, 1):
+                          result = launch(name, f"round-{round_index + 1}-{name}")
+                          times[name] = result[2]
+                          timings[name].append(result[2])
+                          runs.writerow([round_index + 1, position, name, *result])
+                          raw.flush()
+                      candidate_ratio = times["candidate"] / times["base"]
+                      twin_ratio = times["twin"] / times["base"]
+                      pairs["candidate/base"].append(candidate_ratio)
+                      pairs["twin/base"].append(twin_ratio)
+                      ratios.writerow([round_index + 1, ",".join(order), *(times[name] for name in names), candidate_ratio, twin_ratio])
+                      paired.flush()
+                      print(f"round {round_index + 1}: candidate/base {candidate_ratio:.6f}, twin/base {twin_ratio:.6f}", flush=True)
+              summary = ["CoreMark, 2000 iterations, seven rotating rounds; CPU = child user + system seconds.", "",
+                         "| Image | Median CPU (s) | Min (s) | Max (s) | Spread (max-min)/median |",
+                         "| --- | ---: | ---: | ---: | ---: |"]
+              for name in names:
+                  values = timings[name]
+                  median = statistics.median(values)
+                  summary.append(f"| {name} | {median:.9f} | {min(values):.9f} | {max(values):.9f} | {(max(values) - min(values)) / median:.2%} |")
+              summary.extend(["", "| Paired CPU ratio | Median | Min | Max |", "| --- | ---: | ---: | ---: |"])
+              for name, values in pairs.items():
+                  summary.append(f"| {name} | {statistics.median(values):.6f} | {min(values):.6f} | {max(values):.6f} |")
+              summary.extend(["", "Ratios below 1 mean faster than base. The separately produced base twin measures noise; no timing threshold selects an adoption verdict."])
+              text = "\n".join(summary) + "\n"
+              (out / "summary.md").write_text(text)
+              print(text, end="", flush=True)
+          else:
+              raise ValueError(f"unknown measurement mode: {mode}")
+          PY
+
+      - name: Take a small correctness and duration sample before the panel
+        run: |
+          set -euo pipefail
+          perl .github/run-check.pl handler-rbp-bench/sample \
+            python3 "$HANDLER_RBP_BENCH_OUT/measure.py" "$HANDLER_RBP_BENCH_OUT" "$V2H_CPUS" sample
+
+      - name: Measure seven rotating rounds and validate every result
+        run: |
+          set -euo pipefail
+          out="$HANDLER_RBP_BENCH_OUT"
+          perl .github/run-check.pl handler-rbp-bench/measure \
+            python3 "$out/measure.py" "$out" "$V2H_CPUS" measure
+          cat "$out/summary.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Enforce temporary operational time budgets
+        if: always() && env.HANDLER_RBP_BENCH_OUT != ''
+        run: perl .github/run-check.pl --budget-verdict "$WHITEFOOT_TIME_BUDGET_RECORD"
+
+      - name: Retain inputs, all raw results and the three independently built images
+        if: always() && env.HANDLER_RBP_BENCH_OUT != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: handler-rbp-bench-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.HANDLER_RBP_BENCH_OUT }}/*.*
+            ${{ env.HANDLER_RBP_BENCH_OUT }}/v2h-base
+            ${{ env.HANDLER_RBP_BENCH_OUT }}/v2h-twin
+            ${{ env.HANDLER_RBP_BENCH_OUT }}/v2h-candidate
+            ${{ env.HANDLER_RBP_BENCH_OUT }}/sf/benchmarks/wasi/coremark/coremark.wasm
+          if-no-files-found: error
+
+      - name: Remove the temporary base compiler worktree
+        if: always() && env.HANDLER_RBP_BENCH_OUT != ''
+        run: |
+          set -euo pipefail
+          tree="$HANDLER_RBP_BENCH_OUT/base-worktree"
+          if [ -d "$tree" ]; then
+            git worktree remove --force "$tree"
+          fi

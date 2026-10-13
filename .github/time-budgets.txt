@@ -99,3 +99,25 @@ handler-rbp/inspection-controls 10         10         10         -      -
 handler-rbp/inspection          10         10         10         -      -
 handler-rbp/module              300        300        300        -      -
 handler-rbp/crc                 10         10         10         -      -
+
+# Temporary handler-rbp-bench.yml, manual 14900K research comparison; remove
+# these rows with the workflow before ready. These are unsampled operational
+# ceilings, not per-CPU measurements or performance acceptance thresholds.
+# Fetch/module ceilings and image ceilings reuse the temporary acquisition
+# and generated-program ceilings above. Compiler ceilings reuse the temporary
+# handler-rbp/compiler-build row above.
+# The i9 has no sampled CPU class and uses the existing unknown-model fallback.
+# One preflight sample per image precedes the fixed seven-round panel. Initial
+# sample/measurement caps allow up to 120 s per launch; retain the first run
+# and ask the owner about an overrun rather than silently raising a ceiling.
+handler-rbp-bench/fetch-base     300        300        300        -      -
+handler-rbp-bench/fetch-candidate 300       300        300        -      -
+handler-rbp-bench/build-base     135        115        85         -      -
+handler-rbp-bench/build-candidate 135       115        85         -      -
+handler-rbp-bench/generate       10         10         10         -      -
+handler-rbp-bench/compile-base   300        300        300        -      -
+handler-rbp-bench/compile-twin   300        300        300        -      -
+handler-rbp-bench/compile-candidate 300     300        300        -      -
+handler-rbp-bench/module         300        300        300        -      -
+handler-rbp-bench/sample         360        360        360        -      -
+handler-rbp-bench/measure        1800       1800       1800       -      -
