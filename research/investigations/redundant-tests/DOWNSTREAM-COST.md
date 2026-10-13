@@ -456,3 +456,83 @@ labels: no budget-table change was authorized by this task's file scope, and
 the experiment deadline is not a budget approval. The unavailable downstream
 migration/explanation-off control remains an attribution limitation. The review
 does not validate a new performance result or approve the pull request.
+
+## Separate finding: `unchanged` reservation and downstream migration
+
+The original attribution artifact contains four Snowghost module reports with
+FORM-3 `UnexpectedToken`, `found: "unchanged"`, at a local `let` binding.
+The first three below stop before semantic analysis and have incomplete
+rejection inventories. Oracle IDNA recovers past its parser failure, analyzes
+the remaining bodies and reports a further OP-5 task; its completed inventory
+must not be described as a parser-only abort. All main reference reports
+accept these modules. The uninstrumented timings use the same run and pins
+recorded above, in seconds:
+
+| Module | Main / branch / main twin | Parser tasks | Branch semantic evidence |
+| --- | --- | --- | --- |
+| `pkg::style` | 53.019 / 0.719 / 52.491 | 4 | `complete: false`; no work TSV |
+| `pkg::layout` | 8.432 / 1.119 / 8.130 | 5 | `complete: false`; no work TSV |
+| `pkg::oracle::dom_selftest` | 0.354 / 0.112 / 0.323 | 1 | `complete: false`; no work TSV |
+| `pkg::oracle::idna` | 0.136 / 0.216 / 0.116 | 1 | `complete: true`; semantic work TSV; additional OP-5 task in `prefix_intact` at line 295 |
+
+Every parser task identifies the following site in the pinned Snowghost
+`renderer/` tree; the columns are one-based:
+
+| Module | Function | Source location |
+| --- | --- | --- |
+| `pkg::style` | `layout_changes` | `style/delta.wf:893:11` |
+| `pkg::style` | `restyle_level` | `style/incremental.wf:1061:7` |
+| `pkg::style` | `rebuild_all` | `style/incremental.wf:1522:7` |
+| `pkg::style` | `rematched` | `style/restyle.wf:553:7` |
+| `pkg::layout` | `narrow_beside` | `layout/flow.wf:584:7` |
+| `pkg::layout` | `position_child` | `layout/flow.wf:2610:9` |
+| `pkg::layout` | `retained_pseudo_attributes` | `layout/style_update.wf:487:11` |
+| `pkg::layout` | `styles_restyled` | `layout/style_update.wf:711:9` |
+| `pkg::layout` | `update_flow` | `layout/update.wf:1505:7` |
+| `pkg::oracle::dom_selftest` | `check_atoms` | `oracle/dom_selftest/dom_selftest.wf:255:7` |
+| `pkg::oracle::idna` | `print_case` | `oracle/idna/idna.wf:335:11` |
+
+This inventory is extracted from every module's `time-branch.stdout` JSON and
+cross-checked against its `work-branch.stdout`, metadata and TSV presence.
+In particular, `pkg::tools::normalization_tables` is incomplete after an OP-5
+task in `build_composition_tables`; it has semantic work rows and no emitted
+`unchanged` parser task. It is not evidence of this reservation failure.
+The fast parser-only observations omit the semantic cost of the affected
+module, so they cannot count as OP-5 performance improvements.
+
+The reservation originates on **main**, in the range-helper-frame amendment
+[PR #395](https://github.com/Ming-Research/Whitefoot/pull/395), merged as
+[`35cfc4a0ba27ca74a9933711ef52369a67ec912d`](https://github.com/Ming-Research/Whitefoot/commit/35cfc4a0ba27ca74a9933711ef52369a67ec912d).
+That main first-parent change advances the specification from v0.137 to
+**v0.138** and first adds `"unchanged"` as a fixed grammar atom in GRAM-5 and
+GRAM-6. FORM-3 already excludes every lowercase fixed grammar atom from IDENT;
+therefore the new atom reserves the spelling wherever an IDENT is required.
+The compiler adds `FixedTerminal::Unchanged` in `syntax/terminal.rs`; the
+classifier selects fixed-terminal membership instead of identifier membership
+for a matching lowercase word. Both the grammar atom and compiler terminal
+are absent from the merge's first parent. Main's first-parent history for the
+literal grammar atom identifies this merge as its introduction.
+
+The amendment's approved draft
+[`26f62c5fd13bf719e5d4bb3380caf7e37565aad7`](https://github.com/Ming-Research/Whitefoot/commit/26f62c5fd13bf719e5d4bb3380caf7e37565aad7)
+was titled v0.136. The [specification approval record](../../../spec/log.md)
+explicitly includes `unchanged` becoming reserved and states that the
+unchanged rule text was renumbered to v0.138 because main had reached v0.137.
+Thus v0.136 is the draft title, not the main-line specification version that
+introduced this reservation. The comparison compiler
+[`58743a931a5ec6244864d37041fd1a7c1c5a145d`](https://github.com/Ming-Research/Whitefoot/commit/58743a931a5ec6244864d37041fd1a7c1c5a145d)
+uses v0.135 and predates it. The OP-5 branch inherits the reservation through
+its integration merge
+[`c0898cd491e75ade8540f0483d40396c5bd83b32`](https://github.com/Ming-Research/Whitefoot/commit/c0898cd491e75ade8540f0483d40396c5bd83b32);
+the atom is absent from that merge's first parent and the main amendment is
+an ancestor of its merged main parent. The same main amendment is an ancestor
+of the locally recorded `origin/main` ref. This is a main-line language
+migration, not an OP-5 restriction added only on the experiment branch.
+
+Downstream migration requires renaming each local `unchanged` binding and its
+bound uses to a permitted identifier, preserving the initializer, control flow
+and meaning. This complies with the specified identifier reservation; it does
+not repair or conceal an OP-5 compiler gap. Such renames alone establish no
+semantic verdict: the remaining module checks, including oracle IDNA's
+independent OP-5 task, still need checking. No downstream source is modified
+by this finding, and no compiler build or invocation was performed locally.
