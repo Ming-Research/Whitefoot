@@ -16,8 +16,8 @@
 #
 # The existing attribution jobs measure release wf-d837678c6905 (the one
 # Snowghost pins) or its commit built here from source. Job `comparison`
-# additionally builds this branch's merge base with main and its head with
-# the same gate profile, then runs two interleaved cold-build rounds with
+# builds that pinned commit and the same commit with this PR's own compiler
+# diff applied, using the same gate profile, then runs two interleaved rounds with
 # an identical-binary base twin. Snowghost-wf is 466e9843 throughout.
 name: sg-cold-attrib
 
@@ -431,11 +431,10 @@ jobs:
             esac
           done
           failed=0
-          for variant in default jobs-all jobs-1 default-again trace; do
+          for variant in default jobs-all jobs-1 default-again; do
             extra=(); case $variant in
               jobs-all) extra=(-Wl,--thinlto-jobs=all) ;;
               jobs-1) extra=(-Wl,--thinlto-jobs=1) ;;
-              trace) extra=(-Wl,--time-trace -Wl,--time-trace-file="$out/link-trace.json") ;;
             esac
             cmd=(); for a in "${base[@]}"; do
               if [[ "$a" == OUTPUT ]]; then a="$RUNNER_TEMP/link-$variant"; fi
@@ -545,21 +544,42 @@ jobs:
       - name: Qualify the comparison reporter with synthetic controls
         run: python3 -I .github/sg-cold-compare.py --self-test
 
-      - name: Resolve the comparison revisions
+      - name: Construct both compilers on Snowghost's pinned release commit
         run: |
           set -euo pipefail
           out="$RUNNER_TEMP/comparison-results"
           mkdir -p "$out" "$RUNNER_TEMP/comparison-bin"
           git fetch --no-tags origin '+refs/heads/main:refs/remotes/origin/main'
-          base=$(git merge-base origin/main HEAD)
-          head=$(git rev-parse HEAD)
-          printf 'base=%s\nhead=%s\n' "$base" "$head" > "$out/compiler-inputs.txt"
+          base=$(git rev-parse "$WF_COMMIT")
+          source_base=$(git merge-base origin/main HEAD)
+          source_head=$(git rev-parse HEAD)
+          git diff "$(git merge-base origin/main HEAD)" HEAD -- compiler > "$out/compiler.patch"
+          diff_sha=$(sha256sum "$out/compiler.patch")
+          diff_sha=${diff_sha%% *}
+          head="$base + compiler diff sha256:$diff_sha"
+          printf 'base=%s\nhead_tree=%s\nsource_merge_base=%s\nsource_head=%s\ncompiler_diff_sha256=%s\n' \
+            "$base" "$head" "$source_base" "$source_head" "$diff_sha" > "$out/compiler-inputs.txt"
           printf 'COMPARISON_BASE=%s\nCOMPARISON_HEAD=%s\n' "$base" "$head" >> "$GITHUB_ENV"
           git worktree add --detach "$RUNNER_TEMP/comparison-base" "$base"
+          git worktree add --detach "$RUNNER_TEMP/comparison-head" "$base"
+          if ! git -C "$RUNNER_TEMP/comparison-head" apply --3way "$out/compiler.patch" \
+            > "$out/compiler-apply.log" 2>&1; then
+            echo "The PR compiler diff does not apply cleanly to Snowghost's pinned compiler; no comparison will run." >&2
+            {
+              git -C "$RUNNER_TEMP/comparison-head" diff --name-only --diff-filter=U
+              sed -n -E 's/^error: patch failed: (compiler\/.*):[0-9]+$/\1/p; s/^error: (compiler\/[^:]*):.*$/\1/p' \
+                "$out/compiler-apply.log"
+            } | sort -u > "$out/compiler-rejected-files.txt"
+            echo 'Unmerged or rejected compiler files:' >&2
+            cat "$out/compiler-rejected-files.txt" >&2
+            cat "$out/compiler-apply.log" >&2
+            exit 1
+          fi
           git -C "$RUNNER_TEMP/comparison-base" submodule update --init --recursive
-          git diff --stat "$base" "$head" -- compiler >> "$out/compiler-inputs.txt"
-          git show "$base":compiler/src/bin/whitefootc.rs > "$out/base-driver.rs"
-          cp compiler/src/bin/whitefootc.rs "$out/head-driver.rs"
+          git -C "$RUNNER_TEMP/comparison-head" submodule update --init --recursive
+          git diff --stat "$source_base" "$source_head" -- compiler >> "$out/compiler-inputs.txt"
+          cp "$RUNNER_TEMP/comparison-base/compiler/src/bin/whitefootc.rs" "$out/base-driver.rs"
+          cp "$RUNNER_TEMP/comparison-head/compiler/src/bin/whitefootc.rs" "$out/head-driver.rs"
           cmp .github/llvm-major "$RUNNER_TEMP/comparison-base/.github/llvm-major"
 
       - name: Install and identify the common four-processor toolchain
@@ -587,8 +607,7 @@ jobs:
         run: |
           set -euo pipefail
           for variant in base head; do
-            source="$GITHUB_WORKSPACE"
-            if [ "$variant" = base ]; then source="$RUNNER_TEMP/comparison-base"; fi
+            source="$RUNNER_TEMP/comparison-$variant"
             cargo fetch --manifest-path "$source/compiler/Cargo.toml" --locked
             perl "$GITHUB_WORKSPACE/.github/run-check.pl" "comparison-compiler-$variant" \
               cargo build --manifest-path "$source/compiler/Cargo.toml" --locked --offline \
@@ -647,6 +666,9 @@ jobs:
           name: sg-cold-attrib-comparison
           path: |
             ${{ runner.temp }}/comparison-results/compiler-inputs.txt
+            ${{ runner.temp }}/comparison-results/compiler.patch
+            ${{ runner.temp }}/comparison-results/compiler-apply.log
+            ${{ runner.temp }}/comparison-results/compiler-rejected-files.txt
             ${{ runner.temp }}/comparison-results/machine.txt
             ${{ runner.temp }}/comparison-results/manifest.json
             ${{ runner.temp }}/comparison-results/samples.json
