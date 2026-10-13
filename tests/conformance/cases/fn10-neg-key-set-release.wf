@@ -1,5 +1,5 @@
 fn walk(n: u64) -> result: u64 pure {
   let keys = key_set_new(capacity: 2_u64);
-  let held = &keys;
+  let view = &keys;
   return musttail walk(n: n);
 }

@@ -6,7 +6,7 @@ fn walk(n: u64) -> result: u64 pure {
     return n;
   }
   let owner = array_filled::<u8, 0>(value: 0_u8);
-  let held = &owner;
+  let view = &owner;
   let next = n - 1_u64;
   return musttail walk(n: next);
 }

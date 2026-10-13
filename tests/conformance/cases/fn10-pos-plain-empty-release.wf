@@ -10,7 +10,7 @@ fn walk(n: u64) -> result: u64 pure {
     return n;
   }
   let owner = Plain(value: n);
-  let held = &owner;
+  let view = &owner;
   let next = n - 1_u64;
   return musttail walk(n: next);
 }
