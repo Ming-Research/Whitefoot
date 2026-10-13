@@ -18,12 +18,9 @@ use crate::ir::{IrIndexedFamilyKind, IrIndexedProjection, IrIndexedReduction};
 /// The first argument of a range driver's captures: seed, lower, upper.
 const CAPTURES: usize = 3;
 
-/// One storage group of a granted far half: the family that owns its
-/// capture position, and the raw allocation acquired for it.
+/// One storage group of a granted far half: the raw allocation acquired
+/// for it.
 pub(super) struct FarGroup {
-    /// Ordinal of the group's first family; every family of the group
-    /// shares its `capture` and `private` positions.
-    first: usize,
     /// The allocation's base and its byte size, for the acquired-prefix
     /// release on a later group's failure.
     pointer: String,
@@ -124,11 +121,7 @@ impl FunctionEmitter<'_, '_> {
                     bundle.fields.push((field, "i1 true".to_owned()));
                 }
             }
-            bundle.groups.push(FarGroup {
-                first,
-                pointer,
-                bytes,
-            });
+            bundle.groups.push(FarGroup { pointer, bytes });
         }
         Ok(bundle)
     }
