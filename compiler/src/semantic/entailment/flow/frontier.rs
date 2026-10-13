@@ -2,7 +2,7 @@
 //! frontier; snapshots and prover cache demands cannot create a boundary.
 
 use super::super::LoopInductionInput;
-use super::super::state::{HeaderRelationInput, TransportedHeaderRelation};
+use super::super::state::{AffineRelationInstance, HeaderRelationInput, TransportedHeaderRelation};
 use super::*;
 
 pub(super) struct InductionBatch {
@@ -95,92 +95,14 @@ impl Analyzer<'_, '_> {
                     && first_loss.is_none()
                     && let Some(component) = batch.evidence.failing_component
                 {
-                    let leaves = template
-                        .relation
-                        .left
-                        .postorder()
-                        .chain(template.relation.right.postorder())
-                        .filter(|leaf| {
-                            matches!(
-                                leaf.kind,
-                                CheckedAffineExpressionKind::Local { .. }
-                                    | CheckedAffineExpressionKind::Measure(_)
-                                    | CheckedAffineExpressionKind::Field(_)
-                                    | CheckedAffineExpressionKind::Constant { .. }
-                                    | CheckedAffineExpressionKind::ConstGeneric { .. }
-                            )
-                        });
-                    let atoms = relation_view.affine.measure_atoms.borrow();
-                    let mut support_terms = Vec::new();
-                    let mut measures = Vec::new();
-                    for (leaf, image) in leaves.zip(&instance.operands) {
-                        if !matches!(
-                            leaf.kind,
-                            CheckedAffineExpressionKind::Measure(_)
-                                | CheckedAffineExpressionKind::Field(_)
-                        ) {
-                            continue;
-                        }
-                        let mut terms = atoms
-                            .iter()
-                            .filter_map(|(term, value)| (value == image).then_some(*term))
-                            .collect::<Vec<_>>();
-                        terms.sort_unstable();
-                        if let [term] = terms.as_slice() {
-                            measures.push(*term);
-                        }
-                        support_terms.extend(terms);
-                    }
-                    support_terms.sort_unstable();
-                    support_terms.dedup();
-                    measures.sort_unstable();
-                    measures.dedup();
-                    let mut conjunct = template.relation.clone();
-                    conjunct.equality = false;
-                    if component == 1 {
-                        std::mem::swap(&mut conjunct.left, &mut conjunct.right);
-                    }
-                    first_loss = Some(LostHeaderRelation {
-                        template: SourceLoopInvariantRef {
-                            loop_id: template.loop_id,
-                            source_ordinal: source_ordinal as u32,
-                        },
-                        name: template.name.clone(),
-                        relation: self
-                            .input
-                            .render_checked_invariant_relation(&template.relation, None),
-                        conjunct: self.input.render_checked_invariant_relation(&conjunct, None),
-                        incoming: sites
-                            .get(ordinal)
-                            .cloned()
-                            .unwrap_or_else(|| template.relation.node_path.clone()),
-                        components: instance.components.clone(),
-                        bindings: template
-                            .relation
-                            .left
-                            .postorder()
-                            .chain(template.relation.right.postorder())
-                            .filter_map(|expression| match &expression.kind {
-                                CheckedAffineExpressionKind::Local { binding, .. } => Some(*binding),
-                                _ => None,
-                            })
-                            .collect(),
-                        support: support_terms
-                            .into_iter()
-                            .map(|term| self.vocabulary.terms.kind(term).clone())
-                            .collect(),
-                        kills: input
-                            .measure_kills
-                            .iter()
-                            .filter(|kill| {
-                                measures.contains(&kill.term)
-                                    && sites.get(ordinal).is_some_and(|site| {
-                                        kill.source.components().starts_with(site.components())
-                                    })
-                            })
-                            .cloned()
-                            .collect(),
-                    });
+                    first_loss = Some(self.reasoning().lost_header_relation(
+                        &template,
+                        source_ordinal,
+                        component,
+                        &instance,
+                        &relation_view,
+                        (input, sites.get(ordinal)),
+                    ));
                 }
                 evidence.push(HeaderRelationInput {
                     site: sites
@@ -313,6 +235,156 @@ impl Analyzer<'_, '_> {
             });
         }
         batches
+    }
+}
+
+impl Reasoning<'_, '_, '_> {
+    /// A break can carry an unsealed frontier out of its template's scope.
+    /// Diagnose that missing relation without transporting it into the real
+    /// exit state or sharing the diagnostic query's terms and atoms.
+    pub(super) fn record_exit_header_losses(
+        &self,
+        output: &mut ProofFlowState,
+        inputs: &[ProofFlowState],
+        sites: &[crate::NodePath],
+        templates: &[CheckedLoopInvariant],
+    ) {
+        if templates.is_empty() || output.facts.all_derivable {
+            return;
+        }
+        let mut vocabulary = self.vocabulary.clone();
+        vocabulary.affine_l0_cache = None;
+        let mut explanation = Reasoning {
+            input: self.input,
+            vocabulary: &mut vocabulary,
+        };
+        let view = output.clone();
+        for (source_ordinal, template) in templates.iter().enumerate() {
+            let Ok((instance, relation_view)) =
+                explanation.relation_instance(&template.relation, &view, None)
+            else {
+                continue;
+            };
+            for (ordinal, input) in inputs.iter().enumerate() {
+                let batch =
+                    explanation.prove_relation_instance(&template.relation, &input.clone(), None);
+                if batch.disposition == TargetDisposition::Proved {
+                    continue;
+                }
+                if let Some(component) = batch.evidence.failing_component {
+                    let mut loss = explanation.lost_header_relation(
+                        template,
+                        source_ordinal,
+                        component,
+                        &instance,
+                        &relation_view,
+                        (input, sites.get(ordinal)),
+                    );
+                    loss.components =
+                        LostHeaderComponents::Exit(Box::new(template.relation.clone()));
+                    if !output.lost_headers.contains(&loss) {
+                        output.lost_headers.push(loss);
+                    }
+                }
+                break;
+            }
+        }
+    }
+
+    fn lost_header_relation(
+        &self,
+        template: &CheckedLoopInvariant,
+        source_ordinal: usize,
+        component: u8,
+        instance: &AffineRelationInstance,
+        relation_view: &ProofFlowState,
+        source: (&ProofFlowState, Option<&crate::NodePath>),
+    ) -> LostHeaderRelation {
+        let (input, site) = source;
+        let leaves = template
+            .relation
+            .left
+            .postorder()
+            .chain(template.relation.right.postorder())
+            .filter(|leaf| {
+                matches!(
+                    leaf.kind,
+                    CheckedAffineExpressionKind::Local { .. }
+                        | CheckedAffineExpressionKind::Measure(_)
+                        | CheckedAffineExpressionKind::Field(_)
+                        | CheckedAffineExpressionKind::Constant { .. }
+                        | CheckedAffineExpressionKind::ConstGeneric { .. }
+                )
+            });
+        let atoms = relation_view.affine.measure_atoms.borrow();
+        let mut support_terms = Vec::new();
+        let mut measures = Vec::new();
+        for (leaf, image) in leaves.zip(&instance.operands) {
+            if !matches!(
+                leaf.kind,
+                CheckedAffineExpressionKind::Measure(_) | CheckedAffineExpressionKind::Field(_)
+            ) {
+                continue;
+            }
+            let mut terms = atoms
+                .iter()
+                .filter_map(|(term, value)| (value == image).then_some(*term))
+                .collect::<Vec<_>>();
+            terms.sort_unstable();
+            if let [term] = terms.as_slice() {
+                measures.push(*term);
+            }
+            support_terms.extend(terms);
+        }
+        support_terms.sort_unstable();
+        support_terms.dedup();
+        measures.sort_unstable();
+        measures.dedup();
+        let mut conjunct = template.relation.clone();
+        conjunct.equality = false;
+        if component == 1 {
+            std::mem::swap(&mut conjunct.left, &mut conjunct.right);
+        }
+        LostHeaderRelation {
+            template: SourceLoopInvariantRef {
+                loop_id: template.loop_id,
+                source_ordinal: source_ordinal as u32,
+            },
+            name: template.name.clone(),
+            relation: self
+                .input
+                .render_checked_invariant_relation(&template.relation, None),
+            conjunct: self.input.render_checked_invariant_relation(&conjunct, None),
+            incoming: site
+                .cloned()
+                .unwrap_or_else(|| template.relation.node_path.clone()),
+            components: LostHeaderComponents::Frozen(instance.components.clone()),
+            bindings: template
+                .relation
+                .left
+                .postorder()
+                .chain(template.relation.right.postorder())
+                .filter_map(|expression| match &expression.kind {
+                    CheckedAffineExpressionKind::Local { binding, .. } => Some(*binding),
+                    _ => None,
+                })
+                .collect(),
+            support: support_terms
+                .into_iter()
+                .map(|term| self.vocabulary.terms.kind(term).clone())
+                .collect(),
+            kills: input
+                .measure_kills
+                .iter()
+                .filter(|kill| {
+                    measures.contains(&kill.term)
+                        && site.is_some_and(|site| {
+                            kill.source.components().starts_with(site.components())
+                        })
+                })
+                .cloned()
+                .collect(),
+        }
     }
 }
 

@@ -20,11 +20,21 @@ impl Reasoning<'_, '_, '_> {
                 input: self.input,
                 vocabulary: &mut vocabulary,
             };
-            for inequality in &loss.components {
+            let mut view = state.clone();
+            let components = match &loss.components {
+                LostHeaderComponents::Frozen(components) => components.clone(),
+                LostHeaderComponents::Exit(relation) => {
+                    let (instance, formed) =
+                        explanation.relation_instance(relation, &view, None).ok()?;
+                    view = formed;
+                    instance.components
+                }
+            };
+            for inequality in &components {
                 let negation = inequality.negated(&mut AffineCheckState::new()).ok()?;
                 if explanation
                     .prove(
-                        ProofContext::new(&state.facts, &state.affine),
+                        ProofContext::new(&view.facts, &view.affine),
                         ProofGoal::Affine {
                             inequality: &negation,
                             right: None,
@@ -36,8 +46,8 @@ impl Reasoning<'_, '_, '_> {
                     return None;
                 }
             }
-            let mut restored = state.affine.clone();
-            restored.facts.extend(loss.components.iter().map(|inequality| {
+            let mut restored = view.affine.clone();
+            restored.facts.extend(components.iter().map(|inequality| {
                 ActiveAffineFact {
                     inequality: inequality.clone(),
                     evidence: AffineFactEvidence::Source(
@@ -53,7 +63,7 @@ impl Reasoning<'_, '_, '_> {
             .ok()?;
             if explanation
                 .prove(
-                    ProofContext::new(&state.facts, &restored),
+                    ProofContext::new(&view.facts, &restored),
                     ProofGoal::Affine {
                         inequality: &contradiction,
                         right: None,
@@ -65,7 +75,7 @@ impl Reasoning<'_, '_, '_> {
                 return None;
             }
             if !goals.iter().all(|goal| {
-                let proof = explanation.prove(ProofContext::new(&state.facts, &restored), *goal);
+                let proof = explanation.prove(ProofContext::new(&view.facts, &restored), *goal);
                 proof.disposition == ProofDisposition::Proved
                     && proof.route != Some(ProofRoute::Contradiction)
             }) {

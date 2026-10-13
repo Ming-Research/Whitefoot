@@ -159,6 +159,77 @@ pub(super) const LOST_HEADER_RELATIONS: &[RepairPair] = &[
 ];
 
 #[test]
+fn exit_header_explanation_survives_only_while_its_support_does() {
+    let source = proof_source!(
+        "",
+        "\n  ensures fp < stack^.inner.len;",
+        "    break;\n",
+        ""
+    );
+    for (name, before_return, explains) in [
+        ("exit-unrelated-write.wf", "  set c = 0_u64;\n", true),
+        ("exit-related-write.wf", "  touch(stack: stack);\n", false),
+        (
+            "exit-branch-write.wf",
+            "  if c == 0_u64 {\n    touch(stack: stack);\n  }\n",
+            false,
+        ),
+    ] {
+        let source = std::str::from_utf8(source)
+            .expect("source is text")
+            .replace(
+                "  return 0_u64;",
+                &format!("{before_return}  return 0_u64;"),
+            );
+        let failure = compile(
+            &[SourceInput::new(name, source.as_bytes())],
+            CompilerLimits::default(),
+        )
+        .expect_err("the postcondition still lacks the lost length bound");
+        assert_eq!(failure.rule_id(), Some("FN-9"), "{name}: {failure}");
+        assert_eq!(
+            failure.to_string().contains("header invariant `fb`"),
+            explains,
+            "{name}: {failure}",
+        );
+    }
+}
+
+#[test]
+fn exit_header_explanation_requires_a_consistent_proof_of_the_goal() {
+    let source = proof_source!(
+        "",
+        "\n  ensures c < stack^.inner.len;",
+        "    break;\n",
+        ""
+    );
+    for (name, before_return) in [
+        ("exit-unrelated-goal.wf", ""),
+        (
+            "exit-conflicting-header.wf",
+            "  if stack^.inner.len <= fp {\n    return 0_u64;\n  }\n",
+        ),
+    ] {
+        let source = std::str::from_utf8(source)
+            .expect("source is text")
+            .replace(
+                "  return 0_u64;",
+                &format!("{before_return}  return 0_u64;"),
+            );
+        let failure = compile(
+            &[SourceInput::new(name, source.as_bytes())],
+            CompilerLimits::default(),
+        )
+        .expect_err("the header relation gives no bound on c");
+        assert_eq!(failure.rule_id(), Some("FN-9"), "{name}: {failure}");
+        assert!(
+            !failure.to_string().contains("was not kept at the join"),
+            "{name}: {failure}",
+        );
+    }
+}
+
+#[test]
 fn unrelated_bound_does_not_blame_the_lost_header_relation() {
     let source = std::str::from_utf8(REJECTED)
         .expect("source is text")

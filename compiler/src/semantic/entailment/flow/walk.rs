@@ -1496,6 +1496,7 @@ impl Analyzer<'_, '_> {
                             };
                             self.frames.loops[position].continues.push(edge);
                         } else {
+                            self.frames.loops[position].break_sites.push(edge.site);
                             self.frames.loops[position].breaks.push(edge.state);
                         }
                     }
@@ -1650,6 +1651,7 @@ impl Analyzer<'_, '_> {
                     invariant_atoms: HashSet::new(),
                     capture_path: None,
                     breaks: Vec::new(),
+                    break_sites: Vec::new(),
                     continues: Vec::new(),
                 });
                 let mut body_state = state.clone();
@@ -1680,11 +1682,15 @@ impl Analyzer<'_, '_> {
                 // Each break state already left the loop's name scope in
                 // `exit_counted_loops_from`; its header conclusions stay.
                 let frame = self.frames.loops.pop();
-                let breaks = frame.map(|frame| frame.breaks).unwrap_or_default();
+                let (breaks, break_sites, templates) = frame
+                    .map(|frame| (frame.breaks, frame.break_sites, frame.templates))
+                    .unwrap_or_default();
                 let has_breaks = !breaks.is_empty();
                 // [FN-1, ENT-5] only breaks resolved to this loop reach its
                 // continuation; an empty join has no continuing path.
                 *state = self.join_with_transport(&breaks, &[]);
+                self.reasoning()
+                    .record_exit_header_losses(state, &breaks, &break_sites, &templates);
                 if !has_breaks {
                     state.entry_images = head_entry_images;
                 }
@@ -1852,6 +1858,7 @@ impl Analyzer<'_, '_> {
                     invariant_atoms,
                     capture_path: Some(range_path.clone()),
                     breaks: Vec::new(),
+                    break_sites: Vec::new(),
                     continues: Vec::new(),
                 });
                 let mut body_state = head.clone();
@@ -1915,7 +1922,9 @@ impl Analyzer<'_, '_> {
                 // Each break state already left the loop's name scope in
                 // `exit_counted_loops_from`; its header conclusions stay.
                 let frame = self.frames.loops.pop();
-                let breaks = frame.map(|frame| frame.breaks).unwrap_or_default();
+                let (breaks, break_sites, templates) = frame
+                    .map(|frame| (frame.breaks, frame.break_sites, frame.templates))
+                    .unwrap_or_default();
 
                 // Unlike an ordinary loop, the real false-header edge always
                 // contributes. Binder and captures leave scope before it or
@@ -1973,6 +1982,11 @@ impl Analyzer<'_, '_> {
                 exits.extend(breaks);
                 self.frames.scopes.pop();
                 *state = self.join_with_transport(&exits, &[]);
+                let mut exit_sites = Vec::with_capacity(1 + break_sites.len());
+                exit_sites.push(node_path.clone());
+                exit_sites.extend(break_sites);
+                self.reasoning()
+                    .record_exit_header_losses(state, &exits, &exit_sites, &templates);
                 record_continuing(&mut state.continuing, &outer_continuing);
                 true
             }

@@ -226,6 +226,8 @@ struct LoopFrame {
     /// the private endpoint-capture scope as well as source binding scopes.
     capture_path: Option<Vec<u32>>,
     breaks: Vec<ProofFlowState>,
+    /// Diagnostic origins of break predecessors; never used by transport.
+    break_sites: Vec<crate::NodePath>,
     continues: Vec<FlowEdge>,
 }
 
@@ -389,10 +391,18 @@ struct LostHeaderRelation {
     relation: String,
     conjunct: String,
     incoming: crate::NodePath,
-    components: Vec<AffineInequality>,
+    components: LostHeaderComponents,
     kills: Vec<MeasureKill>,
     bindings: Vec<BindingId>,
     support: Vec<TermKind>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum LostHeaderComponents {
+    Frozen(Vec<AffineInequality>),
+    /// Exit joins have no active template to transport. Their diagnostic
+    /// query owns its atoms, so retain source instead of those private IDs.
+    Exit(Box<CheckedAffineRelation>),
 }
 
 impl ProofFlowState {

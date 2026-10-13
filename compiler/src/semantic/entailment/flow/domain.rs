@@ -1426,6 +1426,15 @@ impl Judging<'_, '_, '_> {
             lost_headers: {
                 let mut losses = Vec::new();
                 for loss in contributing.iter().flat_map(|state| &state.lost_headers) {
+                    // A source relation replayed after loop exit must still
+                    // name the same live support on every incoming path.
+                    if matches!(loss.components, LostHeaderComponents::Exit(_))
+                        && !contributing
+                            .iter()
+                            .all(|state| state.lost_headers.contains(loss))
+                    {
+                        continue;
+                    }
                     if !losses.contains(loss) {
                         losses.push(loss.clone());
                     }
