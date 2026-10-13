@@ -666,11 +666,14 @@ cases remain; removing observations cannot change candidate formation.
 Existing join, closure and affine-index counters are unchanged. The documented
 TSV schema in `work.rs` remains the owner of counter definitions.
 
-The temporary measurement workflow remains for one cleaned-head confirmation
-against the pinned base above, then is removed before ready. Its head schema
-requires only retained counters and no shadow or failed-reuse fields. Require
-identical verdicts and inspect pruning counts and uninstrumented CPU recovery.
-Removing failure reuse may restore searches for repeated targets, so raw call
-counts need not equal the previous head. Losing the
-recovery after cleanup reopens the attribution, rather than weakening the
-criterion. The cleaned revision still needs CI validation and this confirmation.
+Cleaned-head confirmation (hosted runner, 2026-10-13, head `13d2df4f9`
+against the pinned base above, run
+https://github.com/Ming-Research/Whitefoot/actions/runs/38384699923): the
+check verdict `pkg::vm: accepted` is identical across all eight runs; median
+paired user+system CPU ratio head/base is 0.600 (range 0.599-0.607; medians
+13.240 s base, 7.940 s head). The recovery survives removing failure reuse,
+so the attribution stands. The gate passed on the same revision
+(https://github.com/Ming-Research/Whitefoot/actions/runs/38384700155). The
+temporary measurement workflow and its budget rows were then removed. A paired
+14900K comparison against the release before #361 remains the completion
+measurement.
