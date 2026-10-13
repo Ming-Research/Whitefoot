@@ -152,6 +152,13 @@ pub(crate) enum CheckedAffineExpressionKind {
     /// automatic derivation already carries an atom for; the invariant
     /// evaluates nothing and reads no storage [INV-1].
     Measure(Box<CheckedExpression>),
+    /// [INV-1, ENT-6] one tracked field place written as an affine factor:
+    /// a binding, its `^` exactly when it is a `&T` reference, and one or
+    /// more field selections ending at an integer field. The inner expression is exactly the read
+    /// the ordinary place checker forms for that spelling, so the affine
+    /// domain reaches the same [ENT-2] term whose current image the flow
+    /// carries; the invariant evaluates nothing and reads no storage.
+    Field(Box<CheckedExpression>),
     Add(Box<CheckedAffineExpression>, Box<CheckedAffineExpression>),
     Subtract(Box<CheckedAffineExpression>, Box<CheckedAffineExpression>),
     MultiplyByConstant {
@@ -1119,6 +1126,10 @@ pub(crate) struct CheckedNominal {
     /// capability alone: the written `nocopy` modifier and the cell nominals
     /// this compiler interns for declarations [PRE-1] writes `nocopy`.
     pub(crate) nocopy: bool,
+    /// [TYPE-11] whether this is a struct that declares affine type
+    /// invariants, which an enum payload of its type carries across a
+    /// function boundary.
+    pub(crate) type_invariant: bool,
 }
 
 impl CheckedNominal {
@@ -2431,6 +2442,10 @@ pub(crate) enum CheckedExpression {
         /// Filled from the complete phase-A inventory before entailment runs,
         /// in callee `requires_clause` source order.
         requirements: Vec<super::goal::CheckedCallRequirement>,
+        /// [TYPE-11] the callee's requirements over its parameters' enum
+        /// payloads, each owed in its argument's conditional context for its
+        /// route [ENT-5]; filled with `requirements`.
+        routed_requirements: Vec<super::postcondition::CheckedRoutedRequirement>,
         result: CheckedType,
         /// For a borrow-mode result admitted under the reborrow extension:
         /// the caller-side storage the result borrow is conservatively rooted
@@ -3126,6 +3141,10 @@ pub(crate) struct CheckedFunction {
     /// at body entry in the state holding the requirements before it, where
     /// its subscripts owe [OP-4]. A hypothetical premise set forms none.
     pub(crate) requirement_places: Vec<Vec<CheckedExpression>>,
+    /// [TYPE-11] the type invariants of each struct a parameter's enum
+    /// carries in a variant field, each restricted to that variant, in
+    /// parameter order and then variant, field and declaration order.
+    pub(crate) routed_requirements: Vec<super::postcondition::CheckedRoutedRequirement>,
     /// Verified-relation surfaces in `ensures_clause` source order. H1
     /// constructs this metadata; the shared entailment flow proves every
     /// clause at every selected exit.

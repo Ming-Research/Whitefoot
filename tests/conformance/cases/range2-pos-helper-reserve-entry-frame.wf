@@ -1,0 +1,20 @@
+enum Flow {
+  Open(block: u32);
+}
+
+struct EntrySequence {
+  payloads: Box<Paged<Flow>>;
+}
+
+fn sequence_reserve(sequence: &EntrySequence, capacity: u64) -> result: unit writes(sequence.payloads) contract {
+  requires capacity >= sequence^.payloads.inner.cap;
+  ensures sequence^.payloads.inner.len == entry(sequence)^.payloads.inner.len;
+  ensures forall preserved(k in 0_u64..sequence^.payloads.inner.len): sequence^.payloads.inner[k] == entry(sequence)^.payloads.inner[k];
+} {
+  grow_paged(cell: &sequence^.payloads, capacity: capacity);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

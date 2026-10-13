@@ -1,0 +1,27 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Counter {
+  doc "A count and a tag.";
+  count: u64;
+  tag: u64;
+}
+
+fn advance(counter: &Counter, delta: u64) -> result: unit writes(counter) contract {
+  requires counter^.count + delta <= 800_u64;
+} {
+  doc "Both arms write only the tag, so the count holds its entry image in each and the join keeps it; the requirement bounds the sum read after the join.";
+  if delta < 5_u64 {
+    set counter^.tag = 1_u64;
+  } else {
+    set counter^.tag = 2_u64;
+  }
+  let count = counter^.count;
+  let total = count + delta;
+  set counter^.count = total;
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}
