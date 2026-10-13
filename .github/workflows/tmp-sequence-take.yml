@@ -1,23 +1,23 @@
-# Temporary: runs the registered measurements Q1 and Q2 of
-# research/investigations/sequence-take/DESIGN.md section 7, before any
-# language change. Q1 is a C program (one shared fetch-and-add per operation at
-# 100 to 800 ns of private work); Q2 is a Whitefoot witness (one atomic
-# statement on a map entry and the context's own part, with and without a
-# whole target on one Shared<u64> sequence) built with the compiler revision
-# named by wf_rev, by default a main revision that has stopped counting
-# handles of value handles, so that today's form is measured at its best.
+# Temporary: runs the registered measurements Q1, Q2 and Q3 of
+# research/investigations/sequence-take/DESIGN.md section 7. Q1 prices one
+# shared fetch-and-add in C, and Q2 compares ordinary statements with and
+# without an exclusive sequence on the compiler revision named by wf_rev.
+# Q3 uses experiment_release and includes T1, T1t, T1off, TP and TC, plus
+# same-compiler Q2 controls. Before Q3, a hosted job compares the ordinary
+# statement fixture's emitted body with ir_baseline byte for byte.
 # Removed after the run, with the results copied into the investigation's
 # record.
 #
 #   gh workflow run tmp-sequence-take.yml --ref <branch> -f mode=smoke
 #   gh workflow run tmp-sequence-take.yml --ref <branch> -f mode=pilot
 #   gh workflow run tmp-sequence-take.yml --ref <branch> -f mode=main
+#   gh workflow run tmp-sequence-take.yml --ref <branch> -f kinds=q3 -f experiment_release=wf-exp-<12-hex> -f mode=pilot
 #
 # smoke builds the compiler and the arms and runs every arm briefly on a
 # GitHub-hosted runner to check the wiring, the check values, that T2 passes
-# the correctness checks N1 to N3 and that Tbad fails N1 and N3; its rates
+# the correctness checks N1 to N3 (and T1 in Q3) and that Tbad fails N1 and N3; its rates
 # decide nothing. pilot (one block at the 8-P-core list, timed) and main (the
-# registered six blocks at all four lists) run only on the 14900K runner and
+# registered six blocks at four lists, plus one driver for Q3) run only on the 14900K runner and
 # refuse any other host. If the noise at the 8-P-core list exceeds 0.05, rerun
 # main once with cell_millis=10000.
 #
@@ -39,6 +39,19 @@ on:
         type: choice
         options: [smoke, pilot, main]
         default: smoke
+      kinds:
+        description: Q1/Q2 pre-implementation comparison, or Q3 atomic-value acceptance with the same-compiler controls
+        type: choice
+        options: ["q1 q2", q3]
+        default: "q1 q2"
+      experiment_release:
+        description: Q3 compiler experiment release tag (wf-exp followed by twelve hex digits); required for kinds=q3
+        type: string
+        default: ""
+      ir_baseline:
+        description: Pre-amendment compiler revision for exact ordinary-statement IR comparison before Q3
+        type: string
+        default: 30ea2978819d2c8047f748fbcfec019e69c50084
       blocks:
         description: Blocks of the main run (registered as 6, DESIGN.md section 7)
         type: string
@@ -60,13 +73,98 @@ permissions:
   contents: read
 
 env:
+  KINDS: ${{ inputs.kinds }}
+  EXPERIMENT_RELEASE: ${{ inputs.experiment_release }}
   CARGO_TERM_COLOR: never
   CARGO_INCREMENTAL: 0
 
 jobs:
+  ir_baseline:
+    if: ${{ inputs.kinds == 'q3' }}
+    name: ordinary statement IR matches the pre-amendment compiler
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ github.token }}
+      BASELINE_INPUT: ${{ inputs.ir_baseline }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check Q3 reduction with deliberately wrong inputs
+        run: python3 -I -B research/experiments/sequence-take/q3/test_summary.py
+      - name: Install LLVM tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang lld
+          rustup default stable
+      - name: Build the baseline compiler
+        run: |
+          baseline=$(git rev-parse "$BASELINE_INPUT")
+          echo "BASELINE=$baseline" >> "$GITHUB_ENV"
+          git worktree add --detach "$RUNNER_TEMP/sequence-take-baseline" "$baseline"
+          cargo fetch --locked --manifest-path "$RUNNER_TEMP/sequence-take-baseline/compiler/Cargo.toml"
+          make -C "$RUNNER_TEMP/sequence-take-baseline/compiler" build
+      - name: Download the experiment compiler
+        run: |
+          [[ "$EXPERIMENT_RELEASE" =~ ^wf-exp-[0-9a-f]{12}$ ]] || { echo "Q3 requires an experiment release"; exit 1; }
+          release_dir="$RUNNER_TEMP/sequence-take-ir"
+          mkdir -p "$release_dir"
+          gh release download "$EXPERIMENT_RELEASE" --repo "$GITHUB_REPOSITORY" --dir "$release_dir" --clobber \
+            --pattern whitefootc-linux-x86_64.tar.gz --pattern whitefoot-release.json --pattern SHA256SUMS
+          (cd "$release_dir" && sha256sum --check SHA256SUMS --ignore-missing)
+          tar -xzf "$release_dir/whitefootc-linux-x86_64.tar.gz" -C "$release_dir"
+          jq --exit-status --arg tag "$EXPERIMENT_RELEASE" \
+            '.tag == $tag and (.commit | startswith($tag | ltrimstr("wf-exp-")))' \
+            "$release_dir/whitefoot-release.json" >/dev/null
+      - name: Compare emitted ordinary statement bodies
+        run: |
+          release_dir="$RUNNER_TEMP/sequence-take-ir"
+          perl .github/run-check.pl sequence-take/baseline-ir \
+            "$RUNNER_TEMP/sequence-take-baseline/compiler/target/gate/whitefootc" --emit-llvm \
+            -o "$release_dir/baseline.ll" tests/programs/shared_statement_ir.wf
+          perl .github/run-check.pl sequence-take/experiment-ir \
+            "$release_dir/whitefootc" --emit-llvm \
+            -o "$release_dir/experiment.ll" tests/programs/shared_statement_ir.wf
+          python3 -I -B - "$release_dir" <<'PYCOMPARE'
+          import pathlib
+          import re
+          import sys
+          directory = pathlib.Path(sys.argv[1])
+          def body(path):
+              text = path.read_text()
+              for name in ("_env_ordinary.body", "_env_ordinary", "ordinary.body", "ordinary"):
+                  match = re.search(r"^define [^\n]* @wf_" + re.escape(name) + r"\([^\n]*\n.*?^}", text, re.M | re.S)
+                  if match:
+                      return match.group(0)
+              raise SystemExit(f"no ordinary function body in {path}")
+          before = body(directory / "baseline.ll")
+          after = body(directory / "experiment.ll")
+          (directory / "baseline-body.ll").write_text(before + "\n")
+          (directory / "experiment-body.ll").write_text(after + "\n")
+          if before != after:
+              import difflib
+              print("\n".join(difflib.unified_diff(before.splitlines(), after.splitlines(), fromfile="baseline", tofile="experiment")))
+              raise SystemExit("ordinary-statement emitted IR changed")
+          print("ordinary-statement emitted IR is byte-for-byte identical")
+          PYCOMPARE
+          printf '%s\n' "$BASELINE" > "$release_dir/baseline-revision.txt"
+          cp tests/programs/shared_statement_ir.wf "$release_dir/source.wf"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sequence-take-ir-${{ github.run_id }}
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/sequence-take-ir/*.ll
+            ${{ runner.temp }}/sequence-take-ir/whitefoot-release.json
+            ${{ runner.temp }}/sequence-take-ir/baseline-revision.txt
+            ${{ runner.temp }}/sequence-take-ir/source.wf
+
   smoke:
-    if: ${{ inputs.mode == 'smoke' }}
-    name: sequence-take Q1 and Q2 (smoke, GitHub-hosted, no verdict)
+    needs: ir_baseline
+    if: ${{ always() && (needs.ir_baseline.result == 'success' || needs.ir_baseline.result == 'skipped') && inputs.mode == 'smoke' }}
+    name: sequence-take ${{ inputs.kinds }} (smoke, GitHub-hosted, no verdict)
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
@@ -87,7 +185,7 @@ jobs:
           cpus=$(nproc)
           echo "cpus: $cpus"
           if [ "$cpus" -ge 4 ]; then
-            echo "CPU_LISTS=0,1 0-3" >> "$GITHUB_ENV"
+            echo "CPU_LISTS=0 0,1 0-3" >> "$GITHUB_ENV"
             echo "CHECK_LIST=0-3" >> "$GITHUB_ENV"
           else
             echo "CPU_LISTS=0 0,1" >> "$GITHUB_ENV"
@@ -100,7 +198,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends clang lld
           rustup default stable
           missing=
-          for tool in /usr/bin/clang ld.lld cargo make taskset perl python3 git awk lscpu timeout sha256sum /usr/bin/time; do
+          for tool in /usr/bin/clang ld.lld cargo make taskset perl python3 git awk lscpu timeout sha256sum /usr/bin/time gh jq tar; do
             command -v "$tool" >/dev/null || missing="$missing $tool"
           done
           if [ -n "$missing" ]; then
@@ -108,7 +206,36 @@ jobs:
             exit 1
           fi
 
+      - name: Require an experiment release for Q3
+        run: |
+          if [ "$KINDS" = q3 ]; then
+            [[ "$EXPERIMENT_RELEASE" =~ ^wf-exp-[0-9a-f]{12}$ ]] || { echo "Q3 requires experiment_release=wf-exp-<12-hex>"; exit 1; }
+          elif [ -n "$EXPERIMENT_RELEASE" ]; then
+            echo "experiment_release is only used for kinds=q3"
+            exit 1
+          fi
+
+      - name: Download the Q3 experiment compiler
+        if: ${{ inputs.kinds == 'q3' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          release_dir="$RUNNER_TEMP/sequence-take-release"
+          mkdir -p "$release_dir"
+          gh release download "$EXPERIMENT_RELEASE" --repo "$GITHUB_REPOSITORY" --dir "$release_dir" --clobber \
+            --pattern whitefootc-linux-x86_64.tar.gz --pattern whitefoot-release.json --pattern SHA256SUMS
+          (cd "$release_dir" && sha256sum --check SHA256SUMS --ignore-missing)
+          tar -xzf "$release_dir/whitefootc-linux-x86_64.tar.gz" -C "$release_dir"
+          jq --exit-status --arg tag "$EXPERIMENT_RELEASE" \
+            '.tag == $tag and (.commit | startswith($tag | ltrimstr("wf-exp-")))' \
+            "$release_dir/whitefoot-release.json" >/dev/null
+          revision=$(jq -r .commit "$release_dir/whitefoot-release.json")
+          echo "WF_RELEASE=$EXPERIMENT_RELEASE ($revision)" >> "$GITHUB_ENV"
+          echo "WHITEFOOTC=$release_dir/whitefootc" >> "$GITHUB_ENV"
+          cp "$release_dir/whitefoot-release.json" "$RUNNER_TEMP/sequence-take-release.json"
+
       - name: Build the compiler at the named revision
+        if: ${{ inputs.kinds != 'q3' }}
         run: |
           rev=$(git rev-parse "$WF_REV_INPUT")
           echo "WF_RELEASE=$rev" >> "$GITHUB_ENV"
@@ -137,7 +264,7 @@ jobs:
           python3 -I -B research/experiments/sequence-take/summarize.py --smoke "$OUT" > "$OUT/summary.txt" || status=$?
           cat "$OUT/summary.txt"
           {
-            echo "## sequence-take Q1 and Q2 (smoke, no verdict)"
+            echo "## sequence-take ${{ inputs.kinds }} (smoke, no verdict)"
             echo
             echo '```text'
             cat "$OUT/host.txt" 2>/dev/null || true
@@ -160,13 +287,17 @@ jobs:
             ${{ runner.temp }}/sequence-take/summary.txt
             ${{ runner.temp }}/sequence-take/host.txt
             ${{ runner.temp }}/sequence-take/runs/
+            ${{ runner.temp }}/sequence-take/bin/*.ll
+            ${{ runner.temp }}/sequence-take-release.json
 
   measure:
-    if: ${{ inputs.mode != 'smoke' }}
-    name: sequence-take Q1 and Q2 (${{ inputs.mode }}, 14900K)
+    needs: ir_baseline
+    if: ${{ always() && (needs.ir_baseline.result == 'success' || needs.ir_baseline.result == 'skipped') && inputs.mode != 'smoke' }}
+    name: sequence-take ${{ inputs.kinds }} (${{ inputs.mode }}, 14900K)
     runs-on: [self-hosted, 14900k]
-    # Main: 31 units x 4 lists x 6 blocks x 5 s is about 62 minutes of cells,
-    # plus calibration, six pairs of 1 s correctness runs and a compiler build.
+    # Q1/Q2 main: 31 units x 4 lists x 6 blocks x 5 s, about 62 minutes.
+    # Q3 main: 8 units x 5 lists x 6 blocks x 5 s, about 20 minutes, plus
+    # three correctness controls per block. The baseline build is hosted.
     # Bounds a stuck runner only.
     timeout-minutes: 150
     # One run at a time on the 14900K, queued rather than cancelled.
@@ -212,12 +343,15 @@ jobs:
           echo "BLOCKS=$BLOCKS_INPUT" >> "$GITHUB_ENV"
           echo "MILLIS=$MILLIS_INPUT" >> "$GITHUB_ENV"
           echo "OUT=$RUNNER_TEMP/sequence-take" >> "$GITHUB_ENV"
+          if [ "$KINDS" = q3 ]; then
+            echo "CPU_LISTS=0 0,2 0,2,4,6 0,2,4,6,8,10,12,14 0-15" >> "$GITHUB_ENV"
+          fi
           if [ -d "$HOME/.cargo/bin" ]; then
             echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
             export PATH="$HOME/.cargo/bin:$PATH"
           fi
           missing=
-          for tool in /usr/bin/clang ld.lld cargo make taskset perl python3 git awk lscpu timeout sha256sum /usr/bin/time; do
+          for tool in /usr/bin/clang ld.lld cargo make taskset perl python3 git awk lscpu timeout sha256sum /usr/bin/time gh jq tar; do
             command -v "$tool" >/dev/null || missing="$missing $tool"
           done
           if [ -n "$missing" ]; then
@@ -248,7 +382,36 @@ jobs:
           ps -eo pid,pcpu,args --sort=-pcpu | head -n 8
           awk -v busy="$busy" 'BEGIN { exit !(busy > 0.05) }' && { echo "the host is not idle; stop its other work first"; exit 1; } || true
 
+      - name: Require an experiment release for Q3
+        run: |
+          if [ "$KINDS" = q3 ]; then
+            [[ "$EXPERIMENT_RELEASE" =~ ^wf-exp-[0-9a-f]{12}$ ]] || { echo "Q3 requires experiment_release=wf-exp-<12-hex>"; exit 1; }
+          elif [ -n "$EXPERIMENT_RELEASE" ]; then
+            echo "experiment_release is only used for kinds=q3"
+            exit 1
+          fi
+
+      - name: Download the Q3 experiment compiler
+        if: ${{ inputs.kinds == 'q3' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          release_dir="$RUNNER_TEMP/sequence-take-release"
+          mkdir -p "$release_dir"
+          gh release download "$EXPERIMENT_RELEASE" --repo "$GITHUB_REPOSITORY" --dir "$release_dir" --clobber \
+            --pattern whitefootc-linux-x86_64.tar.gz --pattern whitefoot-release.json --pattern SHA256SUMS
+          (cd "$release_dir" && sha256sum --check SHA256SUMS --ignore-missing)
+          tar -xzf "$release_dir/whitefootc-linux-x86_64.tar.gz" -C "$release_dir"
+          jq --exit-status --arg tag "$EXPERIMENT_RELEASE" \
+            '.tag == $tag and (.commit | startswith($tag | ltrimstr("wf-exp-")))' \
+            "$release_dir/whitefoot-release.json" >/dev/null
+          revision=$(jq -r .commit "$release_dir/whitefoot-release.json")
+          echo "WF_RELEASE=$EXPERIMENT_RELEASE ($revision)" >> "$GITHUB_ENV"
+          echo "WHITEFOOTC=$release_dir/whitefootc" >> "$GITHUB_ENV"
+          cp "$release_dir/whitefoot-release.json" "$RUNNER_TEMP/sequence-take-release.json"
+
       - name: Build the compiler at the named revision
+        if: ${{ inputs.kinds != 'q3' }}
         run: |
           export PATH="$HOME/.cargo/bin:$PATH"
           rev=$(git rev-parse "$WF_REV_INPUT")
@@ -281,7 +444,7 @@ jobs:
           python3 -I -B research/experiments/sequence-take/summarize.py $flag "$OUT" > "$OUT/summary.txt" || true
           cat "$OUT/summary.txt"
           {
-            echo "## sequence-take Q1 and Q2 ($MODE)"
+            echo "## sequence-take ${{ inputs.kinds }} ($MODE)"
             echo
             echo '```text'
             cat "$OUT/host.txt" 2>/dev/null || true
@@ -305,3 +468,5 @@ jobs:
             ${{ runner.temp }}/sequence-take/summary.txt
             ${{ runner.temp }}/sequence-take/host.txt
             ${{ runner.temp }}/sequence-take/runs/
+            ${{ runner.temp }}/sequence-take/bin/*.ll
+            ${{ runner.temp }}/sequence-take-release.json

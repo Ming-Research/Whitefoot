@@ -192,6 +192,12 @@ impl<'unit> Checker<'_, 'unit> {
         loop_depth: usize,
         owner: AffineProofOwner,
     ) -> Result<CheckedAffineRelation, CheckStop> {
+        self.reject_atomic_value_names(
+            node,
+            bindings,
+            "an atomic-value target binding cannot occur in a proof",
+            "read the atomic value once in the block and prove facts about the returned scalar snapshot",
+        )?;
         self.types
             .check_range_referent_places(context.check_context, node, bindings)?;
         let normalization = self

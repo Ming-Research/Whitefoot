@@ -946,6 +946,85 @@ impl FunctionEmitter<'_, '_> {
         self.emit_constant(result, IrType::Unit, IrConstant::Unit)
     }
 
+    /// The currently qualified hosted targets have native 64-bit RMW. This
+    /// word is inline in the Shared allocation; its handle remains live through
+    /// the statement. Saturation uses the runtime's bounded executor count:
+    /// at most 128 in-flight additions of at most 2^32 cannot wrap a u64.
+    pub(super) fn emit_atomic_value(
+        &mut self,
+        result: IrValueId,
+        ty: IrType,
+        cell: IrValueId,
+        update: Option<(IrValueId, bool)>,
+    ) -> Result<(), BackendFailure> {
+        let u64_type = IrType::Integer {
+            width: 64,
+            signed: false,
+        };
+        let Some(IrType::Address(IrAddressed::Nominal(nominal))) = self.value_type(cell) else {
+            return Err(BackendFailure::InvalidIr);
+        };
+        if ty != u64_type
+            || !matches!(self.nominal(nominal)?.kind(),
+            IrNominalKind::Struct { fields } if fields.len() == 1 && fields[0].ty() == u64_type)
+        {
+            return Err(BackendFailure::InvalidIr);
+        }
+        if let Some((value, _)) = update
+            && self.value_type(value) != Some(u64_type)
+        {
+            return Err(BackendFailure::InvalidIr);
+        }
+        let cell = self.value_name(cell);
+        let result_name = self.value_name(result);
+        let prefix = format!("atomic.value.{}", result.index());
+        let cap = 1_u64 << 63;
+        match update {
+            None => {
+                writeln!(self.output,
+                    "  %{prefix}.raw = load atomic i64, ptr {cell} seq_cst, align 8\n  %{prefix}.below = icmp ult i64 %{prefix}.raw, {cap}\n  {result_name} = select i1 %{prefix}.below, i64 %{prefix}.raw, i64 {cap}")
+                    .map_err(|_| BackendFailure::TextEmission)?;
+            }
+            Some((value, false)) => {
+                let value = self.value_name(value);
+                writeln!(self.output,
+                    "  %{prefix}.raw = atomicrmw add ptr {cell}, i64 {value} seq_cst, align 8\n  %{prefix}.limit = sub i64 {cap}, {value}\n  %{prefix}.is_full = icmp uge i64 %{prefix}.raw, %{prefix}.limit\n  br i1 %{prefix}.is_full, label %{prefix}.full, label %{prefix}.success")
+                    .map_err(|_| BackendFailure::TextEmission)?;
+                self.output.open_block(format!("{prefix}.full"));
+                writeln!(self.output,
+                    "  store atomic i64 {cap}, ptr {cell} seq_cst, align 8\n  br label %{prefix}.done")
+                    .map_err(|_| BackendFailure::TextEmission)?;
+                self.output.open_block(format!("{prefix}.success"));
+                writeln!(self.output, "  br label %{prefix}.done")
+                    .map_err(|_| BackendFailure::TextEmission)?;
+                self.output.open_block(format!("{prefix}.done"));
+                writeln!(self.output,
+                    "  {result_name} = phi i64 [ {cap}, %{prefix}.full ], [ %{prefix}.raw, %{prefix}.success ]")
+                    .map_err(|_| BackendFailure::TextEmission)?;
+            }
+            Some((value, true)) => {
+                let value = self.value_name(value);
+                // A maximum that already holds leaves the line read-only. Its
+                // observation is the effect point; a rising maximum uses umax.
+                writeln!(self.output,
+                    "  %{prefix}.seen = load atomic i64, ptr {cell} seq_cst, align 8\n  %{prefix}.rises = icmp ult i64 %{prefix}.seen, {value}\n  br i1 %{prefix}.rises, label %{prefix}.raise, label %{prefix}.stable")
+                    .map_err(|_| BackendFailure::TextEmission)?;
+                self.output.open_block(format!("{prefix}.raise"));
+                writeln!(self.output,
+                    "  %{prefix}.raised = atomicrmw umax ptr {cell}, i64 {value} seq_cst, align 8\n  br label %{prefix}.done")
+                    .map_err(|_| BackendFailure::TextEmission)?;
+                self.output.open_block(format!("{prefix}.stable"));
+                writeln!(self.output, "  br label %{prefix}.done")
+                    .map_err(|_| BackendFailure::TextEmission)?;
+                self.output.open_block(format!("{prefix}.done"));
+                writeln!(self.output,
+                    "  %{prefix}.raw = phi i64 [ %{prefix}.raised, %{prefix}.raise ], [ %{prefix}.seen, %{prefix}.stable ]\n  %{prefix}.below = icmp ult i64 %{prefix}.raw, {cap}\n  {result_name} = select i1 %{prefix}.below, i64 %{prefix}.raw, i64 {cap}")
+                    .map_err(|_| BackendFailure::TextEmission)?;
+            }
+        }
+        Ok(())
+    }
+
     /// A new object sized for its state, holding one handle.
     pub(super) fn emit_shared_new(
         &mut self,

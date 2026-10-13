@@ -120,6 +120,13 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
 }
 "#,
     ),
+    (
+        "prelude/AtomicValue.wf",
+        PreludeSource::Opaque,
+        r#"opaque nocopy struct AtomicValue {
+}
+"#,
+    ),
     // A key set [SHARE-1] and the entries an entry binding names over one
     // [SHARE-2]: their readonly fields declare the measures [MSR-1].
     (
@@ -375,6 +382,39 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
 "#,
     ),
     (
+        "prelude/shared_atomic_new.wf",
+        PreludeSource::Function,
+        r#"fn shared_atomic_new(value: u64) -> result: Shared<AtomicValue> pure contract {
+  requires value <= 9223372036854775808_u64;
+};
+"#,
+    ),
+    (
+        "prelude/atomic_load.wf",
+        PreludeSource::Function,
+        r#"fn atomic_load(cell: &AtomicValue) -> value: u64 reads(cell) contract {
+  ensures value <= 9223372036854775808_u64;
+};
+"#,
+    ),
+    (
+        "prelude/atomic_add.wf",
+        PreludeSource::Function,
+        r#"fn atomic_add(cell: &AtomicValue, value: u64) -> before: Option<u64> writes(cell) contract {
+  requires value <= 4294967296_u64;
+};
+"#,
+    ),
+    (
+        "prelude/atomic_raise.wf",
+        PreludeSource::Function,
+        r#"fn atomic_raise(cell: &AtomicValue, value: u64) -> before: u64 writes(cell) contract {
+  requires value <= 9223372036854775808_u64;
+  ensures before <= 9223372036854775808_u64;
+};
+"#,
+    ),
+    (
         "prelude/shared_share.wf",
         PreludeSource::Function,
         r#"fn shared_share<T: drop>(shared: &Shared<T>) -> result: Shared<T> reads(shared);
@@ -572,11 +612,15 @@ mod tests {
         // [PRE-1] keeps no host record: the host signatures are the standard
         // library's [PRE-2], which this unit names none of. Of the
         // compiler-owned rows the key set's four functions [SHARE-1] and
-        // the decision cell's five functions [PRE-1] take no type parameter,
+        // the decision cell's five functions and atomic value's four [PRE-1]
+        // take no type parameter,
         // so each is one ordinary checked function; every other row is
         // generic, and [FN-2] gives it a checked function only per concrete
         // instance, of which this unit, calling none of them, has none.
         let ungeneric = [
+            "atomic_add",
+            "atomic_load",
+            "atomic_raise",
             "claim_killed",
             "claim_written",
             "decision_cell_new",
@@ -586,6 +630,7 @@ mod tests {
             "key_set_insert",
             "key_set_new",
             "key_set_read_key",
+            "shared_atomic_new",
         ];
         assert_eq!(signatures, ungeneric);
         for row in crate::lowering::COMPILER_OWNED_PRELUDE_ROWS {

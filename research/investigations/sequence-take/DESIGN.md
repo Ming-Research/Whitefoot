@@ -2,12 +2,20 @@
 
 ## Status
 
-A design study written before any implementation or measurement. Nothing in
-it was built or run. It reads the active specification `spec/kernel-spec.md`
-(title v0.135) and the design tree at Whitefoot `c52e867ca` (main); line
-numbers cite that revision. Each claim is marked **deduction** (argued from
-cited rules), **measured** (with its run), **source-read** or **estimate**
-(unmeasured judgment).
+The design study and registered comparisons were written before implementation
+or measurement, against specification v0.135 and Whitefoot `c52e867ca`.
+Source line references in those sections identify that historical revision.
+The owner selected candidate (V) on 2026-10-13, reporting Q1 S1/S0 = 1.000
+against the 0.75 go threshold and Q2 T2/T0 = 0.015 against the same threshold.
+Those reported results authorize the implementation; they are not new
+measurements made by this amendment.
+
+The draft implementation uses `AtomicValue` and specification v0.151, with
+v0.150 as its main-line base. Section 12 records its name comparison and
+integration boundaries. Compiler and program tests and the Q3 experiment
+entry are authored but have not been run in this worktree. Each original
+argument remains labeled **deduction**, **measured**, **source-read** or
+**estimate** according to its evidence.
 
 It answers Firn's request on the status board, "an atomic statement can take
 a globally increasing number without holding the number exclusively". The
@@ -839,18 +847,26 @@ below its argument, a single step; otherwise it is `ldumaxal` on AArch64 with
 LSE and a compare-and-swap loop on x86-64, each retry following another raise
 that succeeded, so it is lock-free; without LSE every operation is an
 exclusive-monitor loop. These are the premises the existing spin locks already
-rest on, so WAIT-2's guarantee gains none.
+rest on. A statement whose only targets are atomic values also performs the
+existing local yield check before acquiring any target, using the ordinary
+acquisition path's wait counter, threshold, driver-token read and yield point.
+The state operation adds no wait; the statement retains WAIT-2's scheduling
+progress guarantee.
 
 **No cost to anything that does not use it.** A statement without an
 atomic-value target is compiled exactly as today; no other statement, object
 or program gains a word, a flag, a check or a branch. A statement that names
 one but whose path performs no operation, such as Firn's write with AOF off,
-performs no hardware step and touches no shared line beyond reading its
-handle place, and keeps lazy lock taking on that path. A statement whose only
-targets are atomic values takes no lock and counts no handle (the same
-handle-count obligation as (B)). On a path that performs the operation, the
+performs no atomic-value state operation and does not touch that state word,
+and keeps lazy lock taking on that path. The atomic-only form still executes
+its local yield check. A statement whose only
+targets are atomic values takes no state lock and performs the local yield
+check before any target acquisition. Its state operation uses one atomic
+instruction plus that local yield check; saturation and lifetime handling
+retain the conditions in section 12. An unchanged handle place needs no
+extra count update. On a path that performs the operation, the
 first operation takes every lock group not yet taken (section 3.3), then
-performs one hardware step.
+performs one atomic instruction.
 
 **Firn's AOF on and off: one form.** The operation sits inside `if logging`,
 so AOF-off writes execute no operation and pay nothing for the sequence,
@@ -1113,19 +1129,20 @@ it; that program needs an exclusive hold); the owner reading ruling 6 as
 forbidding the lock form on multicore targets without hardware add (then
 atomic values are refused at composition there).
 
-## 9. Specification and design-tree changes that would follow
+## 9. Specification and design-tree amendment
 
-Not made; listed for the implementing branch after the owner's ruling, for
-the recommended (V).
+The implementing branch follows (V). Section 12 records the selected spelling
+and the current target and lifetime boundaries; the draft amendment uses
+v0.151 because main has already advanced to v0.150. The scope is:
 
 - Specification: V1 to V4 of section 5.6 and S6 of section 5.2 (real time);
-  the measure table row (`Atomic<u64>`: absent, as other opaque states); and
+  the measure table row (`AtomicValue`: absent); and
   conformance cases: each V4 refusal (two operations on one path, across one
   binding and across two; an operation in a loop; the binding in a guard, as
   another call's argument and in a `swap`); `atomic_add` through a
   `SharedRead` target refused; one context adding from a first value in
-  order; saturation with a first value of `2^63 - 1` (`Some`, then `None`,
-  then `None`, and a load of 2^63); `atomic_raise` returning the value before;
+  order; saturation with a first value of `2^63 - 2` (`Some`, then `None`,
+  then `None`, and a load of 2^63), plus `None` immediately from `2^63 - 1`; `atomic_raise` returning the value before;
   a program test with the section 2 witness checking N1 and N2.
 - Design tree: a language decision under
   `design/language/waiting/shared-objects` (an atomic value held by a
@@ -1134,10 +1151,10 @@ the recommended (V).
   reasons); compiler decisions under
   `design/compiler/waiting-contexts/state-locks` (the operation after the
   last acquisition, the first operation taking every group, no lock and no
-  handle count for a statement whose only targets are atomic values, the
-  saturation protocol, the visible lock unit on targets without
-  read-modify-write).
-- Library: the one-call forms of section 5.6, written in Whitefoot.
+  handle count for stable handle places, the saturation protocol, and the
+  capability requirements for the currently absent degraded target backends).
+- Library convenience: the one-call forms of section 5.6 can be written in
+  Whitefoot and introduce no additional language rule.
 - With (B) instead: S1 to S6 of section 5.2, with S5 changed to take only on
   the paths that read the binding if Firn is to keep one statement form.
 
@@ -1194,9 +1211,132 @@ Measured elsewhere and cited: one contended line's ceiling and private lines'
 rate in C, and the shortest exclusive statement's rate, on the 14900K (counter
 study run 38304337014).
 
-Not established: the cost of one take below saturation at Firn's size of
-work (Q1); today's form in the witness's shape (Q2); the implemented take's
-rate and correctness (Q3); the cost of a raise that does not rise (Q1 arm
-S4, Q3 arm TP); the cost on AArch64 and on any embedded target; whether the
-owner accepts the lock form on multicore targets without hardware add; the
-name `Atomic`.
+Q1 and Q2 now have the owner-reported selection results summarized in Status.
+Still unverified by this amendment: the implemented operation's correctness
+and rate in Q3; the maximum's cost in TP; the cost on AArch64 and embedded
+targets. Degraded forms govern future targets and are not implemented
+capabilities of this base.
+`AtomicValue` is the implementation's proposed name, compared in section 12.
+
+
+
+## 12. Implementation surface and target boundaries
+
+The implementing amendment uses `AtomicValue`, a non-generic opaque state
+containing the one bounded `u64` described in section 5.6. `Shared<AtomicValue>`
+and `SharedRead<AtomicValue>` retain the existing handle and authority forms.
+The name denotes the checked statement-level invariant: at most one operation
+on atomic values along a statement path, taking effect with its other writes.
+It does not promise a particular machine instruction or lock-free execution
+on every target. Generalization to other value domains requires a further
+language decision rather than unused type arguments now.
+
+### Naming comparison
+
+| Candidate | Meaning and comparison | Disposition |
+|---|---|---|
+| `AtomicValue` | A shared value whose one operation joins the atomic statement's effect point; its permitted domain is specified separately. | Proposed name. |
+| `Atomic<T>` / `AtomicU64` | C's `_Atomic` and Rust's atomic integer types permit independent loads, stores and read-modify-write operations, with explicit memory-order choices. Their unsigned addition wraps; their operations need not belong to one enclosing statement. | Do not borrow this broader API convention for the narrower Whitefoot invariant. |
+| `Counter` / `Sequence` | Suggests a counting or numbering use, while the same state supports an exact maximum and observations. | Too narrow for the selected operations. |
+| `Cell` | Describes a storage location without the statement-level invariant; Rust's `Cell` additionally suggests unsynchronized interior mutability. | Does not identify the checked property. |
+
+The C comparison uses [N1570, sections 6.7.2.4 and
+7.17](https://www.open-std.org/jtc1/sc22/wg14/www/docs/n1570.pdf); the Rust
+comparison uses the [atomic integer API](https://doc.rust-lang.org/stable/core/sync/atomic/type.AtomicU64.html)
+and [atomic ordering documentation](https://doc.rust-lang.org/stable/core/sync/atomic/index.html).
+These names are compared for semantics, not used to import another language's
+memory model into Whitefoot.
+
+### Integration boundaries found in the current base
+
+The current main-line specification is already v0.150, so this amendment
+archives its bytes and uses v0.151. Its SHARE-3 already orders completed
+shared-effect calls before subsequently begun effects. The amendment makes
+completion explicitly cover atomic statements as well as calls, without a
+second order or additional input.
+
+Section 5.6's saturation rule and the owner's instruction report `None` when
+an add reaches 2^63. The earlier section 9 proposal of `Some, None, None` from
+2^63 - 1 contradicted that rule. Section 9 now starts that sequence at
+2^63 - 2, and the boundary tests also require immediate `None` from
+2^63 - 1. This follows the owner's explicit boundary instruction rather than
+changing the rule to fit the old example. The tests await CI evidence.
+
+The current target inventory contains only x86-64 and AArch64 hosted targets.
+There is no single-execution-thread target or multicore target without
+64-bit atomic read-modify-write in that inventory, and no backend/runtime for
+either degraded form. Those forms are requirements for future targets, not
+missing implementations for any currently supported target. The target's thread model, not `WF_DRIVERS=1`, must
+select a future ordinary-access form: the hosted runtime may run a displaced
+executor and its replacement simultaneously. The existing bounds are 64
+drivers and 128 executors. With each in-flight add at most 2^32, the maximum
+transient excess from adds awaiting their saturation store is at most 2^39,
+so the raw word cannot wrap. Loads and the returned old value of a raise must
+both clamp this transient representation to 2^63.
+
+The current shared-object lifetime contract permits an atomic block to move,
+release or replace the handle it targeted. A statement whose handle place
+stays live needs no extra retain; one that can lose the handle needs the
+existing statement-owned retain until its exit. The no-extra-retain fast form
+therefore requires a handle place proved to remain live. Disabling necessary retention would permit use after free. The
+implementation preserves lifetime and identifies these cases separately from
+the ordinary no-retain fast form; any requirement to eliminate their retain
+needs an ownership-transfer design, not a silent relaxation of lifetime.
+
+The sharded-state interface mentioned by the sketch is absent in this base.
+The accepted current witness shape therefore uses a map entry, an ordinary
+shared part and an atomic value, as the existing Q2 harness does. It does not
+claim that the separate sharded-state work is implemented here.
+
+Source inspection also found two integration limits to track separately.
+The compiler's older shared/frozen constructors are absent from its explicit
+allocation-fact seed; whether later paths independently prevent inappropriate
+pure-call reuse has not been established here. The new constructor carries
+its allocation fact without joining the heap-only list that forbids calls in
+`no_heap` programs. Changing the older constructors requires a focused witness
+and an audit of their consumers.
+
+Compositions that use snapshot export already insert signal-mask preparation
+and restoration at every atomic statement. The new target retains these
+hooks, so in those compositions an atomic-only statement has that existing
+cost as well as its one state operation. Q3's current graph does not use the
+exporter. Eliminating those hooks for an atomic-only statement would need a
+separate proof that its block cannot prepare an export through a forwarding
+call; this amendment does not silently bypass the export protocol.
+
+
+### Scheduling progress at the direct statement boundary
+
+Source inspection found that the draft zero-lock lowering removed the
+acquisition that called `wf_context_pass`. That call is the hosted runtime's
+cooperative scheduling boundary: after 64 immediately answered waits it lets
+another ready context run, and its driver-token read also hands back a
+displaced invocation. Without it, a context polling an atomic value on one
+driver can prevent its ready producer from ever raising it, violating WAIT-2.
+The deadline monitor cannot repair a witness with no registered timer.
+
+The selected correction, option A of the owner's non-blocking yield-check
+card, is the existing local yield check before an atomic-only statement
+acquires any target. It uses the same runtime function and therefore the
+same counter, threshold, driver-token read and yield point as ordinary
+acquisition. The cost commitment is one atomic instruction plus the local
+yield check, with no state lock; no different scheduler or weaker WAIT-2
+rule is introduced. Mixed statements retain their ordinary acquisition check.
+
+The formal [atomic polling program](../../../tests/programs/atomic_value_progress.wf)
+is now wired into the program tests on one and four drivers. The backend
+regression requires the scheduling pass in its polling function, and the
+lowering checks cover placement before acquiring any target. These checks
+and the native witness await owner-run CI; no local execution is claimed.
+
+### Temporary IR comparison budget treatment
+
+The hosted old/new IR comparison uses `sequence-take/baseline-ir` and
+`sequence-take/experiment-ir`. The existing budget helper returns without a
+missing-row verdict when `WHITEFOOT_TIME_BUDGET_RECORD` is unset and always
+preserves the command's exit code. This temporary dispatch-only workflow sets
+no such record and invokes no budget verdict, so an unbudgeted label does not
+fail either stage. Under the owner's instruction no provisional numbers are
+invented. The temporary workflow is removed before the branch becomes ready;
+its emitted-body comparison still fails for a differing body or a failed
+compiler command.

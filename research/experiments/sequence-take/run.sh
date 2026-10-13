@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds and runs the arms of Q1 and Q2 of research/investigations/
+# Builds and runs the arms of Q1, Q2 and Q3 of research/investigations/
 # sequence-take/DESIGN.md section 7 (written before any measurement); the
 # shapes follow research/experiments/shared-counters/ on the counter study's
 # branch.
@@ -7,10 +7,10 @@
 #   run.sh --out DIR [--build-only | --skip-build]
 #
 # Environment:
-#   WHITEFOOTC      the Whitefoot compiler for the Q2 arms (without it only Q1
+#   WHITEFOOTC      the Whitefoot compiler for the Q2 or Q3 arms (without it only Q1
 #                   is built and run)
 #   WF_RELEASE      a name for that compiler's revision, recorded in host.txt
-#   KINDS           "q1 q2" (default), or one of them
+#   KINDS           "q1 q2" (default), q1, q2 or q3; Q3 includes its Q2 controls
 #   MODE            main (default), pilot or smoke. pilot: one block at the
 #                   8-P-core list, timed, with the projected main duration
 #                   written to pilot.txt. smoke: short cells on a host that is
@@ -60,7 +60,11 @@ BLOCKS=${BLOCKS:-6}
 MILLIS=${MILLIS:-5000}
 CHECK_MILLIS=${CHECK_MILLIS:-1000}
 KINDS=${KINDS:-"q1 q2"}
-CPU_LISTS=${CPU_LISTS:-"0,2 0,2,4,6 0,2,4,6,8,10,12,14 0-15"}
+if [ "$KINDS" = q3 ]; then
+    CPU_LISTS=${CPU_LISTS:-"0 0,2 0,2,4,6 0,2,4,6,8,10,12,14 0-15"}
+else
+    CPU_LISTS=${CPU_LISTS:-"0,2 0,2,4,6 0,2,4,6,8,10,12,14 0-15"}
+fi
 CHECK_LIST=${CHECK_LIST:-0,2,4,6,8,10,12,14}
 CALIB_CPU=${CALIB_CPU:-0}
 W_LIST=${W_LIST:-"100 200 400 800"}
@@ -93,20 +97,40 @@ if [ "$build" = 1 ]; then
     wf_record="whitefootc: not used (Q2 not built)"
     twin_record="T0 and its twin: not built"
     share_record="wf__shared_share calls: not recorded"
-    if has_kind q2; then
-        : "${WHITEFOOTC:?WHITEFOOTC names the compiler to build the Q2 arms with}"
-        for entry in t0 t2 c_t2 c_tbad; do
-            "$WHITEFOOTC" --full-lto --graph "$here/modules.wfg" --entry "$entry" -o "$out/bin/$entry"
+    if has_kind q2 || has_kind q3; then
+        : "${WHITEFOOTC:?WHITEFOOTC names the compiler to build the Whitefoot arms with}"
+        wf_graph="$here/modules.wfg"
+        entries="t0 t2 c_t2 c_tbad"
+        if has_kind q3; then
+            # Bind Q3 and its controls as one module without making the Q2
+            # source graph name types that older released compilers lack.
+            mkdir -p "$out/source-q3"
+            cp "$here/harness.wf" "$here/timed.wf" "$here/correct.wf" "$out/source-q3/"
+            cp "$here/q3/atomic.wf" "$out/source-q3/"
+            cat "$here/module.wfm" "$here/q3/module.wfm" > "$out/source-q3/module.wfm"
+            cat "$here/modules.wfg" "$here/q3/modules.wfg" > "$out/source-q3/modules.wfg"
+            wf_graph="$out/source-q3/modules.wfg"
+            entries="$entries t1 t1off tp tc c_t1"
+        fi
+        for entry in $entries; do
+            "$WHITEFOOTC" --full-lto --graph "$wf_graph" --entry "$entry" -o "$out/bin/$entry"
         done
-        "$WHITEFOOTC" --full-lto --graph "$here/modules.wfg" --entry t0 -o "$out/bin/t0_twin"
+        "$WHITEFOOTC" --full-lto --graph "$wf_graph" --entry t0 -o "$out/bin/t0_twin"
+        if has_kind q3; then
+            "$WHITEFOOTC" --full-lto --graph "$wf_graph" --entry t1 -o "$out/bin/t1_twin"
+        fi
         wf_record="whitefootc: $("$WHITEFOOTC" --version 2>&1 | head -n 1)"
         twin_record="T0 and its twin: $(sha256sum "$out/bin/t0" "$out/bin/t0_twin" | awk '{print $1}' | tr '\n' ' ')"
         share_calls() {
-            "$WHITEFOOTC" --emit-llvm --graph "$here/modules.wfg" --entry "$1" -o "$out/bin/$1.ll" ||
+            "$WHITEFOOTC" --emit-llvm --graph "$wf_graph" --entry "$1" -o "$out/bin/$1.ll" ||
                 { echo unavailable; return 0; }
             grep -c 'call void @wf__shared_share(' "$out/bin/$1.ll" || true
         }
         share_record="wf__shared_share calls in the emitted code: t0=$(share_calls t0) t2=$(share_calls t2)"
+        if has_kind q3; then
+            twin_record="$twin_record; T1 and its twin: $(sha256sum "$out/bin/t1" "$out/bin/t1_twin" | awk '{print $1}' | tr '\n' ' ')"
+            share_record="$share_record t1=$(share_calls t1) t1off=$(share_calls t1off) tp=$(share_calls tp) tc=$(share_calls tc)"
+        fi
     fi
     {
         echo "kernel: $(uname -srvmo)"
@@ -194,7 +218,11 @@ if has_kind q1; then
         done
     done
 fi
-if has_kind q2; then
+if has_kind q3; then
+    for arm in T0 T0t T2 T1 T1t T1off TP TC; do
+        units+=("q3:$arm:0")
+    done
+elif has_kind q2; then
     for arm in T0 T0t T2; do
         units+=("q2:$arm:0")
     done
@@ -221,6 +249,11 @@ run_cell() {
         T0) bin="$out/bin/t0" ;;
         T0t) bin="$out/bin/t0_twin" ;;
         T2) bin="$out/bin/t2" ;;
+        T1) bin="$out/bin/t1" ;;
+        T1t) bin="$out/bin/t1_twin" ;;
+        T1off) bin="$out/bin/t1off" ;;
+        TP) bin="$out/bin/tp" ;;
+        TC) bin="$out/bin/tc" ;;
         *) echo "unknown arm $arm" >&2; exit 2 ;;
     esac
     if [ "$kind" = q1 ]; then
@@ -263,7 +296,7 @@ run_correctness() {
         [ $((status & 4)) -ne 4 ] || break
     done
     verdict=$(echo "$line" | sed -n 's/.* verdict=\([0-9]*\).*/\1/p')
-    if [ "$arm" = c_t2 ]; then
+    if [ "$arm" != c_tbad ]; then
         if [ "$status" = 0 ] && [ "$verdict" = 0 ]; then expect=ok; else expect=BAD; fi
     else
         if [ -n "$verdict" ] && [ $((verdict & 5)) -eq 5 ] && [ "$status" = "$verdict" ]; then expect=ok; else expect=BAD; fi
@@ -286,7 +319,10 @@ for block in $(seq 0 $((BLOCKS - 1))); do
             run_cell "$block" "$pos" "$unit" "$list" "$drivers"
         done
     done
-    if has_kind q2; then
+    if has_kind q2 || has_kind q3; then
+        if has_kind q3; then
+            run_correctness "$block" c_t1 "$out/bin/c_t1" 1
+        fi
         run_correctness "$block" c_t2 "$out/bin/c_t2" 1
         run_correctness "$block" c_tbad "$out/bin/c_tbad" "$CHECK_ATTEMPTS"
     fi
@@ -297,7 +333,9 @@ echo "cells and checks took $elapsed s"
 if [ "$MODE" = pilot ]; then
     {
         echo "pilot: one block at the list $CPU_LISTS took $elapsed s including calibration"
-        echo "projection of the main run (6 blocks, 4 lists): about $((elapsed * 24)) s"
+        lists=4
+        if has_kind q3; then lists=5; fi
+        echo "projection of the main run ($BLOCKS pilot block scaled to 6 blocks, $lists lists): about $((elapsed * 6 * lists)) s"
     } | tee "$out/pilot.txt"
 fi
 cat "$raw" "$correct"

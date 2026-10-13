@@ -288,10 +288,19 @@ impl<'a> PhysicalTypes<'a> {
                 referent: self.ty(referent)?,
                 release: lower_release_class(release),
             },
+            CheckedNominalKind::Shared {
+                state,
+                shape: CheckedShared::AtomicValue,
+            } => IrNominalKind::Struct {
+                fields: vec![IrField {
+                    ty: self.ty(state)?,
+                }],
+            },
             CheckedNominalKind::Shared { state, shape } => IrNominalKind::Shared {
                 state: self.ty(state)?,
                 shape: match shape {
                     CheckedShared::Object => IrShared::Object,
+                    CheckedShared::AtomicValue => unreachable!("handled as inline state"),
                     CheckedShared::Map { entry } => IrShared::Map {
                         entry: self.ty(entry)?,
                     },
@@ -446,7 +455,8 @@ impl<'a> PhysicalTypes<'a> {
                                 shape: right_shape,
                             },
                         ) => match (left_shape, right_shape) {
-                            (CheckedShared::Object, CheckedShared::Object) => {
+                            (CheckedShared::Object, CheckedShared::Object)
+                            | (CheckedShared::AtomicValue, CheckedShared::AtomicValue) => {
                                 pending.push((*left, *right))
                             }
                             (

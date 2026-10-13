@@ -189,7 +189,9 @@ impl Checker<'_, '_> {
                 if atom.is_some()
                     && !matches!(
                         prior_target.kind,
-                        CheckedTargetKind::Object | CheckedTargetKind::MapWhole
+                        CheckedTargetKind::Object
+                            | CheckedTargetKind::AtomicValue
+                            | CheckedTargetKind::MapWhole
                     )
                 {
                     continue;
@@ -258,7 +260,15 @@ impl Checker<'_, '_> {
             let (kind, referent, anchors) = match (map_entry, atom) {
                 (Some(entry), Some(_)) => self.check_target_index(context, node, &header, &earlier, &statement_roots, &mut block_bindings, scope.loops.len(), &mut effects, entry)?,
                 (Some(_), None) => (CheckedTargetKind::MapWhole, state, Vec::new()),
-                (None, None) => (CheckedTargetKind::Object, state, Vec::new()),
+                (None, None) => (
+                    if self.types.is_atomic_value_type(state) {
+                        CheckedTargetKind::AtomicValue
+                    } else {
+                        CheckedTargetKind::Object
+                    },
+                    state,
+                    Vec::new(),
+                ),
                 (None, Some(_)) => return self.types.declarations.issue_node(SemanticRule::Share2, *place, SemanticIssueKind::AtomicTargetNotShared { found: "an indexed handle whose state is no concurrent hash map".to_owned(), mechanical_fix: "write the target as `name = &handle` and reach the state through `name^`; an index step names entries of a `ConcurrentHashMap<V>` state alone" }),
             };
             let binding = self.bind_atomic_reference(
@@ -362,6 +372,11 @@ impl Checker<'_, '_> {
                 targets_alias_declarations(&declarations, &block_bindings, target.binding)
             })
             .collect::<Vec<_>>();
+        self.body.atomic_value_roots = targets
+            .iter()
+            .filter(|target| matches!(target.kind, CheckedTargetKind::AtomicValue))
+            .map(|target| target.binding)
+            .collect();
         self.body.atomic_depth += 1;
         self.body.held_atomic_roots = targets.iter().map(|target| target.binding).collect();
         self.body.held_atomic_node = Some(node_path.clone());
@@ -369,9 +384,11 @@ impl Checker<'_, '_> {
         let held_write_start = self.body.held_writes.len();
         let checked = self.check_atomic_parts(context, node, &mut block_bindings, counters, scope);
         self.body.atomic_depth -= 1;
+        self.body.atomic_value_roots.clear();
         self.body.held_atomic_roots.clear();
         self.body.held_atomic_node = None;
         let (mut guard, mut checked) = checked?;
+        self.check_atomic_value_paths(&targets, guard.as_ref().map(|g| &g.0), &checked.statements)?;
         let held_calls = self.body.held_calls[held_call_start..].to_vec();
         let held_writes = self.body.held_writes[held_write_start..].to_vec();
         self.check_held_protection(&held_writes, &block_bindings, &held_calls)?;
@@ -758,6 +775,12 @@ impl Checker<'_, '_> {
             .first_child_with(node, Production::Expr)?
         {
             Some(expression_node) => {
+                self.reject_atomic_value_names(
+                    expression_node,
+                    bindings,
+                    "an atomic-value target binding cannot occur in a guard",
+                    "read the atomic value once in the block; use ordinary shared state for a waiting guard",
+                )?;
                 self.body.held_guard = true;
                 let condition =
                     self.check_condition(context, expression_node, bindings, scope.loops.len());
@@ -979,7 +1002,7 @@ fn statement_mentions(statement: &CheckedStatement, binding: BindingId) -> bool 
 
 /// Whether a checked expression names `binding` as a place's root or as a
 /// value.
-fn expression_mentions(expression: &CheckedExpression, binding: BindingId) -> bool {
+pub(super) fn expression_mentions(expression: &CheckedExpression, binding: BindingId) -> bool {
     let names = match expression {
         CheckedExpression::Binding { binding: named, .. }
         | CheckedExpression::DerefAddressed { binding: named, .. }

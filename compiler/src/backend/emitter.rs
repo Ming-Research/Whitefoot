@@ -2886,6 +2886,15 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             IrOperation::BoxNew { nominal, value } => {
                 self.emit_box_new(result, ty, *nominal, *value)
             }
+            IrOperation::AtomicValueLoad { cell } => {
+                self.emit_atomic_value(result, ty, *cell, None)
+            }
+            IrOperation::AtomicValueAdd { cell, value } => {
+                self.emit_atomic_value(result, ty, *cell, Some((*value, false)))
+            }
+            IrOperation::AtomicValueRaise { cell, value } => {
+                self.emit_atomic_value(result, ty, *cell, Some((*value, true)))
+            }
             IrOperation::SharedNew { nominal } => self.emit_shared_new(result, ty, *nominal),
             IrOperation::DecisionCellNew { nominal } => {
                 self.emit_decision_cell_new(result, ty, *nominal)
@@ -2899,6 +2908,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             IrOperation::SharedRetain { nominal, object } => {
                 self.emit_shared_retain(result, ty, *nominal, *object)
             }
+            IrOperation::ContextPass => self.emit_context_pass(result, ty),
             IrOperation::SnapshotAtomicBegin => self.emit_snapshot_atomic(result, true),
             IrOperation::SnapshotAtomicEnd => self.emit_snapshot_atomic(result, false),
             IrOperation::SharedAcquire { object } => {

@@ -3,6 +3,7 @@
 #![allow(clippy::panic)]
 
 mod atomic_groups;
+mod atomic_values;
 mod contexts;
 mod held_placement;
 mod overlap_storage;

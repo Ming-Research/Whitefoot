@@ -1448,6 +1448,7 @@ pub(super) enum OpaqueStruct {
     Shared,
     SharedRead,
     DecisionCell,
+    AtomicValue,
     ConcurrentHashMap,
     /// A host handle: a standard library module declares it with no fields,
     /// and only a host function forms one [PRE-2]. `linear` when its
@@ -1476,6 +1477,9 @@ const PROGRAM_OPAQUE_STRUCT: &str = "no value of an opaque struct the program de
 /// names both sources.
 pub(super) fn opaque_struct_constructed(opaque: OpaqueStruct) -> &'static str {
     match opaque {
+        OpaqueStruct::AtomicValue => {
+            "create a shared atomic value with `shared_atomic_new(value: n)` and use its state only as an atomic target [SHARE-1, SHARE-2]"
+        }
         OpaqueStruct::DecisionCell => "replace this construction with `decision_cell_new()` [PRE-1]",
         OpaqueStruct::Frozen => {
             "replace this construction with `frozen_new::<T>(value: v)`, passing a copy value bare or an affine value with `move` [SHARE-1]"
@@ -1506,6 +1510,9 @@ pub(super) fn opaque_struct_constructed(opaque: OpaqueStruct) -> &'static str {
 /// nothing makes through a reference or an element [OWN-1, WIN-3].
 pub(super) fn opaque_struct_taken_apart(opaque: OpaqueStruct, owned: bool) -> &'static str {
     match opaque {
+        OpaqueStruct::AtomicValue => {
+            "keep the atomic value opaque and use one `atomic_load`, `atomic_add` or `atomic_raise` call through its atomic target binding [SHARE-2]"
+        }
         OpaqueStruct::DecisionCell => "keep the decision cell handle intact and read its verdict with `decision_cell_read(cell: &h)` [PRE-1]",
         OpaqueStruct::Frozen => {
             "keep the handle formed by `frozen_new` intact; replace this destructuring with reads of copy-typed parts through `h.inner` or borrows into `&h.inner`, adapting uses of the destructured bindings to those reads or references [SHARE-1]"

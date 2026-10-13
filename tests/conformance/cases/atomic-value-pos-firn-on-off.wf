@@ -1,0 +1,60 @@
+struct AtomicPart {
+  number: u64;
+  writes: u64;
+}
+
+fn atomic_commit(table: &Shared<ConcurrentHashMap<u64>>, part: &Shared<AtomicPart>, sequence: &Shared<AtomicValue>, key: &[u8], logging: Bool) -> result: unit reads(table), reads(part), reads(sequence), reads(key) waits {
+  atomic slot = &table^[key], p = &part^, s = &sequence^ {
+    if logging {
+      match atomic_add(cell: s, value: 1_u64) {
+        Some(value: number) => {
+          set slot^ = Some<u64>(value: number);
+          set p^.number = number;
+          set p^.writes = p^.writes +wrap 1_u64;
+        }
+        None() => {
+        }
+      }
+    } else {
+      set slot^ = Some<u64>(value: 99_u64);
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let table = shared_map_new::<u64>(capacity: 1_u64);
+  let initial = AtomicPart(number: 0_u64, writes: 0_u64);
+  let part = shared_new::<AtomicPart>(value: initial);
+  let sequence = shared_atomic_new(value: 0_u64);
+  let bytes = array_filled::<u8, 1>(value: 97_u8);
+  let key = &bytes[0_u64..1_u64];
+  let enabled = True();
+  atomic_commit(table: &table, part: &part, sequence: &sequence, key: key, logging: enabled);
+  let disabled = False();
+  atomic_commit(table: &table, part: &part, sequence: &sequence, key: key, logging: disabled);
+  atomic s = &sequence {
+    let comparison_1 = atomic_load(cell: s);
+    if comparison_1 != 1_u64 {
+      return std::process::exit_status(code: 1_u8);
+    }
+  }
+  atomic p = &part {
+    if p^.writes != 1_u64 {
+      return std::process::exit_status(code: 2_u8);
+    }
+  }
+  atomic slot = &table[key] {
+    match slot^ {
+      Some(value: value) => {
+        if value^ != 99_u64 {
+          return std::process::exit_status(code: 3_u8);
+        }
+      }
+      None() => {
+        return std::process::exit_status(code: 4_u8);
+      }
+    }
+  }
+  return std::process::exit_status(code: 0_u8);
+}

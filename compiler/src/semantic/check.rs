@@ -691,6 +691,8 @@ struct BodyChecker {
     atomic_depth: u32,
     /// Current atomic target origins and protection obligations before framing.
     held_atomic_roots: Vec<BindingId>,
+    /// Direct state binders available to the atomic-value operations [SHARE-2].
+    atomic_value_roots: Vec<BindingId>,
     held_calls: Vec<(NodeId, Vec<ResolvedPlace>)>,
     held_writes: Vec<(NodeId, ResolvedPlace)>,
     checked_held_calls: Vec<super::model::CheckedHeldCall>,

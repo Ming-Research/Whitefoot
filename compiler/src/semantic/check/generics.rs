@@ -264,6 +264,12 @@ pub(in crate::semantic::check) const HEAP_ALLOCATING_PRELUDE_FUNCTIONS: [&str; 8
     "grow",
 ];
 
+/// Allocation facts govern effect optimizations, separately from the boxed
+/// allocation rows forbidden by a source `no_heap` declaration [STOR-8].
+pub(in crate::semantic::check) fn prelude_allocates(name: &str) -> bool {
+    HEAP_ALLOCATING_PRELUDE_FUNCTIONS.contains(&name) || name == "shared_atomic_new"
+}
+
 impl<'unit> Checker<'_, 'unit> {
     /// Builds only the source template inventory and exact generic-cycle
     /// judgment needed by the selector preflight view. Generic bodies are
@@ -1138,8 +1144,7 @@ impl<'unit> Checker<'_, 'unit> {
         // [OP-10]'s `grow`. It is not a row category [EFF-1, STOR-8], so it is
         // set here from the declaration's own identity and unioned along the
         // call graph by the ordinary effect walk.
-        declared_effects.allocates |=
-            HEAP_ALLOCATING_PRELUDE_FUNCTIONS.contains(&template.name.as_str());
+        declared_effects.allocates |= prelude_allocates(&template.name);
         let waits = self.types.declarations.tree.direct_token_with(
             template.node,
             crate::TerminalPredicate::Fixed(crate::FixedTerminal::Waits),

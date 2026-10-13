@@ -1527,6 +1527,10 @@ _Static_assert(sizeof(uintptr_t) <= sizeof(uint64_t), "a group word holds a cont
 /* The most drivers a program runs, whatever WF_DRIVERS asks for. */
 #define WF_DRIVER_LIMIT 64u
 #define WF_EXECUTOR_LIMIT (2u * WF_DRIVER_LIMIT)
+/* AtomicValue fetch-add saturation permits at most one unfinished add per
+ * executor, each at most 2^32. The temporary word must never wrap. */
+_Static_assert(WF_EXECUTOR_LIMIT <= (UINT64_MAX - (UINT64_C(1) << 63)) /
+               (UINT64_C(1) << 32), "atomic-value saturation cannot wrap");
 
 /* One cache line per allocation-producing thread: the entry, context
  * executors and compute workers. Each registers once; these runtime pools

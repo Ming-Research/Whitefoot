@@ -278,6 +278,26 @@ impl<'unit> Checker<'_, 'unit> {
             check_context,
             function,
         } = context;
+        let atomic_value_operation = formal.is_none()
+            && matches!(
+                signature.name.as_str(),
+                "atomic_load" | "atomic_add" | "atomic_raise"
+            )
+            && self
+                .types
+                .declarations
+                .tree
+                .is_prelude_node(signature.node)?;
+        if atomic_value_operation && (self.body.atomic_depth == 0 || self.body.held_guard) {
+            return self.types.declarations.issue_node(
+                SemanticRule::Share2,
+                node,
+                SemanticIssueKind::AtomicValueUse {
+                    reason: "atomic-value operations occur only in an atomic statement's body",
+                    mechanical_fix: "name the shared atomic value in an atomic header and call the operation directly in its block, outside its guard",
+                },
+            );
+        }
         // [WAIT-1] a waiting call stands only in the body of a waiting
         // function, so every function that does not wait is wait-free and
         // compute overlap never contains a wait [PAR-1, PAR-2].
@@ -372,6 +392,18 @@ impl<'unit> Checker<'_, 'unit> {
             self.body.enter_atomic_update_argument(&call, ordinal);
             let argument = self.check_call_argument_atom(context, atom, bindings, loop_depth)?;
             self.reject_failed_atomic_update_argument(atom)?;
+            if self.types.is_atomic_value_type(argument.expression.ty())
+                && !(atomic_value_operation && ordinal == 0)
+            {
+                return self.types.declarations.issue_node(
+                    SemanticRule::Share2,
+                    atom,
+                    SemanticIssueKind::AtomicValueUse {
+                        reason: "an atomic-value reference cannot be passed to another callable",
+                        mechanical_fix: "call `atomic_load`, `atomic_add` or `atomic_raise` directly on the atomic header binding",
+                    },
+                );
+            }
             // [CONST-2, OWN-11, TYPE-2] every possible origin of a written
             // reference argument must be writable. The checked argument
             // retains those paths through aliases and control-flow joins.
@@ -741,6 +773,18 @@ impl<'unit> Checker<'_, 'unit> {
                 super::super::super::types::Placement::Value,
                 &signature.substitution,
             )?;
+        }
+        if atomic_value_operation
+            && !matches!(arguments.first(), Some(CheckedExpression::Binding { binding, .. }) if self.body.atomic_value_roots.contains(binding))
+        {
+            return self.types.declarations.issue_node(
+                SemanticRule::Share2,
+                node,
+                SemanticIssueKind::AtomicValueUse {
+                    reason: "the cell argument must directly name this statement's atomic-value target binding",
+                    mechanical_fix: "pass the atomic header's binding as `cell: binding`, without a helper, alias or reborrow",
+                },
+            );
         }
         let result = signature.result;
         let result_mode = signature.result_mode;

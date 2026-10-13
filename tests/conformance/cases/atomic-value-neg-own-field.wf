@@ -1,0 +1,7 @@
+struct WrongAtomicOwner {
+  cell: AtomicValue;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  return std::process::exit_status(code: 0_u8);
+}

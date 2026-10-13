@@ -936,6 +936,7 @@ impl Report for SemanticIssueKind {
             AtomicBindingUnused { binding, mechanical_fix };
             AtomicGuardWrites { mechanical_fix };
             AtomicGuardDecisionCell { mechanical_fix };
+            AtomicValueUse { reason, mechanical_fix };
             AtomicGuardReadsSelfChanging { handle, mechanical_fix };
             InvalidSpawn { condition };
             InvalidMusttail { condition, subject };

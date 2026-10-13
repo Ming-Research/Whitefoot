@@ -1086,6 +1086,7 @@ pub(crate) struct CheckedTarget {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum CheckedTargetKind {
     Object,
+    AtomicValue,
     MapWhole,
     MapEntry(Box<CheckedExpression>),
     MapSet(Box<CheckedExpression>),
@@ -1114,6 +1115,8 @@ impl CheckedTarget {
 /// [SHARE-1] which shared nominal a `Shared` kind is.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CheckedShared {
+    /// `AtomicValue`, bounded u64 state accessed once per atomic statement path.
+    AtomicValue,
     /// `Shared<T>`, a handle to an object.
     Object,
     /// `ConcurrentHashMap<V>`, a table whose every entry is an `entry`, the

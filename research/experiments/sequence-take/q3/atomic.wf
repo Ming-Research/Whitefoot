@@ -1,0 +1,236 @@
+alias Clock = std::time::Clock;
+alias ExitStatus = std::process::ExitStatus;
+alias Inputs = std::process::Inputs;
+alias Instant = std::time::Instant;
+
+const sq_name_t1: Array<u8, 2> =[116_u8, 49_u8];
+
+const sq_name_t1off: Array<u8, 5> =[116_u8, 49_u8, 111_u8, 102_u8, 102_u8];
+
+const sq_name_tp: Array<u8, 2> =[116_u8, 112_u8];
+
+const sq_name_tc: Array<u8, 2> =[116_u8, 99_u8];
+
+const sq_name_c1: Array<u8, 4> =[99_u8, 95_u8, 116_u8, 49_u8];
+
+fn sq_atomic_context(table: Shared<ConcurrentHashMap<u64>>, part: Shared<SqPart>, seq: Shared<AtomicValue>, totals: Shared<Totals>, gate: Shared<Gate>, clock: Clock, index: u64, variant: u8) -> result: unit pure waits {
+  doc "T1 uses one atomic-value add within the entry-and-part statement; T1off (variant 3) carries that target with its add on the untaken path; TP (4) runs T0 and then a one-target raise; TC (5) runs only the local work and a one-target add. The loop and clock batches match T0.";
+  let deadline = gate_pass(gate: &gate, clock: &clock);
+  let state = index;
+  let done = 0_u64;
+  loop @run {
+    for @batch (turn in 0_u64..1024_u64) {
+      set state = step(state: state);
+      let high = ishr.wrap(state, 33_u32);
+      let key = high % 100000_u64;
+      let bytes = sq_key_bytes(key: key);
+      let view = &bytes[0_u64..8_u64];
+      let exhausted = False();
+      if variant == 5_u8 {
+        atomic s = &seq {
+          match atomic_add(cell: s, value: 1_u64) {
+            Some(value: current) => {
+            }
+            None() => {
+              set exhausted = True();
+            }
+          }
+        }
+      } else {
+        if variant == 4_u8 {
+          let record = sq_record(key: key, number: 0_u64);
+          atomic slot = &table[view], p = &part {
+            set slot^ = Some<u64>(value: record);
+            let ring_at = p^.pos % 4096_u64;
+            set p^.ring[ring_at] = record;
+            set p^.pos = p^.pos +wrap 1_u64;
+          }
+          let peak = high % 1048576_u64;
+          atomic s = &seq {
+            let previous = atomic_raise(cell: s, value: peak);
+          }
+        } else {
+          atomic slot = &table[view], p = &part, s = &seq {
+            if variant == 1_u8 {
+              match atomic_add(cell: s, value: 1_u64) {
+                Some(value: current) => {
+                  let record = sq_record(key: key, number: current);
+                  set slot^ = Some<u64>(value: record);
+                  let ring_at = p^.pos % 4096_u64;
+                  set p^.ring[ring_at] = record;
+                  set p^.pos = p^.pos +wrap 1_u64;
+                }
+                None() => {
+                  set exhausted = True();
+                }
+              }
+            } else {
+              let record = sq_record(key: key, number: 0_u64);
+              set slot^ = Some<u64>(value: record);
+              let ring_at = p^.pos % 4096_u64;
+              set p^.ring[ring_at] = record;
+              set p^.pos = p^.pos +wrap 1_u64;
+            }
+          }
+        }
+      }
+      if exhausted {
+        break @run;
+      }
+    }
+    set done = done +wrap 1024_u64;
+    let reading = std::time::now(clock: &clock);
+    if std::time::instant_reached(deadline: deadline, instant: reading) {
+      break @run;
+    }
+  }
+  tally(totals: &totals, done: done, state: state);
+  return unit;
+}
+
+fn sq_atomic_start(variant: u8, table: &Shared<ConcurrentHashMap<u64>>, seq: &Shared<AtomicValue>, totals: &Shared<Totals>, clock: &Clock, millis: u64, contexts: u64) -> started: Instant reads(table), reads(seq), reads(totals), writes(clock) waits {
+  doc "Spawns one Q3 timed arm, each context with its own part, then opens their common gate; returning joins the spawned contexts.";
+  let gate = gate_new(clock: clock);
+  for @start (index in 0_u64..contexts) {
+    let table_handle = shared_share::<ConcurrentHashMap<u64>>(shared: table);
+    let part = sq_part_new();
+    let seq_handle = shared_share::<AtomicValue>(shared: seq);
+    let tally_handle = shared_share::<Totals>(shared: totals);
+    let gate_handle = shared_share::<Gate>(shared: &gate);
+    let ticks = std::time::clock_share(clock: clock);
+    spawn sq_atomic_context(table: move table_handle, part: move part, seq: move seq_handle, totals: move tally_handle, gate: move gate_handle, clock: move ticks, index: index, variant: variant);
+  }
+  let started = gate_open(gate: &gate, clock: clock, millis: millis);
+  return started;
+}
+
+fn sq_atomic_run(inputs: Inputs, variant: u8, name: &[u8]) -> status: ExitStatus reads(name) waits {
+  doc "Runs the new atomic-value timed arm on the experiment compiler, with the original Q2 workload and output protocol.";
+  let bench = bench_begin(inputs: move inputs);
+  if bench.valid {
+  } else {
+    return std::process::exit_status(code: 2_u8);
+  }
+  let table = shared_map_new::<u64>(capacity: 100000_u64);
+  let seq = shared_atomic_new(value: 0_u64);
+  let totals = totals_new();
+  let started = sq_atomic_start(variant: variant, table: &table, seq: &seq, totals: &totals, clock: &bench.clock, millis: bench.millis, contexts: bench.contexts);
+  let ended = std::time::now(clock: &bench.clock);
+  return bench_end(bench: move bench, name: name, totals: &totals, started: started, ended: ended, verdict: 0_u8);
+}
+
+fn sq_t1_main(inputs: Inputs) -> status: ExitStatus pure waits {
+  return sq_atomic_run(inputs: move inputs, variant: 1_u8, name: &sq_name_t1[0_u64..2_u64]);
+}
+
+fn sq_t1off_main(inputs: Inputs) -> status: ExitStatus pure waits {
+  return sq_atomic_run(inputs: move inputs, variant: 3_u8, name: &sq_name_t1off[0_u64..5_u64]);
+}
+
+fn sq_tp_main(inputs: Inputs) -> status: ExitStatus pure waits {
+  return sq_atomic_run(inputs: move inputs, variant: 4_u8, name: &sq_name_tp[0_u64..2_u64]);
+}
+
+fn sq_tc_main(inputs: Inputs) -> status: ExitStatus pure waits {
+  return sq_atomic_run(inputs: move inputs, variant: 5_u8, name: &sq_name_tc[0_u64..2_u64]);
+}
+
+fn sq_atomic_check_context(table: Shared<ConcurrentHashMap<u64>>, part: Shared<SqPart>, seq: Shared<AtomicValue>, collected: Shared<SqLog>, totals: Shared<Totals>, gate: Shared<Gate>, clock: Clock, index: u64) -> result: unit pure waits {
+  doc "T1 correctness: up to 512 entry-and-part statements with one atomic-value add each; records and before/after clocks feed the same independent N1-N3 verifier as T2 and Tbad.";
+  let deadline = gate_pass(gate: &gate, clock: &clock);
+  let base = gate_base(gate: &gate, clock: &clock);
+  let state = index;
+  let count = 0_u64;
+  let mine = slots_new::<SqRec, 512>();
+  loop @run {
+    set state = step(state: state);
+    let high = ishr.wrap(state, 33_u32);
+    let key = high % 100000_u64;
+    let bytes = sq_key_bytes(key: key);
+    let view = &bytes[0_u64..8_u64];
+    let origin = ishl.wrap(index, 32_u32);
+    let stored = ior(origin, count);
+    let number = 0_u64;
+    let exhausted = False();
+    let first = std::time::now(clock: &clock);
+    let before = std::time::nanoseconds_from(earlier: base, later: first);
+    atomic slot = &table[view], p = &part, s = &seq {
+      match atomic_add(cell: s, value: 1_u64) {
+        Some(value: current) => {
+          let record = sq_record(key: key, number: current);
+          set number = current;
+          set slot^ = Some<u64>(value: stored);
+          let ring_at = p^.pos % 4096_u64;
+          set p^.ring[ring_at] = record;
+          set p^.pos = p^.pos +wrap 1_u64;
+        }
+        None() => {
+          set exhausted = True();
+        }
+      }
+    }
+    let second = std::time::now(clock: &clock);
+    let after = std::time::nanoseconds_from(earlier: base, later: second);
+    if exhausted {
+      break @run;
+    }
+    if mine.len < mine.cap {
+      let logged = SqRec(key: key, value: stored, number: number, before: before, after: after);
+      place_back(window: &mine, value: logged);
+    }
+    set count = count +wrap 1_u64;
+    if mine.len >= mine.cap {
+      break @run;
+    }
+    if std::time::instant_reached(deadline: deadline, instant: second) {
+      break @run;
+    }
+  }
+  atomic c = &collected {
+    for @merge (at in 0_u64..mine.len) {
+      if c^.log.len < c^.log.cap {
+        place_back(window: &c^.log, value: mine[at]);
+      }
+    }
+  }
+  tally(totals: &totals, done: count, state: state);
+  return unit;
+}
+
+fn sq_atomic_check_start(table: &Shared<ConcurrentHashMap<u64>>, seq: &Shared<AtomicValue>, collected: &Shared<SqLog>, totals: &Shared<Totals>, clock: &Clock, millis: u64, contexts: u64) -> started: Instant reads(table), reads(seq), reads(collected), reads(totals), writes(clock) waits {
+  doc "Spawns the contexts of a correctness run, each with a part of its own, opens the gate and returns the instant it opened, once every context has completed.";
+  let gate = gate_new(clock: clock);
+  for @start (index in 0_u64..contexts) {
+    let table_handle = shared_share::<ConcurrentHashMap<u64>>(shared: table);
+    let part = sq_part_new();
+    let seq_handle = shared_share::<AtomicValue>(shared: seq);
+    let log_handle = shared_share::<SqLog>(shared: collected);
+    let tally_handle = shared_share::<Totals>(shared: totals);
+    let gate_handle = shared_share::<Gate>(shared: &gate);
+    let ticks = std::time::clock_share(clock: clock);
+    spawn sq_atomic_check_context(table: move table_handle, part: move part, seq: move seq_handle, collected: move log_handle, totals: move tally_handle, gate: move gate_handle, clock: move ticks, index: index);
+  }
+  let started = gate_open(gate: &gate, clock: clock, millis: millis);
+  return started;
+}
+
+fn sq_atomic_check_run(inputs: Inputs, name: &[u8]) -> status: ExitStatus reads(name) waits {
+  doc "Runs one correctness arm and prints the harness line ending with the verdict; the exit status is the verdict.";
+  let bench = bench_begin(inputs: move inputs);
+  if bench.valid {
+  } else {
+    return std::process::exit_status(code: 2_u8);
+  }
+  let table = shared_map_new::<u64>(capacity: 100000_u64);
+  let seq = shared_atomic_new(value: 0_u64);
+  let collected = sq_log_new();
+  let totals = totals_new();
+  let started = sq_atomic_check_start(table: &table, seq: &seq, collected: &collected, totals: &totals, clock: &bench.clock, millis: bench.millis, contexts: bench.contexts);
+  let ended = std::time::now(clock: &bench.clock);
+  let verdict = sq_verify(collected: &collected, table: &table);
+  return bench_end(bench: move bench, name: name, totals: &totals, started: started, ended: ended, verdict: verdict);
+}
+
+fn sq_c1_main(inputs: Inputs) -> status: ExitStatus pure waits {
+  return sq_atomic_check_run(inputs: move inputs, name: &sq_name_c1[0_u64..4_u64]);
+}

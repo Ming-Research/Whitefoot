@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Reduces the output directory of run.sh to the tables and the decisions
-registered in research/investigations/sequence-take/DESIGN.md section 7 for Q1
-and Q2.
+registered in research/investigations/sequence-take/DESIGN.md section 7 for Q1,
+Q2 and Q3.
 
     python3 summarize.py [--smoke | --pilot] DIR
 
 DIR holds raw.tsv, correct.tsv, calib.tsv, idle.tsv and host.txt. It prints,
 per arm, w and CPU list, the median and the range of the rate over blocks; the
-noise e; the descriptive numbers; the Q1 and Q2 decisions under the registered
+noise e; the descriptive numbers; the Q1, Q2 and Q3 decisions under the registered
 thresholds; and the correctness runs. A ratio is decided only when it clears
 its threshold by more than e. --smoke marks a wiring run on a host that is not
 the 14900K: it prints no verdict and exits 1 when an arm, a check value or a
@@ -22,6 +22,7 @@ from collections import defaultdict
 
 Q1_ARMS = ["S0", "S0t", "S1", "S1t", "S2", "S3", "S4"]
 Q2_ARMS = ["T0", "T0t", "T2"]
+Q3_ARMS = ["T0", "T0t", "T2", "T1", "T1t", "T1off", "TP", "TC"]
 Q1_MEANING = {
     "S0": "work only",
     "S0t": "S0 built a second time (noise control)",
@@ -35,6 +36,14 @@ Q2_MEANING = {
     "T0": "map entry and own part; record (key, 0)",
     "T0t": "T0 built a second time (noise control)",
     "T2": "T0 plus a whole target on one Shared<u64>, +checked 1",
+}
+Q3_MEANING = {
+    **Q2_MEANING,
+    "T1": "entry and own part, one atomic-value add at their effect point",
+    "T1t": "T1 built a second time (contended noise control)",
+    "T1off": "T1 header, atomic operation only on the untaken path",
+    "TP": "T0 then one-target raise of a maximum below 2^20",
+    "TC": "one-target add to a shared count, with the same local LCG work",
 }
 DECISION_W = 400
 Q1_THRESHOLD = 0.75
@@ -182,9 +191,15 @@ def main(directory, smoke=False, pilot=False):
             problems.append("a block started on a host that was not idle")
         print()
 
+    has_q3 = any(k[0] in ("T1", "T1t", "T1off", "TP", "TC") for k in cells)
+    if has_q3:
+        table("Table 3 (Q3). Rate, millions of operations per second", Q3_ARMS, Q3_MEANING, [0])
+
     e1, e1_lists = noise(cells, "S1t", "S1", DECISION_W, lists)
     e0, _ = noise(cells, "S0t", "S0", DECISION_W, lists)
     e2, e2_lists = noise(cells, "T0t", "T0", 0, lists)
+    e3, e3_lists = noise(cells, "T1t", "T1", 0, lists)
+    q3_e = max(e2, e3) if e2 is not None and e3 is not None else None
     print("Noise e = largest |median(twin) / median(arm) - 1| over the CPU lists (DESIGN.md section 7)")
     if e1 is not None:
         print(f"  Q1, S1t / S1 at w = {DECISION_W}: " + ", ".join(f"{drivers[c]} CPUs {fmt(v)}" for c, v in e1_lists.items()) + f"  e = {fmt(e1)}")
@@ -197,9 +212,11 @@ def main(directory, smoke=False, pilot=False):
         print(f"  S0t / S0 at w = {DECISION_W}: e = {fmt(e0)} (uncontended twin, reported)")
     if e2 is not None:
         print(f"  Q2, T0t / T0: " + ", ".join(f"{drivers[c]} CPUs {fmt(v)}" for c, v in e2_lists.items()) + f"  e = {fmt(e2)}")
+    if has_q3:
+        print(f"  Q3, T1t / T1: " + ", ".join(f"{drivers[c]} CPUs {fmt(v)}" for c, v in e3_lists.items()) + f"  e = {fmt(e3)}; combined control e = {fmt(q3_e)}")
     rerun = []
     if key8 is not None:
-        for label, per in (("S1t / S1", e1_lists), ("T0t / T0", e2_lists)):
+        for label, per in (("S1t / S1", e1_lists), ("T0t / T0", e2_lists), ("T1t / T1", e3_lists)):
             if per.get(key8, 0) > NOISE_RERUN:
                 rerun.append(label)
     if rerun and final:
@@ -262,14 +279,56 @@ def main(directory, smoke=False, pilot=False):
                 print(f"  {drivers[c]} CPUs: {ns:.1f} ns per operation; nearest Q1 w: {nearest}")
         print()
 
+    if has_q3:
+        exact8 = next((c for c in lists if drivers[c] == P_CORE_DRIVERS), None)
+        key1 = next((c for c in lists if drivers[c] == 1), None)
+        print(f"Q3 acceptance (combined control e = {fmt(q3_e)})")
+        for label, cpus, top, threshold in (
+            ("T1 / T0 at eight P-cores", exact8, "T1", 0.75),
+            ("T1 / T0 at one driver", key1, "T1", 0.97),
+            ("TP / T0 at eight P-cores", exact8, "TP", 0.90),
+        ):
+            value = ratio(cells, top, "T0", 0, cpus) if cpus else None
+            print(f"  {label} >= {threshold}: {fmt(value)} -> {reading(value, threshold, True, q3_e, final)}")
+        print("  T1off / T0 within e of one, every CPU list:")
+        for cpus in lists:
+            value = ratio(cells, "T1off", "T0", 0, cpus)
+            if not final:
+                verdict = "no verdict"
+            elif value is None or q3_e is None:
+                verdict = "no data or noise estimate"
+            else:
+                verdict = "met" if abs(value - 1) <= q3_e else "not met"
+            print(f"    {drivers[cpus]} CPUs: {fmt(value)} -> {verdict}")
+        print("  TC rate is descriptive; TC / W1 needs the shared-counter study's private-count control measured under the same compiler and machine settings; this run does not fabricate that control.")
+        t1_ratio = ratio(cells, "T1", "T0", 0, exact8) if exact8 else None
+        if reading(t1_ratio, 0.75, True, q3_e, final) == "not met":
+            print("  Below Firn's threshold: compare Q1 S1 / S0 at T0's measured work before attributing the failure to implementation or design (DESIGN.md section 7, Q3).")
+        if final and (exact8 is None or key1 is None):
+            problems.append("Q3 requires both the eight-P-core list and one-driver list")
+        print()
+
     correct = read_tsv(os.path.join(directory, "correct.tsv"))
     if correct:
         print("Correctness runs (1 s each at the 8-P-core list; verdict bit 1 = N1, 2 = N2, 4 = N3 failed)")
         print(f"{'block':>5} {'arm':<7} {'attempts':>8} {'status':>6} {'verdict':>7}  expectation")
         for r in correct:
-            wanted = "T2 passes N1-N3 (verdict 0)" if r["arm"] == "c_t2" else "Tbad fails N1 and N3 (bits 1 and 4)"
+            wanted = "Tbad fails N1 and N3 (bits 1 and 4)" if r["arm"] == "c_tbad" else f"{r['arm']} passes N1-N3 (verdict 0)"
             print(f"{r['block']:>5} {r['arm']:<7} {r['attempts']:>8} {r['status']:>6} {r['verdict']:>7}  {wanted}: {r['expect']}")
-        bad = [r for r in correct if r["expect"] != "ok"]
+        def correctness_matches(row):
+            try:
+                status = int(row["status"])
+                verdict = int(row["verdict"])
+            except ValueError:
+                return False
+            if row["arm"] == "c_tbad":
+                required = status == verdict and verdict & 5 == 5
+            elif row["arm"] in ("c_t1", "c_t2"):
+                required = status == 0 and verdict == 0
+            else:
+                required = False
+            return required and row["expect"] == "ok"
+        bad = [r for r in correct if not correctness_matches(r)]
         if bad:
             print("  The checker is wrong or the implementation violates N1-N3: Q3 waits for it.")
             problems.append("a correctness run did not give the required verdict")
@@ -279,7 +338,7 @@ def main(directory, smoke=False, pilot=False):
 
     if smoke:
         expected_q1 = [(a, w) for a in Q1_ARMS for w in ws] if ws else []
-        expected_q2 = [(a, 0) for a in Q2_ARMS] if any(k[0] in Q2_ARMS for k in cells) else []
+        expected_q2 = [(a, 0) for a in (Q3_ARMS if has_q3 else Q2_ARMS)] if any(k[0] in Q2_ARMS for k in cells) else []
         for c in lists:
             for arm, w in expected_q1 + expected_q2:
                 rows = cells.get((arm, w, c))
@@ -292,6 +351,16 @@ def main(directory, smoke=False, pilot=False):
                     problems.append(f"{arm} w={w} on {c} printed check 0")
         print("Smoke wiring: " + ("every arm ran on every list, check values nonzero, correctness runs as required" if not problems else "PROBLEMS"))
 
+    if has_q3:
+        for cpus in lists:
+            for arm in Q3_ARMS:
+                actual = {r["block"] for r in cells.get((arm, 0, cpus), [])}
+                if actual != set(blocks):
+                    problems.append(f"missing Q3 cells for {arm} on {cpus}")
+        for block in blocks:
+            for arm in ("c_t1", "c_t2", "c_tbad"):
+                if not any(int(r["block"]) == block and r["arm"] == arm for r in correct):
+                    problems.append(f"missing Q3 correctness control {arm} in block {block}")
     for p in problems:
         print(f"PROBLEM: {p}")
     return 1 if problems else 0

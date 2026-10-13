@@ -785,6 +785,18 @@ impl<'unit> Checker<'_, 'unit> {
         let kind = (|| {
             Ok(match template.role {
                 DeclarationRole::Struct
+                    if template.name == "AtomicValue"
+                        && self
+                            .types
+                            .declarations
+                            .is_prelude_opaque_declaration(template.node)? =>
+                {
+                    CheckedNominalKind::Shared {
+                        state: CheckedType::Integer(IntegerType::U64),
+                        shape: CheckedShared::AtomicValue,
+                    }
+                }
+                DeclarationRole::Struct
                     if template.name == "DecisionCell"
                         && self
                             .types
@@ -1980,6 +1992,7 @@ impl<'unit> TypeContext<'unit> {
                 "Shared" => OpaqueStruct::Shared,
                 "SharedRead" => OpaqueStruct::SharedRead,
                 "DecisionCell" => OpaqueStruct::DecisionCell,
+                "AtomicValue" => OpaqueStruct::AtomicValue,
                 "ConcurrentHashMap" => OpaqueStruct::ConcurrentHashMap,
                 _ => return Err(SemanticCompilerFailure::InvalidResolution.into()),
             });

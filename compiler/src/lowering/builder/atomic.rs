@@ -24,6 +24,7 @@ pub(super) struct AtomicRegion {
     groups: Vec<Group>,
     bindings: HashMap<BindingId, usize>,
     target_bindings: HashMap<BindingId, usize>,
+    atomic_bindings: BTreeSet<BindingId>,
     ledger: Rc<RefCell<AtomicLedger>>,
 }
 #[derive(Clone)]
@@ -48,6 +49,7 @@ struct Group {
 #[derive(Clone)]
 enum Lock {
     Object,
+    AtomicValue,
     Map {
         nominal: IrNominalId,
         table: IrValueId,
@@ -100,12 +102,25 @@ impl IrBuilder<'_> {
         let enclosing = self.bindings.keys().copied().collect::<Vec<_>>();
         let mut grouped = std::collections::BTreeMap::new();
         for (index, target) in targets.iter().enumerate() {
+            if matches!(target.kind, CheckedTargetKind::AtomicValue) {
+                continue;
+            }
             grouped
                 .entry(target.lock_order.clone())
                 .or_insert_with(Vec::new)
                 .push(index);
         }
         let mut guard_roots = Vec::new();
+        if !targets.is_empty()
+            && targets
+                .iter()
+                .all(|target| matches!(target.kind, CheckedTargetKind::AtomicValue))
+        {
+            // Ordinary acquisition supplies this waiting boundary for mixed
+            // statements. An atomic-only statement holds no target while it
+            // yields, and prepares snapshots on the executor that resumes it.
+            self.define(IrType::Unit, IrOperation::ContextPass)?;
+        }
         self.define(IrType::Unit, IrOperation::SnapshotAtomicBegin)?;
         if let Some(guard) = guard {
             expression_bindings(guard, &mut guard_roots);
@@ -148,8 +163,59 @@ impl IrBuilder<'_> {
             groups: Vec::new(),
             bindings: HashMap::new(),
             target_bindings: HashMap::new(),
+            atomic_bindings: BTreeSet::new(),
             ledger: ledger.clone(),
         };
+        // Atomic values are lifetime-protected targets, but never lock groups on
+        // the currently qualified hosted targets. Merely naming one reads only
+        // its handle; a branch with no operation does not touch its shared word.
+        for target in targets
+            .iter()
+            .filter(|target| matches!(target.kind, CheckedTargetKind::AtomicValue))
+        {
+            let state = lower_type(self.erasure, target.state)?;
+            let address = self.expression(&target.handle)?;
+            let IrType::Address(IrAddressed::Nominal(nominal)) = self.value_type(address)? else {
+                return Err(LoweringFailure::InvalidCheckedProgram);
+            };
+            let loaded = self.define(
+                IrType::Nominal(nominal),
+                IrOperation::Load {
+                    address,
+                    referent: IrAddressed::Nominal(nominal),
+                },
+            )?;
+            let object = if target.kept_by_place {
+                loaded
+            } else {
+                self.define(
+                    IrType::Nominal(nominal),
+                    IrOperation::SharedRetain {
+                        nominal,
+                        object: loaded,
+                    },
+                )?
+            };
+            let referent = IrAddressed::of(state).ok_or(LoweringFailure::InvalidCheckedProgram)?;
+            let field = self.define(
+                IrType::Address(referent),
+                IrOperation::SharedState { nominal, object },
+            )?;
+            self.bind_reference(target.binding, field)?;
+            region.atomic_bindings.insert(target.binding);
+            region
+                .target_bindings
+                .insert(target.binding, region.targets.len());
+            region.targets.push(TargetRegion {
+                binding: target.binding,
+                object,
+                nominal,
+                state: field,
+                owned: !target.kept_by_place,
+                wrote: !target.reads,
+                lock: Lock::AtomicValue,
+            });
+        }
         for (group_index, indexes) in grouped.into_values().enumerate() {
             ledger.borrow_mut().push_group(
                 indexes
@@ -406,7 +472,15 @@ impl IrBuilder<'_> {
         };
         let mut roots = Vec::new();
         statement_bindings(statement, &mut roots);
-        let reached = self.reached_groups(&region, &roots);
+        let mut reached = self.reached_groups(&region, &roots);
+        // The atomic operation is the statement's effect point: it follows
+        // every lock acquisition, including groups first used later in the body.
+        if roots
+            .iter()
+            .any(|root| region.atomic_bindings.contains(&root.binding))
+        {
+            reached.extend(0..region.groups.len());
+        }
         if let Some(last) = reached.last().copied() {
             let source = statement
                 .ledger_path()
@@ -485,6 +559,7 @@ impl IrBuilder<'_> {
                 for (ordinal, member) in group.targets.iter().enumerate() {
                     let target = &region.targets[*member];
                     let hold = match &target.lock {
+                        Lock::AtomicValue => return Err(LoweringFailure::InvalidCheckedProgram),
                         Lock::Object => None,
                         Lock::Map { table, take, .. } => {
                             self.prepare_hold(*table, take)?;
@@ -519,6 +594,7 @@ impl IrBuilder<'_> {
             } else {
                 let target = &region.targets[group.targets[0]];
                 match &target.lock {
+                    Lock::AtomicValue => return Err(LoweringFailure::InvalidCheckedProgram),
                     Lock::Object => {
                         self.define(
                             IrType::Unit,
@@ -655,6 +731,7 @@ impl IrBuilder<'_> {
                 .transpose()?;
             if let Some(record) = group.record {
                 let nominal = match &region.targets[group.targets[0]].lock {
+                    Lock::AtomicValue => return Err(LoweringFailure::InvalidCheckedProgram),
                     Lock::Object => None,
                     Lock::Map { nominal, .. } => Some(*nominal),
                 };
@@ -665,6 +742,7 @@ impl IrBuilder<'_> {
             } else {
                 let target = &region.targets[group.targets[0]];
                 match &target.lock {
+                    Lock::AtomicValue => return Err(LoweringFailure::InvalidCheckedProgram),
                     Lock::Object => {
                         self.define(
                             IrType::Unit,
@@ -788,6 +866,7 @@ impl IrBuilder<'_> {
                 for member in &region.groups[index].targets {
                     let target = &region.targets[*member];
                     match &target.lock {
+                        Lock::AtomicValue => return Err(LoweringFailure::InvalidCheckedProgram),
                         Lock::Object => {
                             let test =
                                 self.wake_test(guard, target.binding, target.state, &targets)?;

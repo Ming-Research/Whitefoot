@@ -1,0 +1,14 @@
+fn repeated(owner: &Shared<AtomicValue>, choose: Bool) -> result: unit reads(owner) waits {
+  atomic s = &owner^ {
+    if choose {
+      let first = atomic_load(cell: s);
+    } else {
+    }
+    let second = atomic_load(cell: s);
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  return std::process::exit_status(code: 0_u8);
+}

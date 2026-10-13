@@ -1303,6 +1303,20 @@ pub enum IrOperation {
     SharedNew {
         nominal: IrNominalId,
     },
+    /// [SHARE-1] one atomic-value observation, clamped to its saturation cap.
+    AtomicValueLoad {
+        cell: IrValueId,
+    },
+    /// One fetch-add, returning the prior value on success and 2^63 on full.
+    AtomicValueAdd {
+        cell: IrValueId,
+        value: IrValueId,
+    },
+    /// One monotonic raise, returning the prior abstract value.
+    AtomicValueRaise {
+        cell: IrValueId,
+        value: IrValueId,
+    },
     /// [PRE-1] an Open one-shot decision cell with one shared handle.
     DecisionCellNew {
         nominal: IrNominalId,
@@ -1325,6 +1339,9 @@ pub enum IrOperation {
         nominal: IrNominalId,
         object: IrValueId,
     },
+    /// The existing waiting-boundary scheduling pass, before any target is
+    /// acquired by an atomic-only statement. Defines Unit and may suspend.
+    ContextPass,
     /// Native snapshot signal preparation before any atomic acquisition.
     /// Erased when the composition uses no snapshot export.
     SnapshotAtomicBegin,

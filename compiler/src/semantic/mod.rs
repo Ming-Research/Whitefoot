@@ -1289,6 +1289,13 @@ pub enum SemanticIssueKind {
         /// The repair [DIAG-1].
         mechanical_fix: &'static str,
     },
+    /// An atomic-value binding or operation violates its one-operation scope [SHARE-2].
+    AtomicValueUse {
+        /// The violated atomic-value condition.
+        reason: &'static str,
+        /// The repair [DIAG-1].
+        mechanical_fix: &'static str,
+    },
     /// An atomic statement's guard whose footprint writes a path [SHARE-2].
     AtomicGuardWrites {
         /// The repair [DIAG-1].
