@@ -1,0 +1,17 @@
+# Temporary: registers this workflow path with GitHub so that the next commit's
+# manual-only call-grain measurement can be dispatched. Replaced by that commit.
+name: tmp-call-grain
+
+on:
+  push:
+    branches: [claude/call-grain-args]
+    paths: [.github/workflows/tmp-call-grain.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  register:
+    runs-on: ubuntu-24.04
+    steps:
+      - run: echo registered
