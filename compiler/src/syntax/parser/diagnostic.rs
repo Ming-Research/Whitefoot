@@ -757,10 +757,103 @@ struct Frontier {
     atom_only: bool,
     /// A maximal-prefix row has already matched a terminal of an atom.
     matched_atom_prefix: bool,
-    /// A maximal-prefix row expects IDENT at the boundary and admits the
-    /// token after it, so writing a fresh IDENT in place of the boundary
-    /// token lets this frontier's row match [FORM-3, DIAG-1].
+    /// A maximal-prefix row expects IDENT at the boundary and the token
+    /// after the boundary can follow that IDENT, so writing a fresh IDENT in
+    /// place of the boundary token lets the derivation continue past it
+    /// [FORM-3, DIAG-1].
     identifier_continues: bool,
+}
+
+/// Whether `token` can follow the terminal occurrence `node` within the
+/// production whose right-hand side writes it.
+///
+/// A row whose last position is the IDENT ends there, so the row cannot say
+/// what follows it. The answer comes from the source EBNF: each enclosing
+/// sequence's later children, and each enclosing repetition's own body, up to
+/// the production's root. What follows the production itself depends on the
+/// caller instance, which the occurrence does not record, so reaching the
+/// root answers no: `outer(& musttail inner())` writes its IDENT in `pbase`,
+/// and no rename of `musttail` derives there.
+fn follows_in_production(node: GrammarNodeId, token: Option<&ClassifiedToken>) -> bool {
+    let Some(token) = token else {
+        return false;
+    };
+    let Some(path) = crate::syntax::grammar::productions()
+        .iter()
+        .find_map(|production| enclosing_path(production.root(), node))
+    else {
+        return false;
+    };
+    for (parent, index) in path.iter().rev() {
+        let Some(record) = grammar_node(*parent) else {
+            return false;
+        };
+        let children = record.children();
+        match record.kind() {
+            GrammarNodeKind::Sequence => {
+                for sibling in children.iter().skip(index + 1) {
+                    let (starts, nullable) = first_accepts(*sibling, token);
+                    if starts {
+                        return true;
+                    }
+                    if !nullable {
+                        return false;
+                    }
+                }
+            }
+            GrammarNodeKind::RepeatZero | GrammarNodeKind::RepeatOne => {
+                if children
+                    .get(*index)
+                    .is_some_and(|body| first_accepts(*body, token).0)
+                {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+/// The structural ancestors of `target` below `node`, outermost first, each
+/// with the index of the child on the way down; `None` when `target` is not
+/// in `node`'s tree. A production reference is a leaf here.
+fn enclosing_path(
+    node: GrammarNodeId,
+    target: GrammarNodeId,
+) -> Option<Vec<(GrammarNodeId, usize)>> {
+    if node == target {
+        return Some(Vec::new());
+    }
+    let record = grammar_node(node)?;
+    record
+        .children()
+        .iter()
+        .enumerate()
+        .find_map(|(index, child)| {
+            let mut path = enclosing_path(*child, target)?;
+            path.insert(0, (node, index));
+            Some(path)
+        })
+}
+
+/// Whether `token` can begin `node`, and whether `node` derives the empty
+/// string.
+fn first_accepts(node: GrammarNodeId, token: &ClassifiedToken) -> (bool, bool) {
+    let mut starts = false;
+    let mut nullable = false;
+    for word in grammar_prefixes(node, false) {
+        match word[0] {
+            Some(atom) => {
+                starts |= matches!(
+                    atom.predicate(),
+                    LookaheadPredicate::Terminal(predicate) if token.terminals().contains(predicate)
+                );
+            }
+            None => nullable = true,
+        }
+    }
+    (starts, nullable)
 }
 
 fn frontier(
@@ -827,7 +920,11 @@ fn frontier(
             identifier_continues |= match row.position(usize::from(maximum) + 1) {
                 Some(next) => accepts(next.predicate(), tokens, cursor, usize::from(maximum) + 1)
                     .map_err(DiagnosticResult::Compiler)?,
-                None => true,
+                // The row ends at the IDENT, so it says nothing about the
+                // token after it; ask the production that writes the IDENT.
+                None => atom.provenance().is_some_and(|occurrence| {
+                    follows_in_production(occurrence, tokens.get(cursor + usize::from(maximum) + 1))
+                }),
             };
         }
         atom_only |= atom.is_atom_only();

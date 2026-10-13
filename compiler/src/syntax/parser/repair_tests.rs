@@ -270,20 +270,7 @@ fn marked_atom_starts_require_a_callee_head() {
                 marker.as_bytes(),
                 "{source}"
             );
-            // Only with nothing after the marker does a name written in its
-            // place derive, `outer(name)`, so only there is the marker read
-            // as a name and the reserved-name rename offered [FORM-3]; every
-            // other follower leaves no IDENT row that a rename would match.
-            let rename = follower.is_empty().then(|| {
-                let start = source.find(marker).expect("the marker is written");
-                let offset = |at: usize| crate::ByteOffset::new(u64::try_from(at).expect("small"));
-                SyntaxRepair::ReservedName(crate::syntax::SyntaxCoordinate::new(
-                    issue.coordinate().source(),
-                    offset(start),
-                    offset(start + marker.len()),
-                ))
-            });
-            assert_eq!(issue.mechanical_fix, rename, "{source}");
+            assert_eq!(issue.mechanical_fix, None, "{source}");
         }
     }
 }
