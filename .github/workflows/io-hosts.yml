@@ -146,14 +146,22 @@ jobs:
       # This host already requires io_uring. The case uses taskset with
       # three CPUs from its allowed set, prints Inputs.drivers, and compares
       # it with reports published after actual driver executors started.
+      # The busy-ring receive also needs this host's required native ring;
+      # an unavailable ring cannot satisfy either native witness.
       # No unavailable-ring or fewer-CPU result satisfies the criterion.
-      - name: Runtime driver count through the ordinary Inputs entry
+      - name: Runtime driver count and busy-ring receive through ordinary entries
+        env:
+          WF_REQUIRE_LINUX_IO_URING: '1'
+          WF_TRACE_RING_SERVICE: '1'
         run: |
           perl .github/run-check.pl compiler/test-build-corpus \
             cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --test corpus --no-run
           perl .github/run-check.pl compiler/test-corpus \
             cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --test corpus \
             programs::driver_count::driver_count_matches_started_roles_under_three_cpu_affinity -- --ignored --exact
+          perl .github/run-check.pl compiler/test-corpus \
+            cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --test corpus \
+            programs::busy_ring_receive::a_tcp_receive_releases_an_atomic_computation_with_an_idle_driver -- --exact
 
       # run-check.pl appended every stage over its budget in
       # .github/time-budgets.txt, or without one, to this record; the stages
