@@ -1,0 +1,701 @@
+# TEMPORARY: remove this workflow before PR #417 (claude/result-source) is
+# marked ready. It implements Stage 1 (hosted instruction counts and build
+# cost) of the comparison fixed in the result-source investigation's
+# DESIGN.md ("Comparison fixed before measurement"); Stage 2 (14900K timing)
+# is a separate workflow. It builds three compilers with the same flags:
+# base (the branch point, BASE_REV), twin (base built again in its own target
+# directory, the noise control) and branch (this checkout). The limit-150
+# control of the design cannot be built here: neither base nor this branch has
+# the fragment link's import-limit argument. With each compiler it builds
+# Snowghost's layout_oracle (sequential and --par fragment builds, empty
+# cache) and Halo's bench (fragment build and --full-lto), counts direct call
+# sites of the styles accessors in the sequential fragment build with
+# objdump, and counts instructions of the sequential apollo11 word edits (the
+# first four) under callgrind with collection toggled on
+# wf_layout.text_changed and wf_layout.update. The job fails on a build or
+# protocol error and never on a measured number; the report step prints one
+# line per pre-written criterion. Hosted times show cost, not 14900K timing.
+# Invoke with: gh workflow run result-source-measure.yml --ref claude/result-source
+name: result-source-measure
+
+on:
+  push:
+    branches: [claude/result-source]
+  workflow_dispatch:
+    inputs:
+      rounds:
+        description: Builds per compiler, program and mode, each with an empty cache
+        type: string
+        default: "3"
+      snowghost_commit:
+        description: Snowghost-wf revision (default c8f5e17, the design's 136-site baseline)
+        type: string
+        default: ""
+      halo_commit:
+        description: Halo-wf revision
+        type: string
+        default: ""
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: result-source-measure
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+  WHITEFOOT_CHECK_TIMEOUT: 7200
+  # The branch point of claude/result-source (main before the branch).
+  BASE_REV: d59615352
+  SNOWGHOST_COMMIT: ${{ inputs.snowghost_commit || 'c8f5e1776bc2a3f46f7ed07502f61002b3a52f4b' }}
+  HALO_COMMIT: ${{ inputs.halo_commit || '641eb29f48334489ff62af3b3ed71721c2967fb6' }}
+  ROUNDS: ${{ inputs.rounds || '3' }}
+
+jobs:
+  measure:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install the host toolchain, valgrind and fonts
+        run: |
+          set -eo pipefail
+          case "$ROUNDS" in ''|*[!0-9]*|0*) echo "rounds must be a positive integer, not '$ROUNDS'" >&2; exit 1 ;; esac
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          rustup default stable
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends valgrind binutils \
+            fonts-dejavu-core fonts-dejavu-mono fonts-dejavu-extra fonts-liberation fonts-freefont-ttf \
+            fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont \
+            fonts-noto-color-emoji fonts-opensymbol
+          out="$RUNNER_TEMP/rsrc"
+          mkdir -p "$out/results" "$out/logs" "$out/drivers"
+          {
+            echo "branch $(git rev-parse HEAD), base $BASE_REV, rounds $ROUNDS"
+            echo "Snowghost $SNOWGHOST_COMMIT, Halo $HALO_COMMIT"
+            /usr/bin/clang --version | head -1
+            ld.lld --version
+            rustc --version
+            valgrind --version
+            size --version | head -1
+            objdump --version | head -1
+            lscpu | grep -E 'Model name|^CPU\(s\)'
+          } | tee "$out/results/machine.txt"
+
+      - name: Write the measurement helper
+        run: |
+          set -eo pipefail
+          cat > "$RUNNER_TEMP/rsrc/measure.py" <<'PY'
+          """Builds, site counts, callgrind counts and the report of the Stage 1 run.
+
+          usage: measure.py build OUT PROGRAM DIRECTORY ENTRY MODE ROUNDS
+                 measure.py callgrind OUT SNOWGHOST_ROOT DATA_DIR EDITS INCTIME
+                 measure.py report OUT
+
+          The compilers are OUT/whitefootc-{base,twin,branch}. MODE is seq or par
+          (fragment builds with an empty cache) or lto (--full-lto). Nothing here
+          decides a pass: a failure is a build or protocol error, never a number.
+          """
+          import csv, importlib.util, json, os, pathlib, re, statistics, subprocess, sys, time
+          from collections import Counter
+
+          SIDES = ("base", "twin", "branch")
+          STYLES = ("wf_layout.computed_of", "wf_layout.font_of", "wf_layout.box_of")
+          OTHERS = ("wf_layout.text_of", "wf_font.read_item", "wf_font.write_item", "wf_font.next_glyphs")
+          ACCESSORS = STYLES + OTHERS
+          MARKERS = ("wf_layout.text_changed", "wf_layout.update")
+          HEADER = re.compile(r"^[0-9a-f]+ <(.+)>:$")
+          BRANCH = re.compile(r"\s(call\w*|j\w+)\s+[0-9a-f]+ <([^>+]+)>$")
+          BUILD_COLUMNS = ["program", "mode", "round", "position", "side", "wall_s", "link_ms", "text_bytes"]
+
+
+          def pattern_of(name):
+              return re.compile(re.escape(name) + r"(\..+)?$")
+
+
+          def canonical(name):
+              return re.sub(r"\.source$", "", name)
+
+
+          def text_size(path):
+              listing = subprocess.run(["size", "-A", str(path)], check=True,
+                                       capture_output=True, text=True).stdout
+              return next(int(line.split()[1]) for line in listing.splitlines()
+                          if line.split()[:1] == [".text"])
+
+
+          def sites(executable, keep):
+              """Direct calls and jumps to each accessor (public and .source symbols).
+
+              Counts per accessor: [excluding the public symbol's own call of its
+              .source entry, all]. A call or jump from the function itself is not a site.
+              """
+              patterns = {name: pattern_of(name) for name in ACCESSORS}
+              counts = {name: [0, 0] for name in ACCESSORS}
+              lines = []
+              process = subprocess.Popen(["objdump", "-d", "--no-show-raw-insn", str(executable)],
+                                         stdout=subprocess.PIPE, text=True)
+              function = None
+              for line in process.stdout:
+                  line = line.rstrip("\n")
+                  found = HEADER.match(line)
+                  if found:
+                      function = found[1]
+                      continue
+                  found = BRANCH.search(line)
+                  if not found or found[2] == function:
+                      continue
+                  for name, pattern in patterns.items():
+                      if pattern.match(found[2]):
+                          wrapper = function is not None and canonical(function) == canonical(found[2])
+                          counts[name][1] += 1
+                          counts[name][0] += 0 if wrapper else 1
+                          lines.append(f"{function}\t{found[1]}\t{found[2]}\t{'wrapper' if wrapper else 'site'}")
+              if process.wait():
+                  sys.exit("objdump failed")
+              keep.write_text("caller\tinstruction\tcallee\tkind\n" + "\n".join(sorted(lines)) + "\n")
+              return counts
+
+
+          def append_rows(path, columns, rows):
+              new = not path.exists()
+              with path.open("a") as target:
+                  if new:
+                      target.write("\t".join(columns) + "\n")
+                  for row in rows:
+                      target.write("\t".join(str(row[column]) for column in columns) + "\n")
+
+
+          def cmd_build(out, program, directory, entry, mode, rounds):
+              out, directory, rounds = pathlib.Path(out), pathlib.Path(directory), int(rounds)
+              measured_sites = program == "snowghost" and mode == "seq"
+              for round in range(rounds):
+                  shift = round % len(SIDES)
+                  rows = []
+                  for position, side in enumerate(SIDES[shift:] + SIDES[:shift]):
+                      label = f"{program}-{mode}-{side}-{round + 1}"
+                      executable = out / "programs" / label
+                      cache = out / "caches" / label
+                      executable.parent.mkdir(parents=True, exist_ok=True)
+                      command = [str(out / f"whitefootc-{side}")]
+                      if mode == "lto":
+                          command += ["--full-lto"]
+                      else:
+                          command += ["--cache", str(cache), "--fragments", "function", "--report"]
+                      if mode == "par":
+                          command += ["--par"]
+                      command += ["--graph", "modules.wfg", "--entry", entry, "-o", str(executable)]
+                      start = time.perf_counter()
+                      build = subprocess.run(command, cwd=directory, capture_output=True, text=True)
+                      wall = time.perf_counter() - start
+                      log = out / "logs" / f"build-{label}.log"
+                      log.parent.mkdir(exist_ok=True)
+                      log.write_text(f"$ {' '.join(command)}\nexit {build.returncode}\n"
+                                     f"--- stdout\n{build.stdout}--- stderr\n{build.stderr}")
+                      if build.returncode:
+                          print(log.read_text()[-6000:], file=sys.stderr)
+                          sys.exit(f"{label}: whitefootc exited with {build.returncode}")
+                      report = {}
+                      for line in reversed(build.stdout.splitlines()):
+                          if line.startswith('{"build"'):
+                              report = json.loads(line)["build"]
+                              break
+                      row = {"program": program, "mode": mode, "round": round + 1, "position": position + 1,
+                             "side": side, "wall_s": f"{wall:.3f}", "link_ms": report.get("link_ms", "NA"),
+                             "text_bytes": text_size(executable)}
+                      rows.append(row)
+                      print("\t".join(str(row[column]) for column in BUILD_COLUMNS), flush=True)
+                      if measured_sites:
+                          counts = sites(executable, out / "results" / f"sites-{side}-round{round + 1}.tsv")
+                          append_rows(out / "results" / "sites.tsv", ["round", "side", "accessor", "sites", "sites_all"],
+                                      [{"round": round + 1, "side": side, "accessor": name,
+                                        "sites": value[0], "sites_all": value[1]} for name, value in counts.items()])
+                          print(f"{label} sites: " + " ".join(f"{n.rsplit('.', 1)[-1]}={v[0]}/{v[1]}" for n, v in counts.items()),
+                                flush=True)
+                          if round == 0:
+                              (out / "drivers" / f"snowghost-seq-{side}").unlink(missing_ok=True)
+                              os.replace(executable, out / "drivers" / f"snowghost-seq-{side}")
+                      if executable.exists():
+                          executable.unlink()
+                      subprocess.run(["rm", "-rf", str(cache)], check=True)
+                  append_rows(out / "results" / "builds.tsv", BUILD_COLUMNS, rows)
+
+
+          def parse_callgrind(text):
+              """Self Ir per function; the rows must add up to the totals footer."""
+              names, own = {}, Counter()
+              function = None
+              skip = False
+              positions = events = totals = None
+
+              def name(value):
+                  found = re.fullmatch(r"\((\d+)\)(?: (.+))?", value)
+                  if not found:
+                      return value
+                  if found[2] is not None:
+                      names[found[1]] = found[2]
+                  return names[found[1]]
+
+              for line in text.splitlines():
+                  if line.startswith("positions:"):
+                      positions = len(line.split()) - 1
+                  elif line.startswith("events:"):
+                      events = line.split()[1:]
+                  elif line.startswith("totals:"):
+                      fields = line.split()[1:]
+                      totals = int(fields[events.index("Ir")])
+                  elif line.startswith("fn="):
+                      function = name(line[3:])
+                  elif line.startswith("cfn="):
+                      name(line[4:])
+                  elif line.startswith("calls="):
+                      skip = True
+                  elif line and line[0] in "*+-0123456789":
+                      if skip:
+                          skip = False
+                          continue
+                      fields = line.split()
+                      index = positions + events.index("Ir")
+                      own[function] += int(fields[index]) if index < len(fields) else 0
+              if totals is None or sum(own.values()) != totals:
+                  raise ValueError("exclusive rows do not reconcile with the totals footer")
+              return totals, own
+
+
+          def prefix(source, count, destination):
+              written, lines = 0, []
+              for line in source.read_bytes().splitlines(keepends=True):
+                  if line[:2] in (b"T ", b"D ", b"C ", b"K ", b"B ", b"X "):
+                      if written == count:
+                          break
+                      written += 1
+                  lines.append(line)
+              if written != count:
+                  sys.exit("edit script shorter than the requested operations")
+              destination.write_bytes(b"".join(lines))
+
+
+          def cmd_callgrind(out, root, data_dir, edits, inctime_path):
+              out, root = pathlib.Path(out).resolve(), pathlib.Path(root).resolve()
+              data = root / data_dir
+              spec = importlib.util.spec_from_file_location("inctime", inctime_path)
+              inctime = importlib.util.module_from_spec(spec)
+              spec.loader.exec_module(inctime)
+              script = out / "apollo11-word-first4.edits"
+              prefix(pathlib.Path(edits), 4, script)
+              sheets = [
+                  "wikibase.client.init&only=styles&skin=vector-2022=" + str(data / "apollo11-modules.css"),
+                  "modules=site.styles&only=styles&skin=vector-2022=" + str(data / "apollo11-site.css")]
+              (out / "callgrind").mkdir(exist_ok=True)
+              for side in SIDES:
+                  driver = out / "drivers" / f"snowghost-seq-{side}"
+                  symbols = subprocess.run(["nm", str(driver)], check=True, capture_output=True, text=True).stdout.split()
+                  for marker in MARKERS:
+                      if symbols.count(marker) != 1:
+                          sys.exit(f"{side}: symbol {marker} is not defined exactly once")
+                  total, own, scopes = 0, Counter(), {}
+                  for index, marker in enumerate(MARKERS):
+                      label = f"{side}-scope{index + 1}"
+                      output = out / "callgrind" / f"{label}.out"
+                      # One marker per process, the last character a wildcard (valgrind 3.22
+                      # option-trie shadowing; the wrapper's .body clone is a longer name).
+                      command = ["valgrind", "--tool=callgrind", "--collect-atstart=no",
+                                 "--toggle-collect=" + marker[:-1] + "?", "--callgrind-out-file=" + str(output),
+                                 str(driver), "edittime", str(script), str(data / "apollo11.html"),
+                                 str(root / "renderer" / "style" / "ua.css"), *sheets]
+                      stdout, stderr = out / "callgrind" / f"{label}.stdout", out / "callgrind" / f"{label}.stderr"
+                      start = time.perf_counter()
+                      with stdout.open("w") as so, stderr.open("w") as se:
+                          run = subprocess.run(command, cwd=root, stdout=so, stderr=se,
+                                               env=dict(os.environ, WF_WORKERS="1"))
+                      print(f"{label}: exit {run.returncode}, {time.perf_counter() - start:.0f} s", flush=True)
+                      if run.returncode:
+                          print(stderr.read_text()[-4000:], file=sys.stderr)
+                          sys.exit(f"{label}: valgrind exited with {run.returncode}")
+                      timed, other, styled, built = inctime.read(str(stdout), inctime.script_operations(str(script)))
+                      if other or styled or built or len(timed) != 4:
+                          sys.exit(f"{label}: incomplete, refused or non-text edit protocol")
+                      scope_total, scope_own = parse_callgrind(output.read_text())
+                      if scope_total <= 0:
+                          sys.exit(f"{label}: no instructions collected")
+                      scopes[marker] = scope_total
+                      total += scope_total
+                      own.update(scope_own)
+                  (out / "results" / f"callgrind-{side}.json").write_text(
+                      json.dumps({"total": total, "scopes": scopes, "own": dict(own)}) + "\n")
+                  print(f"{side}: {total} instructions in {scopes}", flush=True)
+
+
+          def read_tsv(path):
+              if not path.exists():
+                  return []
+              with path.open() as source:
+                  return list(csv.DictReader(source, delimiter="\t"))
+
+
+          def pct(base, new):
+              return (new - base) / base * 100 if base else float("nan")
+
+
+          def group(own, name):
+              pattern = pattern_of(name)
+              return sum(value for key, value in own.items() if pattern.match(key))
+
+
+          def cmd_report(out):
+              out = pathlib.Path(out)
+              results = out / "results"
+              lines = []
+
+              def say(text=""):
+                  print(text)
+                  lines.append(text)
+
+              # Builds.
+              stats, order = {}, []
+              for row in read_tsv(results / "builds.tsv"):
+                  key = (row["program"], row["mode"])
+                  if key not in order:
+                      order.append(key)
+                  entry = stats.setdefault(key + (row["side"],), {"wall": [], "link": [], "text": []})
+                  entry["wall"].append(float(row["wall_s"]))
+                  if row["link_ms"] not in ("NA", ""):
+                      entry["link"].append(float(row["link_ms"]))
+                  entry["text"].append(int(row["text_bytes"]))
+
+              def median(key, field):
+                  values = stats.get(key, {}).get(field)
+                  return statistics.median(values) if values else None
+
+              def delta(key_base, key_other, field):
+                  a, b = median(key_base, field), median(key_other, field)
+                  return None if a is None or b is None else pct(a, b)
+
+              def show(value):
+                  return "-" if value is None else f"{value:+.2f}%"
+
+              say("== Build cost: median over rounds, each build with an empty cache (hosted runner times) ==")
+              say("columns: wall_s = whole whitefootc run; link_ms = fragment link from --report (fragment builds only); "
+                  "text = .text bytes of the executable; d_* = change against base, in percent")
+              say(f"{'program':9} {'mode':5} {'side':7} {'n':>2} {'wall_s':>9} {'d_wall':>9} {'link_ms':>9} {'d_link':>9} {'text':>10} {'d_text':>9}")
+              for program, mode in order:
+                  base = (program, mode, "base")
+                  for side in SIDES:
+                      key = (program, mode, side)
+                      if key not in stats:
+                          continue
+                      wall, link, text = median(key, "wall"), median(key, "link"), median(key, "text")
+                      mark = side != "base"
+                      say(f"{program:9} {mode:5} {side:7} {len(stats[key]['wall']):>2} {wall:>9.2f} "
+                          f"{show(delta(base, key, 'wall')) if mark else '':>9} "
+                          f"{'-' if link is None else format(link, '.1f'):>9} "
+                          f"{show(delta(base, key, 'link')) if mark else '':>9} {int(text):>10} "
+                          f"{show(delta(base, key, 'text')) if mark else '':>9}")
+              say()
+
+              # Call sites.
+              by_side = {side: {} for side in SIDES}
+              mixed = []
+              for row in read_tsv(results / "sites.tsv"):
+                  slot = by_side[row["side"]].setdefault(row["accessor"], set())
+                  slot.add((int(row["sites"]), int(row["sites_all"])))
+              site_value = {}
+              for side in SIDES:
+                  for name, values in by_side[side].items():
+                      if len(values) > 1:
+                          mixed.append(f"{side} {name}: {sorted(values)}")
+                      site_value[side, name] = max(values)
+              say("== Direct call and jump sites in the sequential fragment build of layout_oracle (objdump) ==")
+              say("cell = sites excluding the public symbol's own call of its .source entry / all sites; both the public "
+                  "and the .source symbols are counted")
+              say(f"{'accessor':28} {'base':>9} {'twin':>9} {'branch':>9}")
+              style_sites = {side: [0, 0] for side in SIDES}
+              for name in ACCESSORS:
+                  cells = []
+                  for side in SIDES:
+                      value = site_value.get((side, name))
+                      cells.append("-" if value is None else f"{value[0]}/{value[1]}")
+                      if value is not None and name in STYLES:
+                          style_sites[side][0] += value[0]
+                          style_sites[side][1] += value[1]
+                  say(f"{name:28} {cells[0]:>9} {cells[1]:>9} {cells[2]:>9}")
+              say(f"{'three styles accessors':28} " + " ".join(f"{style_sites[s][0]}/{style_sites[s][1]:>6}".rjust(9) for s in SIDES))
+              if mixed:
+                  say("sites differ between rounds (maximum used): " + "; ".join(mixed))
+              say()
+
+              # Callgrind.
+              cg = {}
+              for side in SIDES:
+                  path = results / f"callgrind-{side}.json"
+                  if path.exists():
+                      cg[side] = json.loads(path.read_text())
+              say("== Callgrind, Snowghost sequential layout_oracle, apollo11 word edits (first four), collection toggled on "
+                  "wf_layout.text_changed and wf_layout.update; instructions (Ir) ==")
+              if len(cg) == len(SIDES):
+                  say(f"{'workload':34} {'base':>13} {'twin':>13} {'branch':>13} {'delta':>11} {'percent':>9}")
+                  base_total, branch_total = cg["base"]["total"], cg["branch"]["total"]
+                  say(f"{'apollo11 word edits, total':34} {base_total:>13} {cg['twin']['total']:>13} {branch_total:>13} "
+                      f"{branch_total - base_total:>+11} {pct(base_total, branch_total):>+8.2f}%")
+                  say()
+                  say("self instructions per hot function (public and .source symbols summed)")
+                  say(f"{'function':34} {'base':>13} {'twin':>13} {'branch':>13} {'delta':>11} {'percent':>9}")
+                  rows = [(name, [group(cg[s]["own"], name) for s in SIDES]) for name in ACCESSORS]
+                  rows.insert(3, ("three styles accessors", [sum(group(cg[s]["own"], n) for n in STYLES) for s in SIDES]))
+                  for name, values in rows:
+                      say(f"{name:34} {values[0]:>13} {values[1]:>13} {values[2]:>13} {values[2] - values[0]:>+11} "
+                          f"{pct(values[0], values[2]):>+8.2f}%")
+                  say()
+                  say("top 12 functions by absolute self-instruction change, base to branch (exact symbol names)")
+                  names = set(cg["base"]["own"]) | set(cg["branch"]["own"])
+                  ranked = sorted(names, key=lambda n: -abs(cg["branch"]["own"].get(n, 0) - cg["base"]["own"].get(n, 0)))[:12]
+                  for name in ranked:
+                      a, t, b = (cg[s]["own"].get(name, 0) for s in ("base", "twin", "branch"))
+                      say(f"{name[:34]:34} {a:>13} {t:>13} {b:>13} {b - a:>+11} {pct(a, b):>+8.2f}%")
+              else:
+                  say("not measured: callgrind results missing for " + ", ".join(s for s in SIDES if s not in cg))
+              say()
+
+              # Criteria.
+              say("== Pre-written criteria, Stage 1 (quoted from the investigation's DESIGN.md) ==")
+              say("For a rejection criterion, PASS means the rejecting condition does not hold. Stage 2 criteria are not measured here.")
+
+              def criterion(status, tag, quote, threshold, measured):
+                  say(f"{status:12} {tag}: \"{quote}\" | threshold: {threshold} | measured: {measured}")
+
+              branch_sites = style_sites["branch"][0] if by_side["branch"] else None
+              if branch_sites is None:
+                  criterion("NOT MEASURED", "R1 mechanism", "More than 6 direct call sites of the three styles accessors remain",
+                            "at most 6", "no site counts")
+                  criterion("NOT MEASURED", "P1 sites", "the candidate leaves at most 6 direct call sites of the three styles accessors, "
+                            "both symbols counted", "at most 6", "no site counts")
+              else:
+                  measured = (f"{branch_sites} sites excluding the public symbols' own calls of their .source entries "
+                              f"({style_sites['branch'][1]} counting them); base {style_sites['base'][0]}, twin {style_sites['twin'][0]}")
+                  criterion("PASS" if branch_sites <= 6 else "FAIL", "R1 mechanism",
+                            "More than 6 direct call sites of the three styles accessors remain", "at most 6", measured)
+                  criterion("PASS" if branch_sites <= 6 else "FAIL", "P1 sites",
+                            "the candidate leaves at most 6 direct call sites of the three styles accessors, both symbols counted",
+                            "at most 6", measured)
+
+              if len(cg) == len(SIDES):
+                  fall = cg["base"]["total"] - cg["branch"]["total"]
+                  measured = f"total falls by {fall} instructions ({pct(cg['base']['total'], cg['branch']['total']):+.2f}%)"
+                  criterion("PASS" if fall >= 125000 else "FAIL", "R2 size of effect",
+                            "The cell's total falls by less than 125,000 instructions (10% of the regression)",
+                            "a fall of at least 125,000", measured)
+                  criterion("PASS" if fall >= 250000 else "FAIL", "P3 total",
+                            "the cell's total falls by at least 250,000 instructions (20% of the regression), centrally about 440,000",
+                            "a fall of at least 250,000", measured)
+                  before = sum(group(cg["base"]["own"], n) for n in STYLES)
+                  after = sum(group(cg["branch"]["own"], n) for n in STYLES)
+                  drop = (before - after) / before * 100 if before else float("nan")
+                  criterion("PASS" if before and drop >= 80 else "FAIL", "P2 accessors",
+                            "their combined self instructions fall by at least 80%", "a fall of at least 80%",
+                            f"{before} to {after} self instructions, a fall of {drop:.1f}%")
+              else:
+                  for tag, quote, threshold in (
+                          ("R2 size of effect", "The cell's total falls by less than 125,000 instructions (10% of the regression)", "a fall of at least 125,000"),
+                          ("P3 total", "the cell's total falls by at least 250,000 instructions (20% of the regression), centrally about 440,000", "a fall of at least 250,000"),
+                          ("P2 accessors", "their combined self instructions fall by at least 80%", "a fall of at least 80%")):
+                      criterion("NOT MEASURED", tag, quote, threshold, "no callgrind results")
+
+              worst = {"text": (float("-inf"), ""), "link": (float("-inf"), ""), "wall": (float("-inf"), "")}
+              for program, mode in order:
+                  for field in worst:
+                      value = delta((program, mode, "base"), (program, mode, "branch"), field)
+                      if value is not None and value > worst[field][0]:
+                          worst[field] = (value, f"{program} {mode}")
+              if order:
+                  def cell(field):
+                      value, where = worst[field]
+                      return "-" if value == float("-inf") else f"{value:+.2f}% ({where})"
+                  measured = f"worst text {cell('text')}, worst fragment link {cell('link')}, worst build time {cell('wall')}"
+                  failed = worst["text"][0] > 5 or worst["link"][0] > 10 or worst["wall"][0] > 5
+                  criterion("FAIL" if failed else "PASS", "R3 build cost",
+                            "For Snowghost or Halo in any build mode, text grows by more than 5%, or the fragment link by more than 10%, "
+                            "or total build time by more than 5%, against base.",
+                            "text at most +5%, link at most +10%, build time at most +5%", measured)
+                  criterion("FAIL" if worst["text"][0] > 2 else "PASS", "P4 text",
+                            "text grows by at most 2%", "at most +2% in every program and mode", f"worst text {cell('text')}")
+              else:
+                  criterion("NOT MEASURED", "R3 build cost", "For Snowghost or Halo in any build mode, text grows by more than 5%, or the "
+                            "fragment link by more than 10%, or total build time by more than 5%, against base.", "see above", "no builds")
+                  criterion("NOT MEASURED", "P4 text", "text grows by at most 2%", "at most +2%", "no builds")
+
+              twin_wall = [delta((p, m, "base"), (p, m, "twin"), "wall") for p, m in order]
+              twin_wall = [abs(v) for v in twin_wall if v is not None]
+              if twin_wall and len(cg) == len(SIDES):
+                  noise_ir = abs(pct(cg["base"]["total"], cg["twin"]["total"]))
+                  noise_time = max(twin_wall)
+                  ok = noise_ir <= 0.5 and noise_time <= 1
+                  criterion("PASS" if ok else "FAIL", "N noise control",
+                            "Base and twin must agree within 0.5% of instructions and 1% of times, or the stage is re-run once.",
+                            "instructions within 0.5%, build times within 1%",
+                            f"twin differs from base by {noise_ir:.3f}% of instructions and at most {noise_time:.2f}% of median build times"
+                            + ("" if ok else " (hosted build times are noisy; re-run once, as the design says)"))
+              else:
+                  criterion("NOT MEASURED", "N noise control",
+                            "Base and twin must agree within 0.5% of instructions and 1% of times, or the stage is re-run once.",
+                            "instructions within 0.5%, build times within 1%", "missing builds or callgrind results")
+              say("Stage 2 (timing on the 14900K): R4 timing effect, R5 veto and the Stage 2 predictions are not measured here.")
+              (results / "report.txt").write_text("\n".join(lines) + "\n")
+
+
+          def main():
+              commands = {"build": cmd_build, "callgrind": cmd_callgrind, "report": cmd_report}
+              commands[sys.argv[1]](*sys.argv[2:])
+
+
+          main()
+          PY
+          python3 -I -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$RUNNER_TEMP/rsrc/measure.py"
+
+      - name: Build the base, twin and branch compilers
+        run: |
+          set -eo pipefail
+          out="$RUNNER_TEMP/rsrc"
+          base=$(git rev-parse "$BASE_REV^{commit}")
+          git merge-base --is-ancestor "$base" HEAD
+          for side in base twin branch; do
+            if [ "$side" = branch ]; then
+              tree="$PWD"
+            else
+              tree="$out/tree-$side"
+              git worktree add --detach "$tree" "$base"
+            fi
+            echo "$side: $(git -C "$tree" rev-parse HEAD)" | tee -a "$out/results/compilers.txt"
+            # Separate targets force a real second build of the base source.
+            export CARGO_TARGET_DIR="$out/target-$side"
+            cargo fetch --locked --manifest-path "$tree/compiler/Cargo.toml"
+            perl "$tree/.github/run-check.pl" "result-source/build-compiler-$side" \
+              cargo build --manifest-path "$tree/compiler/Cargo.toml" --profile gate --bin whitefootc --locked --offline
+            cp "$CARGO_TARGET_DIR/gate/whitefootc" "$out/whitefootc-$side"
+            rm -rf "$CARGO_TARGET_DIR"
+          done
+          (cd "$out" && sha256sum whitefootc-*) | tee "$out/results/compilers.sha256"
+          git diff --stat "$base" HEAD -- compiler | tail -1 | tee -a "$out/results/compilers.txt"
+
+      - name: Check out the pinned Snowghost and Halo sources and the page
+        run: |
+          set -eo pipefail
+          out="$RUNNER_TEMP/rsrc"
+          sg="$out/snowghost"
+          git clone --quiet https://github.com/Ming-Research/Snowghost-wf "$sg"
+          git -C "$sg" checkout --quiet "$SNOWGHOST_COMMIT"
+          git -C "$sg" submodule update --quiet --init whitefoot-kit
+          git clone --quiet https://github.com/Ming-Research/Halo-wf "$out/halo"
+          git -C "$out/halo" checkout --quiet "$HALO_COMMIT"
+          git -C "$sg" log --oneline -1
+          git -C "$out/halo" log --oneline -1
+          make -s -C "$sg" oracle-fonts
+          test "$(find "$sg/build/fonts" -type f | wc -l)" -eq 47
+          # The edit scripts are generated from the page the pinned harness fetches.
+          rs=research
+          conc=$(find "$sg" -path '*/investigations/concurrency/run.sh' | head -1)
+          test -n "$conc"
+          data="$sg/build/$rs/concurrency"
+          mkdir -p "$data"
+          sed -n 's/^\(apollo11[^ ]*\) \([^ ]*\) \([^ ]*\)$/\1 \2 \3/p' "$conc" > "$out/page-pins.txt"
+          test "$(wc -l < "$out/page-pins.txt")" -eq 3
+          while read -r name url pinned; do
+            curl -fsSL --retry 3 --max-time 120 -o "$data/$name" "$url"
+          done < "$out/page-pins.txt"
+          (cd "$data" && sha256sum apollo11* | tee "$out/results/page.sha256")
+
+      - name: Build Snowghost layout_oracle with each compiler, sequential
+        run: |
+          set -eo pipefail
+          out="$RUNNER_TEMP/rsrc"
+          perl .github/run-check.pl result-source/build-snowghost-seq \
+            python3 -I "$out/measure.py" build "$out" snowghost "$out/snowghost/renderer" layout_oracle seq "$ROUNDS"
+
+      - name: Build Snowghost layout_oracle with each compiler, --par
+        if: ${{ !cancelled() }}
+        run: |
+          set -eo pipefail
+          out="$RUNNER_TEMP/rsrc"
+          perl .github/run-check.pl result-source/build-snowghost-par \
+            python3 -I "$out/measure.py" build "$out" snowghost "$out/snowghost/renderer" layout_oracle par "$ROUNDS"
+
+      - name: Build Halo bench with each compiler, fragment build
+        if: ${{ !cancelled() }}
+        run: |
+          set -eo pipefail
+          out="$RUNNER_TEMP/rsrc"
+          halo_dir=$(find "$out/halo" -type d -name halo-bench | head -1)
+          test -n "$halo_dir"
+          perl .github/run-check.pl result-source/build-halo-fragments \
+            python3 -I "$out/measure.py" build "$out" halo "$halo_dir" bench seq "$ROUNDS"
+
+      - name: Build Halo bench with each compiler, --full-lto
+        if: ${{ !cancelled() }}
+        run: |
+          set -eo pipefail
+          out="$RUNNER_TEMP/rsrc"
+          halo_dir=$(find "$out/halo" -type d -name halo-bench | head -1)
+          test -n "$halo_dir"
+          perl .github/run-check.pl result-source/build-halo-lto \
+            python3 -I "$out/measure.py" build "$out" halo "$halo_dir" bench lto "$ROUNDS"
+
+      - name: Generate the apollo11 edit scripts with the base driver
+        if: ${{ !cancelled() }}
+        run: |
+          set -eo pipefail
+          out="$RUNNER_TEMP/rsrc"
+          sg="$out/snowghost"
+          cp "$out/drivers/snowghost-seq-base" "$sg/build/layout_oracle_seq"
+          incr=$(find "$sg" -path '*/investigations/incremental-layout' -type d | head -1)
+          test -n "$incr"
+          echo "INCREMENTAL_DIR=$incr" >> "$GITHUB_ENV"
+          (cd "$sg" && perl "$GITHUB_WORKSPACE/.github/run-check.pl" result-source/prepare-edits \
+            sh "$incr/run.sh" prepare apollo11)
+          test -f "$sg/build/x5/scripts/apollo11-word.edits"
+          cp "$sg/build/x5/scripts/apollo11-word.edits" "$out/results/"
+
+      - name: Count instructions of the apollo11 word edits under callgrind
+        if: ${{ !cancelled() }}
+        run: |
+          set -eo pipefail
+          out="$RUNNER_TEMP/rsrc"
+          sg="$out/snowghost"
+          rs=research
+          perl .github/run-check.pl result-source/callgrind \
+            python3 -I "$out/measure.py" callgrind "$out" "$sg" "build/$rs/concurrency" \
+              "$sg/build/x5/scripts/apollo11-word.edits" "$INCREMENTAL_DIR/scripts/inctime.py"
+
+      - name: Report the tables and the criteria
+        if: ${{ !cancelled() }}
+        run: |
+          set -eo pipefail
+          out="$RUNNER_TEMP/rsrc"
+          python3 -I "$out/measure.py" report "$out"
+          {
+            echo '```'
+            cat "$out/results/report.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: result-source-measure-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/rsrc/results/
+            ${{ runner.temp }}/rsrc/logs/
+            ${{ runner.temp }}/rsrc/callgrind/
+            ${{ runner.temp }}/rsrc/apollo11-word-first4.edits
+          compression-level: 6
