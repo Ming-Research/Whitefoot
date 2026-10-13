@@ -26,6 +26,17 @@ pub(in crate::semantic::check) fn float_ordering_repair(symbol: &str, operation:
     )
 }
 
+pub(in crate::semantic::check) fn mixed_float_ordering_repair(
+    symbol: &str,
+    operation: &str,
+    left_type: &str,
+    right_type: &str,
+) -> String {
+    format!(
+        "`{symbol}` orders integers and these operands have different float types `{left_type}` and `{right_type}`; when rounding the right operand to `{left_type}` is intended, bind `cvt.nearest::<{right_type}, {left_type}>(right)` to a fresh local with a preceding `let`, using the original right operand for `right`; replace this comparison with `{operation}(left, converted)`, using the original left operand for `left` and that fresh binding for `converted`"
+    )
+}
+
 pub(in crate::semantic::check) fn propagation_repair(
     enclosing_return_type: &str,
     operand_type: &str,

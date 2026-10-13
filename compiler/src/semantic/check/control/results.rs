@@ -789,7 +789,7 @@ impl<'unit> TypeContext<'unit> {
         place: NodeId,
         bindings: &HashMap<DeclarationId, LocalBinding>,
     ) -> Result<String, CheckStop> {
-        use super::super::repairs::{CellContent, cell_taken_apart};
+        use super::super::repairs::{CellContent, cell_taken_apart, fresh_repair_name};
         let binder = match self
             .declarations
             .tree
@@ -860,10 +860,31 @@ impl<'unit> TypeContext<'unit> {
                 _ => None,
             },
         };
+        // Reserve complete inventories rather than ownership-live bindings:
+        // moved locals still occupy their names, and a new let must not
+        // collide with later locals, aliases or top-level declarations.
+        let fresh_binder = if content == Some(CellContent::Linear) && binder.is_none() {
+            fresh_repair_name("content", |name| {
+                self.declarations
+                    .resolved
+                    .declarations()
+                    .iter()
+                    .any(|declaration| declaration.spelling() == name)
+                    || self
+                        .declarations
+                        .resolved
+                        .prelude_declarations()
+                        .iter()
+                        .any(|declaration| declaration.spelling() == name)
+            })
+        } else {
+            String::new()
+        };
         Ok(cell_taken_apart(
             content,
             &consumed.spelling,
             binder.as_deref(),
+            &fresh_binder,
         ))
     }
 }

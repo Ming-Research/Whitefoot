@@ -386,7 +386,7 @@ impl<'unit> TypeContext<'unit> {
                     LinearValueKind::Struct
                 }
                 CheckedNominalKind::Box {
-                    referent: CheckedType::Window { .. },
+                    referent: CheckedType::Window { capacity: None, .. },
                     ..
                 } => LinearValueKind::Window,
                 _ => LinearValueKind::Whole,

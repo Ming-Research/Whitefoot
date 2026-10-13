@@ -161,6 +161,222 @@ fn main() -> status: std::process::ExitStatus pure {
 "#],
     },
     RepairPair {
+        name: "linear-fixed-boxed-slots-at-exit.wf",
+        rejected: br#"nodrop struct Token {
+  value: u8;
+}
+
+fn finish(cell: Box<Slots<Token, 2>>) -> result: unit pure contract {
+  requires cell.inner.len == 1_u64;
+} {
+  return unit;
+}
+"#,
+        rule: "PROV-6",
+        sentences: &["\n  mechanical_fix: move `cell` whole into a function that consumes it, or return it\n"],
+        repaired: &[
+            br#"nodrop struct Token {
+  value: u8;
+}
+
+fn consume(cell: Box<Slots<Token, 2>>) -> result: unit pure contract {
+  requires cell.inner.len == 1_u64;
+} {
+  let window = move cell.inner;
+  let token = take_back(window: &window);
+  let Token(value: byte) = move token;
+  free_empty(window: move window);
+  return unit;
+}
+
+fn finish(cell: Box<Slots<Token, 2>>) -> result: unit pure contract {
+  requires cell.inner.len == 1_u64;
+} {
+  consume(cell: move cell);
+  return unit;
+}
+"#,
+            br#"nodrop struct Token {
+  value: u8;
+}
+
+fn finish(cell: Box<Slots<Token, 2>>) -> result: Box<Slots<Token, 2>> pure contract {
+  requires cell.inner.len == 1_u64;
+} {
+  return move cell;
+}
+"#,
+        ],
+    },
+    RepairPair {
+        name: "linear-fixed-boxed-ring-at-exit.wf",
+        rejected: br#"nodrop struct Token {
+  value: u8;
+}
+
+fn finish(cell: Box<Ring<Token, 2>>) -> result: unit pure contract {
+  requires cell.inner.len == 1_u64;
+} {
+  return unit;
+}
+"#,
+        rule: "PROV-6",
+        sentences: &["\n  mechanical_fix: move `cell` whole into a function that consumes it, or return it\n"],
+        repaired: &[
+            br#"nodrop struct Token {
+  value: u8;
+}
+
+fn consume(cell: Box<Ring<Token, 2>>) -> result: unit pure contract {
+  requires cell.inner.len == 1_u64;
+} {
+  let window = move cell.inner;
+  let token = take_back(window: &window);
+  let Token(value: byte) = move token;
+  free_empty(window: move window);
+  return unit;
+}
+
+fn finish(cell: Box<Ring<Token, 2>>) -> result: unit pure contract {
+  requires cell.inner.len == 1_u64;
+} {
+  consume(cell: move cell);
+  return unit;
+}
+"#,
+            br#"nodrop struct Token {
+  value: u8;
+}
+
+fn finish(cell: Box<Ring<Token, 2>>) -> result: Box<Ring<Token, 2>> pure contract {
+  requires cell.inner.len == 1_u64;
+} {
+  return move cell;
+}
+"#,
+        ],
+    },
+    RepairPair {
+        name: "linear-inline-fixed-slots-at-exit.wf",
+        rejected: br#"nodrop struct Token {
+  value: u8;
+}
+
+fn finish(window: Slots<Token, 2>) -> result: unit pure contract {
+  requires window.len == 1_u64;
+} {
+  return unit;
+}
+"#,
+        rule: "PROV-6",
+        sentences: &["\n  mechanical_fix: move `window` whole into a function that consumes it, or return it; or take every element out and consume it, prove its length is zero, and call `free_empty(window: move window)`\n"],
+        repaired: &[
+            br#"nodrop struct Token {
+  value: u8;
+}
+
+fn consume(window: Slots<Token, 2>) -> result: unit pure contract {
+  requires window.len == 1_u64;
+} {
+  let token = take_back(window: &window);
+  let Token(value: byte) = move token;
+  free_empty(window: move window);
+  return unit;
+}
+
+fn finish(window: Slots<Token, 2>) -> result: unit pure contract {
+  requires window.len == 1_u64;
+} {
+  consume(window: move window);
+  return unit;
+}
+"#,
+            br#"nodrop struct Token {
+  value: u8;
+}
+
+fn finish(window: Slots<Token, 2>) -> result: Slots<Token, 2> pure contract {
+  requires window.len == 1_u64;
+} {
+  return move window;
+}
+"#,
+            br#"nodrop struct Token {
+  value: u8;
+}
+
+fn finish(window: Slots<Token, 2>) -> result: unit pure contract {
+  requires window.len == 1_u64;
+} {
+  let token = take_back(window: &window);
+  let Token(value: byte) = move token;
+  free_empty(window: move window);
+  return unit;
+}
+"#,
+        ],
+    },
+    RepairPair {
+        name: "linear-inline-fixed-ring-at-exit.wf",
+        rejected: br#"nodrop struct Token {
+  value: u8;
+}
+
+fn finish(window: Ring<Token, 2>) -> result: unit pure contract {
+  requires window.len == 1_u64;
+} {
+  return unit;
+}
+"#,
+        rule: "PROV-6",
+        sentences: &["\n  mechanical_fix: move `window` whole into a function that consumes it, or return it; or take every element out and consume it, prove its length is zero, and call `free_empty(window: move window)`\n"],
+        repaired: &[
+            br#"nodrop struct Token {
+  value: u8;
+}
+
+fn consume(window: Ring<Token, 2>) -> result: unit pure contract {
+  requires window.len == 1_u64;
+} {
+  let token = take_back(window: &window);
+  let Token(value: byte) = move token;
+  free_empty(window: move window);
+  return unit;
+}
+
+fn finish(window: Ring<Token, 2>) -> result: unit pure contract {
+  requires window.len == 1_u64;
+} {
+  consume(window: move window);
+  return unit;
+}
+"#,
+            br#"nodrop struct Token {
+  value: u8;
+}
+
+fn finish(window: Ring<Token, 2>) -> result: Ring<Token, 2> pure contract {
+  requires window.len == 1_u64;
+} {
+  return move window;
+}
+"#,
+            br#"nodrop struct Token {
+  value: u8;
+}
+
+fn finish(window: Ring<Token, 2>) -> result: unit pure contract {
+  requires window.len == 1_u64;
+} {
+  let token = take_back(window: &window);
+  let Token(value: byte) = move token;
+  free_empty(window: move window);
+  return unit;
+}
+"#,
+        ],
+    },
+    RepairPair {
         name: "linear-boxed-window-at-exit.wf",
         rejected: br#"fn pass<T>(window: Box<Slots<T>>) -> result: unit pure contract {
   requires window.inner.len == 0_u64;

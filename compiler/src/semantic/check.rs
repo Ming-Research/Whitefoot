@@ -22,7 +22,7 @@ mod range_clauses;
 mod range_type_invariants;
 mod receipts;
 mod references;
-mod repairs;
+pub(in crate::semantic) mod repairs;
 mod requires;
 mod schedule;
 mod spawn;

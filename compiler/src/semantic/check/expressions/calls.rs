@@ -557,6 +557,19 @@ impl<'unit> TypeContext<'unit> {
         let mut arguments = Vec::with_capacity(operand_count);
         let mut argument_metadata = Vec::with_capacity(operand_count);
         let mut effects = EffectSet::NONE;
+        // A repair can reuse the float operands only when both are owned
+        // floats of one exact type. Inspect the already-checked right operand
+        // without changing the row rejection or its first failing premise.
+        let right_float_type = operands
+            .get(1)
+            .filter(|(_, operand)| {
+                operand.mode == CheckedMode::Own
+                    && matches!(
+                        operand.expression.ty(),
+                        CheckedType::Float(_) | CheckedType::GenericFloat(_)
+                    )
+            })
+            .map(|(_, operand)| operand.expression.ty());
         // [OP-2] the selected type is derived from the operands: the first
         // operand's exact type is it, and every later operand must be
         // exactly the row's argument type for that selection — which for the
@@ -587,22 +600,54 @@ impl<'unit> TypeContext<'unit> {
                             CheckedIntegerOperation::GreaterEqual => Some("fge"),
                             _ => None,
                         };
-                        let kind = match float_operation {
-                            Some(float_operation)
+                        // A mixed comparison needs a preceding conversion let.
+                        // Neither a contract clause nor a contract definition
+                        // can contain that statement.
+                        let mut permits_conversion_binding = true;
+                        if float_operation.is_some()
+                            && right_float_type.is_some_and(|right| right != selected)
+                        {
+                            let mut ancestor = Some(node);
+                            while let Some(current) = ancestor {
+                                if self.declarations.tree.production(current)?
+                                    == Production::ContractBlock
+                                {
+                                    permits_conversion_binding = false;
+                                    break;
+                                }
+                                ancestor = self.declarations.tree.parent(current)?;
+                            }
+                        }
+                        let kind = match (float_operation, right_float_type) {
+                            (Some(float_operation), Some(right_type))
                                 if matches!(
                                     selected,
                                     CheckedType::Float(_) | CheckedType::GenericFloat(_)
-                                ) =>
+                                ) && permits_conversion_binding =>
                             {
+                                let left_name = self.checked_type_name(selected)?;
+                                let right_name = self.checked_type_name(right_type)?;
+                                let mechanical_fix = if selected == right_type {
+                                    super::super::repairs::writer_operations::float_ordering_repair(
+                                        operation.spelling(),
+                                        float_operation,
+                                    )
+                                } else {
+                                    super::super::repairs::writer_operations::mixed_float_ordering_repair(
+                                        operation.spelling(),
+                                        float_operation,
+                                        &left_name,
+                                        &right_name,
+                                    )
+                                };
                                 SemanticIssueKind::InvalidOperation {
                                     operation: Some(operation.spelling().to_owned()),
-                                    operand_types: Some(vec![self.checked_type_name(selected)?]),
-                                    mechanical_fix: Some(
-                                        super::super::repairs::writer_operations::float_ordering_repair(
-                                            operation.spelling(),
-                                            float_operation,
-                                        ),
-                                    ),
+                                    operand_types: Some(if selected == right_type {
+                                        vec![left_name]
+                                    } else {
+                                        vec![left_name, right_name]
+                                    }),
+                                    mechanical_fix: Some(mechanical_fix),
                                 }
                             }
                             _ => SemanticIssueKind::invalid_operation(),

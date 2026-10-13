@@ -48,6 +48,14 @@ pub(super) mod writer_operations;
 pub(super) mod writer_ownership;
 pub(super) mod writer_references;
 
+/// The first suggested name whose spelling the caller's inventory leaves free.
+pub(in crate::semantic) fn fresh_repair_name(stem: &str, taken: impl Fn(&str) -> bool) -> String {
+    std::iter::once(stem.to_owned())
+        .chain((1_u32..).map(|suffix| format!("{stem}{suffix}")))
+        .find(|name| !taken(name))
+        .expect("an unbounded candidate sequence has a free name")
+}
+
 /// The executable builder's signature route does not reject checked source.
 pub(crate) const fn executable_runner_repair() -> &'static str {
     "select a function taking no parameters or one std::process::Inputs and returning std::process::ExitStatus or unit"
@@ -1472,16 +1480,18 @@ pub(super) enum CellContent {
 /// [TYPE-2, TYPE-9] a destructuring `let` naming `Box`. `cell` is the
 /// consumed place as a read of it is written and `binder` the name the
 /// statement binds, when it binds one. `content` is `None` when the place
-/// selects no cell the checker can type.
+/// selects no cell the checker can type. `fresh_binder` supplies a free name
+/// only for linear content when the statement binds none.
 pub(super) fn cell_taken_apart(
     content: Option<CellContent>,
     cell: &str,
     binder: Option<&str>,
+    fresh_binder: &str,
 ) -> String {
     const INNER: &str = "a cell's content is its member `inner` [TYPE-9]";
     match (content, binder) {
         (Some(CellContent::Linear), name) => {
-            let name = name.unwrap_or("content");
+            let name = name.unwrap_or(fresh_binder);
             format!("{INNER}: replace this statement with `let {name} = move {cell}.inner;`, which frees the cell [WIN-3], then move `{name}` into a function that consumes it or return it")
         }
         (Some(CellContent::LinearOperand), _) => format!(

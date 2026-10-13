@@ -45,6 +45,113 @@ fn finish(cell: Box<Token>) -> result: Token pure {
         ],
     },
     RepairPair {
+        name: "linear-cell-content-name-is-a-parameter.wf",
+        rejected: br#"nodrop struct Token {
+  value: u8;
+}
+
+fn finish(cell: Box<Token>, content: u8) -> result: unit pure {
+  let Box(..) = move cell;
+  return unit;
+}
+"#,
+        rule: "TYPE-2",
+        sentences: &["\n  mechanical_fix: a cell's content is its member `inner` [TYPE-9]: replace this statement with `let content1 = move cell.inner;`, which frees the cell [WIN-3], then move `content1` into a function that consumes it or return it\n"],
+        repaired: &[
+            br#"nodrop struct Token {
+  value: u8;
+}
+
+fn consume(value: Token) -> result: unit pure {
+  let Token(value: byte) = move value;
+  return unit;
+}
+
+fn finish(cell: Box<Token>, content: u8) -> result: unit pure {
+  let content1 = move cell.inner;
+  consume(value: move content1);
+  return unit;
+}
+"#,
+            br#"nodrop struct Token {
+  value: u8;
+}
+
+fn finish(cell: Box<Token>, content: u8) -> result: Token pure {
+  let content1 = move cell.inner;
+  return move content1;
+}
+"#,
+        ],
+    },
+    RepairPair {
+        name: "linear-cell-content-name-reserves-the-declaration-inventory.wf",
+        rejected: br#"alias content3 = std::process::exit_status;
+
+nodrop struct Token {
+  value: u8;
+}
+
+fn content() -> result: unit pure {
+  return unit;
+}
+
+fn finish(cell: Box<Token>) -> result: unit pure {
+  let content1 = box_new::<u8>(value: 1_u8);
+  let previous = move content1;
+  let Box(..) = move cell;
+  let content2 = 0_u8;
+  return unit;
+}
+"#,
+        rule: "TYPE-2",
+        sentences: &["\n  mechanical_fix: a cell's content is its member `inner` [TYPE-9]: replace this statement with `let content4 = move cell.inner;`, which frees the cell [WIN-3], then move `content4` into a function that consumes it or return it\n"],
+        repaired: &[
+            br#"alias content3 = std::process::exit_status;
+
+nodrop struct Token {
+  value: u8;
+}
+
+fn content() -> result: unit pure {
+  return unit;
+}
+
+fn consume(value: Token) -> result: unit pure {
+  let Token(value: byte) = move value;
+  return unit;
+}
+
+fn finish(cell: Box<Token>) -> result: unit pure {
+  let content1 = box_new::<u8>(value: 1_u8);
+  let previous = move content1;
+  let content4 = move cell.inner;
+  consume(value: move content4);
+  let content2 = 0_u8;
+  return unit;
+}
+"#,
+            br#"alias content3 = std::process::exit_status;
+
+nodrop struct Token {
+  value: u8;
+}
+
+fn content() -> result: unit pure {
+  return unit;
+}
+
+fn finish(cell: Box<Token>) -> result: Token pure {
+  let content1 = box_new::<u8>(value: 1_u8);
+  let previous = move content1;
+  let content4 = move cell.inner;
+  let content2 = 0_u8;
+  return move content4;
+}
+"#,
+        ],
+    },
+    RepairPair {
         name: "linear-cell-binding-content.wf",
         rejected: br#"nodrop struct Token {
   value: u8;
