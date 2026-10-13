@@ -542,6 +542,9 @@ jobs:
               --callgrind-out-file="$out/callgrind/$v.out" "$out/halo-$v" < "$out/fib.lua" \
               > "$out/callgrind/$v.stdout" 2> "$out/callgrind/$v.stderr" &
             pids+=($!)
+            # At most three at once: eight callgrinds exceed the runner's memory
+            # and the out-of-memory daemon stops them with SIGTERM (exit 143).
+            if [ ${#pids[@]} -ge 3 ]; then wait "${pids[0]}"; pids=("${pids[@]:1}"); fi
           done
           for pid in "${pids[@]}"; do wait "$pid"; done
           for v in Bplain $VARIANTS; do
@@ -581,6 +584,9 @@ jobs:
               valgrind --tool=callgrind --callgrind-out-file="$out/kernel-runs/$k.$v.out" "$out/halo-$v" < "$out/kernels/$k.lua" \
                 > "$out/kernel-runs/$k.$v.stdout" 2> "$out/kernel-runs/$k.$v.stderr" &
               pids+=($!)
+              # At most three at once: eight callgrinds exceed the runner's memory
+              # and the out-of-memory daemon stops them with SIGTERM (exit 143).
+              if [ ${#pids[@]} -ge 3 ]; then wait "${pids[0]}"; pids=("${pids[@]:1}"); fi
             done
           done
           for pid in "${pids[@]}"; do wait "$pid"; done
@@ -664,6 +670,9 @@ jobs:
               --callgrind-out-file="$out/callgrind/$v.out" "$out/halo-$v" < "$out/fib.lua" \
               > "$out/callgrind/$v.stdout" 2> "$out/callgrind/$v.stderr" &
             pids+=($!)
+            # At most three at once: eight callgrinds exceed the runner's memory
+            # and the out-of-memory daemon stops them with SIGTERM (exit 143).
+            if [ ${#pids[@]} -ge 3 ]; then wait "${pids[0]}"; pids=("${pids[@]:1}"); fi
           done
           for pid in "${pids[@]}"; do wait "$pid"; done
           for v in PGOa PGOb; do
