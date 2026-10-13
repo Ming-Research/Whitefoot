@@ -140,7 +140,7 @@ jobs:
             echo "## sequence-take Q1 and Q2 (smoke, no verdict)"
             echo
             echo '```text'
-            cat "$OUT/host.txt" 2>/dev/null
+            cat "$OUT/host.txt" 2>/dev/null || true
             echo
             cat "$OUT/summary.txt"
             echo '```'
@@ -284,8 +284,8 @@ jobs:
             echo "## sequence-take Q1 and Q2 ($MODE)"
             echo
             echo '```text'
-            cat "$OUT/host.txt" 2>/dev/null
-            cat "$OUT/pilot.txt" 2>/dev/null
+            cat "$OUT/host.txt" 2>/dev/null || true
+            cat "$OUT/pilot.txt" 2>/dev/null || true
             echo
             cat "$OUT/summary.txt"
             echo '```'
