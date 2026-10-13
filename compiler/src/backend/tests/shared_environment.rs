@@ -364,16 +364,18 @@ fn main() -> status: std::process::ExitStatus pure {
         .into_iter()
         .filter(|(_, block)| block.contains("load ptr, ptr %wf.env.v"))
         .collect();
-    // Eager argument preparation queued these two pointer loads before the
-    // budget query. Their first uses are the capture operands of the call
-    // after indexed preparation has constructed its join block.
+    // Eager argument preparation queued the pointer loads before the budget
+    // query. The split function takes every record slot as a capture
+    // (left, right and spare), so each load's use is its operand of the
+    // split call after indexed preparation has constructed its join block;
+    // each slot is loaded exactly once, there, and nowhere else.
     assert_eq!(loads.len(), 1, "{first}");
     let (label, body) = &loads[0];
     assert!(
         label.starts_with("indexed.") && label.ends_with(".join"),
         "{first}"
     );
-    assert_eq!(body.matches("load ptr, ptr %wf.env.v").count(), 2, "{body}");
+    assert_eq!(body.matches("load ptr, ptr %wf.env.v").count(), 3, "{body}");
     assert!(body.contains("@wf__par_split_count_first."), "{body}");
     assert_local_record_consumers(body, |line| line.contains("@wf__par_split_count_first."));
 }
