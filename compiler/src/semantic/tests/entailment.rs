@@ -257,6 +257,20 @@ fn relation_has_bare_binding(
     })
 }
 
+/// Whether a term is a tracked place or measure rooted at `binding`: the
+/// receiver terms a value carrier's delivery relates [ENT-5].
+fn term_rooted_at(
+    summary: &FunctionEntailment,
+    term: TermId,
+    binding: super::super::BindingId,
+) -> bool {
+    matches!(
+        retained_term(summary, term),
+        TermKind::Place(place, _) | TermKind::Measure(_, place)
+            if place.root == PlaceRoot::Binding(binding)
+    )
+}
+
 fn retained_conclusion(
     conclusions: &[DerivationConclusion],
     id: DerivationId,
@@ -2134,53 +2148,62 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                 else {
                     panic!("a reachable give relation has one exact source relation");
                 };
-                // The receiver replaced exactly the carrier term: the given
-                // atom, or the evaluated value whose equality to the carrier
-                // closed into the edge state [ENT-5].
-                assert!(matches!(
-                    retained_term(summary, *carrier),
-                    TermKind::Place(..) | TermKind::CommitValue { .. }
-                ));
-                assert!(source.terms().contains(carrier));
-                assert!(!relation_has_bare_binding(summary, source, *receiver));
-                assert!(!relation.terms().contains(carrier));
-                assert!(relation_has_bare_binding(summary, relation, *receiver));
-                if let Relation::Distinct {
-                    left,
-                    right,
-                    difference,
-                } = source
-                {
-                    let receiver_term = relation.terms().into_iter().find(|term| matches!(
-                        retained_term(summary, *term),
-                        TermKind::Place(place, _) if place.root == PlaceRoot::Binding(*receiver)
-                            && place.path.is_empty()
-                    )).expect("the delivered relation contains its receiver");
-                    let replace = |term| {
-                        if term == *carrier {
-                            receiver_term
+                if term_rooted_at(summary, *carrier, *receiver) {
+                    // A value carrier's receiver stands for its fresh carrier,
+                    // so its Give node substitutes nothing: the relation names
+                    // the same terms as its source, its carrier among them
+                    // [ENT-5].
+                    assert_eq!(source.terms(), relation.terms());
+                    assert!(relation.terms().contains(carrier));
+                } else {
+                    // The receiver replaced exactly the carrier term: the given
+                    // atom, or the evaluated value whose equality to the carrier
+                    // closed into the edge state [ENT-5].
+                    assert!(matches!(
+                        retained_term(summary, *carrier),
+                        TermKind::Place(..) | TermKind::CommitValue { .. }
+                    ));
+                    assert!(source.terms().contains(carrier));
+                    assert!(!relation_has_bare_binding(summary, source, *receiver));
+                    assert!(!relation.terms().contains(carrier));
+                    assert!(relation_has_bare_binding(summary, relation, *receiver));
+                    if let Relation::Distinct {
+                        left,
+                        right,
+                        difference,
+                    } = source
+                    {
+                        let receiver_term = relation.terms().into_iter().find(|term| matches!(
+                            retained_term(summary, *term),
+                            TermKind::Place(place, _) if place.root == PlaceRoot::Binding(*receiver)
+                                && place.path.is_empty()
+                        )).expect("the delivered relation contains its receiver");
+                        let replace = |term| {
+                            if term == *carrier {
+                                receiver_term
+                            } else {
+                                term
+                            }
+                        };
+                        let (left, right) = (replace(*left), replace(*right));
+                        let expected = if left <= right {
+                            Relation::Distinct {
+                                left,
+                                right,
+                                difference: *difference,
+                            }
                         } else {
-                            term
-                        }
-                    };
-                    let (left, right) = (replace(*left), replace(*right));
-                    let expected = if left <= right {
-                        Relation::Distinct {
-                            left,
-                            right,
-                            difference: *difference,
-                        }
-                    } else {
-                        Relation::Distinct {
-                            left: right,
-                            right: left,
-                            difference: -*difference,
-                        }
-                    };
-                    assert_eq!(
-                        relation, &expected,
-                        "delivery preserves the excluded offset"
-                    );
+                            Relation::Distinct {
+                                left: right,
+                                right: left,
+                                difference: -*difference,
+                            }
+                        };
+                        assert_eq!(
+                            relation, &expected,
+                            "delivery preserves the excluded offset"
+                        );
+                    }
                 }
                 let retained = retained_event(summary, *event);
                 used_events[event.0 as usize] = true;
@@ -2250,7 +2273,14 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                     parents,
                 } = detail.as_ref();
                 assert_relation_terms_resolve(summary, relation);
-                assert!(relation_has_bare_binding(summary, relation, *receiver));
+                // The receiving binding itself for an integer carrier, a
+                // place or measure below it for a value carrier [ENT-5].
+                assert!(
+                    relation
+                        .terms()
+                        .into_iter()
+                        .any(|term| term_rooted_at(summary, term, *receiver))
+                );
                 assert!(!parents.is_empty());
                 let mut prior_edge: Option<&crate::NodePath> = None;
                 for (ordinal, parent) in parents.iter().enumerate() {
@@ -2413,10 +2443,12 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                 // ranged EFF-5 pairs now share CallSeparation at a call.
                 match outcome.family {
                     ObligationFamily::Bounds => assert_eq!(outcome.conjunct, 0),
-                    // Separation for a call, exchange or reference preservation
-                    // is one occurrence, without a conjunct of its own.
+                    // Separation for a call, exchange, atomic target pair or
+                    // reference preservation is one occurrence, without a
+                    // conjunct of its own.
                     ObligationFamily::CallSeparation(_)
                     | ObligationFamily::ExchangeSeparation(_)
+                    | ObligationFamily::AtomicTargetSeparation(_)
                     | ObligationFamily::ReferencePreservation(_) => {
                         assert_eq!(outcome.conjunct, 0)
                     }
@@ -5730,25 +5762,26 @@ fn main() -> status: std::process::ExitStatus pure {
     );
 }
 
-/// A capacity's implicit component keeps its const parameter's narrower
-/// type. Equal explicit witnesses before give must not create a redundant
-/// delivery root, and the receiving invariant still sees the closed fact.
+/// A length reaches its upper bound only through its capacity: the implicit
+/// component joins the length to the closed capacity 255. Equal explicit
+/// witnesses before give must not create a redundant delivery root, and the
+/// receiving invariant still sees the closed fact through that component.
 #[test]
 fn delivery_implicit_omission_uses_the_closed_const_capacity_component() {
-    let source = br#"fn probe<const n: u8>(values: &Slots<u8, n>, x: u64, a: Bool, b: Bool) -> result: u64 reads(values.cap) {
+    let source = br#"fn probe(values: &Slots<u8, 255>, x: u64, a: Bool, b: Bool) -> result: u64 reads(values.len) {
   let picked = if a {
-    let capacity = values^.cap;
+    let length = values^.len;
     let d = x;
     if b {
-      invariant one: values^.cap <= d + 255_u64;
+      invariant one: values^.len <= d + 255_u64;
     } else {
-      invariant two: values^.cap <= d + 255_u64;
+      invariant two: values^.len <= d + 255_u64;
     }
     give d;
   } else {
     return x;
   }
-  invariant received: values^.cap <= picked + 255_u64;
+  invariant received: values^.len <= picked + 255_u64;
   return picked;
 }
 
@@ -5777,10 +5810,10 @@ fn main() -> status: std::process::ExitStatus pure {
             !matches!(
                 relation,
                 Relation::Bound { left, bound: 255, .. }
-                    if matches!(retained_term(&summary, *left), TermKind::Measure(CheckedMeasure::Capacity, _))
+                    if matches!(retained_term(&summary, *left), TermKind::Measure(CheckedMeasure::Length, _))
             )
         }),
-        "the capacity's implicit upper bound needs no delivery root"
+        "the length's implicit upper bound through its capacity needs no delivery root"
     );
 }
 
@@ -6261,6 +6294,233 @@ fn main() -> status: std::process::ExitStatus pure {
         })
         .collect::<Vec<_>>();
     assert_eq!(joins, vec![vec![0, 1]]);
+}
+
+fn unmentioned_aggregate_measure_delivery_source(fields: usize, read_after_give: bool) -> String {
+    let declarations = (0..fields)
+        .map(|field| format!("  field{field}: Box<Slots<u8>>;\n"))
+        .collect::<String>();
+    let allocations = (0..fields)
+        .map(|field| format!("  let field{field} = box_slots_new::<u8>(capacity: 4_u64);\n"))
+        .collect::<String>();
+    let arguments = (0..fields)
+        .map(|field| format!("field{field}: move field{field}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let first_read = if read_after_give {
+        "    let first_length = chosen.field0.inner.len;\n"
+    } else {
+        ""
+    };
+    format!(
+        "struct Bundle {{\n{declarations}}}\n
+enum Envelope {{
+  Left(value: Bundle);
+  Right(value: Bundle);
+}}
+
+fn make(flag: Bool) -> made: Envelope pure {{
+{allocations}  let bundle = Bundle({arguments});
+  if flag {{
+    return Envelope::Left(value: move bundle);
+  }} else {{
+    return Envelope::Right(value: move bundle);
+  }}
+}}
+
+fn driver(flag: Bool) -> result: unit pure {{
+  for @items (i in 0_u64..2_u64) {{
+    let chosen = match make(flag: flag) {{
+      Left(value: held_value) => {{
+        give move held_value;
+      }}
+      Right(value: held_value) => {{
+        give move held_value;
+      }}
+    }}
+{first_read}    release::<Bundle>(value: move chosen);
+  }}
+  return unit;
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
+}}
+"
+    )
+}
+
+#[test]
+fn aggregate_give_does_not_register_unmentioned_measured_descendants() {
+    // Each extra field used to mint source measures and immutable datums in
+    // the driver despite no read naming it. Comparing the complete inventory
+    // observes that source of closure-row growth without a timing threshold.
+    let counts = [1, 8].map(|fields| {
+        let source = unmentioned_aggregate_measure_delivery_source(fields, false);
+        let summary = accepted_entailment(source.as_bytes(), "driver");
+        validate_derivations(&summary);
+        assert!(
+            summary.inventory.terms.iter().all(|term| !matches!(
+                term,
+                TermKind::Measure(..) | TermKind::MeasureDatum { measure: Some(_), .. }
+            )),
+            "{fields} untouched fields must register neither measures nor placement datums"
+        );
+        summary.inventory.terms.len()
+    });
+    assert_eq!(
+        counts[0], counts[1],
+        "unused aggregate fields must not enlarge the driver's term universe"
+    );
+}
+
+#[test]
+fn an_aggregate_descendant_can_be_first_measured_after_give() {
+    let source = unmentioned_aggregate_measure_delivery_source(8, true);
+    let summary = accepted_entailment(source.as_bytes(), "driver");
+    validate_derivations(&summary);
+    let first_path = vec![PlaceStep::Field(0), PlaceStep::Deref];
+    assert!(summary.inventory.terms.iter().any(|term| matches!(
+        term,
+        TermKind::Measure(CheckedMeasure::Length, place) if place.path == first_path
+    )));
+    assert!(
+        summary.inventory.terms.iter().all(|term| match term {
+            TermKind::Measure(_, place) => place.path == first_path,
+            TermKind::MeasureDatum { measure: Some(_), .. } => false,
+            _ => true,
+        }),
+        "a later first read forms its own descendant's measures without transporting untouched ones"
+    );
+}
+
+#[test]
+fn aggregate_give_preserves_a_family_when_length_or_only_capacity_was_read() {
+    // The capacity variant names only cap in the source; ordinary measure
+    // reading can also register its standing family. It protects transport
+    // after that read, rather than a capacity-only interned vocabulary.
+    for capacity_only in [false, true] {
+        let (result, before, after) = if capacity_only {
+            (
+                "unit",
+                "  let limit = bundle.tracked.inner.cap;\n  if limit < 4_u64 {\n  } else {\n    return unit;\n  }\n",
+                "  need_small(limit: chosen.tracked.inner.cap);\n  return unit;\n",
+            )
+        } else {
+            (
+                "u8",
+                "  let length = bundle.tracked.inner.len;\n  if length == 0_u64 {\n    return 0_u8;\n  }\n",
+                "  let value = chosen.tracked.inner[0_u64];\n  return value;\n",
+            )
+        };
+        let source = format!(
+            "struct Bundle {{
+  tracked: Box<Slots<u8>>;
+  untouched: Box<Slots<u8>>;
+}}
+
+fn need_small(limit: u64) -> result: unit pure contract {{
+  requires limit < 4_u64;
+}} {{
+  return unit;
+}}
+
+fn probe(bundle: Bundle, flag: Bool) -> result: {result} pure {{
+{before}  let chosen = if flag {{
+    give move bundle;
+  }} else {{
+    give move bundle;
+  }}
+{after}}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
+}}
+"
+        );
+        let summary = accepted_entailment(source.as_bytes(), "probe");
+        validate_derivations(&summary);
+        if capacity_only {
+            assert_eq!(summary.call_goals.len(), 1);
+            assert_eq!(
+                summary.call_goals[0].disposition,
+                CallGoalDisposition::Discharged,
+                "a capacity-only source read must carry its bound across give"
+            );
+        } else {
+            let bounds = summary
+                .obligations
+                .iter()
+                .filter(|outcome| outcome.family == ObligationFamily::Bounds)
+                .collect::<Vec<_>>();
+            assert_eq!(bounds.len(), 1);
+            assert!(
+                bounds[0].discharged,
+                "the source's nonempty bound survives give"
+            );
+        }
+        let tracked_path = vec![PlaceStep::Field(0), PlaceStep::Deref];
+        for measure in [
+            CheckedMeasure::Length,
+            CheckedMeasure::Capacity,
+            CheckedMeasure::Head,
+        ] {
+            assert!(
+                summary.inventory.terms.iter().any(|term| matches!(
+                    term,
+                    TermKind::MeasureDatum { path, measure: Some(actual), .. }
+                        if *path == tracked_path && *actual == measure
+                )),
+                "a mentioned source retains the whole measure family: {measure:?}"
+            );
+        }
+        assert!(
+            summary.inventory.terms.iter().all(|term| match term {
+                TermKind::Measure(_, place) => place.path == tracked_path,
+                TermKind::MeasureDatum { path, measure: Some(_), .. } => *path == tracked_path,
+                _ => true,
+            }),
+            "tracking one descendant must not register its untouched sibling"
+        );
+    }
+}
+
+#[test]
+fn a_copied_generic_array_give_preserves_a_later_length_equality() {
+    // No source measure is read before give. The array is copied, so its
+    // source remains available and a later read must still relate it to the
+    // receiver. The symbolic length expression prevents a concrete type
+    // constant from proving the equality without that transport.
+    let source = br#"fn need_equal(left: u64, right: u64) -> result: unit pure contract {
+  requires left == right;
+} {
+  return unit;
+}
+
+fn probe<const n: u64>(original: Array<u8, n + 1>, flag: Bool) -> result: unit pure {
+  let chosen = if flag {
+    give original;
+  } else {
+    give original;
+  }
+  need_equal(left: original.len, right: chosen.len);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let summary = accepted_entailment(source, "probe");
+    validate_derivations(&summary);
+    let [goal] = summary.call_goals.as_slice() else {
+        panic!("the copied array has exactly one later length-equality requirement");
+    };
+    assert_eq!(
+        goal.disposition,
+        CallGoalDisposition::Discharged,
+        "a later length read of the copied source must equal the give receiver's length"
+    );
 }
 
 #[test]

@@ -1,0 +1,30 @@
+enum Step {
+  Next();
+  Stop();
+}
+
+fn walk(steps: &Box<Slots<Step>>, pc0: u64) -> r: u64 reads(steps) contract {
+  requires pc0 < steps^.inner.len;
+  requires forall more(j in 0_u64..steps^.inner.len) when steps^.inner[j] is not Stop: j + 1_u64 < steps^.inner.len;
+} {
+  doc "Runs from pc0 to the first Stop. Every step that is not a Stop has a successor, so a Next step needs no bound check.";
+  let n = steps^.inner.len;
+  let pc = pc0;
+  loop (
+    invariant in_steps: pc < n
+  ) {
+    match steps^.inner[pc] {
+      Next() => {
+        set pc = pc + 1_u64;
+        continue;
+      }
+      Stop() => {
+        return pc;
+      }
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

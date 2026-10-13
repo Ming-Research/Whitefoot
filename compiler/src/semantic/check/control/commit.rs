@@ -224,7 +224,7 @@ impl<'unit> Checker<'_, 'unit> {
                     SemanticRule::Type7,
                     value_node,
                     SemanticIssueKind::MissingDereference {
-                        mechanical_fix: "write `p^`",
+                        mechanical_fix: "write `p^`".to_owned(),
                     },
                 );
             }
@@ -271,6 +271,7 @@ impl<'unit> Checker<'_, 'unit> {
         // target is a proper prefix of. Writing the storage at the target's
         // own path, or below it, is a content write and invalidates nothing.
         for place in &mutation.place.members {
+            self.record_held_write(node, place);
             self.types.invalidate_references_with_separation(
                 bindings,
                 place,
@@ -444,7 +445,7 @@ impl<'unit> Checker<'_, 'unit> {
                 SemanticRule::Type7,
                 target_node,
                 SemanticIssueKind::MissingDereference {
-                    mechanical_fix: "write `p^`",
+                    mechanical_fix: "write `p^`".to_owned(),
                 },
             );
         };

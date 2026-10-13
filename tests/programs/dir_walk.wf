@@ -46,8 +46,8 @@ fn publish_all(factory: &HandleFactory, output: &OutputStream, source: &[u8], le
 
 fn stored_byte(records: &Slots<u8, 8192>, index: u64) -> result: u8 reads(records) {
   doc "Reads one record byte, delivering zero for a position the record table does not hold.";
-  let held = records^.len;
-  let inside = index < held;
+  let observed = records^.len;
+  let inside = index < observed;
   if inside {
     let value = records^[index];
     return value;

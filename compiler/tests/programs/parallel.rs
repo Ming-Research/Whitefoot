@@ -426,6 +426,19 @@ fn shared_objects_keep_every_update_on_one_driver_and_on_four() {
     }
 }
 
+/// [SHARE-1, SHARE-2] sixteen contexts hold the only handles to one counter
+/// and add to it through statements that count no handle of their own, since
+/// no block writes or moves the handle place it was read from. Each context
+/// releases its handle while the others' statements run, and every statement
+/// makes and releases another object, which can reuse a released object's
+/// storage. The counter must live until its last handle is released: an
+/// earlier release loses increments to those objects or faults, and the
+/// program's status names a wrong highest count.
+#[test]
+fn shared_objects_outlive_statements_while_other_contexts_release_handles() {
+    run_on_one_driver_and_on_four("shared_handle_release.wf", 3);
+}
+
 /// Runs one program on one driver and on four, `rounds` times each, and
 /// requires status 0, which each program gives only when every count it
 /// checks is the one every order of its atomic statements gives.
@@ -470,6 +483,15 @@ fn shared_maps_keep_every_update_on_one_driver_and_on_four() {
     run_on_one_driver_and_on_four("shared_maps.wf", 3);
 }
 
+/// Four contexts cover every logging/timing combination. Only the three
+/// held writers advance metadata, while all four preserve their entry updates
+/// and publish a sequence exactly on held writes. This checks the program's
+/// results; lock timing itself is not observable from these final counts.
+#[test]
+fn conditional_metadata_keeps_only_held_commits_on_one_driver_and_on_four() {
+    run_on_one_driver_and_on_four("lock_on_use.wf", 3);
+}
+
 /// A value read under a read-only whole-map hold must not lock its cell:
 /// that hold's release only opens the map gate. The old lowering left the
 /// first read's cell locked and the second read spun forever, so the shared
@@ -503,6 +525,18 @@ fn guards_on_map_entries_wake_on_every_write_on_one_driver_and_on_four() {
 #[test]
 fn a_map_swapped_whole_keeps_its_identity_on_one_driver_and_on_four() {
     run_on_one_driver_and_on_four("map_resets.wf", 2);
+}
+
+/// [SHARE-1, SHARE-2] a shared map whose values are unit serves as a set of
+/// byte-string keys: four contexts mark, unmark and test their own rows, then
+/// a count, a scan and a clear see exactly the marked keys, on one driver and
+/// on four. The entry's presence tag of `Option<unit>` is the only state the
+/// runtime keeps, so a tag read at the wrong offset, width or empty value
+/// would report a wrong membership (status 1 or 5), count (2), scan length
+/// (3), scanned keys (4) or clear (6, 7).
+#[test]
+fn a_map_of_unit_values_holds_a_set_of_keys_on_one_driver_and_on_four() {
+    run_on_one_driver_and_on_four("unit_set.wf", 2);
 }
 
 /// [SHARE-3] statements whose blocks meet several objects in opposite

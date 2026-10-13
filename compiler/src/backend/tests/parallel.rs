@@ -172,8 +172,8 @@ fn conditional_call_inside_atomic_keeps_ordinary_lowering() {
   return unit;
 }
 
-fn both(held: Shared<u64>, out: &u64, go: Bool) -> result: unit writes(out) waits {
-  atomic state = &held {
+fn both(observed_state: Shared<u64>, out: &u64, go: Bool) -> result: unit writes(out) waits {
+  atomic state = &observed_state {
     if go {
       fill(v: state);
     }

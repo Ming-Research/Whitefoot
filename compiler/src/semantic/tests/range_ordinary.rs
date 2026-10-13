@@ -946,8 +946,8 @@ fn scalar_written_through_a_reference_inside_an_atomic_statement() {
   let source = 1_u64;
   let observed = observe(value: source);
   let writer = &source;
-  atomic held = &state {
-    set writer^ = held^.value;
+  atomic observed_state = &state {
+    set writer^ = observed_state^.value;
   }
   guard(left: observed, right: source);
   return unit;
@@ -962,11 +962,11 @@ fn struct_written_after_a_copy_of_it() {
     check(
         &stale(
             "fn caller() -> result: unit pure {
-  let held = Holder(value: 1_u64);
-  let twin = held;
+  let observed_state = Holder(value: 1_u64);
+  let twin = observed_state;
   let observed = observe(value: twin.value);
-  set held.value = 2_u64;
-  guard(left: observed, right: held.value);
+  set observed_state.value = 2_u64;
+  guard(left: observed, right: observed_state.value);
   return unit;
 }",
         ),
@@ -979,11 +979,11 @@ fn struct_field_written_through_a_reference() {
     check(
         &stale(
             "fn caller() -> result: unit pure {
-  let held = Holder(value: 1_u64);
-  let observed = observe(value: held.value);
-  let writer = &held;
+  let observed_state = Holder(value: 1_u64);
+  let observed = observe(value: observed_state.value);
+  let writer = &observed_state;
   set writer^.value = 2_u64;
-  guard(left: observed, right: held.value);
+  guard(left: observed, right: observed_state.value);
   return unit;
 }",
         ),
@@ -1165,4 +1165,126 @@ fn written_premise_measure_subscripts_receive_their_own_range_verdict() {
             expected,
         );
     }
+}
+
+/// A loop whose back edge needs the frame bound after `arm` runs on some
+/// iterations; `keep` preserves the length only through its postcondition.
+fn arm_only(arm: &str) -> String {
+    format!(
+        "fn keep(xs: &Box<Array<u64>>, i: u64) -> r: unit writes(xs.inner) contract {{
+  requires i < xs^.inner.len;
+  ensures xs^.inner.len == entry(xs)^.inner.len;
+}} {{
+  set xs^.inner[i] = 0_u64;
+  return unit;
+}}
+
+fn probe(xs: &Box<Array<u64>>, flags: &[u8], i: u64) -> r: unit reads(flags), writes(xs) contract {{
+  requires i + 4_u64 <= xs^.inner.len;
+  requires forall small(j in 0_u64..flags^.len): flags^[j] < 3_u8;
+}} {{
+  let at = 0_u64;
+  loop (
+    invariant bound: i + 4_u64 <= xs^.inner.len
+  ) {{
+    if at >= flags^.len {{
+      return unit;
+    }}
+    let flag = flags^[at];
+{arm}
+    set at = at + 1_u64;
+    continue;
+  }}
+}}"
+    )
+}
+
+#[test]
+fn arm_fact_survives_its_join() {
+    // [RANGE-2] keep's length postcondition is active only in the arm that
+    // calls it; the back edge needs it there and the header bound elsewhere.
+    check(
+        &arm_only("    if flag != 0_u8 {\n      keep(xs: xs, i: i);\n    }"),
+        None,
+    );
+}
+
+#[test]
+fn arm_fact_survives_nested_joins() {
+    // Each inner arm's own call fact holds where both its inner and its
+    // outer arm were taken.
+    check(
+        &arm_only(
+            "    if flag != 0_u8 {\n      if flag == 1_u8 {\n        keep(xs: xs, i: i);\n      } else {\n        keep(xs: xs, i: i);\n        keep(xs: xs, i: i);\n      }\n    }",
+        ),
+        None,
+    );
+}
+
+/// `small` returns its argument and ensures it is below ten; `pick` calls it only where
+/// `guard` holds, then indexes a ten-element-or-longer array at `x`.
+fn arm_guarded(guard: &str) -> String {
+    format!(
+        "fn small(n: u64) -> r: u64 pure contract {{
+  requires n < 10_u64;
+  ensures r == n;
+  ensures r < 10_u64;
+}} {{
+  return n;
+}}
+
+fn pick(t: &Box<Array<u64>>, x: u64, flag: Bool) -> r: u64 reads(t) contract {{
+  requires 10_u64 <= t^.inner.len;
+  requires forall low(j in 0_u64..t^.inner.len): t^.inner[j] < 100_u64;
+}} {{
+{guard}
+  return t^.inner[x];
+}}"
+    )
+}
+
+#[test]
+fn arm_fact_holds_only_where_its_arm_was_taken() {
+    // Keeping `x < 10` after both joins without the arms' conditions would
+    // prove the index on the paths that never called `small`. The case with
+    // one join is the conformance case
+    // range2-neg-arm-fact-holds-only-where-its-arm-was-taken.
+    check(
+        &arm_guarded(
+            "  if flag {\n    if x < 10_u64 {\n      let kept = small(n: x);\n    }\n  }",
+        ),
+        Some(SemanticRule::Op4),
+    );
+}
+
+/// `251_u8 + v` after `inner` sets `v` in the outer then-arm and `outer`
+/// sets it in the else-arm; the range requirement over `marks` makes the
+/// function take part in the range judgment.
+fn bypassed_join(inner: &str, outer: &str) -> String {
+    format!(
+        "fn bump(marks: &[u64], x: u64) -> result: u8 pure contract {{
+  requires forall small(k in 0_u64..marks^.len): marks^[k] < 8_u64;
+}} {{
+  let v = 0_u8;
+  if x < 100_u64 {{
+{inner}
+  }} else {{
+    set v = {outer}_u8;
+  }}
+  let w = 251_u8 + v;
+  return w;
+}}"
+    )
+}
+
+#[test]
+fn joined_value_is_free_where_its_join_was_bypassed() {
+    // [RANGE-3] Two inner joins, each with a returning arm, sit in the arms
+    // of a middle join that the outer else bypasses, so each needs the outer
+    // join's bypass: the middle join's own bypasses alone ask its selector
+    // to be both arms. The direct bypass is the range2 bypassed-join cases.
+    let nested = "    if x < 10_u64 {\n      if x == 1_u64 {\n        set v = 1_u8;\n      } else if x == 2_u64 {\n        set v = 2_u8;\n      } else {\n        return 100_u8;\n      }\n    } else {\n      set v = 9_u8;\n      if x == 11_u64 {\n        set v = 3_u8;\n      } else if x == 12_u64 {\n        set v = 4_u8;\n      } else {\n        return 100_u8;\n      }\n    }";
+    check(&bypassed_join(nested, "5"), Some(SemanticRule::Op2));
+    // On the paths through the inner joins their arms still bound `v`.
+    check(&bypassed_join(nested, "4"), None);
 }

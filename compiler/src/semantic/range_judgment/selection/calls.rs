@@ -9,6 +9,7 @@ pub(super) struct Terms<'a> {
     nominals: &'a [CheckedNominal],
     elements: &'a [CheckedType],
     places: &'a PlaceMap,
+    aliases: &'a Aliases,
 }
 
 impl<'a> Terms<'a> {
@@ -18,6 +19,7 @@ impl<'a> Terms<'a> {
         nominals: &'a [CheckedNominal],
         elements: &'a [CheckedType],
         places: &'a PlaceMap,
+        aliases: &'a Aliases,
     ) -> Self {
         Self {
             parameters,
@@ -25,6 +27,7 @@ impl<'a> Terms<'a> {
             nominals,
             elements,
             places,
+            aliases,
         }
     }
 
@@ -92,7 +95,9 @@ impl<'a> Terms<'a> {
                 ..
             }) => {
                 if projections.is_empty() {
-                    self.arguments.get(*ordinal as usize).is_some_and(term)
+                    self.arguments
+                        .get(*ordinal as usize)
+                        .is_some_and(|argument| term(argument, self.aliases))
                 } else {
                     // An integer field/dereference is a range term only below
                     // an element. A substituted bare own scalar remains one.
@@ -156,7 +161,7 @@ impl<'a> Terms<'a> {
         };
         let parameter = self.parameters.get(*ordinal as usize)?;
         let argument = self.arguments.get(*ordinal as usize)?;
-        let mut place = actual_place(argument, self.places)?;
+        let mut place = actual_place(argument, self.places, self.aliases)?;
         let mut range_referent = parameter.mode.is_range();
         let mut ty = parameter.ty;
         // A reference formal's first dereference is replaced by the actual
@@ -218,7 +223,7 @@ impl<'a> Terms<'a> {
                 }
                 GoalProjection::Subscript(_) | GoalProjection::FormalSubscript { .. } => {
                     if let GoalProjection::FormalSubscript { ordinal } = projection
-                        && !term(self.arguments.get(*ordinal as usize)?)
+                        && !term(self.arguments.get(*ordinal as usize)?, self.aliases)
                     {
                         return None;
                     }
@@ -258,29 +263,37 @@ struct Place {
     scalar: bool,
 }
 
-fn actual_place(expression: &CheckedExpression, places: &PlaceMap) -> Option<Place> {
+fn actual_place(
+    expression: &CheckedExpression,
+    places: &PlaceMap,
+    aliases: &Aliases,
+) -> Option<Place> {
     let mut scalar = false;
     let element = match expression {
+        // A payload binder passed whole names its element projection [RANGE-1].
         CheckedExpression::Binding { binding, .. } => {
             scalar = !places.is_reference(*binding);
-            false
+            aliases.contains(binding)
         }
         CheckedExpression::BorrowAddressed { root, .. }
         | CheckedExpression::ReadStorage { root, .. } => {
             let PlaceRoot::Binding(binding) = root.root else {
                 return None;
             };
-            if !range_path(&root.path, false) {
+            let below = aliases.contains(&binding);
+            if !range_path(&root.path, below, aliases) {
                 return None;
             }
             scalar = root.path.is_empty() && !places.is_reference(binding);
-            root.path
-                .iter()
-                .any(|step| matches!(step, CheckedPlaceStep::Subscript(_)))
+            below
+                || root
+                    .path
+                    .iter()
+                    .any(|step| matches!(step, CheckedPlaceStep::Subscript(_)))
         }
         CheckedExpression::BorrowRangeIndex { place, .. }
         | CheckedExpression::RangeIndex { place, .. } => {
-            if !term(&place.offset) || !range_path(&place.path, true) {
+            if !term(&place.offset, aliases) || !range_path(&place.path, true, aliases) {
                 return None;
             }
             true
@@ -290,20 +303,24 @@ fn actual_place(expression: &CheckedExpression, places: &PlaceMap) -> Option<Pla
             offset,
             ..
         } => {
-            if !term(offset) {
+            if !term(offset, aliases) {
                 return None;
             }
             true
         }
         CheckedExpression::BufferIndex { root, offset, .. } => {
-            if !term(offset) || !range_path(&root.path, false) {
+            let below = aliases.contains(&root.binding);
+            if !term(offset, aliases) || !range_path(&root.path, below, aliases) {
                 return None;
             }
             true
         }
         CheckedExpression::ProjectValue { value, .. }
-        | CheckedExpression::BoxDeref { value, .. } => actual_place(value, places)?.element,
-        CheckedExpression::Project { .. } | CheckedExpression::DerefAddressed { .. } => false,
+        | CheckedExpression::BoxDeref { value, .. } => {
+            actual_place(value, places, aliases)?.element
+        }
+        CheckedExpression::DerefAddressed { binding, .. } => aliases.contains(binding),
+        CheckedExpression::Project { .. } => false,
         _ => return None,
     };
     Some(Place { element, scalar })

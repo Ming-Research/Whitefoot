@@ -69,6 +69,11 @@ impl Checker<'_, '_> {
         check_context: &CheckContext<'_>,
         signature: &FunctionSignature,
     ) -> Result<Vec<ContractReadPath>, CheckStop> {
+        // [MSR-3] admits every entry former before the clauses that contain
+        // it are formed, as the body check and formal contract formation do:
+        // RANGE-1 forms a place from an entry former only once MSR-3 has
+        // admitted it, and [DIAG-1] cites MSR-3, defined first, at the former.
+        self.types.declarations.check_entry_formers(signature)?;
         let check_context = CheckContext {
             writing_module: self
                 .types
@@ -156,7 +161,7 @@ impl Checker<'_, '_> {
                 .declarations
                 .relation_postcondition_selectors(selectors)?
             {
-                let expression = self.expand_postcondition_clause(
+                let (expression, _) = self.expand_postcondition_clause(
                     context,
                     &selector,
                     &mut bindings.clone(),
@@ -168,10 +173,10 @@ impl Checker<'_, '_> {
         // Both entry and published exit/result invariant clauses use the
         // existing TYPE-11 substitution. Owned result roots supply no
         // reference argument and therefore add no compared read.
-        for requirement in self.implicit_type_invariant_requirements(&check_context, signature)? {
+        for requirement in self.implicit_type_invariant_requirements(signature)? {
             collect_goal(&requirement.template.root, signature, &mut reads);
         }
-        self.append_range_type_invariant_contracts(&check_context, signature, &parameters)?;
+        self.append_range_type_invariant_contracts(signature, &parameters)?;
         for clause in &self.body.range_facts.requirements {
             collect_range_clause(clause, signature, &[], ClauseState::Entry, &mut reads);
         }
@@ -398,7 +403,9 @@ fn range_base(
     signature: &FunctionSignature,
     definitions: &[(BindingId, GoalExpression)],
 ) -> Option<(u32, Vec<ContractReadStep>)> {
-    let CheckedRangeRoot::Binding(binding) = place.root else {
+    // An entry-state root reads the same parameter storage at call entry
+    // [MSR-3, RANGE-1], so it joins the footprint as that parameter's read.
+    let (CheckedRangeRoot::Binding(binding) | CheckedRangeRoot::Entry(binding)) = place.root else {
         return None;
     };
     let (ordinal, mut steps) =
@@ -603,7 +610,9 @@ fn collect_range_projection(
                             field,
                         }))
                     }
-                    CheckedRangeProjection::Tag(_) => break,
+                    // A tag and an `unchanged` whole-selection identity
+                    // read the complete selected element [RANGE-1].
+                    CheckedRangeProjection::Tag(_) | CheckedRangeProjection::WholeElement => break,
                 }
             }
         }
@@ -864,7 +873,8 @@ fn range_owned_projection(
             position,
             pending,
         )?,
-        CheckedRangeProjection::Tag(_) => return None,
+        // A whole-selection identity has no integer image [RANGE-1].
+        CheckedRangeProjection::Tag(_) | CheckedRangeProjection::WholeElement => return None,
     })
 }
 

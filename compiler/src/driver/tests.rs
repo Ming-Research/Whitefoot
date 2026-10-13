@@ -4,6 +4,11 @@ use super::{
 };
 use crate::{OverlapLowering, RecursionBudget, SourceInput};
 
+mod call_result_repairs;
+mod recursive_postconditions;
+#[cfg(unix)]
+mod spellings;
+
 /// Places each record in the module its directory names, in the
 /// interface role when it is that directory's `module.wfm` [MOD-2].
 fn module_inputs<'a>(
@@ -1570,9 +1575,10 @@ fn a_syntax_rejection_prints_the_expected_spellings_and_the_offending_line() {
     assert_eq!(failure.rule_id(), Some("GRAM-9"));
     let detail = failure.detail();
     // The set as spellings, in the grammar's own order. `:` follows an atom
-    // that closes a range clause's guard list [GRAM-5].
+    // that closes a range clause's guard list, and `is` one that a variant
+    // relation tests [GRAM-5]; `is` first occurs in a result route.
     assert!(
-        detail.contains(r#"expected: [";", "{", ":", ")", ",", "<", ">", "["#),
+        detail.contains(r#"expected: [";", "{", ":", ")", ",", "is", "<", ">", "["#),
         "{detail}"
     );
     // The line the writer wrote, and where in it the parser stopped.

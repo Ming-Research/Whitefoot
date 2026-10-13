@@ -1,0 +1,39 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Counter {
+  doc "One count.";
+  count: u64;
+}
+
+fn fill(counter: &Counter, steps: u64) -> result: unit writes(counter) contract {
+  requires counter^.count + steps <= 800_u64;
+} {
+  doc "Adds one per iteration. The header invariant states the field's room over its header image; each iteration reads the field, adds one and writes it back, which the invariant and the counted bound prove and the next header re-establishes.";
+  for (
+    index in 0_u64..steps,
+    invariant room: counter^.count + steps - index <= 800_u64
+  ) {
+    let now = counter^.count;
+    let next = now + 1_u64;
+    set counter^.count = next;
+  }
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "Fills 5 by 3 steps after checking the room.";
+  let counter = Counter(count: 5_u64);
+  let kept = counter.count;
+  if kept <= 797_u64 {
+  } else {
+    return exit_status(code: 1_u8);
+  }
+  fill(counter: &counter, steps: 3_u64);
+  let count = counter.count;
+  if count == 8_u64 {
+  } else {
+    return exit_status(code: 2_u8);
+  }
+  return exit_status(code: 0_u8);
+}

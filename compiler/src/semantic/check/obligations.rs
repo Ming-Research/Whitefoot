@@ -14,7 +14,7 @@ use super::super::model::{
     CheckedAffineExpressionKind, CheckedAffineRelation, CheckedContainerRoot,
     CheckedConversionMode, CheckedExpression, CheckedFunction, CheckedLoopId, CheckedLoopInvariant,
     CheckedPlaceStep, CheckedProofUseSource, CheckedRangeElementPlace, CheckedRangeSource,
-    CheckedSetTarget, CheckedStatement, FunctionId,
+    CheckedSeparationOccasion, CheckedSetTarget, CheckedStatement, FunctionId,
 };
 use super::super::obligations::{ObligationRecord, ObligationSubject};
 use super::{CheckStop, CheckedFunctionInventory};
@@ -54,18 +54,28 @@ fn obligation_records(
     // syntax, each submitted where its call, set or reference use stands.
     for (query, separation) in function.call_separations.iter().enumerate() {
         let query = u32::try_from(query).expect("separation queries exceed u32");
-        let (rule, site, family) = match &separation.reference_use {
-            Some(use_site) => (
+        let (rule, site, family) = match (&separation.reference_use, &separation.occasion) {
+            (Some(use_site), _) => (
                 SemanticRule::Ref2,
                 use_site.site.clone(),
                 ObligationFamily::ReferencePreservation(query),
             ),
-            None if separation.exchange => (
+            (None, _) if separation.held_use.is_some() => (
+                SemanticRule::Hold1,
+                separation.held_use.as_ref().expect("held diagnostic site").site.clone(),
+                ObligationFamily::CallSeparation(query),
+            ),
+            (None, CheckedSeparationOccasion::Exchange) => (
                 SemanticRule::Op11,
                 separation.site.clone(),
                 ObligationFamily::ExchangeSeparation(query),
             ),
-            None => (
+            (None, CheckedSeparationOccasion::AtomicTargets(target)) => (
+                SemanticRule::Share2,
+                target.clone(),
+                ObligationFamily::AtomicTargetSeparation(query),
+            ),
+            (None, CheckedSeparationOccasion::Call) => (
                 SemanticRule::Eff5,
                 separation.site.clone(),
                 ObligationFamily::CallSeparation(query),
@@ -84,6 +94,15 @@ fn obligation_records(
     // compiler-owned [PRE-1] signature has none, its contract being a
     // declaration premise.
     if function.body.is_some() {
+        // [ENT-2, FN-9] the places a postcondition forms owe their
+        // subscripts' obligations at every return that selects it.
+        for postcondition in &function.postconditions {
+            for _ in &postcondition.selected_returns {
+                for place in &postcondition.places {
+                    records.expression(&place.expression);
+                }
+            }
+        }
         for (ordinal, postcondition) in function.postconditions.iter().enumerate() {
             records.push(
                 SemanticRule::Fn9,
@@ -96,6 +115,24 @@ fn obligation_records(
         }
     }
     records.list
+}
+
+/// [ENT-2, FN-8] whether some place a requirement of `function` forms at
+/// body entry owes an obligation at `site`.
+pub(super) fn requirement_forms_site(function: &CheckedFunction, site: &NodePath) -> bool {
+    let mut records = Records {
+        list: Vec::new(),
+        empties_run: &|_| false,
+        function: function.id,
+        loops: Vec::new(),
+        gives: 0,
+        atomic: None,
+        branches: Vec::new(),
+    };
+    for place in function.requirement_places.iter().flatten() {
+        records.expression(place);
+    }
+    records.list.iter().any(|record| record.site == *site)
 }
 
 struct Records<'rows> {
@@ -351,7 +388,8 @@ impl Records<'_> {
         for side in [&relation.left, &relation.right] {
             for expression in side.postorder() {
                 match &expression.kind {
-                    CheckedAffineExpressionKind::Measure(measure) => self.expression(measure),
+                    CheckedAffineExpressionKind::Measure(measure)
+                    | CheckedAffineExpressionKind::Field(measure) => self.expression(measure),
                     CheckedAffineExpressionKind::Constant { .. }
                     | CheckedAffineExpressionKind::Local { .. }
                     | CheckedAffineExpressionKind::ConstGeneric { .. }
@@ -370,6 +408,7 @@ impl Records<'_> {
                 call,
                 arguments,
                 requirements,
+                routed_requirements,
                 ..
             } => {
                 for argument in arguments {
@@ -388,6 +427,17 @@ impl Records<'_> {
                             callee: *function,
                             requires_clause: requirement.requires_clause.clone(),
                             subject: requirement.subject,
+                        },
+                    );
+                }
+                for requirement in routed_requirements {
+                    self.push(
+                        rule,
+                        call.clone(),
+                        ObligationSubject::CallRequirement {
+                            callee: *function,
+                            requires_clause: requirement.clause.clone(),
+                            subject: Some(requirement.subject),
                         },
                     );
                 }

@@ -301,8 +301,8 @@ fn copy_destructuring_preserves_its_source_and_noncopy_requires_move() {
         ),
         SemanticRule::Own1,
         |kind| {
-            matches!(kind, SemanticIssueKind::MoveOfCopy { mechanical_fix }
-            if *mechanical_fix == "remove `move` from the destructuring: let N(f: a, ...) = p;")
+            matches!(kind, SemanticIssueKind::MoveOfCopy { mechanical_fix, .. }
+            if *mechanical_fix == "write `rebuilt` without `move`")
         },
     );
 }
@@ -363,8 +363,8 @@ fn finish(value: Holder) -> result: unit pure {
 fn main() -> status: std::process::ExitStatus pure {
   let left = box_new::<u64>(value: 1_u64);
   let right = box_new::<u64>(value: 2_u64);
-  let held = Holder(left: move left, right: move right);
-  release::<Holder>(value: move held);
+  let observed = Holder(left: move left, right: move right);
+  release::<Holder>(value: move observed);
   release::<u64>(value: 7_u64);
   return std::process::exit_status(code: 0_u8);
 }

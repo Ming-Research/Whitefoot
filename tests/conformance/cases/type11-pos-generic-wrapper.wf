@@ -1,0 +1,26 @@
+struct Span {
+  start: u64;
+  end: u64;
+  invariant ordered(span): span.start <= span.end;
+}
+
+fn wrap_one<T: drop>(item: T) -> result: Option<T> pure {
+  return Some<T>(value: move item);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let span = Span(start: 3_u64, end: 10_u64);
+  let wrapped = wrap_one::<Span>(item: span);
+  match wrapped {
+    Some(value: s) => {
+      let a = s.start;
+      let b = s.end;
+      let d = b - a;
+      let code = cvt.wrap::<u64, u8>(d);
+      return std::process::exit_status(code: code);
+    }
+    None() => {
+      return std::process::exit_status(code: 0_u8);
+    }
+  }
+}

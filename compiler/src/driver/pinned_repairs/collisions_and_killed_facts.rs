@@ -144,7 +144,7 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         rule: "OP-4",
         sentences: &[
-            "\n  mechanical_fix: `at < context^.blocks.inner.len` is not proved here, but facts about `context^.blocks.inner.len` that held before the call to `bump` at line 18 would prove it, and its row, which writes `context^`, removed them: where `bump` leaves `context^.blocks.inner.len` unchanged, declare its row as `writes(context.width)`, the paths its body accesses, or state `context^.blocks.inner.len` unchanged in its `ensures`; or guard the access with `if at < context^.blocks.inner.len` where skipping it is the intended behavior, adding to the effect row any read that condition makes which the row does not yet declare\n",
+            "\n  mechanical_fix: `at < context^.blocks.inner.len` is not proved here, but facts about `context^.blocks.inner.len` that held before the call to `bump` at line 18 would prove it, and its row, which writes `context^`, removed them: where `bump` leaves `context^.blocks.inner.len` unchanged, declare its row as `writes(context.width)`, the paths its body accesses, or state equality of the entry and exit values of `context^.blocks.inner.len` in its `ensures`; or guard the access with `if at < context^.blocks.inner.len` where skipping it is the intended behavior, adding to the effect row any read that condition makes which the row does not yet declare\n",
         ],
         repaired: &[
             br#"struct Block {
@@ -293,7 +293,7 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         rule: "OP-4",
         sentences: &[
-            "\n  mechanical_fix: `at < context^.blocks.inner.len` is not proved here, but facts about `context^.blocks.inner.len` that held before the call to `note` at line 13 would prove it, and its row, which writes `context^`, removed them: where `note` leaves `context^.blocks.inner.len` unchanged, declare its row as `reads(context.blocks.inner.cap), writes(context.width)`, the paths its body accesses, or state `context^.blocks.inner.len` unchanged in its `ensures`; or guard the access with `if at < context^.blocks.inner.len` where skipping it is the intended behavior, adding to the effect row any read that condition makes which the row does not yet declare\n",
+            "\n  mechanical_fix: `at < context^.blocks.inner.len` is not proved here, but facts about `context^.blocks.inner.len` that held before the call to `note` at line 13 would prove it, and its row, which writes `context^`, removed them: where `note` leaves `context^.blocks.inner.len` unchanged, declare its row as `reads(context.blocks.inner.cap), writes(context.width)`, the paths its body accesses, or state equality of the entry and exit values of `context^.blocks.inner.len` in its `ensures`; or guard the access with `if at < context^.blocks.inner.len` where skipping it is the intended behavior, adding to the effect row any read that condition makes which the row does not yet declare\n",
         ],
         repaired: &[
             br#"struct Ctx {
@@ -412,7 +412,7 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         rule: "OP-4",
         sentences: &[
-            "\n  mechanical_fix: `at < context^.blocks.inner.len` is not proved here, but facts about `context^.blocks.inner.len` that held before the call to `lift_all` at line 21 would prove it, and its row, which writes `context^.blocks.inner`, removed them: where `lift_all` leaves `context^.blocks.inner.len` unchanged, state `context^.blocks.inner.len` unchanged in its `ensures`; or guard the access with `if at < context^.blocks.inner.len` where skipping it is the intended behavior, adding to the effect row any read that condition makes which the row does not yet declare\n",
+            "\n  mechanical_fix: `at < context^.blocks.inner.len` is not proved here, but facts about `context^.blocks.inner.len` that held before the call to `lift_all` at line 21 would prove it, and its row, which writes `context^.blocks.inner`, removed them: where `lift_all` leaves `context^.blocks.inner.len` unchanged, state equality of the entry and exit values of `context^.blocks.inner.len` in its `ensures`; or guard the access with `if at < context^.blocks.inner.len` where skipping it is the intended behavior, adding to the effect row any read that condition makes which the row does not yet declare\n",
         ],
         repaired: &[
             br#"struct Block {

@@ -1,0 +1,45 @@
+const name: Array<u8, 1> =[107_u8];
+
+struct Stamp {
+  wall: std::time::WallClock;
+}
+
+fn stale(slots: &Entries<Stamp>, deadline: i64) -> result: Bool reads(slots) {
+  doc "Reports whether the first entry holds a stamp whose calendar time has reached deadline.";
+  if 0_u64 < slots^.len {
+    match &slots^[0_u64] {
+      Some(value: stamp) => {
+        let reading = std::time::unix_nanoseconds(clock: &stamp^.wall);
+        let reached = reading >= deadline;
+        return reached;
+      }
+      None() => {
+        return False();
+      }
+    }
+  }
+  return False();
+}
+
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
+  doc "A guard whose call reads entries whose element values hold a wall clock reads that clock through an element.";
+  let std::process::Inputs(cwd: directory, handles: factory, wall_clock: wall, ..) = move inputs;
+  let std::fs::Directory(read: directory_read, write: directory_write) = move directory;
+  std::fs::close_directory_write(factory: &factory, directory: move directory_write);
+  std::fs::close_directory(factory: &factory, directory: move directory_read);
+  let start = std::time::unix_nanoseconds(clock: &wall);
+  let deadline = start +sat 1000000_i64;
+  let stamp = Stamp(wall: move wall);
+  let store = shared_map_new::<Stamp>(capacity: 1_u64);
+  let keys = key_set_new(capacity: 1_u64);
+  key_set_insert(keys: &keys, key: &name[0_u64..1_u64]);
+  atomic e = &store[&name[0_u64..1_u64]] {
+    set e^ = Some<Stamp>(value: move stamp);
+  }
+  let count = 0_u64;
+  atomic slots = &store[keys] when stale(slots: slots, deadline: deadline) {
+    set count = slots^.len;
+  }
+  let code = cvt.wrap::<u64, u8>(count);
+  return std::process::exit_status(code: code);
+}

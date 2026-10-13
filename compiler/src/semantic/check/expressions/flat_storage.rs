@@ -27,6 +27,14 @@ const WIN3_NO_SLOT_MOVE: &str = "use take_back, remove_at, or swap [OP-10, OP-11
 use super::super::{CheckStop, Checker, EffectSet, LocalBinding, PlaceAccess, TypedExpression};
 use super::{MutationTarget, PlaceUseOptions, ResolvedPlaceSet};
 
+/// The declared type of a written place and whether the place is a run of
+/// elements of that type, as `Checker::selected_place_shape` reads it.
+#[derive(Clone, Copy, Debug)]
+pub(in crate::semantic::check) struct SelectedPlaceShape {
+    pub(in crate::semantic::check) ty: CheckedType,
+    pub(in crate::semantic::check) run: bool,
+}
+
 #[derive(Clone)]
 pub(in crate::semantic::check) struct CheckedArrayPlace {
     pub(super) root: CheckedArrayRoot,
@@ -363,9 +371,14 @@ impl<'unit> Checker<'_, 'unit> {
             return self.types.declarations.issue_node(
                 SemanticRule::Own1,
                 node,
-                SemanticIssueKind::MoveOfCopy {
-                    mechanical_fix: "read the measure without `move`",
-                },
+                self.ownership_issue(
+                    check_context,
+                    node,
+                    CheckedType::Integer(IntegerType::U64),
+                    true,
+                    None,
+                    Some("read the measure without `move`".to_owned()),
+                )?,
             );
         }
         Ok(TypedExpression {
@@ -594,9 +607,14 @@ impl<'unit> Checker<'_, 'unit> {
                 return self.types.declarations.issue_node(
                     SemanticRule::Own1,
                     use_node,
-                    SemanticIssueKind::MoveOfCopy {
-                        mechanical_fix: "read the measure without `move`",
-                    },
+                    self.ownership_issue(
+                        check_context,
+                        place,
+                        CheckedType::Integer(IntegerType::U64),
+                        true,
+                        None,
+                        Some("read the measure without `move`".to_owned()),
+                    )?,
                 );
             }
             let mut effects = range.offsets.effects;
@@ -683,9 +701,14 @@ impl<'unit> Checker<'_, 'unit> {
                     return self.types.declarations.issue_node(
                         SemanticRule::Own1,
                         use_node,
-                        SemanticIssueKind::MoveOfCopy {
-                            mechanical_fix: "read the measure without `move`",
-                        },
+                        self.ownership_issue(
+                            check_context,
+                            place,
+                            CheckedType::Integer(IntegerType::U64),
+                            true,
+                            None,
+                            Some("read the measure without `move`".to_owned()),
+                        )?,
                     );
                 }
                 let mut resolved = range.resolved;
@@ -801,9 +824,14 @@ impl<'unit> Checker<'_, 'unit> {
             return self.types.declarations.issue_node(
                 SemanticRule::Own1,
                 use_node,
-                SemanticIssueKind::MoveOfCopy {
-                    mechanical_fix: "read the measure without `move`",
-                },
+                self.ownership_issue(
+                    check_context,
+                    place,
+                    CheckedType::Integer(IntegerType::U64),
+                    true,
+                    None,
+                    Some("read the measure without `move`".to_owned()),
+                )?,
             );
         }
         for member in &container.resolved.members {
@@ -888,9 +916,14 @@ impl<'unit> Checker<'_, 'unit> {
             return self.types.declarations.issue_node(
                 SemanticRule::Own1,
                 node,
-                SemanticIssueKind::MoveOfCopy {
-                    mechanical_fix: "read the constant's copy scalar without `move`",
-                },
+                self.ownership_issue(
+                    check_context,
+                    node,
+                    place.root.ty,
+                    true,
+                    None,
+                    Some("read the constant's copy scalar without `move`".to_owned()),
+                )?,
             );
         }
         self.check_storage_read(check_context, node, node, place, bindings, options)
@@ -971,19 +1004,28 @@ impl<'unit> Checker<'_, 'unit> {
             return self.types.declarations.issue_node(
                 SemanticRule::Own1,
                 node,
-                SemanticIssueKind::BareAffineUse {
-                    mechanical_fix: "move the element out with take_back or remove_at, or \
-                                     exchange it with swap [OP-10, OP-11]",
-                },
+                self.ownership_issue(
+                    check_context,
+                    source_place,
+                    place.root.ty,
+                    false,
+                    None,
+                    Some("move the element out with take_back or remove_at, or exchange it with swap [OP-10, OP-11]".to_owned()),
+                )?,
             );
         }
         if copy && options.explicit_move && Checker::judges_class_spelling(check_context) {
             return self.types.declarations.issue_node(
                 SemanticRule::Own1,
                 node,
-                SemanticIssueKind::MoveOfCopy {
-                    mechanical_fix: "use the indexed copy place without `move`",
-                },
+                self.ownership_issue(
+                    check_context,
+                    source_place,
+                    place.root.ty,
+                    true,
+                    None,
+                    Some("use the indexed copy place without `move`".to_owned()),
+                )?,
             );
         }
         let mut effects = place.offsets.effects;
@@ -1161,10 +1203,14 @@ impl<'unit> Checker<'_, 'unit> {
             return self.types.declarations.issue_node(
                 SemanticRule::Own1,
                 use_node,
-                SemanticIssueKind::BareAffineUse {
-                    mechanical_fix: "move the element out with take_back or remove_at, or \
-                                     exchange it with swap [OP-10, OP-11]",
-                },
+                self.ownership_issue(
+                    check_context,
+                    place,
+                    selected_type,
+                    false,
+                    None,
+                    Some("move the element out with take_back or remove_at, or exchange it with swap [OP-10, OP-11]".to_owned()),
+                )?,
             );
         }
         if !element_read_out
@@ -1174,9 +1220,14 @@ impl<'unit> Checker<'_, 'unit> {
             return self.types.declarations.issue_node(
                 SemanticRule::Own1,
                 use_node,
-                SemanticIssueKind::MoveOfCopy {
-                    mechanical_fix: "use the indexed copy place without `move`",
-                },
+                self.ownership_issue(
+                    check_context,
+                    place,
+                    selected_type,
+                    true,
+                    None,
+                    Some("use the indexed copy place without `move`".to_owned()),
+                )?,
             );
         }
         if matches!(indexed, CheckedIndexedPlace::Container(_)) {
@@ -1905,7 +1956,7 @@ impl<'unit> Checker<'_, 'unit> {
                     .declarations
                     .unsupported(UnsupportedSemanticFeature::CompositeValues, node);
             }
-            let (binding, path, _) = self
+            let (binding, path, proof_base) = self
                 .types
                 .declarations
                 .explicit_container_path(&place.expression, node)?;
@@ -1919,6 +1970,7 @@ impl<'unit> Checker<'_, 'unit> {
                     binding,
                     element,
                     element_type: place.ty,
+                    proof_base,
                 },
                 declaration: place.declaration,
                 element_type: place.ty,
@@ -2009,6 +2061,30 @@ impl<'unit> Checker<'_, 'unit> {
         {
             return Ok(false);
         }
+        Ok(self
+            .selected_place_shape(context, node, suffixes, bindings, root_role)?
+            .is_some_and(|shape| shape.run))
+    }
+
+    /// The declared type the place `pbase` plus `suffixes` selects, and
+    /// whether that place is a run of elements of that type rather than one
+    /// element: a range reference's referent `r^` [REF-4], or a run a
+    /// subscript selects below segments or pages [TYPE-9, OP-4]. A subscript
+    /// written after the place applies to the place this shape describes, so
+    /// on a run it selects one of its elements and on one place it is that
+    /// place's own subscript [OP-4].
+    ///
+    /// Like `is_run_selection` this reads declared types alone; it
+    /// answers `None` for a place it cannot type that way, such as one whose
+    /// root is no local binding, and the ordinary walk then judges the place.
+    pub(in crate::semantic::check) fn selected_place_shape(
+        &self,
+        context: FunctionContext<'_, '_>,
+        node: NodeId,
+        suffixes: &[NodeId],
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+        root_role: LexicalUseRole,
+    ) -> Result<Option<SelectedPlaceShape>, CheckStop> {
         let pbase = self
             .types
             .declarations
@@ -2016,28 +2092,26 @@ impl<'unit> Checker<'_, 'unit> {
             .first_child_with(node, Production::Pbase)?
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
         if !self.types.declarations.tree.children(pbase)?.is_empty() {
-            return Ok(false);
+            return Ok(None);
         }
         let usage = self
             .types
             .declarations
             .use_at(context.check_context, pbase, root_role)?;
         let ResolvedTarget::Source { declaration, .. } = usage.target() else {
-            return Ok(false);
+            return Ok(None);
         };
         let Some(local) = bindings.get(&declaration) else {
-            return Ok(false);
+            return Ok(None);
         };
         let mut ty = local.ty;
         let mut range = false;
         let mut pages = false;
-        let mut selected_run = false;
         for (position, suffix) in suffixes.iter().enumerate() {
-            selected_run = false;
             match self.types.declarations.tree.place_suffix(*suffix)? {
                 crate::syntax::views::PlaceSuffix::Dereference => {
                     if position != 0 || !local.mode.is_reference() {
-                        return Ok(false);
+                        return Ok(None);
                     }
                     range = local.mode.is_range();
                 }
@@ -2045,9 +2119,9 @@ impl<'unit> Checker<'_, 'unit> {
                     if range {
                         range = false;
                     } else {
-                        selected_run = pages || matches!(ty, CheckedType::Segments { .. });
+                        let selected_run = pages || matches!(ty, CheckedType::Segments { .. });
                         let Some(element) = ty.storage_element() else {
-                            return Ok(false);
+                            return Ok(None);
                         };
                         ty = self.types.element_type(element)?;
                         range = selected_run;
@@ -2056,7 +2130,7 @@ impl<'unit> Checker<'_, 'unit> {
                 }
                 crate::syntax::views::PlaceSuffix::Member(_) => {
                     if range {
-                        return Ok(false);
+                        return Ok(None);
                     }
                     let name = self
                         .types
@@ -2075,15 +2149,20 @@ impl<'unit> Checker<'_, 'unit> {
                         pages = true;
                     } else {
                         let Some(member) = self.types.place_member(ty, name)? else {
-                            return Ok(false);
+                            return Ok(None);
                         };
                         ty = member.ty();
                     }
                 }
-                crate::syntax::views::PlaceSuffix::Range { .. } => return Ok(false),
+                crate::syntax::views::PlaceSuffix::Range { .. } => return Ok(None),
             }
         }
-        Ok(selected_run)
+        // A window's pages name no place of their own until a subscript
+        // selects one [TYPE-10].
+        if pages {
+            return Ok(None);
+        }
+        Ok(Some(SelectedPlaceShape { ty, run: range }))
     }
 
     pub(in crate::semantic::check) fn run_element_subscript(
@@ -2200,6 +2279,7 @@ impl<'unit> Checker<'_, 'unit> {
                 formation: Some(Box::new(formed.expression)),
                 element,
                 element_type,
+                proof_base: None,
             },
             declaration,
             element_type,
@@ -2331,7 +2411,7 @@ impl<'unit> Checker<'_, 'unit> {
                         SemanticRule::Type7,
                         node,
                         SemanticIssueKind::MissingDereference {
-                            mechanical_fix: "write `holder^`",
+                            mechanical_fix: "write `holder^`".to_owned(),
                         },
                     );
                 }

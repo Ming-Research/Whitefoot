@@ -42,7 +42,7 @@ use super::super::model::{
 };
 use super::super::places::{
     CapturedRange, CapturedTerm, CapturedValue, DescendantTarget, PlaceRoot, PlaceStep,
-    ResolvedPlace, UnprovedSeparations,
+    ResolvedPlace, UnprovedSeparations, places_overlap,
 };
 use super::{
     CheckStop, Checker, EffectPath, EffectSet, LocalBinding, PlaceAccess, TypedExpression,
@@ -131,6 +131,10 @@ pub(super) enum InvalidationEvent {
     PrefixWritten,
     /// The path or a prefix of it was moved out of [OWN-1, WIN-3].
     PrefixMoved,
+    /// The path or a prefix of it was released by a compiler-derived release
+    /// [STOR-3]: a move out of a field releases the owner's other affine
+    /// parts at the move [WIN-3].
+    PrefixReleased,
     /// A call's substituted row writes a proper prefix of the path
     /// [EFF-5 clause 3].
     CallWrite,
@@ -154,10 +158,66 @@ impl InvalidationEvent {
         match self {
             Self::PrefixWritten => "a proper prefix of the reference's path was written",
             Self::PrefixMoved => "the reference's path or a prefix of it was moved out of",
+            Self::PrefixReleased => "the reference's path or a prefix of it was released",
             Self::CallWrite => "a call wrote a proper prefix of the reference's path",
             Self::RootScopeEnded => "the scope of the local variable the path starts at ended",
             Self::WindowBoundaryMoved => {
                 "a window operation moved the boundary or origin the reference was formed under"
+            }
+        }
+    }
+}
+
+/// [SHARE-1, SHARE-2] the places an atomic statement read one target's
+/// handle from, and whether a write, move or release checked while the
+/// statement's binding is in scope may overlap one of them [OWN-7].
+///
+/// The binding carries it through the same walk that carries [REF-2]
+/// validity, so it sees every event that walk enumerates: a statement's
+/// write or move, a call's substituted row [EFF-5] and a window operation.
+/// A move out of a field also releases the rest of its owner [WIN-3], which
+/// that walk does not enumerate; the consume reports each released part
+/// here itself.
+/// Unlike validity it is shared by every copy of the binding's state and is
+/// never restored by a join, so an event on a path that leaves the block by
+/// an edge marks it as well as one that falls through.
+#[derive(Debug, Eq, PartialEq)]
+pub(super) struct HandleWatch {
+    places: Vec<ResolvedPlace>,
+    disturbed: std::cell::Cell<bool>,
+}
+
+impl HandleWatch {
+    pub(super) const fn new(places: Vec<ResolvedPlace>) -> Self {
+        Self {
+            places,
+            disturbed: std::cell::Cell::new(false),
+        }
+    }
+
+    /// Whether some event may have written, moved or released a watched
+    /// place.
+    pub(super) fn disturbed(&self) -> bool {
+        self.disturbed.get()
+    }
+
+    /// Marks every watch in scope whose places `written` may overlap. A
+    /// handle is opaque, so nothing is written below a watched place, and
+    /// overlap in either direction marks.
+    pub(super) fn observe(
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+        written: &ResolvedPlace,
+    ) {
+        for watch in bindings
+            .values()
+            .filter_map(|local| local.handle_watch.as_deref())
+        {
+            if watch
+                .places
+                .iter()
+                .any(|place| places_overlap(&UnprovedSeparations, written, place))
+            {
+                watch.disturbed.set(true);
             }
         }
     }
@@ -748,6 +808,7 @@ impl<'unit> Checker<'_, 'unit> {
         window: &ResolvedPlace,
         shifts_origin: bool,
     ) {
+        HandleWatch::observe(bindings, window);
         for local in bindings.values_mut() {
             let Some(reference) = &mut local.reference else {
                 continue;
@@ -1025,7 +1086,7 @@ impl<'unit> Checker<'_, 'unit> {
                 SemanticRule::Type7,
                 place_node,
                 SemanticIssueKind::MissingDereference {
-                    mechanical_fix: "write `p^` before selecting a member or element",
+                    mechanical_fix: "write `p^` before selecting a member or element".to_owned(),
                 },
             );
         }
@@ -1038,7 +1099,7 @@ impl<'unit> Checker<'_, 'unit> {
                 SemanticRule::Type7,
                 place_node,
                 SemanticIssueKind::MissingDereference {
-                    mechanical_fix: "apply `^` only to a reference; name an owned place as itself",
+                    mechanical_fix: "apply `^` only to a reference; name an owned place as itself".to_owned(),
                 },
             );
         }
@@ -1203,6 +1264,7 @@ impl<'unit> Checker<'_, 'unit> {
                     binding: local.binding,
                     element: self.types.intern_element(local.ty)?,
                     element_type: local.ty,
+                    proof_base: self.body.exact_description(local),
                 },
                 local
                     .reference
@@ -1749,6 +1811,7 @@ impl<'unit> Checker<'_, 'unit> {
                     binding: local.binding,
                     element: self.types.intern_element(local.ty)?,
                     element_type: local.ty,
+                    proof_base: self.body.exact_description(local),
                 },
                 local
                     .reference
@@ -1860,6 +1923,7 @@ impl<'unit> Checker<'_, 'unit> {
                     binding: local.binding,
                     element,
                     element_type: local.ty,
+                    proof_base: self.body.exact_description(local),
                 }),
                 named,
                 local.ty,
@@ -2253,11 +2317,14 @@ impl<'unit> Checker<'_, 'unit> {
 /// [ENT-2] which reference variables and paths are exact in the function
 /// being checked: the declarations some `set` of its body rebinds, reachable
 /// or not, and among them the self-anchored reference variables, parameters
-/// and `atomic` binders, whose own binding is the root of the path they name.
+/// and `atomic` binders, whose own binding is the root of the path they name;
+/// and the range aliases, each with the variable its places are
+/// identified through.
 #[derive(Clone, Copy)]
 pub(super) struct Exactness<'body> {
     rebound_declarations: &'body std::collections::HashSet<DeclarationId>,
     rebound_anchors: &'body std::collections::HashSet<BindingId>,
+    range_alias_sources: &'body HashMap<BindingId, BindingId>,
 }
 
 impl Exactness<'_> {
@@ -2289,6 +2356,16 @@ impl Exactness<'_> {
             && self.is_exact_path(path))
         .then_some(path)
     }
+
+    /// The variable a place written through `binding` is identified through
+    /// [ENT-2]: a range alias's source, and otherwise the variable
+    /// itself.
+    pub(super) fn proof_binding(self, binding: BindingId) -> BindingId {
+        self.range_alias_sources
+            .get(&binding)
+            .copied()
+            .unwrap_or(binding)
+    }
 }
 
 impl BodyChecker {
@@ -2296,13 +2373,22 @@ impl BodyChecker {
         Exactness {
             rebound_declarations: &self.rebound_declarations,
             rebound_anchors: &self.rebound_anchors,
+            range_alias_sources: &self.range_alias_sources,
         }
     }
 
     /// The proof base of every place written through `local` at this point
-    /// [ENT-2]: its exact path. A reference parameter that names itself needs
-    /// none, its spelling being that path already.
+    /// [ENT-2]: its exact path, or for a range alias its source
+    /// variable. A reference parameter that names itself needs none, its
+    /// spelling being that path already, and neither does a range-reference
+    /// variable that is no range alias.
     pub(super) fn exact_description(&self, local: &LocalBinding) -> Option<ResolvedPlace> {
+        if local.mode.is_range() {
+            return self
+                .range_alias_sources
+                .get(&local.binding)
+                .map(|source| ResolvedPlace::binding(*source));
+        }
         let path = self.exactness().exact_path(local)?;
         let itself = path.root == PlaceRoot::Binding(local.binding) && path.path.is_empty();
         (!itself).then(|| ResolvedPlace {
@@ -2312,6 +2398,23 @@ impl BodyChecker {
             root: path.root,
             path: path.path.clone(),
         })
+    }
+
+    /// [ENT-2] records `alias`, bound by `let` to the bare range-reference
+    /// variable `source`, as a range alias identified through `source`'s own
+    /// identifying variable when no `set` of the body rebinds either of them,
+    /// reachable or not. An alias forms no range, so it holds the one
+    /// formation, and with it the `len`, its never-rebound source holds
+    /// throughout the alias's scope.
+    pub(super) fn note_range_alias(&mut self, alias: &LocalBinding, source: &LocalBinding) {
+        if alias.mode.is_range()
+            && source.mode.is_range()
+            && !self.rebound_declarations.contains(&alias.declaration)
+            && !self.rebound_declarations.contains(&source.declaration)
+        {
+            let identity = self.exactness().proof_binding(source.binding);
+            self.range_alias_sources.insert(alias.binding, identity);
+        }
     }
 
     /// Records an `atomic` binder that some `set` of the body rebinds as a
@@ -2539,6 +2642,7 @@ impl<'unit> TypeContext<'unit> {
         event: &InvalidationEvent,
         site: Option<&crate::NodePath>,
     ) -> Result<(), CheckStop> {
+        HandleWatch::observe(bindings, written);
         // [REF-1] a reference keeps the index value its formation read, so a
         // write of that binding leaves the reference valid but ends the
         // binding's spelling as a name for its index. [EFF-1] A parameter no
@@ -2561,7 +2665,10 @@ impl<'unit> TypeContext<'unit> {
                 local.call_value = false;
             }
         }
-        let include_equal = matches!(event, InvalidationEvent::PrefixMoved);
+        let include_equal = matches!(
+            event,
+            InvalidationEvent::PrefixMoved | InvalidationEvent::PrefixReleased
+        );
         let primitive_write = !include_equal
             && !matches!(
                 written.path.last(),
@@ -2626,12 +2733,13 @@ impl<'unit> TypeContext<'unit> {
         for (declaration, site, positions, window, path) in preserved {
             let query = CheckedCallSeparation {
                 site: site.clone(),
-                exchange: false,
+                occasion: super::super::model::CheckedSeparationOccasion::Call,
                 reference_use: Some(super::super::model::CheckedReferencePreservationUse {
                     site: site.clone(),
                     binder: String::new(),
                     event: event.phrase(),
                 }),
+                held_use: None,
                 positions,
                 contract_indices: Vec::new(),
                 window,
@@ -2689,6 +2797,7 @@ mod tests {
         crate::resolution::with_each_declaration_role(|resolved| {
             let declarations = DeclarationInventory {
                 resolved,
+                ledger_line_starts: Default::default(),
                 no_heap: false,
                 tree: TreeView::new(resolved.syntax()).unwrap(),
             };
@@ -2718,6 +2827,7 @@ mod tests {
                     compiler_updated: false,
                     reference: None,
                     refinement_witnesses: Vec::new(),
+                    handle_watch: None,
                     call_value: true,
                     read_only_state: false,
                 };
@@ -2809,6 +2919,7 @@ mod tests {
                 },
             )),
             refinement_witnesses: Vec::new(),
+            handle_watch: None,
             call_value: false,
             read_only_state: false,
         };
@@ -2882,6 +2993,7 @@ mod tests {
         let events = [
             InvalidationEvent::PrefixWritten,
             InvalidationEvent::PrefixMoved,
+            InvalidationEvent::PrefixReleased,
             InvalidationEvent::CallWrite,
             InvalidationEvent::RootScopeEnded,
             InvalidationEvent::WindowBoundaryMoved,

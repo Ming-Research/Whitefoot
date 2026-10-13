@@ -2,7 +2,7 @@
 //! family contains the leaves' dense scalar cells or masks in leaf order. Only this site owns those
 //! allocations; chunks borrow disjoint ranges and cannot release them.
 
-use super::parallel::LoopSplitSite;
+use super::parallel::{LoopSplitSite, SplitArgument};
 use super::*;
 use crate::ir::{IrIndexedFamilyKind, IrIndexedProjection};
 
@@ -55,7 +55,7 @@ impl FunctionEmitter<'_, '_> {
         span: &str,
         weight: &str,
         budget: &str,
-        arguments: &mut [String],
+        arguments: &mut [SplitArgument],
     ) -> Result<IndexedPrivate, BackendFailure> {
         if split.indexed.is_empty() {
             return Ok(IndexedPrivate {
@@ -227,19 +227,19 @@ impl FunctionEmitter<'_, '_> {
                 "  %{prefix}.pointer = insertvalue {ty} zeroinitializer, ptr {}, 0\n  %{prefix}.range = insertvalue {ty} %{prefix}.pointer, i64 {}, 1\n  %{prefix}.selected = select i1 {active}, {ty} %{prefix}.range, {ty} {}",
                 root.pointer, root.total, root.original
             )?;
-            arguments[3 + spec.capture] = self.value_argument(
+            arguments[3 + spec.capture] = SplitArgument::Prepared(self.value_argument(
                 ParameterAbi::Value(range_type),
                 &format!("%{prefix}.selected"),
-            )?;
+            )?);
             let original_private = self.value_name(split.captures[spec.private]);
             writeln!(
                 self.output,
                 "  %{prefix}.is_private = or i1 {active}, {original_private}"
             )?;
-            arguments[3 + spec.private] = self.value_argument(
+            arguments[3 + spec.private] = SplitArgument::Prepared(self.value_argument(
                 ParameterAbi::Value(IrType::Bool),
                 &format!("%{prefix}.is_private"),
-            )?;
+            )?);
         }
         Ok(IndexedPrivate {
             budget: selected_budget,

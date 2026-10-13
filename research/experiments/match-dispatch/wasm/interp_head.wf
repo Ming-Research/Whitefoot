@@ -183,6 +183,11 @@ fn enter(stack: &Box<Array<u64>>, consts: &Box<Slots<u64>>, fp: u64, at: u16, ca
 fn run(code: &Box<Slots<Op>>, funcs: &Box<Slots<Func>>, brtab: &Box<Slots<Target>>, table: &Box<Slots<u64>>, consts: &Box<Slots<u64>>, stack: &Box<Array<u64>>, mem: &Box<Array<u8>>, globals: &Box<Slots<u64>>, pc0: u64, fp0: u64, acc0: u64) -> r: Outcome reads(code), reads(funcs), reads(brtab), reads(table), reads(consts), writes(stack), writes(mem), writes(globals) contract {
   requires pc0 < code^.inner.len;
   requires fp0 + 65536_u64 <= stack^.inner.len;
+  requires forall brtable_span(j in 0_u64..code^.inner.len): code^.inner[j].BrTable.start + code^.inner[j].BrTable.count < brtab^.inner.len;
+  requires forall brtablen_span(j in 0_u64..code^.inner.len): code^.inner[j].BrTableN.start + code^.inner[j].BrTableN.count < brtab^.inner.len;
+  requires forall brtablenc_span(j in 0_u64..code^.inner.len): code^.inner[j].BrTableNC.start + code^.inner[j].BrTableNC.count < brtab^.inner.len;
+  requires forall target_bound(j in 0_u64..brtab^.inner.len): brtab^.inner[j].t < code^.inner.len;
+  requires forall move_bounds(j in 0_u64..brtab^.inner.len) when brtab^.inner[j].k != 0_u32: brtab^.inner[j].s < 65536_u64, brtab^.inner[j].d < 65536_u64;
 } {
   doc "One operation per dispatch on frame slots: an operand names a slot by its distance from fp, below 65536, so the frame contract covers every slot access. Values are u64 words, an i32 kept zero-extended and a float as its bits; a frame is the parameters, locals and constants from fp, the caller's return pc and frame base after them, then the operand slots. acc carries a value from the operation that computed it to the next one, its single consumer, in place of a slot, or a local's value that an operation wrote to both the local's slot and acc, to the operations after it reading that local.";
   let n = code^.inner.len;
@@ -279,24 +284,15 @@ fn run(code: &Box<Slots<Op>>, funcs: &Box<Slots<Func>>, brtab: &Box<Slots<Target
         let pick = imin(i, count);
         let base = cvt::<u32, u64>(startv^);
         let at = base + pick;
-        if at < brtab^.inner.len {
-          let slot = brtab^.inner[at];
-          let target = cvt::<u32, u64>(slot.t);
-          let si = cvt::<u32, u64>(slot.s);
-          let di = cvt::<u32, u64>(slot.d);
-          if slot.k != 0_u32 {
-            if si < 65536_u64 {
-              if di < 65536_u64 {
-                move_slot(stack: stack, fp: fp, s: si, d: di);
-              }
-            }
-          }
-          if target < n {
-            set pc = target;
-            continue;
-          }
+        let slot = brtab^.inner[at];
+        let target = cvt::<u32, u64>(slot.t);
+        let si = cvt::<u32, u64>(slot.s);
+        let di = cvt::<u32, u64>(slot.d);
+        if slot.k != 0_u32 {
+          move_slot(stack: stack, fp: fp, s: si, d: di);
         }
-        return trap(code: 1_u32, pc: pc);
+        set pc = target;
+        continue;
       }
       BrTableN(c: cv, start: startv, count: countv) => {
         let ci = cvt::<u16, u64>(cv^);
@@ -308,15 +304,10 @@ fn run(code: &Box<Slots<Op>>, funcs: &Box<Slots<Func>>, brtab: &Box<Slots<Target
         let pick = imin(i, count);
         let base = cvt::<u32, u64>(startv^);
         let at = base + pick;
-        if at < brtab^.inner.len {
-          let slot = brtab^.inner[at];
-          let target = cvt::<u32, u64>(slot.t);
-          if target < n {
-            set pc = target;
-            continue;
-          }
-        }
-        return trap(code: 1_u32, pc: pc);
+        let slot = brtab^.inner[at];
+        let target = cvt::<u32, u64>(slot.t);
+        set pc = target;
+        continue;
       }
       Return(s: sv, k: kv, l: lv) => {
         let li = cvt::<u16, u64>(lv^);

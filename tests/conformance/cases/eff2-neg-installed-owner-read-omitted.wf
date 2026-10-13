@@ -15,8 +15,8 @@ fn observe(owner: Box<u64>, incoming: Box<u64>) -> result: u64 pure {
 
 fn main() -> status: ExitStatus pure {
   doc "Builds two cells and exchanges them through the helper.";
-  let held = box_new::<u64>(value: 3_u64);
+  let observed = box_new::<u64>(value: 3_u64);
   let spare = box_new::<u64>(value: 5_u64);
-  let seen = observe(owner: move held, incoming: move spare);
+  let seen = observe(owner: move observed, incoming: move spare);
   return exit_status(code: 0_u8);
 }

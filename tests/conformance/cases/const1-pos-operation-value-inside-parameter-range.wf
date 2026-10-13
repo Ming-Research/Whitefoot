@@ -1,0 +1,29 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn get<const n: u8>() -> r: u8 pure {
+  doc "Reads the const generic at its written type u8.";
+  return n;
+}
+
+fn next<const m: u8>() -> r: u8 pure {
+  doc "m + 1 names only u8 terms, so it is admitted for the u8 parameter; each instance judges its value against u8's closed range.";
+  return get::<m + 1>();
+}
+
+fn half<const m: u8>() -> r: u8 pure {
+  doc "m / 2 can never leave u8's range, and is admitted for the u8 parameter like any operation over u8 terms.";
+  return get::<m / 2>();
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "254 + 1 is 255, the top of u8's range, and 200 / 2 is 100; both instances are admitted and read exactly those values.";
+  let top = next::<254>();
+  let middle = half::<200>();
+  if top == 255_u8 {
+    if middle == 100_u8 {
+      return exit_status(code: 0_u8);
+    }
+  }
+  return exit_status(code: 1_u8);
+}
