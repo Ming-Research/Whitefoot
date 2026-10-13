@@ -113,7 +113,7 @@ jobs:
           (fragment builds with an empty cache) or lto (--full-lto). Nothing here
           decides a pass: a failure is a build or protocol error, never a number.
           """
-          import csv, importlib.util, json, os, pathlib, re, statistics, subprocess, sys, time
+          import csv, importlib.util, json, os, pathlib, re, shlex, signal, statistics, subprocess, sys, time
           from collections import Counter
 
           SIDES = ("base", "twin", "branch")
@@ -124,6 +124,65 @@ jobs:
           HEADER = re.compile(r"^[0-9a-f]+ <(.+)>:$")
           BRANCH = re.compile(r"\s(call\w*|j\w+)\s+[0-9a-f]+ <([^>+]+)>$")
           BUILD_COLUMNS = ["program", "mode", "round", "position", "side", "wall_s", "link_ms", "text_bytes"]
+          COMMAND_TIMEOUT_S = 1200
+
+
+          def run_bounded(label, phase, command, stdout, stderr, cwd=None, timeout_s=COMMAND_TIMEOUT_S, kill_after_s=10):
+              """Bound one hosted command and clean its group even on helper cancellation."""
+              wrapped = ["timeout", "--signal=TERM", f"--kill-after={kill_after_s}s", f"{timeout_s}s", *command]
+              print(f"== START {label} {phase}: limit {timeout_s}s; command {shlex.join(wrapped)}; "
+                    f"stdout {stdout}; stderr {stderr} ==", flush=True)
+              process, interrupted = None, None
+              code = None
+              status = "launch failed"
+              previous = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGINT)}
+
+              def kill_group():
+                  if process is not None:
+                      try:
+                          os.killpg(process.pid, signal.SIGKILL)
+                      except ProcessLookupError:
+                          pass
+
+              def interrupt(sig, frame):
+                  nonlocal interrupted
+                  interrupted = interrupted or sig
+                  # timeout owns a group outside run-check.pl's group. Clean it
+                  # immediately, before the outer wrapper's two-second KILL.
+                  kill_group()
+
+              with stdout.open("w") as so, stderr.open("w") as se:
+                  start = time.perf_counter()
+                  try:
+                      for sig in previous:
+                          signal.signal(sig, interrupt)
+                      # GNU timeout's default group includes whitefootc and its
+                      # clang descendants; --foreground would lose that coverage.
+                      process = subprocess.Popen(wrapped, cwd=cwd, stdout=so, stderr=se, start_new_session=True)
+                      # A signal during Popen may arrive before the PID is assigned.
+                      if interrupted is not None:
+                          kill_group()
+                      code = process.wait()
+                  finally:
+                      kill_group()
+                      if process is not None:
+                          process.wait()
+                      for sig, handler in previous.items():
+                          signal.signal(sig, handler)
+                      # Include signals received after wait returned or during
+                      # cleanup; they must never turn into a successful build.
+                      wall = time.perf_counter() - start
+                      if code is not None:
+                          code = 128 + interrupted if interrupted is not None else (code if code >= 0 else 128 - code)
+                          status = f"exit {code}"
+                          if interrupted is not None:
+                              status += f", interrupted by signal {interrupted}"
+                          elif code == 124:
+                              status += f", timeout after {timeout_s}s"
+                          elif code == 137:
+                              status += ", SIGKILL (timeout escalation or external kill)"
+                      print(f"== END {label} {phase}: wall {wall:.3f}s, {status} ==", flush=True)
+              return code, wall
 
 
           def pattern_of(name):
@@ -134,14 +193,18 @@ jobs:
               return re.sub(r"\.source$", "", name)
 
 
-          def text_size(path):
-              listing = subprocess.run(["size", "-A", str(path)], check=True,
-                                       capture_output=True, text=True).stdout
+          def text_size(path, label, logs):
+              stdout, stderr = logs / f"size-{label}.stdout", logs / f"size-{label}.stderr"
+              code, wall = run_bounded(label, "text size", ["size", "-A", str(path)], stdout, stderr)
+              if code:
+                  print(stderr.read_text()[-6000:], file=sys.stderr, flush=True)
+                  sys.exit(f"{label}: size exited with {code}; see {stdout} and {stderr}")
+              listing = stdout.read_text()
               return next(int(line.split()[1]) for line in listing.splitlines()
                           if line.split()[:1] == [".text"])
 
 
-          def sites(executable, keep):
+          def sites(executable, keep, label, logs):
               """Direct calls and jumps to each accessor (public and .source symbols).
 
               Counts per accessor: [excluding the public symbol's own call of its
@@ -150,27 +213,33 @@ jobs:
               patterns = {name: pattern_of(name) for name in ACCESSORS}
               counts = {name: [0, 0] for name in ACCESSORS}
               lines = []
-              process = subprocess.Popen(["objdump", "-d", "--no-show-raw-insn", str(executable)],
-                                         stdout=subprocess.PIPE, text=True)
+              stdout, stderr = logs / f"objdump-{label}.stdout", logs / f"objdump-{label}.stderr"
+              code, wall = run_bounded(label, "objdump", ["objdump", "-d", "--no-show-raw-insn", str(executable)],
+                                       stdout, stderr)
+              if code:
+                  print(stderr.read_text()[-6000:], file=sys.stderr, flush=True)
+                  sys.exit(f"{label}: objdump exited with {code}; see {stdout} and {stderr}")
+              print(f"== START {label} site enumeration: {stdout} ==", flush=True)
+              start = time.perf_counter()
               function = None
-              for line in process.stdout:
-                  line = line.rstrip("\n")
-                  found = HEADER.match(line)
-                  if found:
-                      function = found[1]
-                      continue
-                  found = BRANCH.search(line)
-                  if not found or found[2] == function:
-                      continue
-                  for name, pattern in patterns.items():
-                      if pattern.match(found[2]):
-                          wrapper = function is not None and canonical(function) == canonical(found[2])
-                          counts[name][1] += 1
-                          counts[name][0] += 0 if wrapper else 1
-                          lines.append(f"{function}\t{found[1]}\t{found[2]}\t{'wrapper' if wrapper else 'site'}")
-              if process.wait():
-                  sys.exit("objdump failed")
+              with stdout.open() as source:
+                  for line in source:
+                      line = line.rstrip("\n")
+                      found = HEADER.match(line)
+                      if found:
+                          function = found[1]
+                          continue
+                      found = BRANCH.search(line)
+                      if not found or found[2] == function:
+                          continue
+                      for name, pattern in patterns.items():
+                          if pattern.match(found[2]):
+                              wrapper = function is not None and canonical(function) == canonical(found[2])
+                              counts[name][1] += 1
+                              counts[name][0] += 0 if wrapper else 1
+                              lines.append(f"{function}\t{found[1]}\t{found[2]}\t{'wrapper' if wrapper else 'site'}")
               keep.write_text("caller\tinstruction\tcallee\tkind\n" + "\n".join(sorted(lines)) + "\n")
+              print(f"== END {label} site enumeration: wall {time.perf_counter() - start:.3f}s, exit 0 ==", flush=True)
               return counts
 
 
@@ -202,28 +271,27 @@ jobs:
                       if mode == "par":
                           command += ["--par"]
                       command += ["--graph", "modules.wfg", "--entry", entry, "-o", str(executable)]
-                      start = time.perf_counter()
-                      build = subprocess.run(command, cwd=directory, capture_output=True, text=True)
-                      wall = time.perf_counter() - start
-                      log = out / "logs" / f"build-{label}.log"
-                      log.parent.mkdir(exist_ok=True)
-                      log.write_text(f"$ {' '.join(command)}\nexit {build.returncode}\n"
-                                     f"--- stdout\n{build.stdout}--- stderr\n{build.stderr}")
-                      if build.returncode:
-                          print(log.read_text()[-6000:], file=sys.stderr)
-                          sys.exit(f"{label}: whitefootc exited with {build.returncode}")
+                      logs = out / "logs"
+                      logs.mkdir(exist_ok=True)
+                      stdout, stderr = logs / f"build-{label}.stdout", logs / f"build-{label}.stderr"
+                      code, wall = run_bounded(label, f"build side={side} round={round + 1} mode={mode}", command,
+                                               stdout, stderr, cwd=directory)
+                      if code:
+                          print(stdout.read_text()[-6000:], file=sys.stderr, flush=True)
+                          print(stderr.read_text()[-6000:], file=sys.stderr, flush=True)
+                          sys.exit(f"{label}: whitefootc exited with {code}; see {stdout} and {stderr}")
                       report = {}
-                      for line in reversed(build.stdout.splitlines()):
+                      for line in reversed(stdout.read_text().splitlines()):
                           if line.startswith('{"build"'):
                               report = json.loads(line)["build"]
                               break
                       row = {"program": program, "mode": mode, "round": round + 1, "position": position + 1,
                              "side": side, "wall_s": f"{wall:.3f}", "link_ms": report.get("link_ms", "NA"),
-                             "text_bytes": text_size(executable)}
+                             "text_bytes": text_size(executable, label, logs)}
                       rows.append(row)
                       print("\t".join(str(row[column]) for column in BUILD_COLUMNS), flush=True)
                       if measured_sites:
-                          counts = sites(executable, out / "results" / f"sites-{side}-round{round + 1}.tsv")
+                          counts = sites(executable, out / "results" / f"sites-{side}-round{round + 1}.tsv", label, logs)
                           append_rows(out / "results" / "sites.tsv", ["round", "side", "accessor", "sites", "sites_all"],
                                       [{"round": round + 1, "side": side, "accessor": name,
                                         "sites": value[0], "sites_all": value[1]} for name, value in counts.items()])
@@ -607,9 +675,75 @@ jobs:
               commands[sys.argv[1]](*sys.argv[2:])
 
 
-          main()
+          if __name__ == "__main__":
+              main()
           PY
           python3 -I -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$RUNNER_TEMP/rsrc/measure.py"
+
+      - name: Check the command deadline and progressive logs
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/rsrc"
+          # This temporary hosted stage owns its scratch budget table.
+          printf 'label linux macos windows\nresult-source/deadline-selfcheck 30 - -\n' > "$out/deadline-budgets.txt"
+          WHITEFOOT_TIME_BUDGET_FILE="$out/deadline-budgets.txt" \
+            WHITEFOOT_TIME_BUDGET_RECORD="$out/results/deadline-budget-verdict.txt" \
+            WHITEFOOT_CHECK_TIMEOUT=30 \
+            perl .github/run-check.pl result-source/deadline-selfcheck python3 -I - "$out" <<'PY'
+          import importlib.util, os, pathlib, signal, sys, time
+
+          out = pathlib.Path(sys.argv[1])
+          spec = importlib.util.spec_from_file_location("measure", out / "measure.py")
+          measure = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(measure)
+          logs = out / "logs"
+
+          def check(label, source, expected, *args):
+              stdout, stderr = logs / f"{label}.stdout", logs / f"{label}.stderr"
+              code, wall = measure.run_bounded(label, "timeout self-check", [sys.executable, "-c", source, *args],
+                                               stdout, stderr, timeout_s=1, kill_after_s=1)
+              if code != expected:
+                  sys.exit(f"{label}: expected exit {expected}, got {code}; see {stdout} and {stderr}")
+              return stdout, stderr
+
+          stdout, stderr = check("timeout-check-success", "print('success', flush=True)", 0)
+          if stdout.read_text().strip() != "success":
+              sys.exit("timeout-check-success: stdout missing")
+          stdout, stderr = check("timeout-check-nonzero", "import sys; print('failure', file=sys.stderr, flush=True); sys.exit(7)", 7)
+          if stderr.read_text().strip() != "failure":
+              sys.exit("timeout-check-nonzero: stderr missing")
+          stdout, stderr = check("timeout-check-term", "import time; print('before TERM deadline', flush=True); time.sleep(60)", 124)
+          if stdout.read_text().strip() != "before TERM deadline":
+              sys.exit("timeout-check-term: progressive stdout missing")
+
+          # Both processes ignore TERM: GNU timeout must escalate to KILL.
+          # The descendant writes its own PID and flushes output before waiting.
+          pidfile = logs / "timeout-check-descendant.pid"
+          child = ("import os,pathlib,signal,sys,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                   "pathlib.Path(sys.argv[1]).write_text(str(os.getpid())); print('partial stdout', flush=True); time.sleep(60)")
+          parent = ("import signal,subprocess,sys; signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                    "print('partial stderr', file=sys.stderr, flush=True); "
+                    f"subprocess.Popen([sys.executable, '-c', {child!r}, sys.argv[1]]).wait()")
+          stdout, stderr = check("timeout-check-descendant", parent, 137, str(pidfile))
+          if "partial stdout" not in stdout.read_text() or "partial stderr" not in stderr.read_text():
+              sys.exit("timeout-check-descendant: progressive output missing")
+          pid = int(pidfile.read_text())
+          state = pathlib.Path(f"/proc/{pid}/stat")
+          deadline = time.monotonic() + 2
+          while True:
+              try:
+                  terminated = state.read_text().rsplit(") ", 1)[1].split()[0] == "Z"
+              except FileNotFoundError:
+                  terminated = True
+              if terminated:
+                  break
+              if time.monotonic() >= deadline:
+                  sys.exit(f"timeout-check-descendant: descendant {pid} is still running")
+              time.sleep(0.05)
+          print(f"timeout-check-descendant: descendant {pid} terminated (absent or zombie awaiting reaping); partial logs retained", flush=True)
+          print("timeout self-check: success, nonzero exit, TERM deadline and KILL descendant deadline passed", flush=True)
+          PY
+          perl .github/run-check.pl --budget-verdict "$out/results/deadline-budget-verdict.txt"
 
       - name: Build the base, twin and branch compilers
         id: build-compilers
@@ -686,7 +820,7 @@ jobs:
             python3 -I "$out/measure.py" build "$out" snowghost "$out/snowghost/renderer" layout_oracle seq "$ROUNDS"
 
       - name: Build Snowghost layout_oracle with each compiler, --par
-        if: ${{ !cancelled() && steps.build-compilers.outcome == 'success' && steps.checkout-programs.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.snowghost-seq.outcome == 'success' }}
         run: |
           set -euo pipefail
           out="$RUNNER_TEMP/rsrc"
