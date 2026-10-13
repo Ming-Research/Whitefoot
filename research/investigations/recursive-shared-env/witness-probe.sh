@@ -2,7 +2,7 @@
 # Temporary helper of .github/workflows/tmp-witness-probe.yml; removed with it
 # before the branch is ready.
 #
-#   tmp-witness-probe.sh wrapper REAL_CLANG OUT
+#   witness-probe.sh wrapper REAL_CLANG OUT
 #       writes the clang wrapper to OUT. It passes every call through to
 #       REAL_CLANG, except that with WF_CC set to x86_regcallcc or
 #       preserve_nonecc it first rewrites each `-x ir` input module: the
@@ -10,11 +10,11 @@
 #       that calling convention and so do the `call` lines to them. It logs
 #       the rewritten signatures to $WF_CC_LOG and keeps the rewritten module
 #       in $WF_CC_KEEP.
-#   tmp-witness-probe.sh measure SNOWGHOST COMPILER NAME RESULTS
+#   witness-probe.sh measure SNOWGHOST COMPILER NAME RESULTS
 #       runs Snowghost's `scan-param.sh witness` with COMPILER for the three
 #       variants (plain, regcall, preserve_none) and files each one's outputs
 #       under RESULTS/NAME-VARIANT with a summary.tsv.
-#   tmp-witness-probe.sh report RESULTS NAME...
+#   witness-probe.sh report RESULTS NAME...
 #       prints, per variant, the table of function, calls, instructions per
 #       call for the copies with and without the table, one column group per
 #       NAME.
