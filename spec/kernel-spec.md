@@ -1,4 +1,4 @@
-# Kernel Specification v0.148
+# Kernel Specification v0.149
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
