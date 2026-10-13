@@ -484,6 +484,12 @@ CI.
 
 ## Experiment 6b: both-sides grain rerun
 
+The [6b result](../../investigations/par-demand/DESIGN.md#result) records
+[main run 38422459949](https://github.com/Ming-Research/Whitefoot/actions/runs/38422459949)
+and its five replacements from
+[completion run 38431519838](https://github.com/Ming-Research/Whitefoot/actions/runs/38431519838),
+with the rule tables, prediction readings, diagnostics and source-derived totals.
+
 Select `experiment=par-demand`, `par_demand_experiment=6b`,
 `placement_runner=14900k`, with `placement_rounds` empty. The
 [preregistration](../../investigations/par-demand/DESIGN.md#experiment-6b-both-sides-grain-and-the-fir-single-thread-criterion-fixed-before-it-measures)

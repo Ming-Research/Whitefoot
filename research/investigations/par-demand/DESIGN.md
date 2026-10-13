@@ -4544,3 +4544,209 @@ line to the direction card, including an inconclusive interval rather than
 treating it as success. The frozen reducer's verdicts and permitted rerun
 remain visible; there is no further completion retry to seek a pass. Cells
 with no applicable rule remain reported controls, subject to the twin rule.
+
+
+#### Result
+
+**Evidence and replacement.** The [main run 38422459949](https://github.com/Ming-Research/Whitefoot/actions/runs/38422459949)
+at `d9b290542` and the [void-cell completion run 38431519838](https://github.com/Ming-Research/Whitefoot/actions/runs/38431519838)
+at `392e9c9f5` each froze 30 decisive rounds. The completion supplies only
+recursion W1, mandelbrot W4, records W4, stencil W4 and stencil W8. Its
+individual verdict replaces that cell's original void; samples from the two
+runs, sizing and decisive phases are not pooled. Every other cell retains
+the main run's evidence. In the tables, `completion` identifies a replacement
+cell; `main` identifies retained evidence. Ratios are paired second-call wall
+ratios. All measured numbers are rounded to three decimals; verdicts use the
+unrounded summaries, including comparisons hidden by rounding near 1.000.
+
+**Accounting and applicable-rule reading.** Replacing the five voids yields
+38 summary rows: 29 pass, seven not-applicable, two inconclusive and zero
+fail or void. The two inconclusive rows are small_constant W1 and histogram
+W1 timing diagnostics. Under the owner's recorded machine-code-identity
+ruling, their single-thread requirement is decided by E6b-identity, which
+passes; their timing diagnostics remain inconclusive. This gives 31 pass,
+seven not-applicable and zero fail for the applicable-rule reading of all
+38 rows, with every applicable performance gate and structural identity
+requirement decided. It does not mean every timing diagnostic is decided.
+The seven not-applicable cells are small_constant W4/W8, large_helper W8,
+records W8, fir W4, stencil W4 and prefix W4. A total of 31 pass and six
+not-applicable over 37 cells would omit one of these rows and is not the
+accounting supported by the summaries.
+
+**E6b-identity: structural admission.** Both summaries carry identical
+construction-admission records. All 12 workloads pass computation identity
+and construction admission. `latched-writer` counts admitted differences in
+the cold abort-record writer, outside the timed computation; `entry-adapter`
+counts admitted differences in the timed entry wrapper. They occur in seven
+and eight workloads respectively. These are classified structural
+differences, not timing allowances. There is no timing median or bound for
+this criterion.
+
+| Workload | Computation identity | latched-writer count | entry-adapter count | Pool decisions per timed call | E6b-identity |
+| --- | --- | ---: | ---: | ---: | --- |
+| small_constant | pass | 0 | 0 | 0 | pass |
+| small_split | pass | 1 | 0 | 1 | pass |
+| recursion | pass | 0 | 1 | 1 | pass |
+| spine | pass | 0 | 0 | 0 | pass |
+| hot_helper | pass | 0 | 0 | 0 | pass |
+| large_helper | pass | 0 | 1 | 1 | pass |
+| mandelbrot | pass | 1 | 1 | 1 | pass |
+| records | pass | 1 | 1 | 1 | pass |
+| fir | pass | 1 | 1 | 1 | pass |
+| stencil | pass | 1 | 1 | 1 | pass |
+| prefix | pass | 1 | 1 | 1 | pass |
+| histogram | pass | 1 | 1 | 1 | pass |
+
+Spine's timed entry makes zero pool decisions; recursion's makes one. All
+recorded entry decisions are outside loops. This admits the timed
+construction and satisfies E6b-identity. It does not independently verify
+P1's default-versus-one-sided LLVM equality prediction: that comparison is
+not present in these summaries.
+
+**Completion cells.** Every replacement twin interval includes 1.000, so
+none is void again. Stencil W4 has no applicable performance rule; the other
+four replacement cells pass both keep comparisons below.
+
+| Cell | Twin/demand median | Twin/demand 95% interval | Completion verdict |
+| --- | ---: | --- | --- |
+| recursion W1 | 0.981 | [0.973, 1.001] | pass |
+| mandelbrot W4 | 0.999 | [0.998, 1.004] | pass |
+| records W4 | 1.001 | [0.997, 1.006] | pass |
+| stencil W4 | 0.993 | [0.986, 1.006] | not-applicable |
+| stencil W8 | 0.999 | [0.988, 1.009] | pass |
+
+**E6b-keep: the 25 protected cells.** Both comparisons pass in every cell.
+Each upper bound must be <= 1.050. `previous` is this build's one-sided
+ablation; `unversioned` disables region versioning while retaining the new
+grain. Thus these comparisons protect preservation under the shared runtime
+treatment; they do not measure the startup exposure repair against its
+historical runtime.
+
+| Cell | Evidence | demand/previous median | 95% upper | Bound | Verdict | demand/unversioned median | 95% upper | Bound | Verdict |
+| --- | --- | ---: | ---: | ---: | --- | ---: | ---: | ---: | --- |
+| small_split W1 | main | 1.000 | 1.000 | 1.050 | pass | 1.000 | 1.001 | 1.050 | pass |
+| small_split W4 | main | 1.000 | 1.001 | 1.050 | pass | 0.913 | 0.915 | 1.050 | pass |
+| small_split W8 | main | 1.000 | 1.000 | 1.050 | pass | 0.912 | 0.914 | 1.050 | pass |
+| recursion W1 | completion | 1.026 | 1.031 | 1.050 | pass | 1.003 | 1.031 | 1.050 | pass |
+| recursion W4 | main | 0.990 | 1.021 | 1.050 | pass | 1.023 | 1.049 | 1.050 | pass |
+| recursion W8 | main | 0.988 | 1.002 | 1.050 | pass | 0.985 | 1.002 | 1.050 | pass |
+| spine W1 | main | 1.004 | 1.005 | 1.050 | pass | 1.002 | 1.004 | 1.050 | pass |
+| hot_helper W1 | main | 1.000 | 1.000 | 1.050 | pass | 1.000 | 1.000 | 1.050 | pass |
+| hot_helper W4 | main | 1.000 | 1.000 | 1.050 | pass | 1.000 | 1.000 | 1.050 | pass |
+| hot_helper W8 | main | 1.000 | 1.000 | 1.050 | pass | 1.000 | 1.000 | 1.050 | pass |
+| large_helper W4 | main | 1.001 | 1.002 | 1.050 | pass | 0.999 | 1.002 | 1.050 | pass |
+| mandelbrot W1 | main | 1.001 | 1.003 | 1.050 | pass | 1.000 | 1.002 | 1.050 | pass |
+| mandelbrot W4 | completion | 1.002 | 1.004 | 1.050 | pass | 1.002 | 1.005 | 1.050 | pass |
+| mandelbrot W8 | main | 0.994 | 1.005 | 1.050 | pass | 0.999 | 1.010 | 1.050 | pass |
+| records W1 | main | 1.000 | 1.002 | 1.050 | pass | 1.000 | 1.001 | 1.050 | pass |
+| records W4 | completion | 1.003 | 1.006 | 1.050 | pass | 1.002 | 1.008 | 1.050 | pass |
+| fir W8 | main | 1.000 | 1.002 | 1.050 | pass | 1.000 | 1.002 | 1.050 | pass |
+| stencil W1 | main | 1.001 | 1.018 | 1.050 | pass | 1.000 | 1.018 | 1.050 | pass |
+| stencil W2 | main | 0.993 | 1.003 | 1.050 | pass | 0.991 | 0.995 | 1.050 | pass |
+| stencil W8 | completion | 0.998 | 1.007 | 1.050 | pass | 1.008 | 1.016 | 1.050 | pass |
+| prefix W1 | main | 1.000 | 1.006 | 1.050 | pass | 0.998 | 1.006 | 1.050 | pass |
+| prefix W8 | main | 0.996 | 1.027 | 1.050 | pass | 0.994 | 1.011 | 1.050 | pass |
+| histogram W2 | main | 0.989 | 0.999 | 1.050 | pass | 0.990 | 1.001 | 1.050 | pass |
+| histogram W4 | main | 0.995 | 1.013 | 1.050 | pass | 1.000 | 1.008 | 1.050 | pass |
+| histogram W8 | main | 0.996 | 1.002 | 1.050 | pass | 0.991 | 1.002 | 1.050 | pass |
+
+**E6b-recursion: balanced recursion.** Its unconditional W8 guard passes;
+the measured comparison gives no evidence that the both-sides rule
+misclassifies balanced recursion.
+
+| Cell | Evidence | demand/par median | 95% interval | 95% upper | Bound | Verdict |
+| --- | --- | ---: | --- | ---: | ---: | --- |
+| recursion W8 | main | 0.988 | [0.970, 1.011] | 1.011 | 1.050 | pass |
+
+**E6b-seq: spine W4/W8.** The criterion allows an upper bound <= 1.000 or
+the entire interval inside that cell's own `[1-F, 1+F]` band. W4 passes the
+literal upper-bound test; W8 passes inside its measured floor.
+
+| Cell | Evidence | demand/seq median | 95% interval | 95% upper | Literal bound | F | Floor band | Verdict |
+| --- | --- | ---: | --- | ---: | ---: | ---: | --- | --- |
+| spine W4 | main | 0.998 | [0.996, 1.000] | 1.000 | 1.000 | 0.004 | [0.996, 1.004] | pass (upper bound) |
+| spine W8 | main | 1.001 | [0.998, 1.002] | 1.002 | 1.000 | 0.004 | [0.996, 1.004] | pass (inside floor) |
+
+P2's separate demand/previous prediction also holds in both wide cells.
+The 0.500 threshold below is a prediction check, not an added gate.
+
+| Cell | demand/previous median | 95% interval | 95% upper | Prediction threshold | Prediction reading |
+| --- | ---: | --- | ---: | ---: | --- |
+| spine W4 | 0.274 | [0.272, 0.276] | 0.276 | 0.500 | below threshold |
+| spine W8 | 0.223 | [0.222, 0.224] | 0.224 | 0.500 | below threshold |
+
+The zero-decision construction and these same-source comparisons support
+pricing both sides as the remedy for spine in this panel: its prior roughly
+2.9-4.5-fold loss, retained as historical context, is absent against seq in
+the measured W4/W8 cells. The demand/previous upper bounds are 0.276 and
+0.224, both below 0.500. This conclusion is specific to the measured spine
+program and static-grain treatment.
+
+**E6b-fir-seq: fir W1.** The separately selected 1.050 bound passes. The
+unrounded median means demand is 0.451% slower than seq. Its demand/par
+comparison remains near 1.050, as P4 predicted, and has no applicable bound.
+
+| Cell | Evidence | Comparison | Median | 95% interval | 95% upper | Bound | Verdict |
+| --- | --- | --- | ---: | --- | ---: | ---: | --- |
+| fir W1 | main | demand/seq | 1.005 | [1.004, 1.006] | 1.006 | 1.050 | pass |
+| fir W1 | main | demand/par | 1.054 | [1.052, 1.055] | 1.055 | none | reported only |
+
+**W1 E6b-seq diagnostics, except fir.** These timing readings do not replace
+the structural identity judgment. The numerical rule uses the literal 1.000
+upper bound or full containment in the measured floor band; the diagnostic
+verdict below also retains the surviving-work limitation where applicable.
+
+| Cell | Evidence | demand/seq median | 95% interval | 95% upper | Literal bound | F | Floor band | Diagnostic verdict |
+| --- | --- | ---: | --- | ---: | ---: | ---: | --- | --- |
+| small_constant W1 | main | 1.002 | [0.992, 1.022] | 1.022 | 1.000 | 0.022 | [0.978, 1.022] | inconclusive (hot work absent; numerical floor test passes) |
+| small_split W1 | main | 1.000 | [1.000, 1.000] | 1.000 | 1.000 | 0.001 | [0.999, 1.001] | pass (inside floor) |
+| recursion W1 | completion | 0.997 | [0.977, 1.028] | 1.028 | 1.000 | 0.030 | [0.970, 1.030] | pass (inside floor) |
+| spine W1 | main | 0.999 | [0.998, 1.001] | 1.001 | 1.000 | 0.003 | [0.997, 1.003] | pass (inside floor) |
+| hot_helper W1 | main | 1.000 | [1.000, 1.000] | 1.000 | 1.000 | 0.000 | [1.000, 1.000] | pass (inside floor) |
+| large_helper W1 | main | 0.993 | [0.992, 0.994] | 0.994 | 1.000 | 0.002 | [0.998, 1.002] | pass (upper bound) |
+| mandelbrot W1 | main | 1.000 | [0.995, 1.003] | 1.003 | 1.000 | 0.005 | [0.995, 1.005] | pass (inside floor) |
+| records W1 | main | 0.999 | [0.996, 1.002] | 1.002 | 1.000 | 0.005 | [0.995, 1.005] | pass (inside floor) |
+| stencil W1 | main | 1.000 | [0.998, 1.006] | 1.006 | 1.000 | 0.006 | [0.994, 1.006] | pass (inside floor) |
+| prefix W1 | main | 1.000 | [0.997, 1.006] | 1.006 | 1.000 | 0.009 | [0.991, 1.009] | pass (inside floor) |
+| histogram W1 | main | 1.002 | [0.999, 1.008] | 1.008 | 1.000 | 0.005 | [0.995, 1.005] | inconclusive (straddles floor edge) |
+
+Small_constant W1 is an inconclusive timing diagnostic because its optimized
+hot work or intended site did not survive; a numerical interval inside the
+floor cannot repair that missing observation. Histogram W1 is different:
+its work survives, but its interval crosses the upper floor edge, so neither
+full containment nor an exceedance is established. Histogram's structural
+E6b-identity still passes. Neither diagnostic is relabeled as a timing pass.
+
+**Predictions versus criteria.** P2 and P4 have the readings above, and
+recursion W8's demand/par interval includes 1.000 while passing the
+unconditional guard. Five protected demand/previous intervals exclude 1.000, as listed below,
+so the panel does not support a blanket statistical-equality reading. This
+observation is separate from the passing 1.050 preservation bounds. The
+registered P3 prediction is conditional on “where P1 holds”; its full reading
+remains unverified because these summaries do not establish P1's LLVM
+comparison. The interval differences alone do not identify a cause.
+
+| Protected cell | Evidence | demand/previous median | 95% interval | Excludes 1.000 on raw values |
+| --- | --- | ---: | --- | --- |
+| recursion W1 | completion | 1.026 | [1.004, 1.031] | yes |
+| spine W1 | main | 1.004 | [1.002, 1.005] | yes |
+| large_helper W4 | main | 1.001 | [1.000, 1.002] | yes |
+| stencil W1 | main | 1.001 | [1.000, 1.018] | yes |
+| histogram W2 | main | 0.989 | [0.980, 0.999] | yes |
+
+Rounding displays the lower endpoint as 1.000 for large_helper W4 and
+stencil W1; each raw lower endpoint is above 1.000. The pass against 1.050
+therefore establishes preservation within the registered allowance, not
+statistical equality to the one-sided arm. No registered gated-performance
+falsifier is triggered: the spine, recursion, preservation and fir bounds
+pass. The one-worker requirement passes structural identity under the
+recorded ruling, while the two inconclusive timing diagnostics remain open.
+
+**Limits.** This is one 14900K machine, the registered workload/pin panel
+and one compiler/runtime treatment represented by the two run revisions.
+The replacement cells do not create a second full-panel replication, and
+there is no pooled estimate across revisions. The observations do not
+establish behavior for other programs, machines, runtime-extent kept calls
+or compiler/runtime treatments. The summaries establish construction
+admission and the recorded ratios; they supply no fresh independent P1 LLVM
+verification or attribution of the small protected-cell differences.
