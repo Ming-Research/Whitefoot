@@ -414,18 +414,48 @@ MacBook or a new 14900K measurement is needed for this design.
 
 ## Qualification run
 
-Run pending: [the temporary Darwin qualification workflow](../../../.github/workflows/darwin-probe-qualify.yml)
-uses hosted `macos-15` arm64, official upstream LLVM 22.1.8 with its published
-SHA-256, and Apple's maintained clang as the comparison. It emits the existing
-large-frame and narrow/wide recursion fixtures with the current compiler,
-keeps the original IR, and changes only probe attributes for the upstream
-inline candidate. Fixture exposure and the isolated negative control follow
-the maintained tests; they are recorded separately from the candidate rewrite.
+The artifacts from [the first hosted run's revision](https://github.com/Ming-Research/Whitefoot/commit/f417d887e0e0338b7b172ebab8c34a1ac9ea1e47)
+show that upstream LLVM 22.1.8 reproduces the probe-method failure on narrow
+recursion and accepts its inline candidate. Apple clang 17 passes the large
+frame's containment/ablation controls and both recursion geometries; upstream
+passes narrow recursion on entry and worker stacks. Upstream large-frame and
+wide-recursion compilation stops earlier with `Intrinsic has incorrect return
+type! ptr @llvm.coro.end`. Their emitted declaration and call use `i1`, selected
+by the current compiler's Apple-clang probe. Those failures supply no result
+about the inline probe candidate. This is a consumer-selection defect in the
+experiment; it does not justify weakening a floor oracle.
 
-Accept this arm64 non-LTO candidate only if the original IR reproduces
-`Unsupported stack probing method`, the attribute-only candidate compiles and
-links using the system SDK/ld, and its exact large-frame function has a 4096
-byte descent-and-touch walk. The large-frame positive must end with SIGABRT
+The corrected [temporary qualification workflow](../../../.github/workflows/darwin-probe-qualify.yml)
+retains hosted `macos-15` arm64, the verified official 22.1.8 archive, the system
+SDK/ld, every native/control check, and the unchanged compiler. It runs the
+compiler's own three probe sources and flags against Apple and upstream clang:
+the `preserve_nonecc` musttail pair, the `captures(none)` parameter, and the
+verified `void` call to `llvm.coro.end`. Probe inputs, commands, diagnostics,
+answers and source-byte checks become part of the artifact; answers come from
+the actual executable, never a version number.
+
+Apple's original IR stays intact. Only in the upstream lane, the experiment
+substitutes those consumer-selected forms where they occur before testing
+either probe method; zero occurrences are recorded too. A changed `llvm.coro.end` call includes its result type and removal of
+the unused `i1` result assignment. An independently checked byte-edit allowlist
+admits only these forms in their legal IR contexts and the probe attribute
+under test; CI controls inject unrelated edits to prove that they are rejected.
+Changes to other signatures, dispatch layout, instruction operands or unrelated
+attributes are outside that allowance. A convention-dependent dispatch shape
+that cannot be adapted by the allowed forms stops explicitly.
+
+This measured substitution stands in for the later bundled-clang resolution
+change, where the compiler's existing probes will run its sibling clang and
+emit that consumer's forms directly. It is experiment-only, not a new compiler
+path, an intrinsic compatibility policy, or a change to the language. The
+artifact preserves raw compiler IR, Apple-fact original IR, upstream-fact
+baseline IR, and the inline candidate, with separate fact and probe diffs.
+Fixture exposure and probe ablation remain separately recorded test adapters.
+
+Accept this arm64 non-LTO candidate only if the upstream-fact baseline
+reproduces `Unsupported stack probing method`, its attribute-only candidate
+compiles and links using the system SDK/ld, and its exact large-frame function
+has a 4096 byte descent-and-touch walk. The large-frame positive must end with SIGABRT
 and exactly `{"resource":"stack"}\n`; the ablated control must have no probe
 in that function, end with Darwin's SIGBUS, and write no resource record.
 Narrow and wide recursion on both entry and worker stacks must succeed just
@@ -433,11 +463,11 @@ below their measured bounds and abort with the exact stack record above them.
 Apple must pass the corresponding unchanged-IR maintained comparison.
 
 Any missing check, different signal or record, lost native probe, unresolved
-link, or unrelated IR incompatibility leaves qualification failed or blocked;
-the experiment must not rewrite coroutine intrinsics to conceal another
-toolchain gap. The workflow summary and artifact will supply the run URL,
+link, unexplained fact result, rejected byte-edit guard, or incompatibility
+outside the three measured forms leaves qualification failed or blocked.
+The workflow summary and artifact will supply the run URL,
 revision, toolchain versions, SDK/linker identity, IR, disassembly and logs.
-No run result is recorded yet. A passing run does not qualify x86-64 Darwin,
+The corrected run is pending. A passing run does not qualify x86-64 Darwin,
 LTO, release packages, or the host-clang isolation requirement.
 
 ## Recommended ordered delivery plan
@@ -496,10 +526,11 @@ probes are not being reopened.
 
 ## Unverified work and findings disposition
 
-- **Not run:** any compiler build, clang invocation, test, package extraction,
-  download, measurement or CI workflow. The investigation is source research
-  only; no acceptance condition is marked complete.
-- **Safety qualification outstanding:** Darwin inline native execution,
+- **Execution boundary:** the first hosted qualification artifacts were read
+  and their limited results are recorded above. The corrected run is pending;
+  neither release commitment is accepted. No build, test, compiler invocation,
+  download or measurement ran on this workstation.
+- **Safety qualification outstanding:** the complete Darwin inline floor run,
   post-LTO probing, aligned/variable frames, unwinding and stack-ledger
   correspondence; Apple inline support; exact Apple helper ABI/deployment
   availability; runtime C prologue coverage. These belong in probe qualification,
