@@ -157,23 +157,32 @@ jobs:
           WFC="$PWD/compiler/target/gate/whitefootc"
           mkdir -p "$OUT"
           python3 -I "$DIR/generate.py" --expect > "$OUT/expected.tsv"
-          printf 'witness\texpected\tcompile\trun\n' > "$OUT/results.tsv"
+          printf 'witness\texpected\tmode\tcompile\trun\n' > "$OUT/results.tsv"
           wrong=0
-          while IFS=$'\t' read -r name expected; do
+          while IFS=$'\t' read -r name expected mode; do
             src="$DIR/$name.wf"
-            "$WFC" --diagnostic-format text -o "$OUT/$name.bin" "$src" > "$OUT/$name.diagnostic.txt" 2>&1
+            if [ "$mode" = check ]; then
+              "$WFC" --diagnostic-format text --check "$src" > "$OUT/$name.diagnostic.txt" 2>&1
+            elif [ "$mode" = run ]; then
+              "$WFC" --diagnostic-format text -o "$OUT/$name.bin" "$src" > "$OUT/$name.diagnostic.txt" 2>&1
+            else
+              echo "Unknown witness mode: $name: $mode" >&2
+              exit 1
+            fi
             compile=$?
             "$WFC" --diagnostic-format json --check "$src" > "$OUT/$name.diagnostic.json" 2>&1
             run=-
             if [ "$compile" -eq 0 ]; then
               compile=accepted
-              timeout 60 "$OUT/$name.bin" > "$OUT/$name.run.txt" 2>&1
-              run=$?
-              if [ "$run" -ne 0 ]; then wrong=1; fi
+              if [ "$mode" = run ]; then
+                timeout 60 "$OUT/$name.bin" > "$OUT/$name.run.txt" 2>&1
+                run=$?
+                if [ "$run" -ne 0 ]; then wrong=1; fi
+              fi
             else
               compile="rejected($compile)"
             fi
-            printf '%s\t%s\t%s\t%s\n' "$name" "$expected" "$compile" "$run" >> "$OUT/results.tsv"
+            printf '%s\t%s\t%s\t%s\t%s\n' "$name" "$expected" "$mode" "$compile" "$run" >> "$OUT/results.tsv"
           done < "$OUT/expected.tsv"
           echo "$wrong" > "$OUT/wrong-output.txt"
           cat "$OUT/results.tsv"
@@ -185,7 +194,7 @@ jobs:
           {
             echo '## float-text E2: witness programs'
             echo
-            echo 'run is the exit status of the compiled program: 0 means every value matched the one computed in Python; 10*n+k names the failing check k of case n.'
+            echo 'run is the exit status of a compiled program; function-only witnesses use --check and have no run. Predictions are recorded separately from actual verdicts.'
             echo
             echo '```'
             cat "$OUT/results.tsv" || true
@@ -195,7 +204,7 @@ jobs:
               echo
               echo "### $(basename "$f" .diagnostic.txt)"
               echo '```'
-              head -n 60 "$f"
+              cat "$f"
               echo '```'
             done
           } >> "$GITHUB_STEP_SUMMARY"

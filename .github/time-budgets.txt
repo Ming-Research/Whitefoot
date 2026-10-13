@@ -17,6 +17,10 @@
 
 label                           linux  macos  windows
 
+# Temporary float-text-check.yml; initial budgets await its first CI sample.
+compiler/float-text-build        190    -      -
+compiler/float-text-module       60     -      -
+
 # gate.yml, static group
 check/static                    85     125    -
 repository-invariants           25     30     -

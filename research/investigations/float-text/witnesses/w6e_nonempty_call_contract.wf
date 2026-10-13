@@ -1,0 +1,22 @@
+struct Digits {
+  count: u64;
+}
+
+fn assign_nonzero(digits: &Digits) -> result: unit writes(digits.count) {
+  set digits^.count = 1_u64;
+  return unit;
+}
+
+fn consume_nonempty(digits: &Digits) -> result: unit reads(digits.count) contract {
+  requires 1_u64 <= digits^.count;
+} {
+  return unit;
+}
+
+fn read_nonzero() -> result: unit pure {
+  doc "Internal contract gap, with an FN-8 refusal predicted and not compiled: the assigning helper produces a nonempty value but publishes no count postcondition, so the next call cannot require a positive count. The assignment body establishes the property for every call. This isolates the missing cross-call count guarantee at f64_read's call to decimal_binary_bits after decimal_assign; it does not establish a language gap or model the first pass's text relation.";
+  let digits = Digits(count: 0_u64);
+  assign_nonzero(digits: &digits);
+  consume_nonempty(digits: &digits);
+  return unit;
+}

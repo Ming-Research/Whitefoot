@@ -1,0 +1,35 @@
+fn trimmed_count(input: &[u8], count: u64) -> result: u64 reads(input) contract {
+  requires count <= input^.len;
+  ensures result <= count;
+} {
+  let remaining = count;
+  loop @trim (
+    invariant within: remaining <= count
+  ) {
+    if 0_u64 < remaining {
+    } else {
+      invariant empty_within: remaining <= count;
+      break @trim;
+    }
+    let last = remaining - 1_u64;
+    let digit = input^[last];
+    if digit == 0_u8 {
+      set remaining = last;
+    } else {
+      invariant retained_within: remaining <= count;
+      break @trim;
+    }
+  }
+  return remaining;
+}
+
+fn trim_nonempty(input: &[u8], count: u64) -> result: u64 reads(input) contract {
+  requires 1_u64 <= count;
+  requires count <= input^.len;
+  requires forall leading(k in 0_u64..1_u64): 1_u8 <= input^[k];
+  ensures 1_u64 <= result;
+} {
+  doc "Internal contract gap, with an FN-9 refusal predicted and not compiled: removing trailing zeros preserves a nonzero first digit and hence a positive count, but the helper publishes only its upper bound. Its body really preserves nonemptiness for these inputs. A caller cannot use that unstated relation. This isolates the missing trim summary used by decimal_left and decimal_right; it does not establish a language gap.";
+  let retained = trimmed_count(input: input, count: count);
+  return retained;
+}

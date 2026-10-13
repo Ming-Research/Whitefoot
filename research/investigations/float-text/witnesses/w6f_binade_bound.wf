@@ -1,0 +1,20 @@
+fn binary_exponent(value: u64) -> result: u32 pure contract {
+  requires value <= 9223372036854775808_u64;
+  ensures result <= 63_u32;
+} {
+  doc "Predicted INV-1 refusal, not compiled: the next-header exponent bound needs the relation between repeated division by two and the number of divisions. An integer at most 2^63 needs at most 63 divisions to become at most one. This isolates the logarithmic step-count mechanism behind the decimal normalization loops, without claiming to reproduce their decimal-point bounds or their helper contracts.";
+  let remaining = value;
+  let exponent = 0_u32;
+  loop @normalize (
+    invariant value_bound: remaining <= 9223372036854775808_u64,
+    invariant exponent_bound: exponent <= 63_u32
+  ) {
+    if 1_u64 < remaining {
+      set remaining = remaining / 2_u64;
+      set exponent = exponent + 1_u32;
+    } else {
+      return exponent;
+    }
+  }
+  return exponent;
+}

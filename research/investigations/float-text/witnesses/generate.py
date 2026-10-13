@@ -7,14 +7,14 @@ the gaps E2 found, and w2g and w2h, which vary w2f one change at a time)
 to learn whether the checker accepts the arithmetic that exact decimal
 conversion needs. Every expected value in those generated witnesses is computed here with
 Python's exact integer arithmetic, from the definition of the operation and
-never from the output of any witness. The directly authored W5 witnesses
+never from the output of any witness. The directly authored W5 and W6 witnesses
 record further predicted proof gaps in their doc strings; their small expected
 results are derived by hand. This script inventories them for the same CI
 experiment without generating or rewriting their source.
 
     python3 -I generate.py            # write the witness files beside this script
     python3 -I generate.py --check    # compare generated files and require authored files
-    python3 -I generate.py --expect   # print name<TAB>prediction per witness
+    python3 -I generate.py --expect   # print name<TAB>prediction<TAB>run|check
 
 Standard library only.
 """
@@ -894,18 +894,33 @@ HANDWRITTEN_WITNESSES = [
     ("w5c_shift_exhaustion", "reject (INV-1, predicted)"),
 ]
 
+# Function-only witnesses use --check, so no executable-entry error can hide
+# their proof verdict. Contract examples are not language-gap declarations.
+CHECK_ONLY_WITNESSES = [
+    ("w6a_range_field_guard", "reject (RANGE-1, predicted; corresponding module refusal observed)"),
+    ("w6b_range_field_guard_twin", "accept (predicted)"),
+    ("w6c_horner_bound", "reject (INV-1, predicted)"),
+    ("w6d_trim_nonempty_contract", "reject (FN-9, predicted; internal contract gap)"),
+    ("w6e_nonempty_call_contract", "reject (FN-8, predicted; internal contract gap)"),
+    ("w6f_binade_bound", "reject (INV-1, predicted; mechanism only)"),
+    ("w6g_scaled_point_contract", "reject (INV-1, predicted; internal contract abstraction)"),
+    ("w6h_scan_leading_digit", "reject (RANGE-3, predicted; induction fact missing)"),
+]
+
 
 def main(argv):
     mode = argv[1] if len(argv) > 1 else "write"
     if mode == "--expect":
         for name, _, expected in WITNESSES:
-            print(f"{name}\t{expected}")
+            print(f"{name}\t{expected}\trun")
         for name, expected in HANDWRITTEN_WITNESSES:
-            print(f"{name}\t{expected}")
+            print(f"{name}\t{expected}\trun")
+        for name, expected in CHECK_ONLY_WITNESSES:
+            print(f"{name}\t{expected}\tcheck")
         return 0
     status = 0
     if mode == "--check":
-        for name, _ in HANDWRITTEN_WITNESSES:
+        for name, _ in HANDWRITTEN_WITNESSES + CHECK_ONLY_WITNESSES:
             if not os.path.isfile(os.path.join(HERE, name + ".wf")):
                 print(f"{name}.wf is missing", file=sys.stderr)
                 status = 1

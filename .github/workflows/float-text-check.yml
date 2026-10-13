@@ -1,0 +1,85 @@
+# TEMPORARY: diagnose the float-text module while its proof gaps are open.
+# Remove this workflow and its two time-budget rows before the branch is ready.
+# All inputs are maintained compiler/library sources. Individual semantic
+# witnesses remain in the separate, manually dispatched experiment workflow.
+name: float-text-check
+
+on:
+  push:
+    branches: [claude/float-text-module]
+    paths:
+      - .github/workflows/float-text-check.yml
+      - .github/time-budgets.txt
+      - compiler/**
+      - lib/std/float_text/**
+      - lib/std/modules.wfg
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: float-text-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  module:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      WHITEFOOT_CHECK_TIMEOUT: 600
+      WHITEFOOT_TIME_BUDGET_RECORD: ${{ runner.temp }}/float-text-budget-overruns.txt
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build whitefootc
+        run: perl .github/run-check.pl compiler/float-text-build cargo build --manifest-path compiler/Cargo.toml --locked --profile gate --bin whitefootc
+
+      - name: Check only the shipped float-text module and print its complete report
+        shell: bash
+        run: |
+          out="$RUNNER_TEMP/float-text-check"
+          mkdir -p "$out/probe"
+          printf 'pkg::probe: [std::float_text];\n' > "$out/modules.wfg"
+          printf '\n' > "$out/probe/module.wfm"
+          export FLOAT_TEXT_PROBE="$out"
+          export FLOAT_TEXT_COMPILER="$PWD/compiler/target/gate/whitefootc"
+          set +e
+          perl .github/run-check.pl compiler/float-text-module bash -c '
+            "$FLOAT_TEXT_COMPILER" --graph "$FLOAT_TEXT_PROBE/modules.wfg" \
+              --check-module std::float_text --report --diagnostic-format json \
+              > "$FLOAT_TEXT_PROBE/report.jsonl" 2> "$FLOAT_TEXT_PROBE/driver.jsonl"
+          '
+          status=$?
+          set -e
+          printf '%s\n' "$status" > "$out/status.txt"
+          echo "Module check exit status: $status"
+          echo 'Complete module report, including every reported task:'
+          if [ -s "$out/report.jsonl" ]; then
+            jq -s . "$out/report.jsonl"
+          fi
+          echo 'Driver diagnostics:'
+          if [ -s "$out/driver.jsonl" ]; then
+            cat "$out/driver.jsonl"
+          fi
+          {
+            echo '### float-text module diagnostics'
+            echo "Module check exit status: $status"
+            echo 'The report lists at most one failure per set-aside function. A declaration failure may leave complete=false; this is not an exhaustive list of source errors.'
+            echo '```json'
+            cat "$out/report.jsonl" "$out/driver.jsonl"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: float-text-module-diagnostics
+          path: ${{ runner.temp }}/float-text-check
+          if-no-files-found: error
+
+      - name: Time budget verdict
+        if: always()
+        run: perl .github/run-check.pl --budget-verdict "$WHITEFOOT_TIME_BUDGET_RECORD"
