@@ -1,5 +1,5 @@
 fn probe(x: i64) -> result: i64 pure contract {
-  requires x * 9223372036854775807_i64 * 9223372036854775807_i64 * 4_i64 <= 0_i64;
+  requires((x * 9223372036854775807_i64) * 9223372036854775807_i64) * 4_i64 <= 0_i64;
 } {
   doc "The coefficient of x is 4 * (2^63 - 1)^2, outside i128.";
   return x;

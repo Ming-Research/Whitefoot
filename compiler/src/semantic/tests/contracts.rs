@@ -1990,15 +1990,19 @@ fn clause_formation_rejects_at_the_clause_outside_i128() {
     });
 }
 
-/// `x <= 0_i64 + ... + 0_i64` with `terms` literals schedules `2 * terms`
-/// expression nodes: the atom `x`, each literal and each `+`.
+/// `x <= (0_i64 + ...) + ... + (...)` with `terms` literals in parenthesized
+/// runs of 50 schedules about `2 * terms` expression nodes (the atom `x`, each
+/// literal and each `+`) while its nesting depth stays near 100.
 fn long_sum_relation(terms: usize) -> String {
-    let sum = vec!["0_i64"; terms].join(" + ");
-    format!("x <= {sum}")
+    let groups: Vec<String> = (0..terms)
+        .step_by(50)
+        .map(|start| format!("({})", vec!["0_i64"; (terms - start).min(50)].join(" + ")))
+        .collect();
+    format!("x <= {}", groups.join(" + "))
 }
 
 /// [MSR-5] counts the 4096 scheduled expression nodes over the whole clause,
-/// so 2049 summed literals (4098 nodes) is rejected at the clause and 2000
+/// so 2100 summed literals (4199 nodes) are rejected at the clause and 2000
 /// (4000 nodes) is formed and proves the body.
 #[test]
 fn clause_formation_counts_the_node_ceiling_over_the_whole_clause() {
