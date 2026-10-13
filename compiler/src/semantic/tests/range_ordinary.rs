@@ -1245,12 +1245,51 @@ fn pick(t: &Box<Array<u64>>, x: u64, flag: Bool) -> r: u64 reads(t) contract {{
 
 #[test]
 fn arm_fact_holds_only_where_its_arm_was_taken() {
-    // Keeping `x < 10` after the join without its arm's condition would
-    // prove the index on the path that never called `small`.
-    for guard in [
-        "  if x < 10_u64 {\n    let kept = small(n: x);\n  }",
-        "  if flag {\n    if x < 10_u64 {\n      let kept = small(n: x);\n    }\n  }",
-    ] {
-        check(&arm_guarded(guard), Some(SemanticRule::Op4));
+    // Keeping `x < 10` after both joins without the arms' conditions would
+    // prove the index on the paths that never called `small`. The case with
+    // one join is the conformance case
+    // range2-neg-arm-fact-holds-only-where-its-arm-was-taken.
+    check(
+        &arm_guarded(
+            "  if flag {\n    if x < 10_u64 {\n      let kept = small(n: x);\n    }\n  }",
+        ),
+        Some(SemanticRule::Op4),
+    );
+}
+
+/// `251_u8 + v` after `inner` sets `v` in the outer then-arm and `outer`
+/// sets it in the else-arm; the range requirement over `marks` makes the
+/// function take part in the range judgment.
+fn bypassed_join(inner: &str, outer: &str) -> String {
+    format!(
+        "fn bump(marks: &[u64], x: u64) -> result: u8 pure contract {{
+  requires forall small(k in 0_u64..marks^.len): marks^[k] < 8_u64;
+}} {{
+  let v = 0_u8;
+  if x < 100_u64 {{
+{inner}
+  }} else {{
+    set v = {outer}_u8;
+  }}
+  let w = 251_u8 + v;
+  return w;
+}}"
+    )
+}
+
+#[test]
+fn joined_value_is_free_where_its_join_was_bypassed() {
+    // [RANGE-3] The inner join, one of whose arms returns, is reached only
+    // on the outer then-arm. Its choice over its live arms, asserted on the
+    // else path too, refuted that path and accepted `251 + 5`. The second
+    // body nests two such joins in the arms of a middle join that the outer
+    // else bypasses as well, so each needs the outer join's bypass: the
+    // middle join's own bypasses alone ask its selector to be both arms.
+    let one = "    if x == 1_u64 {\n      set v = 1_u8;\n    } else if x == 2_u64 {\n      set v = 2_u8;\n    } else {\n      return 100_u8;\n    }";
+    let two = "    if x < 10_u64 {\n      if x == 1_u64 {\n        set v = 1_u8;\n      } else if x == 2_u64 {\n        set v = 2_u8;\n      } else {\n        return 100_u8;\n      }\n    } else {\n      if x == 11_u64 {\n        set v = 3_u8;\n      } else if x == 12_u64 {\n        set v = 4_u8;\n      } else {\n        return 100_u8;\n      }\n    }";
+    for inner in [one, two] {
+        check(&bypassed_join(inner, "5"), Some(SemanticRule::Op2));
+        // On the paths through the inner joins their arms still bound `v`.
+        check(&bypassed_join(inner, "4"), None);
     }
 }

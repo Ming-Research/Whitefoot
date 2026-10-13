@@ -1218,9 +1218,13 @@ fn expand(
                             ));
                             alternatives.push(alternative);
                         }
+                        alternatives.extend(world.not_reached(join));
                     }
                 }
             }
+            // [RANGE-3] A joined value is the one of the arm taken where its
+            // join was reached; elsewhere a later join took an arm that
+            // bypassed it, and the value is unconstrained.
             AtomDef::Joined { join, values } => {
                 let arms = world.joins[join as usize].clone();
                 for (arm, selected) in arms.iter().zip(values) {
@@ -1228,19 +1232,28 @@ fn expand(
                     alternative.push(Literal::new(value.clone(), Relation::Equal, selected));
                     alternatives.push(alternative);
                 }
+                alternatives.extend(world.not_reached(join));
             }
             // [RANGE-3] A guard names a join's selector: the join took one of
             // its arms. Every choice over the join's arms already fixes the
             // selector, so the bare split is added only where none is in the
-            // problem. It names no arm's conditions, which hold only on paths
-            // through the join, and a guard reaching past a later join that
-            // one of whose arms bypassed this one carries that join's guard too.
+            // problem; a choice over the join's arms has an alternative
+            // beginning with each arm's number, while a bypass names a few.
+            // It names no arm's conditions, which hold only on paths through
+            // the join, and a guard reaching past a later join one of whose
+            // arms bypassed this one carries that join's guard too.
             AtomDef::Selector { arms } => {
-                let first = Literal::new(value.clone(), Relation::Equal, Linear::constant(0));
                 let split = query.choices.iter().any(|choice| {
-                    choice
-                        .iter()
-                        .any(|alternative| alternative.first() == Some(&first))
+                    (0..arms).all(|arm| {
+                        let taken = Literal::new(
+                            value.clone(),
+                            Relation::Equal,
+                            Linear::constant(i128::from(arm)),
+                        );
+                        choice
+                            .iter()
+                            .any(|alternative| alternative.first() == Some(&taken))
+                    })
                 });
                 if !split {
                     alternatives = (0..arms)

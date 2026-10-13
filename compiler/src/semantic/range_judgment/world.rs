@@ -176,6 +176,9 @@ pub(super) struct World {
     pub(super) joins: Vec<Vec<Vec<Literal>>>,
     /// Each join's selector, the atom its arms' literals fix.
     selectors: Vec<Linear>,
+    /// Each join's bypasses: a later join and one of its arms that did not
+    /// pass through this join, recorded where that later join dropped it.
+    bypasses: Vec<Vec<(JoinId, usize)>>,
     next_origin: u32,
     next_generation: u32,
     /// What a dry walk records as written.
@@ -431,7 +434,33 @@ impl World {
             .collect();
         self.joins.push(arms);
         self.selectors.push(selector);
+        self.bypasses.push(Vec::new());
         id
+    }
+
+    /// [RANGE-3] The alternatives that `join` was not reached: one
+    /// `selector == arm` literal for each later join and arm that bypassed
+    /// it, and, since a later join can itself be bypassed, those of each such
+    /// join in turn. A path through `join` takes one of its arms; any other
+    /// path reaching a value `join` defines passed a join that dropped it
+    /// through an arm that bypassed it.
+    pub(super) fn not_reached(&self, join: JoinId) -> Vec<Vec<Literal>> {
+        let mut alternatives = Vec::new();
+        let mut visited = BTreeSet::from([join]);
+        let mut pending = vec![join];
+        while let Some(reached) = pending.pop() {
+            for (later, arm) in &self.bypasses[reached as usize] {
+                alternatives.push(vec![Literal::new(
+                    self.selectors[*later as usize].clone(),
+                    Relation::Equal,
+                    Linear::constant(*arm as i128),
+                )]);
+                if visited.insert(*later) {
+                    pending.push(*later);
+                }
+            }
+        }
+        alternatives
     }
 
     /// `selector != arm`: the join took another arm than `arm`.
@@ -1010,12 +1039,28 @@ pub(super) fn join_states(
         out.generations.insert(container, generation);
     }
     join_facts(world, join, &arms, &mut out);
-    out.disjunctions = first
-        .disjunctions
-        .iter()
-        .copied()
-        .filter(|earlier| arms.iter().all(|arm| arm.disjunctions.contains(earlier)))
-        .collect();
+    // [RANGE-3] An earlier join every arm passed through stays reached; one
+    // only some arms passed through records the others as its bypasses.
+    let mut earlier: Vec<JoinId> = Vec::new();
+    for arm in &arms {
+        for reached in &arm.disjunctions {
+            if !earlier.contains(reached) {
+                earlier.push(*reached);
+            }
+        }
+    }
+    for reached in earlier {
+        let mut all = true;
+        for (index, arm) in arms.iter().enumerate() {
+            if !arm.disjunctions.contains(&reached) {
+                all = false;
+                world.bypasses[reached as usize].push((join, index));
+            }
+        }
+        if all {
+            out.disjunctions.push(reached);
+        }
+    }
     out.disjunctions.push(join);
     // A reference one arm took may survive the join through a joined value.
     for arm in &arms {
