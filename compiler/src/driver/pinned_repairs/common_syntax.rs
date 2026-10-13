@@ -195,7 +195,9 @@ fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
 "#,
-        rule: "GRAM-5",
+        // DIAG-1 stops at fn_decl's body doc? exit: after `return`, the
+        // expected expression start belongs to that exit's continuation.
+        rule: "GRAM-2",
         sentences: &[
             "\n  mechanical_fix: bind each operation with its own preceding `let` and pass the binding as the operand; an expression has one operation over two atoms, with no chaining or parenthesized subexpressions [GRAM-6, GRAM-9]\n",
         ],

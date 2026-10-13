@@ -170,7 +170,20 @@ fn shared_dependency_interface_syntax_is_reported_once() {
     let inputs = module_inputs(&graph, &records);
     let failure = crate::check_module_program(&graph, &inputs, CompilerLimits::default())
         .expect_err("the shared interface header omits its effect row");
-    assert_eq!(coordinates(&failure), vec![(0, 33, 34)]);
+    // Recognition admits `u64 ;` through the type production's SELECT_2
+    // rows, so DIAG-1 stops at `effects`, whose grammar owner is EFF-1.
+    // The body's `u64 {` instead stops within `type` and cites GRAM-3.
+    assert_eq!(failure.diagnostics().count(), 1);
+    assert_eq!(failure.stage(), crate::CompilationStage::Parsing);
+    assert_eq!(failure.rule_id(), Some("EFF-1"));
+    assert_eq!(
+        failure.record.expected_terminals().expect("effect row"),
+        &["pure".to_owned(), "reads".to_owned(), "writes".to_owned()]
+    );
+    let coordinate = failure.source_coordinate().expect("interface coordinate");
+    assert_eq!(coordinate.source().ordinal(), 0);
+    assert_eq!(coordinate.start().value(), 33);
+    assert_eq!(coordinate.end().value(), 34);
 }
 
 /// Program-wide syntax admission does not expand the source selection of a
