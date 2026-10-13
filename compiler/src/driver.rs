@@ -13,6 +13,7 @@ mod packages;
 mod reads;
 
 pub(crate) mod launcher;
+pub use launcher::require_executable_runner;
 /// The repair pairs that pin repairs with the programs they produce.
 #[cfg(test)]
 mod pinned_repairs;

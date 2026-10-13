@@ -37,7 +37,8 @@ pub(crate) use check::check_semantics_arithmetic_obligations;
 #[cfg(test)]
 pub(crate) use check::check_semantics_division_obligations;
 pub(crate) use check::{
-    ProofReceipts, check_semantics_with_receipts, header_invariant_scope_repair,
+    ProofReceipts, check_semantics_with_receipts, executable_caller_repair,
+    executable_runner_repair, header_invariant_scope_repair,
 };
 pub(crate) use entry::{EntryRejection, EntryRequest};
 
@@ -723,6 +724,8 @@ pub enum SemanticIssueKind {
         expected: String,
         /// The exact type, mode, or written form found there.
         found: String,
+        /// A construct-specific repair when the mismatch identifies one.
+        mechanical_fix: Option<String>,
     },
     /// [OP-10, OP-14] an operand whose shape is outside the operation's
     /// admitted set.
@@ -772,7 +775,7 @@ pub enum SemanticIssueKind {
         /// The nominal whose `linear` declaration created the obligation.
         obligation: String,
         /// Exact restructuring required by PROV-6.
-        mechanical_fix: &'static str,
+        mechanical_fix: String,
     },
     /// [PROV-6] a consume of a proper sub-place of a value linear in this
     /// scope, with no commit reinitializing that sub-place.
@@ -806,7 +809,7 @@ pub enum SemanticIssueKind {
         /// The predecessor that reaches the join with the binding dead.
         dead_predecessor: String,
         /// Exact restructuring required by LIV-1.
-        mechanical_fix: &'static str,
+        mechanical_fix: String,
     },
     /// [WIN-3] an assignment over a place whose final selected type is
     /// linear. Assigning over an owned place releases the old value when it
@@ -900,13 +903,25 @@ pub enum SemanticIssueKind {
     },
     /// `move` was written for a copy value.
     MoveOfCopy {
+        /// The place as written at this use.
+        binding: String,
+        /// Its instantiated source type.
+        ty: String,
+        /// Why the written consume is unavailable for this value.
+        reason: String,
         /// Exact mechanical repair required by OWN-1.
-        mechanical_fix: &'static str,
+        mechanical_fix: String,
     },
     /// An affine value was used without its required consuming spelling.
     BareAffineUse {
+        /// The place as written at this use.
+        binding: String,
+        /// Its instantiated source type.
+        ty: String,
+        /// The first part that makes it non-copy, in declaration order.
+        reason: String,
         /// Exact mechanical repair required by OWN-1.
-        mechanical_fix: &'static str,
+        mechanical_fix: String,
     },
     /// [TYPE-2] a constructor `call` or a destructuring `let_stmt` named an
     /// opaque struct, whose constructor entry exists to be refused.
@@ -971,7 +986,7 @@ pub enum SemanticIssueKind {
     /// A borrow holder was used without the required explicit dereference.
     MissingDereference {
         /// Exact mechanical repair selected by TYPE-7.
-        mechanical_fix: &'static str,
+        mechanical_fix: String,
     },
     /// [TYPE-7] a range referent was used without an admitted projection.
     RangeReferentUse {
@@ -988,7 +1003,14 @@ pub enum SemanticIssueKind {
         mechanical_fix: &'static str,
     },
     /// The selected operation family has no row for the written arguments.
-    InvalidOperation,
+    InvalidOperation {
+        /// The operation spelling when a concrete repair is available.
+        operation: Option<String>,
+        /// The source types of the operands or conversion endpoints.
+        operand_types: Option<Vec<String>>,
+        /// The source change admitted by this operation's domain.
+        mechanical_fix: Option<String>,
+    },
     /// [OP-16] equality has no row for this type or one of its parts.
     InvalidEqualityType {
         /// The first non-equality part, in declaration order, and its repair.
@@ -1402,7 +1424,14 @@ pub enum SemanticIssueKind {
         missing_variants: Vec<String>,
     },
     /// A propagation operand or enclosing result has the wrong Result shape.
-    InvalidPropagation,
+    InvalidPropagation {
+        /// The enclosing function's declared return type.
+        enclosing_return_type: String,
+        /// The propagation operand's instantiated type.
+        operand_type: String,
+        /// Handle the operand under this function's return boundary.
+        mechanical_fix: String,
+    },
     /// `give` is absent, misplaced, duplicated, or followed by a statement.
     InvalidGive,
     /// [GIVE-1] no arm or branch of a value initializer supplies a value,
@@ -1418,7 +1447,7 @@ pub enum SemanticIssueKind {
         /// Which EFF-1 condition this row failed.
         reason: &'static str,
         /// Exact repair required by EFF-1 for that condition.
-        mechanical_fix: &'static str,
+        mechanical_fix: String,
     },
     /// A row carries an entry that another of its entries covers, such as
     /// `reads(p)` or `writes(p.x)` beside `writes(p)`, or `reads(p.x)` beside
@@ -1466,6 +1495,15 @@ pub(crate) fn written_count(count: usize, noun: &str) -> String {
 }
 
 impl SemanticIssueKind {
+    /// An operation-domain rejection without a construct-specific repair.
+    pub(crate) fn invalid_operation() -> Self {
+        Self::InvalidOperation {
+            operation: None,
+            operand_types: None,
+            mechanical_fix: None,
+        }
+    }
+
     /// [FN-9] preserves the selector refusal while explaining its admitted
     /// forms. Wording belongs to the shared repair module.
     pub(crate) const fn invalid_postcondition_selector() -> Self {
@@ -1487,6 +1525,7 @@ impl SemanticIssueKind {
         Self::TypeMismatch {
             expected: expected.into(),
             found: found.into(),
+            mechanical_fix: None,
         }
     }
 }
