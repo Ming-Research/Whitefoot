@@ -4,12 +4,16 @@ use super::RepairPair;
 
 pub(super) const COMMON_SYNTAX: &[RepairPair] = &[
     RepairPair {
+        // [FN-9] return a tracked place; the widening operations are
+        // preceding body lets, matching the contract definition chain.
         name: "syntax-nested-call-contract-define.wf",
         rejected: br#"fn widen(value: u8) -> result: u64 pure contract {
   define wide = cvt::<u32, u64>(cvt::<u8, u32>(value));
   ensures result == wide;
 } {
-  return cvt::<u8, u64>(value);
+  let widened_u32 = cvt::<u8, u32>(value);
+  let widened_u64 = cvt::<u32, u64>(widened_u32);
+  return widened_u64;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -25,7 +29,9 @@ fn main() -> status: std::process::ExitStatus pure {
   define wide = cvt::<u32, u64>(inner);
   ensures result == wide;
 } {
-  return cvt::<u8, u64>(value);
+  let widened_u32 = cvt::<u8, u32>(value);
+  let widened_u64 = cvt::<u32, u64>(widened_u32);
+  return widened_u64;
 }
 
 fn main() -> status: std::process::ExitStatus pure {

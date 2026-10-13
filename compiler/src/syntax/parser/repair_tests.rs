@@ -193,6 +193,45 @@ fn marked_call_starts_keep_atom_attribution_and_frontier_expectations() {
 }
 
 #[test]
+fn unmarked_call_starts_after_delimiters_use_the_atom_boundary() {
+    for (callee, start) in [
+        ("inner()", "inner("),
+        ("inner::nested()", "inner::"),
+        ("ineg.checked(0_i32)", "ineg.checked("),
+        ("ineg.checked::<i32>(0_i32)", "ineg.checked::"),
+        ("pkg::inner()", "pkg::"),
+        ("std::inner()", "std::"),
+        ("Packet(value: 0_u32)", "Packet("),
+        ("Packet<u32>(value: 0_u32)", "Packet<"),
+        ("Packet::Some(value: 0_u32)", "Packet::"),
+    ] {
+        for (before, after) in [
+            ("outer(", ");"),
+            ("outer(0_u32, ", ");"),
+            ("outer(value: ", ");"),
+            ("return 0_u32 +wrap ", ";"),
+            ("return values[", "];"),
+            ("for (index in ", "..1_u64) {}"),
+            ("for (index in 0_u64..", ") {}"),
+        ] {
+            let source = format!("fn f() -> r: u32 pure {{ {before}{callee}{after} }}");
+            let result = outcome(source.as_bytes(), false);
+            let ParseOutcome::SourceIssue(issue) = result else {
+                panic!("call in atom position must reject: {source}: {result:?}");
+            };
+            // DIAG-1 row 2 starts its window at the atom occurrence, including
+            // when position 0 was a delimiter matched before that occurrence.
+            assert_eq!(issue.rule(), SyntaxRule::Gram9, "{source}");
+            assert_eq!(
+                issue_bytes(source.as_bytes(), issue),
+                start.as_bytes(),
+                "{source}"
+            );
+        }
+    }
+}
+
+#[test]
 fn marked_atom_starts_require_a_callee_head() {
     for marker in ["musttail", "spawn"] {
         for follower in [
@@ -230,25 +269,30 @@ fn marked_atom_starts_require_a_callee_head() {
 }
 
 #[test]
-fn a_marker_after_an_atom_prefix_does_not_start_another_atom() {
-    for marker in ["musttail", "spawn"] {
+fn a_call_head_after_an_atom_prefix_does_not_start_another_atom() {
+    for (call, head) in [
+        ("musttail inner()", "musttail"),
+        ("spawn inner()", "spawn"),
+        ("std::inner()", "std"),
+        ("pkg::inner()", "pkg"),
+    ] {
         for (prefix, rule) in [
             ("value", SyntaxRule::Gram5),
             ("&", SyntaxRule::Form3),
             ("move", SyntaxRule::Form3),
         ] {
-            let source = format!("fn f() -> r: unit pure {{ outer({prefix} {marker} inner()); }}");
+            let source = format!("fn f() -> r: unit pure {{ outer({prefix} {call}); }}");
             let result = outcome(source.as_bytes(), false);
             let ParseOutcome::SourceIssue(issue) = result else {
-                panic!("marker after atom prefix must reject: {source}: {result:?}");
+                panic!("call head after atom prefix must reject: {source}: {result:?}");
             };
             // DIAG-1 row 2 examines the atom occurrence's start, whose
-            // first token is the prefix above. The marker at position 1
+            // first token is the prefix above. The call head at position 1
             // remains the ordinary frontier defect rather than a new atom.
             assert_eq!(issue.rule(), rule, "{source}");
             assert_eq!(
                 issue_bytes(source.as_bytes(), issue),
-                marker.as_bytes(),
+                head.as_bytes(),
                 "{source}"
             );
             assert_eq!(issue.mechanical_fix, None, "{source}");
@@ -364,7 +408,10 @@ fn marked_contract_calls_do_not_offer_a_definition_hoist() {
 
 #[test]
 fn contract_definition_does_not_offer_to_hoist_a_constructor() {
-    for constructor in ["Some<u8>(value: value)", "Packet(value: value)"] {
+    for (constructor, start) in [
+        ("Some<u8>(value: value)", "Some<"),
+        ("Packet(value: value)", "Packet("),
+    ] {
         let source = format!(
             "fn f(value: u8) -> r: u8 pure contract {{ define inner = inspect({constructor}); requires value == 0_u8; }} {{ return value; }}"
         );
@@ -372,7 +419,12 @@ fn contract_definition_does_not_offer_to_hoist_a_constructor() {
         let ParseOutcome::SourceIssue(issue) = result else {
             panic!("nested constructor must reject: {result:?}");
         };
-        assert_eq!(issue.rule(), SyntaxRule::Gram9);
+        assert_eq!(issue.rule(), SyntaxRule::Gram9, "{source}");
+        assert_eq!(
+            issue_bytes(source.as_bytes(), issue),
+            start.as_bytes(),
+            "{source}"
+        );
         assert_eq!(issue.mechanical_fix, None);
     }
 }

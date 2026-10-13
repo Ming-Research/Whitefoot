@@ -728,16 +728,11 @@ fn override_issue(
         return Ok(Some(issue));
     }
     // A matched delimiter can put the would-next-enter atom at position m,
-    // for example `, spawn` in an argument-list continuation. This is a new
-    // atom only when no maximal-prefix row has already matched an atom's
+    // for example `( std` or `, spawn` in an argument-list continuation.
+    // This is a new atom only when no maximal-prefix row has matched an atom's
     // terminal: `value spawn`, `& spawn` and `move spawn` have already begun
     // the atom. Existing starts retain their original cursor in that case.
-    let atom_cursor = if frontier.atom_only
-        && !frontier.matched_atom_prefix
-        && site.tokens.get(boundary).is_some_and(|token| {
-            fixed(token, FixedTerminal::Musttail) || fixed(token, FixedTerminal::Spawn)
-        })
-    {
+    let atom_cursor = if frontier.atom_only && !frontier.matched_atom_prefix {
         boundary
     } else {
         site.cursor
