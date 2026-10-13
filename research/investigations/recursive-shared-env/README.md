@@ -78,6 +78,33 @@ borrowed input. Its scan entry with the table against without it is today
 the target is at least 0.98. This check runs in Snowghost-wf with a released
 compiler and is not part of this record's decision.
 
+## First measurement
+
+CI run 38334593158 measured the first implementation, which had no
+`noinline` cut, against the base.
+
+- The with-table and without-table copies cost the same per call: the gap
+  is 0, inside the 1-instruction acceptance bound.
+- The without-table chain costs 14.17 more instructions per top-level call
+  than on the base, past the 2-instruction rejection bound. By the
+  criterion above, this implementation is rejected.
+- Attribution, from callgrind's annotation of the same run:
+  - The record itself is a net gain of 1.22 per call. Slot loads add 1.97,
+    and fewer argument moves save 2.19 and one fewer entry copy 1.00.
+  - The host now inlines the internal step, with compound inside it, into
+    the negation arm of the internal test. Test becomes non-leaf, so every
+    call to it pushes and pops six callee-saved registers, adjusts the
+    stack and keeps the record pointer in a callee-saved register: 16.56
+    per call. Shared-epilogue jumps add 1.09.
+  - The base keeps step a call, and test stays frameless.
+  - No alias reloads were found, and no slot loads on paths that do not
+    use them: the host already sinks the loads into the arms.
+
+The follow-up keeps the cycle-closing calls of each component out of line
+(compiler/recursive-environment). It is measured against the same
+criterion, on the same witness, against the same base.
+
 ## Status
 
-Implemented, not yet measured.
+The first implementation was measured and rejected. The `noinline` cut on
+back edges is implemented and not yet measured.

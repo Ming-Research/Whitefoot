@@ -80,6 +80,9 @@ pub(super) struct InternalCall {
     /// For each of the callee's parameters, whether the caller passes it
     /// inside the environment record rather than as itself.
     pub(super) packed: Vec<bool>,
+    /// The call-site attributes, with a leading space, or empty: `noinline`
+    /// on a call that closes a cycle of the group.
+    pub(super) attributes: &'static str,
 }
 
 /// How one borrowed parameter lies in the record.
@@ -139,6 +142,7 @@ impl SlotKind {
 /// One member's place in its group.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct Member {
+    ordinal: u32,
     group: usize,
     /// For each parameter, its slot in the group's record, or `None` for a
     /// parameter passed as itself.
@@ -151,6 +155,9 @@ pub(super) struct EnvironmentPlan {
     /// Each group's slots in record order.
     groups: Vec<Vec<SlotKind>>,
     members: HashMap<u32, Member>,
+    /// The `(caller, callee)` calls inside a group that close one of its
+    /// cycles and are kept out of line ([`back_edges`]).
+    back_edges: HashSet<(u32, u32)>,
 }
 
 impl EnvironmentPlan {
@@ -321,6 +328,12 @@ impl EnvironmentPlan {
         let group = self.groups.len();
         self.groups
             .push(slots.iter().map(|(_, kind, _)| *kind).collect());
+        for (caller, callee) in back_edges(program, members) {
+            self.back_edges.insert((
+                u32::try_from(caller).map_err(|_| BackendFailure::CounterOverflow)?,
+                u32::try_from(callee).map_err(|_| BackendFailure::CounterOverflow)?,
+            ));
+        }
         for (member, &ordinal) in members.iter().enumerate() {
             let mut parameter_slots = vec![None; functions[ordinal].parameters().len()];
             for (slot, (_, _, keys)) in slots.iter().enumerate() {
@@ -330,9 +343,11 @@ impl EnvironmentPlan {
                     }
                 }
             }
+            let ordinal = u32::try_from(ordinal).map_err(|_| BackendFailure::CounterOverflow)?;
             self.members.insert(
-                u32::try_from(ordinal).map_err(|_| BackendFailure::CounterOverflow)?,
+                ordinal,
                 Member {
+                    ordinal,
                     group,
                     parameter_slots,
                 },
@@ -340,6 +355,67 @@ impl EnvironmentPlan {
         }
         Ok(())
     }
+}
+
+/// The calls of a group that close its cycles, as `(caller, callee)`
+/// function ordinals: the back edges of a depth-first walk of the group's
+/// calls, in call-site order, from its first member in program order that a
+/// function outside the group calls, or from its first member when none is.
+///
+/// Inlining one copy of a cycle into a member puts the whole chain's frame
+/// on every path of that member: Snowghost's witness test, which is leaf and
+/// frameless, inlined step and compound into its negation arm and then
+/// saved six callee-saved registers on every call, a cost the host's inline
+/// cost does not count. A cycle can never be inlined away, and keeping one
+/// call of it out of line changes no meaning. The walk starts where the
+/// chain is entered, so the edges it keeps inlinable are the ones each
+/// entry runs forward through, compound into test, and the cut falls on the
+/// call that returns to an activation already on the walk.
+fn back_edges(program: &IrProgram, members: &[usize]) -> Vec<(usize, usize)> {
+    let functions = program.functions();
+    let inside: HashSet<usize> = members.iter().copied().collect();
+    let entered = members.iter().copied().find(|member| {
+        functions.iter().enumerate().any(|(caller, function)| {
+            !inside.contains(&caller)
+                && calls(function).any(|(callee, _)| callee as usize == *member)
+        })
+    });
+    let Some(start) = entered.or_else(|| members.first().copied()) else {
+        return Vec::new();
+    };
+    let successors = |member: usize| {
+        let mut next: Vec<usize> = Vec::new();
+        for (callee, _) in calls(&functions[member]) {
+            let callee = callee as usize;
+            if inside.contains(&callee) && !next.contains(&callee) {
+                next.push(callee);
+            }
+        }
+        next
+    };
+    let mut found = Vec::new();
+    let mut visited: HashSet<usize> = HashSet::new();
+    let mut on_walk: HashSet<usize> = HashSet::new();
+    let mut walk: Vec<(usize, Vec<usize>, usize)> = Vec::new();
+    visited.insert(start);
+    on_walk.insert(start);
+    walk.push((start, successors(start), 0));
+    while let Some((member, next, cursor)) = walk.last_mut() {
+        let member = *member;
+        let Some(&callee) = next.get(*cursor) else {
+            on_walk.remove(&member);
+            walk.pop();
+            continue;
+        };
+        *cursor += 1;
+        if on_walk.contains(&callee) {
+            found.push((member, callee));
+        } else if visited.insert(callee) {
+            on_walk.insert(callee);
+            walk.push((callee, successors(callee), 0));
+        }
+    }
+    found
 }
 
 /// Whether the function may belong to a group (see the module comment).
@@ -533,6 +609,15 @@ impl FunctionEmitter<'_, '_> {
             symbol: internal_entry_symbol(EntryForm::Environment, target.name()),
             convention: "",
             packed: callee.parameter_slots.iter().map(Option::is_some).collect(),
+            attributes: if self
+                .environments
+                .back_edges
+                .contains(&(own.ordinal, function))
+            {
+                " noinline"
+            } else {
+                ""
+            },
         })
     }
 

@@ -217,16 +217,20 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         if let Some(budget) = budget {
             rendered.push(format!("i64 {budget}"));
         }
-        let (callee, convention) = match &internal {
-            Some(internal) => (internal.symbol.clone(), internal.convention),
-            None => (callee, ""),
+        let (callee, convention, attributes) = match &internal {
+            Some(internal) => (
+                internal.symbol.clone(),
+                internal.convention,
+                internal.attributes,
+            ),
+            None => (callee, "", ""),
         };
         if stored_result {
             return {
                 self.output.symbol(callee.to_string());
                 writeln!(
                     self.output,
-                    "  call {convention}void @{callee}({})",
+                    "  call {convention}void @{callee}({}){attributes}",
                     rendered.join(", ")
                 )
             }
@@ -238,7 +242,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 self.output.symbol(callee.to_string());
                 writeln!(
                     self.output,
-                    "  {} = call {convention}{} @{callee}({})",
+                    "  {} = call {convention}{} @{callee}({}){attributes}",
                     self.value_name(result),
                     emitted_type_1,
                     rendered.join(", ")
