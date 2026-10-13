@@ -37,6 +37,7 @@ mod judge;
 mod loop_summary;
 pub(crate) mod operation_facts;
 mod origin_transport;
+mod postcondition_render;
 mod postconditions;
 mod prover;
 mod relations;
@@ -2157,6 +2158,10 @@ mod indexed_goal_kill_tests {
         let constant_ids = HashMap::new();
         let const_parameter_types = HashMap::new();
         let context = EntailmentContext {
+            source_spellings: &HashMap::new(),
+            postcondition_clauses: &HashMap::new(),
+            postcondition_sources: &HashMap::new(),
+            type_spellings: &HashMap::new(),
             declarations: &[],
             callees: &[],
             constants: &[],
@@ -2401,6 +2406,10 @@ mod range_argument_kill_tests {
         let constant_ids = HashMap::new();
         let const_parameter_types = HashMap::new();
         let context = EntailmentContext {
+            source_spellings: &HashMap::new(),
+            postcondition_clauses: &HashMap::new(),
+            postcondition_sources: &HashMap::new(),
+            type_spellings: &HashMap::new(),
             declarations: &[],
             callees: &[],
             constants: &[],

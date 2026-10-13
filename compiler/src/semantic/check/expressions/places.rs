@@ -28,6 +28,93 @@ use super::super::references::{OWN1_ROOTED_CONSUME, ReferenceSelection, WIN3_NO_
 use super::super::{CheckStop, Checker, EffectSet, LocalBinding, PlaceAccess, TypedExpression};
 use super::{PlaceUseContext, PlaceUseOptions, ResolvedPlaceSet};
 
+struct CheckerPlaceNames<'a, 'unit> {
+    types: &'a TypeContext<'unit>,
+    bindings: &'a HashMap<DeclarationId, LocalBinding>,
+}
+
+impl crate::semantic::place_render::PlaceNames for CheckerPlaceNames<'_, '_> {
+    type Error = CheckStop;
+
+    fn field(
+        &self,
+        ty: Option<CheckedType>,
+        field: u32,
+    ) -> Result<Option<(String, CheckedType)>, CheckStop> {
+        let Some(CheckedType::Nominal(nominal)) = ty else {
+            return Err(SemanticCompilerFailure::InvalidResolution.into());
+        };
+        let CheckedNominalKind::Struct { fields } = &self.types.nominal(nominal)?.kind else {
+            return Err(SemanticCompilerFailure::InvalidResolution.into());
+        };
+        let field = fields.get(field as usize)
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        Ok(Some((field.name.clone(), field.ty)))
+    }
+
+    fn payload(
+        &self,
+        ty: Option<CheckedType>,
+        variant: u32,
+        field: u32,
+    ) -> Result<Option<(String, String, CheckedType)>, CheckStop> {
+        let Some(CheckedType::Nominal(nominal)) = ty else {
+            return Err(SemanticCompilerFailure::InvalidResolution.into());
+        };
+        let CheckedNominalKind::Enum { variants } = &self.types.nominal(nominal)?.kind else {
+            return Err(SemanticCompilerFailure::InvalidResolution.into());
+        };
+        let variant = variants.get(variant as usize)
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        let field = variant.fields.get(field as usize)
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        Ok(Some((variant.name.clone(), field.name.clone(), field.ty)))
+    }
+
+    fn deref(
+        &self,
+        ty: Option<CheckedType>,
+    ) -> Result<(bool, Option<CheckedType>), CheckStop> {
+        if let Some(Some(referent)) = ty.map(|ty| self.types.box_content(ty)).transpose()? {
+            return Ok((true, Some(referent)));
+        }
+        let selected = match ty {
+            Some(CheckedType::Nominal(nominal)) => match self.types.nominal(nominal)?.kind {
+                CheckedNominalKind::Shared {
+                    state,
+                    shape: crate::semantic::CheckedShared::Object,
+                } => Some(state),
+                _ => ty,
+            },
+            _ => ty,
+        };
+        Ok((false, selected))
+    }
+
+    fn element(
+        &self,
+        ty: Option<CheckedType>,
+        range: bool,
+    ) -> Result<Option<CheckedType>, CheckStop> {
+        self.types.selected_element(ty, range)
+    }
+
+    fn table_entry(&self, ty: Option<CheckedType>) -> Result<Option<CheckedType>, CheckStop> {
+        self.types.table_entry_of(ty)
+    }
+
+    fn offset(&self, value: CapturedValue) -> Result<String, CheckStop> {
+        match value.term {
+            CapturedTerm::Opaque => Ok(value
+                .source
+                .and_then(|node| self.types.source_spellings.get(&node))
+                .cloned()
+                .unwrap_or_else(|| "?".to_owned())),
+            _ => self.types.declarations.render_captured_offset(value, self.bindings),
+        }
+    }
+}
+
 /// Type-directed member formation, before a use judges access or ownership.
 /// A source field and a Box content carry the same selected type but retain
 /// their different storage steps. The measure judgment handles descriptor
@@ -2095,8 +2182,9 @@ impl<'unit> TypeContext<'unit> {
     /// [TYPE-9] and a payload step names its variant and field [FORM-2]. An
     /// index or range position spells the value it captured when the place
     /// was formed [REF-1]: a literal, a const, or the binding it read. A
-    /// computed offset has no source name and renders as `?`, and a loop
-    /// summary's unknown descendant cover keeps [REF-1]'s `.**` notation.
+    /// computed offset retains its argument's source text when captured, and
+    /// otherwise renders as `?`; a loop summary's unknown descendant cover
+    /// keeps [REF-1]'s `.**` notation.
     ///
     /// This is the one renderer every checker payload naming a resolved place
     /// uses — the [EFF-5] substituted paths, the [OP-12] target and the
@@ -2112,7 +2200,7 @@ impl<'unit> TypeContext<'unit> {
     ) -> Result<String, CheckStop> {
         let mut range = false;
         let mut prefix = 0;
-        let (mut rendered, mut ty) = match place.root {
+        let (rendered, ty) = match place.root {
             PlaceRoot::Binding(binding) => {
                 match bindings.values().find(|local| local.binding == binding) {
                     Some(local) => {
@@ -2133,126 +2221,18 @@ impl<'unit> TypeContext<'unit> {
                 (constant.name.clone(), Some(constant.declared_type))
             }
         };
-        for (position, step) in place.path.iter().enumerate() {
-            match *step {
-                PlaceStep::Descendant(target) => {
-                    rendered.push_str(".**");
-                    ty = Some(target.ty);
-                    range = target.range;
-                }
-                PlaceStep::Field(field) => {
-                    let Some(CheckedType::Nominal(nominal)) = ty else {
-                        return Err(SemanticCompilerFailure::InvalidResolution.into());
-                    };
-                    let CheckedNominalKind::Struct { fields } = &self.nominal(nominal)?.kind else {
-                        return Err(SemanticCompilerFailure::InvalidResolution.into());
-                    };
-                    let declared = fields
-                        .get(field as usize)
-                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                    rendered.push('.');
-                    rendered.push_str(&declared.name);
-                    ty = Some(declared.ty);
-                }
-                PlaceStep::Deref => match ty.map(|ty| self.box_content(ty)).transpose()? {
-                    Some(Some(referent)) => {
-                        rendered.push_str(".inner");
-                        ty = Some(referent);
-                    }
-                    _ => {
-                        rendered = format!("{rendered}^");
-                        // A borrow keeps its referent's type; a shared
-                        // object's `^` reaches its state [SHARE-1].
-                        if let Some(CheckedType::Nominal(nominal)) = ty
-                            && let CheckedNominalKind::Shared {
-                                state,
-                                shape: crate::semantic::CheckedShared::Object,
-                            } = self.nominal(nominal)?.kind
-                        {
-                            ty = Some(state);
-                        }
-                    }
-                },
-                PlaceStep::Payload { variant, field } => {
-                    let Some(CheckedType::Nominal(nominal)) = ty else {
-                        return Err(SemanticCompilerFailure::InvalidResolution.into());
-                    };
-                    let CheckedNominalKind::Enum { variants } = &self.nominal(nominal)?.kind else {
-                        return Err(SemanticCompilerFailure::InvalidResolution.into());
-                    };
-                    let declared = variants
-                        .get(variant as usize)
-                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                    let payload = declared
-                        .fields
-                        .get(field as usize)
-                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                    rendered.push_str(&format!(".{}.{}", declared.name, payload.name));
-                    ty = Some(payload.ty);
-                }
-                PlaceStep::Page(offset) => {
-                    rendered.push_str(&format!(
-                        ".pages[{}]",
-                        self.declarations.render_captured_offset(offset, bindings)?
-                    ));
-                    ty = self.selected_element(ty, range)?;
-                    range = true;
-                }
-                PlaceStep::Index(offset) => {
-                    // [SHARE-2] an indexed atomic binder's own subscript is
-                    // not in the writer's spelling of the binder.
-                    if position < prefix {
-                        continue;
-                    }
-                    rendered.push_str(&format!(
-                        "[{}]",
-                        self.declarations.render_captured_offset(offset, bindings)?
-                    ));
-                    // [TYPE-9] a segment is a run of T.
-                    let segment = !range && matches!(ty, Some(CheckedType::Segments { .. }));
-                    match self.table_entry_of(ty)? {
-                        Some(entry) if !range => {
-                            ty = Some(entry);
-                            range = Self::table_selects_entries(place.path.get(position + 1));
-                        }
-                        _ => {
-                            ty = self.selected_element(ty, range)?;
-                            range = segment;
-                        }
-                    }
-                }
-                PlaceStep::Range(_)
-                    if !range && matches!(ty, Some(CheckedType::Segments { .. })) =>
-                {
-                    rendered.push_str(".all");
-                    ty = self.selected_element(ty, range)?;
-                    range = true;
-                }
-                PlaceStep::Range(span) => {
-                    rendered.push_str(&format!(
-                        "[{}..{}]",
-                        self.declarations
-                            .render_captured_offset(span.start, bindings)?,
-                        self.declarations
-                            .render_captured_offset(span.end, bindings)?
-                    ));
-                    ty = self.selected_element(ty, range)?;
-                    range = true;
-                }
-                PlaceStep::Part(part) => {
-                    rendered.push('.');
-                    rendered.push_str(part.spelling());
-                    ty = self.selected_element(ty, range)?;
-                    range = matches!(part, WindowPart::Filled | WindowPart::Free);
-                }
-                PlaceStep::Measure(measure) => {
-                    rendered.push('.');
-                    rendered.push_str(measure.spelling());
-                    ty = Some(CheckedType::Integer(IntegerType::U64));
-                }
-            }
-        }
-        Ok(rendered)
+        crate::semantic::place_render::render_place_projections(
+            &CheckerPlaceNames { types: self, bindings },
+            rendered,
+            ty,
+            range,
+            prefix,
+            place
+                .path
+                .iter()
+                .copied()
+                .map(crate::semantic::place_render::PlaceProjection::Place),
+        )
     }
     /// [TYPE-2, TYPE-10] refuses a write target whose path names a readonly
     /// field or a window part of the place it follows.
