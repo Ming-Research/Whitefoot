@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 the owner's agent instructions own the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-13 The compiler offers an explicit formatting request
+
+Nodes: compiler/formatting-command
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve; I write the spec/log.md and design/log.md approval records, mark the pull request ready and run the gate on both platforms, renumber when its turn comes and report to the coordinator for merging" (translated), on the card "approve the specification and design-tree changes of Whitefoot#438 (head commit 6320188fc)? It gives the compiler a command that rewrites source files into the canonical layout" (translated), whose background quoted FORM-1 and FORM-2 before and after, stated that no rule was added or retired and no conformance verdict changed, and listed the three decisions of the new node. The revision merged here differs from 6320188fc only by the merge of main and the renumbering of the specification from v0.149 to v0.152, because main reached v0.151 first.
+
+Summary: A new node records that `whitefootc --format` replaces, in place and all or nothing, every source whose bytes differ from its FORM-2 rendering, over the sources `--check` takes or a module graph, while checking and compilation keep rejecting non-canonical input, because the canonical bytes are fixed by derivation and a FORM-2 rejection reports only the first difference; that its bytes and the FORM-2 judgment come from one rendering function that stops after grammar derivation, so a program with semantic errors can still be formatted and the two cannot drift; and that graph formatting forms the module program as `--check --graph` does and reports any other failure as `--check` would. Refused: formatting during checking, a formatter script per downstream project, and writing canonical bytes to standard output.
+
 ## 2026-10-13 One release classification decides whether release does work, and key sets and concurrent hash maps release runtime storage
 
 Nodes: compiler/cleanup-traversal, language/ownership/linearity, language/waiting/shared-objects/keyed-tables

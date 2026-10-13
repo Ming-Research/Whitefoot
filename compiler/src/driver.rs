@@ -26,7 +26,9 @@ pub use cache::{BuildCache, content_digest, running_compiler_identity};
 pub(crate) use diagnostic::Place;
 use diagnostic::{Anchor, Head, Record};
 pub use diagnostic::{DiagnosticFormat, render_driver_failure};
-pub use packages::{ModuleProgramFailure, form_module_program_graph};
+pub use packages::{
+    FormattedFile, ModuleProgramFailure, form_module_program_graph, format_module_program,
+};
 
 use crate::backend::emitter::{LlvmModule, emit_prepared_llvm, prepare_dispatch_layout};
 use crate::target::TargetLayout;
@@ -34,9 +36,10 @@ use crate::{
     ACTIVE_KERNEL_SPEC_HASH, BackendFailure, CanonicalLimits, CanonicalOutcome,
     CanonicalSyntaxUnit, CheckedProgram, EntryRejection, EntryRequest, FinalizeLimits,
     FinalizeOutcome, LexLimits, LexOutcome, LoweringFailure, ParseLimits, ParseOutcome,
-    ResolutionOutcome, ResolvedSyntaxUnit, SemanticOutcome, SourceBundle, SourceInput,
-    SourceLimits, TerminalLimits, TerminalOutcome, audit_canonical, check_semantics,
-    classify_terminals, finalize, lex, parse, parse_graph, resolve,
+    RenderOutcome, RenderedSource, ResolutionOutcome, ResolvedSyntaxUnit, SemanticOutcome,
+    SourceBundle, SourceInput, SourceLimits, TerminalLimits, TerminalOutcome, audit_canonical,
+    check_semantics, classify_terminals, finalize, lex, parse, parse_graph, render_canonical,
+    resolve,
 };
 
 /// Host-compiler optimization arguments for every Whitefoot executable.
@@ -2552,16 +2555,68 @@ fn admit_entry(
     })
 }
 
-/// Runs the syntax stages over one bundle, from raw lexical formation through
-/// the canonical [FORM-2] audit, and returns the canonical unit, which owns
-/// every stage's result. A module graph file takes the `graph_file` start and
-/// every source bundle the `program` start [GRAM-2, MOD-1]; the stages are
-/// otherwise one path.
-fn canonical_syntax(
+/// The grammar start a formatting request derives, independent of source
+/// names and diagnostic display paths.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FormatGrammar {
+    /// The `program` start for one ordered source compilation unit.
+    Program,
+    /// The `graph_file` start for exactly one module graph record.
+    Graph,
+}
+
+/// Computes every input record's exact FORM-2 rendering without checking
+/// canonical layout, resolution, types, ownership or other semantic rules.
+///
+/// With [`FormatGrammar::Program`], source records form one compilation unit
+/// in input order, without compiler-owned prelude or library records. With
+/// [`FormatGrammar::Graph`], exactly one record takes the module graph start.
+/// The grammar does not depend on logical paths or display paths. Returned
+/// source identities are the zero-based input ordinals, and results retain
+/// that order. No partial result escapes when any syntax stage or rendering
+/// fails; lexical and grammar failures use the ordinary compiler diagnostics.
+///
+/// This is the shared entry point for tools that need canonical bytes,
+/// including formatting requests and diagnostic repairs. It neither writes
+/// files nor treats the rendered bytes as a semantic acceptance verdict.
+pub fn canonical_format(
+    inputs: &[SourceInput<'_>],
+    grammar: FormatGrammar,
+    limits: CompilerLimits,
+) -> Result<Vec<RenderedSource>, CompilationFailure> {
+    let bundle = SourceBundle::with_limits(inputs, limits.source)
+        .map_err(CompilationFailure::source_envelope)?;
+    let graph = grammar == FormatGrammar::Graph;
+    if graph && inputs.len() != 1 {
+        return Err(CompilationFailure::new(
+            CompilationStage::SourceEnvelope,
+            CompilationFailureKind::Invocation,
+            "graph formatting requires exactly one source record",
+        ));
+    }
+    let finalized = finalized_syntax(&bundle, limits, graph)?;
+    match render_canonical(&finalized, limits.canonical) {
+        RenderOutcome::Complete(sources) => Ok(sources),
+        RenderOutcome::ResourceFailure(failure) => Err(CompilationFailure::new(
+            CompilationStage::CanonicalSource,
+            CompilationFailureKind::Resource,
+            failure,
+        )),
+        RenderOutcome::CompilerFailure(failure) => Err(CompilationFailure::new(
+            CompilationStage::CanonicalSource,
+            CompilationFailureKind::Compiler,
+            failure,
+        )),
+    }
+}
+
+/// Runs the shared syntax stages before the canonical audit. The graph and
+/// program grammar starts retain the same stage failure mappings.
+fn finalized_syntax(
     bundle: &SourceBundle,
     limits: CompilerLimits,
     graph: bool,
-) -> Result<CanonicalSyntaxUnit, CompilationFailure> {
+) -> Result<crate::FinalizedBundle, CompilationFailure> {
     let lexed = match lex(bundle, limits.lexer) {
         LexOutcome::Complete(complete) => complete,
         LexOutcome::SourceIssue(issue) => {
@@ -2680,6 +2735,17 @@ fn canonical_syntax(
             ));
         }
     };
+    Ok(finalized)
+}
+
+/// Runs the syntax stages over one bundle, including the unchanged FORM-2
+/// audit. The canonical unit owns every stage's result.
+fn canonical_syntax(
+    bundle: &SourceBundle,
+    limits: CompilerLimits,
+    graph: bool,
+) -> Result<CanonicalSyntaxUnit, CompilationFailure> {
+    let finalized = finalized_syntax(bundle, limits, graph)?;
     let canonical = match audit_canonical(finalized, limits.canonical) {
         CanonicalOutcome::Complete(complete) => complete,
         CanonicalOutcome::SourceIssue(issue) => {
@@ -2952,6 +3018,122 @@ fn lower_selected(
             };
             CompilationFailure::new(stage, kind, failure)
         })
+}
+
+#[cfg(test)]
+mod formatting_tests {
+    use super::{
+        CompilationFailureKind, CompilationStage, CompilerLimits, FormatGrammar, canonical_format,
+        check,
+    };
+    use crate::SourceInput;
+
+    #[test]
+    fn formatting_grammar_is_independent_of_logical_and_display_paths() {
+        let source = b"const value:u64=1_u64;\n";
+        for (logical, display) in [
+            ("ordinary.wfg", "ordinary.wfg"),
+            ("ordinary.wf", "ordinary.wf"),
+            ("ordinary.wfg", "/some/package/ordinary.wfg"),
+            ("ordinary.wfg", "./ordinary.wfg"),
+        ] {
+            let inputs = [SourceInput::from_host_path(logical, display, source)];
+            let formatted =
+                canonical_format(&inputs, FormatGrammar::Program, CompilerLimits::default())
+                    .expect("source names never select the grammar start");
+            assert_eq!(formatted.len(), 1);
+            assert_eq!(formatted[0].bytes, b"const value: u64 = 1_u64;\n");
+        }
+        let inputs = [SourceInput::new("ordinary.wf", b"pkg:[];\n")];
+        let formatted = canonical_format(&inputs, FormatGrammar::Graph, CompilerLimits::default())
+            .expect("graph selection also ignores the source name");
+        assert_eq!(formatted[0].bytes, b"pkg: [];\n");
+    }
+
+    #[test]
+    fn graph_formatting_requires_exactly_one_record() {
+        let records = [
+            SourceInput::new("first.wfg", b"pkg: [];\n"),
+            SourceInput::new("second.wfg", b"pkg: [];\n"),
+        ];
+        for inputs in [records.as_slice(), &records[..0]] {
+            let failure = canonical_format(inputs, FormatGrammar::Graph, CompilerLimits::default())
+                .expect_err("a graph grammar invocation holds exactly one record");
+            assert_eq!(failure.stage(), CompilationStage::SourceEnvelope);
+            assert_eq!(failure.kind(), CompilationFailureKind::Invocation);
+            assert_eq!(failure.rule_id(), None);
+        }
+    }
+
+    #[test]
+    fn formatting_ignores_semantic_errors_and_keeps_source_order() {
+        let first = b"fn wrong() -> result: u8 pure {\n    return 7_u64;  \n}\n";
+        let second = b"const spare: u64 = 2_u64;\n";
+        let inputs = [
+            SourceInput::new("wrong.wf", first),
+            SourceInput::new("spare.wf", second),
+        ];
+        let formatted =
+            canonical_format(&inputs, FormatGrammar::Program, CompilerLimits::default())
+                .expect("complete derivations format despite a return type error");
+        assert_eq!(formatted.len(), 2);
+        assert_eq!(formatted[0].source.ordinal(), 0);
+        assert_eq!(formatted[1].source.ordinal(), 1);
+        assert_eq!(
+            formatted[0].bytes,
+            b"fn wrong() -> result: u8 pure {\n  return 7_u64;\n}\n"
+        );
+        assert_eq!(formatted[1].bytes, second);
+        let canonical = [
+            SourceInput::new("wrong.wf", &formatted[0].bytes),
+            SourceInput::new("spare.wf", &formatted[1].bytes),
+        ];
+        assert_eq!(
+            check(&canonical, CompilerLimits::default())
+                .expect_err("the checker still rejects the type error")
+                .rule_id(),
+            Some("FN-1")
+        );
+    }
+
+    #[test]
+    fn formatting_reuses_lexical_and_grammar_diagnostics() {
+        for bytes in [b"$\n".as_slice(), b"fn wrong(\n".as_slice()] {
+            let inputs = [SourceInput::new("broken.wf", bytes)];
+            let formatted =
+                canonical_format(&inputs, FormatGrammar::Program, CompilerLimits::default())
+                    .expect_err("an incomplete derivation cannot format");
+            let checked = check(&inputs, CompilerLimits::default())
+                .expect_err("the same source fails before canonical auditing");
+            assert_eq!(formatted.stage(), checked.stage());
+            assert_eq!(formatted.kind(), checked.kind());
+            assert_eq!(formatted.rule_id(), checked.rule_id());
+            assert_eq!(formatted.to_string(), checked.to_string());
+        }
+    }
+
+    #[test]
+    fn formatting_keeps_resource_stops_distinct_from_source_rejections() {
+        let inputs = [SourceInput::new(
+            "source.wf",
+            b"const value: u64 = 1_u64;\n",
+        )];
+        let mut limits = CompilerLimits::default();
+        limits.lexer.max_tokens = 0;
+        let failure = canonical_format(&inputs, FormatGrammar::Program, limits)
+            .expect_err("lexical ceilings also apply to formatting");
+        assert_eq!(failure.stage(), CompilationStage::Lexing);
+        assert_eq!(failure.kind(), CompilationFailureKind::Resource);
+        assert_eq!(failure.rule_id(), None);
+
+        let mut limits = CompilerLimits::default();
+        limits.canonical.max_work = 0;
+        let failure = canonical_format(&inputs, FormatGrammar::Program, limits)
+            .expect_err("rendering ceilings apply before a result escapes");
+        assert_eq!(failure.stage(), CompilationStage::CanonicalSource);
+        assert_eq!(failure.kind(), CompilationFailureKind::Resource);
+        assert_eq!(failure.rule_id(), None);
+    }
 }
 
 #[cfg(test)]
