@@ -1266,7 +1266,7 @@ The current target inventory contains only x86-64 and AArch64 hosted targets.
 There is no single-execution-thread target or multicore target without
 64-bit atomic read-modify-write in that inventory, and no backend/runtime for
 either degraded form. Those forms are requirements for future targets, not
-missing implementations for any currently supported target. The target's thread model, not `WF_DRIVERS=1`, must
+missing implementations for any currently supported target. A multicore target without atomic addition would need a visible ordinary statement lock for the value, not a lock hidden behind an independent scalar operation. The target's thread model, not `WF_DRIVERS=1`, must
 select a future ordinary-access form: the hosted runtime may run a displaced
 executor and its replacement simultaneously. The existing bounds are 64
 drivers and 128 executors. With each in-flight add at most 2^32, the maximum

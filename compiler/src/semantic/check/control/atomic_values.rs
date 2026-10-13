@@ -156,6 +156,8 @@ impl Checker<'_, '_> {
                 }
                 // The ordinary call checker established that the first argument
                 // is this statement's direct atomic-value binder.
+                // An argument is an atom [GRAM-9], so it holds no nested
+                // operation; each starts from count 0.
                 for argument in arguments.iter().skip(1) {
                     self.atomic_value_expression(argument, bindings, 0, in_loop, call)?;
                 }
