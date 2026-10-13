@@ -332,40 +332,26 @@ jobs:
     needs: [groups, gate]
     if: ${{ !cancelled() && needs.groups.outputs.run == 'true' && needs.groups.outputs.both == 'true' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 2
+    # Worst case: 4 listings of about 3 calls each, every call failing four
+    # times before it answers (5+10+20+40 = 75 s of waits), plus 3 waits of 30 s
+    # between listings: 4*3*75 + 90 = 990 s, under 20 minutes.
+    timeout-minutes: 20
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      # A branch cut before main gained the script judges with main's copy.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: default-branch
+          sparse-checkout: .github
       - name: Require every group green on Linux and macOS
         env:
           GH_TOKEN: ${{ github.token }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           GATE_GROUPS: ${{ needs.groups.outputs.groups }}
         run: |
-          set -euo pipefail
-          groups=$(jq -er '.[]' <<< "$GATE_GROUPS")
-          test -n "$groups"
-          # Only jobs of this workflow's runs for the revision count; a job
-          # re-run in a later attempt or run supersedes the earlier one.
-          runs=$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/workflows/gate.yml/runs?head_sha=$HEAD_SHA&per_page=100" \
-            --jq '.workflow_runs[].id')
-          : > "$RUNNER_TEMP/jobs.tsv"
-          for run in $runs; do
-            gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$run/jobs?filter=latest&per_page=100" \
-              --jq '.jobs[] | select(.completed_at != null) | [.completed_at, .name, .conclusion] | @tsv' >> "$RUNNER_TEMP/jobs.tsv"
-          done
-          missing=0
-          for group in $groups; do
-            for os in ubuntu-24.04 macos-15; do
-              name="$group ($os)"
-              conclusion=$(sort -r "$RUNNER_TEMP/jobs.tsv" | awk -F '\t' -v name="$name" '$2 == name && found == "" { found = $3 } END { print found }')
-              if [ "$conclusion" = success ]; then
-                echo "ok      $name"
-              else
-                echo "MISSING $name: ${conclusion:-no gate job}"
-                missing=1
-              fi
-            done
-          done
-          if [ "$missing" -ne 0 ]; then
-            echo "::error::$HEAD_SHA is not green on both platforms"
-            exit 1
-          fi
+          script=.github/gate-both-platforms.sh
+          [ -f "$script" ] || script=default-branch/.github/gate-both-platforms.sh
+          sh "$script"
