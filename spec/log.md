@@ -11,6 +11,14 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-13 v0.141: a fact some arms hold survives their join, and a joined value is free where its join was bypassed
+
+Rules: changed RANGE-2, RANGE-3
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the specification revision and design-tree change of Whitefoot#414 at commit cd4851320? It covers two things: keeping a fact that holds in only some arms after a join, and fixing the soundness defect where, when an inner arm returns early, the outer other path is wrongly treated as impossible" (translated).
+
+Summary: The range judgment dropped every fact not active at the end of all arms of a join, so the v2h interpreter's slot-move loop, whose length-preserving helper is called in one arm, could not carry the helper's `ensures stack^.inner.len == entry(stack)^.inner.len` to its back edge. RANGE-2 now keeps each fact active at the end of an arm, and each routed postcondition awaiting its `match` there, active after the join where that arm was taken; RANGE-3 step 1 asserts an instance's conclusions only where its fact is active, and step 2 adds that a join on which a fact's activity depends took one of its arms. Step 2 also corrects a soundness defect: a joined value or read was defined as the one of the arm taken on every path, so when an inner `if` had a returning arm, a path an outer join brought in without passing the inner join was refuted, and `251_u8 + v` with `v = 5` on that path, or an out-of-bounds index, was accepted. The definition now also holds where the join was bypassed, a join being bypassed where a later join, some of whose arms did not pass through it, took one of those arms or was itself bypassed. Selection ground: the facts are true exactly on the paths through their arms, and every added alternative only weakens what the judgment assumes, so the judgment accepts nothing new off those paths.
+
 ## 2026-10-13 v0.140: a struct's type invariants travel through enum payloads, bare type parameters, recursive calls and branch deliveries
 
 Rules: changed TYPE-11, FN-9, DIAG-2, GIVE-1, EFF-5, ENT-1, ENT-2, ENT-3, ENT-5, MSR-3, CALL-6

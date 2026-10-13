@@ -293,7 +293,7 @@ mod tests {
             );
             assert!(world.atoms[new.terms[0].0 as usize].ty.is_none());
             assert_eq!(
-                judge(&mut world, &[], &[], &[], differs(old, new)),
+                judge(&mut world, &[], &[], &[], &[], differs(old, new)),
                 Ok(expected)
             );
         }
@@ -343,7 +343,7 @@ mod tests {
                     Some(IntegerType::U64),
                 );
                 assert_eq!(
-                    judge(&mut world, &[], &[], &[], differs(old, new)),
+                    judge(&mut world, &[], &[], &[], &[], differs(old, new)),
                     Ok(expected)
                 );
             }
@@ -385,7 +385,14 @@ mod tests {
             );
             let new = world.read(exit, indices, projection, Some(IntegerType::U32));
             assert_eq!(
-                judge(&mut world, &[fact.clone()], &[0], &[], differs(old, new)),
+                judge(
+                    &mut world,
+                    &[fact.clone()],
+                    &[0],
+                    &[],
+                    &[],
+                    differs(old, new)
+                ),
                 Ok(expected)
             );
         }
@@ -421,7 +428,14 @@ mod tests {
                 Some(IntegerType::U64),
             );
             assert_eq!(
-                judge(&mut world, &[fact.clone()], &[0], &[], differs(old, new)),
+                judge(
+                    &mut world,
+                    &[fact.clone()],
+                    &[0],
+                    &[],
+                    &[],
+                    differs(old, new)
+                ),
                 Ok(expected)
             );
         }
@@ -468,6 +482,7 @@ mod tests {
                     &facts,
                     &active,
                     &[],
+                    &[],
                     differs(value, Linear::constant(7))
                 ),
                 Ok(expected)
@@ -509,7 +524,7 @@ mod tests {
             .units
             .push(Literal::new(known, Relation::Equal, Linear::constant(7)));
         assert_eq!(
-            judge(&mut world, &[frame, relay], &[0, 1], &[], query),
+            judge(&mut world, &[frame, relay], &[0, 1], &[], &[], query),
             Ok(Verdict::Refuted)
         );
     }
@@ -534,7 +549,17 @@ mod tests {
                 .support
                 .push(Literal::new(value, Relation::Equal, Linear::constant(0)));
         }
-        assert!(judge(&mut world, std::slice::from_ref(&fact), &[0], &[], one_tuple).is_ok());
+        assert!(
+            judge(
+                &mut world,
+                std::slice::from_ref(&fact),
+                &[0],
+                &[],
+                &[],
+                one_tuple
+            )
+            .is_ok()
+        );
         let mut many_tuples = Query::default();
         for index in 0..257 {
             let value = world.read(
@@ -548,7 +573,7 @@ mod tests {
                 .push(Literal::new(value, Relation::Equal, Linear::constant(0)));
         }
         assert_eq!(
-            judge(&mut world, &[fact], &[0], &[], many_tuples),
+            judge(&mut world, &[fact], &[0], &[], &[], many_tuples),
             Err(Capacity::Instances)
         );
     }
@@ -574,7 +599,7 @@ mod tests {
                 .push(Literal::new(value, Relation::Equal, Linear::constant(0)));
         }
         assert_eq!(
-            judge(&mut world, &[fact], &[0], &[], query),
+            judge(&mut world, &[fact], &[0], &[], &[], query),
             Err(Capacity::Atoms)
         );
     }

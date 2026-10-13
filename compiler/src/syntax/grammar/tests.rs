@@ -124,7 +124,7 @@ fn complete_inventory_is_pinned() {
     // v0.84's range facts add `apart_clause` [GRAM-4] and `range_clause`,
     // `range_binder` and `range_relation` [GRAM-5]: four productions.
     // v0.90's package bindings add `package_decl` [GRAM-2, MOD-11].
-    // v0.141 adds `range_variant` [GRAM-5, RANGE-1]; a guard is a
+    // v0.142 adds `range_variant` [GRAM-5, RANGE-1]; a guard is a
     // `range_relation`, so no production of its own remains.
     assert_eq!(productions().len(), 101);
     // v0.72's standard library qualifier [MOD-10] adds a `"pkg" | "std"`
@@ -161,7 +161,7 @@ fn complete_inventory_is_pinned() {
     // `pbase` gains one `psuffix*` repeat.
     // v0.128's range guard optional comparison adds one decision.
     // v0.136's unchanged suffix adds a choice inside `clause_expr`.
-    // v0.141 shares the comparison, variant or unchanged choice between a
+    // v0.142 shares the comparison, variant or unchanged choice between a
     // guard and a conclusion, adds `range_variant`'s optional `not`, and
     // retires the guard's optional comparison and separate suffix choice.
     // Walking the merged EBNF in definition order gives 182 decisions.
@@ -185,10 +185,10 @@ fn complete_inventory_is_pinned() {
     // Together the projected entry former and the guard comparison add
     // 95 + 104 rows to the 7,932-row v0.127 inventory.
     // The row inventory preserves FIRST(2), FOLLOW(2) and SELECT provenance.
-    // v0.140's `unchanged` conclusion and v0.141's single `range_relation`
+    // v0.140's `unchanged` conclusion and v0.142's single `range_relation`
     // production (guards and conclusions alike) together give 8,384 rows.
     assert_eq!(SELECT_ROWS.len(), 8_384);
-    // v0.136's `unchanged` and v0.141's `not` are both fixed terminals.
+    // v0.136's `unchanged` and v0.142's `not` are both fixed terminals.
     assert_eq!(diagnostic_terminal_order().len(), 117);
     assert_eq!(productions()[0], Production::Program);
     // v0.70 [GRAM-2] adds the file alias header as an `item` arm and closes
@@ -370,7 +370,7 @@ fn complete_inventory_is_pinned() {
     // strong-LL(2) [GRAM-1, GRAM-5].
     // The projected entry former adds the repeat immediately before these
     // suffix decisions; later decision identities move by one [MSR-3].
-    // v0.136's clause suffix choice moves them once more; v0.141 keeps it.
+    // v0.136's clause suffix choice moves them once more; v0.142 keeps it.
     assert_eq!(DECISIONS[157].production(), Production::Pbase);
     assert_eq!(DECISIONS[157].kind(), DecisionKind::Repeat0);
     assert_eq!(DECISIONS[157].rows().len(), 93);
@@ -392,7 +392,7 @@ fn complete_inventory_is_pinned() {
     // v0.136's diagnostic-only ordinary unchanged suffix [RANGE-1].
     assert_eq!(DECISIONS[153].production(), Production::ClauseExpr);
     assert_eq!(DECISIONS[153].kind(), DecisionKind::Choice);
-    // v0.141 shares comparison, variant and unchanged relations between a
+    // v0.142 shares comparison, variant and unchanged relations between a
     // guard and a conclusion, then adds the variant's optional `not`.
     // A relation has no bare alternative, so it owns no optional [RANGE-1].
     for (index, production, kind) in [

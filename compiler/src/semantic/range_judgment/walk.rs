@@ -46,8 +46,8 @@ use super::facts::{self, Fact, Frame, PlaceView, Query};
 use super::solver::{Capacity, Linear, Literal, Relation, Verdict};
 use super::world::stored_projections;
 use super::world::{
-    Cond, ContainerId, FactId, Location, Modified, Origin, ReadSource, Slot, State, Step, Value,
-    VersionDef, View, World, join, join_states, join_values, negated,
+    Cond, ContainerId, FactId, Guarded, Location, Modified, Origin, ReadSource, Slot, State, Step,
+    Value, VersionDef, View, World, join, join_states, join_values, negated,
 };
 use super::{ApartFailure, CertifiedLoop, JudgmentScope, RangeIssue};
 
@@ -570,7 +570,14 @@ impl<'program> Walker<'program> {
                     .choices
                     .push(negation.into_iter().map(|literal| vec![literal]).collect()),
             }
-            let verdict = facts::judge(&mut self.world, &self.facts, &state.facts, &[], query)?;
+            let verdict = facts::judge(
+                &mut self.world,
+                &self.facts,
+                &state.facts,
+                &state.guarded,
+                &[],
+                query,
+            )?;
             if verdict != Verdict::Refuted {
                 let relation = clause.conclusions[position].node.clone();
                 return Ok(Some(
@@ -1161,13 +1168,19 @@ impl<'program> Walker<'program> {
                             ));
                         }
                         forked.variants.insert(location.clone(), arm.tag);
-                        let enabled: Vec<FactId> = forked
+                        let enabled: Vec<(FactId, Vec<Literal>)> = forked
                             .routed
                             .iter()
-                            .filter(|(at, variant, _)| at == location && *variant == arm.tag)
-                            .map(|(_, _, fact)| *fact)
+                            .filter(|(at, variant, ..)| at == location && *variant == arm.tag)
+                            .map(|(_, _, fact, guards)| (*fact, guards.clone()))
                             .collect();
-                        forked.facts.extend(enabled);
+                        for (fact, guards) in enabled {
+                            if guards.is_empty() {
+                                forked.facts.push(fact);
+                            } else {
+                                forked.guarded.push(Guarded { fact, guards });
+                            }
+                        }
                     }
                     for binder in &arm.binders {
                         let element = match &value {
@@ -2982,7 +2995,7 @@ impl<'program> Walker<'program> {
         };
         query.units.push(negated(goal));
         matches!(
-            facts::judge(&mut self.world, &self.facts, &[], &[], query),
+            facts::judge(&mut self.world, &self.facts, &[], &[], &[], query),
             Ok(Verdict::Refuted)
         )
     }
@@ -3139,6 +3152,7 @@ impl<'program> Walker<'program> {
                         &mut self.world,
                         &self.facts,
                         &entry.facts,
+                        &entry.guarded,
                         &written_instances,
                         query,
                     ) {

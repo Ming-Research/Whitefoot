@@ -871,7 +871,7 @@ mod tests {
         // atoms, and `forall` [RANGE-1] after the element read's `^`. v0.101's
         // `continue` [GRAM-4] first occurs right after `break`, moving every
         // later terminal one slot. v0.136's `unchanged` [RANGE-1] first occurs
-        // in `clause_expr`, before the place suffixes. v0.141's `not` first occurs in
+        // in `clause_expr`, before the place suffixes. v0.142's `not` first occurs in
         // the variant relation after `forall`, moving the effect atoms one slot.
         assert_eq!(FixedTerminal::Alias as u8, 1);
         assert_eq!(FixedTerminal::Equal as u8, 2);
