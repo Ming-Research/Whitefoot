@@ -335,12 +335,6 @@ impl Checker<'_, '_> {
                     aliases.push(other.binding);
                 }
             }
-            if aliases.len() > 1 {
-                self.body
-                    .range_facts
-                    .atomic_aliases
-                    .insert(node_path.clone());
-            }
             let reference = block_bindings
                 .get_mut(&declaration.id())
                 .and_then(|l| l.reference.as_mut())

@@ -12,6 +12,13 @@ Nodes: compiler/waiting-contexts/state-locks
 Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the design-tree change: an atomic target that appears only in proofs takes its lock at statement entry? (Ming-Research/Whitefoot#434, head 5811a8c89)" (translated).
 
 Summary: The lock-order decision's entry-acquired groups gain the groups of targets with no executable use in the guard and block, acquired with every earlier group, because once proofs are erased such a target has no first use to acquire at and entry acquisition keeps the hold SHARE-1 requires, instead of omitting its lock; "before the guard" is reworded to "before the guard or block" without changing the choice. The checker now counts invariant and `use` mentions toward SHARE-2's naming rule.
+## 2026-10-13 The range walk checks every object partition of possibly aliased atomic targets
+
+Nodes: compiler/range-judgment
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the design-tree change: for several atomic targets that may be the same object, the range judgment checks every possible object partition? (Ming-Research/Whitefoot#441, head cb26294b1)" (translated).
+
+Summary: At an atomic statement the range walk checks each partition of the possibly aliased whole-object targets that their pairwise relations allow, giving targets placed in one object one storage location and the others separate ones, so the existing write, call, branch and exit judgments keep a same-or-different relation throughout the block; it replaces the unsupported report for multi-target blocks with range type invariants. Refused were treating possible aliases as always equal or always distinct (each misjudges one case) and conditional alias handling at every mutation. The invariants to restore at exit are keyed by the original entry targets, and loop proof records merge only after every partition proves them. The provisional cost grows with the Bell number of the targets, without a work bound; it is reassessed when real multi-target atomic blocks slow development.
 ## 2026-10-13 Conformance rejections pin their byte range, and an out-of-order requirement is moved rather than restated
 
 Nodes: compiler/verification, compiler/diagnostic-repairs
