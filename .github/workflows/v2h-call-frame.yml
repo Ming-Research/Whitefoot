@@ -23,6 +23,35 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  compile-hosted:
+    # Untagged pushes only: confirms both generated interpreters compile before a 14900K slot is used.
+    if: github.event_name == 'push' && !startsWith(github.event.head_commit.message, '[14900k]')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+      - name: Compile old and new generated interpreters
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y -qq lld >/dev/null
+          out="$RUNNER_TEMP/v2h-compile"
+          mkdir -p "$out/old-source"
+          gen=research/experiments/match-dispatch/wasm/gen.py
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
+          make -C compiler build
+          git archive "$(git rev-parse origin/main)" research/experiments/match-dispatch/wasm | tar -x -C "$out/old-source"
+          python3 "$out/old-source/$gen" "$out/old.wf"
+          python3 "$gen" "$out/new.wf"
+          for form in old new; do
+            compiler/target/gate/whitefootc --dispatch-ledger "$out/$form.wf" -o "$out/wasm-$form"
+          done
+
   compare:
     if: github.event_name == 'workflow_dispatch' || startsWith(github.event.head_commit.message, '[14900k]')
     runs-on: [self-hosted, 14900k]

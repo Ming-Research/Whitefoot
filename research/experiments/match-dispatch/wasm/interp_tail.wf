@@ -2178,7 +2178,7 @@ fn resolve_calls(code: &Box<Slots<Op>>, funcs: &Box<Slots<Func>>) -> ok: Bool re
     if i < code^.inner.len {
       let op = code^.inner[i];
       match op {
-        Call(begin: fi32, at: at, params: unused_params, saved: unused_saved) => {
+        Call(begin: fi32, at: call_at, params: unused_params, saved: unused_saved) => {
           let fi = cvt::<u32, u64>(fi32);
           if fi >= funcs^.inner.len {
             return False();
@@ -2206,7 +2206,7 @@ fn resolve_calls(code: &Box<Slots<Op>>, funcs: &Box<Slots<Func>>) -> ok: Bool re
           let begin32 = cvt::<u64, u32>(callee.start);
           let params16 = cvt::<u64, u16>(callee.params);
           let saved16 = cvt::<u64, u16>(saved);
-          let resolved = Op::Call(begin: begin32, at: at, params: params16, saved: saved16);
+          let resolved = Op::Call(begin: begin32, at: call_at, params: params16, saved: saved16);
           set code^.inner[i] = resolved;
         }
 @@CALL_RESOLUTION_OTHER_ARMS@@
