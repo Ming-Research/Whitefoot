@@ -15,7 +15,7 @@ fn expect_nonzero(length: u64) -> result: unit pure contract {
   return unit;
 }
 
-fn unchanged(rows: &Slots<Slots<u8, 4>, 2>, index: u64) -> result: u8 reads(rows) contract {
+fn preserved_value(rows: &Slots<Slots<u8, 4>, 2>, index: u64) -> result: u8 reads(rows) contract {
   requires index < rows^.len;
 } {
   doc "Both signs of an indexed measure goal survive while its named offset is unchanged [ENT-5]: a reread of the measure inside each guarded branch discharges a requirement that restates the guard's sign.";

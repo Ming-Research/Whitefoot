@@ -1130,7 +1130,7 @@ pub(super) fn bounds_after_kill(
         (_, None) => ("leave", String::new(), "each one's"),
     };
     format!(
-        "`{}` is not proved here, but facts about `{measure}` that held before the {call} {sites} would prove it, and {rows} {written}, removed them: where {who} {leaves} `{measure}` unchanged, {narrowing}state `{measure}` unchanged in {its} `ensures`; or {}",
+        "`{}` is not proved here, but facts about `{measure}` that held before the {call} {sites} would prove it, and {rows} {written}, removed them: where {who} {leaves} `{measure}` unchanged, {narrowing}state equality of the entry and exit values of `{measure}` in {its} `ensures`; or {}",
         case.text,
         case.guard("access", SKIP)
     )

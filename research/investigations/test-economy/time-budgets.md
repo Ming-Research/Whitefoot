@@ -522,6 +522,16 @@ macOS to 425 s, on the status board on 2026-10-12 (card
 coord-ci-budget-1012), and asked whether macOS speed also depends on the
 host assigned, to lower the budget or split it by host once known.
 
+**`check/runtime` on ubuntu, raised to 30 s.** The same main code ran the
+stage in 12.1 s on an AMD EPYC 9V45 host (run 38303779039), 14.6 s on an
+AMD EPYC 9V74 (run 38306929562) and 19.1 and 19.3 s on AMD EPYC 7763 hosts
+(runs 38310976155 and 38314210000), with only a budget-file change merged
+between the 14.6-s and 19.1-s runs; three pull requests that do not touch
+the runtime, Whitefoot#383 and #399 twice, took 20.6, 20.0 and 20.1 s on
+EPYC 7763 hosts against 20 s on 2026-10-12. The stage is its group's only
+labeled stage. The owner approved a raise of 10 s, to 30 s, on the status
+board on 2026-10-12 (card ci-runtime-budget-raise).
+
 **The candidate's images, back to 10 s.** `performance-candidate-images`
 builds the five formal kernels with the candidate compiler right after the
 two cold compiler builds. On PRs #278 and #289 it overran its 10-s floor on
@@ -647,6 +657,32 @@ jobs, made the slow runs. From this, the gate runs macOS only where its
 answer decides a merge (a ready pull request, `main`, a manual run) and checks
 both platforms per revision in a final job
 ([decision](../../../design/compiler/verification.md)).
+
+### Gate only where a pull request is open
+
+Read from the Actions API on 2026-10-12: `gate.yml` had 408 runs in the 24
+hours to 11:07Z, at most 41 created in one UTC hour. Its 359 push runs on
+branches other than `main` created between 2026-10-11 11:54Z and 2026-10-12
+11:05Z were compared with each branch's pull requests: 235 were for a branch
+with a pull request open when the run was created (created no later than the
+run and not closed before it), and 124, about a third, for a branch with
+none. Every one of these branches was named `claude/`, so a branch name could
+not have told the two apart. `io-hosts.yml` ran on the same pushes.
+
+From this, a push to a branch without an open pull request runs one deciding
+job and skips every check ([decision](../../../design/compiler/verification.md)).
+Two properties of GitHub, documented rather than measured here, shape the
+rule. GitHub starts no pull request run while the pull request conflicts
+with its base, so pull request events cannot be the only trigger. And a
+session opens its pull request seconds after the first push, while that
+push's run may wait minutes for a runner before it decides; a push run that
+counted every pull request open when it decided would usually check that
+head a second time beside the opening's run. The push run therefore counts
+only pull requests created no later than itself: a run is created after its
+push, so this errs only toward checking a head twice. A conflicting pull
+request opened after its branch's last push gets no run of its own either;
+that head cannot merge until `main` is merged into it, and the push that
+does so is checked.
 
 ## Daily loop
 

@@ -11,6 +11,7 @@ use super::super::super::places::{
 };
 use super::super::expressions::calls::user::WAIT1_DECLARE_THE_CALLER_WAITING;
 use super::super::references::{ReferenceInfo, ReferenceKind};
+use super::super::types::SelectedPlaceType;
 use super::super::{CheckStop, Checker, EffectSet, LocalBinding, TypedExpression};
 use super::{ControlCounters, ControlScope, StatementResult};
 use crate::semantic::check::FunctionContext;
@@ -27,6 +28,7 @@ pub(in crate::semantic::check) const SHARE2_KEY_BEFORE_THE_STATEMENT: &str = "re
 pub(in crate::semantic::check) const SHARE2_WAIT_OUTSIDE_THE_BLOCK: &str = "move the waiting call out of the atomic statement: end the statement first, wait, and start another atomic statement for any update that depends on the outcome";
 pub(in crate::semantic::check) const SHARE2_END_THE_OUTER_STATEMENT: &str = "name both handles as targets of one statement, `atomic outer = &first, inner = &second { … }`, or end the outer statement before starting the inner one";
 pub(in crate::semantic::check) const SHARE2_READ_ONLY_GUARD: &str = "make the guard read only, calling a function whose row writes nothing and moves no argument, and make the update in the block";
+pub(in crate::semantic::check) const SHARE2_WAIT_FOR_THE_TIME_OUTSIDE_THE_GUARD: &str = "wait for the time outside the guard: call `std::time::sleep_until` with the deadline before the statement, or spawn a context that sleeps until the deadline and then fires a cancellation source, and give the statement a target on that source's `cancel_state` whose `fired` the guard reads";
 pub(in crate::semantic::check) const SHARE2_HOLD_A_HANDLE_ONCE: &str = "hold a handle whole once, or name its entries with entry and key-set targets";
 pub(in crate::semantic::check) const SHARE2_PROVE_THE_HANDLE_PLACES_APART: &str = "prove before the statement that the positions of the two handle places are distinct, such as by a `requires` clause or an `if` around the statement, or hold the second handle in an atomic statement of its own";
 pub(in crate::semantic::check) const SHARE2_USE_THE_BINDING: &str = "remove the target, or the whole statement when no target is used; a statement holds what its targets name, so a target nothing uses holds a state or entries for nothing";
@@ -724,6 +726,24 @@ impl Checker<'_, '_> {
             Some(expression_node) => {
                 let condition =
                     self.check_condition(context, expression_node, bindings, scope.loops.len())?;
+                if let Some((call, handle)) =
+                    self.guard_self_changing_part(&condition.expression)?
+                {
+                    let call = self
+                        .types
+                        .declarations
+                        .tree
+                        .node_with_path(&call)
+                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                    return self.types.declarations.issue_node(
+                        SemanticRule::Share2,
+                        call,
+                        SemanticIssueKind::AtomicGuardReadsSelfChanging {
+                            handle,
+                            mechanical_fix: SHARE2_WAIT_FOR_THE_TIME_OUTSIDE_THE_GUARD,
+                        },
+                    );
+                }
                 if self.guard_writes(&condition.expression) {
                     return self.types.declarations.issue_node(
                         SemanticRule::Share2,
@@ -744,6 +764,58 @@ impl Checker<'_, '_> {
             .children_with(node, Production::Stmt)?;
         let block = self.check_block(context, &statements, bindings, counters, scope)?;
         Ok((guard, block))
+    }
+
+    /// [SHARE-2, PRE-2] the call of a guard whose row reads or writes a path
+    /// whose type is or has a self-changing host handle part, with that part.
+    /// A guard's `expr` holds at most one call, whose arguments are atoms
+    /// [GRAM-5, GRAM-9], so the walk finds at most that call and the site is
+    /// unique. A row path is rooted at one of the
+    /// callee's reference parameters, so its type is the one the caller's
+    /// projected path has [EFF-5]; a formal's row is rebased to the selected
+    /// callee's parameters [FN-4].
+    fn guard_self_changing_part(
+        &self,
+        expression: &CheckedExpression,
+    ) -> Result<Option<(crate::NodePath, String)>, CheckStop> {
+        for child in expression_children(expression) {
+            if let Some(found) = self.guard_self_changing_part(child)? {
+                return Ok(Some(found));
+            }
+        }
+        let CheckedExpression::UserCall {
+            function,
+            formal_effects,
+            call,
+            ..
+        } = expression
+        else {
+            return Ok(None);
+        };
+        let signature = self
+            .types
+            .signatures
+            .get(function.0 as usize)
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        let paths: Vec<&CheckedStatePath> = match formal_effects {
+            Some(effects) => effects.reads.iter().chain(&effects.writes).collect(),
+            None => signature
+                .declared_effects
+                .reads
+                .iter()
+                .chain(&signature.declared_effects.writes)
+                .collect(),
+        };
+        for path in paths {
+            let ty = match self.types.effect_path_selected(path, signature)? {
+                SelectedPlaceType::Value(ty) | SelectedPlaceType::Range(ty) => ty,
+                SelectedPlaceType::UnresolvedWindowElement => continue,
+            };
+            if let Some(handle) = self.types.first_self_changing_part(ty)? {
+                return Ok(Some((call.clone(), handle)));
+            }
+        }
+        Ok(None)
     }
 
     /// [SHARE-2, PAR-1] whether a guard's footprint writes a path: a call in

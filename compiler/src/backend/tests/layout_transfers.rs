@@ -453,8 +453,8 @@ fn main() -> status: std::process::ExitStatus pure {
   if copied.j != 10_u32 {
     return std::process::exit_status(code: 4_u8);
   }
-  let unchanged = copy_local_ten(source: &target, target: &copied);
-  if unchanged != 1_u32 {
+  let kept = copy_local_ten(source: &target, target: &copied);
+  if kept != 1_u32 {
     return std::process::exit_status(code: 5_u8);
   }
   if copied.a != 1_u32 {
@@ -821,8 +821,8 @@ fn main() -> status: std::process::ExitStatus pure {
   for (round in 0_u64..32_u64) {
     let seed = round +wrap 7_u64;
     let unchanged_input = AliasedSnapshot::Number(n: seed);
-    let unchanged = unchanged_snapshot(value: move unchanged_input);
-    let unchanged_observed = observe_snapshot(value: move unchanged);
+    let kept = unchanged_snapshot(value: move unchanged_input);
+    let unchanged_observed = observe_snapshot(value: move kept);
     if unchanged_observed != seed {
       return std::process::exit_status(code: 1_u8);
     }

@@ -691,6 +691,15 @@ pub enum SemanticIssueKind {
         /// Bare spelling of the rejected const operation.
         operation: &'static str,
     },
+    /// A const argument's value lies outside the closed range of its const
+    /// parameter's integer type [CONST-1]: at the argument when it is closed,
+    /// and at the concrete instance that evaluates it otherwise.
+    ConstArgumentOutOfRange {
+        /// The const parameter's written integer type.
+        parameter_type: String,
+        /// The argument's evaluated value.
+        value: u64,
+    },
     /// A const-expression names a runtime arithmetic mode; const evaluation
     /// has exactly the five bare spellings under the const-eval overflow
     /// policy [CONST-1].
@@ -718,6 +727,14 @@ pub enum SemanticIssueKind {
     BehaviorArgumentMismatch {
         /// The part of the formal interface the supplied function misses.
         expected: String,
+        /// The repair [DIAG-1].
+        mechanical_fix: &'static str,
+    },
+    /// [FN-3] an interface application in an argument list whose written
+    /// arguments are not, in order, the binders one in-scope introduction of
+    /// that interface declares: a literal, a primitive or other concrete
+    /// type, or a const generic that no such introduction declares.
+    UnforwardedGroupApplication {
         /// The repair [DIAG-1].
         mechanical_fix: &'static str,
     },
@@ -1240,6 +1257,14 @@ pub enum SemanticIssueKind {
     },
     /// An atomic statement's guard whose footprint writes a path [SHARE-2].
     AtomicGuardWrites {
+        /// The repair [DIAG-1].
+        mechanical_fix: &'static str,
+    },
+    /// An atomic statement's guard whose call reads or writes a path with a
+    /// self-changing host handle part [SHARE-2, PRE-2].
+    AtomicGuardReadsSelfChanging {
+        /// The first self-changing part of the path's type, from its name.
+        handle: String,
         /// The repair [DIAG-1].
         mechanical_fix: &'static str,
     },

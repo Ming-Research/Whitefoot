@@ -376,6 +376,37 @@ fn a_move_of_the_root_does_not_re_root_its_references() {
     });
 }
 
+/// [REF-2, WIN-3, STOR-3] a move out of one field releases the owner's other
+/// affine parts, and the use of a reference to a released part names that
+/// release as its invalidating event rather than the sibling's move.
+#[test]
+fn a_sibling_move_releases_the_referenced_field() {
+    let source = include_bytes!(
+        "../../../../tests/conformance/cases/ref2-neg-reference-after-sibling-move-releases-it.wf"
+    );
+    assert_rule_kind(source, SemanticRule::Ref2, |kind| {
+        matches!(
+            kind,
+            SemanticIssueKind::InvalidReferenceUse { event, .. } if event.contains("was released")
+        )
+    });
+}
+
+/// [REF-2, WIN-3] a move out of one field consumes the whole owner, so a
+/// reference to the owner is invalid through its moved prefix.
+#[test]
+fn a_field_move_invalidates_a_reference_to_its_owner() {
+    let source = include_bytes!(
+        "../../../../tests/conformance/cases/ref2-neg-owner-reference-after-field-move.wf"
+    );
+    assert_rule_kind(source, SemanticRule::Ref2, |kind| {
+        matches!(
+            kind,
+            SemanticIssueKind::InvalidReferenceUse { event, .. } if event.contains("moved out of")
+        )
+    });
+}
+
 /// [REF-2] compares evaluated index steps. Replacing the same dynamically
 /// indexed owner is a proper-prefix write even though the step came from a
 /// binding rather than a literal.

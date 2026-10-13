@@ -1744,7 +1744,7 @@ fn current_value_image_overflow_precedes_redundant_block_detection() {
   requires value <= 0_u64;
 }} {{
   let scaled = 18446744073709551615_u64 * value;
-  invariant unchanged: scaled <= scaled {{
+  invariant reflexive: scaled <= scaled {{
     use (18446744073709551615_u64 * scaled <= 0_u64);
   }}
   return unit;
@@ -1755,7 +1755,7 @@ fn current_value_image_overflow_precedes_redundant_block_detection() {
     assert_prf1_issue_named(
         source.as_bytes(),
         SourceProofObligation::CertificateArithmeticOverflow,
-        "unchanged",
+        "reflexive",
         ExpectedProofIssueNode::Use {
             source: "use (18446744073709551615_u64 * scaled <= 0_u64);",
             occurrence: 0,
