@@ -1,0 +1,230 @@
+#!/usr/bin/env python3
+"""Count one binary's executed instructions from a callgrind file, per Lua call.
+
+Part of the surviving-call probe in DESIGN.md ("Probe before building");
+deleted with the experiment branch. The counting follows the join in
+.github/workflows/halo-call-path.yml (callgrind addresses joined to objdump),
+so the numbers are comparable with that workflow's B/C/D measurements.
+
+  measure.py run LABEL EXE CALLGRIND_OUT LUA_CALLS OUTDIR
+      writes OUTDIR/LABEL.json and OUTDIR/LABEL.arm-<role>.txt (the arm's
+      disassembly with executions per Lua call).
+  measure.py table OUTDIR LABEL...
+      prints the markdown comparison table and the pre-written criteria.
+
+Arms are the functions `...run$instance$<hash>.body.arm.<n>` for the dispatch
+arms of the five hot opcodes; clones are the symbols ending `.most`.
+"Self" is the instructions executed in the function's own code. "With
+callees" adds the inclusive cost callgrind attributes to its calls, leaving
+out callees that are dispatch arms or the dispatch body (a part reaches the
+next arm by a tail jump, which callgrind may book as a call).
+"""
+import collections
+import json
+import os
+import re
+import subprocess
+import sys
+
+ARMS = {25: 'SubRK', 54: 'LtJmpRK', 5: 'GetUpval', 63: 'Call', 65: 'Return'}
+STORE = re.compile(r'^(v?mov\w*|stos\w*)$')
+DISPATCH = re.compile(r'\.arm\.\d+$|\.body$|\.dispatch$')
+
+
+def parse_callgrind(cg_out, exe_real):
+    names = {'ob': {}, 'fn': {}}
+
+    def resolve(kind, rest):
+        m = re.match(r'\((\d+)\)\s*(.*)$', rest)
+        if not m:
+            return rest
+        if m.group(2):
+            names[kind][m.group(1)] = m.group(2)
+        return names[kind].get(m.group(1), rest)
+
+    cost, fn_min = collections.Counter(), {}
+    self_by_fn, callee_incl = collections.Counter(), collections.Counter()
+    npos, last, ob, fn, cfn, skip = 1, [0, 0], None, None, None, False
+    with open(cg_out) as f:
+        for raw in f:
+            line = raw.rstrip('\n')
+            if line.startswith('positions:'):
+                npos = len(line.split()) - 1
+                continue
+            m = re.match(r'^(ob|cob|fl|fi|fe|cfi|cfl|fn|cfn)=(.*)$', line)
+            if m:
+                kind = m.group(1)
+                if kind == 'ob':
+                    ob = os.path.realpath(resolve('ob', m.group(2)))
+                elif kind == 'cob':
+                    resolve('ob', m.group(2))
+                elif kind == 'fn':
+                    fn = re.sub(r"'\d+$", '', resolve('fn', m.group(2)))
+                elif kind == 'cfn':
+                    cfn = re.sub(r"'\d+$", '', resolve('fn', m.group(2)))
+                continue
+            if line.startswith(('calls=', 'jump=', 'jcnd=')):
+                skip = line.startswith('calls=')
+                continue
+            parts = line.split()
+            if not parts or not re.match(r'^([+-]?(0x)?[0-9a-fA-F]+|\*)$', parts[0]):
+                continue
+            pos = []
+            for i, tok in enumerate(parts[:npos]):
+                pos.append(last[i] if tok == '*' else last[i] + int(tok, 0) if tok[0] in '+-' else int(tok, 0))
+            last[:len(pos)] = pos
+            if skip:
+                skip = False
+                if ob == exe_real and fn is not None and cfn is not None and len(parts) > npos:
+                    callee_incl[(fn, cfn)] += int(parts[npos])
+                continue
+            if ob != exe_real or fn is None or len(parts) <= npos:
+                continue
+            cost[pos[0]] += int(parts[npos])
+            self_by_fn[fn] += int(parts[npos])
+            fn_min[fn] = min(fn_min.get(fn, pos[0]), pos[0])
+    return cost, fn_min, self_by_fn, callee_incl
+
+
+def disassemble(exe, sym):
+    out = subprocess.run(['objdump', '-d', '--no-show-raw-insn', '-M', 'intel', f'--disassemble={sym}', exe],
+                         capture_output=True, text=True).stdout
+    rows = []
+    for row in out.splitlines():
+        m = re.match(r'^\s*([0-9a-f]+):\s*(.*)$', row)
+        if m:
+            rows.append((int(m.group(1), 16), m.group(2)))
+    return rows
+
+
+def run(label, exe, cg_out, calls, outdir):
+    calls = int(calls)
+    exe_real = os.path.realpath(exe)
+    cost, fn_min, self_by_fn, callee_incl = parse_callgrind(cg_out, exe_real)
+    nm = {}
+    for row in subprocess.run(['nm', '--defined-only', exe], capture_output=True, text=True).stdout.splitlines():
+        bits = row.split(None, 2)
+        if len(bits) == 3 and bits[1] in 'tTwW':
+            nm.setdefault(bits[2], int(bits[0], 16))
+    biases = collections.Counter(fn_min[f] - nm[f] for f in fn_min if f in nm)
+    bias = biases.most_common(1)[0][0] if biases else 0
+    total = sum(cost.values())
+    result = {'label': label, 'lua_calls': calls, 'total': total, 'total_per_call': total / calls,
+              'bias': hex(bias), 'arms': {}}
+
+    for number, role in ARMS.items():
+        syms = [s for s in nm if re.search(r'\$[0-9a-f]+\.body\.arm\.%d$' % number, s)]
+        if len(syms) != 1:
+            result['arms'][role] = {'error': f'{len(syms)} symbols match arm {number}: {syms}'}
+            continue
+        sym = syms[0]
+        rows = disassemble(exe, sym)
+        executed = sum(cost.get(a + bias, 0) for a, _ in rows)
+        callees = {c: v / calls for (f, c), v in callee_incl.items() if f == sym and not DISPATCH.search(c)}
+        # The entry block: the instructions before the first control transfer.
+        entry_stores, entry_pushes, entry_len = 0, 0, 0
+        for _, text in rows:
+            mnemonic, _, operands = text.partition(' ')
+            if mnemonic.startswith('j') or mnemonic in ('call', 'ret'):
+                break
+            entry_len += 1
+            first = operands.strip().split(',', 1)[0]
+            if mnemonic == 'push':
+                entry_pushes += 1
+            elif STORE.match(mnemonic) and re.match(r'^[a-z ]*\[(rsp|rbp)', first):
+                entry_stores += 1
+        stores = sum(1 for _, t in rows if STORE.match(t.partition(' ')[0]) and re.match(r'^[a-z ]*\[(rsp|rbp)', t.partition(' ')[2].strip().split(',', 1)[0]))
+        result['arms'][role] = {
+            'symbol': sym, 'static_instructions': len(rows), 'self_per_call': executed / calls,
+            'self_per_call_callgrind_fn': self_by_fn.get(sym, 0) / calls,
+            'with_callees_per_call': executed / calls + sum(callees.values()),
+            'callees_per_call': dict(sorted(callees.items(), key=lambda kv: -kv[1])),
+            'entry_block_instructions': entry_len, 'entry_block_stack_stores': entry_stores,
+            'entry_block_pushes': entry_pushes, 'static_stack_stores': stores,
+        }
+        with open(os.path.join(outdir, f'{label}.arm-{role}.txt'), 'w') as w:
+            w.write(f'# {sym}\n# executions per Lua call, address, instruction (entry block: first {entry_len})\n')
+            for a, text in rows:
+                n = cost.get(a + bias, 0)
+                w.write(f'{n / calls:9.3f}  {a:x}: {text}\n')
+
+    clones = {}
+    for fname, n in self_by_fn.items():
+        if fname.endswith('.most'):
+            clones[fname] = n / calls
+    result['clones'] = dict(sorted(clones.items(), key=lambda kv: -kv[1]))
+    result['clones_self_per_call'] = sum(clones.values())
+    result['clones_executed'] = sum(1 for v in clones.values() if v > 0)
+    result['clones_defined'] = sum(1 for s in nm if s.endswith('.most'))
+    with open(os.path.join(outdir, f'{label}.json'), 'w') as w:
+        json.dump(result, w, indent=1)
+    print(f'{label}: total per Lua call {result["total_per_call"]:.2f}; '
+          + ' '.join(f'{r} {a.get("self_per_call", float("nan")):.1f}' for r, a in result['arms'].items())
+          + f'; clones executed {result["clones_executed"]}/{result["clones_defined"]}, self {result["clones_self_per_call"]:.2f}')
+
+
+def table(outdir, labels):
+    data = {}
+    for label in labels:
+        path = os.path.join(outdir, f'{label}.json')
+        if os.path.exists(path):
+            data[label] = json.load(open(path))
+        else:
+            print(f'(no result for {label})')
+    labels = [l for l in labels if l in data]
+
+    def arm(d, role, key):
+        return d['arms'].get(role, {}).get(key, float('nan'))
+
+    rows = [
+        ('Program total, instructions per Lua call', lambda d: d['total_per_call']),
+        ('SubRK (arm 25) self', lambda d: arm(d, 'SubRK', 'self_per_call')),
+        ('LtJmpRK (arm 54) self', lambda d: arm(d, 'LtJmpRK', 'self_per_call')),
+        ('GetUpval (arm 5) self', lambda d: arm(d, 'GetUpval', 'self_per_call')),
+        ('SubRK + LtJmpRK + GetUpval', lambda d: sum(arm(d, r, 'self_per_call') for r in ('SubRK', 'LtJmpRK', 'GetUpval'))),
+        ('Call (arm 63) self', lambda d: arm(d, 'Call', 'self_per_call')),
+        ('Return (arm 65) self', lambda d: arm(d, 'Return', 'self_per_call')),
+        ('Call with callees', lambda d: arm(d, 'Call', 'with_callees_per_call')),
+        ('Return with callees', lambda d: arm(d, 'Return', 'with_callees_per_call')),
+        ('`.most` clones: self instructions per Lua call (all)', lambda d: d['clones_self_per_call']),
+        ('`.most` clones executed / defined', lambda d: f"{d['clones_executed']} / {d['clones_defined']}"),
+        ('SubRK entry block: stack stores (static)', lambda d: arm(d, 'SubRK', 'entry_block_stack_stores')),
+        ('SubRK entry block: pushes (static)', lambda d: arm(d, 'SubRK', 'entry_block_pushes')),
+        ('SubRK entry block: instructions (static)', lambda d: arm(d, 'SubRK', 'entry_block_instructions')),
+    ]
+    out = ['| Measure | ' + ' | '.join(labels) + ' |', '|---|' + '---|' * len(labels)]
+    for name, fn in rows:
+        cells = []
+        for l in labels:
+            v = fn(data[l])
+            cells.append(v if isinstance(v, str) else (f'{v:.2f}' if isinstance(v, float) else str(v)))
+        out.append(f'| {name} | ' + ' | '.join(cells) + ' |')
+    out.append('')
+    if 'V0' in data:
+        v0 = data['V0']
+        shown = f"{v0['total_per_call']:.2f}"
+        out.append('V0 reproduces B: ' + ('yes, 841.53' if shown == '841.53' else
+                   f'!!!!!! NO: V0 is {shown}, B was 841.53; the codegen path differs from lld\'s, read nothing below as B-relative !!!!!!'))
+
+        def trio(d):
+            return sum(arm(d, r, 'self_per_call') for r in ('SubRK', 'LtJmpRK', 'GetUpval'))
+        for name in ('V1', 'V2', 'V3'):
+            if name in data:
+                d = data[name]
+                out.append(f'{name} against V0: three-arm sum {trio(d) - trio(v0):+.2f}, program total {d["total_per_call"] - v0["total_per_call"]:+.2f} per Lua call')
+        if 'V1' in data:
+            gain = (trio(v0) - trio(data['V1']), v0['total_per_call'] - data['V1']['total_per_call'])
+            out.append('Pre-written rejection (V1 lowers neither the three-arm sum nor the total by at least 10): '
+                       + ('NOT triggered' if gain[0] >= 10 or gain[1] >= 10 else 'TRIGGERED: the convention premise is rejected'))
+        if 'V1' in data and 'V2' in data:
+            near = abs(trio(data['V2']) - trio(data['V1'])) <= 3 or trio(data['V2']) <= trio(data['V1'])
+            out.append('V2 alone reaches V1\'s three-arm sum within 3 (cost is spill placement, not the convention): '
+                       + ('YES' if near else 'no'))
+    print('\n'.join(out))
+
+
+if __name__ == '__main__':
+    if sys.argv[1] == 'run':
+        run(*sys.argv[2:7])
+    else:
+        table(sys.argv[2], sys.argv[3:])

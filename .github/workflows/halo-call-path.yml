@@ -383,3 +383,194 @@ jobs:
           path: |
             ${{ runner.temp }}/halo-call-path/
             !${{ runner.temp }}/halo-call-path/halo-temps
+
+  # The surviving-call probe (research/investigations/halo-call-path/DESIGN.md,
+  # "Probe before building: the convention on the surviving calls only"). It
+  # needs B's module, the one built by a compiler without call entries, but
+  # this branch merges the call-entry compiler (D), so the job builds the
+  # compiler of the commit that produced B (run 38329105320, head 98aa600b1)
+  # in a second worktree and builds Halo with that. The post-LTO module is
+  # lld's `*.0.5.precodegen.bc` (the module lld hands to code generation),
+  # disassembled to text; probe/variants.py writes V0-V3 from it; each variant
+  # goes through host code generation only (clang -O2 with its optimization
+  # passes disabled, so the IR is not reordered beyond code generation), is
+  # linked as the original link is (clang -pthread -fuse-ld=lld, -lm) and is
+  # counted by callgrind as the job above counts. B's own binary is counted
+  # too (Bplain), so a V0 that does not reproduce 841.53 shows whether code
+  # generation or the module is what differs.
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      B_COMMIT: 98aa600b1
+      FIB_N: "32"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install the host toolchain, llvm-dis and valgrind
+        run: |
+          set -euo pipefail
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo apt-get install -y -q "llvm-$version" valgrind binutils
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          sudo ln -sf "/usr/bin/llvm-dis-$version" /usr/local/bin/llvm-dis
+          /usr/bin/clang --version
+          ld.lld --version
+          valgrind --version
+          rustup default stable
+          cargo --version
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-${{ runner.arch }}-halo-call-path-probe-b
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-halo-call-path-probe-
+
+      # B's compiler: the commit of run 38329105320, before the call entries.
+      - name: Build the compiler of the commit that produced B
+        run: |
+          set -euo pipefail
+          git worktree add --detach "$RUNNER_TEMP/b" "$B_COMMIT"
+          git -C "$RUNNER_TEMP/b" log -1 --format='B compiler commit %H %s'
+          cargo fetch --locked --manifest-path "$RUNNER_TEMP/b/compiler/Cargo.toml"
+          make -C "$RUNNER_TEMP/b/compiler" build
+          ls -l "$RUNNER_TEMP/b/compiler/target/gate/whitefootc"
+
+      # Halo's bench host with full LTO by B's compiler, once plainly (Bplain)
+      # and once with lld keeping its temporaries.
+      - name: Build Halo with B's compiler, keeping the post-LTO module
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/halo-probe"
+          halo="$RUNNER_TEMP/halo-b"
+          wfc="$RUNNER_TEMP/b/compiler/target/gate/whitefootc"
+          rm -rf "$out" "$halo"
+          mkdir -p "$out/temps" "$out/ir" "$out/callgrind"
+          git clone --quiet https://github.com/Ming-Research/Halo-wf.git "$halo"
+          git -C "$halo" checkout --quiet "$HALO_REVISION"
+          cd "$halo"
+          graph=research/experiments/halo-bench/modules.wfg
+          "$wfc" --graph "$graph" --entry bench --full-lto -o "$out/halo-Bplain"
+          CCC_OVERRIDE_OPTIONS='+-Wl,--save-temps' \
+            "$wfc" --graph "$graph" --entry bench --full-lto -o "$out/temps/halo-temps"
+          ls -l "$out/temps"
+          llvm-dis "$out/temps/halo-temps.0.5.precodegen.bc" -o "$out/ir/B.precodegen.ll"
+          if cmp -s "$out/halo-Bplain" "$out/temps/halo-temps"; then same=identical; else same=different; fi
+          {
+            echo "B compiler: $(git -C "$RUNNER_TEMP/b" rev-parse HEAD) ($(sha256sum "$wfc" | cut -c1-12)); halo $HALO_REVISION"
+            echo "plain and save-temps binaries: $same"
+            /usr/bin/clang --version | head -n 1
+            ld.lld --version
+            uname -a
+            lscpu | grep -E 'Model name|^CPU\(s\)' || true
+          } | tee "$out/manifest.txt"
+
+      - name: Write the variants
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/halo-probe"
+          mkdir -p "$out/variants"
+          python3 -I research/investigations/halo-call-path/probe/variants.py \
+            "$out/ir/B.precodegen.ll" "$out/variants" | tee "$out/variants-stdout.txt"
+
+      # Code generation only, then the original link without LTO: the bench
+      # host's runtime is already inside the module (full LTO merged it).
+      # -Xclang -disable-llvm-passes keeps clang's -O2 code generation and
+      # skips the IR pipeline, so the variants differ from V0 by the rewrite
+      # alone. HOST_OPTIMIZATION_ARGUMENTS (-O2 -falign-functions=64) and
+      # the link libraries (-lm, -pthread) are those of whitefootc.
+      - name: Generate code and link the variants
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/halo-probe"
+          for v in V0 V1 V2 V3; do
+            ll="$out/variants/$(echo "$v" | tr 'V' 'v').ll"
+            SECONDS=0
+            /usr/bin/clang -O2 -falign-functions=64 -Wno-override-module -Xclang -disable-llvm-passes \
+              -c -x ir "$ll" -o "$out/variants/$v.o"
+            /usr/bin/clang -pthread -fuse-ld=lld -O2 -falign-functions=64 "$out/variants/$v.o" -lm -o "$out/halo-$v"
+            echo "$v: codegen and link ${SECONDS} s, $(size "$out/halo-$v" | tail -n 1)"
+          done | tee "$out/codegen.txt"
+          { echo "Bplain: $(size "$out/halo-Bplain" | tail -n 1)"
+            if cmp -s "$out/halo-V0" "$out/halo-Bplain"; then echo "V0 binary is byte-identical to Bplain"; else echo "V0 binary differs from Bplain (expected if clang code generation is not lld's)"; fi
+          } | tee -a "$out/codegen.txt"
+
+      - name: Check fib's output on every binary
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/halo-probe"
+          sed "s/^local N = 30\$/local N = $FIB_N/" "$RUNNER_TEMP/halo-b/research/experiments/halo-bench/kernels/fib.lua" > "$out/fib.lua"
+          grep -q "^local N = $FIB_N\$" "$out/fib.lua"
+          expected=$(python3 -c "a,b=0,1
+          for _ in range($FIB_N): a,b=b,a+b
+          print(a)")
+          "$out/halo-Bplain" < "$out/fib.lua" > "$out/fib.Bplain.out"
+          test "$(cat "$out/fib.Bplain.out")" = "$expected"
+          for v in V0 V1 V2 V3; do
+            "$out/halo-$v" < "$out/fib.lua" > "$out/fib.$v.out"
+            cmp "$out/fib.Bplain.out" "$out/fib.$v.out"
+            echo "$v prints $(cat "$out/fib.$v.out"), as B does (expected $expected)"
+          done
+
+      # The five counts run at once; each is one process.
+      - name: Count instructions with callgrind and join to the disassembly
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/halo-probe"
+          calls=$(python3 -c "a,b=0,1
+          for _ in range($FIB_N + 1): a,b=b,a+b
+          print(2 * a - 1)")
+          echo "fib($FIB_N) makes $calls Lua calls of fib" | tee -a "$out/manifest.txt"
+          pids=()
+          for v in Bplain V0 V1 V2 V3; do
+            valgrind --tool=callgrind --dump-instr=yes --collect-jumps=yes --dump-line=no \
+              --compress-strings=no --compress-pos=no \
+              --callgrind-out-file="$out/callgrind/$v.out" "$out/halo-$v" < "$out/fib.lua" \
+              > "$out/callgrind/$v.stdout" 2> "$out/callgrind/$v.stderr" &
+            pids+=($!)
+          done
+          for pid in "${pids[@]}"; do wait "$pid"; done
+          for v in Bplain V0 V1 V2 V3; do
+            python3 -I research/investigations/halo-call-path/probe/measure.py run \
+              "$v" "$out/halo-$v" "$out/callgrind/$v.out" "$calls" "$out/callgrind"
+          done
+
+      - name: Table
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/halo-probe"
+          python3 -I research/investigations/halo-call-path/probe/measure.py table "$out/callgrind" Bplain V0 V1 V2 V3 | tee "$out/table.md"
+          if grep -q '!!!!!!' "$out/table.md"; then echo "::warning::V0 does not reproduce B's 841.53 per Lua call"; fi
+          {
+            echo "## halo-probe"
+            echo
+            cat "$out/table.md"
+            echo
+            echo '```text'
+            cat "$out/manifest.txt" "$out/variants/variants-report.txt" "$out/codegen.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Pack the artifact
+        if: always()
+        run: |
+          out="$RUNNER_TEMP/halo-probe"
+          rm -f "$out"/halo-* "$out"/variants/*.o
+          rm -rf "$out/temps"
+          gzip -9 "$out"/ir/*.ll "$out"/variants/*.ll "$out"/callgrind/*.out 2> /dev/null || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: halo-probe
+          if-no-files-found: warn
+          retention-days: 30
+          path: ${{ runner.temp }}/halo-probe/
