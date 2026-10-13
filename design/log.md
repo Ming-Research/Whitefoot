@@ -12,6 +12,13 @@ Nodes: compiler/waiting-contexts/state-locks
 Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the design-tree change: an atomic target that appears only in proofs takes its lock at statement entry? (Ming-Research/Whitefoot#434, head 5811a8c89)" (translated).
 
 Summary: The lock-order decision's entry-acquired groups gain the groups of targets with no executable use in the guard and block, acquired with every earlier group, because once proofs are erased such a target has no first use to acquire at and entry acquisition keeps the hold SHARE-1 requires, instead of omitting its lock; "before the guard" is reworded to "before the guard or block" without changing the choice. The checker now counts invariant and `use` mentions toward SHARE-2's naming rule.
+## 2026-10-13 Conformance rejections pin their byte range, and an out-of-order requirement is moved rather than restated
+
+Nodes: compiler/verification, compiler/diagnostic-repairs
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve these two decisions" (translated), on the card "approve the two decisions Whitefoot#445 (rejections cite the rule and location the specification gives) adds to the design tree?" (translated), whose background named head commit 4c3e0252f, no specification change, and the two added decisions with their refused alternatives.
+
+Summary: A single-file conformance rejection case may declare an expected byte range in its manifest, and the Python runner and the native adapter compare file, range and rule from the same rejection, instead of accepting any rejection whose rule matches, because a rule match alone missed a misplaced report such as a capability-bound failure marked at the type argument rather than the whole instantiating call. When an equivalent requirement is already written but after the requirement that needs it, the repair moves the existing clause ahead, keeping the definitions it uses before it, and suggests a new clause only when no equivalent one exists, because requirements take effect in written order and restating one hides the ordering error; equivalence is judged by meaning after expanding definitions and evaluating constants, in a diagnostic-only state, instead of by spelling, and implicit type invariants are never offered as clauses to move.
 
 ## 2026-10-13 Match branches on integer constant values, with one exclusion fact for `else` and one switch
 

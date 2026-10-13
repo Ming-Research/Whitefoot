@@ -187,6 +187,42 @@ class ManifestValidationTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "unsupported expectation requires"):
                 runner.validate_manifest([case], [], directory, cases)
 
+    def test_reject_span_is_a_checked_byte_interval(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            cases = self.make_repository(directory)
+            (cases / "sample.wf").write_bytes(b"abc")
+            case = self.case()
+            for span in ({"start": 0, "end": 3}, {"start": 3, "end": 3}):
+                case["expect"] = {"kind": "reject", "rule": "PROG-2", "span": span}
+                runner.validate_manifest([case], [], directory, cases)
+            for span in (
+                None, {}, {"start": 0}, {"start": 2, "end": 1},
+                {"start": -1, "end": 1}, {"start": True, "end": 1},
+                {"start": 0, "end": "1"}, {"start": 0, "end": 4},
+                {"start": 0, "end": 1, "file": "sample.wf"},
+            ):
+                with self.subTest(span=span):
+                    case["expect"] = {"kind": "reject", "rule": "PROG-2", "span": span}
+                    with self.assertRaisesRegex(ValueError, "span"):
+                        runner.validate_manifest([case], [], directory, cases)
+
+    def test_span_is_reject_only_and_single_source_only(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            cases = self.make_repository(directory)
+            (cases / "sample.wf").write_bytes(b"abc")
+            case = self.case()
+            case["expect"] = {"kind": "accept", "span": {"start": 0, "end": 1}}
+            with self.assertRaisesRegex(ValueError, "expectation fields"):
+                runner.validate_manifest([case], [], directory, cases)
+            (cases / "sample.wf").unlink()
+            (cases / "sample").mkdir()
+            (cases / "sample" / "modules.wfg").write_text("pkg: [];\n")
+            case["expect"] = {"kind": "reject", "rule": "PROG-2", "span": {"start": 0, "end": 1}}
+            with self.assertRaisesRegex(ValueError, "single .wf source"):
+                runner.validate_manifest([case], [], directory, cases)
+
 
 class ArrangementTests(unittest.TestCase):
     """The invocation arrangement a run case needs (fixtures, argv, stdin,
@@ -262,6 +298,19 @@ class ArrangementTests(unittest.TestCase):
 
 
 class VerdictMatchingTests(unittest.TestCase):
+    def test_reject_span_requires_the_matching_rule_and_complete_interval(self):
+        span = {"start": 12, "end": 40}
+        expect = {"kind": "reject", "rule": "PROV-6", "span": span}
+        self.assertTrue(runner.matches(("reject", "PROV-6", span), expect))
+        for verdict in (
+            ("reject", "PROV-6"), ("reject", "PROV-6", None),
+            ("reject", "PROV-6", {"start": 20, "end": 26}),
+            ("reject", "TYPE-5", span), ("accept",),
+        ):
+            with self.subTest(verdict=verdict):
+                self.assertFalse(runner.matches(verdict, expect))
+        self.assertTrue(runner.matches(("reject", "PROV-6"), {"kind": "reject", "rule": "PROV-6"}))
+
     def test_unsupported_verdict_matches_an_unsupported_expectation(self):
         expect = {"kind": "unsupported", "why": "target qualification"}
 

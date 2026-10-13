@@ -899,6 +899,7 @@ fn check_semantics_attempt(
     repair_mode: effect_repairs::RepairMode,
 ) -> Result<CheckedProgramData, CheckStop> {
     DeclarationInventory::new(resolved).and_then(|declarations| {
+        declarations.check_entry_positions()?;
         let mut types = TypeContext::new(&declarations);
         types.effect_repairs = repair_mode;
         if !resolved.postconditions().is_empty() {
