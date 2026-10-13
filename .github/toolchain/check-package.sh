@@ -180,15 +180,21 @@ PY
     echo 'UNVERIFIED: hosted runner cannot execute the isolation profile'
   else
     while IFS= read -r host; do
-      if ! "$host" --version > "$logs/denial-baseline.txt" 2>&1; then
+      # The baseline proves the path executes, not that it is a compiler:
+      # tools such as clang-cache exit nonzero on --version but still run.
+      # Only the shell's cannot-execute statuses mean it never ran.
+      status=0
+      "$host" --version > "$logs/denial-baseline.txt" 2>&1 || status=$?
+      if [ "$status" -eq 126 ] || [ "$status" -eq 127 ]; then
         isolation=unverified
         printf 'UNVERIFIED: host baseline cannot execute: %s\n' "$host"
         break
       fi
       printf 'Prove host denial: %s\n' "$host"
-      if /usr/bin/sandbox-exec -f "$profile" "$host" --version > "$logs/denial-attempt.txt" 2>&1; then
+      /usr/bin/sandbox-exec -f "$profile" "$host" --version > "$logs/denial-attempt.txt" 2>&1 || true
+      if ! grep -Fq "execvp() of '$host' failed: Operation not permitted" "$logs/denial-attempt.txt"; then
         isolation=unverified
-        printf 'UNVERIFIED: sandbox allowed host clang: %s\n' "$host"
+        printf 'UNVERIFIED: sandbox did not refuse executing host clang: %s\n' "$host"
         break
       fi
       cat "$logs/denial-attempt.txt"
@@ -212,7 +218,8 @@ run() {
   printf ' %q' "$@"
   printf '\n'
   if [ "$mode" = macos ]; then
-    "${wrapper[@]}" "$@" > "$logs/$label.txt" 2>&1 || status=$?
+    # macOS bash 3.2 treats an empty array as unset under set -u.
+    ${wrapper[@]+"${wrapper[@]}"} "$@" > "$logs/$label.txt" 2>&1 || status=$?
   else
     strace -f -s 8192 -e trace=execve -o "$logs/traces/$label.txt" \
       "$@" > "$logs/$label.txt" 2>&1 || status=$?
