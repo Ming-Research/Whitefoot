@@ -1,4 +1,4 @@
-# Kernel Specification v0.150
+# Kernel Specification v0.151
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -283,7 +283,8 @@ atomic_stmt := "atomic" IDENT "=" "&" place ("," IDENT "=" "&" place)* ("when" e
                "{" stmt* "}"
 match_stmt  := "match" expr "{" arm+ "}"
 value_match := "match" expr "{" arm+ "}"
-arm            := TYPEID "(" ( fieldbind_list ("," "..")? | ".." )? ")" "=>" "{" stmt* "}"
+arm            := ( TYPEID "(" ( fieldbind_list ("," "..")? | ".." )? ")"
+                  | literal | IDENT | "else" ) "=>" "{" stmt* "}"
 fieldbind_list := fieldbind ("," fieldbind)*
 fieldbind      := IDENT ":" IDENT
 apart_clause   := "apart" "(" IDENT "," IDENT ")" "{" proof_use* "}"
@@ -332,7 +333,7 @@ The `^` alternative of `psuffix` follows a `place` whose selected kind is a refe
 [GRAM-6] There is no general operator syntax and no precedence: an `infix` expression is exactly one operation over two atoms [GRAM-5, GRAM-9], composition is by `let`, and no precedence, associativity, or parenthesization surface exists.
 The `compare_op` alternatives are the value equalities `==` and `!=` [OP-16] and the four integer orderings of [OP-1], and form `infix` expressions exactly as the `infix_op` arithmetic does; a `call` writes its type arguments after the `::` delimiter, `cvt::<u8, u32>(w)`, so that `IDENT "<"` begins a comparison and never a type-argument list, while a constructor `call` and a `type` write theirs bare.
 There is no `while`.
-Conditional control is type-driven with one form per class: a Bool condition takes `if`/`else`, an enum scrutinee takes `match`, and each is the sole legal form for its class — a `match` whose scrutinee has type `Bool` is a hard error citing GRAM-6 at the scrutinee `expr` node, with a repair [DIAG-1].
+Conditional control is type-driven with one form per class: a Bool condition takes `if`/`else`, an enum or integer scrutinee takes `match`, and each is the sole legal form for its class — a `match` whose scrutinee has type `Bool` is a hard error citing GRAM-6 at the scrutinee `expr` node, with a repair [DIAG-1].
 An `if` condition must have exact value mode and type `own Bool` under exactly the [OP-5] condition judgment, TYPE-7 exclusivity included; every other condition failure cites GRAM-6 at the condition `expr` node.
 An `if_stmt` `else` whose block is empty is a hard error citing GRAM-6 at that `if_stmt` node, with a repair [DIAG-1]; a `value_if`'s undelivering else is [GIVE-1]'s rejection, not this one.
 An `else` whose block contains exactly one `if_stmt` and nothing else is a hard error citing GRAM-6 at that nested `if_stmt` node, with a repair [DIAG-1]; in a `value_if` whose else block is exactly one else-free `if_stmt`, the branch cannot deliver, [GIVE-1] owns the rejection, and GRAM-6 forms no candidate there, so no repair demands a chain form that could not be spelled.
@@ -406,6 +407,26 @@ A `call` whose callee resolves to a table operation [OP-1] writes positional `at
 Argument reordering is not a spelling option: declared order is the one legal byte sequence [FORM-1], so parameter names are redundant checked facts, never a reordering license.
 Callee kind is resolved by name lookup [OP-1], the same partition that already selects the callee.
 
+[GRAM-12] A `match_stmt` and a `value_match` dispatch on one scrutinee, evaluated exactly once before any arm is entered.
+An integer scrutinee produces `own T`, where T is one [OP-2] integer type or a live type parameter bounded `Int` [FN-2]; an enum scrutinee follows [OWN-13].
+A reference used as an integer value retains [TYPE-7]'s rejection; a Bool scrutinee retains [GRAM-6]'s rejection; every other scrutinee type is a hard error citing TYPE-5 at its `expr`, with a repair [DIAG-1].
+An arm's admitted header is selected by the scrutinee's class:
+
+| Scrutinee class | Admitted arm header |
+| --- | --- |
+| Enum | A variant TYPEID and its named payload binders [TYPE-6, GRAM-10]. |
+| Integer | One `literal` of exact type T, one IDENT naming an integer-typed [CONST-2] item of exact type T, or `else`. |
+
+An integer literal header includes the character-literal forms of [FORM-5] with integer type and its `0_T` and `1_T` forms when T is bounded `Int`.
+The lexical lookup of an IDENT header admits the named-const declaration class alone [TYPE-6, DIAG-1]; a const-generic parameter is a different class.
+A header outside its row, a literal or named const of another type, and a non-integer literal or named const are each a hard error citing GRAM-12 at that `arm`, with a repair.
+An integer match has at least one value arm, its decoded mathematical arm values are pairwise distinct, and its `else` count is zero or one, with a present `else` the final arm.
+A match with no value arm cites GRAM-12 at its match node; a duplicate value cites GRAM-12 at the later `arm` and names the earlier arm and decoded value; an `else` that is repeated or not final cites GRAM-12 at the first offending `else` arm, each with a repair [DIAG-1].
+A generic body judges its header types and values at its source instance and each concrete instance [FN-2]; the two generic numeric literal values are the mathematical integers zero and one.
+Coverage is [ERR-2]'s judgment after these header judgments succeed.
+Execution enters the arm whose decoded value equals the integer scrutinee, or the final `else` when its value is absent from the value-arm set; enum selection follows the declared variant.
+A selected arm executes once and its normal successor is the match's continuation [FN-1], with value delivery governed by [GIVE-1].
+
 ## 4. Types
 
 [TYPE-1] Primitive types: `i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 unit`.
@@ -473,7 +494,7 @@ The grammar role, never an inferred type or expected result, selects the domain 
 
 | domain | declarations | admitted uses |
 |---|---|---|
-| lexical IDENT | top-level `fn_decl`; raw function-kind `gparam`; top-level `const_decl`; const `gparam`; `param`; `let_stmt`; `for_stmt` binder; `atomic_stmt` binders; arm `fieldbind` binders; `contract_define`; FN-9-owned result and route candidates; PRE-1 functions | a `callee` IDENT admits a top-level function, in-scope function parameter, or PRE-1 function; an unqualified `function_arg` or `fn_bind` right side admits an ordinary function or function parameter; `const` IDENT admits an in-scope const generic or a named const; `cvalue` IDENT admits a named const; `pbase` admits an in-scope runtime value binding, contract definition, admitted symbolic result datum, named const, or in-scope const generic [MSR-6] |
+| lexical IDENT | top-level `fn_decl`; raw function-kind `gparam`; top-level `const_decl`; const `gparam`; `param`; `let_stmt`; `for_stmt` binder; `atomic_stmt` binders; arm `fieldbind` binders; `contract_define`; FN-9-owned result and route candidates; PRE-1 functions | a `callee` IDENT admits a top-level function, in-scope function parameter, or PRE-1 function; an unqualified `function_arg` or `fn_bind` right side admits an ordinary function or function parameter; `const` IDENT admits an in-scope const generic or a named const; `cvalue` IDENT admits a named const; an `arm` IDENT admits a named const [GRAM-12]; `pbase` admits an in-scope runtime value binding, contract definition, admitted symbolic result datum, named const, or in-scope const generic [MSR-6] |
 | nominal-type TYPEID | source `struct_decl` and `enum_decl` names; source interface and binding groups; PRE-1 nominal types and the reference-kind name `Run` [TYPE-8]; lexical type `gparam`s overlay this domain while live | a runtime `type` or generic-numeric suffix admits only its ordinary type class; an explicit `targ` additionally admits a interface or binding abbreviation; a `pack_use` admits a interface or binding group, with FN-3/FN-5 checking its position and member selection |
 | constructor TYPEID | each source struct constructor under its struct TYPEID; PRE-1 variants, classified as struct-constructor or enum-variant; an opaque struct's constructor, existing only to be refused [TYPE-2] | the constructor TYPEID of a `call`, `cvalue` or destructuring `let_stmt` admits either class |
 | built-in-bound TYPEID | the three built-in bounds `Int`, `Float` and `Eq` [PRE-1] | the bound TYPEID of a type `gparam`; a capability bound instead uses its fixed grammar spelling [GRAM-2, PROV-6] |
@@ -483,7 +504,7 @@ The grammar role, never an inferred type or expected result, selects the domain 
 A source struct contributes one declaration event that adds one nominal-type entry and one constructor entry with the same spelling.
 Those entries do not collide because the grammar distinguishes a `type` role from a constructor `call` role.
 An enum declaration adds only its nominal type. Each source variant belongs to its enum and enters no constructor domain: a construction writes it after its enum, `E::V(...)` or `E<args>::V(...)`, directly or behind a module prefix [MOD-5], or through an alias of it [MOD-4]; an enum declares each variant spelling once, and variants of different enums never collide.
-The label of an `arm` resolves against its scrutinee's already known enum type, the label of a `result_route` against its result ordinal's declared type, and the TYPEID of a `range_variant` against its tested value's enum type [RANGE-1]: it names the variant of that enum with its spelling, and an arm label naming no variant of the scrutinee's enum is a hard error citing TYPE-6 at the `arm`. A PRE-1 variant is written unqualified.
+For an enum scrutinee admitted by [GRAM-12], the TYPEID label of an `arm` resolves against that already known enum type; the label of a `result_route` resolves against its result ordinal's declared type, and the TYPEID of a `range_variant` against its tested value's enum type [RANGE-1]: it names the variant of that enum with its spelling, and an arm label naming no variant of the scrutinee's enum is a hard error citing TYPE-6 at the `arm`. A PRE-1 variant is written unqualified.
 Entries must be unique within, but not across, the nominal-type, constructor, and built-in-bound domains. Interface and binding group names share the nominal-type collision domain, but neither is a runtime type or a constructor.
 Construction and matching never consult an expected nominal type: a constructor names its struct, its PRE-1 variant or its variant's enum, and an arm or route label reads the type its scrutinee or result already has.
 
@@ -756,6 +777,7 @@ A counted binder may be copied and may have a reference formed to it [REF-1], bu
 These restrictions are checked for each enclosing loop, so nesting never grants an outer binding to an inner body.
 
 [OWN-13] Match ownership: a non-place expression scrutinee is an owned temporary (moved into the match).
+An integer match copies its `own` integer value and introduces no payload binder [GRAM-12]; the payload and reference-mode judgments below apply to enum scrutinees.
 An own-mode place scrutinee follows [OWN-1]: copy places are copied and noncopy places are explicitly moved; binders receive `own` payloads, and a consumed root dies. Matching through a reference leaves the scrutinee live and binds each payload as a reference naming the scrutinee path extended by that payload step [REF-1]. Its selected place follows [REF-2], while newly written payload selections require [ENT-3.S15]'s current refinement.
 Binder modes are derived by this rule, stated once; they are not written.
 Sibling binders are judged by [OWN-7].
@@ -1673,7 +1695,17 @@ Recursion is checked through contracts, never by unfolding bodies.
 [ERR-1] Recoverable errors are values: prelude `Result<T, E>` and `Option<T>` (§14), dispatched by `match`.
 No exceptions, no unwinding, no panic values.
 
-[ERR-2] Every `match` is exhaustive over declared variants; there are no wildcard arms.
+[ERR-2] A `match_stmt` or `value_match` is exhaustive under the following table, after [GRAM-12]'s arm judgments:
+
+| Scrutinee class | Required coverage |
+| --- | --- |
+| Enum | Every declared variant is named exactly once. |
+| Integer with value-arm set S equal to its type's complete mathematical domain | There is no `else` arm. |
+| Integer with value-arm set S a proper subset of its type's mathematical domain | There is one final `else` arm. |
+
+For a concrete integer type, complete coverage is decided by the number of distinct decoded values: `max(T) - min(T) + 1`, computed as a mathematical integer, so u8 needs 256 arms and u64 needs 18446744073709551616.
+For a live `Int`-bounded type parameter, coverage must hold for every permitted concrete type under [FN-2].
+An omitted or repeated enum variant, a partial integer match with no `else`, and a complete integer match with `else` are hard errors citing ERR-2 at the complete match node, naming the uncovered variants or integer domain, the repeated variant, or the unnecessary `else`, respectively, with a repair [DIAG-1].
 Bool exhaustiveness is carried by `if`: an else-free `if` is the empty-alternative form, an `if` with `else` covers both, and a Bool-scrutinee `match` is rejected at GRAM-6.
 The asymmetry is deliberate and content-driven: the empty then-block is admitted while the empty else is not, because the else-free form is the one spelling of the empty alternative.
 Variant addition surfaces site-enumerated edit lists (toolchain contract).
@@ -1991,10 +2023,11 @@ For one lexical-use event the closed lookup rank is:
 |---|---|
 | `type` TYPEID | TYPE-5 |
 | built-in-bound TYPEID or the group TYPEID of `pack_use` | FN-3 |
-| constructor `call` constructor TYPEID, enum-variant-only `arm` TYPEID, or `result_route` TYPEID | TYPE-6 |
+| constructor `call` constructor TYPEID or `result_route` TYPEID | TYPE-6 |
 | LABEL use | TYPE-6 |
 | `const` IDENT | CONST-1 |
 | `cvalue` IDENT | CONST-2 |
+| `arm` IDENT | GRAM-12 |
 | `pbase` IDENT | TYPE-5 |
 | IDENT or OPNAME `callee` | OP-1 |
 | unqualified `fn_bind` or `function_arg` callee IDENT | FN-3 |
@@ -2016,7 +2049,7 @@ Every resolution rejection uses `SourceNode` at the use role and has no expected
 The dependent-declaration carriers are exactly the `field` and `vfield` declarations. A `fn_sig` instead contributes a function-parameter declaration with the scope and qualified-member disposition stated by TYPE-6 and FN-3.
 Each is a declaration-class carrier that produces one dependent-declaration record and one declaration event for later typed owner/member checking, but none enters a resolver lookup inventory.
 The two field carriers participate in FORM-3's reservation inventory; a function-parameter name has the ordinary function-name reservation judgment.
-The deferred-use carriers are the left IDENT of `fn_bind`, the member IDENT of a qualified `callee`, the first IDENT of an arm `fieldbind`, each `fieldinit` IDENT, each `psuffix` IDENT, the TYPEID and IDENT of a payload `psuffix`, the TYPEID of a `range_variant`, each field selected below an effect-path root, and each IDENT of a `held_clause`.
+The deferred-use carriers are the TYPEID label of an `arm`, the left IDENT of `fn_bind`, the member IDENT of a qualified `callee`, the first IDENT of an arm `fieldbind`, each `fieldinit` IDENT, each `psuffix` IDENT, the TYPEID and IDENT of a payload `psuffix`, the TYPEID of a `range_variant`, each field selected below an effect-path root, and each IDENT of a `held_clause`.
 Each produces one deferred-use record for later typed owner/member checking. A `held_clause` identifier is checked against its owning callable's parameter declarations by [HOLD-1], not through the ordinary expression lookup domain.
 The `result_binding` IDENT and the second IDENT of a `result_route` fieldbind are FN-9-owned result-datum carriers.
 The header candidate produces one reservation event with `role_ordinal` zero in its `result_binding`.
@@ -2029,7 +2062,8 @@ The name of every `header_invariant` and `invariant_stmt` produces one proof-onl
 An IDENT premise of `use_premise` produces one lexical-use record querying only that domain; it can never resolve to a value declaration that happens to have the same spelling. A `proof_use`'s own IDENT is the named multiplicity and queries the value domain instead, so the two positions never compete for one spelling.
 These records have no runtime declaration or value identity and participate in deterministic lexical resolution exactly at their stated scopes; OP-1 owns declaration-name reservation.
 A function-formal expansion retains its written declaration and application identities rather than fabricating a second lexical spelling.
-In an `arm` or `result_route`, a source variant label uses [TYPE-6]'s owner-local lookup; a PRE-1 variant uses its global constructor declaration.
+An `arm` TYPEID is a deferred scrutinee-owned label: [GRAM-12] first judges its header class against the scrutinee class, and an admitted variant header then resolves within that enum under [TYPE-6].
+In an admitted variant arm or `result_route`, a source variant label uses [TYPE-6]'s owner-local lookup; a PRE-1 variant uses its global constructor declaration.
 Later typed checking compares that variant's owner with the scrutinee enum for an arm; a foreign arm variant cites TYPE-6.
 FN-9 separately judges the route's successfully resolved variant and owner against its result ordinal.
 The resolver does not otherwise accept or reject a dependent role's owner/member relation.
@@ -3403,7 +3437,7 @@ The child attempts one 32-byte status record: ASCII octets `WFSSTAT1`, one statu
 ## 15. Obligation discharge: deterministic facts, invariants, and local certificates (normative)
 
 [ENT-1] The entailment fragment is a closed, deterministic, terminating derivation system fixed completely by this specification.
-Its state is the L0 relation state, [ENT-2]'s finite signed opaque goals, [ENT-6]'s exact current-value images and specification-fixed automatic affine images, and the finite affine theorems admitted by [INV-1] and [PRF-1].
+Its state is the L0 relation state, [ENT-2]'s finite signed opaque goals and integer-exclusion facts, [ENT-6]'s exact current-value images and specification-fixed automatic affine images, and the finite affine theorems admitted by [INV-1] and [PRF-1].
 Complete-state obligation discharge [ENT-6], ordinary-call requirement discharge [FN-8], verified normal-return proof [FN-9], loop induction and program-point invariant checking [INV-1], and local certificate checking [PRF-1] are post-resolution source-acceptance judgments under [DIAG-1].
 They are identical in facts-on and facts-off compilation and are not an optimizer-fact family.
 Which of their obligations this derivation leaves undischarged are judged next by the range judgment is fixed by [RANGE-2].
@@ -3424,7 +3458,7 @@ Two conforming implementations derive the same fact state at every applicable pr
 Every nongeneric source body receives this judgment whether or not the selected invocation reaches it.
 Every generic source body additionally receives one source-schema judgment under the one source-canonical symbolic substitution formed during generic-body validation, even when it has no concrete instantiation.
 That schema checks every OP-2/OP-4, FN-8, and expressible FN-9 judgment its symbolic vocabulary can represent; an unproved operation is not accepted merely because no concrete instance is reachable.
-Generic integer and float type parameters are copy datums only for exact opaque goals in this schema and are not [ENT-2] L0 fragment types, while an integer-typed const generic remains the symbolic constant term [ENT-2] fixes.
+Generic integer and float type parameters are copy datums for exact opaque goals in this schema, with Int-bound datums also admitted by S17 integer exclusions, and are not [ENT-2] L0 fragment types, while an integer-typed const generic remains the symbolic constant term [ENT-2] fixes.
 An FN-9 schema goal exists only when its result datum, selected return, and normalized relation are expressible in the finite schema vocabulary; otherwise it is rechecked in every inhabited concrete instance and is never approximated.
 The schema publishes no executable function, callable summary, or lowering authority.
 Every inhabited concrete [FN-2] instance is rechecked independently after substitution; a contradictory path discharges only by [ENT-4] and never bypasses an ordinary formation check.
@@ -3498,7 +3532,7 @@ A commit or given value therefore denotes that statement's value in the one abst
 An FN-9 parameter datum denotes its function-entry image in the RelationTemplate but creates no snapshot term.
 Local proof may reuse the ordinary parameter term only while FN-9's entry-image stability remains live; caller publication substitutes the corresponding pre-transfer actual image independently for each referenced formal.
 
-A concrete goal is one finite typed expression tree with exact result `own Bool` formed under [FN-8]'s structural identity, either by concrete substitution of a GoalTemplate, by [ENT-3]'s goal-origin judgment in the current function, or as the canonical total predicate of an [ENT-6] operation obligation.
+A concrete goal is one finite typed expression tree with exact result `own Bool` formed under [FN-8]'s structural identity, either by concrete substitution of a GoalTemplate, by [ENT-3]'s goal-origin judgment in the current function, by [ENT-3.S17]'s integer value-arm equality, or as the canonical total predicate of an [ENT-6] operation obligation.
 A concrete place datum is identified by its proof path above, the subscripts of a clause (b) place included; an actual substituted for a reference formal uses the proof path of the place it names, which for a reference-variable actual is that variable's path when it is exact and its own spelling when it is not, while an own actual uses its pre-transfer datum.
 Named consts and typed literals retain the identities FN-8 fixes.
 
@@ -3514,14 +3548,19 @@ FN-8's call-argument form is identified by `(concrete caller instance, call Node
 An [ENT-6] obligation-operand form is identified by `(concrete function instance, owning obligation NodePath, operand ordinal, exact captured type, ordered projections, final result type)` and may occur only in the canonical Goal queried for that one obligation.
 Both forms are neither places nor L0 terms, have no direct or complete ordinary source goal origin, add no flow fact or place support, and cannot be established by naming or reevaluating their source expression.
 Goal equality is exact typed tree equality, including every selected row and datum field, and therefore may hold across two source occurrences or concrete callee instances only when their complete typed trees are identical.
-The finite goal universe of one concrete function is exactly the goals formed from its admitted Bool origins, requirement S4 sources, instantiated ordinary-call requirements, and the canonical OP-2 and OP-6 operation obligations, together with the finite parent and child trees their fixed decomposition and reconstruction rules visit and the query-local term views of [ENT-4.OT].
+The finite goal universe of one concrete function is exactly the goals formed from its admitted Bool origins, requirement S4 sources, instantiated ordinary-call requirements, S17 value-arm equalities, and the canonical OP-2 and OP-6 operation obligations, together with the finite parent and child trees their fixed decomposition and reconstruction rules visit and the query-local term views of [ENT-4.OT].
 Invariant targets and `proof_use` sources are affine inequalities rather than opaque Goals [INV-1, PRF-1]; an OP-4 bounds obligation remains an L0/affine relation and has no opaque Goal of its own.
-Goal construction may intern only written subexpressions, the field equalities [ENT-3] of a struct equality, and the exact normalized components fixed by their owning rules; it synthesizes no arbitrary formula or unbounded algebraic search.
+Goal construction may intern only written subexpressions, the field equalities [ENT-3] of a struct equality, the S17 value-arm equalities, and the exact normalized components fixed by their owning rules; it synthesizes no arbitrary formula or unbounded algebraic search.
 
 A signed opaque fact is exactly `+G` or `-G` for one concrete goal G, meaning that exact whole expression evaluated respectively true or false.
 It carries no child facts merely by existing; [ENT-3] fact sources establish their selected signed contribution and [ENT-4] alone performs the finite parent reconstruction below.
 If G's complete root is exactly one comparison origin relation R under [ENT-3], `+G` has the exact L0 projection R and `-G` has R's exact negation; a non-comparison root has no L0 projection.
 The signed fact and its projection are distinct manifestations in one combined state and have the supports [ENT-5] fixes.
+
+An integer-exclusion fact is `Excluded(E, S)`: E is one admitted integer value expression and S is a finite set of decoded mathematical integers, canonically ordered increasingly, stating that E's value is not a member of S.
+Its identity is the exact typed identity of E together with S; an excluded set is one fact, not a conjunction tree or a family of established offset disequalities.
+Only [ENT-3.S17] establishes one, and [ENT-4, ENT-5] fix its queries and flow.
+A set introduces no new L0 term and no goal for any of its members.
 
 An atomic fact is one difference bound `t1 - t2 <= c` (t1, t2 terms, c a mathematical integer) or one offset disequality `t1 - t2 != c`.
 Difference-bound identity preserves the ordered term pair; offset-disequality identity identifies `(t1, t2, c)` with `(t2, t1, -c)`, although the first source-normalization encounter preserves its written orientation for rendering and component order.
@@ -3729,7 +3768,7 @@ Window mutation uses the operations of [OP-10]; a source helper over a written r
 *Judgment:* the conservative default for every parameter that is not a range reference.
 *Publishes:* the absence of any call-site-derived or body-derived classification.
 
-[ENT-3] The fact state is defined constructively over the conservative structural normal-control graph [FN-1]: each source below establishes its L0 and signed-goal facts at its stated point; facts flow forward along normal edges; kill events apply on the edges where [ENT-5] places them, with scope-exit kills applied before any join; merge points take the [ENT-5] join and loop heads the [ENT-5] loop rule; and the state queried at any point is the [ENT-4] closure of that flow.
+[ENT-3] The fact state is defined constructively over the conservative structural normal-control graph [FN-1]: each source below establishes its L0, signed-goal and integer-exclusion facts at its stated point; facts flow forward along normal edges; kill events apply on the edges where [ENT-5] places them, with scope-exit kills applied before any join; merge points take the [ENT-5] join and loop heads the [ENT-5] loop rule; and the state queried at any point is the [ENT-4] closure of that flow.
 Dominated straight-line establishment is a consequence of this construction, not a second definition.
 Nothing else is a fact: a writer's `ensures_clause` is only an FN-9 proof obligation, never a trusted source; a written header or local invariant conclusion has no authority until INV-1 and any applicable PRF-1 certificate prove it; a type invariant is a fact only where [TYPE-11] makes it a requirement, a postcondition or an atomic block's entry fact; and no compiler-invented loop proposition, inferred summary, or unverified user-function result exists.
 S11 is only the compiler-owned consequence of the counted operations [FN-1] actually executes, and S12 exists only from the declaration relations available under [FN-9, DIAG-2], under the publication formula below.
@@ -3888,7 +3927,7 @@ S13 is the one source by which a declared relation's substitution is computed at
 
 [ENT-3.S15]
 - S15 (variant refinement facts).
-At entry to an `arm` of a `match_stmt` or `value_match` whose scrutinee is a tracked place, the fact that that place holds the arm's declared variant is established.
+At entry to a variant `arm` of a `match_stmt` or `value_match` whose enum scrutinee is a tracked place, the fact that that place holds the arm's declared variant is established.
 It is the fact a payload path step depends on [REF-1] and the fact [MSR-3]'s PAYLOAD placement stands on.
 Its support is that scrutinee place's own storage, so it dies on any [ENT-5] event whose written place overlaps it and on the arm's exit edges by the ordinary join.
 This loss forbids a new payload selection; it does not itself destroy a payload place already captured by a reference [REF-2].
@@ -3900,6 +3939,15 @@ When a header or local invariant gains authority under [INV-1], each bound of it
 An equality contributes its two bounds together.
 Normalization here combines the written affine expression over its source terms, without substituting their current immutable value images or eliminating other terms using premises.
 The fact has ordinary [ENT-5] term support, kills, joins and snapshots; a conclusion outside this exact difference-bound form contributes only its existing affine premise.
+
+[ENT-3.S17]
+- S17 (integer selection facts).
+An integer `match_stmt` or `value_match` first judges and evaluates its scrutinee under [GRAM-12], with every nested obligation and effect completed before the arm-entry state is formed.
+When that evaluated scrutinee has an admitted value expression E [ENT-2], entry to a value arm with decoded value c establishes the exact signed equality `+(E == c)`, with c the typed literal value of the scrutinee's type.
+Its direct goal, complete live origin expansion, signed decomposition and exact comparison projections are established as for [ENT-3.S1]; an expression that denotes an [ENT-2] term or a widening conversion of one therefore establishes that term equal to c.
+Entry to `else` establishes exactly one `Excluded(E, S)`, with S the set of all that match's value-arm values; its origin-equivalent query views are [ENT-4.OT]'s, not additional flow facts.
+Every arm starts from the same post-evaluation incoming state together with its own selection fact; no arm receives an earlier arm's fact or a prefix of excluded values.
+A scrutinee with no admitted value expression establishes no reusable selection fact, as an ordinary call condition establishes no goal origin [ENT-3]; selection still follows [GRAM-12].
 
 [CALL-6] Publication: how a declared relation becomes a fact, where it is computed, where it is established, and that the set it belongs to is consistent.
 Every published relation in this document is published by exactly one route — [ENT-3.S12]'s, with [ENT-3.S13]'s substitution — and nothing else publishes anything.
@@ -3924,7 +3972,14 @@ A contradictory `requires` set is a different thing and stays admissible: it mak
 *Publishes:* the source, the substitution, the instantiation point, the establishment point, the destination list, and the support of every declared relation in the language.
 
 [ENT-4] The L0 component of the closed fact state is the least set containing its established and implicit facts and closed under exactly: (1) from `t1 - t2 <= c1` and `t2 - t3 <= c2`, derive `t1 - t3 <= c1 + c2`; (2) from `t1 - t2 <= c` and `t1 - t2 != c`, derive `t1 - t2 <= c - 1`, and from `t2 - t1 <= -c` and that same disequality, derive `t2 - t1 <= -c - 1`; (3) of two bounds on one ordered pair, the smaller constant subsumes.
-L0 derivability is exact: `a - b <= c` is derivable when the closed state contains `a - b <= c'` with c' <= c; `a - b = c` when both `a - b <= c` and `b - a <= -c` are derivable; `a - b != c` when that offset disequality is present under [ENT-2]'s identity or `a - b <= c - 1` or `b - a <= -c - 1` is derivable.
+An exclusion whose expression denotes term t or a widening conversion of t supplies membership to this closure: when `Excluded(t, S)` holds and c belongs to S, `t - Z != c` and its reversed orientation are derivable.
+Rule (2) may use that membership at the bound's endpoint exactly as it uses an offset disequality, repeatedly to the same least fixed point; no membership query inserts an established disequality or enumerates unrelated set members.
+An exclusion over a constant expression is contradictory exactly when that constant belongs to its set.
+L0 derivability is exact: `a - b <= c` is derivable when the closed state contains `a - b <= c'` with c' <= c; `a - b = c` when both `a - b <= c` and `b - a <= -c` are derivable; `a - b != c` when that offset disequality is present under [ENT-2]'s identity, when the preceding exclusion-membership judgment derives it, or when `a - b <= c - 1` or `b - a <= -c - 1` is derivable.
+
+For an already-interned exact integer equality or disequality goal comparing E with a decoded constant c, in either operand order, `Excluded(E, S)` with c in S derives the negative sign of equality and the positive sign of disequality.
+It derives neither sign for a constant outside S.
+This query creates no goal for another member and performs no algebraic rewrite of E; [ENT-4.OT] supplies its origin-equivalent expressions.
 
 The opaque component retains established signed facts and the following finite truth-functional parent reconstruction over exact parent goals already interned in [ENT-2]'s universe.
 `+band(A,B)` derives from both `+A` and `+B`; `-band(A,B)` derives from either `-A` or `-B`; `+bor(A,B)` derives from either `+A` or `+B`; `-bor(A,B)` derives from both `-A` and `-B`; and either sign of `bnot(A)` derives from the opposite sign of A. `+(a == b)` and `-(a != b)` over a struct type derive from `+` of each of its field equalities [ENT-3], and `-(a == b)` and `+(a != b)` over one from `-` of any of them.
@@ -3932,13 +3987,13 @@ Literal `True()` has an implicit positive proof and literal `False()` an implici
 No `bxor` or Boolean-equivalence introduction is admitted in this version.
 The closure considers only already-interned exact parent trees, uses the written rule order and minimum non-cyclic derivation depth, and creates no new formula.
 Exact signed-goal identity includes every selected operation-table row, concrete selected operand type, and complete ordered operand GoalExpression.
-`+G` is derivable when that exact positive fact is present, when G has an exact comparison projection R and L0 derives R, when G is an operation-domain predicate whose fixed [ENT-6] normalization proves true, or when G's comparison root has an affine normalization and `AUTO` proves it. The affine route is the goal's own comparison normalized, so proving it proves the goal and an L0 projection is what the retained evidence names rather than what the route requires: a goal carrying a coefficient has no two-term projection to name and its retained derivation is the affine consequence alone.
-`-G` is derivable when that exact negative fact is present, when G has a comparison projection and L0 derives R's exact negation, or when G is an operation-domain predicate whose fixed normalization proves false.
+`+G` is derivable when that exact positive fact is present, when the preceding integer-exclusion judgment derives it, when G has an exact comparison projection R and L0 derives R, when G is an operation-domain predicate whose fixed [ENT-6] normalization proves true, or when G's comparison root has an affine normalization and `AUTO` proves it. The affine route is the goal's own comparison normalized, so proving it proves the goal and an L0 projection is what the retained evidence names rather than what the route requires: a goal carrying a coefficient has no two-term projection to name and its retained derivation is the affine consequence alone.
+`-G` is derivable when that exact negative fact is present, when the preceding integer-exclusion judgment derives it, when G has a comparison projection and L0 derives R's exact negation, or when G is an operation-domain predicate whose fixed normalization proves false.
 Integer-domain component relations are only an alternate derivation route into that same exact signed goal; they establish no second source goal and receive no source-obligation identity of their own.
 Derivability never decomposes a merely derived parent: [ENT-3] decomposes only the specification-enumerated source establishments.
 One retained proof never uses a parent-to-child source derivation and then that child solely to reconstruct the same parent; deterministic minimum-depth selection therefore contains no parent-child-parent cycle.
 
-The combined state is contradictory when L0 derives `t - t <= -1` for any t or when both signs of one exact goal are derivable.
+The combined state is contradictory when L0 derives `t - t <= -1` for any t, when an exclusion over a constant is contradictory, or when both signs of one exact goal are derivable.
 At a contradictory point every L0 relation and both signs of every goal in the finite universe are derivable and every ordinary obligation, call goal, and FN-9 selected-return relation is discharged.
 At a non-contradictory query point, an instantiated goal G is `discharged` when `+G` is derivable in the [ENT-4.OT] view, `refuted` when `+G` is absent and `-G` is derivable there, and `unproved` otherwise.
 An instantiated L0 relation R is `discharged` when every normalized conjunct of R is derivable, `refuted` when R is not discharged and R's exact negation is derivable, and `unproved` otherwise.
@@ -3949,11 +4004,12 @@ Implementations may compute lazily or incrementally, but every derivability and 
 
 [ENT-4.OT] Origin transport forms one query-local view of the entering fact state for [MSR-4].
 Two admitted value expressions are origin-equivalent at that point exactly when their complete valid [ENT-3] origin expansions have identical typed trees under [ENT-2]'s proof-path identity.
-The collection consists, in order, of each live origin link's binding datum and right-hand side in binding-declaration order, the entering signed goals in source-allocation order with positive sign first, and the submitted signed goal when present, each followed by its value subtrees in preorder and with exact duplicate trees retained only at their first occurrence.
+The collection consists, in order, of each live origin link's binding datum and right-hand side in binding-declaration order, the entering signed goals in source-allocation order with positive sign first, the expressions of entering exclusions in source-allocation order, and the submitted signed goal when present, each followed by its value subtrees in preorder and with exact duplicate trees retained only at their first occurrence.
 Each origin class containing fragment-integer expressions with an L0 term-plus-constant representation selects its first such expression as representative and supplies the equality of every other such member to that representative.
 Each collected Boolean tree supplies one term view obtained by simultaneously replacing its proper integer subtrees having such representatives with those representatives, stopping traversal at a replacement.
 The Boolean inventory contains the collected Boolean trees, their term views and the Boolean subtrees of those views, partitioned by origin equivalence.
 Each entering signed fact supplies its sign to every member of its Boolean class and supplies each member's exact signed comparison projection when that projection exists.
+Each entering exclusion supplies the same set to every expression in its origin class in this query view, and to that class's L0 representative when present; these are shared views of one set, not per-member disequalities or additional flow establishments.
 These equalities and projections augment the entering L0 state for this query, closed by [ENT-4].
 Over this fixed numeric state, the existing signed-goal derivation rules and transport of either proved sign to every member of its Boolean class are iterated to their least fixed point.
 Within [ENT-6]'s positive Boolean-introduction traversal, a visited Boolean datum also visits its live definition under the demanded sign and transports a successful child proof back to that datum.
@@ -3968,6 +4024,8 @@ Its finite shared expression identities, one term view per collected Boolean tre
 The support of a sum term is the union of its operand supports; all ordinary kills and transports below inspect those operands recursively.
 Z, literals, named const values, and every measure datum of [MSR-3] — a call datum, an entry datum, and a placement datum alike — have empty support and never die.
 A counted capture is immutable and can die only on an edge leaving its compiler-owned construct scope.
+
+The support of an integer-exclusion fact is its expression's opaque-goal support below; its constant set has empty support.
 
 The support of either sign of an opaque goal is the union of the resolved places whose values its complete typed expression reads.
 A direct binding goal therefore depends on that binding, while its separately established complete origin expansion depends on the places read by the expansion.
@@ -4008,11 +4066,13 @@ For support survival, a write event is classified by the following table. A **re
 | Relocation write, a `Box` binding used to reach C, W or a filled descendant | Survives as the same owning binding. |
 | Either write, a reference binding used by the proof path | Survives exactly when that binding is not replaced and its reference remains valid under [REF-2]. |
 
-Every offset and holder is a separate support member; a conclusion survives exactly when every member survives. The table applies to L0 and signed goals, live origin links [ENT-4.OT], current affine-image associations [ENT-6], entry-image stability [FN-9], conditional-result evidence below, and current storage-version transitions [RANGE-2]. Measures use the supporting word [MSR-2], so derived observations use the same classification as their supporting reads. The relocation classification is independent of the element type and supplies no element-equality premise. The cell's new capacity is established by the operation's postcondition [PRE-1].
+Every offset and holder is a separate support member; a conclusion survives exactly when every member survives. The table applies to L0, signed goals and integer exclusions, live origin links [ENT-4.OT], current affine-image associations [ENT-6], entry-image stability [FN-9], conditional-result evidence below, and current storage-version transitions [RANGE-2]. Measures use the supporting word [MSR-2], so derived observations use the same classification as their supporting reads. The relocation classification is independent of the element type and supplies no element-equality premise. The cell's new capacity is established by the operation's postcondition [PRE-1].
 
-An L0 fact or opaque signed goal dies at the earliest of: (a) a [SET-1] `set` commit, an [OP-11] `swap` — one read and one write of each of its two targets — or an [OP-12] update — one write of its target — whose resolved target [SET-1] overlaps, under [OWN-7]'s overlap relation, the resolved place of any support member, or the compiler-owned update of a `for_stmt` binder when that binder is a support member — a measure term's support is its place's descriptor storage [MSR-2], so a write to that place or to any prefix of it kills that place's measures, a write at an element position of it kills the measures of the written element and none of its own, and a write to a sibling field kills neither; a [SET-1] `set` commit whose right-hand side has one fragment type evaluates that right-hand side to its commit value before this kill, and after the kill exactly [ENT-3.S5]'s applicable post-write image is established; (b) a call — ordinary function or table operation — one of whose [EFF-2] boundary-projected `writes` occurrences kills a support member under the table above; the projection is exactly [EFF-2]'s, and a call whose row carries no `writes` kills nothing; how far such a projected write *reaches* — the actual's descriptor storage, or only a range reference's element storage — is classified by [CALL-1] through [CALL-3] from the callee's declaration and by nothing else [CALL-5], and neither the actual's spelling nor the callee's body is consulted; (c) a consuming use [OWN-1] of any support member's root; (d) an edge leaving the lexical scope of any support binding, or leaving the owning counted construct of any capture term in its support.
-Immediately before every specification-ordered batch of kills (a)–(d), materialize the complete [ENT-4] least closure while every pre-kill term and goal remains available; then remove exactly the conclusions whose own support the batch kills. This includes consequences obtained through transitive bounds, implicit type or constant bounds, disequality strengthening, and opaque-goal closure; a partial projection over explicit bound edges is not equivalent. A post-write image or other post-event establishment occurs only after that event's kill as its source rule states.
+An L0 fact, opaque signed goal or integer-exclusion fact dies at the earliest of: (a) a [SET-1] `set` commit, an [OP-11] `swap` — one read and one write of each of its two targets — or an [OP-12] update — one write of its target — whose resolved target [SET-1] overlaps, under [OWN-7]'s overlap relation, the resolved place of any support member, or the compiler-owned update of a `for_stmt` binder when that binder is a support member — a measure term's support is its place's descriptor storage [MSR-2], so a write to that place or to any prefix of it kills that place's measures, a write at an element position of it kills the measures of the written element and none of its own, and a write to a sibling field kills neither; a [SET-1] `set` commit whose right-hand side has one fragment type evaluates that right-hand side to its commit value before this kill, and after the kill exactly [ENT-3.S5]'s applicable post-write image is established; (b) a call — ordinary function or table operation — one of whose [EFF-2] boundary-projected `writes` occurrences kills a support member under the table above; the projection is exactly [EFF-2]'s, and a call whose row carries no `writes` kills nothing; how far such a projected write *reaches* — the actual's descriptor storage, or only a range reference's element storage — is classified by [CALL-1] through [CALL-3] from the callee's declaration and by nothing else [CALL-5], and neither the actual's spelling nor the callee's body is consulted; (c) a consuming use [OWN-1] of any support member's root; (d) an edge leaving the lexical scope of any support binding, or leaving the owning counted construct of any capture term in its support.
+Immediately before every specification-ordered batch of kills (a)–(d), materialize the complete [ENT-4] least closure while every pre-kill term and goal remains available; then remove exactly the conclusions whose own support the batch kills. This includes consequences obtained through transitive bounds, implicit type or constant bounds, disequality strengthening including exclusion membership, and opaque-goal closure; a partial projection over explicit bound edges is not equivalent. A post-write image or other post-event establishment occurs only after that event's kill as its source rule states.
 Scope exits are edge events. After every earlier event and its stated post-event image on that edge, materialize the complete reaching closure, apply scope kills (c) and (d), and close the surviving state before any query or join at the target.
+An exclusion remains one compact set throughout pre-kill closure: materialization retains that set and its ordinary bound and already-interned signed-goal consequences, and creates no separately established offset disequality for its members.
+Its membership consequences remain represented by that set while its support survives; their query derivations do not become additional join or value-delivery candidates.
 A materialized conclusion survives exactly when its own support survives. Thus an arm-local term may be an intermediate vertex proving a relation among outer values, but no fact or goal whose conclusion still names that local, its holder, or its storage survives the scope into a join.
 
 An ordinary user-call boundary has one order in the current ProofContext.
@@ -4110,7 +4170,9 @@ Joins: at the continuation of a `match_stmt` or `value_match`, the ordinary fact
 In any nonempty join with at least one non-contradictory input, a contradictory all-derivable input imposes no constraint.
 Over the non-contradictory inputs, the L0 join keeps for each ordered term pair the weakest (largest-constant) bound held by all, and each offset disequality whose offset is zero or is established on some non-contradictory input exactly when every non-contradictory input holds it under [ENT-4]'s derivability.
 The opaque join keeps one signed fact exactly when that identical goal and sign are held by all non-contradictory inputs.
-The join of closed states is closed.
+The exclusion join keeps `Excluded(E, S)` exactly when that identical expression and set are present on every non-contradictory input; it forms no new set by union, intersection, subset enumeration or distribution.
+Exclusion membership is not an established offset disequality for the L0 join's candidate selection; the zero-offset candidates and independently established disequalities keep their ordinary derivability judgment.
+The resulting join is closed again under [ENT-4].
 A nonempty join whose every input is contradictory, and an empty join with no reaching edge, are each the contradictory all-derivable state.
 At the continuation of an `if_stmt` or `value_if`, this same join is taken over every branch exit edge reaching that continuation — for an else-free `if_stmt`, the false edge is such an edge — each after its pre-exit closure, scope-exit kills, and surviving-state closure; a branch every path of which leaves by `return`, `break` or `continue` to an enclosing loop, or `propagate`'s error edge contributes nothing there.
 The continuation of a `loop_stmt` uses the same join over its `break` edges.
@@ -4530,7 +4592,9 @@ In a function that takes part, an [OP-2] or [OP-6] operation obligation, an [OP-
 The walk carries a symbolic state: each binding's value, each storage location's contents as one version, the variant each location of an enum type is known to hold, the path conditions of the branches taken, the facts that hold, and the joins the walk passed. A location's variant is known where a construction of that variant was stored there or a `match` arm that takes it was entered, until a write to the location or a forgetting below; a `match` arm whose variant the state excludes is not entered, and a join keeps a location's variant only where every arm knows that location to hold it, so a binding the arms bind to different storage holds, after the join, storage whose variant is not known.
 A fact is a range clause with what each of its places and values denotes where it became active: a place denotes one version of one storage location, so a fact never changes meaning. A write makes a new version defined by the old one: at the written index tuple, each projection the written place overlaps [OWN-7] is the written value's projection where the walk can name it and unknown otherwise, and every other projection is the old version's; at every other index tuple the element is the old version's. A question about the new version reaches the old version's facts only through that definition [RANGE-3].
 Every element selection has a whole-element read, an integer read used only to identify its storage version and carrying no value meaning. A write overlapping that element or any owned descendant [OWN-7] leaves the written version's whole-element read unknown at the written tuple; at every other tuple it is the old version's read.
-The variant an enum selection holds is its tag, an integer read of the same version and index tuple whose value numbers the enum's variants in declaration order; a construction stored there defines it, and a `match` arm that takes a variant of a value the walk holds as that selection is entered with the tag equal to that variant. An `if` whose condition is a `Bool` value the walk holds as a selection enters its then-block with that selection's tag equal to the tag of `True` and its else-block, written or not, with it equal to the tag of `False`.
+The variant an enum selection holds is its tag, an integer read of the same version and index tuple whose value numbers the enum's variants in declaration order; a construction stored there defines it, and a `match` arm that takes a variant of a value the walk holds as that selection is entered with the tag equal to that variant. For an integer match, this walk represents [GRAM-12]'s evaluated scrutinee as its symbolic value, enters each value arm with that value equal to the arm's decoded integer, and enters `else` with one exclusion of that value from the entire decoded arm set [ENT-2, ENT-3.S17].
+These are path conditions over the evaluated symbolic value, so a later write creates a new value or storage version without retargeting them; every arm starts from the same post-evaluation state and carries only its own selection condition.
+An `if` whose condition is a `Bool` value the walk holds as a selection enters its then-block with that selection's tag equal to the tag of `True` and its else-block, written or not, with it equal to the tag of `False`.
 Facts become active from four sources and no other: a function's range requirements at entry; a counted or ordinary loop's range invariants at its header; the range type invariants an atomic statement's targets establish at its block's entry [TYPE-11]; and a callee's postconditions available under [FN-9, DIAG-2] after each call: its range postconditions and each of its [FN-9] relations whose two sides are range terms a range postcondition admits [RANGE-1], as a clause without bound variables, every other relation being left to ordinary entailment, with each parameter denoting its argument, a reference parameter's storage as the call leaves it, and each result ordinal the value the call hands back at it [CALL-4]. An unrouted one holds at once; a routed one holds in the arm of a `match` on that ordinal's value that takes its variant V, with the route's binder r denoting that arm's field f.
 Before a call applies its effects, the walk records each argument storage's version; an imported postcondition's `entry(p)` places denote that argument's recorded version. An instance of an imported `unchanged` conclusion whose ranges, guards and read domains hold defines every read already in the problem of its exit selection, at the selected tuple and with any projection, as that projection's read of the recorded entry version. Its projections at a concrete generic instance are those of the instantiated element type. These are definitions of [RANGE-3], formed only at tuples selected by reads already in the problem.
 The walk evaluates integer expressions it can name exactly — literals, consts, bindings, the measures and element reads above, exact `+` and `-`, exact `*` by a constant, and exact integer `cvt` [OP-1, OP-7] — and an integer comparison as a path condition; every other expression is a fresh unknown of its type.
@@ -4547,10 +4611,14 @@ An owed `unchanged` conclusion is the equality of its exit and entry whole-eleme
 
 1. Instances. Every active fact is instantiated once at each tuple whose every bound variable takes a value that an element read already in the problem selects through one of the fact's own element reads whose index is that bare bound variable, after every definition below has been added, and then once more at each tuple that a read of those instances selects in the same way; an instance formed in that second round forms no further instance. An instance asserts each conclusion where its ranges and its guards hold and every read that conclusion depends on is defined [RANGE-1] and its fact is active [RANGE-2], a payload read's definition adding its tag's equality with the payload's variant.
 2. Definitions. The imported `unchanged` definitions of [RANGE-2] are added. A read of a written version is defined by that version's write [RANGE-2], case by case over where the read's index tuple and projection meet the written ones; a value or a read the walk joined is the one of the arm taken, under that arm's conditions, or its join was bypassed; a join is bypassed where a later join, some of whose arms did not pass through it, took one of those arms or was itself bypassed; and a join on which a fact's activity depends took one of its arms.
-3. Theory. The equalities of a set of literals are solved over the integers, their integer solutions written one to one over free integer parameters, and two reads of one version with the same projection whose index tuples agree at every solution are one value, an equality solved with the others. The set is contradictory when the equalities have no integer solution, the two sides of a disequality agree at every solution, or the inequalities have no rational solution once each is written over the parameters and tightened over the integers, its coefficients divided by their greatest common divisor and its bound rounded down. No choice of parameters or order of solving changes this, Fourier-Motzkin elimination decides the last condition in any order, and what it derives is not tightened again.
-4. Decision. An instance whose premises the literals entail asserts its conclusions, a premise being entailed when the literals with each of its negations are contradictory. An open item is a definition without a case among the literals; a disequality whose two sides differ by an amount the solutions do not fix; or two reads of one version with the same projection whose index tuples do not agree at every solution and are not held apart at a position where they differ, where a position is held apart when the difference of its two indices is constant over the solutions, or agrees at every solution, up to sign, with the difference of the two sides of a disequality or strict comparison among the literals. Each branch is split on an open item into one branch per case, a definition's cases, the disequality as `<` and as `>` in its place, and the two reads at equal index tuples or apart at one position where they differ, until a branch is contradictory or has no open item. The clause holds when every branch is contradictory. A set stays contradictory when literals are added to it, and each split covers its item's cases, so the order in which items are split does not change this.
+3. Theory. The equalities of a set of literals are solved over the integers, their integer solutions written one to one over free integer parameters, and two reads of one version with the same projection whose index tuples agree at every solution are one value, an equality solved with the others. The set is contradictory when the equalities have no integer solution, the two sides of a disequality agree at every solution, an excluded expression is fixed by every solution to one member of its excluded set, or the inequalities have no rational solution once each is written over the parameters and tightened over the integers, its coefficients divided by their greatest common divisor and its bound rounded down. No choice of parameters or order of solving changes this, Fourier-Motzkin elimination decides the last condition in any order, and what it derives is not tightened again.
+4. Decision. An instance whose premises the literals entail asserts its conclusions, a premise being entailed when the literals with each of its negations are contradictory. An open item is a definition without a case among the literals; an exclusion whose expression is not fixed by the solutions and whose gap has not been selected; a disequality whose two sides differ by an amount the solutions do not fix; or two reads of one version with the same projection whose index tuples do not agree at every solution and are not held apart at a position where they differ, where a position is held apart when the difference of its two indices is constant over the solutions, or agrees at every solution, up to sign, with the difference of the two sides of a disequality or strict comparison among the literals. Each branch is split on an open item into one branch per case, a definition's cases, an exclusion's nonempty integer gaps in its place, the disequality as `<` and as `>` in its place, and the two reads at equal index tuples or apart at one position where they differ, until a branch is contradictory or has no open item. The clause holds when every branch is contradictory. A set stays contradictory when literals are added to it, and each split covers its item's cases, so the order in which items are split does not change this.
 
-Nothing is searched beyond these fixed steps, and the derivation runs to completion over exact integer and rational arithmetic. One problem holds at most 4096 atoms, counted after step 2 adds every definition, and step 1 forms at most 256 instances of one fact. These are structural ceilings of the problem, not of the derivation's work: a site whose problem exceeds one is a hard error citing RANGE-3, or RANGE-5 for a certificate, that names the ceiling, never an unproved verdict.
+For an excluded set `s0 < ... < sn`, its gaps are `E < s0`, `si < E < s(i+1)` for each adjacent pair, and `sn < E`; a gap containing no integer is absent.
+An empty excluded set has the one unrestricted gap.
+A whole exclusion therefore contributes at most its cardinality plus one cases, its exact complement; it is never expanded into independent binary disequality choices.
+A solved constant outside the set satisfies the exclusion without a split.
+Nothing is searched beyond these fixed steps, and the derivation runs to completion over exact integer and rational arithmetic. One problem holds at most 4096 atoms, counted after step 2 adds every definition, with each exclusion counted as its expression atom plus one atom per distinct set member, and step 1 forms at most 256 instances of one fact. These are structural ceilings of the problem, not of the derivation's work: a site whose problem exceeds one is a hard error citing RANGE-3, or RANGE-5 for a certificate, that names the ceiling, never an unproved verdict.
 A range requirement, range invariant or range postcondition that does not hold is a hard error citing RANGE-3 at the call, at the loop, at its backedge's loop, or at the exit, naming the fact, the site and the first conclusion not established, with a repair [DIAG-1]. An ordinary obligation owed here [RANGE-2] that does not hold is rejected with its own rule and diagnostic, and a range type invariant at a construction or a leaving edge as [TYPE-11] states.
 
 [RANGE-4] A `proof_use` whose `use_premise` is `NAME(atom, ...)` instantiates the range fact NAME at the written terms: one range term per bound variable, in order, formed by [RANGE-1] in the certificate's scope.
