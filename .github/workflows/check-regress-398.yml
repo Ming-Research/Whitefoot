@@ -39,7 +39,7 @@ jobs:
                    aggregate_give_preserves_a_family_when_length_or_only_capacity_was_read \
                    a_copied_generic_array_give_preserves_a_later_length_equality; do
             set +e
-            cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --lib "$t" -- --exact --nocapture > "out-$t.txt" 2>&1
+            cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --lib "$t" -- --nocapture > "out-$t.txt" 2>&1
             st=$?
             set -e
             printf 'FALSIFY sources=%s test=%s status=%s\n' "${{ matrix.sources }}" "$t" "$st"
