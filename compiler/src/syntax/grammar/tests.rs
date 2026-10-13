@@ -167,8 +167,10 @@ fn complete_inventory_is_pinned() {
     // guard and a conclusion, adds `range_variant`'s optional `not`, and
     // retires the guard's optional comparison and separate suffix choice.
     // HOLD-1's `held_clause` identifier repeat adds one decision.
-    // Walking the merged EBNF in definition order gives 183 decisions.
-    assert_eq!(DECISIONS.len(), 183);
+    // v0.150 adds one arm-label choice among a variant pattern, literal,
+    // named const and `else` [GRAM-4]; it adds no production. Walking the
+    // merged EBNF in definition order gives 184 decisions.
+    assert_eq!(DECISIONS.len(), 184);
     // `continue` adds the same statement prefixes and followers as `break`:
     // 72 rows at existing decisions and 29 at its optional label decision.
     // Together these extend the previous 7,816-row inventory by 101.
@@ -190,9 +192,10 @@ fn complete_inventory_is_pinned() {
     // The row inventory preserves FIRST(2), FOLLOW(2) and SELECT provenance.
     // v0.140's `unchanged` conclusion and v0.142's single `range_relation`
     // production (guards and conclusions alike) together give 8,384 rows.
+    // v0.150's integer arm alternatives add 28 provenance-bearing rows.
     // HOLD-1 adds a previously absent terminal to requires_clause. It
     // changes no old FIRST2/FOLLOW2 pair: requires already starts clauses,
-    // and held_clause shares no old nonterminal. Preserve the exact 8,384-row
+    // and held_clause shares no old nonterminal. Preserve the exact 8,412-row
     // inventory under projection, and pin the new repeat separately.
     let held = LookaheadPredicate::Terminal(TerminalPredicate::Fixed(FixedTerminal::Held));
     let old_rows = DECISIONS.iter()
@@ -200,7 +203,7 @@ fn complete_inventory_is_pinned() {
         .flat_map(|decision| decision.rows())
         .filter(|row| (0..2).all(|position| row.position(position).is_none_or(|atom| atom.predicate() != held)))
         .count();
-    assert_eq!(old_rows, 8_384);
+    assert_eq!(old_rows, 8_412);
     let group = DECISIONS.iter().find(|decision| decision.production() == Production::HeldClause).expect("the held identifier repeat");
     assert_eq!(group.kind(), DecisionKind::Repeat0);
     assert_eq!(group.rows().len(), 2);
@@ -383,55 +386,59 @@ fn complete_inventory_is_pinned() {
     assert_eq!(DECISIONS[118].kind(), DecisionKind::Optional);
     assert_eq!(DECISIONS[119].production(), Production::ContinueStmt);
     assert_eq!(DECISIONS[119].kind(), DecisionKind::Optional);
+    // v0.150 inserts the arm-label choice at decision 125 [GRAM-4].
+    // Preorder decision numbering shifts every following decision by one.
+    assert_eq!(DECISIONS[125].production(), Production::Arm);
+    assert_eq!(DECISIONS[125].kind(), DecisionKind::Choice);
     // The call-site marker optional, and v0.82's `atomic_stmt` guard and
     // statement repeat, shift the later place/effect choices; v0.82's
     // retired `for_stmt` marker moves every decision after it back by one,
     // and v0.84's range decisions and v0.86's entry bindings move them
     // forward again.
-    assert_eq!(DECISIONS[137].production(), Production::Call);
-    assert_eq!(DECISIONS[137].kind(), DecisionKind::Optional);
+    assert_eq!(DECISIONS[138].production(), Production::Call);
+    assert_eq!(DECISIONS[138].kind(), DecisionKind::Optional);
     // `psuffix` carries the field, payload and index-or-range choice, and the
     // factored `range_tail?` that keeps the index and range steps
     // strong-LL(2) [GRAM-1, GRAM-5].
     // The projected entry former adds the repeat immediately before these
     // suffix decisions; later decision identities move by one [MSR-3].
     // v0.136's clause suffix choice moves them once more; v0.142 keeps it.
-    assert_eq!(DECISIONS[158].production(), Production::Pbase);
-    assert_eq!(DECISIONS[158].kind(), DecisionKind::Repeat0);
-    assert_eq!(DECISIONS[158].rows().len(), 95);
-    assert_eq!(DECISIONS[159].production(), Production::Psuffix);
-    assert_eq!(DECISIONS[159].kind(), DecisionKind::Choice);
+    assert_eq!(DECISIONS[159].production(), Production::Pbase);
+    assert_eq!(DECISIONS[159].kind(), DecisionKind::Repeat0);
+    assert_eq!(DECISIONS[159].rows().len(), 95);
     assert_eq!(DECISIONS[160].production(), Production::Psuffix);
-    assert_eq!(DECISIONS[160].kind(), DecisionKind::Optional);
+    assert_eq!(DECISIONS[160].kind(), DecisionKind::Choice);
+    assert_eq!(DECISIONS[161].production(), Production::Psuffix);
+    assert_eq!(DECISIONS[161].kind(), DecisionKind::Optional);
     // v0.84's `range_clause` [RANGE-1]: the binder repeat, the optional guard
     // list and its repeat, and the conclusion repeat.
     for (index, kind) in [
-        (161, DecisionKind::Repeat0),
-        (162, DecisionKind::Optional),
-        (163, DecisionKind::Repeat0),
+        (162, DecisionKind::Repeat0),
+        (163, DecisionKind::Optional),
         (164, DecisionKind::Repeat0),
+        (165, DecisionKind::Repeat0),
     ] {
         assert_eq!(DECISIONS[index].production(), Production::RangeClause);
         assert_eq!(DECISIONS[index].kind(), kind);
     }
     // v0.136's diagnostic-only ordinary unchanged suffix [RANGE-1].
-    assert_eq!(DECISIONS[154].production(), Production::ClauseExpr);
-    assert_eq!(DECISIONS[154].kind(), DecisionKind::Choice);
+    assert_eq!(DECISIONS[155].production(), Production::ClauseExpr);
+    assert_eq!(DECISIONS[155].kind(), DecisionKind::Choice);
     // v0.142 shares comparison, variant and unchanged relations between a
     // guard and a conclusion, then adds the variant's optional `not`.
     // A relation has no bare alternative, so it owns no optional [RANGE-1].
     for (index, production, kind) in [
-        (165, Production::RangeRelation, DecisionKind::Choice),
-        (166, Production::RangeVariant, DecisionKind::Optional),
+        (166, Production::RangeRelation, DecisionKind::Choice),
+        (167, Production::RangeVariant, DecisionKind::Optional),
     ] {
         assert_eq!(DECISIONS[index].production(), production);
         assert_eq!(DECISIONS[index].kind(), kind);
     }
     // `epsuffix` mirrors it inside an effect row [EFF-1].
-    assert_eq!(DECISIONS[181].production(), Production::Epsuffix);
-    assert_eq!(DECISIONS[181].kind(), DecisionKind::Choice);
     assert_eq!(DECISIONS[182].production(), Production::Epsuffix);
-    assert_eq!(DECISIONS[182].kind(), DecisionKind::Optional);
+    assert_eq!(DECISIONS[182].kind(), DecisionKind::Choice);
+    assert_eq!(DECISIONS[183].production(), Production::Epsuffix);
+    assert_eq!(DECISIONS[183].kind(), DecisionKind::Optional);
 }
 
 /// `borrow_expr` is `"&" place` and owns no decision.
@@ -563,14 +570,14 @@ fn every_decision_has_two_position_rows_and_complete_arm_coverage() {
             stack.extend_from_slice(node.children());
         }
     }
-    // The same 183 decisions `complete_inventory_is_pinned` reads out of the
+    // The same 184 decisions `complete_inventory_is_pinned` reads out of the
     // generated table, counted a second time by walking every production's
     // node tree. `struct_decl`'s `"opaque"?` optional [GRAM-2, TYPE-2] is
     // reachable from `item`, so the walk and the table agree on it; a
     // decision in the table that no production reaches would show up as the
     // two counts disagreeing.
     assert_eq!(decisions, DECISIONS.len());
-    assert_eq!(decisions, 183);
+    assert_eq!(decisions, 184);
 }
 
 #[test]
@@ -627,7 +634,7 @@ fn overlaps(left: LookaheadPredicate, right: LookaheadPredicate) -> bool {
 
 #[test]
 fn all_detailed_rows_retain_provenance_and_remain_cross_arm_disjoint() {
-    assert_eq!(DECISIONS.len(), 183);
+    assert_eq!(DECISIONS.len(), 184);
     let mut total_rows = 0_usize;
     let mut saw_atom_only = false;
     for decision in &DECISIONS {

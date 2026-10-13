@@ -1,0 +1,146 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn key_of(a: u64, b: u64) -> key: Array<u8, 2> pure {
+  let key = array_filled::<u8, 2>(value: 0_u8);
+  set key[0_u64] = cvt.wrap::<u64, u8>(a);
+  set key[1_u64] = cvt.wrap::<u64, u8>(b);
+  return key;
+}
+
+fn mark(store: &Shared<ConcurrentHashMap<unit>>, a: u64, b: u64) -> result: unit reads(store) waits {
+  let key = key_of(a: a, b: b);
+  atomic slot = &store^[&key[0_u64..2_u64]] {
+    set slot^ = Some<unit>(value: unit);
+  }
+  return unit;
+}
+
+fn unmark(store: &Shared<ConcurrentHashMap<unit>>, a: u64, b: u64) -> result: unit reads(store) waits {
+  let key = key_of(a: a, b: b);
+  atomic slot = &store^[&key[0_u64..2_u64]] {
+    set slot^ = None<unit>();
+  }
+  return unit;
+}
+
+fn is_marked(store: &Shared<ConcurrentHashMap<unit>>, a: u64, b: u64) -> found: Bool reads(store) waits {
+  let key = key_of(a: a, b: b);
+  let seen = False();
+  atomic slot = &store^[&key[0_u64..2_u64]] {
+    match slot^ {
+      Some(value: flag) => {
+        set seen = True();
+      }
+      None() => {
+      }
+    }
+  }
+  return seen;
+}
+
+fn fill(store: Shared<ConcurrentHashMap<unit>>, missing: Shared<u64>, a: u64) -> result: unit pure waits {
+  doc "Marks the sixteen keys of row a twice over, removes its odd columns, and counts every key whose membership then differs from the one just written.";
+  for @twice (round in 0_u64..2_u64) {
+    for @column (b in 0_u64..16_u64) {
+      mark(store: &store, a: a, b: b);
+    }
+  }
+  for @column (b in 0_u64..16_u64) {
+    let parity = b % 2_u64;
+    if parity == 1_u64 {
+      unmark(store: &store, a: a, b: b);
+    }
+  }
+  let wrong = 0_u64;
+  for @column (b in 0_u64..16_u64) {
+    let present = is_marked(store: &store, a: a, b: b);
+    let parity = b % 2_u64;
+    let wanted = parity == 0_u64;
+    if present != wanted {
+      set wrong = wrong +wrap 1_u64;
+    }
+  }
+  atomic m = &missing {
+    set m^ = m^ +wrap wrong;
+  }
+  return unit;
+}
+
+fn run(store: &Shared<ConcurrentHashMap<unit>>, missing: &Shared<u64>) -> result: unit reads(store), reads(missing) waits {
+  for @row (a in 0_u64..4_u64) {
+    let handle = shared_share::<ConcurrentHashMap<unit>>(shared: store);
+    let counted = shared_share::<u64>(shared: missing);
+    spawn fill(store: move handle, missing: move counted, a: a);
+  }
+  return unit;
+}
+
+fn collect(map: &ConcurrentHashMap<unit>, keys: &KeySet) -> result: unit reads(map), writes(keys) {
+  let next = map_scan::<unit>(map: map, cursor: 0_u64, count: 0_u64, keys: keys);
+  loop {
+    if next == 0_u64 {
+      break;
+    }
+    set next = map_scan::<unit>(map: map, cursor: next, count: 0_u64, keys: keys);
+  }
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure waits {
+  doc "Four contexts share one set of two-byte keys held as a map whose values are unit: each marks the sixteen keys of its own row twice, unmarks the odd columns and checks every key of its row. The set then holds the thirty-two even-column keys, a scan reports exactly those, and clearing it empties it. Status 0 when all of that holds; each other status names the first check that failed.";
+  let store = shared_map_new::<unit>(capacity: 4_u64);
+  let missing = shared_new::<u64>(value: 0_u64);
+  run(store: &store, missing: &missing);
+  let wrong = 1_u64;
+  atomic m = &missing {
+    set wrong = m^;
+  }
+  if wrong != 0_u64 {
+    return exit_status(code: 1_u8);
+  }
+  let marked = 0_u64;
+  let keys = key_set_new(capacity: 32_u64);
+  atomic t = &store {
+    set marked = map_count::<unit>(map: t);
+    collect(map: t, keys: &keys);
+  }
+  if marked != 32_u64 {
+    return exit_status(code: 2_u8);
+  }
+  if keys.len != 32_u64 {
+    return exit_status(code: 3_u8);
+  }
+  for @row (a in 0_u64..4_u64) {
+    for @column (b in 0_u64..16_u64) {
+      let key = key_of(a: a, b: b);
+      let before = keys.len;
+      key_set_insert(keys: &keys, key: &key[0_u64..2_u64]);
+      let grew = keys.len != before;
+      let parity = b % 2_u64;
+      let odd = parity == 1_u64;
+      if grew != odd {
+        return exit_status(code: 4_u8);
+      }
+    }
+  }
+  let absent = is_marked(store: &store, a: 9_u64, b: 0_u64);
+  if absent {
+    return exit_status(code: 5_u8);
+  }
+  atomic t = &store {
+    map_clear::<unit>(map: t);
+  }
+  let left = 1_u64;
+  atomic t = &store {
+    set left = map_count::<unit>(map: t);
+  }
+  if left != 0_u64 {
+    return exit_status(code: 6_u8);
+  }
+  let gone = is_marked(store: &store, a: 0_u64, b: 0_u64);
+  if gone {
+    return exit_status(code: 7_u8);
+  }
+  return exit_status(code: 0_u8);
+}
