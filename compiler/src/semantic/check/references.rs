@@ -42,7 +42,7 @@ use super::super::model::{
 };
 use super::super::places::{
     CapturedRange, CapturedTerm, CapturedValue, DescendantTarget, PlaceRoot, PlaceStep,
-    ResolvedPlace, UnprovedSeparations,
+    ResolvedPlace, UnprovedSeparations, places_overlap,
 };
 use super::{
     CheckStop, Checker, EffectPath, EffectSet, LocalBinding, PlaceAccess, TypedExpression,
@@ -163,6 +163,61 @@ impl InvalidationEvent {
             Self::RootScopeEnded => "the scope of the local variable the path starts at ended",
             Self::WindowBoundaryMoved => {
                 "a window operation moved the boundary or origin the reference was formed under"
+            }
+        }
+    }
+}
+
+/// [SHARE-1, SHARE-2] the places an atomic statement read one target's
+/// handle from, and whether a write, move or release checked while the
+/// statement's binding is in scope may overlap one of them [OWN-7].
+///
+/// The binding carries it through the same walk that carries [REF-2]
+/// validity, so it sees every event that walk enumerates: a statement's
+/// write or move, a call's substituted row [EFF-5] and a window operation.
+/// A move out of a field also releases the rest of its owner [WIN-3], which
+/// that walk does not enumerate; the consume reports each released part
+/// here itself.
+/// Unlike validity it is shared by every copy of the binding's state and is
+/// never restored by a join, so an event on a path that leaves the block by
+/// an edge marks it as well as one that falls through.
+#[derive(Debug, Eq, PartialEq)]
+pub(super) struct HandleWatch {
+    places: Vec<ResolvedPlace>,
+    disturbed: std::cell::Cell<bool>,
+}
+
+impl HandleWatch {
+    pub(super) const fn new(places: Vec<ResolvedPlace>) -> Self {
+        Self {
+            places,
+            disturbed: std::cell::Cell::new(false),
+        }
+    }
+
+    /// Whether some event may have written, moved or released a watched
+    /// place.
+    pub(super) fn disturbed(&self) -> bool {
+        self.disturbed.get()
+    }
+
+    /// Marks every watch in scope whose places `written` may overlap. A
+    /// handle is opaque, so nothing is written below a watched place, and
+    /// overlap in either direction marks.
+    pub(super) fn observe(
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+        written: &ResolvedPlace,
+    ) {
+        for watch in bindings
+            .values()
+            .filter_map(|local| local.handle_watch.as_deref())
+        {
+            if watch
+                .places
+                .iter()
+                .any(|place| places_overlap(&UnprovedSeparations, written, place))
+            {
+                watch.disturbed.set(true);
             }
         }
     }
@@ -753,6 +808,7 @@ impl<'unit> Checker<'_, 'unit> {
         window: &ResolvedPlace,
         shifts_origin: bool,
     ) {
+        HandleWatch::observe(bindings, window);
         for local in bindings.values_mut() {
             let Some(reference) = &mut local.reference else {
                 continue;
@@ -2586,6 +2642,7 @@ impl<'unit> TypeContext<'unit> {
         event: &InvalidationEvent,
         site: Option<&crate::NodePath>,
     ) -> Result<(), CheckStop> {
+        HandleWatch::observe(bindings, written);
         // [REF-1] a reference keeps the index value its formation read, so a
         // write of that binding leaves the reference valid but ends the
         // binding's spelling as a name for its index. [EFF-1] A parameter no
@@ -2770,6 +2827,7 @@ mod tests {
                     compiler_updated: false,
                     reference: None,
                     refinement_witnesses: Vec::new(),
+                    handle_watch: None,
                     call_value: true,
                     read_only_state: false,
                 };
@@ -2861,6 +2919,7 @@ mod tests {
                 },
             )),
             refinement_witnesses: Vec::new(),
+            handle_watch: None,
             call_value: false,
             read_only_state: false,
         };

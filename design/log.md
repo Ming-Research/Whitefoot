@@ -5,6 +5,20 @@ Newest first. One entry per approved change of the tree: a dated title,
 the owner's agent instructions own the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-13 An atomic statement counts its handle only when its block may lose it
+
+Nodes: compiler/waiting-contexts
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve Whitefoot#409 (head commit 37d392caf)'s change to the design tree? The change: an atomic statement no longer updates the object's handle count whenever its block cannot write, move or release the place it read the handle from" (translated), whose background listed the four tree edits; the merge still waits for the registered 14900K throughput criterion.
+
+Summary: The shared-object decision now has an atomic statement count a handle of its own only when its guard or block may write, move or release a place it read the handle from, the release of that place with the rest of its owner when a part beside it is moved out included, or when it read the handle from no place or from a place not rooted at a binding, because a handle place the guard and block leave alone keeps the object live until the statement completes [SHARE-1] and no other context reaches a place rooted at a binding [WAIT-3], while the pair of count updates writes one line every driver's statements on the object share. The figures measured for handles a caller lends moved to the rejection of the replaced rule, and the gain for a handle in a local, a value parameter or a field is stated as not yet measured. Rejected: omitting the count only for a handle reached through a reference parameter whose row writes nothing below it.
+## 2026-10-13 The final affine family skips only images proved unable to prove the target
+
+Nodes: compiler/proof-query-context
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve this set of design-tree changes; after the 14900K comparison is in, write the design change log, mark ready and merge through the queue, then tell Halo" (translated), on the card "approve the design-tree decisions of Whitefoot#429's change that lets the final proof step skip known facts that cannot prove the target (head commit 205f0024a)?" (translated), whose background listed the reworded reuse decision, the new skipping decision and the three rejected alternatives.
+
+Summary: AUTO's final L0-image family visits images in their original order but skips an image only when it shares no atom with the target, its interval feasibility is proved, it cannot be an exact-L0 complement raw or GCD-tightened, and the target's checked interval maximum already exceeds its bound; a recorded deduction shows every skipped image fails on every success route, so verdicts and first successful parents are unchanged. Prepared endpoints, measure lookup, residual scratch and interval classifications are shared within one numeric proof and discarded together when the view changes. Failed-query reuse, overlap-only pruning and countermodel certification were rejected. On pinned Halo the check's CPU time fell to 0.600 of its base on hosted runners with identical verdicts.
 ## 2026-10-13 A copied range reference is identified through its source, a qualified constant is cited at its path, and a saturating form that cannot saturate gets no exact image
 
 Nodes: language/checks-and-proofs/proof-identity, language/name-resolution, language/checks-and-proofs/automatic-facts
