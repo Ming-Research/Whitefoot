@@ -179,7 +179,7 @@ fn recorded_consumers_do_not_blame_an_insufficient_summary() {
             "a-insufficient-loop-summary.wf",
             replay_source!(
                 " contract {\n  requires budget^.end < budget^.popped;\n}",
-                "  loop (\n    invariant strict: budget^.end < budget^.popped\n  ) {\n    batch(budget: budget);\n  }\n"
+                "  loop (\n    invariant strict: budget^.end < budget^.popped\n  ) {\n    batch(budget: budget);\n    if budget^.popped == 0_u64 {\n      break;\n    }\n  }\n"
             ),
             "INV-1",
             "\n  name: strict\n",
