@@ -46,6 +46,7 @@ jobs:
           test "$(git -C "$out/wasmi-source" rev-parse HEAD)" = "$WASMI_REV"
           # Default release settings are provisional until compared with the attribution build.
           cargo build --manifest-path "$out/wasmi-source/Cargo.toml" --release --locked --package wasmi_cli > "$out/evidence/wasmi-build.log" 2>&1
+          ls -la "$out/wasmi-source/target/release" >> "$out/evidence/wasmi-build.log"
           {
             printf 'Whitefoot/source %s\nwasmi/source %s\n' "$(git rev-parse HEAD)" "$WASMI_REV"
             printf 'v2h: gen.py default; whitefootc --dispatch-ledger; compiler profile gate\n'
@@ -56,7 +57,7 @@ jobs:
             cargo --version
             /usr/bin/clang --version
             objdump --version
-            sha256sum compiler/target/gate/whitefootc "$out/v2h" "$out/wasmi-source/target/release/wasmi_cli" "$out/evidence/v2h.wf"
+            sha256sum compiler/target/gate/whitefootc "$out/v2h" "$out/wasmi-source/target/release/wasmi" "$out/evidence/v2h.wf"
           } > "$out/evidence/inputs.txt"
           tar -czf "$out/evidence/wasmi-source.tar.gz" -C "$out/wasmi-source" \
             Cargo.toml Cargo.lock crates/cli/Cargo.toml crates/wasmi/Cargo.toml \
@@ -103,7 +104,7 @@ jobs:
               return body
 
           v2h = out / "v2h"
-          wasm = out / "wasmi-source/target/release/wasmi_cli"
+          wasm = out / "wasmi-source/target/release/wasmi"
           vs = symbols(v2h, "v2h")
           ws = symbols(wasm, "wasmi")
           selected = {name: "run entry/exit context" for name in vs
