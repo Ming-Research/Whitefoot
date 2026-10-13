@@ -12,6 +12,13 @@ Nodes: language/checks-and-proofs/range-facts
 Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve Whitefoot#394's specification and design-tree change ... (head commit 25cb94f9d)" (translated), whose background listed the changed Bool-guard decision, the four added decisions and the four added refusals.
 
 Summary: The Bool-guard decision now writes Bool data only as `is True` / `is False`. Four decisions are added: the variant relation `e is V` / `e is not V`; each conclusion holds by its own reads; a conclusion that can never hold is an error, identity being the written spelling; and a reference-bound payload binder denotes the element's payload projection in goals. Four refusals are recorded: `==` for variants (value equality would equate two values of one variant with different payloads), the pattern form `e is V(..)` (its parentheses suggest a binding), one definedness condition for the whole clause (it accepted vacuous clauses), and requiring the payload to be copied to a local first (it refuses the natural form).
+## 2026-10-13 A tracked integer field place has a current image, and a quotient's upper bound follows from its dividend and divisor
+
+Nodes: language/checks-and-proofs/automatic-facts
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the specification and design-tree changes of Whitefoot#406: every tracked integer field place has a current image, a quotient's upper bound follows from its dividend and divisor, and `ishl(1, s)` has its own name? (head commit f722d963a)". The revision merged here differs from f722d963a only by the removal of a temporary measurement workflow and the merge of main.
+
+Summary: One decision is added: every tracked integer field place, whether its root holds the value or is a reference, carries a current affine image that only a commit to the field replaces and every event invalidating its supporting facts removes, instead of limiting images to fields reached through reference parameters, which the owner widened on an earlier card. The same change states the quotient upper bound as dividend below (k+1) divisors with the divisor proved at least one, and treats a variable right shift as division by the named power `ishl(1, s)`, instead of product terms or a writer-supplied proof step.
 
 ## 2026-10-13 A fact some arms hold survives their join, and a joined value is free where its join was bypassed
 
