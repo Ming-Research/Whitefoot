@@ -2,7 +2,7 @@
 
 ## Question and scope
 
-This pre-run record extends the [exact-recovery investigation](EXACT-RECOVERY.md)
+This investigation extends the [exact-recovery investigation](EXACT-RECOVERY.md)
 for [PR #393](https://github.com/Ming-Research/Whitefoot/pull/393). Does the
 remaining cost come from deciding each condition, explaining decided conditions,
 rechecking rejected modules, or disproportionate work on particular functions?
@@ -11,7 +11,7 @@ incremental views along an `if` chain if OP-5 makes any program's check more tha
 50% slower. This investigation attributes that trigger; it changes neither the
 threshold nor the specification, compiler, or downstream sources.
 
-Code inspection below refers to compiler revision
+The pre-run implementation inspection below refers to compiler revision
 `30169c91105990913b11f7c07dc4e49f63de6997`. The workflow records its actual
 compiler revision on execution. Its pinned comparison remains:
 
@@ -113,6 +113,210 @@ row cannot reject any hypothesis about the unfinished analysis.
 | One or several long chains cause pathological per-analysis work | A small set of modules dominates or times out independently; completed functions have unusually large view inventories, fixed-point/affine work per condition, rather than merely more analysis runs. Inspect those source chains next. | The observed excess is accounted for by recovery multiplicity, without disproportionate work per completed invocation. A hot module alone does not prove chain growth; aggregate counters cannot establish a complexity exponent. |
 | Repeated entry composition causes the old Snowghost timeout | All isolated modules finish, while the old combined modules-plus-entries invocation does not. | Individual modules reproduce the severe cost. This rules out entry composition as the sole cause, not an additional contribution. |
 
+## Attribution result: 2026-10-13
+
+[Run 38378768581](https://github.com/Ming-Research/Whitefoot/actions/runs/38378768581)
+completed the protocol below at branch compiler
+`c9982a5893ef029c5cbb0a8971efb5675a441ad3`, against the main compiler and
+downstream pins above. It used gate-profile binaries on Ubuntu hosted runners,
+Rust 1.99.0, with one uninstrumented main/branch/main-twin triplet per job and
+separate instrumented invocations. The artifact's `op5-summary/measurements.json`,
+`per-analysis.jsonl`, `per-function.json`, raw TSVs and report stdout are the
+evidence. The local artifact copy is scratch and is not committed. These are
+screening measurements, not precise timing confirmations on the 14900K.
+The source references in this result section refer to the run's branch head;
+downstream source locations refer to the pinned source bundle.
+
+The pinned main compiler is not an OP-5-only ablation: the branch also merged
+other main-line changes, including the range rules that reserve `unchanged`.
+The wall ratios measure the two compiler versions on the same project sources,
+not the isolated causal percentage of OP-5. The OP-5 phase timers and the
+rejection-triggered repetition identify particular mechanisms within that
+comparison. A precise rule-only percentage would require compiler versions
+that share the other changes. This matters especially for the parser aborts
+below; they are not OP-5 rejection costs.
+
+| Workload | Uninstrumented main / branch / twin, s | Instrumented main / branch, s | Completed analyses main → branch | Branch result |
+| --- | --- | --- | --- | --- |
+| Migrated Firn | 5.227 / 6.626 / 5.225 | 5.225 / 6.628 | 3332 → 3339 | Accepted |
+| Snowghost text IDNA | 0.568 / 3.420 / 0.517 | 0.517 / 3.420 | 101 → 808 | Rejected; 7 OP-5 tasks |
+| Snowghost text normalization | 0.431 / 1.019 / 0.218 | 0.218 / 1.025 | 67 → 402 | Rejected; 5 OP-5 tasks |
+| Snowghost text line break | 0.237 / 0.419 / 0.218 | 0.218 / 0.418 | 93 → 186 | Rejected; 1 OP-5 task |
+| Snowghost font | 15.543 / 33.660 / 15.340 | 15.540 / 33.564 | 448 → 896 | Rejected; 1 OP-5 task |
+| Snowghost layout text | 1.872 / 5.019 / 1.815 | 1.817 / 5.041 | 155 → 465 | Rejected; 2 OP-5 tasks |
+| Halo VM | 7.553 / 8.231 / 7.629 | 7.730 / 8.331 | 627 → 398 | Incomplete rejection inventory; 2 OP-5 tasks |
+| Snowghost style | 53.019 / 0.719 / 52.491 | 53.493 / 0.719 | 778 → unavailable | Incomplete; 4 FORM-3 parser tasks |
+| Snowghost layout | 8.432 / 1.119 / 8.130 | 8.431 / 1.119 | 964 → unavailable | Incomplete; 5 FORM-3 parser tasks |
+| Snowghost oracle style | 6.662 / 602.060 / 6.121 | 6.121 / 602.112 | 290 → 288 | Timeout; ultimate verdict unknown |
+| Snowghost oracle layout | 65.125 / 602.088 / 62.793 | 63.296 / 602.119 | 322 → 320 | Timeout; ultimate verdict unknown |
+
+### Status of the pre-run hypotheses
+
+| Pre-run hypothesis | Status and discriminating observation |
+| --- | --- |
+| Preparing and propagating an origin view at each condition dominates | **Supported for the completed hot oracle-style functions.** The cost is predominantly affine search inside view propagation, rather than allocation. The phase of the unfinished frontier analyses remains **unresolved**. |
+| Explaining deciding proofs dominates | **Rejected as the dominant explanation for the completed hot functions and complete recovery examples.** The hot style functions have no decided conditions; the explanation envelopes below are small in the rejected examples. Explanation within the unfinished analyses remains **unresolved**. |
+| Rechecking after rejection dominates | **Supported** for IDNA, normalization, line break, font and layout text: whole-module analysis inventories recur once per removal. **Rejected for the two oracle timeouts before their deadlines:** they stall in the first inventory, before report recovery starts. |
+| One or several long chains cause pathological per-analysis work | A pathological individual analysis is **supported** at each oracle frontier. The specific long-chain or superlinear explanation is **unverified**, neither supported nor rejected by a missing row or a single source size. |
+| Repeated entry composition causes the old Snowghost timeout | **Rejected as the sole cause.** Two isolated modules reproduce the severe slowdown with no entry composition. An additional aggregate contribution remains unmeasured. |
+
+Nontermination is **unverified**. The origin-view loop installs signed facts
+monotonically over a finite collected set (`origin_transport.rs:571–647`), which
+favors expensive finite progress over a no-progress loop in that region. This
+is not a global termination proof for every nested prover path, and the artifact
+contains no live progress or stack evidence for the interrupted calls.
+
+### The two missing frontier analyses
+
+Oracle style emits every analysis ID from 0 through 287 once. Main emits 290
+analyses; the branch adds the synthetic `error_copy_class_description` analysis.
+Its last completed body is `structure_differing`; the corresponding main
+frontier is `run_structure`, followed by `drive` and `run`. This identifies the
+likely active branch invocation as `run_structure`, ID 288, in pinned
+`oracle/style/structure.wf:461`. Oracle layout emits 320 analyses with IDs
+0 through 320 except 319. Main emits 322; the additional synthetic invocation
+shifts the corresponding body frontier to `run_edits`, likely ID 319, in pinned
+`oracle/layout/edit.wf:1467`. `rebuild_dump` completes as ID 320 while that peer
+is missing. The dependency schedule and concurrent analysis path
+(`semantic/check/schedule.rs:171–298` and `semantic/entailment.rs:1558–1586`)
+explain a completed peer after a missing ID. These are source/order inferences,
+not function-start records. Neither oracle module starts a second recovery
+inventory before its deadline.
+
+The phase of both missing calls is **unknown**. The work instrument writes the
+entire invocation only in `FunctionScope::drop` (`work.rs:292–305`), and a phase
+timer records its time only when dropped (`work.rs:200–205`). Killing an active
+scope loses its counters and phases. Summing completed inclusive analysis
+times and subtracting them from wall time would not recover the missing phase:
+analyses can nest and run concurrently, and other driver work is untimed.
+
+Completed oracle-style bodies nonetheless separate direct decision cost from
+explanation:
+
+| Function | Conditions / redundant | Analysis s | Condition s | View build s | View fixed point s | Affine search s | Final-family exhaustions |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `run_restyle` | 14 / 0 | 2.465 | 2.421 | 0.006082 | 2.246 | 2.406 | 6322 |
+| `run_reach` | 19 / 0 | 1.304 | 1.266 | 0.003567 | 0.620 | 1.253 | 4185 |
+| `run_incremental` | 11 / 0 | 1.423 | 1.402 | 0.003541 | 1.062 | 1.394 | 2808 |
+
+These phases are nested, not additive. All three functions test undecided
+conditions, so they do not construct OP-5 deciding-fact explanations. Their
+combined view-build time is only 13.189 ms, compared with a 5.089 s condition
+envelope and an overlapping 5.053 s affine-search envelope. Thus reducing
+allocation alone misses the observed hot work. In oracle layout the largest
+completed body, `build_page`, spends 34.524 s in analysis and 32.327 s in
+closure; its condition time is about 10 microseconds. `full_structure_edit`
+spends 4.409 s in analysis, 3.086 s in closure and 0.0155 s in conditions.
+Neither completed layout body identifies the timeout phase of `run_edits`.
+
+### Recovery and misleading early finishes
+
+The complete rejected examples contain exactly `(k + 1) × N` analyses, where
+`k` is the number of rejection tasks and `N` the main inventory size. Each
+removal reruns the remaining bodies and synthetic declarations. Font repeats
+`load_face` at 12.683 and 12.724 s, and `compile_layout` at 2.054 and 2.074 s.
+Layout text repeats `font_set_add` at 1.072, 1.059 and 1.071 s, and
+`release_face` at 0.384, 0.383 and 0.373 s. Their whole-analysis totals are
+inclusive, but the repeated expensive bodies make the avoidable work concrete.
+IDNA's redundant judgments shrink across its eight inventories as
+9/8/6/5/4/3/2/0; normalization's six inventories give 8/7/6/4/2/0. Later failures
+have already been encountered during earlier body analyses, before the driver
+reports them one at a time.
+
+The fast style and layout results are parser aborts. Four style bodies and
+five layout bodies use `let unchanged = ...`; the branch treats `unchanged` as
+a reserved token and reports FORM-3 `UnexpectedToken`. No semantic work rows
+are emitted. Their apparent speedup hides semantic checking and says nothing
+about OP-5's cost. Halo VM completes two inventories of 199 analyses each,
+versus main's 627 analyses including later stages. Its tasks name `builtin`
+and `prepare_inner`; the inventory is explicitly incomplete. The exact abort
+that makes recovery incomplete is not present in the emitted report. Static
+inspection suggests a recovery representation failure: the private
+`prepare_inner` header at `vm/calls.wf:321` returns `Step`, declared privately
+in `vm/state.wf:84` and absent from the interface. `pending_declaration`
+copies that header into the interface (`driver.rs:1217–1236`), and a failure
+in a synthesized declaration ends recovery as incomplete (`driver.rs:1077–1078`).
+This explains a plausible hidden abort, not a recorded diagnostic.
+Halo's 8.231 s cannot be compared as a completed accepted check.
+
+### General fixes to investigate, not implementation decisions
+
+**Retain analysis during rejection reporting.** Retain the resolved module and
+the per-function results, collect body failures already available, then
+invalidate only the dependency closure affected by setting a body aside.
+Invalidation must include contracts, instantiated generics, verified
+postconditions, ownership checks and other semantic dependencies; unchanged
+written boundaries alone are insufficient evidence for reuse. This also
+avoids repeatedly reparsing edited text and injecting private headers into an
+interface. Preserve the specified verdict, task inventory, written locations
+and completeness semantics. The following are opportunities, not measured
+post-fix durations:
+
+| Workload | Robust work opportunity | Conditional wall estimate |
+| --- | --- | --- |
+| Font | Remove one of two whole inventories | About 16–17 s recovered from 33.660 s, toward 17 s |
+| Layout text | Remove two of three whole inventories | About 3.3 s recovered from 5.019 s, toward 1.7–1.9 s |
+| IDNA | 87.5% fewer inventory blocks | Optimistic equal-pass arithmetic: 3.420 / 8 ≈ 0.43 s |
+| Normalization | 83.3% fewer inventory blocks | Optimistic equal-pass arithmetic: 1.019 / 6 ≈ 0.17 s |
+| Line break | 50% fewer inventory blocks | Optimistic equal-pass arithmetic: 0.419 / 2 ≈ 0.209 s |
+
+For retained retry fraction `f`, the simple model is
+`T_new ≈ T / (k + 1) × (1 + k × f)`. Here `f` includes affected dependents and
+unavoidable retry work; it is unknown. No value of `f` is measured or assumed
+as a prediction. Especially for short commands, wrapper overhead and the
+large main/twin variation make division by block count unreliable as a wall
+forecast. The counts establish the avoidable repetition; CI must measure the
+actual saving. Recovery changes offer no measured saving before either
+oracle timeout, because neither has started recovery.
+
+**Construct explanations once per reported rejection.** Share visited proof
+roots and render only the failures actually reported, retaining reachable
+proof provenance across ledger pruning rather than retaining bare arena IDs
+for later lookup. This is a general reuse opportunity, not the dominant fix
+indicated by this run. Even assigning every condition timer in every completed
+analysis with a redundant condition to explanation gives these upper envelopes:
+
+| Completed workload analyses | Condition envelope containing possible explanation, ms |
+| --- | --- |
+| IDNA | 78.232 |
+| Normalization | 109.307 |
+| Line break | 4.239 |
+| Font | 1.915 |
+| Layout text | 2.279 |
+| Oracle style | 8.423 |
+| Oracle layout | 34.999 |
+
+The envelopes include decision work and other conditions, so actual explanation
+cost is smaller. They are not independent explanation timers, and say nothing
+about interrupted analyses. This fix cannot be credited with recovering the
+600 s timeouts from the available evidence.
+
+**Incremental views must reuse propagation and proof work.** The owner's
+selected chain-view remedy should retain exact signed-proof and prepared
+affine work as well as expression collections, with correct invalidation
+when the entering facts or live definitions change. The completed hot style
+functions offer up to their 5.089 s condition envelope for investigation,
+not a measured saving or a forecast for the whole module. Whether this remedy
+addresses `run_structure` or `run_edits` remains unknown until their phase is
+observed. No code or design choice is implemented by this note.
+
+The next investigation should use CI-only function-start records and flushed
+phase/site/progress observations, or sampled stacks, at the two named
+frontiers. It should distinguish view fixed-point propagation, affine-family
+exhaustion, explanation and other body work, and record a progress witness
+for any suspected loop. A finite-progress requirement remains semantic; no
+timeout or work budget may choose source acceptance. No instrumentation or
+compiler fix is added in this round.
+
+Migrated Firn is 26.8% slower than the same migrated sources on main, with twin
+ratio 1.000. This supports the accepted-source allowance on one workload.
+The claim that every increase above 50% comes from rejected sources is not
+established: the oracle verdicts remain unknown before recovery starts, and
+their completed undecided functions already show direct OP-5 decision cost.
+The owner's threshold still covers any program, including diagnostic and
+recovery work; this result neither creates an accepted-only exemption nor
+establishes a 50% ceiling for accepted programs.
+
 ## Available control and instrumentation limits
 
 No verified migrated equivalent of either pinned downstream tree was found in
@@ -145,32 +349,35 @@ time. Main has no OP-5 phase counters; missing metrics are unavailable, not zero
 
 Rows are written only when each function analysis finishes (`work.rs`, lines
 292–305). A timed-out module can retain earlier functions' rows while omitting
-the function responsible for most of its time. A module without functions may
-never open the output file at all: Snowghost's pinned static-atom module contains
-only its constant interface. Missing counters therefore mean unavailable
+the function responsible for most of its time. A module without analyzed
+functions may never open the output file at all. The pinned static-atom module
+contains only its constant interface, but this run still emits 40 analyses on
+each compiler from the selected checking context; it is not a missing-counter
+example. Style and layout instead emit no rows because their parser failures
+precede semantic analysis. Missing counters therefore mean unavailable
 attribution, not a failed source verdict or a measured zero. Counter output
 errors and saturated values invalidate the counter evidence. Counters are
 collected in separate invocations because their overhead is not the
 uninstrumented cost.
 
-## Next CI run
+## Executed CI protocol
 
-The temporary [workflow](../../../.github/workflows/op5-cost.yml) builds each
-compiler once and retains the migrated Firn three-way comparison. It packages
+The temporary [workflow](../../../.github/workflows/op5-cost.yml) built each
+compiler once and retained the migrated Firn three-way comparison. It packaged
 the same pinned downstream sources and both binaries for independent module
-jobs. Halo selects `pkg::vm`; Snowghost selects every module declared in its
-pinned renderer graph. No entry composition is included in this screen.
+jobs. Halo selected `pkg::vm`; Snowghost selected every module declared in its
+pinned renderer graph. No entry composition was included in this screen.
 
-Each module first runs uninstrumented main, branch, and a twin of main, then
-runs main and branch with separate `WHITEFOOT_CHECK_WORK` files. Each compiler
-invocation has a 600 s deadline. The jobs retain compiler/wrapper statuses,
+Each module first ran uninstrumented main, branch, and a twin of main, then
+ran main and branch with separate `WHITEFOOT_CHECK_WORK` files. Each compiler
+invocation had a 600 s deadline. The jobs retained compiler/wrapper statuses,
 elapsed times, logs, verdicts and raw counters after a stop, so one pathological
 module cannot hide all later modules. The summary ranks timeouts and completed
 modules and retains per-function analysis multiplicity, OP-5 work and phase
 timers, including the slowest modules. A timeout is censored evidence, never
 a source rejection, a zero duration, or a completed ratio.
 
-This first isolated sweep is a bounded attribution sample. The main twin
+This completed first isolated sweep is a bounded attribution sample. The main twin
 reveals obvious within-job variation; one triplet does not estimate a stable
 performance distribution. Counter-on timing is reported separately. Different
 module jobs may use different hosted machines: compare compilers within each
@@ -218,8 +425,9 @@ owner's threshold.
 
 This note records source inspection and extraction of supplied artifact data,
 not a new compiler run. No local build, test suite, compiler invocation or
-measurement was performed. The changed workflow awaits CI execution; GitHub
-access and the local status-board service were unavailable from this session.
+measurement was performed. The workflow ran in the completed attribution run
+above. GitHub access and the local status-board service were unavailable from
+this session; the board update remains pending rather than claimed complete.
 The downstream migrated/explanation-off control and an independent explanation
 timer remain unavailable under the requested scope. No design approval log,
 specification approval log, specification rule, conformance expectation or
@@ -235,7 +443,14 @@ negative controls cover the failure. The reviewer inspected that repair and
 the no-function/no-counter distinction and reported no remaining concrete
 findings within scope. The inherited review model identifier was unavailable.
 
-Execution of the workflow and its controls remains unverified. Checklist T8's
+The supplied artifact verifies execution of the attribution workflow, not a
+passing compiler gate. A fresh read-only review using `gpt-6.1-sol` at high
+effort checked this prose-only diff against the run's branch head, checklist
+groups A, D and V, and relevant design consistency. It independently matched
+the raw TSVs to the per-analysis records, checked the numerical envelopes and
+source/report interpretation, and found no issues within scope. The interrupted
+phases, future reuse soundness and proposed performance gains remain unverified.
+The earlier review above concerned the pre-run workflow revision. Checklist T8's
 budget-row requirement also remains unverified for the temporary measurement
 labels: no budget-table change was authorized by this task's file scope, and
 the experiment deadline is not a budget approval. The unavailable downstream
