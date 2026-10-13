@@ -12,6 +12,13 @@ Nodes: compiler/waiting-contexts/state-locks
 Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve this decision" (translated), on the card "approve the design-tree change of Whitefoot#421 (head commit 0d2e4f75b)? It adds one decision: the compiler gains a `--lock-ledger` flag reporting when each atomic statement takes each lock group" (translated).
 
 Summary: One decision is added. `whitefootc --lock-ledger` reports, for each atomic statement, its ordered target groups with their bindings and state type, whether each is taken before the guard, on every body path, on some body paths or never, and the first use or later group that takes it, because a writer could not otherwise see that an early read or a preceding type group extends a hold, as Firn's write commands did. Lowering records the acquisition requests it emits and classifies them on its control-flow graph, instead of a warning on early use, which is often intended, or a separate source analysis that could disagree with the acquired groups; the report changes neither acceptance nor acquisition placement.
+## 2026-10-13 A range fact can state an element's variant, and each conclusion stands on its own reads
+
+Nodes: language/checks-and-proofs/range-facts
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve Whitefoot#394's specification and design-tree change ... (head commit 25cb94f9d)" (translated), whose background listed the changed Bool-guard decision, the four added decisions and the four added refusals.
+
+Summary: The Bool-guard decision now writes Bool data only as `is True` / `is False`. Four decisions are added: the variant relation `e is V` / `e is not V`; each conclusion holds by its own reads; a conclusion that can never hold is an error, identity being the written spelling; and a reference-bound payload binder denotes the element's payload projection in goals. Four refusals are recorded: `==` for variants (value equality would equate two values of one variant with different payloads), the pattern form `e is V(..)` (its parentheses suggest a binding), one definedness condition for the whole clause (it accepted vacuous clauses), and requiring the payload to be copied to a local first (it refuses the natural form).
 ## 2026-10-13 A tracked integer field place has a current image, and a quotient's upper bound follows from its dividend and divisor
 
 Nodes: language/checks-and-proofs/automatic-facts
