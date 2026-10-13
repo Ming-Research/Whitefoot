@@ -218,7 +218,7 @@ impl Walker<'_> {
                     variant: route.tag,
                     variants: self
                         .variant_count(post.results.get(index).copied().unwrap_or(callee.result)),
-                    field: 0,
+                    field: route.field,
                 });
                 results[index] = Some(self.read_location(state, &payload, route.payload));
                 routed = Some((at, route.tag));
@@ -271,9 +271,85 @@ impl Walker<'_> {
         out
     }
 
+    /// The selected variant makes precisely its held range relations
+    /// available, both at a match arm and a forwarded return [FN-9].
+    pub(super) fn activate_routed_facts(&self, state: &mut State, at: &Location, tag: u32) {
+        let enabled: Vec<_> = state
+            .routed
+            .iter()
+            .filter(|(location, variant, ..)| location == at && *variant == tag)
+            .map(|(_, _, fact, guards)| (*fact, guards.clone()))
+            .collect();
+        for (fact, guards) in enabled {
+            if guards.is_empty() {
+                state.facts.push(fact);
+            } else {
+                state.guarded.push(Guarded { fact, guards });
+            }
+        }
+    }
+
+    /// [ERR-3, FN-9] the propagated error returns its evaluated payload.
+    /// Its fork selects only the operand's Err relations; none reaches the
+    /// successful continuation.
+    pub(super) fn owe_propagated_postconditions(
+        &mut self,
+        state: &State,
+        value: Value,
+        error_type: CheckedType,
+        node: &NodePath,
+    ) {
+        let CheckedType::Nominal(nominal) = self.function.result else {
+            return;
+        };
+        let CheckedNominalKind::Enum { variants } = &self.nominals[nominal.0 as usize].kind else {
+            return;
+        };
+        let Some(error) = variants.iter().find(|variant| {
+            variant.constructor
+                == super::super::super::model::CheckedConstructor::Prelude(
+                    crate::BuiltinPreludeId::ERR,
+                )
+        }) else {
+            return;
+        };
+        let tag = error.tag;
+        let variants = variants.len() as u32;
+        let mut forked = state.clone();
+        let payload = match value {
+            Value::Variant {
+                variant, fields, ..
+            } => {
+                if variant != tag {
+                    return;
+                }
+                fields.first().cloned().unwrap_or(Value::Unknown)
+            }
+            Value::Owned(location) => {
+                let at = forked.resolve(&location);
+                if forked.variants.get(&at).is_some_and(|known| *known != tag) {
+                    return;
+                }
+                self.activate_routed_facts(&mut forked, &at, tag);
+                let payload = at.child(Step::Payload {
+                    variant: tag,
+                    variants,
+                    field: 0,
+                });
+                self.read_location(&mut forked, &payload, error_type)
+            }
+            _ => Value::Unknown,
+        };
+        let returned = Value::Variant {
+            variant: tag,
+            variants,
+            fields: vec![payload],
+        };
+        self.owe_postconditions(&mut forked, Some(&returned), node, "a propagated error exit");
+    }
+
     /// [RANGE-3] the function's range postconditions an exit selects
-    /// [FN-9]: at a return, `returned` is its value; at a propagated error
-    /// exit there is none, and only the unrouted ones are selected.
+    /// [FN-9]: `returned` is its value, including the propagated Err value.
     pub(super) fn owe_postconditions(
         &mut self,
         state: &mut State,
@@ -292,6 +368,10 @@ impl Walker<'_> {
             .enumerate()
             .filter(|(_, post)| post.owed)
         {
+            // Each route assumes only its own variant. Its activated facts
+            // must not contribute to another route's exit judgment.
+            let mut selected_state = state.clone();
+            let state = &mut selected_state;
             if post.route.is_some() && returned.is_none() {
                 continue;
             }
@@ -305,7 +385,7 @@ impl Walker<'_> {
                         if variant != route.tag {
                             continue;
                         }
-                        fields.first().cloned()
+                        fields.get(route.field as usize).cloned()
                     }
                     Some(Value::Owned(location)) => {
                         let at = state.resolve(&location);
@@ -316,12 +396,13 @@ impl Walker<'_> {
                         {
                             continue;
                         }
+                        self.activate_routed_facts(state, &at, route.tag);
                         let payload = at.child(Step::Payload {
                             variant: route.tag,
                             variants: self.variant_count(
                                 post.results.get(index).copied().unwrap_or(function.result),
                             ),
-                            field: 0,
+                            field: route.field,
                         });
                         Some(self.read_location(state, &payload, route.payload))
                     }

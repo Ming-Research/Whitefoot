@@ -70,7 +70,7 @@ pub(super) const fn instantiation_cycle_repair() -> &'static str {
 /// [FN-9] an unsupported selector cannot state this postcondition. Removing
 /// its last clause also removes a now-empty or define-only contract [FN-8].
 pub(crate) const fn postcondition_selector_repair() -> &'static str {
-    "remove this ensures clause, and remove its contract block if no requires or ensures clauses remain; an unrouted clause can name only result data admitted by [CALL-4]; a routed clause selects `when b is Ok(value: r):` for an own Result<T, E> or `when b is Some(value: r):` for an own Option<T>, where b names that result, r is fresh and payload T supplies admitted data [FN-9]; omit `b is` only when exactly one declared result has the route's enum type [CALL-4]; Err, None and user-enum variants are not postcondition routes"
+    "remove this ensures clause, and remove its contract block if no requires or ensures clauses remain; an unrouted clause can name only result data admitted by [CALL-4]; a routed clause selects `when b is V(f: r):` for an own enum result, where b names that result, V is its variant, f is one declared field whose type supplies admitted data, and r is fresh [FN-9]; omit `b is` only when exactly one declared result has the route's enum type [CALL-4]; use a separate clause for each field"
 }
 
 /// [INV-1, ENT-5] the name's scope and the conclusion's survival are separate.
@@ -1340,6 +1340,7 @@ pub(super) enum OpaqueStruct {
     Frozen,
     Shared,
     SharedRead,
+    DecisionCell,
     ConcurrentHashMap,
     /// A host handle: a standard library module declares it with no fields,
     /// and only a host function forms one [PRE-2]. `linear` when its
@@ -1368,6 +1369,7 @@ const PROGRAM_OPAQUE_STRUCT: &str = "no value of an opaque struct the program de
 /// names both sources.
 pub(super) fn opaque_struct_constructed(opaque: OpaqueStruct) -> &'static str {
     match opaque {
+        OpaqueStruct::DecisionCell => "replace this construction with `decision_cell_new()` [PRE-1]",
         OpaqueStruct::Frozen => {
             "replace this construction with `frozen_new::<T>(value: v)`, passing a copy value bare or an affine value with `move` [SHARE-1]"
         }
@@ -1397,6 +1399,7 @@ pub(super) fn opaque_struct_constructed(opaque: OpaqueStruct) -> &'static str {
 /// nothing makes through a reference or an element [OWN-1, WIN-3].
 pub(super) fn opaque_struct_taken_apart(opaque: OpaqueStruct, owned: bool) -> &'static str {
     match opaque {
+        OpaqueStruct::DecisionCell => "keep the decision cell handle intact and read its verdict with `decision_cell_read(cell: &h)` [PRE-1]",
         OpaqueStruct::Frozen => {
             "keep the handle formed by `frozen_new` intact; replace this destructuring with reads of copy-typed parts through `h.inner` or borrows into `&h.inner`, adapting uses of the destructured bindings to those reads or references [SHARE-1]"
         }

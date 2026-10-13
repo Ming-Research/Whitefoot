@@ -1303,6 +1303,16 @@ pub enum IrOperation {
     SharedNew {
         nominal: IrNominalId,
     },
+    /// [PRE-1] an Open one-shot decision cell with one shared handle.
+    DecisionCellNew {
+        nominal: IrNominalId,
+    },
+    /// [SHARE-3] an independent cell observation or single-attempt claim.
+    /// `winner` is None for a read, 1 for Written and 2 for Killed.
+    DecisionCell {
+        object: IrValueId,
+        winner: Option<u32>,
+    },
     /// The address of the state of the shared object `object` names. Defines
     /// an address of the nominal's state type.
     SharedState {
