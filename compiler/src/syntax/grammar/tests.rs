@@ -373,7 +373,7 @@ fn complete_inventory_is_pinned() {
     // v0.136's clause suffix choice moves them once more; v0.142 keeps it.
     assert_eq!(DECISIONS[157].production(), Production::Pbase);
     assert_eq!(DECISIONS[157].kind(), DecisionKind::Repeat0);
-    assert_eq!(DECISIONS[157].rows().len(), 93);
+    assert_eq!(DECISIONS[157].rows().len(), 95);
     assert_eq!(DECISIONS[158].production(), Production::Psuffix);
     assert_eq!(DECISIONS[158].kind(), DecisionKind::Choice);
     assert_eq!(DECISIONS[159].production(), Production::Psuffix);
