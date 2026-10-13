@@ -1,0 +1,48 @@
+enum RoutedIndex {
+  Found(index: u64);
+  Absent();
+}
+
+fn find(index: u64) -> result: RoutedIndex pure contract {
+  requires index <= 7_u64;
+  ensures when Found(index: payload): payload <= 7_u64;
+} {
+  return RoutedIndex::Found(index: index);
+}
+
+fn forward(index: u64) -> result: RoutedIndex pure contract {
+  requires index <= 7_u64;
+  ensures when Found(index: payload): payload <= 7_u64;
+} {
+  let found = find(index: index);
+  let copied = found;
+  return copied;
+}
+
+fn delivered(flag: Bool) -> result: RoutedIndex pure contract {
+  ensures when Found(index: payload): payload <= 7_u64;
+} {
+  let original = forward(index: 7_u64);
+  let copied = original;
+  let selected = if flag {
+    give copied;
+  } else {
+    let other = forward(index: 6_u64);
+    give other;
+  }
+  return selected;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let no = False();
+  let made = delivered(flag: no);
+  match made {
+    Found(index: value) => {
+      let code = cvt::<u64, u8>(value);
+      return std::process::exit_status(code: code);
+    }
+    Absent() => {
+      return std::process::exit_status(code: 99_u8);
+    }
+  }
+}

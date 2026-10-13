@@ -219,7 +219,7 @@ fn an_external_call_actual_needs_a_real_control_flow_fact() {
 }
 
 #[test]
-fn a_recursive_postcondition_cycle_cannot_publish_its_own_premise() {
+fn a_nonreturning_recursive_cycle_proves_partial_correctness() {
     let source = br#"fn first(value: i32) -> result: i32 pure contract {
   ensures result == value;
 } {
@@ -238,9 +238,7 @@ fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
 "#;
-    rejects_as(source, SemanticRule::Fn9, |kind| {
-        matches!(kind, SemanticIssueKind::UndischargedPostcondition(_))
-    });
+    accepts(source);
 }
 
 #[test]

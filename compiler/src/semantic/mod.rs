@@ -1247,6 +1247,11 @@ pub enum SemanticIssueKind {
         /// The repair [DIAG-1].
         mechanical_fix: &'static str,
     },
+    /// A guard calls a boundary that can reach a one-shot decision cell [SHARE-2].
+    AtomicGuardDecisionCell {
+        /// The repair [DIAG-1].
+        mechanical_fix: &'static str,
+    },
     /// An atomic statement's guard whose call reads or writes a path with a
     /// self-changing host handle part [SHARE-2, PRE-2].
     AtomicGuardReadsSelfChanging {
@@ -1298,9 +1303,9 @@ pub enum SemanticIssueKind {
         /// route.
         mechanical_fix: String,
     },
-    /// A variant selector does not spell exact `Ok(value: result)`.
+    /// A route does not bind exactly one declared field of its variant.
     InvalidPostconditionFields {
-        /// Exact closed field list required by the admitted selector.
+        /// Declared field names from which one routed field must be selected.
         required_fields: Vec<String>,
     },
     /// The symbolic result candidate conflicts with a live declaration.

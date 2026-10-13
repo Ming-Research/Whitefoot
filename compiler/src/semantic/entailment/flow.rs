@@ -1007,8 +1007,6 @@ struct ExpressionJudgment {
 #[derive(Clone, Debug)]
 struct AvailablePostcondition {
     relation: RelationTemplate,
-    variant: Option<crate::BuiltinPreludeId>,
-    field: Option<crate::BuiltinPreludeId>,
     /// The variant field a routed relation is restricted to [FN-9, TYPE-11].
     route: Option<super::super::postcondition::PayloadRoute>,
     authority: super::RelationProvenance,
@@ -1016,9 +1014,9 @@ struct AvailablePostcondition {
 
 impl AvailablePostcondition {
     /// Whether the relation is restricted to one variant field of its
-    /// result, a written success route or a generated one.
+    /// result, a written variant-field route or a generated one.
     const fn routed(&self) -> bool {
-        self.variant.is_some() || self.route.is_some()
+        self.route.is_some()
     }
 }
 

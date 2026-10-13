@@ -766,14 +766,29 @@ pattern does not authorize retired syntax or a new mechanism. Reduce the need
 to a small source case, identify the specification rule that admits or refuses
 it, and record measured cost only when performance selects between alternatives.
 
-## P15. Keep a Result's or Option's evidence with its value
+## P15. Keep an enum field's evidence with its value
 
-A local `Result` or `Option` retains its verified success relations when named,
-copied, moved, assigned or delivered by `give`, whether its success payload is
-an integer or a struct whose integer fields and measures the relations name. A
-match's own `Ok` or `Some` binder and a successful `propagate` make those
-relations available, at the binder itself or at its fields. The failure edge
-keeps its ordinary return and cleanup behavior [FN-9, ENT-5].
+A local own enum retains each variant field's routed relations when named,
+copied, moved, assigned or delivered by `give`, whether that field is an integer
+or a struct whose integer fields and measures the relations name. A match arm
+taking the route's variant receives its surviving relations over the binder for
+that field. Each clause binds one declared field; separate clauses may route
+different fields of one variant. `Result.Ok` and `Option.Some` use this same
+transport, and a successful `propagate` selects its `Ok` relation. The failure
+edge keeps its ordinary return and cleanup behavior [FN-9, ENT-5].
+
+A lookup returning a source enum can promise a different index bound for each
+variant:
+
+```whitefoot
+ensures when Array(value: i): i < array^.inner.len;
+ensures when Node(value: j): j < nodes^.inner.len;
+```
+
+These clauses are a contract fragment for a lookup returning `Slot` with the
+declared variants `Array(value: u64)`, `Node(value: u64)` and `Missing()`.
+The [complete slot-write case](../tests/conformance/cases/fn9-pos-enum-halo-slot-write.wf)
+uses the returned value's own match arms to write the corresponding table.
 
 ```whitefoot
 let outcome = bounded(count: limit);
@@ -906,8 +921,8 @@ input after widening does not discharge a later bare `cvt` of that input.
 
 ## P17. Share state between contexts through one object
 
-A spawn takes only value parameters [WAIT-3], so two contexts reach one piece
-of state only through a shared object [SHARE-1]. Move the state into it with
+A spawn takes only value parameters [WAIT-3]. For general mutable state,
+give the contexts handles to a shared object [SHARE-1]. Move the state into it with
 `shared_new`, give each context its own handle made with `shared_share`, and
 change the state only inside an atomic statement, whose block holds its targets together [SHARE-2, SHARE-3]:
 
@@ -925,6 +940,23 @@ in a row are two points, and another context's statement may take effect
 between them. Copy out what the rest of the function needs into a local; the
 binding and every reference formed from it end with the block [REF-2], and so
 does every fact about the state.
+
+For a race between cancellation and an irrevocable step, use a `DecisionCell`
+[PRE-1]. Make a second handle with `decision_cell_share` before transferring
+one into each context. Call `claim_written` before accepting the step and
+continue only when it returns `Written`; the cancelling context calls
+`claim_killed` and succeeds only when it returns `Killed`. Repeated claims
+return the existing winner. A no-op write still needs the claim if accepting
+it counts as the irrevocable step in the application.
+
+The claims and `decision_cell_read` are nonwaiting, so they can run while an
+atomic block holds keys. Their verdict is independently visible before that
+block ends [SHARE-3]; it does not expose the block's intermediate data. Keep
+an independent handle for the observer, since fetching a handle from the
+held object would first require access to that object. An earlier `Open`
+snapshot is no promise that a later claim will succeed. These calls and
+helpers whose boundaries can reach a cell cannot be atomic guards [SHARE-2];
+use ordinary shared state for a condition on which a context must wait.
 
 The block cannot wait [SHARE-2], so do the waiting outside it: read or receive
 first, then change the object, then send. To wait for the state itself, write
