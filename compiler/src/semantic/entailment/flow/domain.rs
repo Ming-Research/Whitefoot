@@ -639,6 +639,39 @@ impl Vocabulary {
         AffineForm::term(AffineTermId::from_index(index))
     }
 
+    /// Discards every atom minted at or after `start`, with every record that
+    /// names one of them. The next atom minted reuses the first discarded
+    /// index, so a surviving record naming a discarded atom would silently
+    /// denote that unrelated new value; rolling back through this one entry
+    /// point prunes every atom-bearing table together.
+    ///
+    /// The L0 query cache needs no pruning: it memoizes its complete inputs,
+    /// the closed state and the candidate images, so it answers only a query
+    /// over exactly those images.
+    pub(super) fn discard_atoms_from(&mut self, start: usize) {
+        if self.affine_atoms.len() <= start {
+            return;
+        }
+        self.affine_atoms.truncate(start);
+        let kept = |term: AffineTermId| (term.index() as usize) < start;
+        let kept_all = |terms: &[AffineCoefficient]| terms.iter().all(|each| kept(each.term()));
+        self.product_atoms
+            .retain(|product, (left, right)| kept(*product) && kept(*left) && kept(*right));
+        self.handle_images
+            .retain(|handle, image| kept(*handle) && kept_all(image.terms()));
+        self.power_atoms
+            .retain(|(amount, _), power| kept_all(amount.terms()) && kept_all(power.terms()));
+        self.unsigned_divisions.retain(|division| {
+            kept_all(division.quotient.terms())
+                && kept_all(division.dividend.terms())
+                && kept_all(division.divisor.terms())
+        });
+        self.invariant_targets.retain(|_, target| match target {
+            Ok(target) => kept_all(target.terms()),
+            Err(_) => true,
+        });
+    }
+
     /// Folds every delta atom an earlier join minted back into the constant
     /// interval it stands for [ENT-6].
     ///
@@ -1237,7 +1270,7 @@ impl Judging<'_, '_, '_> {
                         match folded[0].form.add(&delta, &mut AffineCheckState::new()) {
                             Ok(value) => value,
                             Err(_) => {
-                                self.vocabulary.affine_atoms.truncate(atom_start);
+                                self.vocabulary.discard_atoms_from(atom_start);
                                 self.vocabulary.new_affine_atom(ty)
                             }
                         }

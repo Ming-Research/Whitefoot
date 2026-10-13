@@ -1770,7 +1770,7 @@ impl Analyzer<'_, '_> {
         if outcome.route == Some(ProofRoute::Affine) || outcome.route.is_none() {
             states.affine = prepared_affine;
         } else {
-            self.vocabulary.affine_atoms.truncate(candidate_atom_start);
+            self.vocabulary.discard_atoms_from(candidate_atom_start);
         }
         let discharged = outcome.disposition == ProofDisposition::Proved;
         let refuted = outcome.disposition == ProofDisposition::Refuted;
