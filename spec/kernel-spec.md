@@ -797,14 +797,14 @@ For a copy operand, each bound field is copied and the source remains live and u
 For an affine or linear operand, the statement is the destructuring consume: one consuming use of the operand [OWN-1], with no surviving residual and no derived release of the consumed value's own storage [STOR-3].
 An own-place `match` [OWN-13] is the enum form of the same destructuring.
 
-The release graph of a type `T` has as its nodes the types reachable from `T` through the parts each node owns: its owned fields, enum variant payloads, `Box` content, and the elements of every storage shape [TYPE-9].
-A runtime-capacity `Array<T>`, `Slots<T>`, or `Ring<T>`, a `Segments<T>`, and a `Paged<T>`, is reached in that graph only as the content of its `Box` [TYPE-9], so the `Box` is the leaf every owner's edge lands on and no such shape is ever a node of an owner other than its own cell.
-A type's release action is non-empty by the least fixed point of these clauses: a `Box` or `Paged` [TYPE-9], a `Shared<T>`, `SharedRead<T>` or `Frozen<T>` handle, a `ConcurrentHashMap<V>` or `KeySet` [SHARE-1], or a `DecisionCell` handle [PRE-1], is non-empty; a struct or enum owning a non-empty field or variant payload is non-empty; and a storage shape with a non-empty element type is non-empty when its type has no constant extent or that extent is not statically zero. A symbolic type parameter is non-empty exactly when its written capability bound [FN-2] does not grant `copy`. These action clauses do not change the type-level ownership or linearity judgment above: a zero constant extent executes no element release but still owns its element type.
-The graph has an edge from a node to a sub-node exactly when that sub-node's release action is non-empty.
-One walk performs the compiler-derived release, and it visits exactly the nodes of that graph in [STOR-3]'s order — every owned field of a struct in declaration order, an enum's active variant's payload selected by the discriminant, a cell's content before the cell itself, every element of an `Array` and every slot of a window [WIN-1] in ascending logical index order — freeing each `Box` cell after its content [STOR-8] and running each other non-empty node's release action.
-A field, payload, or element whose release action is empty is never visited, and a container's elements are visited before its backing is released, so a release of a full container needs no emptiness premise.
-A type whose release graph has a cycle makes that walk's depth a runtime quantity rather than a compile-time constant, and is admitted: the derived release of such a type is one release action per node type, entering itself where the graph closes, and the walk's depth is the value's own.
-Every judgment of this rule that reads the graph reads each node once, which terminates on a cyclic graph and is exactly the node set this version's release actions need.
+The type-ownership closure of a type `T` contains `T` and every type transitively owned under this rule; linearity reads this closure [OWN-1].
+A runtime-capacity `Array<T>`, `Slots<T>`, or `Ring<T>`, a `Segments<T>`, and a `Paged<T>`, is reached in that closure only as the content of its `Box` [TYPE-9].
+A type's release action is non-empty by the least fixed point of these clauses: a `Box` or `Paged` [TYPE-9], a `Shared<T>`, `SharedRead<T>` or `Frozen<T>` handle, a `ConcurrentHashMap<V>` or `KeySet` [SHARE-1], or a `DecisionCell` handle [PRE-1], is non-empty; a struct or enum owning a non-empty field or variant payload is non-empty; and a storage shape with a non-empty element type is non-empty when its type has no constant extent or that extent is not statically zero. A symbolic type parameter is non-empty exactly when its written capability bound [FN-2] does not grant `copy`.
+The executable release graph of `T`, used by [STOR-3, FN-10], starts at `T` and contains precisely these edges: a node has an edge to each owned field, variant payload or `Box` content whose release action is non-empty, and a storage-shape node has an edge to its element type exactly when that element contributes non-empty release by the storage-shape clause above.
+One walk performs the compiler-derived release, following those executable edges for the components present in the value in [STOR-3]'s order — owned fields of a struct in declaration order, an enum's active variant's payload selected by the discriminant, a cell's content before the cell itself, the initialized elements of an `Array` or window [WIN-1] in ascending logical index order — freeing each `Box` cell after its content [STOR-8] and running each other non-empty node's release action.
+A release of a full container needs no emptiness premise [STOR-3].
+A type whose executable release graph has a cycle makes that walk's depth a runtime quantity rather than a compile-time constant, and is admitted: the derived release of such a type is one release action per node type, entering itself where the graph closes, and the walk's depth is the value's own.
+Every compile-time judgment of this rule reads each type once in its corresponding type-ownership closure or executable release graph, so its traversal terminates on cyclic type descriptions.
 
 A consume of a proper sub-place of a value one of whose remaining parts is linear is a partial consume [WIN-3].
 A partial consume is a hard error citing PROV-6 at the complete consumed `place`, naming the residual linear part, with a repair [DIAG-1].
@@ -819,7 +819,7 @@ An instantiation whose argument's class does not satisfy the written bound is a 
 A type parameter with no bound is linear at the one symbolic instance its body is checked at [FN-2], so a body that lets such a parameter's value reach a scope exit receives this rule's own not-consumed rejection there, naming the absent bound in place of a `nodrop` declaration.
 The bound is a capability filter: it supplies no function-kind argument, selects no behavior, and creates no bound-satisfaction judgment other than this one [FN-2, FN-3].
 
-The checked program retains, before lowering [DIAG-2], each type's linearity class, each release edge's release graph, each struct destructuring's binder list, and each declaration bound that was checked.
+The checked program retains, before lowering [DIAG-2], each type's linearity class, each release edge's executable release graph, each struct destructuring's binder list, and each declaration bound that was checked.
 
 ## 6. Storage
 
@@ -879,7 +879,7 @@ An external-resource termination under [SCOPE-3] likewise creates no source edge
 No exit duplicates an action already carried by an inner scope edge.
 
 The release action of a type is compiler-owned semantic data selected by that type, not a fixed enumeration of memory-reclamation actions.
-Which components of a value that action visits, and in which order, is [PROV-6]'s release graph and its one walk; the per-type actions below are the leaves that walk runs.
+Which components of a value that action visits, and in which order, is [PROV-6]'s executable release graph and its one walk; the per-type actions below are the leaves that walk runs.
 A `Box<T>` release runs its content's compiler-derived release; when [STOR-1] places that content in an allocated cell, the release then runs one compiler-derived heap free of that cell.
 An `Array` release is each element's compiler-derived release in ascending index order and no storage reclamation of its own.
 A `Slots` or `Ring` release is each element's compiler-derived release over its window in ascending logical index order and no storage reclamation of its own.
@@ -892,7 +892,7 @@ A `const` item [CONST-2] is never released.
 Every other frame-resident owned value [STOR-1] has no release action of its own.
 
 A host handle [PRE-2] has no fields, so its release is empty. An opaque type with a per-type action above takes that action; every other opaque struct [TYPE-2] takes the release of the fields it owns [PROV-6] under this rule.
-An opaque struct's `nodrop` modifier, and only the ordinary ownership closure of [PROV-6], requires explicit consumption.
+An opaque struct's `nodrop` modifier, and only the type-ownership closure of [PROV-6], requires explicit consumption.
 No source declaration, annotation, attribute, contract, or binding attaches a finalizer or any other user-defined action to a value's release.
 
 A successful [SET-1] assignment derives no finalizer or cleanup edge and no release beyond the old value's own: a copy target's previous value needs none, and an affine target's previous value takes the release [WIN-3] states.
