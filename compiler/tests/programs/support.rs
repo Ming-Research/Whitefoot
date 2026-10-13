@@ -16,7 +16,10 @@ use whitefoot::{
     split_module,
 };
 
-use crate::support::{CLANG, COMPILE_ARGUMENTS, LINK_LIBRARIES, append_runtime_objects};
+use crate::support::{
+    CLANG, COMPILE_ARGUMENTS, LINK_LIBRARIES, append_runtime_objects,
+    append_runtime_objects_with_guard_counters,
+};
 pub(super) use crate::support::{ProgramChild, output_within, run_command};
 
 static NEXT_EXECUTION: AtomicU64 = AtomicU64::new(0);
@@ -117,6 +120,24 @@ fn link_module_with_driver_arguments(
     directory: &Path,
     driver_arguments: &[&str],
 ) {
+    link_module_with_driver_and_counters(
+        units,
+        executable,
+        llvm,
+        directory,
+        driver_arguments,
+        false,
+    );
+}
+
+fn link_module_with_driver_and_counters(
+    units: &[&Path],
+    executable: &Path,
+    llvm: &str,
+    directory: &Path,
+    driver_arguments: &[&str],
+    guard_counters: bool,
+) {
     let mut command = Command::new(CLANG);
     for unit in units {
         command.arg("-x").arg("ir").arg(unit);
@@ -136,8 +157,11 @@ fn link_module_with_driver_arguments(
     // when the module it wraps does not.
     let needs_heap = whitefoot::module_requires_heap_runtime(llvm)
         || std::fs::read_to_string(&driver).is_ok_and(|source| source.contains("wf__empty_window"));
-    let (sources, objects) =
-        append_runtime_objects(&mut command, directory, None, None, needs_heap);
+    let (sources, objects) = if guard_counters {
+        append_runtime_objects_with_guard_counters(&mut command, directory, needs_heap)
+    } else {
+        append_runtime_objects(&mut command, directory, None, None, needs_heap)
+    };
     let compilation = run_command(
         command
             .args(HOST_OPTIMIZATION_ARGUMENTS)
@@ -436,6 +460,21 @@ pub fn build_program_with_driver_arguments(
     driver: Option<&str>,
     driver_arguments: &[&str],
 ) -> CompiledProgram {
+    build_program_with_driver_and_counters(llvm, driver, driver_arguments, false)
+}
+
+/// Links the program and its observer with the bridge's existing guard
+/// counters enabled; every other native unit retains its ordinary build.
+pub fn build_program_with_guard_counters(llvm: &str, driver: &str) -> CompiledProgram {
+    build_program_with_driver_and_counters(llvm, Some(driver), &[], true)
+}
+
+fn build_program_with_driver_and_counters(
+    llvm: &str,
+    driver: Option<&str>,
+    driver_arguments: &[&str],
+    guard_counters: bool,
+) -> CompiledProgram {
     let sequence = NEXT_EXECUTION.fetch_add(1, Ordering::Relaxed);
     let directory = std::env::temp_dir().join(format!(
         "whitefoot-program-{}-{sequence}",
@@ -449,12 +488,13 @@ pub fn build_program_with_driver_arguments(
         std::fs::write(directory.join("driver.c"), driver).expect("write program host driver");
     }
     crate::support::timed("native-build", || {
-        link_module_with_driver_arguments(
+        link_module_with_driver_and_counters(
             &[&module],
             &executable,
             llvm,
             &directory,
             driver_arguments,
+            guard_counters,
         );
     });
     CompiledProgram {
@@ -571,9 +611,21 @@ impl CompiledProgram {
     /// Fresh process with explicit scheduler settings; used for the shipped
     /// report and policy integration, never a test observer's synthetic report.
     pub fn run_with_settings(&self, workers: Option<&str>, settings: &[(&str, &str)]) -> Output {
+        self.run_with_settings_and_arguments(workers, settings, &[])
+    }
+
+    /// Runs one fresh process with explicit scheduler settings and invocation
+    /// arguments, retaining the environment handling of [`Self::run_with_settings`].
+    pub fn run_with_settings_and_arguments(
+        &self,
+        workers: Option<&str>,
+        settings: &[(&str, &str)],
+        arguments: &[&[u8]],
+    ) -> Output {
         let mut command = Command::new(&self.executable);
         command
             .current_dir(&self.directory)
+            .args(arguments.iter().map(|bytes| invocation_argument(bytes)))
             .env_remove("WF_SPLIT_WORK")
             .env_remove("WF_SCHED_REPORT");
         match workers {
