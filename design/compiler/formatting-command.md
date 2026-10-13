@@ -2,7 +2,7 @@ Decision: The command-line compiler offers one explicit formatting request, `--f
 
 Decision: The bytes the formatting request writes and the rendering a FORM-2 rejection is judged against come from one library function that stops after grammar derivation and finalization, because two renderings could drift and a formatter that ran semantic checking would refuse a program whose remaining faults are semantic, instead of a formatting path of its own or formatting only accepted programs.
 
-Decision: Graph formatting forms the module program the way `--check --graph` does, because only the graph and its package records name the source records to format, and a failure there is reported exactly as `--check` reports it, instead of a second package walk that tolerates graph rule failures.
+Decision: Graph formatting forms the module program the way `--check --graph` does, because only the graph and its package records name the source records to format, and any failure other than a source record's own lexical or grammar rejection is reported by rerunning the ordinary module loading on the original bytes, so the writer sees the diagnostic `--check` gives, instead of a second package walk that tolerates graph rule failures or diagnostics positioned in a rendering that was never written.
 
 Rejected:
 - Formatting during `--check` or compilation: rejected because FORM-1 makes non-canonical input a hard error so that the bytes a writer keeps are the bytes the compiler judged, and silently accepting other bytes would make acceptance depend on a rewrite the writer never saw.

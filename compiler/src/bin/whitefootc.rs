@@ -2404,6 +2404,64 @@ mod tests {
                 "{case}"
             );
         }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            // Hosted Unix runners execute without root's read-permission bypass.
+            // A regular implementation exists but cannot be read during discovery.
+            let directory = FormatDirectory::new();
+            let graph_bytes = b"pkg: [];\n";
+            let graph = directory.write("modules.wfg", graph_bytes);
+            let interface_bytes =
+                b"public fn value() -> result: u64 pure doc \"Returns a value.\";  \n";
+            let interface = directory.write("module.wfm", interface_bytes);
+            let source_bytes = b"fn value() -> result: u64 pure {\n    return 7_u64;\n}\n";
+            let source = directory.write("value.wf", source_bytes);
+            let permissions = std::fs::metadata(&source).unwrap().permissions();
+            std::fs::set_permissions(&source, std::fs::Permissions::from_mode(0))
+                .expect("remove the implementation's read permission");
+            let checked = super::run(&[
+                "--graph".to_owned(),
+                graph.to_string_lossy().into_owned(),
+                "--check".to_owned(),
+            ])
+            .expect_err("source discovery cannot read the implementation");
+            let formatted = run_graph_format(&graph)
+                .expect_err("unreadable implementation prevents every formatting write");
+            std::fs::set_permissions(&source, permissions)
+                .expect("restore permissions before checking original source bytes");
+            for failure in [&checked, &formatted] {
+                assert!(matches!(
+                    failure,
+                    Stop::Driver {
+                        category: "Invocation",
+                        ..
+                    }
+                ));
+                let diagnostic = failure.render(DiagnosticFormat::Text);
+                assert!(
+                    diagnostic.contains(&format!("cannot read {}:", source.display())),
+                    "{diagnostic}"
+                );
+                assert!(!diagnostic.contains("MOD-"), "{diagnostic}");
+            }
+            for format in [DiagnosticFormat::Text, DiagnosticFormat::Json] {
+                assert_eq!(formatted.render(format), checked.render(format));
+            }
+            assert_eq!(std::fs::read(&graph).unwrap(), graph_bytes);
+            assert_eq!(std::fs::read(&interface).unwrap(), interface_bytes);
+            assert_eq!(std::fs::read(&source).unwrap(), source_bytes);
+            let mut names = std::fs::read_dir(&directory.0)
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name())
+                .collect::<Vec<_>>();
+            names.sort();
+            assert_eq!(
+                names,
+                ["module.wfm", "modules.wfg", "value.wf"].map(std::ffi::OsString::from)
+            );
+        }
     }
 
     #[test]
