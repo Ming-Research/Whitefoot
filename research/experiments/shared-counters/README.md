@@ -8,7 +8,8 @@ their own objects, a writer-built array of 16 shared objects, or one
 increments. It also holds the C model W7 (sections 8.5 and 8.6), maximum
 arms M1–M4, and A1, random map writes with owned shard buffers and a periodic
 whole-state drain. The branch run is registered in section 8.7 before
-measurement. Firn F0–F3 remain a separate downstream experiment.
+measurement; section 8.8 registers the taken-yield attribution comparison.
+Firn F0–F3 remain a separate downstream experiment.
 
 The harness is ported from the runtime-contention witnesses of Firn-wf, branch
 `claude/witness-contention`, directory
@@ -48,6 +49,8 @@ model's arms W7, W7t and W7rd start one thread per CPU of the list instead.
 | W3rd | `w_shards_reader` (`shards_reader.wf`) | as W3, plus one extra reader context | the reader sleeps about 1 ms, then reads all 16 objects in one atomic statement naming 16 targets, and times it; its reads, total nanoseconds and longest read are the last three output fields |
 | W4 | `w_sharded` (`sharded.wf`) | `+wrap 1` in a one-shard statement on one `Shared<Shards<u64>>`, through a value handle | the implemented sharded state |
 | W4t | `w_sharded` again | as W4 | same source built separately as a second binary; its hash and W4's are recorded in `host.txt` |
+| W4n256 | `w_sharded` with a diagnostic compiler | as W4, yield threshold 256 instead of 64 | attributes the threshold-driven switching path; never an acceptance arm |
+| W4nmax | `w_sharded` with a diagnostic compiler | as W4, yield threshold 1,048,576 instead of 64 | low-yield attribution control; it can still yield in a 5 s cell and never defines accepted behavior |
 | W4r | `w_sharded_param` (`sharded_param.wf`) | W4 through a read-only reference parameter | distinguishes handle-place lowering from the shard path |
 | W4rd | `w_sharded_reader` (`sharded_reader.wf`) | W4 plus one extra context reading every shard in one whole-target statement about every 1 ms | writer retention and longest whole read |
 | M1 | `w_max_exclusive` (`max_exclusive.wf`) | exclusive `imax` on one `Shared<u64>` | maximum control |
@@ -106,7 +109,17 @@ W4 uses `any_shard()` and `&counter[mine]` on a value handle; W4r uses
 `&counter^[mine]` on a read-only reference parameter. W4rd's reader takes
 `&counter` as a whole target and sums a labelled loop over `all^.len`.
 Like W3rd, it runs on the same drivers as the writers and its reads are not
-operations. M1–M4 take `v = state % 1048576_u64` from the local LCG. M3
+operations. W4rd also reports `read_hist_ns`, 65 comma-separated counts of
+per-read durations. Buckets 0–63 have inclusive upper bounds 1, 2, 4, ...,
+2^63 nanoseconds; bucket 64 holds larger values. The histogram is updated
+after the end clock reading, preserving the interval around the whole-target
+statement after sleep returns. The reducer reports each cell's p50/p99 as
+nearest-rank bucket upper bounds capped by the observed maximum, including
+the overflow bucket, and its exact observed maximum. Missing or malformed histograms are
+reported as unavailable; percentile estimates do not replace the maximum-read
+criterion.
+
+M1–M4 take `v = state % 1048576_u64` from the local LCG. M3
 updates its cache to the observed shared maximum inside its exclusive statement.
 These maximum arms are descriptive, without a performance rejection threshold.
 
@@ -241,7 +254,8 @@ be idle (under 5% busy over 5 s) before timed cells. Tell the other sessions
 before a long run. Only CI builds and runs these programs.
 
 Inputs are `PILOT` (default `1`), `BLOCKS` (default `12`, main only) and
-`ARMS` (the original ten arms plus W4, W4t, W4r, W4rd, M1–M4 and A1).
+`ARMS` (the original ten arms plus W4, W4t, W4r, W4rd, M1–M4 and A1,
+and the optional W4n256/W4nmax diagnostic arms).
 A pilot runs one 5 s cell per selected arm at the 8-P-core list and decides
 nothing; inspect it before dispatching the main run. A main uses all four
 CPU lists above and twelve alternating blocks. The default 19-arm main has
@@ -259,6 +273,33 @@ The procedure and decision rule are registered in DESIGN.md section 8.7.
 Keep `raw.tsv`, `host.txt` and `summary.txt` under `results/<run id>/` after
 the run, since artifacts expire. Remove the temporary workflow before
 marking the branch ready.
+
+### Taken-yield attribution run
+
+Section 8.8 registers a six-block comparison with
+`ARMS="W4 W4t W4n256 W4nmax W4rd W5p"`. The variants use the same W4 source
+and full-LTO options. `run.sh` builds additional compilers in disposable
+copies of the checked-out revision, with isolated Cargo output, changing the
+inline threshold and runtime definition/assertion together. Exactly-one
+replacement checks fail the build if the expected source sites have moved.
+Only W4's entry is compiled with these compilers. The build requires each
+variant executable to differ from W4 and a repeat build with the unpatched
+compiler to be byte-identical to W4, and records the hashes and checks.
+It adds no compiler or runtime changes to the branch. All builds and cells
+run in CI under the existing labeled stages.
+
+The summary reports paired W4n256/W4 and W4nmax/W4 ratios, W4nmax/W5p against
+the registered 0.70 prediction and below-0.60 falsifier, and W4n256 recovering
+at least 0.50 of the W4-to-W4nmax throughput gap. Six complete paired blocks
+and a valid W4t/W4 twin are required. Acceptance still uses N=64. A nominal
+per-yield cost model is descriptive: the current scheduler report does not
+count taken yields, so the registered falsifier about measured per-yield cost
+growing from 2 to 8 drivers remains inconclusive without that evidence.
+Reader p50/p99/max are reported per cell, without new acceptance thresholds.
+
+```
+gh workflow run tmp-shared-counters.yml --ref <branch> -f PILOT=0 -f BLOCKS=6 -f ARMS="W4 W4t W4n256 W4nmax W4rd W5p"
+```
 
 ## Repeating the earlier counter run
 

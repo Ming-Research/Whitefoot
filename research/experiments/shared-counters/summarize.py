@@ -4,6 +4,7 @@ arms of this experiment can make (README.md; research/investigations/
 shared-counters/DESIGN.md, section 8).
 
     python3 summarize.py [--smoke | --pilot] RAW.tsv
+    python3 summarize.py --self-test
 
 It prints, per arm and CPU list, the median and the range of the rate over
 blocks; the noise e from the twin pair W2t and W2; the descriptive ratios; and
@@ -22,7 +23,9 @@ reads every CPU list as a decision list and labels every reading as no verdict.
 
 With sharded-state arms present, it also reports section 8.5's implementation
 criteria and the registered scaling checks using paired-block bootstrap
-intervals and W4t/W4 twins. Reader latency uses the longest observed read.
+intervals and W4t/W4 twins. Reader acceptance uses the longest observed read; W4rd p50/p99/max are also
+reported per cell. Threshold variants are diagnostics under section 8.8, never
+accepted behavior. --self-test runs pure-Python reducer controls only.
 --pilot reports an initial run on the 14900K without any acceptance verdict.
 """
 import csv
@@ -33,7 +36,7 @@ import sys
 from collections import defaultdict
 
 ARMS = ["W0", "W1", "W2", "W2t", "W2r", "W6", "W3", "W3rd", "W5", "W5p",
-        "W4", "W4t", "W4r", "W4rd", "M1", "M2", "M3", "M4", "A1",
+        "W4", "W4t", "W4n256", "W4nmax", "W4r", "W4rd", "M1", "M2", "M3", "M4", "A1",
         "W5pN", "W7", "W7t", "W7rd"]
 MEANING = {
     "W0": "no atomic statement (runtime floor)",
@@ -46,6 +49,8 @@ MEANING = {
     "W3rd": "W3 plus a reader of all 16 every millisecond",
     "W4": "+wrap 1 on one shard of Shared<Shards<u64>>, value handle",
     "W4t": "second build of W4's source (sharded-state noise control)",
+    "W4n256": "W4 source, diagnostic compiler yield threshold 256",
+    "W4nmax": "W4 source, diagnostic compiler yield threshold 1048576",
     "W4r": "W4 through a read-only reference parameter",
     "W4rd": "W4 plus a whole-target reader every millisecond",
     "M1": "exclusive imax on one Shared<u64>",
@@ -91,11 +96,54 @@ def number(row, name):
     return int(value) if value not in (None, "") else 0
 
 
+def optional_number(row, name):
+    value = row.get(name)
+    return int(value) if value not in (None, "") else None
+
+
+def histogram_percentiles(value, reads, longest):
+    """Nearest-rank p50/p99 upper bounds from 65 power-of-two ns bins.
+
+    Bin 0 covers [0, 1], bins 1..63 cover (2**(b-1), 2**b], and
+    bin 64 covers (2**63, 2**64-1]. Bound each estimate by observed max.
+    Missing or malformed counts are absent evidence, never zero latency.
+    """
+    if not value:
+        return None, "missing read_hist_ns"
+    try:
+        counts = [int(part) for part in value.split(",")]
+    except (AttributeError, ValueError):
+        return None, "invalid read_hist_ns counts"
+    if len(counts) != 65 or any(count < 0 for count in counts):
+        return None, "read_hist_ns needs 65 nonnegative counts"
+    if reads <= 0 or sum(counts) != reads:
+        return None, "read_hist_ns count differs from reads or has no reads"
+    if longest < 0 or longest >= 2**64:
+        return None, "invalid maximum read time"
+    last = max(index for index, count in enumerate(counts) if count)
+    upper = min(2**last, 2**64 - 1)
+    lower = 0 if last == 0 else 2**(last - 1) + 1
+    if not lower <= longest <= upper:
+        return None, "read_hist_ns final occupied bucket disagrees with maximum"
+    answers = []
+    for percentage in (50, 99):
+        rank = (reads * percentage + 99) // 100
+        cumulative = 0
+        for index, count in enumerate(counts):
+            cumulative += count
+            if cumulative >= rank:
+                answers.append(min(2**index, longest))
+                break
+    return tuple(answers), None
+
+
 def read(path):
     cells = defaultdict(list)
     with open(path, newline="") as f:
         for row in csv.DictReader(f, delimiter="\t"):
             key = (row["arm"], row["cpus"])
+            percentile, histogram_error = histogram_percentiles(
+                row.get("read_hist_ns"), int(row["reads"]), int(row["read_max_ns"]))
             cells[key].append({
                 "block": int(row["block"]),
                 "drivers": int(row["drivers"]),
@@ -106,8 +154,10 @@ def read(path):
                 "reads": int(row["reads"]),
                 "read_ns": int(row["read_ns"]),
                 "read_max_ns": int(row["read_max_ns"]),
-                "read_med_ns": number(row, "read_med_ns"),
-                "read_p99_ns": number(row, "read_p99_ns"),
+                "read_med_ns": percentile[0] if percentile else None if row["arm"] == "W4rd" else optional_number(row, "read_med_ns"),
+                "read_p99_ns": percentile[1] if percentile else None if row["arm"] == "W4rd" else optional_number(row, "read_p99_ns"),
+                "read_hist_error": histogram_error,
+
             })
     return cells
 
@@ -370,6 +420,237 @@ def sharded_section(cells, lists, smoke, pilot=False):
     print()
 
 
+def yield_gap_values(cells, cpus, blocks):
+    rates = {}
+    error = None
+    for arm in ("W4", "W4n256", "W4nmax"):
+        rates[arm], arm_error = complete_rates(cells, arm, cpus, blocks)
+        error = error or arm_error
+    common = sorted(set.intersection(*(set(values) for values in rates.values())))
+    fractions, costs = [], []
+    drivers = len(cpus.split(","))
+    for block in common:
+        base, middle, maximum = (rates[arm][block] for arm in ("W4", "W4n256", "W4nmax"))
+        if maximum <= base:
+            error = error or "W4nmax-W4 gap is not positive in every paired block"
+        else:
+            fractions.append((middle - base) / (maximum - base))
+        costs.append(1e9 * drivers * (1 / base - 1 / maximum) / (1 / 64 - 1 / 1048576))
+    return fractions, {block: cost for block, cost in zip(common, costs)}, error
+
+
+def yield_section(cells, lists, smoke=False, pilot=False):
+    if not any((arm, cpus) in cells for arm in ("W4n256", "W4nmax") for cpus in lists):
+        return
+    blocks = {row["block"] for rows in cells.values() for row in rows}
+    print("Taken-yield attribution (DESIGN.md section 8.8, diagnostic only)")
+    print("Acceptance still uses W4 at N=64. Diagnostic variants never count as accepted behavior.")
+    print(f"Same-block ratios: median [95% percentile bootstrap interval], {DRAWS} draws, seed {SEED}.")
+    print(f"Prediction readings require at least {MIN_BLOCKS} complete paired blocks and a valid W4t/W4 twin.")
+    print("Registered switching prediction: W4nmax/W5p >= 0.70 at 2/4/8 P-cores; W4n256 recovers >=0.50 of the positive W4nmax-W4 throughput gap.")
+    print("Registered falsifier: W4nmax/W5p < 0.60 rejects taken yields as the dominant cost; inspect inline code.")
+    print("Registered global-counter falsifier: measured cost per taken switch does not grow from 2 to 8 drivers.")
+    print("No taken-switch counts are recorded: that falsifier is INCONCLUSIVE. ops/64 is a nominal threshold rate, not a measured switch rate.")
+    print("The modeled incremental yield cost assumes one taken yield per N shard statements, identical non-yield per-driver service cost, and additive yield cost.")
+    print("Model ns/yield = 1e9*drivers*(1/R64-1/Rmax)/(1/64-1/1048576); negative or zero costs are no positive cost evidence.")
+    modeled = {}
+    twin_errors = {}
+    for cpus, name in MODEL_LISTS.items():
+        print(f"{name} ({cpus})")
+        twin, twin_error = sharded_twin(cells, cpus, blocks)
+        twin_errors[cpus] = twin_error
+        print(f"  twin W4t/W4: {show(twin)} -> {'VALID' if twin_error is None else 'INCONCLUSIVE (' + twin_error + ')'}")
+        for arm in ("W4n256", "W4nmax"):
+            interval, error = sharded_pair(cells, arm, "W4", cpus, cpus, blocks)
+            print(f"  {arm}/W4: {show(interval)} (descriptive" + (f"; {error}" if error else "") + ")")
+        interval, error = sharded_pair(cells, "W4nmax", "W5p", cpus, cpus, blocks)
+        validity = error or twin_error
+        prediction = sharded_reading(interval, 0.70, True, validity, smoke or pilot)
+        if smoke or pilot or validity or interval is None or interval[1] < MIN_BLOCKS:
+            falsifier = "INCONCLUSIVE (wiring/pilot run or incomplete/invalid evidence)"
+        elif interval[3] < 0.60:
+            falsifier = "MET (taken yields are not dominant; inspect inline code)"
+        elif interval[2] >= 0.60:
+            falsifier = "NOT MET"
+        else:
+            falsifier = "INCONCLUSIVE (interval contains 0.60)"
+        print(f"  W4nmax/W5p >= 0.70 prediction: {show(interval)} -> {prediction}")
+        print(f"  W4nmax/W5p < 0.60 falsifier: {show(interval)} -> {falsifier}")
+        fractions, costs, gap_error = yield_gap_values(cells, cpus, blocks)
+        modeled[cpus] = costs
+        recovered = bootstrap(fractions)
+        reading = sharded_reading(recovered, 0.50, True, gap_error or twin_error, smoke or pilot)
+        print(f"  (W4n256-W4)/(W4nmax-W4) >= 0.50 prediction: {show(recovered)} -> {reading}")
+        print(f"  modeled incremental cost ns/yield: {show(bootstrap(list(costs.values())), 2)} (descriptive" + (f"; {gap_error}" if gap_error else "") + ")")
+        if any(cost <= 0 for cost in costs.values()):
+            print("  model has zero/negative cost: no positive cost evidence in those blocks")
+        nominal = [row["rate"] / 64 for row in cells.get(("W4", cpus), []) if row["rate"] > 0]
+        print(f"  W4 nominal threshold crossings/s: {fmt(statistics.median(nominal) if nominal else None, 0)} (inferred, not measured switches)")
+    costs2, costs8 = modeled.get(P2_LIST, {}), modeled.get(P8_LIST, {})
+    common = sorted(set(costs2) & set(costs8))
+    growth = [costs8[block] / costs2[block] for block in common if costs2[block] > 0 and costs8[block] > 0]
+    error = twin_errors.get(P2_LIST) or twin_errors.get(P8_LIST)
+    if len(growth) != len(blocks):
+        error = error or "incomplete cells or nonpositive modeled costs"
+    print(f"  modeled cost 8/2 drivers: {show(bootstrap(growth))} (descriptive" + (f"; {error}" if error else "") + ")")
+    print("  measured-switch global-counter growth falsifier: INCONCLUSIVE (no measured taken-switch rates)")
+    print()
+
+
+def reader_distribution_section(cells, lists):
+    if not any(("W4rd", cpus) in cells for cpus in lists):
+        return
+    print("W4rd whole-read distribution per cell (descriptive)")
+    print("The interval surrounds the whole-target statement after sleep returns; histogram updates occur after the ending timestamp.")
+    print("p50/p99 are nearest-rank bucket upper bounds capped by observed max, not exact sample percentiles. Power-of-two ns bounds through 2^63, then u64 max.")
+    for cpus in lists:
+        for row in sorted(cells.get(("W4rd", cpus), []), key=lambda row: row["block"]):
+            error = row.get("read_hist_error", "missing read_hist_ns")
+            median = None if error else row.get("read_med_ns")
+            p99 = None if error else row.get("read_p99_ns")
+            print(f"  {cpus} block {row['block']}: reads={row['reads']} p50<={str(median) if median is not None else 'n/a'} ns p99<={str(p99) if p99 is not None else 'n/a'} ns max={row['read_max_ns']} ns" + (f"; distribution unavailable ({error})" if error else ""))
+    print()
+
+
+def reducer_controls():
+    """Pure-Python controls for section 8.8 and histogram interpretation."""
+    import contextlib
+    import io
+    import tempfile
+    from pathlib import Path
+
+    counts = [0] * 65
+    counts[0], counts[3], counts[4] = 1, 98, 1
+    encoded = ",".join(map(str, counts))
+    assert histogram_percentiles(encoded, 100, 12) == ((8, 8), None)
+    assert histogram_percentiles(encoded, 100, 9) == ((8, 8), None)
+    assert histogram_percentiles(encoded, 99, 12)[0] is None
+    assert histogram_percentiles(encoded, 100, 8)[0] is None
+    assert histogram_percentiles(None, 100, 12)[0] is None
+    assert histogram_percentiles("1,-1", 1, 1)[0] is None
+    negative = counts.copy()
+    negative[0] = -1
+    assert histogram_percentiles(",".join(map(str, negative)), 98, 12)[0] is None
+    assert histogram_percentiles("x," + encoded, 100, 12)[0] is None
+    counts[3], counts[4] = 97, 2
+    assert histogram_percentiles(",".join(map(str, counts)), 100, 12)[0] == (8, 12)
+    counts = [0] * 65
+    counts[64] = 1
+    assert histogram_percentiles(",".join(map(str, counts)), 1, 2**63 + 1)[0] == (2**63 + 1, 2**63 + 1)
+    overflow_output = io.StringIO()
+    with contextlib.redirect_stdout(overflow_output):
+        reader_distribution_section({("W4rd", P2_LIST): [dict(
+            block=0, reads=1, read_med_ns=2**63 + 1,
+            read_p99_ns=2**63 + 1, read_max_ns=2**63 + 1,
+            read_hist_error=None)]}, [P2_LIST])
+    assert "p50<=9223372036854775809 ns p99<=9223372036854775809 ns max=9223372036854775809 ns" in overflow_output.getvalue()
+    counts = [0] * 65
+    counts[0] = 1
+    assert histogram_percentiles(",".join(map(str, counts)), 1, 0)[0] == (0, 0)
+
+    cells = defaultdict(list)
+    for cpus in MODEL_LISTS:
+        for block in range(6):
+            for arm, rate in (("W4", 100), ("W4t", 100), ("W4n256", 175), ("W4nmax", 200), ("W5p", 250)):
+                cells[arm, cpus].append(dict(block=block, drivers=len(cpus.split(",")), rate=rate))
+    fractions, costs, error = yield_gap_values(cells, P2_LIST, set(range(6)))
+    assert error is None and fractions == [0.75] * 6 and all(value > 0 for value in costs.values())
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        yield_section(cells, list(MODEL_LISTS))
+    text = output.getvalue()
+    assert "0.800 [0.800-0.800]" in text and "-> PASS" in text
+    assert "-> NOT MET" in text and "measured-switch global-counter growth falsifier: INCONCLUSIVE" in text
+    import copy
+
+    def diagnostic_text(data, **options):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            yield_section(data, list(MODEL_LISTS), **options)
+        return output.getvalue()
+
+    failure = copy.deepcopy(cells)
+    for cpus in MODEL_LISTS:
+        for row in failure["W4nmax", cpus]:
+            row["rate"] = 140
+        for row in failure["W4n256", cpus]:
+            row["rate"] = 110
+    failed = diagnostic_text(failure)
+    assert "-> MET (taken yields are not dominant" in failed
+    assert "0.250 [0.250-0.250] n=6 -> FAIL" in failed
+    pilot_text = diagnostic_text(cells, pilot=True)
+    assert "-> PASS" not in pilot_text and "-> FAIL" not in pilot_text
+    assert "-> MET (" not in pilot_text and "-> NOT MET" not in pilot_text
+    equality = copy.deepcopy(cells)
+    for cpus in MODEL_LISTS:
+        for row in equality["W4nmax", cpus]:
+            row["rate"] = 150
+    at_boundary = diagnostic_text(equality)
+    assert "0.600 [0.600-0.600] n=6 -> NOT MET" in at_boundary
+    missing_prediction = copy.deepcopy(cells)
+    missing_prediction["W4nmax", P2_LIST].pop()
+    invalid_text = diagnostic_text(missing_prediction)
+    lines = invalid_text.splitlines()
+    first_prediction = next(line for line in lines if line.startswith("  W4nmax/W5p >= 0.70 prediction:"))
+    assert "-> INCONCLUSIVE" in first_prediction and "missing" in first_prediction
+    invalid_twin = copy.deepcopy(cells)
+    for row in invalid_twin["W4t", P2_LIST]:
+        row["rate"] = 200
+    lines = diagnostic_text(invalid_twin).splitlines()
+    first_prediction = next(line for line in lines if line.startswith("  W4nmax/W5p >= 0.70 prediction:"))
+    assert "-> INCONCLUSIVE" in first_prediction and "W4t/W4 interval excludes 1" in first_prediction
+    # Paired ratios must differ from ratios of medians for this control.
+    paired = copy.deepcopy(cells)
+    for block, (base, multiple) in enumerate(zip((1, 100, 101, 1000, 1001, 10000), (100, 2, 3, 4, 5, 6))):
+        paired["W4", P2_LIST][block]["rate"] = base
+        paired["W4nmax", P2_LIST][block]["rate"] = base * multiple
+    interval, error = sharded_pair(paired, "W4nmax", "W4", P2_LIST, P2_LIST, set(range(6)))
+    assert error is None and interval[0] == 4.5
+    assert interval[0] != ratio(paired, "W4nmax", "W4", P2_LIST)
+    for row in cells["W4nmax", P2_LIST]:
+        row["rate"] = 100
+    fractions, costs, error = yield_gap_values(cells, P2_LIST, set(range(6)))
+    assert error and fractions == [] and list(costs.values()) == [0] * 6
+    for row in cells["W4nmax", P2_LIST]:
+        row["rate"] = 90
+    assert all(value < 0 for value in yield_gap_values(cells, P2_LIST, set(range(6)))[1].values())
+    cells["W4n256", P4_LIST].pop()
+    assert "missing" in yield_gap_values(cells, P4_LIST, set(range(6)))[2]
+    # A whole twin far from 1 invalidates all prediction readings.
+    for row in cells["W4t", P8_LIST]:
+        row["rate"] = 200
+    assert sharded_twin(cells, P8_LIST, set(range(6)))[1] is not None
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "hist.tsv"
+        fields = ["arm", "cpus", "block", "drivers", "ops_per_s", "user_frac", "sys_frac", "reads", "read_ns", "read_max_ns", "read_hist_ns"]
+        with path.open("w", newline="") as stream:
+            writer = csv.DictWriter(stream, fields, delimiter="\t")
+            writer.writeheader()
+            writer.writerow(dict(arm="W4rd", cpus=P2_LIST, block=0, drivers=2,
+                                 ops_per_s=100, user_frac=1, sys_frac=0,
+                                 reads=100, read_ns=800, read_max_ns=12, read_hist_ns=encoded))
+        parsed = read(path)["W4rd", P2_LIST][0]
+        assert parsed["read_med_ns"] == 8 and parsed["read_p99_ns"] == 8
+        assert parsed["read_hist_error"] is None
+        # Missing histogram must not use scalar zero placeholders as evidence.
+        fields.extend(("read_med_ns", "read_p99_ns"))
+        with path.open("w", newline="") as stream:
+            writer = csv.DictWriter(stream, fields, delimiter="\t")
+            writer.writeheader()
+            writer.writerow(dict(arm="W4rd", cpus=P2_LIST, block=0, drivers=2,
+                                 ops_per_s=100, user_frac=1, sys_frac=0,
+                                 reads=100, read_ns=800, read_max_ns=12,
+                                 read_hist_ns="broken", read_med_ns=0, read_p99_ns=0))
+        parsed_cells = read(path)
+        parsed = parsed_cells["W4rd", P2_LIST][0]
+        assert parsed["read_med_ns"] is None and parsed["read_p99_ns"] is None
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            reader_distribution_section(parsed_cells, [P2_LIST])
+        assert "p50<=n/a ns p99<=n/a ns" in output.getvalue()
+    print("Yield attribution reducer controls passed: passing/failing predictions and falsifiers; same-block pairing; pilot suppression; histogram ranks/bounds/overflow/missing/malformed counts; TSV transport; positive/zero/negative yield cost; recovery; complete paired cells; twin validity; no measured-switch verdict.")
+
+
 def model_section(cells, lists, drivers, smoke, pilot=False):
     """The C model's reading under the rule of DESIGN.md section 8.6."""
     if not any(("W7", c) in cells for c in lists):
@@ -393,7 +674,7 @@ def model_section(cells, lists, drivers, smoke, pilot=False):
         twin = bootstrap(paired_ratios(cells, "W7t", "W7", c))
         gate = bootstrap(paired_ratios(cells, "W7", "W5pN", c))
         retention = bootstrap(paired_ratios(cells, "W7rd", "W7", c))
-        medians_us = [r["read_med_ns"] / 1000 for r in cells.get(("W7rd", c), []) if r["reads"] > 0]
+        medians_us = [r["read_med_ns"] / 1000 for r in cells.get(("W7rd", c), []) if r["reads"] > 0 and r["read_med_ns"] is not None]
         latency = bootstrap(medians_us)
         print(f"{name} ({c}, {drivers[c]} writer threads, {2 * drivers[c]} shards)")
         twin_valid = twin is not None and twin[2] <= 1 <= twin[3]
@@ -405,10 +686,11 @@ def model_section(cells, lists, drivers, smoke, pilot=False):
         print(f"  whole read, median us (<= {READ_LIMIT_US:.0f}): {show(latency, 2)}  (median over blocks of each cell's median read)")
         rows = cells.get(("W7rd", c), [])
         if rows:
-            p99 = statistics.median(r["read_p99_ns"] / 1000 for r in rows)
+            p99_values = [r["read_p99_ns"] / 1000 for r in rows if r["read_p99_ns"] is not None]
+            p99 = statistics.median(p99_values) if p99_values else None
             longest = max(r["read_max_ns"] / 1000 for r in rows)
             reads = statistics.median(r["reads"] for r in rows)
-            print(f"  whole read, 99th percentile us (median over blocks): {p99:.2f}; longest of any block: {longest:.2f}; reads per cell (median): {reads:.0f}  (reported only)")
+            print(f"  whole read, 99th percentile us (median over blocks): {fmt(p99, 2)}; longest of any block: {longest:.2f}; reads per cell (median): {reads:.0f}  (reported only)")
         if c in decides:
             if not twin_valid:
                 gate_readings[c] = reader_readings[c] = "void"
@@ -538,6 +820,8 @@ def main(path, smoke=False, pilot=False):
         print("About 5000 reads are expected in a 5 s cell; fewer means the reader fell behind its 1 ms period.")
         print()
 
+    yield_section(cells, lists, smoke, pilot)
+    reader_distribution_section(cells, lists)
     model_section(cells, lists, drivers, smoke, pilot)
     sharded_section(cells, lists, smoke, pilot)
 
@@ -583,6 +867,9 @@ def main(path, smoke=False, pilot=False):
 
 if __name__ == "__main__":
     arguments = sys.argv[1:]
+    if arguments == ["--self-test"]:
+        reducer_controls()
+        sys.exit(0)
     smoke = arguments[:1] == ["--smoke"]
     pilot = arguments[:1] == ["--pilot"]
     if smoke or pilot:

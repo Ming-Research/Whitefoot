@@ -6,13 +6,14 @@ alias Instant = std::time::Instant;
 const sharded_reader_name: Array<u8, 14> =[115_u8, 104_u8, 97_u8, 114_u8, 100_u8, 101_u8, 100_u8, 95_u8, 114_u8, 101_u8, 97_u8, 100_u8, 101_u8, 114_u8];
 
 fn sharded_reader_context(counter: Shared<Shards<u64>>, totals: Shared<Totals>, gate: Shared<Gate>, clock: Clock) -> result: unit pure waits {
-  doc "Until the deadline, about every millisecond, sums every shard in one whole-target statement and times it, then adds its reads, total nanoseconds and longest read to the totals once.";
+  doc "Until the deadline, about every millisecond, sums every shard in one whole-target statement and times it, then adds its reads, total nanoseconds, longest read and a power-of-two nanosecond histogram to the totals once.";
   let deadline = gate_pass(gate: &gate, clock: &clock);
   let never = std::time::cancel_never();
   let state = 0_u64;
   let count = 0_u64;
   let total = 0_u64;
   let longest = 0_u64;
+  let histogram = array_filled::<u64, 65>(value: 0_u64);
   loop @run {
     let begun = std::time::now(clock: &clock);
     let wake = std::time::instant_after(instant: begun, nanoseconds: 1000000_u64);
@@ -29,6 +30,14 @@ fn sharded_reader_context(counter: Shared<Shards<u64>>, totals: Shared<Totals>, 
     let span = std::time::nanoseconds_from(earlier: before, later: after);
     set count = count +wrap 1_u64;
     set total = total +wrap span;
+    let upper = 1_u64;
+    for @bucket (bucket in 0_u64..65_u64) {
+      if span <= upper {
+        set histogram[bucket] = histogram[bucket] +wrap 1_u64;
+        break @bucket;
+      }
+      set upper = upper +sat upper;
+    }
     if span > longest {
       set longest = span;
     }
@@ -38,6 +47,7 @@ fn sharded_reader_context(counter: Shared<Shards<u64>>, totals: Shared<Totals>, 
   }
   std::time::close_cancel_watch(watch: move never);
   tally_reads(totals: &totals, count: count, nanoseconds: total, longest: longest, state: state);
+  tally_read_histogram(totals: &totals, histogram: &histogram);
   return unit;
 }
 

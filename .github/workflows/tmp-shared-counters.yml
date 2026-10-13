@@ -1,6 +1,6 @@
 # Temporary measurement workflow for the sharded-state implementation.
 # Remove before this branch is marked ready. Procedure and decision rule:
-# research/investigations/shared-counters/DESIGN.md, section 8.7.
+# research/investigations/shared-counters/DESIGN.md, sections 8.7 and 8.8.
 name: tmp-shared-counters
 
 on:
@@ -16,7 +16,7 @@ on:
         type: string
         default: "12"
       ARMS:
-        description: Arms in initial rotation order (empty uses run.sh defaults)
+        description: Arms in rotation order (W4n256/W4nmax supported; empty uses run.sh defaults)
         type: string
         default: ""
 
@@ -44,7 +44,7 @@ jobs:
             echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
             export PATH="$HOME/.cargo/bin:$PATH"
           fi
-          for tool in /usr/bin/clang cargo taskset perl python3 git awk sed timeout lscpu sha256sum; do
+          for tool in /usr/bin/clang cargo taskset perl python3 git awk sed timeout lscpu sha256sum tar cmp mktemp; do
             command -v "$tool"
           done
           awk -F ': ' '/^model name/ { print $2; exit }' /proc/cpuinfo | grep -F i9-14900K
@@ -71,7 +71,7 @@ jobs:
           perl .github/run-check.pl shared-counters/compiler \
             cargo build --manifest-path compiler/Cargo.toml --profile gate --bin whitefootc --locked --offline
 
-      - name: Build the selected arms and retain their LLVM
+      - name: Build the selected arms, diagnostic compiler copies and retained LLVM
         env:
           ARMS: ${{ inputs.ARMS }}
           PILOT: ${{ inputs.PILOT }}
@@ -143,6 +143,7 @@ jobs:
               "shared_counters_summary", "research/experiments/shared-counters/summarize.py")
           summary = importlib.util.module_from_spec(module_spec)
           module_spec.loader.exec_module(summary)
+          summary.reducer_controls()
           blocks = set(range(6))
 
           def fixture(n=6):

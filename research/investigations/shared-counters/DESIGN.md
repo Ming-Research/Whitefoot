@@ -1402,6 +1402,99 @@ drain cell with fewer than half its nominal reads is reported as starved,
 not as a pass or fail of the reader and A1 criteria, which wait for the
 single-driver progress decision.
 
+### 8.8 Taken-yield cost attribution (registered 2026-10-13, before measurement)
+
+**Question.** Is the W4 throughput loss after the cooperative-yield fix
+primarily the cost of taken yields, rather than the inline boundary that
+every shard statement now executes? The comparison supplied for this
+registration is run 38427370760 after the fix against run 38413746180 before
+it: W4 with 64 contexts fell from 368.7 / 737.9 / 1476.3 to
+277.3 / 496.3 / 948.8 million operations per second at 2 / 4 / 8 P-cores.
+These two runs motivate the question; they are not the same-source
+attribution comparison below. Code inspection suggests three process-global
+atomic read-modify-writes per context switch among nine such instructions;
+their contention is a hypothesis to test, not an established attribution.
+
+**Comparison and construction.** Keep W4 and its independently built twin
+W4t at the accepted threshold of 64 immediately answered waiting boundaries.
+Add W4n256 with threshold 256 and W4nmax with threshold 1,048,576. Each
+variant compiler is built in CI from a disposable copy of the exact same
+checkout revision, changing only the inline emitter's threshold literal and
+the runtime's threshold definition and matching static assertion, including
+its diagnostic text. Each replacement must match exactly once or the build
+fails. The branch's compiler and runtime source stay unchanged. Each variant
+compiler builds only W4's source entry, with the same full-LTO options; its
+retained LLVM also belongs to that entry. Require each variant executable to
+differ byte for byte from W4, and require W4 to equal a repeat build of the
+same entry by the unpatched compiler. Record the source revision, compiler
+and executable hashes, thresholds and checks with the host evidence.
+
+W4nmax reduces the nominal yield frequency 16,384-fold from W4. It is a
+low-yield diagnostic, not literally a never-yield arm: even at the supplied
+W4 rates a 5 s cell would cross that threshold roughly 1,322 / 2,367 / 4,524
+times in aggregate. Displacement can also cause a switch before the
+threshold. These variants are diagnostics only and never accepted behavior;
+all implementation acceptance criteria still use W4 at N=64.
+
+**Procedure and evidence rule.** Run `ARMS="W4 W4t W4n256 W4nmax W4rd W5p"`
+with `BLOCKS=6`, 64 writers and 5 s cells, using section 8.7's CPU lists,
+alternating rotation, idle check and CI lock. The attribution decision lists
+are 2 / 4 / 8 P-cores; 16 hyperthreads remain descriptive. Reuse the
+same-block ratios, six complete paired blocks, 95% percentile bootstrap
+intervals and W4t/W4 interval containing 1 from section 8.7. Report
+W4n256/W4, W4nmax/W4 and W4nmax/W5p at each decision list. A partial workflow,
+missing comparison or invalid twin leaves the affected prediction
+inconclusive. These are attribution predictions, not replacement acceptance
+thresholds.
+
+**Predictions and falsifiers.** Registered before dispatch:
+
+- If taken switching dominates, W4nmax/W5p returns to at least 0.70 at each
+  of 2 / 4 / 8 P-cores. Use section 8.7's lower-bound rule to read this
+  prediction.
+- W4n256 recovers most of the W4-to-W4nmax throughput gap at each decision
+  list: the paired-block fraction `(R256 - R64) / (Rmax - R64)` is at least
+  0.50, where R is the cell's aggregate operations per second. A nonpositive
+  denominator cannot support a recovered-gap claim and leaves it
+  inconclusive. Use the same interval rule for the 0.50 prediction.
+- If W4nmax stays below 0.60 of W5p at a decision list (the interval's upper
+  bound is below 0.60), taken yields are not the dominant cost there; inspect
+  the inline code next. Between 0.60 and 0.70 the comparison does not settle
+  the attribution.
+- If the incremental loss per taken yield does not grow from 2 to 8
+  drivers, the process-global-counter explanation is not dominant. For d
+  drivers, rates R64 and Rmax and **measured** taken-switch rates s64 and
+  smax, estimate service-time cost per removed yield as
+  `d * (1/R64 - 1/Rmax) / (s64/R64 - smax/Rmax)` seconds. Pair the 8-driver
+  estimate over the 2-driver estimate within the same block; an upper
+  interval bound at or below 1 falsifies growth, a lower bound above 1
+  supports it, and an interval crossing 1 is inconclusive. Nonpositive
+  denominators or costs cannot establish this attribution.
+
+The current scheduler report exposes borrowing and reassignment, not taken
+yield counts. Without those measured switch rates the last falsifier stays
+inconclusive. The reducer may report the model obtained by substituting
+`sN = RN/N`, clearly marked as nominal, not measured: it assumes one
+threshold-driven yield per N updates, continuous runnable competition and no
+extra displacement switches. The model's growth is descriptive evidence
+only and cannot decide the global-counter explanation. Varying thresholds
+also changes how often the slow boundary and completion reaping execute, so
+a recovered rate attributes the threshold-driven path as a whole, not the
+three global instructions individually.
+
+**Reader distribution (descriptive).** W4rd remains at N=64. Record each
+read interval exactly as before: from the clock reading after sleep returns
+to the clock reading after the whole-target statement, including its wait
+and sum. Accumulate a context-local fixed histogram after the end clock
+reading and publish it once on completion. Buckets have inclusive upper
+bounds 1, 2, 4, ... , 2^63 nanoseconds; the last bucket holds larger spans.
+The reducer reports each cell's nearest-rank p50 and p99 as bucket upper
+bounds capped by that cell's observed maximum, including the overflow bucket, along
+with its exact observed maximum and read count. Missing or malformed
+histograms are unavailable evidence, never a zero latency. These new
+percentiles are descriptive; they do not change section 8.7's maximum-read
+acceptance criterion.
+
 ## 9. Results: the arms that need no language change
 
 The owner chose, on the board card that asked what Whitefoot should offer for
