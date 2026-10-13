@@ -134,7 +134,7 @@ impl Checker<'_, '_> {
             // are in earlier components, so the components of one level, all
             // of whose callees are in lower levels, are analyzed concurrently;
             // each level then publishes in component order. Functions of one
-            // component read none of each other's summaries either.
+            // component read immutable induction hypotheses for each other.
             let mut levels = vec![0_usize; schedule.components.len()];
             for position in 0..schedule.components.len() {
                 levels[position] = schedule.components[position]
@@ -192,10 +192,9 @@ impl Checker<'_, '_> {
                             .collect::<Vec<_>>()
                     })
                     .collect::<Vec<_>>();
-                // [DIAG-2, TYPE-11] a call to a member of the caller's own
-                // component receives that member's type-invariant
-                // postconditions as induction hypotheses, named by the
-                // summary identities the component publishes them under
+                // [DIAG-2] a call to a member of the caller's own component
+                // receives all of that member's postconditions as induction
+                // hypotheses, named by the summary identities it publishes
                 // once every selected exit of every member has proved them.
                 let mut at_level = vec![false; schedule.components.len()];
                 for position in positions {
@@ -212,14 +211,12 @@ impl Checker<'_, '_> {
                             .unwrap_or(u32::MAX);
                         let verifying = selected(index)
                             && at_level.get(component as usize).copied().unwrap_or(false);
-                        let generated = checked
+                        let hypotheses = checked
                             .function
                             .postconditions
                             .iter()
                             .enumerate()
-                            .filter(|(_, postcondition)| {
-                                verifying && postcondition.selector.generated
-                            })
+                            .filter(|_| verifying)
                             .filter_map(|(ordinal, postcondition)| {
                                 Some((
                                     postcondition,
@@ -234,7 +231,7 @@ impl Checker<'_, '_> {
                             .collect();
                         ComponentPostconditions {
                             component,
-                            generated,
+                            hypotheses,
                         }
                     })
                     .collect::<Vec<_>>();
@@ -250,7 +247,7 @@ impl Checker<'_, '_> {
                                 .copied()
                                 .chain(
                                     component
-                                        .generated
+                                        .hypotheses
                                         .iter()
                                         .map(|(postcondition, _)| *postcondition),
                                 )
@@ -425,9 +422,10 @@ impl Checker<'_, '_> {
     /// publish a postcondition summary an analyzed body reads, by the same
     /// call graph the postcondition schedule is built from.
     ///
-    /// A component publishes summaries only for its functions' postconditions
-    /// [FN-9], so a callee component without one contributes nothing to its
-    /// callers and is left out with everything only it reaches. Components
+    /// A component publishes entailment summaries only for its functions'
+    /// ordinary postconditions [FN-9], so a callee component without one
+    /// contributes nothing to its callers' entailment analyses and is left out
+    /// with everything only it reaches. Components
     /// are taken whole: the schedule analyzes every member of a component it
     /// selects, and a member's own callees decide whether its component
     /// publishes, so each member's summary-publishing callees are followed.
@@ -447,6 +445,8 @@ impl Checker<'_, '_> {
             }
             return Ok(analyzed);
         }
+        // This is entailment-analysis reachability: range clauses are read
+        // directly by the separate range walk, not through these summaries.
         let publishes = schedule
             .components
             .iter()
