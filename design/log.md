@@ -5,6 +5,13 @@ Newest first. One entry per approved change of the tree: a dated title,
 the owner's agent instructions own the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-12 The gate runs for revisions that can merge
+
+Nodes: compiler/verification
+
+Owner-approved: On the shared status board on 2026-10-12, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve Whitefoot#399 (head commit b8f67f29a423)'s changes to the design tree and the repository guidance, which make the gate run only for branches with an open PR, the main line and manual runs?" (translated), whose background listed the changed trigger decision, the opening and reopening runs' own concurrency group, the final job skipping on cancellation, the failed-query rule and the unchanged Linux and macOS scope.
+
+Summary: The gate and the I/O host checks run for a push to the main line, a push to a branch with an open pull request created no later than the push's run, a pull request's opening or reopening, the event of marking one ready (the gate only) and a manual run, and one deciding job skips every other push, because the merge precondition needs only the gate of a revision that can merge, instead of every push, skipping branches by name, or pull request events alone, which GitHub does not send for a conflicting branch. An opening or reopening has a concurrency group of its own so it cannot cancel the run of a push that follows it; an opening skips when the branch has already moved, while a reopening always runs because pushes made while the pull request was closed were skipped. The final both-platforms job runs on `!cancelled()` so a superseded run leaves no red result beside its replacement, and a failed GitHub query fails the run instead of silently skipping checks or dropping macOS.
 ## 2026-10-13 A range postcondition states that an element is unchanged and reads entry versions
 
 Nodes: compiler/range-judgment, language/checks-and-proofs, language/checks-and-proofs/range-facts

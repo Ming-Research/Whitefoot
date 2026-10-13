@@ -193,24 +193,29 @@ build time apart from test and program execution.
 
 ## Checks
 
-- `make static`, run on every push by the static group of `gate.yml`, which
-  adds the conformance structure, the performance instrument and the
-  compiler's format and lint checks: repository invariants, the
-  specification archives, the README and its translation changed together,
-  prose integrity, guidance references, Rust sources under `compiler/src/`
-  over 4,000 lines listed in `.github/oversized-sources.txt`, and the design
+- `make static`, run by the static group of `gate.yml`, which adds the
+  conformance structure, the performance instrument and the compiler's
+  format and lint checks: repository invariants, the specification
+  archives, the README and its translation changed together, prose
+  integrity, guidance references, Rust sources under `compiler/src/` over
+  4,000 lines listed in `.github/oversized-sources.txt`, and the design
   tree's form, read through the `design/skill` submodule.
 - `make check`, on the revision to merge: the static group plus the compiler
   build, tests, the conformance adapter and the runtime; `make check-groups`
-  lists the groups. `gate.yml` runs those groups on Linux on every push, and
-  on macOS as well for a push to a pull request marked ready, the event of
-  marking one ready, `main` and a manual run; its job `Gate on both platforms`
-  passes only when every group is green on both for the revision. That job's
+  lists the groups. `gate.yml` and `io-hosts.yml` check a push to `main`, a
+  push to a branch with an open pull request, draft or ready, the opening or
+  reopening of a pull request and a manual run; any other push, to a branch
+  with no open pull request, skips their checks, so work that needs CI opens
+  its Draft pull request first. `gate.yml` runs the groups on Linux, and on
+  macOS as well for a pull request marked ready, the event of marking one
+  ready, `main` and a manual run; its job `Gate on both platforms` passes
+  only when every group is green on both for the revision. That job's
   success on the exact revision to be merged, a head current with `main`, is
-  that revision's `make check`. It needs `python3`, LLD on
-  Linux (`ld.lld`) and the `time` utility.
+  that revision's `make check`. It needs `python3`, `jq`, LLD on Linux
+  (`ld.lld`) and the `time` utility.
 - `make design-ready` runs in `design-readiness.yml`.
-- CI only: `io-hosts.yml` on every push (Linux io_uring and Windows IOCP),
+- CI only: `io-hosts.yml`, on the same revisions as the gate (Linux io_uring
+  and Windows IOCP),
   `map-sanitizers.yml` on every push to a PR that changes the concurrent
   map's runtime or its test (that test under AddressSanitizer and
   ThreadSanitizer, on the PR's head),
