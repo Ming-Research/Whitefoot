@@ -161,9 +161,9 @@ read.
 - `spec/kernel-spec.md`: normative syntax, semantics, judgments, boundaries
   and examples; not compiler convenience presented as law or editing history.
   `spec/log.md` holds its approvals.
-- `docs/writing.md` in [Whitefoot-kit](https://github.com/Ming-Research/Whitefoot-kit/blob/main/docs/writing.md): the
-  writing guide for agents (writer problems, usable forms, examples,
-  applicability and costs); a specification change that alters a usable form
+- Whitefoot-kit's [writing guide](https://github.com/Ming-Research/Whitefoot-kit/blob/main/docs/writing.md): writer
+  problems, usable forms, examples, applicability and costs, for agents;
+  a specification change that alters a usable form
   is filed to Whitefoot-kit on the status board.
 - `docs/ideas.md` and `docs/why-whitefoot.md`: candidate mechanisms and
   explanatory essays; not a work queue or invented measurements.
