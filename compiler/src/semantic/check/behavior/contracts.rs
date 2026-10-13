@@ -772,7 +772,10 @@ impl<'unit> TypeContext<'unit> {
         let elements = &self.elements;
         let const_parameter_types = self.const_generic_types().collect();
         let copy_type_parameters = self.copy_type_parameters();
+        let type_spellings = self.diagnostic_constant_type_spellings();
         let context = EntailmentContext {
+            source_spellings: &self.source_spellings,
+            type_spellings: &type_spellings,
             declarations: self.declarations.resolved.declarations(),
             callees: &[],
             constants: &self.checked_constants,

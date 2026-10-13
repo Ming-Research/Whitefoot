@@ -854,7 +854,13 @@ impl<'unit> TypeContext<'unit> {
             location,
             kind: SemanticIssueKind::UndischargedCallRequirement(Box::new(
                 crate::UndischargedCallRequirementDetail {
-                    concrete_callee: self.render_function_instance(signature)?,
+                    concrete_callee: self.render_called_function(
+                        signature,
+                        self.declarations
+                            .tree
+                            .node_with_path(&outcome.node_path)
+                            .ok_or(SemanticCompilerFailure::InvalidResolution)?,
+                    )?,
                     requires_clause,
                     instantiated_goal: outcome.rendered_goal.clone(),
                     disposition,

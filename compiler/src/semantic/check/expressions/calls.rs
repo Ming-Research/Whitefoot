@@ -405,15 +405,19 @@ impl<'unit> Checker<'_, 'unit> {
         self.parse_type_with(check_context, ty, &function.substitution)
     }
 
-    fn invalid_named_arguments(signature: &FunctionSignature) -> SemanticIssueKind {
-        SemanticIssueKind::InvalidNamedArguments {
-            callee: signature.name.clone(),
+    fn invalid_named_arguments(
+        &self,
+        signature: &FunctionSignature,
+        node: NodeId,
+    ) -> Result<SemanticIssueKind, CheckStop> {
+        Ok(SemanticIssueKind::InvalidNamedArguments {
+            callee: self.types.render_called_function(signature, node)?,
             declared_parameters: signature
                 .parameters
                 .iter()
                 .map(|parameter| parameter.name.clone())
                 .collect(),
-        }
+        })
     }
 }
 

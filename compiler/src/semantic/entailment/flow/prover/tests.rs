@@ -12,6 +12,8 @@ fn with_integer_parameters(types: &[IntegerType], check: impl FnOnce(&mut Analyz
     let constant_ids = HashMap::new();
     let const_parameter_types = HashMap::new();
     let context = EntailmentContext {
+        source_spellings: &HashMap::new(),
+        type_spellings: &HashMap::new(),
         declarations: &[],
         callees: &[],
         constants: &[],
@@ -26,6 +28,14 @@ fn with_integer_parameters(types: &[IntegerType], check: impl FnOnce(&mut Analyz
         component_postconditions: &[],
         binding_names: &[],
     };
+    with_render_context(&context, types, check);
+}
+
+fn with_render_context(
+    context: &EntailmentContext<'_>,
+    types: &[IntegerType],
+    check: impl FnOnce(&mut Analyzer<'_, '_>),
+) {
     let function = CheckedFunction {
         formal_hypothesis: false,
         summary_source: None,
@@ -71,7 +81,7 @@ fn with_integer_parameters(types: &[IntegerType], check: impl FnOnce(&mut Analyz
         obligations: Vec::new(),
         entailment: FunctionEntailment::default(),
     };
-    let mut analyzer = Analyzer::new(&context, &function);
+    let mut analyzer = Analyzer::new(context, &function);
     analyzer.input.collect_bindings();
     check(&mut analyzer);
 }
@@ -106,6 +116,67 @@ fn projected_contract_measure_has_the_operation_forms_affine_image() {
             analyzer.reasoning().affine_goal_value(&projected, &state),
             Some(expected)
         );
+    });
+}
+
+#[test]
+fn aggregate_goal_values_use_const_source_constructors_and_lists() {
+    use crate::semantic::model::{CheckedElement, CheckedField, CheckedNominal, NominalId};
+
+    with_analyzer(|outer| {
+        let integer = CheckedType::Integer(IntegerType::U64);
+        let nominal = CheckedType::Nominal(NominalId(0));
+        let array = CheckedType::Array {
+            element: CheckedElement(0),
+            length: CheckedConst::Value(2),
+        };
+        let nominals = [CheckedNominal {
+            id: NominalId(0),
+            name: "internal-instance-name".to_owned(),
+            kind: CheckedNominalKind::Struct {
+                fields: vec![CheckedField {
+                    name: "values".to_owned(),
+                    ty: array,
+                    readonly: false,
+                }],
+            },
+            linear: false,
+            nocopy: false,
+            type_invariant: false,
+        }];
+        let spellings = HashMap::from([(nominal, "Bundle<u64>".to_owned())]);
+        let elements = [integer, nominal, CheckedType::Integer(IntegerType::U8)];
+        let context = EntailmentContext {
+            nominals: &nominals,
+            type_spellings: &spellings,
+            elements: &elements,
+            ..*outer.input.context
+        };
+        with_render_context(&context, &[], |analyzer| {
+            let values = CheckedValue::Array {
+                ty: array,
+                elements: vec![
+                    CheckedValue::Integer { ty: IntegerType::U64, bits: 1 },
+                    CheckedValue::Integer { ty: IntegerType::U64, bits: 9 },
+                ],
+            };
+            let aggregate = CheckedValue::Struct { ty: nominal, fields: vec![values.clone()] };
+            assert_eq!(analyzer.input.render_goal_datum(&GoalDatum::Literal(values)),
+                "[1_u64, 9_u64]");
+            assert_eq!(analyzer.input.render_goal_datum(&GoalDatum::Literal(aggregate.clone())),
+                "Bundle<u64>(values: [1_u64, 9_u64])");
+            let nested = CheckedValue::Array {
+                ty: CheckedType::Array { element: CheckedElement(1), length: CheckedConst::Value(1) },
+                elements: vec![aggregate],
+            };
+            assert_eq!(analyzer.input.render_goal_datum(&GoalDatum::Literal(nested)),
+                "[Bundle<u64>(values: [1_u64, 9_u64])]");
+            let empty = CheckedValue::Array {
+                ty: CheckedType::Array { element: CheckedElement(2), length: CheckedConst::Value(0) },
+                elements: Vec::new(),
+            };
+            assert_eq!(analyzer.input.render_goal_datum(&GoalDatum::Literal(empty)), "\"\"");
+        });
     });
 }
 

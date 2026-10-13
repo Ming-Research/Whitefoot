@@ -206,6 +206,10 @@ impl EntailmentCallee {
 
 /// Program-level context the per-function analysis reads.
 pub(crate) struct EntailmentContext<'check> {
+    /// Source text for captured values; diagnostic rendering alone reads it.
+    pub(crate) source_spellings: &'check HashMap<crate::syntax::NodeId, String>,
+    /// Constructor type names for aggregate constants in diagnostic goals.
+    pub(crate) type_spellings: &'check HashMap<CheckedType, String>,
     /// Existing resolved declarations, borrowed for source names in residuals.
     pub(crate) declarations: &'check [crate::DeclarationRecord],
     /// Callee projections indexed by [`FunctionId`].

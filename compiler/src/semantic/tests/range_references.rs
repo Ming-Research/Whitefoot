@@ -1311,7 +1311,7 @@ fn direct_page_length_fact_dies_after_place_back() {
             "../../../../tests/conformance/cases/msr2-neg-direct-page-length-after-append.wf"
         ),
         CallRequirementDisposition::Unproved,
-        "p^.pages[0].len == 1_u64",
+        "p^.pages[0_u64].len == 1_u64",
     );
 }
 
@@ -1333,7 +1333,7 @@ fn borrowed_page_length_does_not_identify_a_direct_read_after_append() {
             "../../../../tests/conformance/cases/ent2-neg-borrowed-page-length-as-current.wf"
         ),
         CallRequirementDisposition::Unproved,
-        "p^.pages[0].len == 1_u64",
+        "p^.pages[0_u64].len == 1_u64",
     );
 }
 
@@ -1364,7 +1364,7 @@ fn direct_page_element_bound_dies_after_take_back() {
             else {
                 panic!("expected the element's bounds obligation: {issue:?}");
             };
-            assert_eq!(residual, "1_u64 < values^.pages[0].len");
+            assert_eq!(residual, "1_u64 < values^.pages[0_u64].len");
         },
     );
 }

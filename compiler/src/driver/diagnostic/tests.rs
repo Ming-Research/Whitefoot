@@ -119,9 +119,9 @@ fn main() -> status: std::process::ExitStatus pure {
   marker:              {}
   concrete_callee: drop_spaces
   requires_clause: caller.wf:2:3 \"requires out^.len >= src^.len;\"
-  instantiated_goal: buffer[0..5].len >= text[0..6].len
+  instantiated_goal: buffer[0_u64..5_u64].len >= text[0_u64..6_u64].len
   disposition: Refuted
-  mechanical_fix: `buffer[0..5].len >= text[0..6].len` is false for the values that reach this call, so no fact can establish it here: pass arguments that satisfy it, or change the statements or requirements that fix those values",
+  mechanical_fix: `buffer[0_u64..5_u64].len >= text[0_u64..6_u64].len` is false for the values that reach this call, so no fact can establish it here: pass arguments that satisfy it, or change the statements or requirements that fix those values",
         "^".repeat(65)
     );
     assert_eq!(failure.to_string(), expected);
@@ -201,13 +201,13 @@ fn main() -> status: std::process::ExitStatus pure {
   postcondition: ensures.wf:2:3 "ensures result == value;"
   conjunct: 0
   selector: ensures.wf:1:42 "result: i32"
-  relation: 0 = value
+  relation: 0_i32 = value
   disposition: Unproved
   mechanical_fix: the postcondition is not proved where this `return` delivers its value: add a `requires` over the parameters the value is computed from, prove the bound before the return with an `invariant` whose `use` steps name the facts it follows from, or state a postcondition the body proves"#
     );
     assert_eq!(
         failure.render(DiagnosticFormat::Json),
-        r#"{"rule":"FN-9","kind":"UndischargedPostcondition","category":"Source","stage":"Semantics","at":{"file":"ensures.wf","line":5,"column":5},"bytes":{"start":118,"end":131},"source":"    return 0_i32;","detail":{"concrete_function":"unproved","postcondition":{"at":{"file":"ensures.wf","line":2,"column":3},"bytes":{"start":71,"end":95},"text":"ensures result == value;"},"conjunct":0,"selector":{"at":{"file":"ensures.wf","line":1,"column":42},"bytes":{"start":41,"end":52},"text":"result: i32"},"relation":"0 = value","disposition":"Unproved","mechanical_fix":"the postcondition is not proved where this `return` delivers its value: add a `requires` over the parameters the value is computed from, prove the bound before the return with an `invariant` whose `use` steps name the facts it follows from, or state a postcondition the body proves"}}"#
+        r#"{"rule":"FN-9","kind":"UndischargedPostcondition","category":"Source","stage":"Semantics","at":{"file":"ensures.wf","line":5,"column":5},"bytes":{"start":118,"end":131},"source":"    return 0_i32;","detail":{"concrete_function":"unproved","postcondition":{"at":{"file":"ensures.wf","line":2,"column":3},"bytes":{"start":71,"end":95},"text":"ensures result == value;"},"conjunct":0,"selector":{"at":{"file":"ensures.wf","line":1,"column":42},"bytes":{"start":41,"end":52},"text":"result: i32"},"relation":"0_i32 = value","disposition":"Unproved","mechanical_fix":"the postcondition is not proved where this `return` delivers its value: add a `requires` over the parameters the value is computed from, prove the bound before the return with an `invariant` whose `use` steps name the facts it follows from, or state a postcondition the body proves"}}"#
     );
 }
 
@@ -513,4 +513,102 @@ fn invalid_float_literals_render_the_repair_in_text_and_json() {
             assert!(!json.contains("canonical_spelling"), "{json}");
         }
     }
+}
+
+#[test]
+fn normalized_postcondition_relations_keep_legal_literal_suffixes() {
+    for ty in ["i64", "u64"] {
+        let (parameter, bound) = if ty == "i64" {
+            ("", "0_i64")
+        } else {
+            (", limit: u64", "limit")
+        };
+        let source = format!("struct Word {{\n  value: {ty};\n}}\n\nfn below(w: Word{parameter}) -> result: {ty} pure contract {{\n  ensures result < {bound};\n}} {{\n  return w.value;\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n");
+        let failure = stop("typed-relation.wf", source.as_bytes());
+        assert_eq!(failure.rule_id(), Some("FN-9"));
+        let rendered = failure.to_string();
+        assert!(
+            rendered.contains(&format!("\n  relation: w.value - {bound} <= -1_i64\n")),
+            "{rendered}"
+        );
+    }
+}
+
+#[test]
+fn unproved_goal_spells_enum_payload_and_literal_index_as_source() {
+    let source = br#"enum Shape {
+  Circle(radius: u64);
+}
+
+fn need(radius: &u64, limit: u64) -> result: unit reads(radius) contract {
+  requires radius^ < limit;
+} {
+  let observed = radius^;
+  return unit;
+}
+
+fn probe(shapes: &Array<Shape, 1>, limit: u64) -> result: unit reads(shapes) {
+  match &shapes^[0_u64] {
+    Circle(radius: radius) => {
+      need(radius: radius, limit: limit);
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let failure = stop("proof-place-spelling.wf", source);
+    assert_eq!(failure.rule_id(), Some("FN-8"));
+    let rendered = failure.to_string();
+    assert!(
+        rendered.contains("\n  instantiated_goal: shapes^[0_u64].Circle.radius < limit\n"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("\n  disposition: Unproved\n"), "{rendered}");
+}
+
+#[test]
+fn indexed_atomic_goal_names_the_binder_without_its_identity_index() {
+    let source = br#"const key: Array<u8, 2> =[107_u8, 49_u8];
+
+struct Word {
+  value: u64;
+}
+
+fn need(value: &u64, limit: u64) -> result: unit reads(value) contract {
+  requires value^ < limit;
+} {
+  let observed = value^;
+  return unit;
+}
+
+fn probe(store: &Shared<ConcurrentHashMap<Word>>, limit: u64) -> result: unit reads(store) waits {
+  let observed = &key[0_u64..2_u64];
+  atomic slot = &store^[observed] {
+    match slot^ {
+      Some(value: word) => {
+        need(value: &word^.value, limit: limit);
+      }
+      None() => {
+      }
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let failure = stop("atomic-place-spelling.wf", source);
+    assert_eq!(failure.rule_id(), Some("FN-8"));
+    let rendered = failure.to_string();
+    assert!(
+        rendered.contains("\n  instantiated_goal: slot^.Some.value.value < limit\n"),
+        "{rendered}"
+    );
+    assert!(!rendered.contains("slot^[?]"), "{rendered}");
 }

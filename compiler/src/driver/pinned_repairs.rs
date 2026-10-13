@@ -19,6 +19,7 @@ mod enum_routed_ensures;
 mod floats;
 mod interface_applications;
 mod prelude_opaque;
+mod proof_place_spellings;
 mod recursive_effects;
 mod selector_scope;
 mod shared_maps;
@@ -784,6 +785,7 @@ fn main() -> status: std::process::ExitStatus pure {
         rule: "FN-8",
         sentences: &[
             "\n  disposition: Unproved\n",
+            "\n  instantiated_goal: values[span.start..span.end].len <= 2_u64\n",
             "\n  mechanical_fix: `values[span.start..span.end].len` is the difference of its endpoints [REF-4], and its endpoints `span.start` and `span.end` are not bindings, so no fact names that difference: copy each into a `let` binding before the call and form the range from the bindings, then, where the start is at most the end, bind the difference of the bindings with the exact `-` (a `-wrap` difference carries no relation to the range's length) and establish the requirement over it\n",
         ],
         repaired: &[br#"struct Span {
@@ -3833,6 +3835,7 @@ fn each_pinned_repair_is_carried_out_by_its_programs() {
         .chain(call_separations::CALL_SEPARATIONS)
         .chain(content_moves::CONTENT_MOVES)
         .chain(prelude_opaque::PRELUDE_OPAQUE)
+        .chain(proof_place_spellings::PROOF_PLACE_SPELLINGS)
         .chain(recursive_effects::RECURSIVE_EFFECTS)
         .chain(storage_destructuring::STORAGE_DESTRUCTURING)
         .chain(shared_maps::SHARED_MAPS)

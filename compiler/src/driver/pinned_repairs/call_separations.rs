@@ -7,6 +7,42 @@ use super::RepairPair;
 
 pub(super) const CALL_SEPARATIONS: &[RepairPair] = &[
     RepairPair {
+        name: "call-separation-computed-argument-source.wf",
+        rejected: br#"interface Stage {
+  fn write_two(window: &Array<u64, 2>, first: u64, second: u64) -> result: unit writes(window[first]), writes(window[second]);
+}
+
+fn outer<interface Stage>(window: &Array<u64, 2>) -> result: unit writes(window) {
+  let indices = array_filled::<u64, 2>(value: 0_u64);
+  Stage::write_two(window: window, first: indices[0_u64], second: indices[1_u64]);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "EFF-5",
+        sentences: &[
+            "\n  first: window^[indices[0_u64]]\n  second: window^[indices[1_u64]]\n",
+            "\n  mechanical_fix: these two entries of the callee's row may reach overlapping places through one argument, and no fact names the positions this call passes for them: replace the callee's row entries at or below their common path with one `writes` entry of that path\n",
+        ],
+        repaired: &[br#"interface Stage {
+  fn write_two(window: &Array<u64, 2>, first: u64, second: u64) -> result: unit writes(window);
+}
+
+fn outer<interface Stage>(window: &Array<u64, 2>) -> result: unit writes(window) {
+  let indices = array_filled::<u64, 2>(value: 0_u64);
+  Stage::write_two(window: window, first: indices[0_u64], second: indices[1_u64]);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
         name: "call-passes-one-place-to-two-arguments.wf",
         rejected: br#"struct Cell {
   value: u64;

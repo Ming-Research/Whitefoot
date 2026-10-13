@@ -2709,7 +2709,10 @@ impl Judging<'_, '_, '_> {
                         )
                     })
                 });
-            let residual = self.reasoning().render_relation(&relation);
+            let residual = self.reasoning().render_relation(
+                &relation,
+                postcondition.relation.operands[0].ty(),
+            );
 
             let entry_images = self.input.postcondition_entry_images[index]
                 .iter()

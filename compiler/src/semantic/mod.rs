@@ -14,6 +14,7 @@ pub(crate) mod model;
 mod obligations;
 pub(crate) mod permission;
 mod permission_ledger;
+mod place_render;
 mod places;
 #[cfg(test)]
 pub(crate) use places::UnprovedSeparations;

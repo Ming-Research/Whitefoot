@@ -12,6 +12,79 @@ pub(super) enum BinderSpelling<'a> {
     Bound(BindingId, &'a str),
 }
 
+struct ProofPlaceNames<'a, 'check, 'unit> {
+    input: &'a Input<'check, 'unit>,
+    counted: Option<BinderSpelling<'a>>,
+}
+
+impl crate::semantic::place_render::PlaceNames for ProofPlaceNames<'_, '_, '_> {
+    type Error = std::convert::Infallible;
+
+    fn field(
+        &self,
+        ty: Option<CheckedType>,
+        field: u32,
+    ) -> Result<Option<(String, CheckedType)>, Self::Error> {
+        Ok(ty.and_then(|ty| self.input.field_name(ty, field)).flatten())
+    }
+
+    fn payload(
+        &self,
+        ty: Option<CheckedType>,
+        variant: u32,
+        field: u32,
+    ) -> Result<Option<(String, String, CheckedType)>, Self::Error> {
+        Ok(ty.and_then(|ty| {
+            let CheckedType::Nominal(id) = ty else {
+                return None;
+            };
+            let CheckedNominalKind::Enum { variants } =
+                &self.input.context.nominals.get(id.0 as usize)?.kind
+            else {
+                return None;
+            };
+            let variant = variants.get(variant as usize)?;
+            let field = variant.fields.get(field as usize)?;
+            Some((variant.name.clone(), field.name.clone(), field.ty))
+        }))
+    }
+
+    fn deref(
+        &self,
+        ty: Option<CheckedType>,
+    ) -> Result<(bool, Option<CheckedType>), Self::Error> {
+        let boxed = ty.is_some_and(|ty| {
+            matches!(ty, CheckedType::Nominal(id)
+                if self.input.context.nominals.get(id.0 as usize)
+                    .is_some_and(|nominal| matches!(nominal.kind, CheckedNominalKind::Box { .. })))
+        });
+        Ok((boxed, ty.and_then(|ty| self.input.deref_type(ty))))
+    }
+
+    fn element(
+        &self,
+        ty: Option<CheckedType>,
+        range: bool,
+    ) -> Result<Option<CheckedType>, Self::Error> {
+        Ok(if range {
+            ty
+        } else {
+            ty.map(|ty| self.input.storage_element_type(ty).unwrap_or(ty))
+        })
+    }
+
+    fn table_entry(
+        &self,
+        ty: Option<CheckedType>,
+    ) -> Result<Option<CheckedType>, Self::Error> {
+        Ok(ty.and_then(|ty| self.input.table_entry_type(ty)))
+    }
+
+    fn offset(&self, value: CapturedValue) -> Result<String, Self::Error> {
+        Ok(self.input.render_header_offset(value, self.counted))
+    }
+}
+
 impl Input<'_, '_> {
     pub(super) fn render_integer_domain_goal(
         &self,
@@ -79,7 +152,10 @@ impl Input<'_, '_> {
             // INV-1 formation currently admits only strict and non-strict
             // ordered roots. Keep a source-level fallback so an internal
             // inconsistency never leaks an affine term identity.
-            bound => format!("({left} - {right}) <= {bound}_i128"),
+            bound => format!(
+                "({left} - {right}) <= {}",
+                normalized_integer(bound, None)
+            ),
         }
     }
 
@@ -240,23 +316,23 @@ impl Input<'_, '_> {
             .map_or_else(|| "?".to_owned(), |record| record.spelling().to_owned())
     }
 
-    /// One [OP-4] subscript offset, in the spelling the source wrote it in.
-    pub(super) fn render_offset(&self, offset: CapturedValue) -> String {
-        self.render_header_offset(offset, None)
-    }
-
     fn render_header_offset(
         &self,
         offset: CapturedValue,
         counted: Option<BinderSpelling<'_>>,
     ) -> String {
         match offset.term {
-            CapturedTerm::Literal(value) => value.to_string(),
+            CapturedTerm::Literal(value) => format!("{value}_u64"),
             CapturedTerm::Binding(binding) => self.render_header_binding(binding, counted),
             CapturedTerm::Const(declaration) => self.declaration_name(declaration),
             // [REF-1] the binding's spelling names a later value than the one
             // this index read, and no source spelling names that one.
-            CapturedTerm::Superseded(_) | CapturedTerm::Opaque => "?".to_owned(),
+            CapturedTerm::Superseded(_) => "?".to_owned(),
+            CapturedTerm::Opaque => offset
+                .source
+                .and_then(|node| self.context.source_spellings.get(&node))
+                .cloned()
+                .unwrap_or_else(|| "?".to_owned()),
         }
     }
 
@@ -315,10 +391,30 @@ impl Input<'_, '_> {
                 self.context
                     .constants
                     .get(id.0 as usize)
-                    .map(|constant| constant.ty),
+                    .map(|constant| constant.declared_type),
             ),
         };
-        self.render_place_projections(rendered, ty, &place.path, counted)
+        let range = match place.root {
+            PlaceRoot::Binding(binding) => self.binding_is_range(binding),
+            PlaceRoot::Constant(_) => false,
+        };
+        let index_prefix = usize::from(
+            matches!(place.root, PlaceRoot::Binding(binding)
+                if self.summary(binding).is_some_and(|summary| summary.indexed_atomic))
+                && matches!(place.path.first(), Some(PlaceStep::Index(_))),
+        );
+        self.render_place_projections_at(
+            rendered,
+            ty,
+            range,
+            index_prefix,
+            &place.path,
+            counted,
+        )
+    }
+
+    fn binding_is_range(&self, binding: BindingId) -> bool {
+        self.summary(binding).is_some_and(|summary| summary.range)
     }
 
     /// Render body and entry paths through the same typed storage selectors.
@@ -331,106 +427,36 @@ impl Input<'_, '_> {
     /// since this renderer has no error channel.
     fn render_place_projections(
         &self,
-        mut rendered: String,
-        mut ty: Option<CheckedType>,
+        rendered: String,
+        ty: Option<CheckedType>,
         projections: &[PlaceStep],
         counted: Option<BinderSpelling<'_>>,
     ) -> String {
-        for projection in projections {
-            match projection {
-                PlaceStep::Descendant(target) => {
-                    rendered.push_str(".**");
-                    ty = Some(target.ty);
-                }
-                PlaceStep::Payload { variant, field } => {
-                    let selected = ty.and_then(|current| {
-                        let CheckedType::Nominal(nominal) = current else {
-                            return None;
-                        };
-                        let CheckedNominalKind::Enum { variants } =
-                            &self.context.nominals.get(nominal.0 as usize)?.kind
-                        else {
-                            return None;
-                        };
-                        let variant = variants.get(*variant as usize)?;
-                        let field = variant.fields.get(*field as usize)?;
-                        Some((&variant.name, &field.name, field.ty))
-                    });
-                    match selected {
-                        Some((variant, field, field_type)) => {
-                            rendered.push_str(&format!(".{variant}.{field}"));
-                            ty = Some(field_type);
-                        }
-                        None => {
-                            rendered.push_str(".?.?");
-                            ty = None;
-                        }
-                    }
-                }
-                PlaceStep::Range(range) => {
-                    rendered.push_str(&format!(
-                        "[{}..{}]",
-                        self.render_header_offset(range.start, counted),
-                        self.render_header_offset(range.end, counted)
-                    ));
-                }
-                PlaceStep::Part(part) => {
-                    rendered.push('.');
-                    rendered.push_str(part.spelling());
-                    ty = ty.map(|ty| self.storage_element_type(ty).unwrap_or(ty));
-                }
-                PlaceStep::Measure(measure) => {
-                    rendered.push('.');
-                    rendered.push_str(measure.spelling());
-                    ty = Some(CheckedType::Integer(IntegerType::U64));
-                }
-                PlaceStep::Field(field) => {
-                    match ty
-                        .and_then(|current| self.field_name(current, *field))
-                        .flatten()
-                    {
-                        Some((field_name, field_ty)) => {
-                            rendered.push('.');
-                            rendered.push_str(&field_name);
-                            ty = Some(field_ty);
-                        }
-                        None => {
-                            rendered.push_str(".?");
-                            ty = None;
-                        }
-                    }
-                }
-                PlaceStep::Page(offset) => {
-                    rendered.push_str(".pages");
-                    rendered.push('[');
-                    rendered.push_str(&self.render_offset(*offset));
-                    rendered.push(']');
-                    ty = ty.map(|ty| self.storage_element_type(ty).unwrap_or(ty));
-                }
-                PlaceStep::Index(offset) => {
-                    rendered.push_str(&format!(
-                        "[{}]",
-                        self.render_header_offset(*offset, counted)
-                    ));
-                    // A range reference's root type is already its element
-                    // type [REF-4], so a subscript of a type that selects no
-                    // element keeps it. A table's subscript selects its
-                    // `Option` entry, and the entries run of a key set holds
-                    // the same type [SHARE-2].
-                    ty = ty.map(|ty| {
-                        self.table_entry_type(ty)
-                            .or_else(|| self.storage_element_type(ty))
-                            .unwrap_or(ty)
-                    });
-                }
-                PlaceStep::Deref => {
-                    self.render_content_step(&mut rendered, &mut ty);
-                }
-            }
-        }
-        rendered
+        self.render_place_projections_at(rendered, ty, false, 0, projections, counted)
     }
 
+    fn render_place_projections_at(
+        &self,
+        rendered: String,
+        ty: Option<CheckedType>,
+        range: bool,
+        index_prefix: usize,
+        projections: &[PlaceStep],
+        counted: Option<BinderSpelling<'_>>,
+    ) -> String {
+        crate::semantic::place_render::render_place_projections(
+            &ProofPlaceNames { input: self, counted },
+            rendered,
+            ty,
+            range,
+            index_prefix,
+            projections
+                .iter()
+                .copied()
+                .map(crate::semantic::place_render::PlaceProjection::Place),
+        )
+        .unwrap_or_else(|never| match never {})
+    }
     /// The type one stored element of a window, array, buffer, segment run or
     /// entries run holds.
     fn storage_element_type(&self, ty: CheckedType) -> Option<CheckedType> {
@@ -450,22 +476,6 @@ impl Input<'_, '_> {
             } => Some(entry),
             _ => None,
         }
-    }
-
-    /// References cannot be stored in aggregates. After the root reference
-    /// step is consumed, a typed Box dereference spells its `inner` member.
-    pub(super) fn render_content_step(&self, rendered: &mut String, ty: &mut Option<CheckedType>) {
-        let boxed = ty.is_some_and(|ty| {
-            matches!(ty, CheckedType::Nominal(id)
-                if self.context.nominals.get(id.0 as usize)
-                    .is_some_and(|nominal| matches!(nominal.kind, CheckedNominalKind::Box { .. })))
-        });
-        if boxed {
-            rendered.push_str(".inner");
-        } else {
-            *rendered = format!("{rendered}^");
-        }
-        *ty = ty.and_then(|current| self.deref_type(current));
     }
 
     pub(super) fn deref_type(&self, ty: CheckedType) -> Option<CheckedType> {
@@ -628,12 +638,12 @@ impl Input<'_, '_> {
             } => {
                 let (name, ty) = self.context.constant(*declaration).map_or_else(
                     || ("?".to_owned(), None),
-                    |constant| (constant.name.clone(), Some(constant.ty)),
+                    |constant| (constant.name.clone(), Some(constant.declared_type)),
                 );
                 self.render_goal_projections(name, ty, projections)
             }
             GoalDatum::Place {
-                root, projections, ..
+                root, projections, admission, ..
             } => {
                 let base = self.binding_name(*root);
                 let ty = self.summary(*root).and_then(|summary| summary.ty);
@@ -647,7 +657,18 @@ impl Input<'_, '_> {
                 // below the referent.
                 let reference = self.places.is_reference(*root);
                 let base = if reference { format!("{base}^") } else { base };
-                self.render_goal_projections(base, ty, projections)
+                let index_prefix = usize::from(
+                    self.summary(*root)
+                        .is_some_and(|summary| summary.indexed_atomic)
+                        && matches!(projections.first(), Some(GoalProjection::Subscript(_))),
+                );
+                self.render_goal_projections_at(
+                    base,
+                    ty,
+                    admission.root_is_range,
+                    index_prefix,
+                    projections,
+                )
             }
             // Source cannot name this datum: render its structural source
             // role rather than inventing an expression that could reread a
@@ -672,29 +693,95 @@ impl Input<'_, '_> {
             // A literal renders as the source spelling that denotes it
             // [FORM-5]: `unit`, a `Bool` variant constructor, a suffixed
             // integer, or a float's canonical literal.
-            GoalDatum::Literal(value) => match value {
-                CheckedValue::Integer { ty, bits } => {
-                    format!("{}_{}", integer_value(*ty, *bits), integer_type_name(*ty))
-                }
-                CheckedValue::Float { ty, bits } => {
-                    super::super::super::check::floats::float_value_spelling(*ty, *bits)
-                }
-                CheckedValue::Unit => "unit".to_owned(),
-                CheckedValue::Bool(true) => "True()".to_owned(),
-                CheckedValue::Bool(false) => "False()".to_owned(),
-                // [CONST-1] a const generic is named by its parameter, and a
-                // generic-numeric identity is `0_T` or `1_T` [FORM-5].
-                CheckedValue::ConstGeneric { declaration, .. } => {
-                    self.declaration_name(*declaration)
-                }
-                CheckedValue::NumericIdentity {
-                    ty:
-                        CheckedType::GenericInt(declaration) | CheckedType::GenericFloat(declaration),
-                    one,
-                } => format!("{}_{}", u8::from(*one), self.declaration_name(*declaration)),
-                other => format!("{other:?}"),
-            },
+            GoalDatum::Literal(value) => self.render_value(value),
         }
+    }
+
+    /// CONST-2 aggregate values have cvalue spellings, rather than FORM-5
+    /// literals: lists and complete constructors in declared field order.
+    fn render_value(&self, value: &CheckedValue) -> String {
+        match value {
+            CheckedValue::Integer { ty, bits } => {
+                format!("{}_{}", integer_value(*ty, *bits), integer_type_name(*ty))
+            }
+            CheckedValue::Float { ty, bits } => {
+                super::super::super::check::floats::float_value_spelling(*ty, *bits)
+            }
+            CheckedValue::Unit => "unit".to_owned(),
+            CheckedValue::Bool(true) => "True()".to_owned(),
+            CheckedValue::Bool(false) => "False()".to_owned(),
+            CheckedValue::ConstGeneric { declaration, .. } => self.declaration_name(*declaration),
+            CheckedValue::NumericIdentity { ty, one } => {
+                format!("{}_{}", u8::from(*one), self.render_numeric_type(*ty))
+            }
+            CheckedValue::Array { ty, elements } => {
+                if elements.is_empty() {
+                    return match ty.storage_element().and_then(|element| {
+                        self.context.elements.get(element.index())
+                    }) {
+                        Some(CheckedType::Integer(IntegerType::U8)) => "\"\"".to_owned(),
+                        _ => "?".to_owned(),
+                    };
+                }
+                format!(
+                    "[{}]",
+                    elements
+                        .iter()
+                        .map(|value| self.render_value(value))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            }
+            CheckedValue::Struct { ty, fields } => {
+                let Some(CheckedNominalKind::Struct { fields: declared }) = (match ty {
+                    CheckedType::Nominal(id) => self
+                        .context
+                        .nominals
+                        .get(id.0 as usize)
+                        .map(|nominal| &nominal.kind),
+                    _ => None,
+                }) else {
+                    return "?".to_owned();
+                };
+                let Some(name) = self.context.type_spellings.get(ty) else {
+                    return "?".to_owned();
+                };
+                let arguments = declared
+                    .iter()
+                    .zip(fields)
+                    .map(|(field, value)| {
+                        format!("{}: {}", field.name, self.render_value(value))
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("{name}({arguments})")
+            }
+        }
+    }
+
+    fn render_numeric_type(&self, ty: CheckedType) -> String {
+        match ty {
+            CheckedType::Integer(ty) => integer_type_name(ty).to_owned(),
+            CheckedType::Float(FloatType::F32) => "f32".to_owned(),
+            CheckedType::Float(FloatType::F64) => "f64".to_owned(),
+            CheckedType::GenericInt(declaration) | CheckedType::GenericFloat(declaration) => {
+                self.declaration_name(declaration)
+            }
+            _ => "?".to_owned(),
+        }
+    }
+
+    fn render_normalized_integer(&self, value: i128, ty: CheckedType) -> String {
+        if matches!(ty, CheckedType::GenericInt(_)) && matches!(value, 0 | 1) {
+            return format!("{value}_{}", self.render_numeric_type(ty));
+        }
+        normalized_integer(
+            value,
+            match ty {
+                CheckedType::Integer(ty) => Some(ty),
+                _ => None,
+            },
+        )
     }
 
     pub(super) fn render_goal_projections(
@@ -703,94 +790,33 @@ impl Input<'_, '_> {
         root_type: Option<CheckedType>,
         projections: &[GoalProjection],
     ) -> String {
-        let mut rendered = base;
-        let mut ty = root_type;
-        for projection in projections {
-            match projection {
-                GoalProjection::Deref => {
-                    self.render_content_step(&mut rendered, &mut ty);
-                }
-                GoalProjection::Measure(measure) => {
-                    rendered.push('.');
-                    rendered.push_str(measure.spelling());
-                    ty = Some(CheckedType::Integer(IntegerType::U64));
-                }
-                GoalProjection::Field(field) => {
-                    match ty
-                        .and_then(|current| self.field_name(current, *field))
-                        .unwrap_or(None)
-                    {
-                        Some((name, field_type)) => {
-                            rendered.push('.');
-                            rendered.push_str(&name);
-                            ty = Some(field_type);
-                        }
-                        None => {
-                            rendered.push_str(".?");
-                            ty = None;
-                        }
-                    }
-                }
-                GoalProjection::Payload { variant, field } => {
-                    let selected = ty.and_then(|current| {
-                        let CheckedType::Nominal(nominal) = current else {
-                            return None;
-                        };
-                        let CheckedNominalKind::Enum { variants } =
-                            &self.context.nominals.get(nominal.0 as usize)?.kind
-                        else {
-                            return None;
-                        };
-                        let variant = variants.iter().find(|item| item.tag == *variant)?;
-                        let field = variant.fields.get(*field as usize)?;
-                        Some((&variant.name, &field.name, field.ty))
-                    });
-                    if let Some((variant, field, field_type)) = selected {
-                        rendered.push_str(&format!(".{variant}.{field}"));
-                        ty = Some(field_type);
-                    } else {
-                        rendered.push_str(&format!(".{variant}.{field}"));
-                        ty = None;
-                    }
-                }
-                GoalProjection::Page(offset) => {
-                    rendered.push_str(".pages");
-                    rendered.push('[');
-                    rendered.push_str(&self.render_offset(*offset));
-                    rendered.push(']');
-                    ty = None;
-                }
-                GoalProjection::Subscript(offset) => {
-                    rendered.push_str(&format!("[{}]", self.render_offset(*offset)));
-                    // A range reference's root type is already its element
-                    // type [REF-4], so a subscript of a type that selects no
-                    // element keeps it.
-                    ty = ty.map(|ty| element_type(ty, self.context.elements).unwrap_or(ty));
-                }
-                // [REF-4] the range the actual formed, spelled exactly as it
-                // was written: the range names no binding, so its two
-                // endpoints are what identifies it to the writer.
-                GoalProjection::Range(range) => {
-                    rendered.push_str(&format!(
-                        "[{}..{}]",
-                        self.render_offset(range.start),
-                        self.render_offset(range.end)
-                    ));
-                    ty = ty.and_then(|ty| element_type(ty, self.context.elements));
-                }
-                GoalProjection::FormalSubscript { ordinal } => {
-                    rendered.push_str(&format!("[parameter #{ordinal}]"));
-                    ty = ty.and_then(|ty| element_type(ty, self.context.elements));
-                }
-                GoalProjection::FormalPage { ordinal } => {
-                    rendered.push_str(&format!(".pages[parameter #{ordinal}]"));
-                    ty = ty.and_then(|ty| element_type(ty, self.context.elements));
-                }
-            }
-        }
-        rendered
+        self.render_goal_projections_at(base, root_type, false, 0, projections)
     }
 
+    fn render_goal_projections_at(
+        &self,
+        base: String,
+        root_type: Option<CheckedType>,
+        range: bool,
+        index_prefix: usize,
+        projections: &[GoalProjection],
+    ) -> String {
+        use crate::semantic::place_render::{PlaceProjection, render_place_projections};
+        let projections = projections.iter().map(|projection| match *projection {
+            GoalProjection::FormalSubscript { ordinal } => PlaceProjection::FormalSubscript(ordinal),
+            GoalProjection::FormalPage { ordinal } => PlaceProjection::FormalPage(ordinal),
+            projection => PlaceProjection::Place(projection.place_step()),
+        });
+        render_place_projections(
+            &ProofPlaceNames { input: self, counted: None },
+            base,
+            root_type,
+            range,
+            index_prefix,
+            projections,
+        )
+        .unwrap_or_else(|never| match never {})
+    }
     /// Render the checked storage path without reducing subscript offsets
     /// to overlap identities: even a non-term offset retains its source
     /// expression in an obligation's residual.
@@ -944,12 +970,13 @@ impl Input<'_, '_> {
 
 impl Reasoning<'_, '_, '_> {
     /// Renders one normalized relation for diagnostics.
-    pub(super) fn render_relation(&self, relation: &Relation) -> String {
+    pub(super) fn render_relation(&self, relation: &Relation, ty: CheckedType) -> String {
         match relation {
             Relation::Bound { left, right, bound } => format!(
-                "{} - {} <= {bound}",
-                self.render_term(*left),
-                self.render_term(*right)
+                "{} - {} <= {}",
+                self.render_term(*left, ty),
+                self.render_term(*right, ty),
+                self.input.render_normalized_integer(*bound, ty)
             ),
             // An undisplaced relation reads as the writer wrote it; a
             // displaced one names its difference, exactly as a bound does.
@@ -957,15 +984,20 @@ impl Reasoning<'_, '_, '_> {
                 left,
                 right,
                 difference: 0,
-            } => format!("{} = {}", self.render_term(*left), self.render_term(*right)),
+            } => format!(
+                "{} = {}",
+                self.render_term(*left, ty),
+                self.render_term(*right, ty)
+            ),
             Relation::Equal {
                 left,
                 right,
                 difference,
             } => format!(
-                "{} - {} = {difference}",
-                self.render_term(*left),
-                self.render_term(*right)
+                "{} - {} = {}",
+                self.render_term(*left, ty),
+                self.render_term(*right, ty),
+                self.input.render_normalized_integer(*difference, ty)
             ),
             Relation::Distinct {
                 left,
@@ -973,31 +1005,36 @@ impl Reasoning<'_, '_, '_> {
                 difference: 0,
             } => format!(
                 "{} != {}",
-                self.render_term(*left),
-                self.render_term(*right)
+                self.render_term(*left, ty),
+                self.render_term(*right, ty)
             ),
             Relation::Distinct {
                 left,
                 right,
                 difference,
             } => format!(
-                "{} - {} != {difference}",
-                self.render_term(*left),
-                self.render_term(*right)
+                "{} - {} != {}",
+                self.render_term(*left, ty),
+                self.render_term(*right, ty),
+                self.input.render_normalized_integer(*difference, ty)
             ),
         }
     }
 
-    pub(super) fn render_term(&self, term: TermId) -> String {
+    pub(super) fn render_term(&self, term: TermId, ty: CheckedType) -> String {
         match self.vocabulary.terms.kind(term) {
             TermKind::TargetMeasure { source, .. } => {
-                format!("next-header {}", self.render_term(*source))
+                format!("next-header {}", self.render_term(*source, ty))
             }
             TermKind::Sum(left, right) => {
-                format!("({} + {})", self.render_term(*left), self.render_term(*right))
+                format!(
+                    "({} + {})",
+                    self.render_term(*left, ty),
+                    self.render_term(*right, ty)
+                )
             }
-            TermKind::Zero => "0".to_owned(),
-            TermKind::Constant(value) => value.to_string(),
+            TermKind::Zero => self.input.render_normalized_integer(0, ty),
+            TermKind::Constant(value) => self.input.render_normalized_integer(*value, ty),
             TermKind::ConstParameter(..) => "<const parameter>".to_owned(),
             TermKind::Place(place, _) => self.input.render_place(place),
             TermKind::Measure(measure, place) => {
@@ -1242,6 +1279,42 @@ pub(super) fn numeric_type_name(
     }
 }
 
+/// A normalized relation uses mathematical integers. Prefer its source
+/// type, but never give a negative unsigned or out-of-range literal a suffix
+/// that cannot spell it. Larger constants remain exact mathematical source
+/// expressions composed entirely of legal literals.
+fn normalized_integer(value: i128, preferred: Option<IntegerType>) -> String {
+    if let Some(ty) = preferred {
+        let (minimum, maximum) = type_range(ty);
+        if (minimum..=maximum).contains(&value) {
+            return format!("{value}_{}", integer_type_name(ty));
+        }
+    }
+    if i64::try_from(value).is_ok() {
+        return format!("{value}_i64");
+    }
+    if u64::try_from(value).is_ok() {
+        return format!("{value}_u64");
+    }
+    fn magnitude(value: u128) -> String {
+        if value <= u128::from(u64::MAX) {
+            return format!("{value}_u64");
+        }
+        let base = 1_u128 << 32;
+        format!(
+            "({} * 4294967296_u64 + {}_u64)",
+            magnitude(value / base),
+            value % base
+        )
+    }
+    let magnitude = magnitude(value.unsigned_abs());
+    if value < 0 {
+        format!("(0_i64 - {magnitude})")
+    } else {
+        magnitude
+    }
+}
+
 pub(super) const fn integer_type_name(ty: IntegerType) -> &'static str {
     match ty {
         IntegerType::I8 => "i8",
@@ -1252,5 +1325,22 @@ pub(super) const fn integer_type_name(ty: IntegerType) -> &'static str {
         IntegerType::U16 => "u16",
         IntegerType::U32 => "u32",
         IntegerType::U64 => "u64",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalized_constants_use_only_legal_typed_literals() {
+        assert_eq!(normalized_integer(0, Some(IntegerType::U64)), "0_u64");
+        assert_eq!(normalized_integer(-1, Some(IntegerType::U64)), "-1_i64");
+        assert_eq!(normalized_integer(256, Some(IntegerType::U8)), "256_i64");
+        assert_eq!(normalized_integer(i128::from(u64::MAX), None), "18446744073709551615_u64");
+        assert_eq!(normalized_integer(i128::from(u64::MAX) + 1, None),
+            "(4294967296_u64 * 4294967296_u64 + 0_u64)");
+        assert_eq!(normalized_integer(i128::MIN, None),
+            "(0_i64 - ((9223372036854775808_u64 * 4294967296_u64 + 0_u64) * 4294967296_u64 + 0_u64))");
     }
 }
