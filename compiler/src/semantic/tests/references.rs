@@ -114,7 +114,8 @@ fn recapture(rows: &[Cursor], selector: &Cursor, stable_index: u64) -> result: u
   let stable = &rows^[stable_index];
   set selector = &rows^[selector^.next];
   let copied = selected;
-  return copied^.next +wrap selector^.next +wrap stable^.next;
+  let captured_total = copied^.next +wrap selector^.next;
+  return captured_total +wrap stable^.next;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
