@@ -70,6 +70,45 @@ fn metadata_lock_line(source: &str, state: &str, timing: &str, first_use: &str) 
     )
 }
 
+/// A host display path must remain within one comment, with literal
+/// backslashes distinct from escapes for control characters.
+#[test]
+fn lock_ledger_escapes_control_characters_in_host_display_paths() {
+    let source = lock_ledger_source(
+        "Meta",
+        "Meta(count: 1_u64)",
+        "",
+        "    let observed = m^.count;\n    set m^.count = observed;",
+    );
+    let inputs = [crate::SourceInput::from_host_path(
+        "test.wf",
+        "host\nledger_tail\r\t\u{1}\\test.wf",
+        source.as_bytes(),
+    )];
+    let module = crate::native_test_support::timed("whitefoot-compile", || {
+        crate::compile(&inputs, crate::CompilerLimits::default())
+            .expect("normal compiler pipeline must emit")
+            .into_string()
+    });
+    let lines = lock_ledger_lines(&module);
+    assert_eq!(lines.len(), 2, "one line per target group: {lines:?}");
+    let expected = metadata_lock_line(&source, "Meta", "on every path", "let observed")
+        .replace("test.wf", r"host\nledger_tail\r\t\u{1}\\test.wf");
+    let comment = format!("{}{expected}", crate::LOCK_LEDGER_PREFIX);
+    assert_eq!(
+        module
+            .lines()
+            .filter(|line| *line == comment.as_str())
+            .count(),
+        1,
+        "the escaped metadata path stays on one lock comment: {lines:?}"
+    );
+    assert!(
+        !module.lines().any(|line| line.starts_with("ledger_tail")),
+        "host text after a newline must not become a module line"
+    );
+}
+
 /// An unconditional first read must not be described as conditional merely
 /// because the emitter checks the lazy group's taken word.
 #[test]
@@ -151,6 +190,26 @@ fn lock_ledger_reports_a_guard_read_before_the_guard() {
     assert!(
         lines.contains(&expected.as_str()),
         "a guard read takes Meta before testing the guard: {lines:?}"
+    );
+}
+
+/// A guard over a local value reads no target. Its watch fallback takes all
+/// groups before the guard, including metadata used only under a condition.
+#[test]
+fn lock_ledger_reports_all_groups_before_a_guard_that_reads_no_target() {
+    let source = lock_ledger_source(
+        "Meta",
+        "Meta(count: 1_u64)",
+        " when held",
+        "    if held {\n      let observed = m^.count;\n      set m^.count = observed;\n    }",
+    );
+    let module = compile(source.as_bytes());
+    let lines = lock_ledger_lines(&module);
+    assert_eq!(lines.len(), 2, "one line per target group: {lines:?}");
+    let expected = metadata_lock_line(&source, "Meta", "before the guard", "atomic slot");
+    assert!(
+        lines.contains(&expected.as_str()),
+        "a guard that reads no target takes Meta before testing the guard: {lines:?}"
     );
 }
 

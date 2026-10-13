@@ -1034,6 +1034,9 @@ The limits follow the compiler's lock order:
 - Entry and key-set groups, and every group the guard reads, are taken
   before the guard, together with every earlier group not yet taken. Moving
   a block use under a condition does not defer these groups.
+  A guard that reads no target takes every group before the guard, so such
+  a `when` guard defeats lazy locking. Omit the guard, or write a guard over
+  a target the statement already takes.
 - A `Shared<u64>` counter beside a map entry is therefore locked with the
   entry even when the counter is used only under a condition: its primitive
   type comes first. A separate source struct such as `Meta` comes after the

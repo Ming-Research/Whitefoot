@@ -663,7 +663,7 @@ fn emit_module(
     // survive the module path used by both bundle and graph builds.
     for function in program.functions() {
         for line in &function.lock_ledger {
-            text.text(format!("{LOCK_LEDGER_PREFIX}{line}\n"));
+            emit_ledger_comment(&mut text, LOCK_LEDGER_PREFIX, line);
         }
     }
     Ok(LlvmModule {
@@ -1070,6 +1070,21 @@ pub const DISPATCH_LEDGER_PREFIX: &str = "; dispatch: ";
 
 /// Atomic lowering's developer ledger, printed by `whitefootc --lock-ledger`.
 pub const LOCK_LEDGER_PREFIX: &str = "; lock: ";
+
+/// Keep host display paths inside one LLVM comment and leave escapes
+/// unambiguous for the developer channel that reads the comment back.
+fn emit_ledger_comment(module: &mut Module, prefix: &str, line: &str) {
+    let mut comment = String::from(prefix);
+    for character in line.chars() {
+        if character == '\\' || character.is_control() {
+            comment.extend(character.escape_default());
+        } else {
+            comment.push(character);
+        }
+    }
+    comment.push('\n');
+    module.text(comment);
+}
 
 /// The internal symbol a register-returned definition's destination-form
 /// body is emitted under, beside the public entry that keeps `symbol`.
