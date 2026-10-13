@@ -1582,6 +1582,19 @@ benchmark with AOF off, 8 cores, as the board item measured 21.4 M/s.
   (perf c2c on the object's line, as the counter study did) says what the
   single statement still writes, and that is the first thing A's lowering
   must remove.
+
+  **Q0 result (measured, Firn's run, 2026-10-13).** Firn ran it on the
+  14900K: [Firn-wf run 38367914126](https://github.com/Ming-Research/Firn-wf/actions/runs/38367914126),
+  compiler release `wf-d75f318d5631` (without PR #409), 8 P-cores (CPUs 0, 2,
+  ..., 14), client on CPUs 16-31, AOF off, pipeline depth 16, 6 interleaved
+  rounds of 10 s. The one-statement SET against the two-statement SET had a
+  per-round ratio median of 0.9965 (range 0.984-1.001); the identical twin
+  had 1.001 (0.994-1.025); GET, which does not run this statement, 1.006.
+  The registered prediction holds: the single statement is within the
+  twin's spread. A cost below 1% is not excluded (the 6-round mean, 0.994,
+  sits at the twin's lower edge). So Firn needs no language change for
+  speed: it writes one statement per site, and option A is adopted only
+  when a program needs the checker-enforced guarantee (section 7).
 - **Acceptance, after implementation.** Firn's 40 sites as one statement each
   under A; SET with AOF off within twin noise of 21.4 M/s (Firn's stated
   completion condition); SET with AOF on at the two-statement form's rate
