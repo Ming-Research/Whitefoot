@@ -1,0 +1,33 @@
+interface Identity {
+  fn get(value: i32) -> result: i32 pure contract {
+    ensures result <= value;
+  };
+}
+
+fn apply<interface Identity>(value: i32) -> result: i32 pure contract {
+  ensures result == value;
+} {
+  let selected = Identity::get(value: value);
+  return selected;
+}
+
+fn actual(value: i32) -> result: i32 pure contract {
+  ensures result == value;
+} {
+  cycle(value: value);
+  return value;
+}
+
+binding Selected : Identity {
+  get = actual;
+}
+
+fn cycle(value: i32) -> result: unit pure {
+  let ignored = apply::<Selected>(value: value);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let ignored = apply::<Selected>(value: 1_i32);
+  return std::process::exit_status(code: 0_u8);
+}
