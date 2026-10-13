@@ -1,0 +1,16 @@
+struct Span {
+  start: u64;
+  end: u64;
+  invariant ordered(span): span.start <= span.end;
+}
+
+fn wrap_one<T: drop>(item: T) -> result: Option<T> pure {
+  return Some<T>(value: move item);
+}
+
+fn caller() -> result: u64 pure {
+  let span = Span(start: 1_u64, end: 2_u64);
+  set span.start = 3_u64;
+  let wrapped = wrap_one::<Span>(item: span);
+  return 7_u64;
+}

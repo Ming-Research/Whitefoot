@@ -6,7 +6,7 @@ fn headroom(a: u64, b: u64, limit: u64) -> result: u64 pure contract {
   requires a <= 16_u64;
   requires b <= 16_u64;
 } {
-  doc "An admitted non-L0 ordering requirement supplies its captured affine image; the body uses the operands in reversed order and subtracts their sum. The binder is no longer spelled `room`, which is reserved from every declaration role [FORM-3, TYPE-10].";
+  doc "An admitted non-L0 ordering requirement supplies its captured affine image; the body uses the operands in reversed order and subtracts their sum.";
   let total = b + a;
   let remaining = limit - total;
   return remaining;

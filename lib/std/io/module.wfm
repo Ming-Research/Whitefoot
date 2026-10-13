@@ -60,6 +60,13 @@ public fn error_copy_description(error: &IoError, destination: &[u8], start: u64
   ensures when Ok(value: next): next <= end;
 } doc "Copies the description of error under PRE-2.";
 
+public fn error_copy_class_description(error: &IoError, destination: &[u8], start: u64, end: u64) -> result: Result<u64, DescriptionError> reads(error), writes(destination) contract {
+  requires start <= end;
+  requires end <= destination^.len;
+  ensures when Ok(value: next): start <= next;
+  ensures when Ok(value: next): next <= end;
+} doc "Copies the host's description of the class of error under PRE-2.";
+
 public fn factory_share(factory: &HandleFactory) -> result: HandleFactory reads(factory) doc "Returns a factory that draws on the same host handle budget as factory; an acquisition through either spends a credit of that one budget and a close through either returns one.";
 
 public fn write_once(factory: &HandleFactory, output: &OutputStream, source: &[u8], start: u64, end: u64, deadline: Option<Instant>, cancel: &CancelWatch) -> result: Result<u64, IoError> reads(cancel), reads(source), writes(factory), writes(output) waits contract {

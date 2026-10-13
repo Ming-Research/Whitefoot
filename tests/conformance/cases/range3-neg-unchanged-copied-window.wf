@@ -1,0 +1,11 @@
+fn replace(cell: &Array<u64, 1>) -> result: unit writes(cell) contract {
+  ensures forall kept(k in 0_u64..cell^.len): cell^[k] unchanged;
+} {
+  let saved = cell^;
+  set cell^ = saved;
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

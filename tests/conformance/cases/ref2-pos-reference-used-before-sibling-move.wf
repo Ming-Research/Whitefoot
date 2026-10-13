@@ -1,0 +1,27 @@
+struct Pair {
+  cell: Shared<u64>;
+  other: Shared<u64>;
+}
+
+fn witness() -> result: u64 pure waits {
+  let c = shared_new::<u64>(value: 1_u64);
+  let o = shared_new::<u64>(value: 2_u64);
+  let pair = Pair(cell: move c, other: move o);
+  let r = &pair.cell;
+  let seen = 0_u64;
+  atomic state = &r^ {
+    set seen = state^;
+  }
+  let gone = move pair.other;
+  return seen;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  doc "REF-2: the control for ref2-neg-reference-after-sibling-move-releases-it. A reference to a field is used before a move out of its sibling releases that field, so every use precedes the invalidating event and the program reads the field's value.";
+  let seen = witness();
+  if seen == 1_u64 {
+  } else {
+    return std::process::exit_status(code: 1_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

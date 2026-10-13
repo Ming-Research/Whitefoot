@@ -1,0 +1,45 @@
+struct Span {
+  start: u64;
+  end: u64;
+  invariant ordered(span): span.start <= span.end;
+}
+
+enum Shape {
+  Empty();
+  Pair(left: u32, span: Span);
+}
+
+fn width(span: Span) -> result: u64 pure {
+  let e = span.end;
+  let s = span.start;
+  let w = e - s;
+  return w;
+}
+
+fn make(a: u64) -> shape: Shape pure {
+  let b = a +wrap 3_u64;
+  if a <= b {
+    let span = Span(start: a, end: b);
+    return Shape::Pair(left: 1_u32, span: span);
+  }
+  return Shape::Empty();
+}
+
+fn measure(shape: Shape) -> result: u64 pure {
+  match shape {
+    Pair(left: l, span: s) => {
+      let w = width(span: s);
+      return w;
+    }
+    Empty() => {
+      return 0_u64;
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let shape = make(a: 4_u64);
+  let w = measure(shape: shape);
+  let code = cvt.wrap::<u64, u8>(w);
+  return std::process::exit_status(code: code);
+}

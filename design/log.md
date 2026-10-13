@@ -5,6 +5,104 @@ Newest first. One entry per approved change of the tree: a dated title,
 the owner's agent instructions own the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-13 A tracked integer field place has a current image, and a quotient's upper bound follows from its dividend and divisor
+
+Nodes: language/checks-and-proofs/automatic-facts
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the specification and design-tree changes of Whitefoot#406: every tracked integer field place has a current image, a quotient's upper bound follows from its dividend and divisor, and `ishl(1, s)` has its own name? (head commit f722d963a)". The revision merged here differs from f722d963a only by the removal of a temporary measurement workflow and the merge of main.
+
+Summary: One decision is added: every tracked integer field place, whether its root holds the value or is a reference, carries a current affine image that only a commit to the field replaces and every event invalidating its supporting facts removes, instead of limiting images to fields reached through reference parameters, which the owner widened on an earlier card. The same change states the quotient upper bound as dividend below (k+1) divisors with the divisor proved at least one, and treats a variable right shift as division by the named power `ishl(1, s)`, instead of product terms or a writer-supplied proof step.
+
+## 2026-10-13 A fact some arms hold survives their join, and a joined value is free where its join was bypassed
+
+Nodes: compiler/range-judgment, language/checks-and-proofs/range-facts
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the specification revision and design-tree change of Whitefoot#414 at commit cd4851320? It covers two things: keeping a fact that holds in only some arms after a join, and fixing the soundness defect where, when an inner arm returns early, the outer other path is wrongly treated as impossible" (translated).
+
+Summary: Three decisions are added and one is reworded. A fact active at the end of only some arms of a join stays active where one of those arms was taken, instead of being dropped, which refused v2h's slot-move loop, or kept unconditionally, which would accept an index bounded only in one arm. The range judgment carries such a fact under the literals that the join's selector differs from each arm lacking it, and splits a bare selector over arm numbers only, instead of one guarded copy per arm, which multiplies rules, or a split over the arms' full conditions, which asserts an inner join's conditions on paths that bypassed it. A join records the earlier joins some of its arms bypassed, and the choice defining a joined value or version adds one `selector == arm` alternative per bypass, transitively, instead of a choice over the inner arms alone, the soundness defect where an inner returning arm let `251_u8 + v` be accepted, or a free not-reached alternative, which loses the arms' values on paths through the join. The derivation decision now says a joined value is the arm taken's, or no value where a later join bypassed its join.
+
+## 2026-10-13 A struct's type invariants travel through enum payloads, bare type parameters, recursive calls and branch deliveries
+
+Nodes: language/checks-and-proofs, language/checks-and-proofs/automatic-facts, language/checks-and-proofs/obligation-discharge
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the specification revision and design-tree change of Whitefoot#398 at commit b8d1126d3? (including bare type parameters symmetric, recursive results carrying invariants, and branch give delivering values)" (translated); before it, on 2026-10-12, the owner approved the enum-payload part at commit f42b49029 (option A, "approve"), chose option B on the card asking whether bare type parameters also take invariants at entry before merging, and chose option A on the direction cards "a recursive function's own successful result carries the invariant" and "a struct delivered by an if-branch give carries the invariant" (translated).
+
+Summary: Type invariants cross a function boundary inside an own enum's variant field as routed requirements and postconditions, because fallible producers return their structs inside `Result` or `Option`; refused were a written every-exit-is-`Err` form alone or beside the routes and assuming a parameter's routed invariant at body entry. Boundary positions are judged on the instance's type, instead of the written type (a wrapper would owe the invariant at exit and get nothing at entry) or parameters only (a `Span` result and a `T` result would promise different things). A callable whose definition the build supplies requires and promises no invariant, because no body proves the promise. The multi-module component decision now admits generated invariant postconditions inside a component as induction hypotheses, since they come from signatures and struct declarations, keeping each module's verdict a function of its own bodies and its dependencies' interfaces; written postconditions stay withheld, because no program needs them and they would change which written clauses are accepted. The `give` delivery decision splits into integers (unchanged) and other own values, delivered as a `let` binding; delivering only type invariants and re-calling the producer in each branch were refused.
+
+## 2026-10-13 A program reads a socket address's parts and a connection's local address
+
+Nodes: language/system-interface/socket-addresses
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve Whitefoot#402 (head commit 3cd02e6d4)'s specification change and design decisions, letting a Whitefoot program read the parts of a socket address and the local address of a connection?" (translated).
+
+Summary: A new node records four decisions. The family and components of a `SocketAddress` are read by the nonwaiting `socket_address_ip`, which returns the enum `IpAddress` with the constructors' own components, because a pattern match yields them with no proof, instead of a byte-window copy, a per-byte reader, a fixed 16-byte array or formatted text. The port is read by `socket_address_port`. An IPv6 address keeps only address and port, as a provisional choice reopened when a program must reconnect to or print a link-local peer. The local address is `local_address` on the receiving half, returning `Result<SocketAddress, IoError>` with the new origin 10, instead of a field of `AcceptedConnection`, a query on `TcpConnection` or on each half, or an infallible query, each refused with its reason in the node.
+## 2026-10-13 A split-dispatch frame slot whose contents never cross a transfer belongs to each part
+
+Nodes: compiler/match-dispatch-lowering
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve; I write the design-tree change log, mark the PR ready and hand it to the coordinator's merge queue" (translated), on the card "approve Whitefoot#405's change to the design tree: in split dispatch, frame slots whose contents do not cross a transfer between parts belong to each part (head commit 3605cbec0640)?" (translated), whose background stated the changed shared-frame decision, the added refused alternative and the Halo fib(32) measurement.
+
+Summary: A frame slot of a split `loop { match }` stays in the shared frame only when its contents cross a transfer between parts (the outer function's call into dispatch, a part's tail call or a part's return) or its address can reach another part; every other slot belongs to each part that uses it. The join after a `match` is copied into every arm, so the refused rule of keeping a slot local only when exactly one part uses it put the join's slots in the shared frame and cost Halo 14 dead stores per Lua call; with the new rule Halo's fib(32) fell from 862.53 to 841.53 executed instructions per Lua call ([the join's slots in each arm](../research/investigations/halo-call-path/DESIGN.md#the-joins-slots-in-each-arm)). Slots holding an element address stay shared because the analysis does not track derived addresses.
+## 2026-10-12 The gate runs for revisions that can merge
+
+Nodes: compiler/verification
+
+Owner-approved: On the shared status board on 2026-10-12, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve Whitefoot#399 (head commit b8f67f29a423)'s changes to the design tree and the repository guidance, which make the gate run only for branches with an open PR, the main line and manual runs?" (translated), whose background listed the changed trigger decision, the opening and reopening runs' own concurrency group, the final job skipping on cancellation, the failed-query rule and the unchanged Linux and macOS scope.
+
+Summary: The gate and the I/O host checks run for a push to the main line, a push to a branch with an open pull request created no later than the push's run, a pull request's opening or reopening, the event of marking one ready (the gate only) and a manual run, and one deciding job skips every other push, because the merge precondition needs only the gate of a revision that can merge, instead of every push, skipping branches by name, or pull request events alone, which GitHub does not send for a conflicting branch. An opening or reopening has a concurrency group of its own so it cannot cancel the run of a push that follows it; an opening skips when the branch has already moved, while a reopening always runs because pushes made while the pull request was closed were skipped. The final both-platforms job runs on `!cancelled()` so a superseded run leaves no red result beside its replacement, and a failed GitHub query fails the run instead of silently skipping checks or dropping macOS.
+## 2026-10-13 A range postcondition states that an element is unchanged and reads entry versions
+
+Nodes: compiler/range-judgment, language/checks-and-proofs, language/checks-and-proofs/range-facts
+
+Owner-approved: On the shared status board on 2026-10-12, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the specification revision and design-tree change of Whitefoot#395 at commit 26f62c5fd?" (translated), including `unchanged` becoming a reserved word; the rule text is unchanged since that commit, only renumbered from v0.136 to v0.138 because main reached v0.137 first.
+
+Summary: A range postcondition may read a written reference parameter's entry version through `entry(p)`, and the new one-sided `P unchanged` proposition says an element position at exit is the version it had at entry, for any element type and without an equality operator. A whole-element read identifies a storage version and a copy is a fresh version keeping only value projections, which closes the copy-back hole the first review found. Callers expand a callee's `unchanged` only for reads already present, inside the existing two-round instantiation bound. It is motivated by Snowghost's growth and append helpers, whose callers lost every fact about old elements, including type invariants of elements that own a Box.
+
+## 2026-10-13 A const argument is judged where it is written; a symbolic integer constant keeps its exact type
+
+Nodes: language/generics, compiler/checker-facts
+
+Owner-approved: On the shared status board on 2026-10-12, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the specification revision and design-tree change of Whitefoot#390 at commit c80159911?" (translated), whose background listed the added generics decision (a const argument is admitted when each name in it has exactly the parameter's integer type and its value lies in that type's range, judged at the argument when it names no const generic and at each concrete instance when it does, with six refused alternatives) and the changed reason of the checker-facts decision that a symbolic integer constant keeps its declaration's identity and exact type.
+
+Summary: A u8 const parameter given 300 was truncated to 44 in code generation while the checker reasoned from the written type's range facts, which allowed an out-of-bounds read. A const argument is therefore admitted only when its names have exactly the parameter's integer type and its value lies in the parameter's range, judged where the argument is written or, for an operation over a const generic, at each instance, where the unsigned 64-bit domain is already judged. The refused alternatives are checking only at instantiation, requiring literals to carry the exact type, restricting const parameters to u64, admitting narrower names, and two ways of admitting operations over names of other types. The checker-facts decision keeps its choice and now gives the sharper reason: a use taking its consumer's type would read a const generic with bounds its own instances never checked.
+
+## 2026-10-12 A guard reaches no self-changing host handle; an IoError's class description; what concurrency promises about progress
+
+Nodes: language/parallelism, language/system-interface, language/waiting/shared-objects
+
+Owner-approved: On the shared status board on 2026-10-12, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve Whitefoot#392 (head commit 70aca3925)'s specification v0.136 change and three design decisions?" (translated), whose background listed the three decisions: a guard reads no self-changing host handle, listed in a specification table instead of a declaration marker; the class description by variant alone; and the concurrency progress promise with its refused alternative.
+
+Summary: A guard reads or writes no path that is or holds a self-changing host handle, and PRE-2 lists those handles in one table instead of marking their types, because a guard is woken only by writes and these handles change with no write. `error_copy_class_description` describes an `IoError` by its variant alone, ignoring its code and origin, through PRE-2's class-to-code table. Concurrency promises no failure that one driver would not show: apart from the driver count a program reads, an execution on several drivers is one the language permits on one; a context that does not wait eventually takes its next step while every context keeps reaching its completion or a wait; and a program in which every unfinished context waits for a false guard or another context, with no host operation outstanding, may be stopped with a report on any number of drivers, which the runtime does. It does not promise freedom from deadlock, because the owner set the bar at behaviour equal to or better than one thread; refusing programs whose guard may never become true is rejected, since whether a guard eventually holds depends on what other contexts do at run time.
+## 2026-10-12 Cache keys carry no host path
+
+Nodes: compiler/incremental-compilation
+
+Owner-approved: On the shared status board on 2026-10-12, written in Chinese, the owner chose option A, "approve" (translated), on the card cache-key-logical-identity, "approve the design tree decision that cache keys contain no host path? (Whitefoot#383, head commit 1821dc02d42d)" (translated), whose background listed the new decision and the new Rejected item.
+
+Summary: No build-cache key contains the host path an invocation read a record from; a key identifies each record by its stable resolved module identity and logical path with the content its query reads, and a recorded rejection is reused only while the host paths its diagnostic prints are unchanged, because a graph reached through a relative path, an absolute path or a path with a `..` component is the same input whose acceptances and built modules should be reused, while its diagnostics must still name this invocation's paths. Keying every verdict on display paths, which rebuilt an unchanged graph whenever the spelling changed, is replaced; rewriting the paths inside a recorded rejection's text is rejected because a rendering quotes several paths in free text beside quoted source.
+
+## 2026-10-12 A heap reading loads the pool counter without the pool lock
+
+Nodes: language/system-interface/memory-statistics
+
+Owner-approved: On the shared status board on 2026-10-12, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve Whitefoot#381 (head commit d83539e29)'s change to the design tree? The change: reading memory use no longer takes the memory pool's lock, and the pool's total becomes an atomic on a cache line of its own" (translated), whose background listed the narrowed allocation-accounting decision, the added pool-reading decision with its refused alternative, and the two 14900K acceptance runs.
+
+Summary: The allocation-accounting decision now says only that the pool counter changes under its lock. A new decision has a reading load that counter without the lock, the counter being an atomic padded to its own cache line that only a lock holder changes with a relaxed load and store, because each stored value is exact when stored, so PRE-2's quiescent exactness and concurrent bound hold, while a reading under the lock wrote the lock's line on every driver. On the i9-14900K a loop of readings fell from 51.1 to 16.3 million per second in total from 2 to 8 performance cores under the lock and rose to 4.0 times its 2-core rate without it, and firn's GET on 8 performance cores became 40% faster against a 5% twin spread ([pool counter read without the pool lock](../research/investigations/memory-statistics/README.md#pool-counter-read-without-the-pool-lock)); reading the counter under the pool lock is refused.
+## 2026-10-12 A released small KeySet stays as its thread's spare
+
+Nodes: compiler/waiting-contexts/concurrent-map
+
+Owner-approved: On the shared status board on 2026-10-12, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve Whitefoot#378's change to the design tree? The change: when a KeySet is released, its small blocks stay as the thread's spare instead of returning to the runtime pool each time, and the memory account still counts them as released" (translated), whose background stated the reading that PRE-2's "released blocks retained by an allocator" covers the spare, the 128 KiB per-thread bound kept until the process ends, and the 14900K measurement.
+
+Summary: A KeySet release still lowers the heap reading by exactly what `key_set_bytes` reported, but a store of at most 1,024 keys with an arena of at most 64 KiB may stay as the releasing thread's one spare, recorded as released, instead of always returning to the runtime pool, because the pool takes its one free-list lock on every driver and returning every release cost firn's two-core `MSET` a quarter of its throughput, which the spare recovers within twin noise; PRE-2's heap holding excludes released blocks an allocator retains. The refused alternative of a spare whose kept blocks stay in the reading is recorded, since its release would lower the reading by nothing.
+## 2026-10-12 A call separates the places a callee's contract reads
+
+Nodes: compiler/checker-facts, language/effects/call-site-check
+
+Owner-approved: On the shared status board on 2026-10-12, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve Ming-Research/Whitefoot#373 (head commit 4d8025bb6) changing the specification and the design tree?" (translated), whose background listed EFF-5's contract-read footprint with its kept and widened positions, EFF-2's pointer to it, and the two design-tree decisions in call-site-check.md and checker-facts.md.
+
+Summary: Each place a callee's contract reads through a reference parameter joins the call's pairwise overlap comparison as a read supplied by that argument while staying erased proof syntax, because the callee's proof treats reference parameters as separate roots and the call must guarantee that separation for the storage its contract reads, instead of dropping the separate-root assumption and killing facts on every possibly overlapping parameter. Captured offsets of erased contract positions take call and position identities whose substituted expressions exist only in a temporary call-entry proof state, so the comparison reads the call's values without adding runtime captures.
+
 ## 2026-10-12 Cursor transport through mixed joins
 
 Nodes: compiler/match-dispatch-lowering

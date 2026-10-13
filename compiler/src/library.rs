@@ -246,6 +246,24 @@ pub(crate) fn is_host_module(path: &[String]) -> bool {
     matches!(path, [single] if HOST_MODULES.contains(&single.as_str()))
 }
 
+/// The self-changing host handles [PRE-2], each as its host module's path
+/// below the standard library and its name: through each, a host function
+/// observes a value the host changes with no write by the program, so an
+/// atomic statement's guard reads none of them [SHARE-2].
+pub(crate) const SELF_CHANGING_HOST_HANDLES: &[(&str, &str)] = &[
+    ("time", "Clock"),
+    ("time", "WallClock"),
+    ("process", "MemoryMeter"),
+];
+
+/// Reports whether the declaration `name` of the host module at `path` is a
+/// self-changing host handle [PRE-2].
+pub(crate) fn is_self_changing_host_handle(path: &[String], name: &str) -> bool {
+    matches!(path, [single] if SELF_CHANGING_HOST_HANDLES
+        .iter()
+        .any(|(module, handle)| single == module && name == *handle))
+}
+
 /// The standard library module a record belongs to and its role: the
 /// module's path below the library's root and whether the record is its
 /// interface [MOD-2].
@@ -261,7 +279,7 @@ pub(crate) fn record_module(logical: &str) -> Option<(Vec<String>, crate::Source
 
 #[cfg(test)]
 mod tests {
-    use super::{GRAPH, HOST_MODULES, RECORDS};
+    use super::{GRAPH, HOST_MODULES, RECORDS, SELF_CHANGING_HOST_HANDLES};
 
     fn library_root() -> std::path::PathBuf {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../lib/std")
@@ -398,6 +416,50 @@ mod tests {
                 .and_then(|rest| rest.split("```\n").next())
                 .expect("PRE-2 states every host module's record");
             assert_eq!(stated, *text, "{path} is the PRE-2 text");
+        }
+    }
+
+    /// [PRE-2] the checker's self-changing host handles are exactly the rows
+    /// of the specification's table, and each is a fieldless opaque struct
+    /// its host module's record declares, so a row added to one list and not
+    /// the other, or a misspelled handle that would match nothing, fails.
+    #[test]
+    fn the_self_changing_host_handles_are_the_specification_table() {
+        let spec = crate::spec::ACTIVE_KERNEL_SPEC_TEXT;
+        let table = spec
+            .split("| Self-changing host handle |")
+            .nth(1)
+            .expect("PRE-2 states the self-changing host handles");
+        let stated: Vec<(String, String)> = table
+            .lines()
+            .skip(2)
+            .take_while(|line| line.starts_with('|'))
+            .map(|line| {
+                let cell = line.split('|').nth(1).expect("a table cell").trim();
+                let path = cell
+                    .strip_prefix("`std::")
+                    .and_then(|rest| rest.strip_suffix('`'))
+                    .expect("a handle cell names `std::module::Name`");
+                let (module, name) = path.split_once("::").expect("module and name");
+                (module.to_owned(), name.to_owned())
+            })
+            .collect();
+        let carried: Vec<(String, String)> = SELF_CHANGING_HOST_HANDLES
+            .iter()
+            .map(|(module, name)| ((*module).to_owned(), (*name).to_owned()))
+            .collect();
+        assert_eq!(stated, carried);
+        for (module, name) in SELF_CHANGING_HOST_HANDLES {
+            assert!(HOST_MODULES.contains(module), "{module} is a host module");
+            let path = format!("std/{module}/module.wfm");
+            let (_, text) = RECORDS
+                .iter()
+                .find(|(record, _)| *record == path)
+                .expect("every host module is carried");
+            assert!(
+                text.contains(&format!("public opaque nocopy struct {name} {{\n}}\n")),
+                "{path} declares {name} as a fieldless opaque struct"
+            );
         }
     }
 }
