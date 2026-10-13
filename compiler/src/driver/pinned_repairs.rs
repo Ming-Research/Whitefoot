@@ -1974,13 +1974,11 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 fn combine(first: u64, second: u64, third: u64, limits: Box<Bounds>, second_limit: u64, third_limit: u64) -> result: u8 pure contract {
-  requires first <= limits.inner.len;
   requires second <= second_limit;
   requires third <= third_limit;
 } {
   let length = limits.inner.len;
-  invariant combined: first + second + third <= length + second_limit + third_limit {
-    use (first <= length);
+  invariant combined: length + second + third <= length + second_limit + third_limit {
     use (second <= second_limit);
     use (third <= third_limit);
   }

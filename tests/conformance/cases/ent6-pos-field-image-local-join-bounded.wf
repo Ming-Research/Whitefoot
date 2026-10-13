@@ -2,7 +2,7 @@ struct Reading {
   value: i64;
 }
 
-fn pick(flag: bool, d: u8) -> result: i64 pure {
+fn pick(flag: Bool, d: u8) -> result: i64 pure {
   doc "Each arm commits a different bounded constant to the local's field. The join keeps no image the arms do not share, and the field's joined image reaches the common lower bound 5 through the L0 index, so the subtraction of a widened byte cannot overflow.";
   let e = Reading(value: 0_i64);
   if flag {
