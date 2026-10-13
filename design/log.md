@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 the owner's agent instructions own the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-13 Rebinding a reference variable is its own invalidation event
+
+Nodes: compiler/checker-facts
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the design-tree change: pointing a reference variable elsewhere becomes its own kind of event that invalidates proof facts? (Ming-Research/Whitefoot#439, head b1ee96910)" (translated).
+
+Summary: A new decision makes a reference rebinding a distinct invalidation event that removes only the facts spelled through or reached through that reference variable, and loop summaries carry the event unchanged, because the specification says a rebinding writes no storage, instead of synthesizing a whole write of the variable and removing facts by its function-wide provenance list, which removed facts established through other names on the old or new target.
+
 ## 2026-10-13 One release classification decides whether release does work, and key sets and concurrent hash maps release runtime storage
 
 Nodes: compiler/cleanup-traversal, language/ownership/linearity, language/waiting/shared-objects/keyed-tables
