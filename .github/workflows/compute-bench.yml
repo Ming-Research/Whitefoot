@@ -58,6 +58,10 @@ on:
         description: Repository-relative manual inspection file bound to this build; required for qualified demand timing
         type: string
         default: ""
+      par_demand_cells:
+        description: Comma-separated workload:width decisive cells for demand 6/6b; empty measures all (sizing and construction stay complete)
+        type: string
+        default: ""
       par_demand_inspection_ref:
         description: Full commit holding par_demand_inspection when it was committed after this build; empty reads it from the dispatched checkout
         type: string
@@ -530,9 +534,14 @@ jobs:
           ROUNDS: ${{ inputs.placement_rounds || (inputs.par_demand_experiment == '2' && '30' || '10') }}
           RUNNER: ${{ inputs.placement_runner }}
           EXPERIMENT: ${{ inputs.par_demand_experiment }}
+          CELLS: ${{ inputs.par_demand_cells }}
           WHITEFOOT_CHECK_TIMEOUT: "5400"
         run: |
           { lscpu; cat /proc/self/status; printf 'runner=%s rounds=%s\n' "$RUNNER" "$ROUNDS"; } > "$RUNNER_TEMP/par-demand/measurement-host.txt"
+          if [ -n "$CELLS" ] && [ "$EXPERIMENT" != 6 ] && [ "$EXPERIMENT" != 6b ]; then
+            echo "par_demand_cells requires demand experiment 6 or 6b." >&2
+            exit 1
+          fi
           case "$EXPERIMENT" in
             diagnostic-*)
               mode="${EXPERIMENT#diagnostic-}"
@@ -546,23 +555,25 @@ jobs:
               ;;
           esac
           sizing=()
+          cells=()
+          if [ -n "$CELLS" ]; then cells=(--cells "$CELLS"); fi
           if [ "$RUNNER" = github ]; then sizing=(--sizing); fi
           if [ "$EXPERIMENT" = 4 ] || [ "$EXPERIMENT" = 5a ] || [ "$EXPERIMENT" = 5c ] || [ "$EXPERIMENT" = 6b ] || [ "$EXPERIMENT" = 6 ]; then
             perl .github/run-check.pl par-demand/measure python3 research/experiments/par-demand/measure.py \
-              --build "$RUNNER_TEMP/par-demand" --experiment "$EXPERIMENT"
+              --build "$RUNNER_TEMP/par-demand" --experiment "$EXPERIMENT" "${cells[@]}"
             cat "$RUNNER_TEMP/par-demand/summary.json" >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           if [ "$EXPERIMENT" = 3 ]; then
             perl .github/run-check.pl par-demand/measure python3 research/experiments/par-demand/measure.py \
-              --build "$RUNNER_TEMP/par-demand" --experiment 3
+              --build "$RUNNER_TEMP/par-demand" --experiment 3 "${cells[@]}"
             python3 research/experiments/par-demand/measure.py \
               --build "$RUNNER_TEMP/par-demand/counter" --experiment 3 --instrumented
             cat "$RUNNER_TEMP/par-demand/summary.json" >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           perl .github/run-check.pl par-demand/measure python3 research/experiments/par-demand/measure.py \
-            --build "$RUNNER_TEMP/par-demand" --experiment "$EXPERIMENT" --rounds "$ROUNDS" "${sizing[@]}"
+            --build "$RUNNER_TEMP/par-demand" --experiment "$EXPERIMENT" --rounds "$ROUNDS" "${sizing[@]}" "${cells[@]}"
           python3 research/experiments/par-demand/summarize.py "$RUNNER_TEMP/par-demand/measurements.tsv" \
             --inspection "$RUNNER_TEMP/par-demand/inspection.json" --experiment "$EXPERIMENT" "${sizing[@]}" > "$RUNNER_TEMP/par-demand/summary.json"
           cat "$RUNNER_TEMP/par-demand/summary.json" >> "$GITHUB_STEP_SUMMARY"

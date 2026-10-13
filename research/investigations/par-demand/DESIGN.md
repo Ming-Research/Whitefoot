@@ -4511,3 +4511,36 @@ fadbc866b's although the [startup exposure repair](#startup-exposure-repair)
 timed. The control now requires the macro-off object to equal the base, the
 demand object to equal it once the repair's single call is removed, and the
 timed demand object to differ from it. No criterion, prediction or arm changed.
+
+#### 6b void-cell completion run, fixed before it measures
+
+**Registered 2026-10-13, before any completion measurement.** This completes
+experiment 6b; it is not a new experiment. The result of
+[6b run 38422459949](https://github.com/Ming-Research/Whitefoot/actions/runs/38422459949)
+at revision `d9b290542` has no failed cell and five cells voided by a
+twin/demand paired-ratio bootstrap interval excluding 1. Measure only
+`recursion:1,mandelbrot:4,records:4,stencil:4,stencil:8` in the decisive phase.
+The 32 already-decided 6b cells keep their verdicts and are not re-measured
+for a new verdict.
+
+**Frozen procedure.** Retain 6b's whole-build construction, verification,
+machine-code identity, required build-bound inspection, six full-matrix sizing
+rounds and round-freezing rule. The selected cells use that frozen even count,
+with the same inputs, pins, full-matrix workload/width rotations, per-cell arm
+rotation, first/second calls, twin, applicable shifted-seq controls, reducer,
+bootstrap settings, bounds and single exceeding-cell rerun. Sizing still
+includes every cell; it supplies no replacement verdict and is never pooled
+with decisive samples. Filtering changes only which decisive cells execute.
+6b's registration lists W1 E6b-seq as a timing criterion; under the owner's
+2026-10-11 ruling machine-code identity decides the single-thread requirement,
+so W1 E6b-seq is read and reported as a diagnostic, as measured. The
+separately selected fir W1 bound is unchanged.
+
+**Final reading and stop rule.** Each of the five completion verdicts is final
+and replaces that cell's 6b void; the original run remains recorded. A cell
+void again is reported as **no evidence**, never a pass. A cell whose
+applicable rule has an upper bound above its registered bound returns the
+line to the direction card, including an inconclusive interval rather than
+treating it as success. The frozen reducer's verdicts and permitted rerun
+remain visible; there is no further completion retry to seek a pass. Cells
+with no applicable rule remain reported controls, subject to the twin rule.

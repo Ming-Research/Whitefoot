@@ -15,7 +15,7 @@ import time
 from pathlib import Path
 from summarize import (E5A_PADDING, E6B, E6_FAMILY, experiment_matrix, parse_experiment, attempt_result,
                        attempt_result_e2, attempt_result_e4, e6_attempt, cell_widths, cell_arms, construction_identity,
-                       e6b_construction, e2_excluded, load, summarize)
+                       e6b_construction, e2_excluded, load, summarize, parse_cells, cell_names)
 from entry_dispatch import (MIN_CALLS, MAX_CALLS, MIN_BATCH_NS, WIDTHS as ENTRY_WIDTHS,
                             validate_proof as entry_dispatch_proof, validate_sample)
 from inspection import validate_inspection
@@ -36,6 +36,15 @@ def require_paired_rounds(rounds, *, sizing=False):
         raise ValueError('paired ordering requires a positive round count')
     if not sizing and rounds % 2:
         raise ValueError(f'paired decisive ordering requires an even frozen round count; protocol selected {rounds}; no rounding applied')
+
+
+def ordered_cells(manifest, widths, experiment, round_id, selected):
+    """Filter only after full-matrix rotations, preserving each cell's arm order."""
+    for name in balanced_order(manifest, round_id):
+        for width in balanced_order(cell_widths(experiment, name), round_id):
+            arms = balanced_order(cell_arms(experiment, width, name), round_id, widths.index(width))
+            if (name, width) in selected:
+                yield name, width, arms
 
 
 def run(command, **kwargs):
@@ -205,6 +214,7 @@ def main():
     parser.add_argument("--instrumented", action="store_true")
     parser.add_argument("--sizing", action="store_true")
     parser.add_argument("--verify-only", action="store_true")
+    parser.add_argument("--cells", default="", help="comma-separated workload:width decisive cells (6/6b); empty keeps all")
     args = parser.parse_args()
     if args.experiment in (3, 4, "5a", "5c", *E6_FAMILY) and args.rounds is not None:
         parser.error("experiments 3, 4, 5a, 5c, 6 and 6b select their rounds from six sizing rounds; omit --rounds")
@@ -213,6 +223,10 @@ def main():
     if args.rounds is None:
         args.rounds = 30 if args.experiment == 2 else 10
     arms_for_run, widths_for_run, manifest = experiment_matrix(args.experiment)
+    try:
+        selected = parse_cells(args.cells, args.experiment)
+    except ValueError as error:
+        parser.error(str(error))
     if args.rounds < 1:
         parser.error("rounds must be positive")
     build = args.build.resolve()
@@ -261,7 +275,8 @@ def main():
                     hashes=hashes, experiment=args.experiment, topology=topology,
                     settings={arm: demand_setting(args.experiment, arm) for arm in arms_for_run},
                     setting="on" if args.experiment in (2, 3, 4, "5a", "5c", *E6_FAMILY) else "off-never-request", manifest=manifest,
-                    instrumented=args.instrumented, layout=layout)
+                    instrumented=args.instrumented, layout=layout,
+                    selected_cells=cell_names(selected, args.experiment))
     (build / "identity.json").write_text(json.dumps(identity, indent=2) + "\n")
     if args.verify_only:
         for name in manifest:
@@ -322,48 +337,45 @@ def main():
                         calls = entry_evidence["calibration"][str(width)]["calls"]
                         entry_evidence[phase].append(dict(entry_sample(width, calls, round_id % 2), round=round_id))
                     (build / "entry-dispatch-measurements.json").write_text(json.dumps(entry_evidence, indent=2) + "\n")
-                names = balanced_order(manifest, round_id)
-                for name in names:
+                for name, width, arms in ordered_cells(manifest, widths_for_run, args.experiment, round_id, selected):
                     meta = manifest[name]
                     settings = dict(env)
                     if "repetitions" in meta:
                         settings["WFD_REPETITIONS"] = str(meta.get("sizing_repetitions", meta["repetitions"]) if args.sizing and args.experiment not in (3, 4, "5a", "5c", *E6_FAMILY) else meta["repetitions"])
                         settings["WFD_EXTENT"] = str(meta.get("sizing_extent", meta["extent"]) if args.sizing and args.experiment not in (3, 4, "5a", "5c", *E6_FAMILY) else meta["extent"])
-                    widths = balanced_order(cell_widths(args.experiment, name), round_id)
-                    for width in widths:
-                        if (name, width) not in selected:
-                            continue
-                        arms = balanced_order(cell_arms(args.experiment, width, name), round_id, widths_for_run.index(width))
-                        for arm in arms:
-                            print(f"attempt={attempt} round={round_id} {name} W={width} {arm}", flush=True)
-                            run(pin(width, [str(build / arm / name), "measure", arm, str(width), str(round_id), str(attempt)]),
-                                env=dict(settings, WF_WORKERS=str(width),
-                                         WF_PAR_DEMAND=demand_setting(args.experiment, arm)), stdout=output)
-                            output.flush()
-    selected = {(name, width) for name in manifest for width in cell_widths(args.experiment, name)}
+                    for arm in arms:
+                        print(f"attempt={attempt} round={round_id} {name} W={width} {arm}", flush=True)
+                        run(pin(width, [str(build / arm / name), "measure", arm, str(width), str(round_id), str(attempt)]),
+                            env=dict(settings, WF_WORKERS=str(width),
+                                     WF_PAR_DEMAND=demand_setting(args.experiment, arm)), stdout=output)
+                        output.flush()
+    complete = parse_cells("", args.experiment)
     if args.experiment in (3, 4, "5a", "5c", *E6_FAMILY):
         args.rounds = 6
         sizing_start = time.monotonic()
-        batch(1, selected, sizing=True)
+        batch(1, complete, sizing=True)
         sizing_seconds = time.monotonic() - sizing_start
         sample = summarize(path, sizing=True, experiment=args.experiment)
         sample_dir = build / f"sizing-e{args.experiment}"
         sample_dir.mkdir(exist_ok=True)
         path.replace(sample_dir / "measurements.tsv")
         (sample_dir / "summary.json").write_text(json.dumps(sample, indent=2) + "\n")
-        identity.update(rounds=6, sizing=True)
+        identity.update(rounds=6, sizing=True, selected_cells=cell_names(complete, args.experiment))
         (sample_dir / "identity.json").write_text(json.dumps(identity, indent=2) + "\n")
         args.rounds = sample["decisive_rounds"]
         if args.experiment in E6_FAMILY:
-            invocations = sum(len(cell_arms(args.experiment, width, name)) for name in manifest
-                              for width in cell_widths(args.experiment, name))
+            invocations = sum(len(cell_arms(args.experiment, width, name)) for name, width in complete)
+            selected_invocations = sum(len(cell_arms(args.experiment, width, name)) for name, width in selected)
             identity["duration_projection"] = dict(sizing_elapsed_seconds=sizing_seconds,
                 decisive_rounds=args.rounds, image_invocations_per_round=invocations,
                 timed_workload_calls_per_round=2 * invocations,
-                initial_total_seconds=sizing_seconds * (1 + args.rounds / 6),
-                all_cells_rerun_total_seconds=sizing_seconds * (1 + 2 * args.rounds / 6),
+                selected_image_invocations_per_round=selected_invocations,
+                selected_timed_workload_calls_per_round=2 * selected_invocations,
+                initial_total_seconds=sizing_seconds * (1 + args.rounds / 6) if selected == complete else None,
+                all_cells_rerun_total_seconds=sizing_seconds * (1 + 2 * args.rounds / 6) if selected == complete else None,
                 scope="six measured rounds including paired entry diagnostics; excludes calibration, reduction, verification, hosted construction and queue time")
-        identity.update(rounds=args.rounds, sizing=args.sizing, sizing_rounds=6)
+        identity.update(rounds=args.rounds, sizing=args.sizing, sizing_rounds=6,
+                        selected_cells=cell_names(complete if args.sizing else selected, args.experiment))
         (build / "identity.json").write_text(json.dumps(identity, indent=2) + "\n")
         if args.sizing:
             return

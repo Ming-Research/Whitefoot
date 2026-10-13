@@ -1402,7 +1402,7 @@ class Experiment6bTests(unittest.TestCase):
                 expected.add("E6b-recursion")
             if (name, width) == ("fir", 1):
                 expected.add("E6b-fir-seq")
-            elif width == 1 or (name, width) in (("spine", 4), ("spine", 8)):
+            elif (name, width) in (("spine", 4), ("spine", 8)):
                 expected.add("E6b-seq")
             self.assertEqual(set(cell["verdicts"]), expected, (name, width))
             self.assertEqual(cell["status"], "not-applicable" if not expected else "pass", (name, width))
@@ -1445,10 +1445,150 @@ class Experiment6bTests(unittest.TestCase):
         self.assertGreater(cell["initial"]["reported_demand_ratios"]["par"]["interval"][0], 1.05)
         self.write({("fir", 1, "demand"): (1060000, 1000000), ("fir", 1, "twin"): (1060000, 1000000)}, attempts=(1, 2))
         self.assertEqual(self.row("fir", 1)["verdicts"]["E6b-fir-seq"], "fail")
-        # Other one-worker cells keep 1.00 or their floor, not 1.05.
+        # Other one-worker seq comparisons diagnose timing; machine identity gates them.
         self.write({("mandelbrot", 1, "demand"): (1010000, 1000000), ("mandelbrot", 1, "twin"): (1010000, 1000000)},
                    attempts=(1, 2))
-        self.assertEqual(self.row("mandelbrot", 1)["verdicts"]["E6b-seq"], "fail")
+        cell = self.row("mandelbrot", 1)
+        self.assertNotIn("E6b-seq", cell["verdicts"])
+        self.assertEqual(cell["initial"]["floor_seq_diagnostic"]["status"], "exceeds")
+
+    def test_one_worker_seq_timing_is_diagnostic_but_machine_identity_is_required(self):
+        changes = {("recursion", 1, arm): (2000000, 1000000)
+                   for arm in ("demand", "twin", "previous", "unversioned")}
+        self.write(changes)
+        cell = self.row("recursion", 1)
+        self.assertEqual(cell["status"], "pass")
+        self.assertEqual(cell["initial"]["status"], "pass")
+        self.assertEqual(cell["initial"]["literal_seq_diagnostic"]["status"], "exceeds")
+        self.assertEqual(cell["initial"]["floor_seq_diagnostic"]["status"], "exceeds")
+        path = self.build / "sequential-identity.json"
+        evidence = json.loads(path.read_text())
+        record = evidence["workloads"]["recursion"]
+        record["comparisons"][0].update(identical=False, demand_instructions=["add", "ret"])
+        classify_construction(record, "wf_bench_fixture", {"wf__par_seq_body"}, {})
+        path.write_text(json.dumps(evidence))
+        with self.assertRaisesRegex(ValueError, "sequential identity construction evidence"):
+            self.result()
+
+    def test_partial_summary_matches_full_cells_and_keeps_full_sizing_and_inspection(self):
+        self.write()
+        text = "recursion:1,mandelbrot:4,records:4,stencil:4,stencil:8"
+        selected = measure.parse_cells(text, E6B)
+        full = self.result()
+        expected = [cell for cell in full["cells"] if (cell["workload"], cell["width"]) in selected]
+        self.path.write_text("".join(line for line in self.path.read_text().splitlines(keepends=True)
+                                     if (line.split("\t")[0], int(line.split("\t")[2])) in selected))
+        identity_path = self.build / "identity.json"
+        identity = json.loads(identity_path.read_text())
+        identity["selected_cells"] = text.split(",")
+        identity_path.write_text(json.dumps(identity))
+        partial = self.result()
+        self.assertEqual(partial["cells"], expected)
+        self.assertEqual(partial["selected_cells"], text.split(","))
+        self.assertEqual(partial["decisive_rounds"], full["decisive_rounds"])
+        self.assertEqual(partial["entry_dispatch"], full["entry_dispatch"])
+        self.assertEqual([row["workload"] for row in partial["sweep"]], ["stencil"])
+        self.assertEqual([row["width"] for row in partial["sweep"][0]["widths"]], [4, 8])
+        self.assertEqual({(row["lower_width"], row["higher_width"]) for row in partial["sweep"][0]["adjacent_widths"]}, {(4, 8)})
+        # Explicit selection may reorder the recorded cells, but cannot replace
+        # or narrow the measured set after seeing its results.
+        self.assertEqual(summarize(self.path, self.inspection, experiment=E6B,
+                                  cells=",".join(reversed(text.split(","))))["cells"], expected)
+        for requested in ("", "recursion:1", "recursion:1,mandelbrot:4,records:4,stencil:4,histogram:8"):
+            with self.subTest(requested=requested), self.assertRaisesRegex(ValueError, "requested cells differ"):
+                summarize(self.path, self.inspection, experiment=E6B, cells=requested)
+        # An unselected workload still needs its build-bound inspection.
+        incomplete = dict(self.inspection)
+        del incomplete["histogram"]
+        with self.assertRaisesRegex(ValueError, "inspection workload"):
+            summarize(self.path, incomplete, experiment=E6B)
+        # Complete sizing is mandatory even for a partial decisive result.
+        sample = self.build / "sizing-e6b" / "measurements.tsv"
+        sample.write_text("".join(line for line in sample.read_text().splitlines(keepends=True)
+                                  if line.split("\t")[0] != "histogram"))
+        with self.assertRaisesRegex(ValueError, "missing experiment 6b cell: histogram"):
+            self.result()
+
+    def test_partial_summary_rejects_missing_selected_cell_arm_and_unknown_selection(self):
+        self.write()
+        lines = [line for line in self.path.read_text().splitlines(keepends=True)
+                 if line.startswith("recursion\t") and line.split("\t")[2] == "1"]
+        self.path.write_text("".join(lines))
+        with self.assertRaisesRegex(ValueError, "missing experiment 6b cell: records/4"):
+            summarize(self.path, self.inspection, experiment=E6B, cells="recursion:1,records:4")
+        self.path.write_text("".join(line for line in lines if line.split("\t")[1] != "twin"))
+        with self.assertRaisesRegex(ValueError, "missing experiment-6b arm"):
+            summarize(self.path, self.inspection, experiment=E6B, cells="recursion:1")
+        with self.assertRaisesRegex(ValueError, "unknown experiment 6b cell"):
+            summarize(self.path, self.inspection, experiment=E6B, cells="unknown:4")
+
+    def test_selected_driver_preserves_sizing_orders_inspection_and_single_rerun(self):
+        text = "recursion:1,mandelbrot:4,records:4,stencil:4,stencil:8"
+        selected = measure.parse_cells(text, E6B)
+        for arm in E6_ARMS:
+            for name in MANIFEST:
+                image = self.build / arm / name
+                image.write_bytes((self.build / "demand" / name).read_bytes()
+                                  if arm == "twin" else image.read_bytes())
+        bind_fixture(self.build, E6_ARMS, self.inspection)
+        observed, inspection_at = [], []
+        construction_at = []
+        def fake_run(command, **kwargs):
+            if command[0] == "git":
+                return type("Result", (), {"stdout": FIXTURE_REVISION + '\n' if command[1] == 'rev-parse' else ''})()
+            if Path(command[3]).name == "entry-dispatch":
+                width, calls, order = map(int, command[4:])
+                return type("Result", (), {"stdout": json.dumps(self.entry_sample(width, order, calls))})()
+            image, mode, arm, width_text, round_id, attempt = command[3:]
+            name, width = Path(image).name, int(width_text)
+            observed.append((name, width, arm, int(round_id), int(attempt)))
+            wall = 1002000 if arm in E5A_PADDING else 1000000 if arm == "seq" else 1001000
+            if (name, width) == ("records", 4) and arm in ("demand", "twin"):
+                wall = 1200000  # Exactly this selected cell requires one complete rerun.
+            for sample in (0, 1):
+                kwargs["stdout"].write(f"{name}\t{arm}\t{width}\t{round_id}\t{attempt}\t{sample}\t{wall}\t1000000\t1\n")
+        real_inspection = measure.validate_inspection
+        def checked(*args):
+            inspection_at.append(len(observed))
+            self.assertEqual(set(args[3]), set(MANIFEST))
+            self.assertEqual(tuple(args[4]), E6_ARMS)
+            return real_inspection(*args)
+        real_construction = measure.e6b_construction
+        def constructed(build):
+            construction_at.append(len(observed))
+            return real_construction(build)
+        def driver(cells):
+            observed.clear()
+            inspection_at.clear()
+            construction_at.clear()
+            with patch("sys.argv", ["measure.py", "--build", str(self.build), "--experiment", E6B, "--cells", cells]), \
+                 patch.object(measure, "run", side_effect=fake_run), \
+                 patch.object(measure.platform, "system", return_value="Linux"), \
+                 patch.object(measure.shutil, "which", return_value="/usr/bin/taskset"), \
+                 patch.object(measure, "e5c_placement", return_value=(dict(E5C_PLACEMENT), {})), \
+                 patch.object(measure, "layout_identity", return_value={}), \
+                 patch.object(measure, "entry_dispatch_proof", return_value={"status": "pass"}), \
+                 patch.object(measure, "e6b_construction", side_effect=constructed), \
+                 patch.object(measure, "validate_inspection", side_effect=checked), \
+                 contextlib.redirect_stdout(io.StringIO()):
+                measure.main()
+            self.assertEqual(construction_at, [0])
+            self.assertEqual(inspection_at, [270 * 6])
+            return (list(observed), self.path.read_text(),
+                    (self.build / "sizing-e6b" / "measurements.tsv").read_text())
+        full_order, full_rows, full_sizing = driver("")
+        partial_order, partial_rows, partial_sizing = driver(text)
+        self.assertEqual(full_sizing, partial_sizing)
+        self.assertEqual(partial_order[:270 * 6], full_order[:270 * 6])
+        self.assertEqual(partial_order[270 * 6:], [row for row in full_order[270 * 6:] if row[:2] in selected])
+        self.assertEqual(partial_rows, "".join(line for line in full_rows.splitlines(keepends=True)
+                                              if (line.split("\t")[0], int(line.split("\t")[2])) in selected))
+        self.assertEqual({row[:2] for row in partial_order if row[4] == 2}, {("records", 4)})
+        identity = json.loads((self.build / "identity.json").read_text())
+        self.assertEqual(identity["selected_cells"], text.split(","))
+        self.assertEqual(set(identity["hashes"]), set(MANIFEST))
+        self.assertEqual(identity["duration_projection"]["selected_image_invocations_per_round"], 33)
+        self.assertIsNone(identity["duration_projection"]["initial_total_seconds"])
 
     def test_recursion_w8_against_par_and_keep_against_both_controls(self):
         regress = {("recursion", 8, "demand"): (550000, 1000000), ("recursion", 8, "twin"): (550000, 1000000)}
@@ -1485,7 +1625,13 @@ class Experiment6bTests(unittest.TestCase):
 
     def test_sizing_freezes_an_even_count(self):
         self.write()
-        sizing = summarize(self.path, sizing=True, experiment=E6B)
+        with patch("summarize.e4_round_count", wraps=e4_round_count) as freeze:
+            sizing = summarize(self.path, sizing=True, experiment=E6B)
+        sizing_cells = freeze.call_args.args[0]
+        for cell, measured in zip(sizing["cells"], sizing_cells):
+            if cell["width"] == 1 and cell["workload"] != "fir":
+                self.assertEqual(measured["initial"]["rules"]["floor_seq_diagnostic"],
+                                 cell["initial"]["floor_seq_diagnostic"])
         self.assertEqual(sizing["decisive_rounds"] % 2, 0)
         self.assertEqual({c["status"] for c in sizing["cells"]} - {"not-applicable"}, {"inconclusive"})
         # A projected width that first fits at seven rounds freezes eight.

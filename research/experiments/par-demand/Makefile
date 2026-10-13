@@ -10,6 +10,7 @@ MICROS := small_constant small_split recursion spine hot_helper large_helper
 KERNELS := mandelbrot records fir stencil prefix histogram
 WORKLOADS := $(MICROS) $(KERNELS)
 EXPERIMENT ?= 1
+CELLS ?=
 ARMS := seq demand par twin
 ifeq ($(EXPERIMENT),2)
 ARMS += idle1
@@ -195,7 +196,7 @@ $(BUILD)/twin/%: $(BUILD)/demand/%
 verify: build
 	python3 measure.py --build "$(BUILD)" --verify-only --experiment $(EXPERIMENT)
 measure: build
-	python3 measure.py --build "$(BUILD)" --experiment $(EXPERIMENT) $(if $(ROUNDS),--rounds $(ROUNDS)) $(MEASURE_FLAGS)
+	python3 measure.py --build "$(BUILD)" --experiment $(EXPERIMENT) --cells "$(CELLS)" $(if $(ROUNDS),--rounds $(ROUNDS)) $(MEASURE_FLAGS)
 summarize:
 	python3 summarize.py "$(BUILD)/measurements.tsv" --inspection "$(BUILD)/inspection.json" --experiment $(EXPERIMENT)
 # CI supplies the pre-prototype compiler; this compares complete --par modules.

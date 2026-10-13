@@ -499,9 +499,36 @@ one.
 The reducer (`--experiment 6b`) applies exactly E6b-keep (demand/previous and
 demand/unversioned <= 1.05 in experiment 6's 25 qualified cells),
 E6b-recursion (recursion W8 demand/par <= 1.05), E6b-seq (demand/seq <= 1.00
-or inside the cell's own shifted-seq floor, at W1 except fir and at spine
-W4/W8) and E6b-fir-seq (fir W1 demand/seq <= 1.05). Other cells report
+or inside the cell's own shifted-seq floor, at spine W4/W8) and E6b-fir-seq
+(fir W1 demand/seq <= 1.05). W1 E6b-seq timing and its floor are diagnostics;
+machine-code identity decides the single-thread requirement under the owner's
+2026-10-11 ruling. Other cells report
 `reported_demand_ratios` and their status is `not-applicable` unless their
 twin voids them. Sizing freezes an even count under `sizing-e6b/`. CI uses
 `build verify`, `measure` and `summarize` with `EXPERIMENT=6b`; nothing here
 runs locally.
+
+The [6b void-cell completion run](../../investigations/par-demand/DESIGN.md#6b-void-cell-completion-run-fixed-before-it-measures)
+replaces only the five void verdicts from run 38422459949. Dispatch it on the
+14900K with the following command, supplying the existing required inspection
+record bound to the dispatched build (and its delivery commit when needed):
+
+```sh
+gh workflow run compute-bench.yml --ref claude/par-demand \
+  -f experiment=par-demand -f par_demand_experiment=6b \
+  -f placement_runner=14900k -f placement_rounds= \
+  -f par_demand_cells=recursion:1,mandelbrot:4,records:4,stencil:4,stencil:8 \
+  -f par_demand_inspection='<repository-relative-inspection.json>' \
+  -f par_demand_inspection_ref='<full-inspection-delivery-commit>'
+```
+
+An empty `par_demand_cells` measures the full matrix. In CI, the equivalent
+Makefile selection is `EXPERIMENT=6b CELLS=recursion:1,mandelbrot:4,records:4,stencil:4,stencil:8`;
+it reaches `measure.py --cells`. The filter applies after the full
+workload/width rotation and keeps all arms of each selected cell. Construction,
+verification, identity, required inspection and full-matrix sizing are
+unchanged. The reducer reads the selection from `identity.json`, reports only
+selected decisive cells, and still rejects missing selected-cell evidence.
+Each completion verdict is final; a second void means no evidence, and a rule
+upper bound above its bound returns the line to the direction card. The other
+32 decided cells retain their original verdicts.

@@ -8,6 +8,24 @@ class WorkflowTests(unittest.TestCase):
     def setUp(self):
         self.workflow = (Path(__file__).resolve().parents[3] / '.github/workflows/compute-bench.yml').read_text()
 
+    def test_cell_selection_only_reaches_decisive_driver_after_full_construction_and_inspection(self):
+        self.assertIn('par_demand_cells:', self.workflow)
+        timing = self.workflow.index('name: Interleave arms, widths and rounds under the selected protocol')
+        before, driver = self.workflow[:timing], self.workflow[timing:]
+        self.assertIn('build verify idle-policy-identity ablation-identity', before)
+        self.assertIn('name: Require build-bound manual inspection before qualified timing', before)
+        self.assertNotIn('inputs.par_demand_cells }}', before)
+        self.assertNotIn('--cells', before)
+        self.assertIn('CELLS: ${{ inputs.par_demand_cells }}', driver)
+        self.assertIn('if [ -n "$CELLS" ]; then cells=(--cells "$CELLS"); fi', driver)
+        self.assertIn('--experiment "$EXPERIMENT" "${cells[@]}"', driver)
+        self.assertIn('par_demand_cells requires demand experiment 6 or 6b.', driver)
+        makefile = (Path(__file__).parent / 'Makefile').read_text()
+        self.assertIn('CELLS ?=', makefile)
+        self.assertIn('--cells "$(CELLS)"', makefile)
+        verify = makefile[makefile.index('verify: build'):makefile.index('measure: build')]
+        self.assertNotIn('CELLS', verify)
+
     def test_diagnostics_build_from_six_and_require_hosted_smoke_before_transfer(self):
         for mode in ('spine', 'fir', 'twin'):
             self.assertIn(f'diagnostic-{mode}', self.workflow)
