@@ -34,7 +34,10 @@ mod type_regions;
 mod types;
 
 pub(crate) use receipts::ProofReceipts;
-pub(crate) use repairs::{header_invariant_scope_repair, postcondition_selector_repair};
+pub(crate) use repairs::{
+    executable_caller_repair, executable_runner_repair, header_invariant_scope_repair,
+    postcondition_selector_repair,
+};
 
 use std::collections::{HashMap, HashSet};
 

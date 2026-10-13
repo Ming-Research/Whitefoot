@@ -1853,9 +1853,9 @@ impl<'unit> TypeContext<'unit> {
                     ..
                 }
         ) {
-            "wrap it in a Box and pass a reference to its content".to_owned()
+            super::repairs::INLINE_SEGMENTS_OR_PAGED.to_owned()
         } else {
-            "wrap it in a Box, or write the constant-capacity form".to_owned()
+            super::repairs::INLINE_RUNTIME_STORAGE.to_owned()
         };
         self.declarations.issue_node(
             SemanticRule::Type9,

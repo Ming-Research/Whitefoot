@@ -757,10 +757,14 @@ impl<'unit> TypeContext<'unit> {
             None => None,
         };
         // A range reference selects a run, never one cell [REF-4].
-        let content = match self.place_selected_kind(check_context, place, bindings) {
-            Ok(Some(super::super::types::SelectedPlaceType::Value(ty))) => self.box_content(ty)?,
+        let operand = match self.place_selected_kind(check_context, place, bindings) {
+            Ok(Some(super::super::types::SelectedPlaceType::Value(ty))) => Some(ty),
             Ok(_) | Err(CheckStop::Unsupported(_)) => None,
             Err(stop) => return Err(stop),
+        };
+        let content = match operand {
+            Some(ty) => self.box_content(ty)?,
+            None => None,
         };
         let consumed = self
             .declarations
@@ -770,19 +774,36 @@ impl<'unit> TypeContext<'unit> {
         // place. A runtime-capacity content is never a binding's value,
         // whatever its elements [TYPE-9].
         let content = match content {
-            Some(
-                CheckedType::Buffer { .. }
-                | CheckedType::Segments { .. }
-                | CheckedType::Window { capacity: None, .. },
-            ) => Some(if consumed.owned {
+            Some(CheckedType::Window { capacity: None, .. }) => Some(if consumed.owned {
                 CellContent::RuntimeCapacity
             } else {
                 CellContent::InPlace
             }),
+            Some(CheckedType::Buffer { .. } | CheckedType::Segments { .. }) => {
+                Some(if consumed.owned {
+                    CellContent::FixedRuntimeCapacity
+                } else {
+                    CellContent::InPlace
+                })
+            }
             Some(ty) if self.is_copy_type(check_context, ty)? => Some(CellContent::Copy),
-            Some(_) if consumed.owned => Some(CellContent::Owned),
+            Some(ty) if consumed.owned => Some(
+                if self.linear_release_obligation(check_context, ty)?.is_some() {
+                    CellContent::Linear
+                } else {
+                    CellContent::Owned
+                },
+            ),
             Some(_) => Some(CellContent::InPlace),
-            None => None,
+            None => match operand {
+                Some(ty)
+                    if consumed.owned
+                        && self.linear_release_obligation(check_context, ty)?.is_some() =>
+                {
+                    Some(CellContent::LinearOperand)
+                }
+                _ => None,
+            },
         };
         Ok(cell_taken_apart(
             content,

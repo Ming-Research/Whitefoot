@@ -6,13 +6,14 @@
 //! and the repair it carries, one program for each alternative the pair
 //! carries out, which must be accepted with the repaired construct live.
 //! Adding or rewording a repair means adding or updating a pair here or in
-//! its family module; the repairs still printed without one are listed in
-//! status board item coord-wfbl-01-25.
+//! its family module. Constructor, ownership, placement and linear-exit
+//! repairs are pinned in `remaining_repairs`, including multi-module fields.
 
 use super::{CompilationFailureKind, CompilerLimits, compile};
 use crate::SourceInput;
 
 mod call_separations;
+mod cell_consumption;
 mod collisions_and_killed_facts;
 mod content_moves;
 mod enum_routed_ensures;
@@ -20,6 +21,7 @@ mod floats;
 mod interface_applications;
 mod prelude_opaque;
 mod recursive_effects;
+mod remaining_repairs;
 mod selector_scope;
 mod shared_maps;
 mod storage_destructuring;
@@ -3831,9 +3833,11 @@ fn each_pinned_repair_is_carried_out_by_its_programs() {
     for pair in REPAIRS
         .iter()
         .chain(call_separations::CALL_SEPARATIONS)
+        .chain(cell_consumption::CELL_CONSUMPTION)
         .chain(content_moves::CONTENT_MOVES)
         .chain(prelude_opaque::PRELUDE_OPAQUE)
         .chain(recursive_effects::RECURSIVE_EFFECTS)
+        .chain(remaining_repairs::REMAINING_REPAIRS)
         .chain(storage_destructuring::STORAGE_DESTRUCTURING)
         .chain(shared_maps::SHARED_MAPS)
         .chain(floats::FLOATS)

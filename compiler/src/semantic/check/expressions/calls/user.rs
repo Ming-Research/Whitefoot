@@ -1020,9 +1020,9 @@ impl<'unit> Checker<'_, 'unit> {
                         {
                             "this call gives these two entries of the callee's row the same positions: pass positions this call proves do not overlap, or replace the callee's row entries at or below their common path with one `writes` entry of that path"
                         } else if left.argument == right.argument && unnamed_positions {
-                            "these two entries of the callee's row may reach overlapping places through one argument, and no fact names the positions this call passes for them: replace the callee's row entries at or below their common path with one `writes` entry of that path"
+                            super::super::super::repairs::joined_argument_overlap(true)
                         } else if left.argument == right.argument {
-                            "these two entries of the callee's row may reach overlapping places through one argument, and no position this call passes separates them: replace the callee's row entries at or below their common path with one `writes` entry of that path"
+                            super::super::super::repairs::joined_argument_overlap(false)
                         } else {
                             "pass places that do not overlap, or pass the shared place through one argument only"
                         },

@@ -956,7 +956,7 @@ impl<'unit> Checker<'_, 'unit> {
                             SemanticRule::Own1,
                             use_node,
                             SemanticIssueKind::MoveOfCopy {
-                                mechanical_fix: "use the copy place without `move`",
+                                mechanical_fix: super::repairs::COPY_PLACE_MOVE,
                             },
                         );
                     }
@@ -1010,7 +1010,7 @@ impl<'unit> Checker<'_, 'unit> {
                         SemanticRule::Own1,
                         use_node,
                         SemanticIssueKind::BareAffineUse {
-                            mechanical_fix: "write `move p` for the affine place",
+                            mechanical_fix: super::repairs::BARE_AFFINE_USE,
                         },
                     );
                 }
@@ -1406,9 +1406,9 @@ impl<'unit> Checker<'_, 'unit> {
     fn copy_move_repair(&self, use_node: NodeId) -> Result<&'static str, CheckStop> {
         Ok(
             if self.types.declarations.tree.production(use_node)? == Production::LetStmt {
-                "remove `move` from the destructuring: let N(f: a, ...) = p;"
+                super::repairs::COPY_DESTRUCTURING_MOVE
             } else {
-                "use the copy place without `move`"
+                super::repairs::COPY_PLACE_MOVE
             },
         )
     }
@@ -1606,7 +1606,7 @@ impl<'unit> Checker<'_, 'unit> {
                 node,
                 SemanticIssueKind::ContainerConstruction {
                     nominal: constructor_name,
-                    mechanical_fix: "build it with a construction function [OP-13]".to_owned(),
+                    mechanical_fix: super::repairs::CONTAINER_CONSTRUCTION.to_owned(),
                 },
             );
         }

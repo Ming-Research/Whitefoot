@@ -44,6 +44,15 @@ use super::super::model::{
 use super::super::permission::visit_read_bindings;
 use crate::NodePath;
 
+/// The executable builder's signature route does not reject checked source.
+pub(crate) const fn executable_runner_repair() -> &'static str {
+    "select a function taking no parameters or one std::process::Inputs and returning std::process::ExitStatus or unit"
+}
+
+pub(crate) const fn executable_caller_repair() -> &'static str {
+    "satisfy the generated caller refusal reported above"
+}
+
 /// [OP-16] name the first excluded part, without suggesting that copy alone
 /// grants equality or that comparing storage bytes implements value equality.
 pub(super) fn value_equality_repair(ty: &str, part: &str) -> String {
@@ -320,7 +329,7 @@ impl<'a> Reads<'a> {
             } => GoalTerms::Parameters,
             _ => GoalTerms::Computed,
         };
-        let results = call_results(self.function, self.editable);
+        let results = call_results(self.function, self.editable, self.written);
         GoalReads {
             terms,
             referenced: self.referenced,
@@ -335,13 +344,21 @@ impl<'a> Reads<'a> {
 /// The bindings of `function` whose value a call to one of the `editable`
 /// functions returned, directly or through local computation from such a
 /// value: the values a callee's `ensures` the writer can add can bound
-/// [FN-9]. A prelude function's contract is not the writer's to change. The
-/// closure ignores control flow, which only widens it.
-fn call_results(function: &CheckedFunction, editable: &HashSet<FunctionId>) -> BTreeSet<BindingId> {
+/// [FN-9]. A prelude function's contract is not the writer's to change. A
+/// binding written on a path to the failed goal no longer identifies the
+/// returned value, so it cannot seed or propagate this diagnostic trace.
+/// This conservatively also omits a copy made before such a write: the kill
+/// roots record paths, not the relative order of the copy and the write.
+fn call_results(
+    function: &CheckedFunction,
+    editable: &HashSet<FunctionId>,
+    written: &[BindingId],
+) -> BTreeSet<BindingId> {
     let mut definitions = Vec::new();
     if let Some(body) = &function.body {
         collect_definitions(body, None, editable, &mut definitions);
     }
+    definitions.retain(|definition| written.binary_search(&definition.binding).is_err());
     let mut results: BTreeSet<BindingId> = definitions
         .iter()
         .filter(|definition| definition.call)
@@ -488,7 +505,7 @@ pub(super) fn returns_call_result(
     statement: &NodePath,
     editable: &HashSet<FunctionId>,
 ) -> bool {
-    let results = call_results(function, editable);
+    let results = call_results(function, editable, &[]);
     function
         .body
         .as_deref()
@@ -945,7 +962,7 @@ pub(super) fn propagated_postcondition(disposition: Disposition) -> &'static str
             "the state this `propagate` leaves the function with makes the postcondition false: restore the places it relates before the `propagate`, or state a postcondition every exit satisfies"
         }
         Disposition::Unproved => {
-            "the postcondition is not proved where this `propagate` leaves the function: establish it before the `propagate`, writing the places it relates or proving it with an `invariant` whose `use` steps name the facts it follows from, or state a postcondition every exit satisfies"
+            "the postcondition is not proved where this `propagate` leaves the function: establish it before the `propagate`, writing the places it relates or proving it with an `invariant`, adding `use` steps only when AUTO does not already prove its target, or state a postcondition every exit satisfies"
         }
     }
 }
@@ -1434,8 +1451,14 @@ pub(super) enum CellContent {
     /// A value without copy other than a runtime-capacity shape, which moves
     /// out and frees the cell [WIN-3].
     Owned,
+    /// A linear content must be consumed after moving it out.
+    Linear,
+    /// The written Box name does not select a cell, but the operand is linear.
+    LinearOperand,
     /// A runtime-capacity shape, which never leaves its cell [TYPE-9].
     RuntimeCapacity,
+    /// A runtime Array or segmented run is outside free_empty's shape set.
+    FixedRuntimeCapacity,
     /// A content not read as a copy, in a cell a reference or an element
     /// reaches, which nothing moves out of [OWN-1, WIN-3], so it is used in
     /// place.
@@ -1453,19 +1476,79 @@ pub(super) fn cell_taken_apart(
 ) -> String {
     const INNER: &str = "a cell's content is its member `inner` [TYPE-9]";
     match (content, binder) {
+        (Some(CellContent::Linear), name) => {
+            let name = name.unwrap_or("content");
+            format!("{INNER}: replace this statement with `let {name} = move {cell}.inner;`, which frees the cell [WIN-3], then move `{name}` into a function that consumes it or return it")
+        }
+        (Some(CellContent::LinearOperand), _) => format!(
+            "the operand is a linear value, not a cell whose content this statement can select: replace this statement by moving `{cell}` whole into a function that consumes it or returning it"
+        ),
+        (Some(CellContent::RuntimeCapacity), None) => format!(
+            "{INNER}, and a runtime-capacity content never leaves it: replace this statement by taking every element out and consuming it, establish `{cell}.inner.len == 0_u64`, and call `free_empty(window: move {cell})` [OP-14]"
+        ),
+        (Some(CellContent::FixedRuntimeCapacity), None) => format!(
+            "{INNER}, and this runtime-capacity content never leaves it: replace this statement by moving `{cell}` whole into a function that consumes it or returning it"
+        ),
         (Some(CellContent::Copy), Some(name)) => {
             format!("{INNER}: replace this statement with `let {name} = {cell}.inner;`")
         }
         (Some(CellContent::Owned), Some(name)) => format!(
             "{INNER}: replace this statement with `let {name} = move {cell}.inner;`, which frees the cell [WIN-3]"
         ),
-        (Some(CellContent::RuntimeCapacity), Some(name)) => format!(
+        (Some(CellContent::RuntimeCapacity | CellContent::FixedRuntimeCapacity), Some(name)) => format!(
             "{INNER}, and a runtime-capacity content never leaves it: remove this statement, and write `{cell}.inner` where `{name}` is used and `move {cell}` where `{name}` is moved [OP-14]"
         ),
         (Some(CellContent::InPlace), Some(name)) => format!(
             "{INNER}, and nothing moves out of a cell a reference or an element reaches [OWN-1, WIN-3]: when `{name}` is never moved, remove this statement and write `{cell}.inner` where `{name}` is used"
         ),
         (None, _) | (_, None) => format!("{INNER}: remove this statement"),
+    }
+}
+
+/// [TYPE-2, OWN-1, TYPE-9, TYPE-11] wording shared by the checking sites.
+pub(super) const CONTAINER_CONSTRUCTION: &str = "build it with a construction function [OP-13]";
+pub(super) const BARE_AFFINE_USE: &str = "write `move p` for the affine place";
+pub(super) const COPY_PLACE_MOVE: &str = "use the copy place without `move`";
+pub(super) const COPY_DESTRUCTURING_MOVE: &str = "remove `move` from the destructuring: let N(f: a, ...) = p;";
+pub(super) const INLINE_RUNTIME_STORAGE: &str = "wrap it in a Box, or write the constant-capacity form";
+pub(super) const INLINE_SEGMENTS_OR_PAGED: &str = "wrap it in a Box and pass a reference to its content";
+pub(super) const INVARIANT_FIELD_READONLY: &str = "write the field `public readonly`, so that code outside the declaring module reads it and only that module writes it, or make it private";
+
+/// The consumption forms the type and its module visibility admit.
+pub(super) enum LinearValueKind {
+    Whole,
+    Host,
+    Enum,
+    Struct,
+    Window,
+}
+
+/// [PROV-6] a scope exit names the binding that must leave by consumption.
+pub(super) fn linear_scope_exit_repair(kind: LinearValueKind, name: &str) -> String {
+    let whole = format!("move `{name}` whole into a function that consumes it, or return it");
+    match kind {
+        LinearValueKind::Whole => whole,
+        LinearValueKind::Host => format!(
+            "when its module provides a consuming close or finish function, move `{name}` whole into it; for a `ReadFile`, call `std::fs::close_read` with `file: move {name}` and a `HandleFactory` reference as `factory`, declaring that reference's write effect and marking the function `waits`; otherwise {whole}"
+        ),
+        LinearValueKind::Enum => format!(
+            "{whole}; or take it apart with `match move {name}` and consume every linear payload in each arm"
+        ),
+        LinearValueKind::Struct => format!(
+            "{whole}; or destructure the whole struct with `let N(f: a, ...) = move {name};`, replacing `N` and `f` with its declared struct and field names and consuming every linear field"
+        ),
+        LinearValueKind::Window => format!(
+            "{whole}; or take every element out and consume it, prove its length is zero, and call `free_empty(window: move {name})`"
+        ),
+    }
+}
+
+/// [EFF-5] one argument's joined places have no separating position.
+pub(super) const fn joined_argument_overlap(unnamed_positions: bool) -> &'static str {
+    if unnamed_positions {
+        "these two entries of the callee's row may reach overlapping places through one argument, and no fact names the positions this call passes for them: replace the callee's row entries at or below their common path with one `writes` entry of that path"
+    } else {
+        "these two entries of the callee's row may reach overlapping places through one argument, and no position this call passes separates them: replace the callee's row entries at or below their common path with one `writes` entry of that path"
     }
 }
 

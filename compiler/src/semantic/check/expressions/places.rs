@@ -334,7 +334,7 @@ impl<'unit> Checker<'_, 'unit> {
                         {
                             OWN1_ROOTED_CONSUME
                         } else {
-                            "write `move p` for the affine place"
+                            super::super::repairs::BARE_AFFINE_USE
                         },
                     },
                 );

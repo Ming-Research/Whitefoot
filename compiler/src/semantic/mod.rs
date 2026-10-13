@@ -37,7 +37,8 @@ pub(crate) use check::check_semantics_arithmetic_obligations;
 #[cfg(test)]
 pub(crate) use check::check_semantics_division_obligations;
 pub(crate) use check::{
-    ProofReceipts, check_semantics_with_receipts, header_invariant_scope_repair,
+    ProofReceipts, check_semantics_with_receipts, executable_caller_repair,
+    executable_runner_repair, header_invariant_scope_repair,
 };
 pub(crate) use entry::{EntryRejection, EntryRequest};
 
@@ -772,7 +773,7 @@ pub enum SemanticIssueKind {
         /// The nominal whose `linear` declaration created the obligation.
         obligation: String,
         /// Exact restructuring required by PROV-6.
-        mechanical_fix: &'static str,
+        mechanical_fix: String,
     },
     /// [PROV-6] a consume of a proper sub-place of a value linear in this
     /// scope, with no commit reinitializing that sub-place.
