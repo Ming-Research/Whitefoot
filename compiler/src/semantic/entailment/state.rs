@@ -1053,13 +1053,17 @@ pub(crate) struct DerivationMetrics {
     pub(crate) retained_bytes: usize,
 }
 
-/// Which mandatory checked-program query owns a retained root.
+/// Which checked-program query owns a retained root.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum DerivationRootKind {
     HeaderRelation {
         occurrence: u32,
     },
     LoopInduction {
+        occurrence: u32,
+    },
+    /// A successful optional [ENT-5] support-separation proof at a write.
+    FactPreservation {
         occurrence: u32,
     },
     BodyEntryContradiction,
@@ -2739,7 +2743,7 @@ impl BoundStore {
     }
 
     /// The terms with at least one cell, ascending.
-    fn live_terms(&self) -> Vec<TermId> {
+    pub(crate) fn live_terms(&self) -> Vec<TermId> {
         let count = self.terms.len();
         let mut live = vec![false; count];
         for row in 0..count {

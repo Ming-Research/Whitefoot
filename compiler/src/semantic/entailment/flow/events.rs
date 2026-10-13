@@ -1454,20 +1454,39 @@ impl Reasoning<'_, '_, '_> {
 
 impl Analyzer<'_, '_> {
     pub(super) fn apply_kills(&mut self, states: &mut ProofFlowState, events: &[KillEvent]) {
+        self.apply_kills_with_pending_results(states, events, &mut [], None);
+    }
+
+    /// One commit uses one set of preservation answers for both its pending
+    /// value and the continuing state, before publishing the new value.
+    pub(super) fn apply_kills_with_pending_results(
+        &mut self,
+        states: &mut ProofFlowState,
+        events: &[KillEvent],
+        pending_results: &mut [results::ResultEvidence],
+        shared_event: Option<FlowEventId>,
+    ) {
         if events.is_empty() {
             return;
         }
         self.record_continuing(states, events);
         self.vocabulary.promote_flow_contradiction(states);
-        let ledger = states.separations.clone();
+        let ledger = self
+            .reasoning()
+            .event_write_separations(states, events, pending_results);
         let live = self.reasoning().event_live_bounds(states, events);
         let separations = EventSeparations {
             ledger: &ledger,
             live: &live,
         };
-        self.reasoning().kill_result_evidence(states, events);
+        for result in pending_results {
+            self.reasoning()
+                .apply_kills_one(&separations, &mut result.facts, events);
+        }
         self.reasoning()
-            .kill_path_components(&separations, states, events, None);
+            .kill_result_evidence(&separations, states, events);
+        self.reasoning()
+            .kill_path_components(&separations, states, events, shared_event);
     }
 
     /// Applies each event on its own and in order, invalidating entry images
@@ -1485,21 +1504,20 @@ impl Analyzer<'_, '_> {
             self.vocabulary.promote_flow_contradiction(states);
         }
         self.record_continuing(states, events);
-        let ledger = states.separations.clone();
         let live = self.reasoning().event_live_bounds(states, events);
-        let separations = EventSeparations {
-            ledger: &ledger,
-            live: &live,
-        };
-        self.reasoning().kill_result_evidence(states, events);
         for event in events {
+            let events = std::slice::from_ref(event);
+            let ledger = self.reasoning().event_write_separations(states, events, &[]);
+            let current_live = self.reasoning().event_live_bounds(states, events);
+            let separations = EventSeparations {
+                ledger: &ledger,
+                live: &current_live,
+            };
+            self.reasoning()
+                .kill_result_evidence(&separations, states, events);
             let proof_event = transfer_event(self, event);
-            self.reasoning().kill_path_components(
-                &separations,
-                states,
-                std::slice::from_ref(event),
-                Some(proof_event),
-            );
+            self.reasoning()
+                .kill_path_components(&separations, states, events, Some(proof_event));
         }
         live
     }

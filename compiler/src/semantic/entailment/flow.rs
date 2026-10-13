@@ -38,6 +38,7 @@ mod loop_summary;
 pub(crate) mod operation_facts;
 mod origin_transport;
 mod postconditions;
+mod preservation;
 mod prover;
 mod relations;
 mod render;
@@ -1513,6 +1514,7 @@ impl<'check, 'unit> Analyzer<'check, 'unit> {
                 delivery_join_roots: 0,
                 header_relation_roots: 0,
                 loop_induction_roots: 0,
+                fact_preservation_roots: 0,
             },
             output: Output {
                 operation_intervals: BTreeMap::new(),
@@ -1830,7 +1832,7 @@ struct LiveBounds {
 /// `place_back` distinct from `r[i]` rather than possibly `r[i]` itself; a
 /// fact below `r[lo..hi]` likewise needs `hi <= r.len` derived there.
 struct EventSeparations<'event> {
-    ledger: &'event SeparationLedger,
+    ledger: &'event dyn SeparationOracle,
     live: &'event LiveBounds,
 }
 
@@ -1943,6 +1945,7 @@ struct Vocabulary {
     delivery_join_roots: u32,
     header_relation_roots: u32,
     loop_induction_roots: u32,
+    fact_preservation_roots: u32,
 }
 
 /// What the analysis publishes: every judgment's outcome, the retained
