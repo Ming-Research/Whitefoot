@@ -13,6 +13,8 @@
 //! already selects through one of the fact's own reads (its triggers), then
 //! once more at the reads those first instances add. Second-round instances
 //! form none. Written certificate instances join the completed two rounds.
+//! A fact active only under join-arm guards forms the same instances, each
+//! asserting its conclusions only where those guards also hold.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -27,7 +29,8 @@ use super::solver::{
     AtomId, AtomKind, Capacity, Linear, Literal, Problem, Relation, Rule, Verdict,
 };
 use super::world::{
-    AtomDef, ContainerId, FactId, Stored, VersionDef, VersionId, World, projections_overlap,
+    AtomDef, ContainerId, FactId, Guarded, Stored, VersionDef, VersionId, World,
+    projections_overlap,
 };
 
 /// What one place of a clause denotes in a frame.
@@ -638,6 +641,7 @@ impl Query {
         &mut self,
         world: &mut World,
         fact: &Fact,
+        guards: &[Literal],
         binders: &[Linear],
         iterations: &[Linear],
         atoms: &mut BTreeSet<AtomId>,
@@ -652,6 +656,7 @@ impl Query {
         }
         for mut conclusion in formed.conclusions {
             conclusion.guards.extend(formed.premises.iter().cloned());
+            conclusion.guards.extend(guards.iter().cloned());
             self.frames.record(world, &conclusion, &formed.conditions);
             for literal in
                 conclusion
@@ -699,15 +704,40 @@ fn conditional_instance(conclusion: &Rule, conditions: &[Rule]) -> Vec<Vec<Liter
     alternatives
 }
 
-/// Judges one query with the given facts active and the given written
-/// instances, by the fixed procedure of [`super::solver`].
+/// Judges one query with the given facts active, unconditionally or under
+/// join-arm guards, and the given written instances, by the fixed procedure
+/// of [`super::solver`].
 pub(super) fn judge(
     world: &mut World,
     facts: &[Fact],
     active: &[FactId],
+    guarded: &[Guarded],
     written: &[(FactId, Vec<Linear>, Vec<Linear>)],
     mut query: Query,
 ) -> Result<Verdict, Capacity> {
+    // Each active fact once, with the guard sets it holds under; an
+    // unconditional activation subsumes every guarded one. A tuple is one
+    // instance of its fact whatever the number of its guard sets [RANGE-3].
+    let mut entries: Vec<(FactId, Vec<Vec<Literal>>)> = Vec::new();
+    for (fact, guards) in active.iter().map(|fact| (*fact, &[] as &[Literal])).chain(
+        guarded
+            .iter()
+            .map(|entry| (entry.fact, entry.guards.as_slice())),
+    ) {
+        match entries.iter_mut().find(|(held, _)| *held == fact) {
+            Some((_, sets)) => {
+                if sets.iter().any(Vec::is_empty) {
+                    continue;
+                }
+                if guards.is_empty() {
+                    *sets = vec![Vec::new()];
+                } else if !sets.iter().any(|set| set == guards) {
+                    sets.push(guards.to_vec());
+                }
+            }
+            None => entries.push((fact, vec![guards.to_vec()])),
+        }
+    }
     let mut atoms: BTreeSet<AtomId> = BTreeSet::new();
     let mut expanded: BTreeSet<AtomId> = BTreeSet::new();
     for literal in query
@@ -744,7 +774,7 @@ pub(super) fn judge(
             })
             .collect();
         let mut instances = Vec::new();
-        for fact_id in active {
+        for (fact_id, _) in &entries {
             let fact = &facts[*fact_id as usize];
             let mut triggers = Vec::new();
             if vacuous(world, &fact.clause, &fact.frame) {
@@ -852,7 +882,14 @@ pub(super) fn judge(
         }
         for (fact_id, binders) in instances {
             let fact = &facts[fact_id as usize];
-            query.add_instance(world, fact, &binders, &[], &mut atoms);
+            let sets = entries
+                .iter()
+                .find(|(held, _)| *held == fact_id)
+                .map(|(_, sets)| sets.as_slice())
+                .unwrap_or_default();
+            for guards in sets {
+                query.add_instance(world, fact, guards, &binders, &[], &mut atoms);
+            }
         }
         expand(world, &mut atoms, &mut expanded, &mut query)?;
     }
@@ -864,7 +901,7 @@ pub(super) fn judge(
             && seen.insert((*fact_id, binders.clone(), iterations.clone()))
         {
             count_instance(&mut counts, *fact_id)?;
-            query.add_instance(world, fact, binders, iterations, &mut atoms);
+            query.add_instance(world, fact, &[], binders, iterations, &mut atoms);
         }
     }
     expand(world, &mut atoms, &mut expanded, &mut query)?;
@@ -1192,6 +1229,31 @@ fn expand(
                     alternatives.push(alternative);
                 }
             }
+            // [RANGE-3] A guard names a join's selector: the join took one of
+            // its arms. Every choice over the join's arms already fixes the
+            // selector, so the bare split is added only where none is in the
+            // problem. It names no arm's conditions, which hold only on paths
+            // through the join, and a guard reaching past a later join that
+            // one of whose arms bypassed this one carries that join's guard too.
+            AtomDef::Selector { arms } => {
+                let first = Literal::new(value.clone(), Relation::Equal, Linear::constant(0));
+                let split = query.choices.iter().any(|choice| {
+                    choice
+                        .iter()
+                        .any(|alternative| alternative.first() == Some(&first))
+                });
+                if !split {
+                    alternatives = (0..arms)
+                        .map(|arm| {
+                            vec![Literal::new(
+                                value.clone(),
+                                Relation::Equal,
+                                Linear::constant(i128::from(arm)),
+                            )]
+                        })
+                        .collect();
+                }
+            }
         }
         if !alternatives.is_empty() {
             for literal in alternatives.iter().flatten() {
@@ -1372,7 +1434,7 @@ mod aggregate_tests {
         let mut world = World::default();
         let fact = projected_fact(&mut world, MAX_INSTANCES + 1);
         assert_eq!(
-            judge(&mut world, &[fact], &[0], &[], Query::default()),
+            judge(&mut world, &[fact], &[0], &[], &[], Query::default()),
             Ok(Verdict::Open)
         );
     }
@@ -1455,7 +1517,7 @@ mod aggregate_tests {
         // The owed clause and distinct instances share the descriptor fact.
         // Every instance still contributes every projection and its atoms.
         for binder in [k, world.opaque(None)] {
-            query.add_instance(&mut world, &fact, &[binder], &[], &mut atoms);
+            query.add_instance(&mut world, &fact, &[], &[binder], &[], &mut atoms);
         }
         assert_eq!(query.type_facts, expected);
         assert_eq!(query.rules.len(), 2 * fact.clause.conclusions.len());
@@ -1606,7 +1668,7 @@ mod aggregate_tests {
                 .map(|index| (0, vec![Linear::constant(index as i128)], Vec::new()))
                 .collect();
             assert_eq!(
-                judge(&mut world, &[fact], &[], &written, Query::default()),
+                judge(&mut world, &[fact], &[], &[], &written, Query::default()),
                 if count == MAX_INSTANCES {
                     Ok(Verdict::Open)
                 } else {
@@ -1629,7 +1691,7 @@ mod aggregate_tests {
             .map(|index| (0, vec![Linear::constant(index as i128)], Vec::new()))
             .collect();
         assert_eq!(
-            judge(&mut world, &[fact], &[0], &written, Query::default()),
+            judge(&mut world, &[fact], &[0], &[], &written, Query::default()),
             Ok(Verdict::Open)
         );
         assert!(
@@ -1656,7 +1718,7 @@ mod aggregate_tests {
             }
             let fact = projected_fact(&mut world, count);
             assert_eq!(
-                judge(&mut world, &[fact], &[0], &[], query),
+                judge(&mut world, &[fact], &[0], &[], &[], query),
                 if count == 1 {
                     Ok(Verdict::Open)
                 } else {
@@ -1736,7 +1798,7 @@ mod aggregate_tests {
                 ..Query::default()
             };
             assert_eq!(
-                judge(&mut world, &[fact.clone()], &[0], &[], query),
+                judge(&mut world, &[fact.clone()], &[0], &[], &[], query),
                 expected
             );
         }

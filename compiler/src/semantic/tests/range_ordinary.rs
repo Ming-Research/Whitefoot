@@ -1166,3 +1166,90 @@ fn written_premise_measure_subscripts_receive_their_own_range_verdict() {
         );
     }
 }
+
+/// A loop whose back edge needs the frame bound after `arm` runs on some
+/// iterations; `keep` preserves the length only through its postcondition.
+fn arm_only(arm: &str) -> String {
+    format!(
+        "fn keep(xs: &Box<Array<u64>>, i: u64) -> r: unit writes(xs.inner) contract {{
+  requires i < xs^.inner.len;
+  ensures xs^.inner.len == entry(xs)^.inner.len;
+}} {{
+  set xs^.inner[i] = 0_u64;
+  return unit;
+}}
+
+fn probe(xs: &Box<Array<u64>>, flags: &[u8], i: u64) -> r: unit reads(flags), writes(xs) contract {{
+  requires i + 4_u64 <= xs^.inner.len;
+  requires forall small(j in 0_u64..flags^.len): flags^[j] < 3_u8;
+}} {{
+  let at = 0_u64;
+  loop (
+    invariant bound: i + 4_u64 <= xs^.inner.len
+  ) {{
+    if at >= flags^.len {{
+      return unit;
+    }}
+    let flag = flags^[at];
+{arm}
+    set at = at + 1_u64;
+    continue;
+  }}
+}}"
+    )
+}
+
+#[test]
+fn arm_fact_survives_its_join() {
+    // [RANGE-2] keep's length postcondition is active only in the arm that
+    // calls it; the back edge needs it there and the header bound elsewhere.
+    check(
+        &arm_only("    if flag != 0_u8 {\n      keep(xs: xs, i: i);\n    }"),
+        None,
+    );
+}
+
+#[test]
+fn arm_fact_survives_nested_joins() {
+    // Each inner arm's own call fact holds where both its inner and its
+    // outer arm were taken.
+    check(
+        &arm_only(
+            "    if flag != 0_u8 {\n      if flag == 1_u8 {\n        keep(xs: xs, i: i);\n      } else {\n        keep(xs: xs, i: i);\n        keep(xs: xs, i: i);\n      }\n    }",
+        ),
+        None,
+    );
+}
+
+/// `small` ensures its argument is below ten; `pick` calls it only where
+/// `guard` holds, then indexes a ten-element-or-longer array at `x`.
+fn arm_guarded(guard: &str) -> String {
+    format!(
+        "fn small(n: u64) -> r: unit pure contract {{
+  requires n < 10_u64;
+  ensures n < 10_u64;
+}} {{
+  return unit;
+}}
+
+fn pick(t: &Box<Array<u64>>, x: u64, flag: Bool) -> r: u64 reads(t) contract {{
+  requires 10_u64 <= t^.inner.len;
+  requires forall low(j in 0_u64..t^.inner.len): t^.inner[j] < 100_u64;
+}} {{
+{guard}
+  return t^.inner[x];
+}}"
+    )
+}
+
+#[test]
+fn arm_fact_holds_only_where_its_arm_was_taken() {
+    // Keeping `x < 10` after the join without its arm's condition would
+    // prove the index on the path that never called `small`.
+    for guard in [
+        "  if x < 10_u64 {\n    small(n: x);\n  }",
+        "  if flag {\n    if x < 10_u64 {\n      small(n: x);\n    }\n  }",
+    ] {
+        check(&arm_guarded(guard), Some(SemanticRule::Op4));
+    }
+}
