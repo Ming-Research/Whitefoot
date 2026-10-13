@@ -13,8 +13,12 @@ fn reply_is_ready(progress: &Progress, sequence: u64) -> ready: Bool reads(progr
     return True();
   }
   match progress^.notice {
-    None() => { return False(); }
-    Some(..) => { return True(); }
+    None() => {
+      return False();
+    }
+    Some(..) => {
+      return True();
+    }
   }
 }
 
