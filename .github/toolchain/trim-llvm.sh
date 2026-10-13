@@ -256,7 +256,10 @@ def linux_dependencies(path, context=None):
             else:
                 match = re.match(r"\s*(/.+?)\s+\(0x[0-9a-fA-F]+\)", line)
                 if match:
+                    # The program interpreter is listed by path only, but a
+                    # binary may also name it in DT_NEEDED by its soname.
                     resolutions[match.group(1)] = match.group(1)
+                    resolutions.setdefault(Path(match.group(1)).name, match.group(1))
     children = []
     for library in needed:
         if library.startswith("/") and not allowed_system(library):
