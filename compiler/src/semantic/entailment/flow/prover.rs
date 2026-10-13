@@ -1476,18 +1476,20 @@ impl Reasoning<'_, '_, '_> {
         );
         // Each residual below is the target less one bridge image, so the
         // point that falsified the target and satisfies every bridge image
-        // falsifies every residual: no candidate can succeed.
-        if self.affine_bridges_refuted(
+        // falsifies every residual: no candidate can succeed. Only this loop
+        // is skipped, so any step after it still runs.
+        let bridges_refuted = self.affine_bridges_refuted(
             target,
             &assumptions,
             &closed,
             right,
             &right_value,
             &candidates,
-        ) {
-            return None;
-        }
+        );
         for candidate in candidates {
+            if bridges_refuted {
+                break;
+            }
             let Some(bound) = closed.tight_bound(candidate.term, right) else {
                 continue;
             };
