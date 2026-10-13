@@ -508,6 +508,9 @@ fn split_call_loop(command: Command, call_it: Bool, seed: u64) -> result: u64 pu
 fn small_callee_cutoff_is_exactly_sixteen_ir_instructions() {
     let mut source = String::new();
     for count in [16, 17] {
+        if !source.is_empty() {
+            source.push('\n');
+        }
         source.push_str(&format!(
             "fn leaf{count}(seed: u64) -> result: u64 pure {{\n"
         ));
@@ -520,7 +523,7 @@ fn small_callee_cutoff_is_exactly_sixteen_ir_instructions() {
             ));
             previous = format!("value{instruction}");
         }
-        source.push_str(&format!("  return {previous};\n}}\n"));
+        source.push_str(&format!("  return {previous};\n}}\n\n"));
         source.push_str(&format!(
             "fn optional_leaf{count}(flag: Bool, seed: u64) -> result: u64 pure {{\n  if flag {{\n    let called = leaf{count}(seed: seed);\n    return called +wrap seed;\n  }}\n  return seed;\n}}\n"
         ));
