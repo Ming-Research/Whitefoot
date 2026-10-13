@@ -1751,6 +1751,59 @@ small (few new arms, no clear rise in checking time). Under it `BrTableN`
 restored. Steps 2 (1.006, pairs below 1.0) and 4 (1.003, a pair at 0.982)
 stay reverted.
 
+The owner replaced that criterion on 2026-10-09 (status board, phase-3
+item): a step is kept when its gain is stable and not noise and it adds no
+complexity or maintenance cost and fits the code's architecture; no fixed
+percentage is required.
+
+**Branch-table bounds proved at load.** `BrTable` and `BrTableN` tested two
+bounds on every jump that wasmi's validated bytecode never tests: the
+selected entry inside the table and the entry's target inside the code.
+`BrTable` also tested its moved slots against the frame. The loader now
+validates, after patching every target, that each entry's target is below
+the code length, that each moving entry's source and destination slots are
+below 65536, and that each `BrTable`, `BrTableN` and `BrTableNC` operation's
+start plus count selects an existing entry (count excludes the default
+slot). A failure rejects the load as wasm validation would. `run` states
+these as quantified requirements over `code` and `brtab`, so the arms read
+the entry and jump with no run-time test. Whitefoot accepted the natural
+statement through `Box<Slots<...>>`, including a relation between one
+container's enum payloads and another container's length, once Whitefoot#354
+kept range facts read through a box across loop heads.
+
+The first version needed two local invariants restating facts the arms
+already have: `pick <= count` after `imin`, and the moved slots' bounds
+before `move_slot`. Without them the checker refused the arm. The checker
+line found both refusals conformant to the specification then active, yet
+a gap in the natural form: the range walk saw `imin`'s result as a fresh
+unknown instead of using its [ENT-3.S7] relation, and it forgets a written
+window's length when a call's length-preserving postcondition names
+`entry(...)`. Specification v0.131 gives the range walk the S7 operation
+relations, so the three `pick <= count` invariants are gone. The moved
+slots' bounds remain until the `entry(...)` postcondition gap closes
+(status board item proof-bl-imin-span-annotation).
+
+Observed on the 14900K, at `9d640d1c3` against `89ddad886`, both generators
+compiled by `89ddad886`'s compiler, with a byte-identical twin of the
+base, 7 interleaved launches:
+
+| CoreMark iterations | candidate / base, median (range) | launches at or above base | twin / base, median (range) | run |
+|---|---|---|---|---|
+| 2000 | 1.0027 (0.9974-1.0080) | 6 of 7 | 1.0000 (0.9974-1.0026) | [38169330587](https://github.com/Ming-Research/Whitefoot/actions/runs/38169330587) |
+| 20000 | 1.0048 (1.0034-1.0085) | 7 of 7 | 1.0013 (0.9995-1.0050) | [38169641172](https://github.com/Ming-Research/Whitefoot/actions/runs/38169641172) |
+
+At 2000 iterations the score moves in steps of about 0.26%, too coarse to
+separate the change from the twin; at 20000 every candidate launch is
+above its base and its smallest ratio exceeds the twin's median. All
+engines report the same final CRC (0x4983 at 2000, 0x382f at 20000). The
+candidate's median score is 0.946 of wasmi's (base 0.940) and 0.801 of
+Silverfir-nano's; wasmi is 0.847 of nano. The `BrTable` arm shrinks from 50
+to 27 instructions and `BrTableN` from 30 to 20; `BrTableNC`'s arm was not
+located by the name-to-arm map in that run, so its code is unverified, and
+CoreMark takes `BrTableN` for 9.15M of its table dispatches. The gain is
+small but stable, and the validation is the interpreter's own, as wasmi's
+is, so the step is kept.
+
 ### Constructor and runtime-boundary audit
 
 The handler-word repair distinguishes values built by emitted constructors

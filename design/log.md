@@ -5,6 +5,51 @@ Newest first. One entry per approved change of the tree: a dated title,
 the owner's agent instructions own the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-13 The lock ledger reports when each atomic target group is taken
+
+Nodes: compiler/waiting-contexts/state-locks
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve this decision" (translated), on the card "approve the design-tree change of Whitefoot#421 (head commit 0d2e4f75b)? It adds one decision: the compiler gains a `--lock-ledger` flag reporting when each atomic statement takes each lock group" (translated).
+
+Summary: One decision is added. `whitefootc --lock-ledger` reports, for each atomic statement, its ordered target groups with their bindings and state type, whether each is taken before the guard, on every body path, on some body paths or never, and the first use or later group that takes it, because a writer could not otherwise see that an early read or a preceding type group extends a hold, as Firn's write commands did. Lowering records the acquisition requests it emits and classifies them on its control-flow graph, instead of a warning on early use, which is often intended, or a separate source analysis that could disagree with the acquired groups; the report changes neither acceptance nor acquisition placement.
+## 2026-10-13 A range fact can state an element's variant, and each conclusion stands on its own reads
+
+Nodes: language/checks-and-proofs/range-facts
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve Whitefoot#394's specification and design-tree change ... (head commit 25cb94f9d)" (translated), whose background listed the changed Bool-guard decision, the four added decisions and the four added refusals.
+
+Summary: The Bool-guard decision now writes Bool data only as `is True` / `is False`. Four decisions are added: the variant relation `e is V` / `e is not V`; each conclusion holds by its own reads; a conclusion that can never hold is an error, identity being the written spelling; and a reference-bound payload binder denotes the element's payload projection in goals. Four refusals are recorded: `==` for variants (value equality would equate two values of one variant with different payloads), the pattern form `e is V(..)` (its parentheses suggest a binding), one definedness condition for the whole clause (it accepted vacuous clauses), and requiring the payload to be copied to a local first (it refuses the natural form).
+## 2026-10-13 A tracked integer field place has a current image, and a quotient's upper bound follows from its dividend and divisor
+
+Nodes: language/checks-and-proofs/automatic-facts
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the specification and design-tree changes of Whitefoot#406: every tracked integer field place has a current image, a quotient's upper bound follows from its dividend and divisor, and `ishl(1, s)` has its own name? (head commit f722d963a)". The revision merged here differs from f722d963a only by the removal of a temporary measurement workflow and the merge of main.
+
+Summary: One decision is added: every tracked integer field place, whether its root holds the value or is a reference, carries a current affine image that only a commit to the field replaces and every event invalidating its supporting facts removes, instead of limiting images to fields reached through reference parameters, which the owner widened on an earlier card. The same change states the quotient upper bound as dividend below (k+1) divisors with the divisor proved at least one, and treats a variable right shift as division by the named power `ishl(1, s)`, instead of product terms or a writer-supplied proof step.
+
+## 2026-10-13 A fact some arms hold survives their join, and a joined value is free where its join was bypassed
+
+Nodes: compiler/range-judgment, language/checks-and-proofs/range-facts
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the specification revision and design-tree change of Whitefoot#414 at commit cd4851320? It covers two things: keeping a fact that holds in only some arms after a join, and fixing the soundness defect where, when an inner arm returns early, the outer other path is wrongly treated as impossible" (translated).
+
+Summary: Three decisions are added and one is reworded. A fact active at the end of only some arms of a join stays active where one of those arms was taken, instead of being dropped, which refused v2h's slot-move loop, or kept unconditionally, which would accept an index bounded only in one arm. The range judgment carries such a fact under the literals that the join's selector differs from each arm lacking it, and splits a bare selector over arm numbers only, instead of one guarded copy per arm, which multiplies rules, or a split over the arms' full conditions, which asserts an inner join's conditions on paths that bypassed it. A join records the earlier joins some of its arms bypassed, and the choice defining a joined value or version adds one `selector == arm` alternative per bypass, transitively, instead of a choice over the inner arms alone, the soundness defect where an inner returning arm let `251_u8 + v` be accepted, or a free not-reached alternative, which loses the arms' values on paths through the join. The derivation decision now says a joined value is the arm taken's, or no value where a later join bypassed its join.
+
+## 2026-10-13 A struct's type invariants travel through enum payloads, bare type parameters, recursive calls and branch deliveries
+
+Nodes: language/checks-and-proofs, language/checks-and-proofs/automatic-facts, language/checks-and-proofs/obligation-discharge
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the specification revision and design-tree change of Whitefoot#398 at commit b8d1126d3? (including bare type parameters symmetric, recursive results carrying invariants, and branch give delivering values)" (translated); before it, on 2026-10-12, the owner approved the enum-payload part at commit f42b49029 (option A, "approve"), chose option B on the card asking whether bare type parameters also take invariants at entry before merging, and chose option A on the direction cards "a recursive function's own successful result carries the invariant" and "a struct delivered by an if-branch give carries the invariant" (translated).
+
+Summary: Type invariants cross a function boundary inside an own enum's variant field as routed requirements and postconditions, because fallible producers return their structs inside `Result` or `Option`; refused were a written every-exit-is-`Err` form alone or beside the routes and assuming a parameter's routed invariant at body entry. Boundary positions are judged on the instance's type, instead of the written type (a wrapper would owe the invariant at exit and get nothing at entry) or parameters only (a `Span` result and a `T` result would promise different things). A callable whose definition the build supplies requires and promises no invariant, because no body proves the promise. The multi-module component decision now admits generated invariant postconditions inside a component as induction hypotheses, since they come from signatures and struct declarations, keeping each module's verdict a function of its own bodies and its dependencies' interfaces; written postconditions stay withheld, because no program needs them and they would change which written clauses are accepted. The `give` delivery decision splits into integers (unchanged) and other own values, delivered as a `let` binding; delivering only type invariants and re-calling the producer in each branch were refused.
+
+## 2026-10-13 A program reads a socket address's parts and a connection's local address
+
+Nodes: language/system-interface/socket-addresses
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve Whitefoot#402 (head commit 3cd02e6d4)'s specification change and design decisions, letting a Whitefoot program read the parts of a socket address and the local address of a connection?" (translated).
+
+Summary: A new node records four decisions. The family and components of a `SocketAddress` are read by the nonwaiting `socket_address_ip`, which returns the enum `IpAddress` with the constructors' own components, because a pattern match yields them with no proof, instead of a byte-window copy, a per-byte reader, a fixed 16-byte array or formatted text. The port is read by `socket_address_port`. An IPv6 address keeps only address and port, as a provisional choice reopened when a program must reconnect to or print a link-local peer. The local address is `local_address` on the receiving half, returning `Result<SocketAddress, IoError>` with the new origin 10, instead of a field of `AcceptedConnection`, a query on `TcpConnection` or on each half, or an infallible query, each refused with its reason in the node.
 ## 2026-10-13 A split-dispatch frame slot whose contents never cross a transfer belongs to each part
 
 Nodes: compiler/match-dispatch-lowering

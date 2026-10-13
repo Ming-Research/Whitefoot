@@ -454,6 +454,38 @@ void wf__body_socket_address_v6(wf_value *result, uint16_t a, uint16_t b, uint16
     result->words[2] = (uint64_t)port | WF_SOCKET_FAMILY_V6;
 }
 
+/* Byte `index` of an address's sixteen, by the rule the two constructors
+ * above write them with and `completion/contract.h` states: byte `i` occupies
+ * bits `8 * (i % 8)` of word `i / 8`, the IPv4 octets are bytes 0 to 3 and an
+ * IPv6 group is its high byte followed by its low byte. */
+static unsigned wf_address_byte(const wf_value *address, unsigned index) {
+    return (unsigned)((address->words[index / 8u] >> (8u * (index % 8u))) & 0xffu);
+}
+
+/* [PRE-2] the family and components the constructors took, read back by the
+ * same layout rule, so every address reads as the call that built it. */
+void wf__body_socket_address_ip(wf_ip_address *result, const wf_value *address) {
+    unsigned index;
+    memset(result, 0, sizeof(*result));
+    if ((address->words[2] & WF_SOCKET_FAMILY_V6) != 0) {
+        result->tag = WF_IP_ADDRESS_V6;
+        for (index = 0; index < 8u; index++) {
+            result->v6.groups[index] =
+                (uint16_t)((wf_address_byte(address, 2u * index) << 8)
+                           | wf_address_byte(address, 2u * index + 1u));
+        }
+    } else {
+        result->tag = WF_IP_ADDRESS_V4;
+        for (index = 0; index < 4u; index++) {
+            result->v4.octets[index] = (uint8_t)wf_address_byte(address, index);
+        }
+    }
+}
+
+uint16_t wf__body_socket_address_port(const wf_value *address) {
+    return (uint16_t)(address->words[2] & WF_SOCKET_PORT_MASK);
+}
+
 static int wf_descriptor(const wf_value *value) { return (int)value->words[0]; }
 
 static void wf_descriptor_value(wf_value *value, int descriptor) {
@@ -1734,6 +1766,25 @@ void wf__body_tcp_accept(wf_accept_result *result, wf_value *factory, wf_value *
     wf_host_operation operation;
     if (wf__body_tcp_accept_start(result, factory, listener, deadline, cancel, &operation))
         wf__body_tcp_accept_finish(result, factory, listener, deadline, cancel, &operation);
+}
+
+/* [PRE-2] the host's report of the connection's own endpoint. Both halves of
+ * one connection carry its one descriptor, which stays open until the second
+ * half-close, so a live receiving half always names an open socket. The query
+ * spends no handle credit and changes neither half. */
+void wf__body_local_address(wf_open_result *result, const wf_value *receive) {
+    uint64_t low, high;
+    uint32_t tag;
+    int error = wf__completion_socket_local_address(wf_descriptor(receive), &low, &high, &tag);
+    memset(result, 0, sizeof(*result));
+    if (error != 0) {
+        result->tag = 1;
+        wf_error(&result->err.error, error, 10);
+        return;
+    }
+    result->ok.value.words[0] = low;
+    result->ok.value.words[1] = high;
+    result->ok.value.words[2] = tag;
 }
 
 void wf__body_cancel_source(wf_cancel_handle *result) {
