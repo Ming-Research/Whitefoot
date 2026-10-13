@@ -574,7 +574,8 @@ def local_frame_verdict(rows):
                    or re.match(r"^enter\b", row["instruction"])) and row["Ir"] > 0]
     unknown = [row for row in rows if row["Ir"] > 0 and
                (re.match(r"^(lea|mov|and)\s+rsp,", row["instruction"]) or
-                re.match(r"^push\s+(?!rbp$)", row["instruction"]) or
+                (re.match(r"^push\b", row["instruction"]) and
+                 not re.fullmatch(r"push\s+rbp\s*", row["instruction"])) or
                 re.search(r"\[rsp(?:[+\-\]])", row["instruction"]) or
                 re.match(r"^mov\s+rbp,rsp$", row["instruction"]))]
     active = any(row["Ir"] > 0 for row in rows)
@@ -624,13 +625,22 @@ def self_test():
         raise ValueError("all-zero missing arm activity must not prove pin coldness")
     if local_frame_verdict(absent)["status"] != "UNVERIFIED" or entry_frame_verdict(absent)["status"] != "UNVERIFIED":
         raise ValueError("all-zero frame fixtures must not pass")
-    if local_frame_verdict(good)["status"] != "PASS":
-        raise ValueError("RBP-only fixture may pass local-allocation criterion")
+    for separator in (" ", "   ", "\t", " \t  "):
+        rbp_only = [{"address": "0x20", "instruction": "push" + separator + "rbp", "Ir": 7},
+                    {"address": "0x30", "instruction": "pop" + separator + "rbp", "Ir": 7}]
+        if local_frame_verdict(rbp_only)["status"] != "PASS":
+            raise ValueError("RBP-only push/pop must pass local-allocation criterion regardless of whitespace")
+        if entry_frame_verdict(rbp_only[:1])["status"] != "FAIL":
+            raise ValueError("RBP push must fail stronger full-frame criterion")
+        if local_frame_verdict([dict(row, Ir=0) for row in rbp_only])["status"] != "UNVERIFIED":
+            raise ValueError("all-zero RBP-only activity must stay unverified")
+        for operand in ("rax", "rbp1"):
+            other_push = {"address": "0x40", "instruction": "push" + separator + operand, "Ir": 1}
+            if local_frame_verdict(rbp_only + [other_push])["status"] != "UNVERIFIED":
+                raise ValueError("non-RBP push must stay unverified regardless of whitespace")
     for instruction in ("sub    rsp,0x80", "add    rsp,0x80"):
-        if local_frame_verdict(good + [{"address": "0x40", "instruction": instruction, "Ir": 1}])["status"] != "FAIL":
+        if local_frame_verdict(rbp_only + [{"address": "0x40", "instruction": instruction, "Ir": 1}])["status"] != "FAIL":
             raise ValueError("hot local allocation/deallocation must fail")
-    if entry_frame_verdict([good[1]])["status"] != "FAIL":
-        raise ValueError("RBP push must fail stronger full-frame criterion")
     if local_frame_verdict([])["status"] != "UNVERIFIED":
         raise ValueError("missing arm must not pass")
     red_zone = [{"address": "0x50", "instruction": "mov    QWORD PTR [rsp-0x8],r8", "Ir": 1}]
