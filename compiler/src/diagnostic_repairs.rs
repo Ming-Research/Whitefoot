@@ -2,6 +2,12 @@
 
 pub(crate) const BOOLEAN_OPERATION_FIX: &str = "write `band(a, b)` for boolean conjunction and `bor(a, b)` for boolean disjunction; both operations are eager, so bind computed operands first with `let` in a body or `define` in a contract block [OP-1, GRAM-5, GRAM-9]";
 
+/// RANGE-1's repair for `&&` and `||`, selected by the grammar position of a
+/// `range_clause`, where `band` and `bor` are calls and so are not admitted.
+pub(crate) const RANGE1_BOOLEAN_AND_FIX: &str = "a range clause admits no call, so `band` is not available there; join Bool tests with commas, each a variant relation testing one Bool datum, as in `when nodes^[k] is True, flags^[k] is True:`, and the same commas join conclusions [RANGE-1, GRAM-5]";
+
+pub(crate) const RANGE1_BOOLEAN_OR_FIX: &str = "a range clause admits no call and has no disjunction, so `bor` and `||` are not available there; state a disjunctive guard as one range clause per disjunct with the same conclusion, as in `when nodes^[k] is True:` and `when flags^[k] is True:`, and a disjunctive conclusion has no range spelling [RANGE-1, GRAM-5]";
+
 pub(crate) const CHARACTER_SUFFIX_FIX: &str = "write a character literal with its mandatory suffix: `u8` for ASCII or `u32` for any Unicode scalar, such as `'a'_u8` [FORM-5, FORM-7]";
 
 pub(crate) const DECIMAL_INTEGER_FIX: &str = "write an integer literal in decimal with its mandatory type suffix, such as `255_u32` [FORM-5, FORM-7]";

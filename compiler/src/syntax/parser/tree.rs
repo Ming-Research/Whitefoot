@@ -49,4 +49,8 @@ pub(crate) struct Frame {
     /// descended into an `expr`, and one diagnostic repair — GRAM-9's — differs
     /// between a body and a contract block.
     pub(crate) in_contract: bool,
+    /// Whether this frame or any frame enclosing it is a `range_clause`.
+    ///
+    /// [RANGE-1] forms no call, so the repair for `&&` and `||` differs there.
+    pub(crate) in_range: bool,
 }

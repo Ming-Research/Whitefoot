@@ -1,14 +1,35 @@
 //! Repairs selected by a rejected lexical spelling, without changing its owner or span.
 
 use crate::SourceIssueKind;
-use crate::diagnostic_repairs::{BOOLEAN_OPERATION_FIX, lowercase_name};
+use crate::diagnostic_repairs::{BOOLEAN_OPERATION_FIX, RANGE1_BOOLEAN_OR_FIX, lowercase_name};
+
+/// Whether the current `;`-, `{`- or `}`-delimited item text, before a `||` the
+/// lexer rejects, already holds the `forall` that opens a RANGE-1 clause.
+/// The lexer has no grammar frame, so this is the one place the position is
+/// read from bytes.
+fn in_range_clause(bytes: &[u8], start: usize) -> bool {
+    let item_start = bytes[..start]
+        .iter()
+        .rposition(|byte| matches!(byte, b';' | b'{' | b'}'))
+        .map_or(0, |index| index + 1);
+    bytes[item_start..start]
+        .split(|byte| !byte.is_ascii_alphanumeric() && *byte != b'_')
+        .any(|word| word == b"forall")
+}
 
 pub(crate) fn raw_fix(bytes: &[u8], start: usize, kind: SourceIssueKind) -> Option<String> {
     if kind != SourceIssueKind::UnexpectedByte {
         return None;
     }
     if bytes.get(start..)?.starts_with(b"||") {
-        return Some(BOOLEAN_OPERATION_FIX.to_owned());
+        return Some(
+            if in_range_clause(bytes, start) {
+                RANGE1_BOOLEAN_OR_FIX
+            } else {
+                BOOLEAN_OPERATION_FIX
+            }
+            .to_owned(),
+        );
     }
     if bytes.get(start) != Some(&b'_') {
         return None;

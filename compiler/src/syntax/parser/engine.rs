@@ -132,6 +132,8 @@ impl<'classified> Parser<'classified> {
         })?;
         let in_contract = self.frames.last().is_some_and(|frame| frame.in_contract)
             || production == Production::ContractBlock;
+        let in_range = self.frames.last().is_some_and(|frame| frame.in_range)
+            || production == Production::RangeClause;
         self.frames.push(Frame {
             production,
             element_start: self.elements.len(),
@@ -139,6 +141,7 @@ impl<'classified> Parser<'classified> {
             extent: None,
             atom_only,
             in_contract,
+            in_range,
         });
         Ok(())
     }
@@ -172,6 +175,7 @@ impl<'classified> Parser<'classified> {
             production: frame.production,
             atom_only: frame.atom_only,
             in_contract: frame.in_contract,
+            in_range: frame.in_range,
             infix_operand: self
                 .frames
                 .iter()

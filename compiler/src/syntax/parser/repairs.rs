@@ -5,7 +5,7 @@ use crate::ClassifiedToken;
 use crate::diagnostic_repairs::{
     ALIAS_FIX, ARRAY_FIX, BOOLEAN_OPERATION_FIX, BORROW_MUT_FIX, EFFECT_ROW_FIX, ENTRY_FIX,
     FLAT_OPERATION_FIX, GRAPH_FIX, INVARIANT_FIX, LET_MUT_FIX, LET_TYPE_FIX, LOOP_FIX,
-    MATCH_BINDER_FIX, VALUE_MATCH_FIX,
+    MATCH_BINDER_FIX, RANGE1_BOOLEAN_AND_FIX, VALUE_MATCH_FIX,
 };
 use crate::syntax::grammar::{LookaheadPredicate, Production};
 use crate::syntax::terminal::{FixedTerminal as F, TerminalPredicate as T};
@@ -175,7 +175,11 @@ pub(super) fn attach(
         } else if at(boundary, F::Ampersand)
             && (at(boundary + 1, F::Ampersand) || previous(1, F::Ampersand))
         {
-            Some(BOOLEAN_OPERATION_FIX)
+            Some(if context.in_range {
+                RANGE1_BOOLEAN_AND_FIX
+            } else {
+                BOOLEAN_OPERATION_FIX
+            })
         } else if !context.in_contract
             && at(boundary, F::LeftBracket)
             && (in_expression

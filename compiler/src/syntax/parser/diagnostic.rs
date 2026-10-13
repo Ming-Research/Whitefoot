@@ -55,6 +55,8 @@ pub(crate) struct ProbeContext {
     /// `contract_define`. The grammar position decides which, so it is read
     /// from the open frames and never from the text of the offending line.
     pub(crate) in_contract: bool,
+    /// An open production frame is a `range_clause`, whose relations admit no call.
+    pub(crate) in_range: bool,
     /// The nearest atom-bearing grammar role is an `infix_tail` operand.
     pub(crate) infix_operand: bool,
     /// The preceding completed statement has a value-match initializer.
@@ -974,6 +976,8 @@ fn probe(
                             atom_only: node.is_atom_only_reference(),
                             in_contract: task_context.in_contract
                                 || production == Production::ContractBlock,
+                            in_range: task_context.in_range
+                                || production == Production::RangeClause,
                             infix_operand: match production {
                                 Production::InfixTail => true,
                                 Production::Psuffix

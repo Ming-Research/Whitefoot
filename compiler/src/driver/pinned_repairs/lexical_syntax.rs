@@ -227,4 +227,46 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "#],
     },
+    RepairPair {
+        name: "range-boolean-disjunction.wf",
+        rejected: br#"struct Node {
+  live: Bool;
+  open: Bool;
+  slot: u64;
+}
+
+fn inspect(nodes: &Slots<Node, 1>) -> result: unit reads(nodes) contract {
+  requires nodes^.len == 1_u64;
+  requires forall held(k in 0_u64..nodes^.len) when nodes^[k].live is True || nodes^[k].open is True: nodes^[k].slot == 0_u64;
+} {
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "FORM-1",
+        sentences: &[
+            "\n  mechanical_fix: a range clause admits no call and has no disjunction, so `bor` and `||` are not available there; state a disjunctive guard as one range clause per disjunct with the same conclusion, as in `when nodes^[k] is True:` and `when flags^[k] is True:`, and a disjunctive conclusion has no range spelling [RANGE-1, GRAM-5]\n",
+        ],
+        repaired: &[br#"struct Node {
+  live: Bool;
+  open: Bool;
+  slot: u64;
+}
+
+fn inspect(nodes: &Slots<Node, 1>) -> result: unit reads(nodes) contract {
+  requires nodes^.len == 1_u64;
+  requires forall held_live(k in 0_u64..nodes^.len) when nodes^[k].live is True: nodes^[k].slot == 0_u64;
+  requires forall held_open(k in 0_u64..nodes^.len) when nodes^[k].open is True: nodes^[k].slot == 0_u64;
+} {
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
 ];
