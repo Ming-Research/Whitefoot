@@ -124,10 +124,10 @@ jobs:
   gate:
     needs: groups
     if: needs.groups.outputs.run == 'true'
-    name: ${{ matrix.stage }} (${{ matrix.os }})
+    name: ${{ matrix.stage.name }} (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    # This bounds a job, never a language verdict. Corpus assertions now share
-    # one executable and job; phase logs distinguish construction from runs.
+    # This bounds a job, never a language verdict. Each shard builds its own
+    # targets; phase logs distinguish construction from runs.
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -172,7 +172,7 @@ jobs:
       # checkout. Work branches use their fork point; manual main runs use
       # the first parent. Missing bases fail instead of skipping the check.
       - name: Select the design review base
-        if: matrix.stage == 'static'
+        if: matrix.stage.group == 'static'
         env:
           PUSH_BEFORE: ${{ github.event.before }}
         run: |
@@ -259,14 +259,15 @@ jobs:
       # its output is not a terminal, which arrives at the runner as the whole
       # stage completing in one instant and destroys the timestamps the raw log
       # is read for.
-      - name: ${{ matrix.stage }}
+      - name: ${{ matrix.stage.name }}
         env:
           STAGE_LOG: ${{ runner.temp }}/stage.log
-          CHECK_GROUP: ${{ matrix.stage }}
+          CHECK_GROUP: ${{ matrix.stage.group }}
+          CHECK_SHARD: ${{ matrix.stage.shard }}
           WHITEFOOT_CHECK_TIMEOUT: 900
         run: |
           set -o pipefail
-          make check-group GROUP="$CHECK_GROUP" 2>&1 | perl -MTime::HiRes=time -e '
+          make check-group GROUP="$CHECK_GROUP" SHARD="$CHECK_SHARD" 2>&1 | perl -MTime::HiRes=time -e '
             open(my $stamped, ">", $ENV{STAGE_LOG}) or die "$ENV{STAGE_LOG}: $!";
             $| = 1;
             while (my $line = <STDIN>) {
@@ -285,12 +286,12 @@ jobs:
       # job it has — a case that goes from milliseconds to minutes closes a
       # minutes-long gap on any host — and it costs no test time, which a real
       # per-case measurement on stable Rust would.
-      - name: Ten largest gaps in ${{ matrix.stage }}
+      - name: Ten largest gaps in ${{ matrix.stage.name }}
         if: always()
         run: |
           test -s "$RUNNER_TEMP/stage.log" || exit 0
           {
-            echo "### ${{ matrix.stage }} (${{ matrix.os }}) — ten largest completion gaps"
+            echo "### ${{ matrix.stage.name }} (${{ matrix.os }}) — ten largest completion gaps"
             echo
             echo 'Seconds between one case reporting and the previous one, so a lower'
             echo 'bound on the wall of the case that closed the gap.'
@@ -312,7 +313,7 @@ jobs:
         run: |
           if [ -s "$WHITEFOOT_TIME_BUDGET_RECORD" ]; then
             {
-              echo "### ${{ matrix.stage }} (${{ matrix.os }}) — time budget reports"
+              echo "### ${{ matrix.stage.name }} (${{ matrix.os }}) — time budget reports"
               echo
               echo '```text'
               cat "$WHITEFOOT_TIME_BUDGET_RECORD"
@@ -341,7 +342,7 @@ jobs:
           GATE_GROUPS: ${{ needs.groups.outputs.groups }}
         run: |
           set -euo pipefail
-          groups=$(jq -er '.[]' <<< "$GATE_GROUPS")
+          groups=$(jq -er '.[].name' <<< "$GATE_GROUPS")
           test -n "$groups"
           # Only jobs of this workflow's runs for the revision count; a job
           # re-run in a later attempt or run supersedes the earlier one.
@@ -353,7 +354,7 @@ jobs:
               --jq '.jobs[] | select(.completed_at != null) | [.completed_at, .name, .conclusion] | @tsv' >> "$RUNNER_TEMP/jobs.tsv"
           done
           missing=0
-          for group in $groups; do
+          while IFS= read -r group; do
             for os in ubuntu-24.04 macos-15; do
               name="$group ($os)"
               conclusion=$(sort -r "$RUNNER_TEMP/jobs.tsv" | awk -F '\t' -v name="$name" '$2 == name && found == "" { found = $3 } END { print found }')
@@ -364,7 +365,7 @@ jobs:
                 missing=1
               fi
             done
-          done
+          done <<< "$groups"
           if [ "$missing" -ne 0 ]; then
             echo "::error::$HEAD_SHA is not green on both platforms"
             exit 1

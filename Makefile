@@ -21,6 +21,9 @@ RESEARCH_CARGO_TARGET := $(WHITEFOOT_SCRATCH_ROOT)/whitefoot-research-tests-targ
 # The _check-<group> recipes below own the commands on both paths. CI reads
 # check-groups and invokes check-group; it keeps no second command inventory.
 CHECK_GROUPS := static unit corpus runtime
+CHECK_SHARDS_unit := 3
+CHECK_SHARDS_corpus := 3
+SHARD ?= 1/1
 ifeq ($(strip $(CHECK_GROUPS)),)
 $(error the correctness group inventory must not be empty)
 endif
@@ -44,7 +47,7 @@ _check:
 	@echo "correctness groups: $(CHECK_GROUPS)"
 	@for group in $(CHECK_GROUPS); do \
 		started=$$(date +%s); \
-		$(MAKE) --no-print-directory check-group GROUP="$$group" || exit 1; \
+		$(MAKE) --no-print-directory check-group GROUP="$$group" SHARD=1/1 || exit 1; \
 		printf '%-28s %6d s\n' "$$group" "$$(( $$(date +%s) - started ))" \
 			>> "$(STAGE_DIR)/summary"; \
 	done
@@ -57,12 +60,20 @@ _check:
 # CHECK_GROUPS, not generated source or another list to maintain.
 check-groups:
 	@printf '['; separator=''; \
-	for group in $(CHECK_GROUPS); do \
-		printf '%s"%s"' "$$separator" "$$group"; separator=,; \
+	for entry in $(foreach group,$(CHECK_GROUPS),$(group):$(if $(filter undefined,$(origin CHECK_SHARDS_$(group))),1,$(CHECK_SHARDS_$(group)))); do \
+		group=$${entry%:*}; count=$${entry#*:}; \
+		perl .github/shard-tests.pl --validate "1/$$count" || exit 1; \
+		shard=1; while test "$$shard" -le "$$count"; do \
+			name="$$group"; test "$$count" -eq 1 || name="$$group $$shard/$$count"; \
+			printf '%s{"group":"%s","shard":"%s/%s","name":"%s"}' \
+				"$$separator" "$$group" "$$shard" "$$count" "$$name"; separator=,; \
+			shard=$$((shard + 1)); \
+		done; \
 	done; printf ']\n'
 
 check-group:
 	@$(if $(and $(filter 1,$(words $(GROUP))),$(filter $(CHECK_GROUPS),$(GROUP))),:,$(error GROUP must name one correctness group from: $(CHECK_GROUPS)))
+	@perl .github/shard-tests.pl --validate "$(SHARD)"
 	@$(CHECK_RUN) "check/$(GROUP)" $(MAKE) --no-print-directory "_check-$(GROUP)"
 
 .PHONY: _check-static

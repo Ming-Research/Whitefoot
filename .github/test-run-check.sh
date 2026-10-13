@@ -2,6 +2,7 @@
 # Exercise the gate wrapper's ownership and exit-status boundaries cheaply.
 set -eu
 runner=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)/run-check.pl
+shards=${runner%/*}/shard-tests.pl
 work=$(mktemp -d "${TMPDIR:-/tmp}/whitefoot-check-test.XXXXXX")
 holder=
 cleanup() {
@@ -9,6 +10,119 @@ cleanup() {
     rm -rf "$work"
 }
 trap cleanup EXIT
+
+test_shards() {
+    # Compare each shard with an independent zero-based round-robin oracle,
+    # then check the union, multiplicity and the unsharded identity.
+    printf '%s\n' A a aa b c d e f g h i j k l m z > "$work/names"
+    n=1
+    while test "$n" -le 5; do
+        : > "$work/union"
+        i=1
+        while test "$i" -le "$n"; do
+            perl "$shards" --partition "$i/$n" < "$work/names" > "$work/selected"
+            awk -v i="$i" -v n="$n" '(NR - 1) % n == i - 1' "$work/names" > "$work/expected"
+            cmp "$work/expected" "$work/selected"
+            cat "$work/selected" >> "$work/union"
+            i=$((i + 1))
+        done
+        LC_ALL=C sort "$work/union" > "$work/sorted"
+        cmp "$work/names" "$work/sorted"
+        n=$((n + 1))
+    done
+    perl "$shards" --partition 1/1 < "$work/names" > "$work/identity"
+    cmp "$work/names" "$work/identity"
+    printf '%s\n' z a A aa > "$work/unsorted"
+    printf '%s\n' A a aa z > "$work/expected"
+    perl "$shards" --partition 1/1 < "$work/unsorted" > "$work/selected"
+    cmp "$work/expected" "$work/selected"
+    for bad in 0/3 4/3 1/0 1 1/2/3 ''; do
+        if perl "$shards" --validate "$bad" > "$work/invalid.log" 2>&1; then exit 1; fi
+        grep -q 'SHARD must be' "$work/invalid.log"
+    done
+
+    # Stand in for Cargo without compiling or running a real test. Ignored
+    # names have the same list spelling as ordinary names, as libtest emits.
+    cat > "$work/cargo-stand-in" <<'CARGO'
+#!/usr/bin/env perl
+use strict;
+use warnings;
+use Cwd qw(getcwd);
+use JSON::PP qw(encode_json);
+open my $log, '>>', $ENV{SHARD_ARGV} or die $!;
+print {$log} join("\t", @ARGV), "\n";
+close $log;
+if ($ARGV[0] eq 'metadata') {
+    my $root = getcwd();
+    print encode_json({workspace_root => $root, packages => [
+        {manifest_path => "$root/Cargo.toml", targets => [
+            {kind => ['lib'], name => 'whitefoot'},
+            {kind => ['bin'], name => 'whitefootc', test => 1},
+            {kind => ['test'], name => 'corpus', test => 1},
+            {kind => ['test'], name => 'discovered', test => 0},
+        ]},
+    ]});
+    exit 0;
+}
+my @names = qw(a::test b::test c::test d::ignored e::test f::test g::test);
+my $target = '';
+for my $i (0 .. $#ARGV - 1) {
+    $target = $ARGV[$i + 1] if $ARGV[$i] eq '--bin' || $ARGV[$i] eq '--test';
+}
+@names = qw(a::test d::ignored) if $target eq 'whitefootc';
+@names = () if $target eq 'discovered';
+my ($tail) = grep { $ARGV[$_] eq '--' } 0 .. $#ARGV;
+defined $tail or die 'missing test arguments';
+my @args = @ARGV[$tail + 1 .. $#ARGV];
+if ($args[0] eq '--list') {
+    join(' ', @args) eq '--list --format terse' or die 'wrong list command';
+    print "$_: test\n" for @names;
+    exit 0;
+}
+shift(@args) eq '--exact' or die 'missing exact filters';
+my %selected = map { $_ => 1 } @args;
+my @ran = grep { $selected{$_} } @names;
+my $ignored = grep { /ignored$/ } @ran;
+my $passed = @ran - $ignored;
+my $mode = $ENV{SHARD_RESULT} // '';
+exit 0 if $mode eq 'missing';
+$passed++ if $mode eq 'extra';
+$passed = $ignored = 0 if $mode eq 'unmatched';
+my $failed = $mode eq 'failed' ? $passed-- && 1 : 0;
+my $summary = "test result: " . ($failed ? 'FAILED' : 'ok')
+    . ". $passed passed; $failed failed; $ignored ignored; 0 measured; 0 filtered out; finished in 0.00s\n";
+print $summary;
+print $summary if $mode eq 'duplicate';
+exit($failed ? 17 : 0);
+CARGO
+    chmod +x "$work/cargo-stand-in"
+    SHARD_ARGV=$work/shard.argv
+    export SHARD_ARGV
+    : > "$SHARD_ARGV"
+    perl "$shards" unit 1/3 "$work/cargo-stand-in" > "$work/shard-unit.log"
+    grep -q 'selected 3 of 7 names' "$work/shard-unit.log"
+    grep -q '2 passed; 0 failed; 1 ignored;' "$work/shard-unit.log"
+    grep -q 'completeness checked: 3 reported' "$work/shard-unit.log"
+    perl "$shards" corpus 1/3 "$work/cargo-stand-in" > "$work/shard-corpus.log"
+    grep -q -- '--bin whitefootc 1/3 completeness checked: 1 reported' "$work/shard-corpus.log"
+    grep -q -- '--test corpus 1/3 completeness checked: 3 reported' "$work/shard-corpus.log"
+    grep -q -- '--test discovered 1/3 completeness checked: 0 reported' "$work/shard-corpus.log"
+    if grep -E -- '--(include-ignored|ignored)' "$SHARD_ARGV"; then exit 1; fi
+    for mode in unmatched extra missing duplicate failed; do
+        status=0
+        SHARD_RESULT=$mode perl "$shards" unit 1/3 "$work/cargo-stand-in" \
+            > "$work/shard-$mode.log" 2>&1 || status=$?
+        test "$status" -ne 0
+        case "$mode" in
+            unmatched|extra) grep -q 'completeness mismatch' "$work/shard-$mode.log" ;;
+            missing|duplicate) grep -q 'expected one libtest summary' "$work/shard-$mode.log" ;;
+            failed) test "$status" -eq 17; grep -q 'completeness checked: 3 reported' "$work/shard-$mode.log" ;;
+        esac
+    done
+    echo 'test shards: partition, exact filters, target discovery, ignored counts and completeness pass'
+}
+test_shards
+if test "${1:-}" = --shards-only; then exit 0; fi
 unset WHITEFOOT_CHECK_OWNER WHITEFOOT_TIME_BUDGET_RECORD WHITEFOOT_TIME_BUDGET_FILE WHITEFOOT_CPUINFO
 WHITEFOOT_CHECK_LOCK_DIR=$work/lock
 export WHITEFOOT_CHECK_LOCK_DIR

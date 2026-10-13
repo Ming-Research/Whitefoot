@@ -1,6 +1,8 @@
 CARGO := cargo
 .DELETE_ON_ERROR:
 CHECK_RUN := perl $(abspath ../.github/run-check.pl)
+SHARD ?= 1/1
+SHARD_RUN := perl $(abspath ../.github/shard-tests.pl)
 CC ?= cc
 LLVM_CC ?= clang
 WINDOWS_CC ?= x86_64-w64-mingw32-gcc
@@ -36,7 +38,7 @@ STAGE_DIR := $(WHITEFOOT_SCRATCH_ROOT)/whitefoot-gate-stages
 NO_CORE_DUMPS := ulimit -c 0;
 
 # Cargo discovers library/bin cases and all integration targets. No manually
-# enumerated sampling partition or redundant list-only Rust build is needed.
+# enumerated target list is needed; sharded runs list the already built tests.
 # Format and API-documentation commands remain available for focused authoring;
 # the correctness gate runs type/lint checks and executable assertions.
 COMPILER_STAGES := build lint test-build test-unit test-corpus completion-test
@@ -177,14 +179,24 @@ _test: test-build test-unit test-corpus
 
 # Private compiler obligations in the library's own test modules.
 test-unit:
+	@$(SHARD_RUN) --validate "$(SHARD)"
+ifeq ($(SHARD),1/1)
 	$(NO_CORE_DUMPS) $(CHECK_RUN) compiler/test-unit $(CARGO) test --profile gate --lib --locked --offline
+else
+	$(NO_CORE_DUMPS) $(CHECK_RUN) compiler/test-unit $(SHARD_RUN) unit "$(SHARD)" "$(CARGO)"
+endif
 
 # Every integration target is discovered by Cargo, so adding one cannot fall
 # out of a copied target list. The shared corpus owns programs, conformance,
 # canonical rendering and the CLI's own tests; no baseline compiler or timed
 # comparison is involved.
 test-corpus:
+	@$(SHARD_RUN) --validate "$(SHARD)"
+ifeq ($(SHARD),1/1)
 	$(NO_CORE_DUMPS) $(CHECK_RUN) compiler/test-corpus $(CARGO) test --profile gate --bins --test '*' --locked --offline
+else
+	$(NO_CORE_DUMPS) $(CHECK_RUN) compiler/test-corpus $(SHARD_RUN) corpus "$(SHARD)" "$(CARGO)"
+endif
 
 docs:
 	RUSTDOCFLAGS="-D warnings" $(CARGO) doc --no-deps --locked --offline
