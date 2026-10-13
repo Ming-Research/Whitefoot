@@ -28,7 +28,7 @@ mod state;
 mod term;
 mod work;
 
-pub(crate) use flow::operation_facts;
+pub(crate) use flow::{matching_requirement, operation_facts};
 
 pub(crate) use state::DerivationId;
 #[cfg(test)]
@@ -40,8 +40,8 @@ use term::TermId;
 
 #[cfg(test)]
 pub(crate) use state::{
-    CountedRootAtom, DerivationNode, DerivationRootKind, FlowEvent, FlowEventId, FlowEventKind,
-    GoalSign, ImplicitBoundKind, JoinParent, PostconditionCallDetail,
+    CountedRootAtom, DerivationNode, DerivationRootKind, ExclusionConclusion, FlowEvent,
+    FlowEventId, FlowEventKind, GoalSign, ImplicitBoundKind, JoinParent, PostconditionCallDetail,
     PostconditionDeliveryJoinDetail, RangeSeparationOrdering, Relation, TransportedHeaderRelation,
 };
 /// The mathematical value of a checked integer constant [ENT-2].

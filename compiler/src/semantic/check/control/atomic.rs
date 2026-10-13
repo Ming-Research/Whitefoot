@@ -336,12 +336,6 @@ impl Checker<'_, '_> {
                     aliases.push(other.binding);
                 }
             }
-            if aliases.len() > 1 {
-                self.body
-                    .range_facts
-                    .atomic_aliases
-                    .insert(node_path.clone());
-            }
             let reference = block_bindings
                 .get_mut(&declaration.id())
                 .and_then(|l| l.reference.as_mut())
@@ -539,6 +533,7 @@ impl Checker<'_, '_> {
                 compiler_updated: false,
                 read_only_state: false,
                 reference: Some(reference),
+                commit_target: None,
                 refinement_witnesses: Vec::new(),
                 handle_watch: None,
                 call_value: false,
