@@ -1318,8 +1318,11 @@ mod tests {
 
     #[test]
     fn unread_constructions_copies_and_returns_create_no_conditional_work() {
-        let source = br#"
-enum Outcome { Some(value: u64); None(); }
+        let source = br#"enum Outcome {
+  Some(value: u64);
+  None();
+}
+
 fn unread() -> result: Outcome pure {
   let original = Outcome::None();
   let copied = original;
@@ -1377,8 +1380,11 @@ fn unread() -> result: Outcome pure {
 
     #[test]
     fn route_demand_follows_copy_cycles_and_nested_value_deliveries() {
-        let source = br#"
-enum Outcome { Some(value: u64); None(); }
+        let source = br#"enum Outcome {
+  Some(value: u64);
+  None();
+}
+
 fn probe(flag: Bool) -> result: u64 pure {
   let dead = Outcome::None();
   let dead_copy = dead;
@@ -1386,12 +1392,22 @@ fn probe(flag: Bool) -> result: u64 pure {
   let copied = live;
   set live = copied;
   let delivered = if flag {
-    let nested = if flag { give copied; } else { give live; }
+    let nested = if flag {
+      give copied;
+    } else {
+      give live;
+    }
     give nested;
-  } else { give copied; }
+  } else {
+    give copied;
+  }
   match delivered {
-    Some(value: n) => { return n; }
-    None() => { return 0_u64; }
+    Some(value: n) => {
+      return n;
+    }
+    None() => {
+      return 0_u64;
+    }
   }
 }
 "#;

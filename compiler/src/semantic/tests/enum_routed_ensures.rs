@@ -129,14 +129,22 @@ fn a_nondata_generic_instance_is_refused_at_its_route_and_names_its_request() {
 
 #[test]
 fn unread_routed_call_keeps_its_required_conditional_root() {
-    let source = br#"
-enum Outcome { Some(value: u64); None(); }
+    let source = br#"enum Outcome {
+  Some(value: u64);
+  None();
+}
+
 fn make() -> result: Outcome pure contract {
   ensures when Some(value: n): n <= 7_u64;
-} { return Outcome::Some(value: 7_u64); }
+} {
+  return Outcome::Some(value: 7_u64);
+}
+
 fn discard(flag: Bool) -> result: unit pure {
   let unread = make();
-  if flag { set unread = Outcome::None(); }
+  if flag {
+    set unread = Outcome::None();
+  }
   return unit;
 }
 "#;
@@ -157,15 +165,24 @@ fn discard(flag: Bool) -> result: unit pure {
 
 #[test]
 fn future_match_retains_construction_exclusion_through_copy_and_join() {
-    let source = br#"
-enum Outcome { Some(value: u64); None(); }
+    let source = br#"enum Outcome {
+  Some(value: u64);
+  None();
+}
+
 fn read(value: u64, unknown: Outcome) -> result: u8 pure {
   let selected = Outcome::None();
-  if value <= 7_u64 { set selected = unknown; }
+  if value <= 7_u64 {
+    set selected = unknown;
+  }
   let copied = selected;
   match copied {
-    Some(value: ignored) => { return cvt::<u64, u8>(value); }
-    None() => { return 0_u8; }
+    Some(value: ignored) => {
+      return cvt::<u64, u8>(value);
+    }
+    None() => {
+      return 0_u8;
+    }
   }
 }
 "#;
@@ -179,13 +196,16 @@ fn read(value: u64, unknown: Outcome) -> result: u8 pure {
 
 #[test]
 fn a_call_requirement_retains_its_copied_argument_route() {
-    let source = br#"
-struct Span {
+    let source = br#"struct Span {
   low: u64;
   high: u64;
   invariant ordered(span): span.low <= span.high;
 }
-fn take(value: Option<Span>) -> result: u64 pure { return 0_u64; }
+
+fn take(value: Option<Span>) -> result: u64 pure {
+  return 0_u64;
+}
+
 fn caller() -> result: u64 pure {
   let span = Span(low: 2_u64, high: 9_u64);
   let made = Some<Span>(value: span);
