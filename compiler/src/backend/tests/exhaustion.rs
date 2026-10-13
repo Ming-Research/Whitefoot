@@ -1138,10 +1138,8 @@ fn darwin_indirect_helper_call(body: &str) -> bool {
                     loaded = operands.split(',').next().map(str::to_owned);
                 }
             }
-            Some("blr") => {
-                if loaded.is_some() && words.next() == loaded.as_deref() {
-                    return true;
-                }
+            Some("blr") if loaded.is_some() && words.next() == loaded.as_deref() => {
+                return true;
             }
             _ => {}
         }
