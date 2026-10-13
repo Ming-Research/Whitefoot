@@ -195,7 +195,7 @@ fn read(packet: &Packet) -> result: u64 reads(packet) {
 }
 
 fn main() -> status: std::process::ExitStatus pure {
-  let packet = Data(value: 7_u64);
+  let packet = Packet::Data(value: 7_u64);
   let copied = read(packet: &packet);
   return std::process::exit_status(code: 0_u8);
 }
@@ -226,7 +226,7 @@ fn read(packet: &Packet) -> result: u64 reads(packet) {
 }
 
 fn main() -> status: std::process::ExitStatus pure {
-  let packet = Data(value: 7_u64);
+  let packet = Packet::Data(value: 7_u64);
   let copied = read(packet: &packet);
   return std::process::exit_status(code: 0_u8);
 }
@@ -256,7 +256,7 @@ fn read(packet: &Packet) -> result: u64 reads(packet) {
 
 fn main() -> status: std::process::ExitStatus pure {
   let count = Count(number: 7_u64);
-  let packet = Data(value: count);
+  let packet = Packet::Data(value: count);
   let copied = read(packet: &packet);
   return std::process::exit_status(code: 0_u8);
 }
@@ -287,7 +287,7 @@ fn read(packet: &Packet) -> result: u64 reads(packet) {
 
 fn main() -> status: std::process::ExitStatus pure {
   let count = Count(number: 7_u64);
-  let packet = Data(value: count);
+  let packet = Packet::Data(value: count);
   let copied = read(packet: &packet);
   return std::process::exit_status(code: 0_u8);
 }
