@@ -1,4 +1,5 @@
 //! Call-entry substitution and storage-version writes [EFF-5, RANGE-2].
+use super::super::world::{CallFootprintLoss, WriteIndex};
 use super::*;
 use crate::semantic::model::CheckedEffectStep;
 use crate::semantic::places::WindowPart;
@@ -6,6 +7,12 @@ use crate::semantic::places::WindowPart;
 pub(super) enum Write {
     View(View),
     Descriptor(ContainerId, CheckedMeasure),
+    Elements {
+        container: ContainerId,
+        indices: Vec<WriteIndex>,
+        projection: Vec<CheckedRangeProjection>,
+        loss: Option<CallFootprintLoss>,
+    },
 }
 
 impl Walker<'_> {
@@ -23,6 +30,79 @@ impl Walker<'_> {
             return Write::View(View::Unknown);
         };
         let mut ty = parameter.ty;
+        match &view {
+            View::Run {
+                container,
+                barrier: Some(barrier),
+                ..
+            }
+            | View::Element {
+                container,
+                barrier: Some(barrier),
+                ..
+            }
+            | View::Unindexed {
+                container,
+                barrier: Some(barrier),
+                ..
+            } => {
+                let mut precise_values = values.to_vec();
+                let mut precise_view = view.clone();
+                match &mut precise_view {
+                    View::Run { barrier, .. }
+                    | View::Element { barrier, .. }
+                    | View::Unindexed { barrier, .. } => *barrier = None,
+                    _ => unreachable!(),
+                }
+                precise_values[ordinal] = Value::Ref(precise_view);
+                // Resolving a diagnostic-only suffix must not turn a fully
+                // captured containing range into an unsupported real write.
+                let saved_imprecise = self.imprecise_call.take();
+                let precise = self.call_write(state, callee, &precise_values, ordinal, steps, node);
+                let unresolved = self.imprecise_call.take().is_some();
+                self.imprecise_call = saved_imprecise;
+                let loss = match precise {
+                    Write::View(View::Element {
+                        indices,
+                        projection: Some(projection),
+                        ..
+                    }) => Some(CallFootprintLoss {
+                        frames: barrier.frames.clone(),
+                        indices: indices.into_iter().map(WriteIndex::Point).collect(),
+                        projection,
+                    }),
+                    Write::Elements {
+                        indices,
+                        projection,
+                        ..
+                    } => Some(CallFootprintLoss {
+                        frames: barrier.frames.clone(),
+                        indices,
+                        projection,
+                    }),
+                    _ => None,
+                };
+                let loss = if unresolved { None } else { loss };
+                let mut indices: Vec<_> = barrier
+                    .prefix
+                    .iter()
+                    .cloned()
+                    .map(WriteIndex::Point)
+                    .collect();
+                indices.push(WriteIndex::Range {
+                    start: barrier.start.clone(),
+                    end: barrier.end.clone(),
+                });
+                return Write::Elements {
+                    container: *container,
+                    indices,
+                    projection: barrier.projection.clone(),
+                    loss,
+                };
+            }
+            View::Unindexed { .. } => return self.call_region(state, view, ty, WriteIndex::Any),
+            _ => {}
+        }
         let mut range = parameter.mode.is_range();
         let actual = |declaration| {
             let ordinal = callee
@@ -34,7 +114,20 @@ impl Walker<'_> {
                 _ => None,
             }
         };
-        for (step_index, step) in steps.iter().enumerate() {
+        for step in steps {
+            // Function-formal rows currently retain their original offset
+            // declaration IDs in some instances. Such an unresolved index
+            // must widen the write, never omit it or name another argument.
+            let unresolved = match step {
+                CheckedEffectStep::Index(declaration) => actual(*declaration).is_none(),
+                CheckedEffectStep::Range { start, end } => {
+                    actual(*start).is_none() || actual(*end).is_none()
+                }
+                _ => false,
+            };
+            if unresolved {
+                self.imprecise_call.get_or_insert_with(|| node.clone());
+            }
             if let CheckedEffectStep::Measure(measure) = step {
                 return match view {
                     View::Place(location) => {
@@ -52,41 +145,26 @@ impl Walker<'_> {
                         container,
                         indices,
                         projection: Some(mut projection),
+                        barrier,
                     } => {
                         projection.push(CheckedRangeProjection::Measure(*measure));
                         Write::View(View::Element {
                             container,
                             indices,
                             projection: Some(projection),
+                            barrier,
                         })
                     }
-                    other => {
-                        self.imprecise_call.get_or_insert_with(|| node.clone());
-                        Write::View(other)
-                    }
+                    other => Write::View(other),
                 };
             }
-            let index = match step {
-                CheckedEffectStep::Index(declaration) => actual(*declaration),
-                CheckedEffectStep::Part(WindowPart::Next) => {
-                    // Appends expose only previously uninitialized tuples;
-                    // old range facts cannot describe those tuples. Shrinking
-                    // before appending also declares `last`/`filled`, whose
-                    // all-element write below discards the old live contents.
-                    let target = effect_target(&view);
-                    self.target_length(state, &target, ty)
-                }
-                _ => None,
-            };
-            if matches!(
-                step,
-                CheckedEffectStep::Index(_) | CheckedEffectStep::Part(WindowPart::Next)
-            ) {
-                let selected = index.and_then(|index| {
-                    self.goal_subscript(state, Value::Ref(view.clone()), ty, index)
-                });
+            if let CheckedEffectStep::Index(declaration) = step {
+                // A missing symbolic capture cannot establish separation.
+                // Retain a fresh unknown point rather than dropping its write.
+                let index = actual(*declaration)
+                    .unwrap_or_else(|| self.world.opaque(Some(IntegerType::U64)));
+                let selected = self.goal_subscript(state, Value::Ref(view.clone()), ty, index);
                 let Some(Value::Ref(selected)) = selected else {
-                    self.imprecise_call.get_or_insert_with(|| node.clone());
                     return Write::View(view);
                 };
                 view = selected;
@@ -98,35 +176,31 @@ impl Walker<'_> {
                 } else if let Some(element) = ty.storage_element() {
                     self.elements[element.0 as usize]
                 } else {
-                    self.imprecise_call.get_or_insert_with(|| node.clone());
                     return Write::View(view);
                 };
                 continue;
             }
-            if matches!(
-                step,
-                CheckedEffectStep::Range { .. }
-                    | CheckedEffectStep::Page(_)
-                    | CheckedEffectStep::Part(
-                        WindowPart::Last | WindowPart::Filled | WindowPart::Free
-                    )
-            ) {
-                // This version vocabulary has point writes, not interval or
-                // page writes. Retain the selected element's descriptor and
-                // siblings, but forget its entire element storage. Any proof
-                // left open after this widening is a compiler capability gap.
-                // WIN-2 makes every element overlap `last` and `filled`.
-                // A suffix or a narrower region needs a representation this
-                // walk does not have yet, so only those cases are widened.
-                if step_index + 1 != steps.len()
-                    || !matches!(
-                        step,
-                        CheckedEffectStep::Part(WindowPart::Last | WindowPart::Filled)
-                    )
-                {
-                    self.imprecise_call.get_or_insert_with(|| node.clone());
+            let region = match step {
+                CheckedEffectStep::Range { start, end } => Some(WriteIndex::Range {
+                    start: actual(*start)
+                        .unwrap_or_else(|| self.world.opaque(Some(IntegerType::U64))),
+                    end: actual(*end).unwrap_or_else(|| self.world.opaque(Some(IntegerType::U64))),
+                }),
+                CheckedEffectStep::Part(WindowPart::Next | WindowPart::Free) => {
+                    let target = effect_target(&view);
+                    self.target_length(state, &target, ty).map(WriteIndex::From)
                 }
-                return Write::View(self.effect_elements(state, view, ty));
+                CheckedEffectStep::Page(_)
+                | CheckedEffectStep::Part(WindowPart::Last | WindowPart::Filled) => {
+                    Some(WriteIndex::Any)
+                }
+                _ => None,
+            };
+            if let Some(region) = region {
+                // Range/index, page/index and part/index are OWN-7 barriers:
+                // an unseparated pair overlaps together with every descendant,
+                // so a field or subscript after this selector cannot separate.
+                return self.call_region(state, view, ty, region);
             }
             let selected = match (step, ty) {
                 (CheckedEffectStep::Field(field), CheckedType::Nominal(nominal)) => {
@@ -166,7 +240,6 @@ impl Walker<'_> {
                 _ => None,
             };
             let Some((step, selected_type)) = selected else {
-                self.imprecise_call.get_or_insert_with(|| node.clone());
                 return Write::View(view);
             };
             ty = selected_type;
@@ -176,61 +249,43 @@ impl Walker<'_> {
                     container,
                     indices,
                     projection: Some(mut projection),
+                    barrier,
                 } => {
                     projection.extend(super::super::world::owned_projection(&[step]).unwrap());
                     View::Element {
                         container,
                         indices,
                         projection: Some(projection),
+                        barrier,
                     }
                 }
                 other => {
-                    self.imprecise_call.get_or_insert_with(|| node.clone());
                     return Write::View(other);
                 }
             };
         }
-        if let View::Run {
-            container,
-            ref prefix,
-            ref offset,
-            ref length,
-        } = view
-        {
-            let complete_length = match prefix.as_slice() {
-                [] => Some(self.world.measure(
-                    container,
-                    state.generation(container),
-                    CheckedMeasure::Length,
-                )),
-                [row] => Some(self.world.segment_length(
-                    container,
-                    state.generation(container),
-                    row.clone(),
-                )),
-                _ => None,
-            };
-            if *offset != Linear::constant(0) || complete_length.as_ref() != Some(length) {
-                self.imprecise_call.get_or_insert_with(|| node.clone());
-            }
-            return Write::View(self.effect_elements(state, view, ty));
+        if matches!(view, View::Run { .. } | View::Unindexed { .. }) {
+            return self.call_region(state, view, ty, WriteIndex::Any);
         }
         Write::View(view)
     }
 
-    fn effect_elements(&mut self, state: &mut State, view: View, ty: CheckedType) -> View {
-        match view {
+    fn call_region(
+        &mut self,
+        state: &mut State,
+        view: View,
+        ty: CheckedType,
+        selected: WriteIndex,
+    ) -> Write {
+        let (container, mut indices, projection, selected) = match view {
             View::Element {
                 container,
                 indices,
                 projection: Some(mut projection),
+                ..
             } => {
                 projection.push(CheckedRangeProjection::Index(indices.len() as u32));
-                View::Element {
-                    container,
-                    indices,
-                    projection: Some(projection),
-                }
+                (container, indices, projection, selected)
             }
             View::Place(location) => {
                 let arity = if matches!(ty, CheckedType::Segments { .. }) {
@@ -238,23 +293,50 @@ impl Walker<'_> {
                 } else {
                     1
                 };
-                match state.container(&mut self.world, location, arity) {
-                    Some(container) => View::Element {
-                        container,
-                        indices: Vec::new(),
-                        projection: Some(Vec::new()),
-                    },
-                    None => View::Unknown,
-                }
+                let Some(container) = state.container(&mut self.world, location, arity) else {
+                    return Write::View(View::Unknown);
+                };
+                (container, Vec::new(), Vec::new(), selected)
             }
             View::Run {
-                container, prefix, ..
-            } => View::Element {
                 container,
-                indices: prefix,
-                projection: Some(Vec::new()),
-            },
-            other => other,
+                prefix,
+                projection,
+                offset,
+                length,
+                ..
+            } => {
+                let shifted = match selected {
+                    WriteIndex::Any => offset
+                        .plus(&length)
+                        .map(|end| WriteIndex::Range { start: offset, end }),
+                    WriteIndex::Range { start, end } => offset
+                        .plus(&start)
+                        .zip(offset.plus(&end))
+                        .map(|(start, end)| WriteIndex::Range { start, end }),
+                    WriteIndex::From(start) => offset.plus(&start).map(WriteIndex::From),
+                    WriteIndex::Point(index) => offset.plus(&index).map(WriteIndex::Point),
+                };
+                let Some(shifted) = shifted else {
+                    return Write::View(View::Unknown);
+                };
+                (container, prefix, projection, shifted)
+            }
+            View::Unindexed {
+                container,
+                indices,
+                projection,
+                ..
+            } => (container, indices, projection, WriteIndex::Any),
+            other => return Write::View(other),
+        };
+        let mut indices: Vec<_> = indices.drain(..).map(WriteIndex::Point).collect();
+        indices.push(selected);
+        Write::Elements {
+            container,
+            indices,
+            projection,
+            loss: None,
         }
     }
 
@@ -263,6 +345,31 @@ impl Walker<'_> {
             Write::Descriptor(container, written) => {
                 state.havoc_measure(&mut self.world, container, written);
             }
+            Write::Elements {
+                container,
+                indices,
+                projection,
+                loss,
+            } => {
+                state.havoc_elements(&mut self.world, container, indices, projection);
+                if let Some(loss) = loss {
+                    let version = state.version(&mut self.world, container);
+                    self.world.call_footprint_losses.insert(version, loss);
+                }
+            }
+            Write::View(View::Unindexed {
+                container,
+                indices,
+                projection,
+                ..
+            }) => {
+                state.havoc_elements(
+                    &mut self.world,
+                    container,
+                    indices.into_iter().map(WriteIndex::Point).collect(),
+                    projection,
+                );
+            }
             Write::View(View::Run { container, .. }) => {
                 state.havoc_container(&mut self.world, container, false);
             }
@@ -270,6 +377,7 @@ impl Walker<'_> {
                 container,
                 indices,
                 projection,
+                ..
             }) => {
                 state.write_element(
                     &mut self.world,
@@ -292,6 +400,7 @@ fn effect_target(view: &View) -> Target {
             container,
             indices,
             projection,
+            ..
         } => Target::Element {
             container: *container,
             indices: indices.clone(),
@@ -300,11 +409,14 @@ fn effect_target(view: &View) -> Target {
         View::Run {
             container,
             prefix,
+            projection,
             offset,
             length,
+            ..
         } => Target::Run {
             container: *container,
             prefix: prefix.clone(),
+            projection: projection.clone(),
             offset: offset.clone(),
             length: length.clone(),
         },

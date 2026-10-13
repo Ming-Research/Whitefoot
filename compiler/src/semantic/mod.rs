@@ -1611,7 +1611,8 @@ pub enum UnsupportedSemanticFeature {
     /// written set took more walks to settle, than the checker follows;
     /// RANGE-2 forgets only what the body can write.
     RangeLoopNesting,
-    /// A call write uses a region the range walk cannot yet version precisely.
+    /// A call's retained formal row has an unresolved index capture, or a
+    /// query needs a reference frame the range walk cannot version precisely.
     RangeCallFootprint,
     /// A range walk through atomic targets that may name the same shared object.
     /// The checker does not yet version these targets with their alias relation.

@@ -28,6 +28,6 @@ fn main() -> status: std::process::ExitStatus pure {
   doc "Instantiates the wider function formal with the narrower set_g actual.";
   let initial = Pair(f: 0_u64, g: 0_u64);
   let rows = array_filled::<Pair, 1>(value: initial);
-  probe::<set_g>(rows: &rows[0_u64..rows.len]);
+  probe::<fn set_g>(rows: &rows[0_u64..rows.len]);
   return std::process::exit_status(code: 0_u8);
 }

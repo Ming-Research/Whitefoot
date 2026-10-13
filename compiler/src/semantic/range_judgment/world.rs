@@ -85,6 +85,47 @@ pub(super) struct Container {
     pub(super) arity: usize,
 }
 
+/// One call-entry element selection in a write footprint [OWN-7, WIN-2].
+#[derive(Clone, Debug)]
+pub(super) enum WriteIndex {
+    Point(Linear),
+    Range { start: Linear, end: Linear },
+    From(Linear),
+    Any,
+}
+
+impl WriteIndex {
+    /// Exactly OWN-7's index/range separation questions, plus WIN-2's live
+    /// index question. A range's emptiness separates every descendant.
+    pub(super) fn separations(&self, index: Option<&Linear>) -> Vec<Literal> {
+        match (self, index) {
+            (Self::Point(at), Some(index)) => {
+                vec![Literal::new(index.clone(), Relation::NotEqual, at.clone())]
+            }
+            (Self::Range { start, end }, index) => {
+                let mut out = vec![Literal::new(
+                    end.clone(),
+                    Relation::LessEqual,
+                    start.clone(),
+                )];
+                if let Some(index) = index {
+                    out.push(Literal::new(index.clone(), Relation::Less, start.clone()));
+                    out.push(Literal::new(
+                        end.clone(),
+                        Relation::LessEqual,
+                        index.clone(),
+                    ));
+                }
+                out
+            }
+            (Self::From(start), Some(index)) => {
+                vec![Literal::new(index.clone(), Relation::Less, start.clone())]
+            }
+            _ => Vec::new(),
+        }
+    }
+}
+
 /// How one version of a container was made.
 #[derive(Clone, Debug)]
 pub(super) enum VersionDef {
@@ -104,6 +145,13 @@ pub(super) enum VersionDef {
         indices: Vec<Linear>,
         projection: Vec<CheckedRangeProjection>,
         values: BTreeMap<Vec<CheckedRangeProjection>, Stored>,
+    },
+    /// A call forgets every tuple its captured footprint may overlap,
+    /// keeping all tuples separated under OWN-7 and disjoint projections.
+    Havoc {
+        previous: VersionId,
+        indices: Vec<WriteIndex>,
+        projection: Vec<CheckedRangeProjection>,
     },
     /// Unknown writes at any tuple, retaining disjoint projections.
     Forget {
@@ -167,6 +215,7 @@ pub(super) struct World {
     pub(super) containers: Vec<Container>,
     container_index: HashMap<Location, ContainerId>,
     pub(super) versions: Vec<Version>,
+    pub(super) call_footprint_losses: HashMap<VersionId, CallFootprintLoss>,
     initial: HashMap<ContainerId, VersionId>,
     copies: HashMap<(ContainerId, ReadSource), (VersionId, u32)>,
     descriptor_copies: HashMap<(ContainerId, u32), ReadSource>,
@@ -541,6 +590,38 @@ pub(super) fn negated(literal: &Literal) -> Literal {
     Literal::new(literal.left.clone(), relation, literal.right.clone())
 }
 
+/// One captured range in a reference's ordered source path.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct RangeFrame {
+    pub(super) captured: super::super::places::CapturedRange,
+    pub(super) prefix: Vec<Linear>,
+    pub(super) projection: Vec<CheckedRangeProjection>,
+    pub(super) offset: Linear,
+    pub(super) start: Linear,
+    pub(super) end: Linear,
+}
+
+/// Diagnostic-only information about a call whose canonical store write lost
+/// a same-range path's suffix precision. It never changes read congruence.
+#[derive(Clone, Debug)]
+pub(super) struct CallFootprintLoss {
+    pub(super) frames: Vec<RangeFrame>,
+    pub(super) indices: Vec<WriteIndex>,
+    pub(super) projection: Vec<CheckedRangeProjection>,
+}
+
+/// The first captured range step that bounds a reference's write footprint.
+/// Reads keep their exact selected coordinates; OWN-7 stops a logical-index
+/// comparison at this containing range before considering later projections.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct RangeBarrier {
+    pub(super) frames: Vec<RangeFrame>,
+    pub(super) prefix: Vec<Linear>,
+    pub(super) projection: Vec<CheckedRangeProjection>,
+    pub(super) start: Linear,
+    pub(super) end: Linear,
+}
+
 /// What a reference names.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum View {
@@ -550,8 +631,10 @@ pub(super) enum View {
     Run {
         container: ContainerId,
         prefix: Vec<Linear>,
+        projection: Vec<CheckedRangeProjection>,
         offset: Linear,
         length: Linear,
+        barrier: Option<RangeBarrier>,
     },
     /// One element of a container.
     Element {
@@ -559,6 +642,16 @@ pub(super) enum View {
         indices: Vec<Linear>,
         /// None for a descendant outside the range projection vocabulary.
         projection: Option<Vec<CheckedRangeProjection>>,
+        barrier: Option<RangeBarrier>,
+    },
+    /// A page's or otherwise non-logically indexed run's call footprint.
+    /// Its logical elements all may overlap under OWN-7; this does not invent
+    /// a mapping from page-local reads to the container's logical indices.
+    Unindexed {
+        container: ContainerId,
+        indices: Vec<Linear>,
+        projection: Vec<CheckedRangeProjection>,
+        barrier: Option<RangeBarrier>,
     },
     /// A whole place.
     Place(Location),
@@ -630,6 +723,8 @@ pub(super) struct Guarded {
 #[derive(Clone, Debug, Default)]
 pub(super) struct State {
     pub(super) values: BTreeMap<BindingId, Value>,
+    /// Diagnostic provenance follows the current scalar binding, not an interned atom.
+    pub(super) binding_reads: BTreeMap<BindingId, Vec<super::facts::ReadProvenance>>,
     pub(super) slots: BTreeMap<Location, Slot>,
     /// Each container's current version; an absent one is at its initial.
     pub(super) versions: BTreeMap<ContainerId, VersionId>,
@@ -791,6 +886,28 @@ impl State {
         }
     }
 
+    pub(super) fn havoc_elements(
+        &mut self,
+        world: &mut World,
+        container: ContainerId,
+        indices: Vec<WriteIndex>,
+        projection: Vec<CheckedRangeProjection>,
+    ) {
+        let previous = self.version(world, container);
+        let version = world.new_version(VersionDef::Havoc {
+            previous,
+            indices,
+            projection: projection.clone(),
+        });
+        self.versions.insert(container, version);
+        if let Some(log) = &mut world.log {
+            log.projections
+                .entry(container)
+                .or_default()
+                .insert(projection);
+        }
+    }
+
     /// [ENT-5] give a relocated window a fresh capacity observation while
     /// retaining the current logical length and every element version.
     pub(super) fn relocate_container(&mut self, world: &mut World, container: ContainerId) {
@@ -935,6 +1052,7 @@ impl State {
     }
 
     pub(super) fn set_value(&mut self, world: &mut World, binding: BindingId, value: Value) {
+        self.binding_reads.remove(&binding);
         self.values.insert(binding, value);
         if let Some(log) = &mut world.log {
             log.bindings.insert(binding);
@@ -996,6 +1114,14 @@ pub(super) fn join_states(
         let Some(all) = all else {
             continue;
         };
+        if all.iter().all(|value| *value == all[0])
+            && let Some(reads) = first.binding_reads.get(binding)
+            && arms
+                .iter()
+                .all(|arm| arm.binding_reads.get(binding) == Some(reads))
+        {
+            out.binding_reads.insert(*binding, reads.clone());
+        }
         let value = join_values(world, join, &all, &arms, &mut out);
         out.values.insert(*binding, value);
     }

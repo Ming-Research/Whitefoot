@@ -1492,3 +1492,186 @@ fn direct_run_elements_report_the_undischarged_inner_bound() {
         });
     }
 }
+
+/// The scalar stored by `let` retains the diagnostic origin of this read;
+/// the source program is valid, but the canonical store lacks this frame's
+/// suffix precision. That limitation must not become an OP-4 rejection.
+#[test]
+fn a_same_range_field_loss_is_explicit_for_a_deferred_bound() {
+    for read_index in [
+        "let index = part^[0_u64].f;",
+        "let index = part^[0_u64].f;\n    if 1_u64 < rows^.len {\n    }",
+    ] {
+        let source = same_frame_projection_program(read_index);
+        super::assert_unsupported(
+            source.as_bytes(),
+            crate::UnsupportedSemanticFeature::RangeCallFootprint,
+        );
+    }
+}
+
+/// Two occurrences can intern the same mathematical read while only one
+/// comes through the captured range. An unused slice read must not change
+/// the root read's normative OP-4 failure into a capability result.
+#[test]
+fn an_unused_same_range_read_does_not_taint_a_root_bound() {
+    let source = same_frame_projection_program(
+        "let ignored = part^[0_u64].f;\n    let index = rows^[0_u64].f;",
+    );
+    assert_rule_kind(source.as_bytes(), SemanticRule::Op4, |kind| {
+        matches!(kind, SemanticIssueKind::UndischargedBoundsObligation { .. })
+    });
+}
+
+/// Restoring a forgotten sibling relationship is not evidence for a bound
+/// that never held. The diagnostic must prove the original failed query.
+#[test]
+fn a_same_range_write_does_not_hide_a_missing_entry_fact() {
+    let source = r#"struct Pair {
+  f: u64;
+  g: u64;
+}
+
+fn set_g(row: &Pair) -> result: unit writes(row.g) {
+  set row^.g = 9_u64;
+  return unit;
+}
+
+fn need_small(part: &[Pair]) -> result: unit pure contract {
+  requires forall small(k in 0_u64..part^.len): part^[k].f <= 7_u64;
+} {
+  return unit;
+}
+
+fn probe(rows: &[Pair]) -> result: unit writes(rows) contract {
+  requires 1_u64 <= rows^.len;
+} {
+  let part = &rows^[0_u64..1_u64];
+  set_g(row: &part^[0_u64]);
+  need_small(part: part);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    assert_rule_kind(source.as_bytes(), SemanticRule::Range3, |kind| {
+        matches!(kind, SemanticIssueKind::UndischargedRangeFact { .. })
+    });
+}
+
+/// Only the actual substituted for a requirement contributes its source
+/// path. Another actual can intern the same read without participating.
+#[test]
+fn an_unused_same_range_actual_does_not_taint_a_root_requirement() {
+    let source = same_frame_call_program("rows^[0_u64].f", "part^[0_u64].f");
+    assert_rule_kind(source.as_bytes(), SemanticRule::Fn8, |kind| {
+        matches!(kind, SemanticIssueKind::UndischargedCallRequirement(_))
+    });
+}
+
+/// Selecting the range-framed actual in the same argument list must still
+/// expose the implementation's missing frame precision explicitly.
+#[test]
+fn a_used_same_range_actual_keeps_its_requirement_provenance() {
+    let source = same_frame_call_program("part^[0_u64].f", "rows^[0_u64].f");
+    super::assert_unsupported(
+        source.as_bytes(),
+        crate::UnsupportedSemanticFeature::RangeCallFootprint,
+    );
+}
+
+/// A different comparison cannot lend its range spelling to the failed
+/// root comparison, even when both actuals have the same read atom.
+#[test]
+fn a_same_range_conjunct_does_not_taint_a_root_conjunct() {
+    for conjunction in [
+        "band(index_small, unused_small)",
+        "band(unused_small, index_small)",
+    ] {
+        let source = same_frame_call_program("rows^[0_u64].f", "part^[0_u64].f").replace(
+            "  requires index < 1_u64;",
+            &format!(
+                "  define index_small = index < 1_u64;\n  define unused_small = unused <= 7_u64;\n  requires {conjunction};",
+            ),
+        );
+        assert_rule_kind(source.as_bytes(), SemanticRule::Fn8, |kind| {
+            matches!(kind, SemanticIssueKind::UndischargedCallRequirement(_))
+        });
+    }
+}
+
+/// Every failed comparison must recover from its own range source. A
+/// comparison already proved from its type needs no restored definition.
+#[test]
+fn same_range_conjuncts_retain_their_independent_requirement_provenance() {
+    for (unused, bound) in [
+        ("part^[0_u64].f", "7_u64"),
+        ("rows^[0_u64].f", "18446744073709551615_u64"),
+    ] {
+        let source = same_frame_call_program("part^[0_u64].f", unused).replace(
+            "  requires index < 1_u64;",
+            &format!(
+                "  define index_small = index < 1_u64;\n  define unused_small = unused <= {bound};\n  requires band(index_small, unused_small);",
+            ),
+        );
+        super::assert_unsupported(
+            source.as_bytes(),
+            crate::UnsupportedSemanticFeature::RangeCallFootprint,
+        );
+    }
+}
+
+fn same_frame_call_program(index: &str, unused: &str) -> String {
+    same_frame_body_program(&format!("check_index(index: {index}, unused: {unused});")).replace(
+        "fn probe(",
+        r#"fn check_index(index: u64, unused: u64) -> result: unit pure contract {
+  requires index < 1_u64;
+} {
+  return unit;
+}
+
+fn probe("#,
+    )
+}
+
+fn same_frame_projection_program(read_index: &str) -> String {
+    same_frame_body_program(&format!(
+        "{read_index}\n    let data = array_filled::<u8, 1>(value: 0_u8);\n    let observed = data[index];",
+    ))
+}
+
+fn same_frame_body_program(body: &str) -> String {
+    r#"struct Pair {
+  f: u64;
+  g: u64;
+}
+
+fn set_g(row: &Pair) -> result: unit writes(row.g) {
+  set row^.g = 9_u64;
+  return unit;
+}
+
+fn probe(rows: &[Pair]) -> result: unit writes(rows) contract {
+  requires forall initial(k in 0_u64..rows^.len): rows^[k].f < 1_u64;
+  requires 1_u64 <= rows^.len;
+} {
+  let part = &rows^[0_u64..1_u64];
+  for (
+    k in 0_u64..1_u64,
+    invariant forall framed(q in 0_u64..part^.len): part^[q].f < 1_u64
+  ) {
+    set_g(row: &part^[0_u64]);
+    BODY
+    return unit;
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#
+    .replace("BODY", body)
+}

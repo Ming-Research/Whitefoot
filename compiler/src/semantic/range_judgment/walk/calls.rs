@@ -42,8 +42,10 @@ impl Walker<'_> {
         contract: Option<&crate::semantic::model::CheckedCallContract>,
     ) -> Value {
         let mut values = Vec::with_capacity(arguments.len());
+        let mut argument_reads = Vec::with_capacity(arguments.len());
         for argument in arguments {
             values.push(self.stored_value(state, argument));
+            argument_reads.push(self.last_reads.clone());
         }
         let Some(callee) = self.functions.get(function.0 as usize) else {
             self.forget_all(state, call);
@@ -73,14 +75,24 @@ impl Walker<'_> {
                 subject: requirement.subject,
             };
             if self.has_ordinary(call, &subject) {
-                let goal =
-                    self.goal_comparisons_with(state, &requirement.template.root, callee, &values);
-                self.ordinary_goal(
+                let goal = self.goal_comparisons_with(
+                    state,
+                    &requirement.template.root,
+                    callee,
+                    &values,
+                    &argument_reads,
+                );
+                self.ordinary_goal_with_reads(
                     state,
                     call,
                     &subject,
-                    goal.as_deref().map_err(|failure| *failure),
+                    goal.as_ref()
+                        .map(|goal| goal.literals.as_slice())
+                        .map_err(|failure| *failure),
                     Some(&[]),
+                    ordinary::GoalReads::PerComparison(
+                        goal.as_ref().map_or(&[], |goal| goal.reads.as_slice()),
+                    ),
                 );
             }
         }
@@ -320,7 +332,12 @@ impl Walker<'_> {
             variants,
             fields: vec![payload],
         };
-        self.owe_postconditions(&mut forked, Some(&returned), node, "a propagated error exit");
+        self.owe_postconditions(
+            &mut forked,
+            Some(&returned),
+            node,
+            "a propagated error exit",
+        );
     }
 
     /// [RANGE-3] the function's range postconditions an exit selects
