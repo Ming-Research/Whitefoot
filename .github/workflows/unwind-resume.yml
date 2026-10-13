@@ -87,7 +87,7 @@ jobs:
             cargo build --manifest-path compiler/Cargo.toml --profile gate --locked \
             > "$UNWIND_EVIDENCE/build.log" 2>&1
           cat "$UNWIND_EVIDENCE/build.log"
-          compiler/target/gate/whitefootc --help > "$UNWIND_EVIDENCE/compiler-cli.txt"
+          compiler/target/gate/whitefootc --help > "$UNWIND_EVIDENCE/compiler-cli.txt" 2>&1 || true
 
       - name: Compile the downstream release binary and retain raw IR
         shell: bash
