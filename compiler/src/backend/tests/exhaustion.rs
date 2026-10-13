@@ -155,7 +155,7 @@ pub(super) fn assert_stack_probes(module: &str) {
         "the module declares its one attribute group once:\n{module}"
     );
     assert!(
-        module.contains(&format!("attributes #0 = {{ {HOST_STACK_PROBE} }}")),
+        module.contains(&format!("attributes #0 = {{ {HOST_STACK_PROBE} uwtable }}")),
         "the group must name this host's probing helper:\n{module}"
     );
 }
