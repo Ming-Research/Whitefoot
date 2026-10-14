@@ -132,7 +132,11 @@ the work-branch and merge boundary.
 - [One object model for shared state](investigations/shared-object-model/DESIGN.md):
   the question, comparison and rejection criteria, fixed before any
   measurement, for a model of description plus identity covering the five
-  classes of shared-object conflict.
+  classes of shared-object conflict; superseded by
+  [one object per atomic statement](investigations/shared-object-model/ONE-OBJECT.md),
+  which makes the object the atomic domain, derives lock units from the
+  state's structure and moves cross-object interaction to instant cell
+  operations.
 - [Atomic targets as one form](investigations/atomic-targets/DESIGN.md): the
   target forms of the atomic statement designed together, present and
   pending (entries, key sets, shards, the atomic value, a target held only

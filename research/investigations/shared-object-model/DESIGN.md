@@ -1,5 +1,11 @@
 # One object model for shared state
 
+> **Superseded direction (2026-10-13).** The owner redirected this
+> investigation away from a proof-only handle identity: the root cause is the
+> multi-object atomic statement, not missing identity. The current study is
+> [ONE-OBJECT.md](ONE-OBJECT.md); this record is kept for its problem
+> statement and five classes.
+
 Status: question and criteria written before any measurement or design work.
 Board item `shared-object-model`; owner ruling on scope: option A of card
 `shared-object-model-scope` (2026-10-14), "description plus identity, all five
