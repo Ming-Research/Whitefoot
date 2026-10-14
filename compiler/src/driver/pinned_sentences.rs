@@ -1463,7 +1463,7 @@ fn main() -> status: std::process::ExitStatus pure {
     // Typed reference, field and Box-content steps retain their source spelling.
     Probe {
         name: "entry-box-content.wf",
-        source: br#"fn clear(cell: &Box<Slots<u8, 4>>) -> result: unit writes(cell) contract {
+        source: br#"fn wipe(cell: &Box<Slots<u8, 4>>) -> result: unit writes(cell) contract {
   ensures cell^.inner.len == entry(cell)^.inner.len;
 } {
   let empty = slots_new::<u8, 4>();
@@ -1485,7 +1485,7 @@ fn main() -> status: std::process::ExitStatus pure {
   storage: Box<Slots<u8, 4>>;
 }
 
-fn clear(cell: &Holder) -> result: unit writes(cell) contract {
+fn wipe(cell: &Holder) -> result: unit writes(cell) contract {
   ensures cell^.storage.inner.len == entry(cell)^.storage.inner.len;
 } {
   let empty = slots_new::<u8, 4>();

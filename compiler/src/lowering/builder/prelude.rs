@@ -64,6 +64,7 @@ impl IrBuilder<'_> {
             "remove_at" => self.row_remove_at(),
             "append" => self.row_append(),
             "split_off" => self.row_split_off(),
+            "clear" => self.row_clear(),
             "swap" => self.row_swap(),
             "free_empty" => self.row_free_empty(),
             "shared_new" => self.row_shared_new(),
@@ -705,6 +706,18 @@ impl IrBuilder<'_> {
             },
         )?;
         self.return_value(transferred)
+    }
+
+    /// `clear(window)`: every element's release in logical order, then
+    /// `window.len` becomes zero; storage, `cap`, a Ring's `head` and a
+    /// Paged's pages are kept [OP-10]. The release work is the element type's
+    /// own, selected by the backend from the one release classification
+    /// [PROV-6], so one operation serves every droppable element type.
+    fn row_clear(&mut self) -> Result<(), LoweringFailure> {
+        let [window] = self.row_parameters()?;
+        self.window_parameter(window)?;
+        let cleared = self.define(IrType::Unit, IrOperation::RunClear { run: window })?;
+        self.return_value(cleared)
     }
 
     // ---- [OP-11] and [OP-14] -------------------------------------------

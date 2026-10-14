@@ -1,0 +1,12 @@
+fn main() -> status: std::process::ExitStatus pure {
+  doc "OP-10, REF-2: a reference to the window itself names the window, not an element, so it survives clear and the window is refilled through it.";
+  let bytes = box_slots_new::<u8>(capacity: 4_u64);
+  let window = &bytes.inner;
+  place_back(window: window, value: 65_u8);
+  clear(window: window);
+  place_back(window: window, value: 66_u8);
+  if window^.len != 1_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

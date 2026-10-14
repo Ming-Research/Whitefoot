@@ -1,0 +1,155 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Bulky {
+  owned: Box<u8>;
+  padding: Array<u64, 100>;
+}
+
+fn clear_reuses_bytes() -> code: u8 pure {
+  doc "Fills a 64 KiB byte buffer, clears it and fills it again. The buffer is the one allocation this function makes: clear keeps its storage and the refill places into that storage.";
+  let bytes = box_slots_new::<u8>(capacity: 65536_u64);
+  for (
+    i in 0_u64..65536_u64,
+    invariant filling: bytes.inner.len == i
+  ) {
+    place_back(window: &bytes.inner, value: 7_u8);
+  }
+  invariant full: bytes.inner.len == 65536_u64;
+  if bytes.inner[65535_u64] != 7_u8 {
+    return 1_u8;
+  }
+  clear(window: &bytes.inner);
+  invariant empty: bytes.inner.len == 0_u64;
+  invariant retained: bytes.inner.cap == 65536_u64;
+  if bytes.inner.len != 0_u64 {
+    return 2_u8;
+  }
+  if bytes.inner.cap != 65536_u64 {
+    return 3_u8;
+  }
+  for (
+    i in 0_u64..65536_u64,
+    invariant refilling: bytes.inner.len == i
+  ) {
+    place_back(window: &bytes.inner, value: 9_u8);
+  }
+  invariant refilled: bytes.inner.len == 65536_u64;
+  if bytes.inner[0_u64] != 9_u8 {
+    return 4_u8;
+  }
+  if bytes.inner[65535_u64] != 9_u8 {
+    return 5_u8;
+  }
+  return 0_u8;
+}
+
+fn clear_releases_slots() -> code: u8 pure {
+  doc "Clears 32 boxed bytes out of a boxed Slots and refills it with 32 more. The ledger sees each box released exactly once, by clear for the first 32 and by scope release for the rest.";
+  let cells = box_slots_new::<Box<u8>>(capacity: 32_u64);
+  for (
+    i in 0_u64..32_u64,
+    invariant filling: cells.inner.len == i
+  ) {
+    let cell = box_new::<u8>(value: 1_u8);
+    place_back(window: &cells.inner, value: move cell);
+  }
+  clear(window: &cells.inner);
+  invariant empty: cells.inner.len == 0_u64;
+  invariant retained: cells.inner.cap == 32_u64;
+  for (
+    i in 0_u64..32_u64,
+    invariant refilling: cells.inner.len == i
+  ) {
+    let cell = box_new::<u8>(value: 2_u8);
+    place_back(window: &cells.inner, value: move cell);
+  }
+  invariant refilled: cells.inner.len == 32_u64;
+  if cells.inner[31_u64].inner != 2_u8 {
+    return 11_u8;
+  }
+  return 0_u8;
+}
+
+fn clear_releases_wrapped_ring() -> code: u8 pure {
+  doc "Clears a boxed Ring whose window wraps past the end of its storage. Its four boxes are released in window order from the origin, which stays where it was.";
+  let ring = box_ring_new::<Box<u8>>(capacity: 4_u64);
+  let a = box_new::<u8>(value: 1_u8);
+  place_back(window: &ring.inner, value: move a);
+  let b = box_new::<u8>(value: 2_u8);
+  place_back(window: &ring.inner, value: move b);
+  let c = box_new::<u8>(value: 3_u8);
+  place_back(window: &ring.inner, value: move c);
+  let d = box_new::<u8>(value: 4_u8);
+  place_back(window: &ring.inner, value: move d);
+  let first = take_front(window: &ring.inner);
+  let second = take_front(window: &ring.inner);
+  let e = box_new::<u8>(value: 5_u8);
+  place_back(window: &ring.inner, value: move e);
+  let f = box_new::<u8>(value: 6_u8);
+  place_back(window: &ring.inner, value: move f);
+  let origin = ring.inner.head;
+  clear(window: &ring.inner);
+  invariant empty: ring.inner.len == 0_u64;
+  if ring.inner.head != origin {
+    return 21_u8;
+  }
+  if first.inner != 1_u8 {
+    return 22_u8;
+  }
+  if second.inner != 2_u8 {
+    return 23_u8;
+  }
+  return 0_u8;
+}
+
+fn clear_releases_paged() -> code: u8 pure {
+  doc "Clears a boxed Paged of ten large elements, four to a page, so the release walk crosses two page boundaries; the refill uses the retained pages.";
+  let pad = array_filled::<u64, 100>(value: 0_u64);
+  let pages = box_paged_new::<Bulky>(capacity: 10_u64);
+  for (
+    i in 0_u64..10_u64,
+    invariant filling: pages.inner.len == i
+  ) {
+    let cell = box_new::<u8>(value: 3_u8);
+    let item = Bulky(owned: move cell, padding: pad);
+    place_back(window: &pages.inner, value: move item);
+  }
+  clear(window: &pages.inner);
+  invariant empty: pages.inner.len == 0_u64;
+  invariant retained: pages.inner.cap == 10_u64;
+  for (
+    i in 0_u64..10_u64,
+    invariant refilling: pages.inner.len == i
+  ) {
+    let cell = box_new::<u8>(value: 4_u8);
+    let item = Bulky(owned: move cell, padding: pad);
+    place_back(window: &pages.inner, value: move item);
+  }
+  invariant refilled: pages.inner.len == 10_u64;
+  if pages.inner[9_u64].owned.inner != 4_u8 {
+    return 31_u8;
+  }
+  return 0_u8;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "OP-10 clear over boxed Slots, Ring and Paged. The native observer counts every allocation: clear and the refills within capacity add none, and every element box is released exactly once.";
+  let bytes = clear_reuses_bytes();
+  if bytes != 0_u8 {
+    return exit_status(code: bytes);
+  }
+  let slots = clear_releases_slots();
+  if slots != 0_u8 {
+    return exit_status(code: slots);
+  }
+  let ring = clear_releases_wrapped_ring();
+  if ring != 0_u8 {
+    return exit_status(code: ring);
+  }
+  let paged = clear_releases_paged();
+  if paged != 0_u8 {
+    return exit_status(code: paged);
+  }
+  return exit_status(code: 0_u8);
+}

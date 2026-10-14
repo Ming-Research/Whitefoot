@@ -1127,6 +1127,16 @@ pub enum IrOperation {
         source: IrValueId,
         index: IrValueId,
     },
+    /// [OP-10] `clear`: every element of the window's old `len` takes its
+    /// compiler-derived release in ascending logical order [PROV-6], then
+    /// `len` becomes zero. The storage, `cap`, a Ring's `head` and a Paged's
+    /// pages are kept, and nothing is allocated. An element type whose release
+    /// action is empty visits no element, so the operation is the boundary
+    /// store alone; an already empty window, the shared empty header among
+    /// them [STOR-1], is not written at all.
+    RunClear {
+        run: IrValueId,
+    },
     /// [OP-13] one runtime-capacity window block and the cell that owns it:
     /// `[len | cap | head? | slots]` with an empty window
     /// (compiler/storage-representation). The value is the cell pointer.

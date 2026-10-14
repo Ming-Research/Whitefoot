@@ -1553,7 +1553,7 @@ fn ignore(part: &u64) -> result: unit pure {{
   return unit;
 }}
 
-fn clear(entries: &Entries<{value_type}>) -> result: unit writes(entries) {{
+fn wipe(entries: &Entries<{value_type}>) -> result: unit writes(entries) {{
   doc "Replaces entries and releases their previous payloads.";
   for (i in 0_u64..entries^.len) {{
     set entries^[i] = None<{value_type}>();
@@ -1568,7 +1568,7 @@ fn borrow_then_clear(entries: &Entries<{value_type}>) -> result: unit writes(ent
     match first^ {{
       Some(value: b) => {{
         ignore(part: {borrowed});
-        clear(entries: entries);
+        wipe(entries: entries);
       }}
       None() => {{
       }}
@@ -1603,7 +1603,7 @@ fn main() -> status: std::process::ExitStatus pure waits {{
                 .pairs
                 .iter()
                 .filter(|pair| {
-                    pair.first.callee_name == "ignore" && pair.second.callee_name == "clear"
+                    pair.first.callee_name == "ignore" && pair.second.callee_name == "wipe"
                 })
                 .collect::<Vec<_>>();
             assert_eq!(pairs.len(), 1, "{value_type}: one adjacent call pair");
@@ -1627,7 +1627,7 @@ fn main() -> status: std::process::ExitStatus pure waits {{
                         ..
                     } if matches!(
                         program.functions()[*function as usize].name(),
-                        "ignore" | "clear"
+                        "ignore" | "wipe"
                     ) =>
                     {
                         Some(*result)
