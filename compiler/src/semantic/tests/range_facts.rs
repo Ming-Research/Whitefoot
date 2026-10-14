@@ -2313,6 +2313,35 @@ fn pinned_case_verdicts(cases: &[PinnedCase<'_>]) {
     }
 }
 
+/// A rule-only verdict cannot distinguish the expanded nonlinear expression
+/// from the old postcondition failure on a definition's non-live binding.
+#[test]
+fn nonlinear_contract_definitions_name_the_expanded_range_term() {
+    let cases: &[&[u8]] = &[
+        include_bytes!(
+            "../../../../tests/conformance/cases/range1-neg-define-nonlinear-requirement-index.wf"
+        ),
+        include_bytes!(
+            "../../../../tests/conformance/cases/range1-neg-define-nonlinear-postcondition-index.wf"
+        ),
+    ];
+    for source in cases {
+        with_semantics(source, |outcome| {
+            let SemanticOutcome::SourceIssue { issue, .. } = outcome else {
+                panic!("expected an expanded range-term rejection: {outcome:?}");
+            };
+            assert_eq!(issue.rule(), SemanticRule::Range1, "{issue:?}");
+            assert!(
+                matches!(issue.kind(), SemanticIssueKind::InvalidRangeClause { .. }),
+                "{issue:?}"
+            );
+            let crate::SemanticLocation::SourceNode(_, coordinate) = issue.location();
+            let start = usize::try_from(coordinate.start().value()).unwrap();
+            assert!(source[start..].starts_with(b"i * j"), "{issue:?}");
+        });
+    }
+}
+
 /// [RANGE-1] a payload binder's referent below an element projection is that
 /// element's payload projection in a range goal, at the subscript the match
 /// recorded, through nested matches and `Box` content, and no range term of
