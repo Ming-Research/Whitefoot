@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 the owner's agent instructions own the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-14 A requirement side displaced by a constant gives an exact entry relation, defined recursively
+
+Nodes: language/checks-and-proofs/requires-entry-contract
+
+Owner-approved: On the shared status board on 2026-10-14, written in Chinese, the owner chose option A on the card "approve the specification v0.151 change and the design decision in Whitefoot#472 (head b8def872197d): ENT-3.S4 registers an exact relation by the recursive entry-side shapes?" (translated), after choosing option A, "recognise it" (translated), on the card asking whether a `requires` side that is a term plus a constant, or its widening conversion, gives an exact two-term relation. The specification number became v0.152 when main reached v0.151 first.
+
+Summary: A requirement whose complete goal is one integer comparison establishes an exact two-term relation at body entry when each side reduces to at most one term plus a folded constant through term-free sums, differences and products and widening conversions, because those preserve the mathematical value, the postcondition side already admits a datum displaced by a constant, and the checker already did so. Refused was narrowing the checker to bare terms, constants and measure terms, which would have made writers' natural `i + 1 <= b` chains need explicit proof steps.
+
 ## 2026-10-13 One release classification decides whether release does work, and key sets and concurrent hash maps release runtime storage
 
 Nodes: compiler/cleanup-traversal, language/ownership/linearity, language/waiting/shared-objects/keyed-tables
