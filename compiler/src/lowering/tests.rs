@@ -1093,7 +1093,7 @@ fn main() -> status: std::process::ExitStatus pure {
                     instruction,
                     IrInstruction::Define {
                         operation: IrOperation::Integer {
-                            operation: IrIntegerOperation::AddWrap,
+                            operation: IrIntegerOperation::AddExact,
                             operand_type: IrType::Integer {
                                 width: 64,
                                 signed: false,
@@ -1147,7 +1147,7 @@ fn main() -> status: std::process::ExitStatus pure {
                         instruction,
                         IrInstruction::Define {
                             operation: IrOperation::Integer {
-                                operation: IrIntegerOperation::AddWrap,
+                                operation: IrIntegerOperation::AddExact,
                                 operand_type: IrType::Integer {
                                     width: 64,
                                     signed: false,
@@ -1899,6 +1899,42 @@ fn nested_indexed_aliases_capture_enclosing_blocks_and_dense_families() {
 fn a_recognized_byte_walk_gains_one_wide_probe_with_its_needles() {
     with_ir(&byte_walk_source(NEUTRAL_MIDDLE, "1_u64"), |program| {
         assert_eq!(probe_needle_counts(program), vec![2]);
+        let main = function(program, "main");
+        let (index, skip) = main
+            .blocks()
+            .iter()
+            .flat_map(IrBlock::instructions)
+            .find_map(|instruction| match instruction {
+                IrInstruction::Define {
+                    result,
+                    operation: IrOperation::BufferProbeSkip { index, .. },
+                    ..
+                } => Some((*index, *result)),
+                _ => None,
+            })
+            .expect("the recognized walk has one wide probe");
+        assert!(
+            main.blocks()
+                .iter()
+                .flat_map(IrBlock::instructions)
+                .any(|instruction| {
+                    matches!(
+                        instruction,
+                        IrInstruction::Define {
+                            operation: IrOperation::Integer {
+                                operation: IrIntegerOperation::AddExact,
+                                operand_type: IrType::Integer {
+                                    width: 64,
+                                    signed: false,
+                                },
+                                arguments,
+                            },
+                            ..
+                        } if arguments.as_slice() == [index, skip]
+                    )
+                }),
+            "the bounded probe skip must advance its own index with an exact add"
+        );
     });
 }
 
