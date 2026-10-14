@@ -14,6 +14,17 @@ use super::support::{CompiledProgram, build_program, compile_program, fixture_di
 use super::support::{close_path, reopen_path};
 use crate::support::run_command;
 
+/// A Windows component name is native UTF-16 code units, so the Windows
+/// copies of the two programs spell their names in them; the rest is shared.
+#[cfg(unix)]
+const PATHS_PROGRAM: &str = "host_paths.wf";
+#[cfg(unix)]
+const BYTES_PROGRAM: &str = "host_path_bytes.wf";
+#[cfg(windows)]
+const PATHS_PROGRAM: &str = "windows/host_paths.wf";
+#[cfg(windows)]
+const BYTES_PROGRAM: &str = "windows/host_path_bytes.wf";
+
 fn run(program: &CompiledProgram, directory: &Path, arguments: &[&OsStr], native: bool) -> Output {
     let mut command = Command::new(program.executable());
     command
@@ -71,7 +82,7 @@ fn publishes(
 
 #[test]
 fn a_host_path_selects_an_existing_data_directory_and_never_creates_one() {
-    let program = build_program(&compile_program("host_paths.wf"));
+    let program = build_program(&compile_program(PATHS_PROGRAM));
     for native in [true, false] {
         let fixture = fixture_directory();
         let data = fixture.path().join("data");
@@ -177,7 +188,7 @@ const INVALID_NATIVE: &[u8] = b"abc";
 
 #[test]
 fn host_paths_from_bytes_open_in_both_encodings() {
-    let program = build_program(&compile_program("host_path_bytes.wf"));
+    let program = build_program(&compile_program(BYTES_PROGRAM));
     for native in [true, false] {
         let fixture = fixture_directory();
         // Names outside ASCII, one beyond the Basic Multilingual Plane, so
