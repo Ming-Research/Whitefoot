@@ -610,3 +610,106 @@ entry hold (`--lock-ledger`); a never-written field is read without a lock; two
 fields always used together share one lock and fields used apart do not. Programs: Firn's
 SET shape, MOVE and SWAPDB over `dbs`, the cancellation guard. Measurements as
 in criterion 4.
+
+## 11. Atomic values against every open request (2026-10-14)
+
+The owner asked why so many designs grew around needs that one atomic value
+with compare-and-exchange answers, and whether `DecisionCell` is anything but
+that. This section takes each open board item that concerns shared words, in
+turn, and compares the current design with `Atomic<T>` (section 2.3). Numbers
+are measured on the 14900K's 8 P-cores where a run is cited and are otherwise
+deductions.
+
+**Why the designs multiplied.** Two earlier decisions pushed every need into a
+narrow shape. The design tree rejected "general atomic fields and general
+lock-free cells" (language/waiting/shared-objects), so each need was given a
+type that did not count as one: `DecisionCell` (one-shot, "exposes no
+intermediate contents"), #403's atomic value (only a statement target, one
+operation per path, at the statement's point), `SharedRead` for cancellation
+guards (#304), and cancellation-state updates as their own kind of shared
+effect. And the single-step integer cell was rejected on a counter criterion
+(one word reached 0.06 of a line per thread against a 0.5 bar,
+card `gran-shared-counters-card`), a correct verdict for counters that was
+then read as a verdict on atomic values in general. With the rejection
+reversed, the narrow types are `Atomic<T>` with fewer operations.
+
+`DecisionCell` is `Atomic<DecisionState>` restricted to load and
+compare-and-exchange from `Open`: the same machine operations (a plain load, a
+locked compare-and-exchange). The one property it adds is that the type
+guarantees a decision never reverts; a library type in `std` with a private
+`Atomic<DecisionState>` field and the two claim functions keeps that guarantee
+without a prelude rule.
+
+1. **Counters and the maximum (`firn-req-shared-max`, `firn-scope-info`,
+   cards `shards-merge-with-reader-gap`, `shards-suspension-accounting-approve`).**
+   Counters every command writes stay on shards: one word written by every
+   core reached 118 M/s in C (run 38304337014), shards 0.60 of a line per
+   thread, about 1.2 G/s (run 38458676162). The maximum moves to an atomic
+   value: load, and max only when larger. A load of a line nobody writes stays
+   in every core's cache, so the common path costs about what not recording
+   costs (Firn's GET: 26.99 M/s without the peak against 2.98 M/s with an
+   exclusive statement per command); a write happens only on a new peak, and
+   no whole read takes every shard lock. The shard cards stay, for counters.
+2. **AOF sequence (`firn-req-sequence-take`, cards `atomic-value-spec-approve`,
+   `atomic-value-yield-check`, `firn-write-meta-aof`).** `Atomic<u64>` add
+   inside the key's statement, after its locks (section 2.3): the instruction
+   #403 emits, without its target-only, once-per-path, no-loop and no-alias
+   rules. Q1 measured one shared add after 400 ns of private arithmetic at
+   1.000 of none; Q2 measured today's exclusive object at 0.015. #403's tests
+   and harness carry over. The yield-check card is item 6's problem.
+3. **SCRIPT KILL (`firn-req-attempt-publish`, `wf-need-firn-script-pool`).**
+   `Atomic<DecisionState>` compare-and-exchange, identical code to the merged
+   cell. The pool's all-or-nothing SCRIPT KILL across engines gains a form the
+   one-shot cell lacks: one `Atomic<u64>` holding a kill bit and a count of
+   running scripts that have written, updated by compare-and-exchange, is a
+   reusable protocol where a one-shot cell needs a fresh cell per epoch.
+4. **Busy-script timer from the statement's start (`firn-req-timer-from-atomic`,
+   card `spawn-inside-atomic-form`).** The script stores its start instant in an
+   `Atomic<u64>` as its statement's first act, which never waits; a command
+   waiting for a key uses `until start + threshold` and, on expiry, reloads the
+   start and either answers BUSY or waits again. That is Redis's timing, which
+   the deadline card said needs the start published. The card's option B
+   ("publish one value from the statement") is exactly an atomic value; option
+   A (spawn in the block) is no longer needed by Firn and stays a general
+   backlog capability.
+5. **Waiting for a key or a flag (`firn-req-wait-key-or-flag`, card
+   `wait-key-or-cancel-form`).** Not an atomic-value problem: the statement
+   waits while acquiring, before any guard runs. The deadline (`until`) stays;
+   item 4 makes its timing exact.
+6. **Progress on one driver (`firn-req-single-driver-progress`, card
+   `single-driver-progress-direction`; also `atomic-value-yield-check`).** Not
+   an atomic-value problem: a context that computes without waiting starves its
+   driver whether it polls an atomic value, a decision cell or nothing. The
+   scheduler's handoff (option A of the progress card) answers both cards, so
+   an atomic operation stays one instruction with no yield check.
+7. **Scripts not holding the write state while Lua runs (`firn-script-meta-free`,
+   `wf-need-firn-par-commit`).** Firn found that a script must read the memory
+   limit and whether an AOF rewrite is running during execution, and take a
+   sequence number at commit. Those are atomic loads and one add, so a script
+   need not hold `meta` while Lua runs even with AOF on, which the owner's
+   option D had to leave out.
+8. **Cancellation (`CancelSource`, `CancelWatch`, `SharedRead`, the
+   cancellation-state update).** `fired` becomes an `Atomic<Bool>` with
+   watches (section 2.4). A guarded statement that today holds the cancel state
+   as a second object (a second lock and watch) loads a word instead, and a
+   firing is a store plus a watcher check instead of a statement on the cancel
+   object.
+9. **Read-mostly settings (`gran-read-hold-read-only`).** That item notes a
+   read hold still writes the lock word and holder count, so the line still
+   moves between cores. For scalar settings an atomic load writes nothing and
+   scales with cores; read holds remain for compound state.
+10. **Weak cores (`firn-wf-mcu-atomics`, v2).** The same target questions as
+    atomic statements: native read-modify-write is one instruction; one core
+    without it masks interrupts in privileged mode; two cores without it need a
+    hardware spinlock or refuse; 64-bit values on 32-bit cores need the
+    declared atomic width. Nothing new.
+
+**Not atomic-value problems:** shards holding owned buffers
+(`firn-req-shards-owned`), the explicit-close lease (`firn-req-linear-resource-lease`),
+distinct maps (section 5), invariants through fields, release declarations.
+
+**Spec accounting.** Retired: the decision cell's 13 rule changes, #403's
+SHARE-2 paragraph and placement rows (not merged), the decision-cell-free
+boundary in PAR-1, PAR-2, SHARE-2 and SHARE-3, the cancellation-state update as
+a kind of shared effect. Added: section 2.3's one section and the guard rule of
+section 2.4.

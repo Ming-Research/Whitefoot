@@ -4,7 +4,8 @@
 > investigation away from a proof-only handle identity: the root cause is the
 > multi-object atomic statement, not missing identity. The current study is
 > [ONE-OBJECT.md](ONE-OBJECT.md); this record is kept for its problem
-> statement and five classes.
+> statement, five classes, case set and criteria, which
+> [STUDY.md](STUDY.md) applies to all candidates.
 
 Status: question and criteria written before any measurement or design work.
 Board item `shared-object-model`; owner ruling on scope: option A of card
