@@ -1,0 +1,322 @@
+alias DirectoryRead = std::fs::DirectoryRead;
+alias DirectoryWrite = std::fs::DirectoryWrite;
+alias HandleFactory = std::io::HandleFactory;
+alias HostPaths = std::fs::HostPaths;
+alias PathEncoding = std::fs::PathEncoding;
+alias ReadFile = std::fs::ReadFile;
+
+const config_name: Array<u8, 10> =[114_u8, 101_u8, 100_u8, 105_u8, 115_u8, 46_u8, 99_u8, 111_u8, 110_u8, 102_u8];
+
+const data_name: Array<u8, 4> =[100_u8, 97_u8, 116_u8, 97_u8];
+
+const temporary: Array<u8, 8> =[116_u8, 101_u8, 109_u8, 112_u8, 46_u8, 97_u8, 111_u8, 102_u8];
+
+const log: Array<u8, 14> =[97_u8, 112_u8, 112_u8, 101_u8, 110_u8, 100_u8, 111_u8, 110_u8, 108_u8, 121_u8, 46_u8, 97_u8, 111_u8, 102_u8];
+
+const sentinel: Array<u8, 8> =[115_u8, 101_u8, 110_u8, 116_u8, 105_u8, 110_u8, 101_u8, 108_u8];
+
+const first_byte: Array<u8, 1> =[120_u8];
+
+const second_byte: Array<u8, 1> =[121_u8];
+
+fn read_config(factory: &HandleFactory, root: &DirectoryRead, name: &[u8], destination: &[u8]) -> next: u64 reads(root), reads(name), writes(factory), writes(destination) waits contract {
+  ensures next <= destination^.len;
+} {
+  match std::fs::open_file(factory: factory, root: root, name: name, start: 0_u64, end: name^.len) {
+    Ok(value: file) => {
+      let length = destination^.len;
+      match std::fs::read_at(factory: factory, file: &file, destination: destination, file_offset: 0_u64, start: 0_u64, end: length) {
+        Ok(value: read) => {
+          std::fs::close_read(factory: factory, file: move file);
+          return read;
+        }
+        Err(error: problem) => {
+          std::fs::close_read(factory: factory, file: move file);
+          return 0_u64;
+        }
+      }
+    }
+    Err(error: problem) => {
+      return 0_u64;
+    }
+  }
+}
+
+fn error_kind(error: &std::io::IoError) -> kind: u8 reads(error) {
+  match error^ {
+    NotFound(code: c, origin: o) => {
+      return 1_u8;
+    }
+    PermissionDenied(code: c, origin: o) => {
+      return 2_u8;
+    }
+    AlreadyExists(code: c, origin: o) => {
+      return 9_u8;
+    }
+    NotDirectory(code: c, origin: o) => {
+      return 3_u8;
+    }
+    IsDirectory(code: c, origin: o) => {
+      return 4_u8;
+    }
+    DirectoryNotEmpty(code: c, origin: o) => {
+      return 9_u8;
+    }
+    ReadOnly(code: c, origin: o) => {
+      return 9_u8;
+    }
+    ResourceBusy(code: c, origin: o) => {
+      return 9_u8;
+    }
+    InvalidInput(code: c, origin: o) => {
+      return 9_u8;
+    }
+    InvalidPath(code: c, origin: o) => {
+      return 5_u8;
+    }
+    Unsupported(code: c, origin: o) => {
+      return 6_u8;
+    }
+    TimedOut(code: c, origin: o) => {
+      return 9_u8;
+    }
+    DeadlinePassed() => {
+      return 9_u8;
+    }
+    Cancelled() => {
+      return 9_u8;
+    }
+    BrokenPipe(code: c, origin: o) => {
+      return 9_u8;
+    }
+    WriteZero(code: c, origin: o) => {
+      return 9_u8;
+    }
+    UnexpectedEnd(code: c, origin: o) => {
+      return 9_u8;
+    }
+    ConnectionRefused(code: c, origin: o) => {
+      return 9_u8;
+    }
+    ConnectionReset(code: c, origin: o) => {
+      return 9_u8;
+    }
+    ConnectionAborted(code: c, origin: o) => {
+      return 9_u8;
+    }
+    NotConnected(code: c, origin: o) => {
+      return 9_u8;
+    }
+    AddressInUse(code: c, origin: o) => {
+      return 9_u8;
+    }
+    AddressUnavailable(code: c, origin: o) => {
+      return 9_u8;
+    }
+    ResourceExhausted(code: c, origin: o) => {
+      return 9_u8;
+    }
+    FileTooLarge(code: c, origin: o) => {
+      return 9_u8;
+    }
+    NoSpace(code: c, origin: o) => {
+      return 9_u8;
+    }
+    QuotaExceeded(code: c, origin: o) => {
+      return 9_u8;
+    }
+    CrossDevice(code: c, origin: o) => {
+      return 9_u8;
+    }
+    DeviceFailure(code: c, origin: o) => {
+      return 9_u8;
+    }
+    Other(code: c, origin: o) => {
+      return 9_u8;
+    }
+  }
+}
+
+fn holds(factory: &HandleFactory, root: &DirectoryRead, name: &[u8], first: u8, second: u8, length: u64) -> result: Bool reads(root), reads(name), writes(factory) waits {
+  match std::fs::open_file(factory: factory, root: root, name: name, start: 0_u64, end: name^.len) {
+    Ok(value: file) => {
+      let bytes = array_filled::<u8, 3>(value: 0_u8);
+      let count = 0_u64;
+      match std::fs::read_at(factory: factory, file: &file, destination: &bytes[0_u64..3_u64], file_offset: 0_u64, start: 0_u64, end: 3_u64) {
+        Ok(value: next) => {
+          set count = next;
+        }
+        Err(error: problem) => {
+          set count = 3_u64;
+        }
+      }
+      std::fs::close_read(factory: factory, file: move file);
+      if count != length {
+        return False();
+      }
+      let first_same = bytes[0_u64] == first;
+      let second_same = bytes[1_u64] == second;
+      let same = band(first_same, second_same);
+      return same;
+    }
+    Err(error: problem) => {
+      return False();
+    }
+  }
+}
+
+fn append_byte(factory: &HandleFactory, root: &DirectoryWrite, byte: &[u8]) -> result: Bool reads(root), reads(byte), writes(factory) waits {
+  match std::fs::open_append(factory: factory, root: root, name: &temporary[0_u64..8_u64], start: 0_u64, end: 8_u64) {
+    Ok(value: file) => {
+      let written = False();
+      match std::fs::append_once(factory: factory, file: &file, source: byte, start: 0_u64, end: byte^.len) {
+        Ok(value: next) => {
+          if next == byte^.len {
+            set written = True();
+          }
+        }
+        Err(error: problem) => {
+        }
+      }
+      if written {
+        match std::fs::sync_file(factory: factory, file: &file) {
+          Ok(value: done) => {
+          }
+          Err(error: problem) => {
+            set written = False();
+          }
+        }
+      }
+      match std::fs::close_write(factory: factory, file: move file) {
+        Ok(value: done) => {
+        }
+        Err(error: problem) => {
+          set written = False();
+        }
+      }
+      return written;
+    }
+    Err(error: problem) => {
+      return False();
+    }
+  }
+}
+
+fn publish(factory: &HandleFactory, data: &std::fs::Directory) -> result: u8 reads(data.read), writes(data.write), writes(factory) waits {
+  let created = append_byte(factory: factory, root: &data^.write, byte: &first_byte[0_u64..1_u64]);
+  if created {
+  } else {
+    return 10_u8;
+  }
+  let appended = append_byte(factory: factory, root: &data^.write, byte: &second_byte[0_u64..1_u64]);
+  if appended {
+  } else {
+    return 11_u8;
+  }
+  match std::fs::rename_file(factory: factory, root: &data^.write, from: &temporary[0_u64..8_u64], from_start: 0_u64, from_end: 8_u64, to: &log[0_u64..14_u64], to_start: 0_u64, to_end: 14_u64) {
+    Ok(value: done) => {
+    }
+    Err(error: problem) => {
+      return 12_u8;
+    }
+  }
+  match std::fs::sync_directory(factory: factory, root: &data^.write) {
+    Ok(value: done) => {
+    }
+    Err(error: problem) => {
+      return 13_u8;
+    }
+  }
+  let published = holds(factory: factory, root: &data^.read, name: &log[0_u64..14_u64], first: 120_u8, second: 121_u8, length: 2_u64);
+  if published {
+  } else {
+    return 14_u8;
+  }
+  match std::fs::open_file(factory: factory, root: &data^.read, name: &temporary[0_u64..8_u64], start: 0_u64, end: 8_u64) {
+    Ok(value: file) => {
+      std::fs::close_read(factory: factory, file: move file);
+      return 15_u8;
+    }
+    Err(error: problem) => {
+      let kind = error_kind(error: &problem);
+      if kind != 1_u8 {
+        return 16_u8;
+      }
+    }
+  }
+  let kept = holds(factory: factory, root: &data^.read, name: &sentinel[0_u64..8_u64], first: 83_u8, second: 0_u8, length: 1_u64);
+  if kept {
+    return 0_u8;
+  }
+  return 17_u8;
+}
+
+fn open_data(factory: &HandleFactory, paths: &HostPaths, base: &DirectoryRead, path: &[u8]) -> result: u8 reads(paths), reads(base), reads(path), writes(factory) waits {
+  let encoding = PathEncoding::NativeBytes();
+  match std::fs::open_host_directory_bytes(factory: factory, paths: paths, base: base, path: path, start: 0_u64, end: path^.len, encoding: encoding) {
+    Ok(value: data) => {
+      let outcome = publish(factory: factory, data: &data);
+      let std::fs::Directory(read: data_read, write: data_write) = move data;
+      match std::fs::close_directory_write(factory: factory, directory: move data_write) {
+        Ok(value: done) => {
+        }
+        Err(error: problem) => {
+          set outcome = 18_u8;
+        }
+      }
+      std::fs::close_directory(factory: factory, directory: move data_read);
+      return outcome;
+    }
+    Err(error: problem) => {
+      return 3_u8;
+    }
+  }
+}
+
+fn seen_through_cwd(factory: &HandleFactory, base: &DirectoryRead) -> result: u8 reads(base), writes(factory) waits {
+  match std::fs::open_directory(factory: factory, root: base, name: &data_name[0_u64..4_u64], start: 0_u64, end: 4_u64) {
+    Ok(value: data) => {
+      let published = holds(factory: factory, root: &data, name: &log[0_u64..14_u64], first: 120_u8, second: 121_u8, length: 2_u64);
+      std::fs::close_directory(factory: factory, directory: move data);
+      if published {
+        return 0_u8;
+      }
+      return 20_u8;
+    }
+    Err(error: problem) => {
+      return 19_u8;
+    }
+  }
+}
+
+fn exercise(factory: &HandleFactory, paths: &HostPaths, base: &DirectoryRead) -> result: u8 reads(paths), reads(base), writes(factory) waits {
+  let config = array_filled::<u8, 1024>(value: 0_u8);
+  let config_end = read_config(factory: factory, root: base, name: &config_name[0_u64..10_u64], destination: &config[0_u64..1024_u64]);
+  if config_end > 0_u64 {
+    if config_end <= 1024_u64 {
+      let outcome = open_data(factory: factory, paths: paths, base: base, path: &config[0_u64..config_end]);
+      if outcome != 0_u8 {
+        return outcome;
+      }
+      return seen_through_cwd(factory: factory, base: base);
+    }
+  }
+  return 2_u8;
+}
+
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
+  doc "An existing directory named by an absolute path in a configuration file opens as both halves without being created: a file created, appended to and synced through the write half is renamed and the directory synced, and the read half and the same directory opened by name from the working directory both read the renamed bytes while an entry the directory already held stays. Before HostPaths exists name resolution rejects; a refused open exits 3, and a failed or wrong step of the sequence exits 10 to 20.";
+  let std::process::Inputs(cwd: directory, handles: factory, host_paths: host_paths, ..) = move inputs;
+  let std::fs::Directory(read: reader, write: writer) = move directory;
+  std::fs::close_directory_write(factory: &factory, directory: move writer);
+  let outcome = 9_u8;
+  match move host_paths {
+    Some(value: paths) => {
+      set outcome = exercise(factory: &factory, paths: &paths, base: &reader);
+    }
+    None() => {
+    }
+  }
+  std::fs::close_directory(factory: &factory, directory: move reader);
+  return std::process::exit_status(code: outcome);
+}

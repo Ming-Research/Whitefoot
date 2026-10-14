@@ -1,0 +1,139 @@
+alias DirectoryRead = std::fs::DirectoryRead;
+alias HandleFactory = std::io::HandleFactory;
+alias HostPaths = std::fs::HostPaths;
+alias PathEncoding = std::fs::PathEncoding;
+alias ReadFile = std::fs::ReadFile;
+
+const top: Array<u8, 3> =[116_u8, 111_u8, 112_u8];
+
+const parent_config: Array<u8, 11> =[112_u8, 97_u8, 114_u8, 101_u8, 110_u8, 116_u8, 46_u8, 99_u8, 111_u8, 110_u8, 102_u8];
+
+const middle_config: Array<u8, 11> =[109_u8, 105_u8, 100_u8, 100_u8, 108_u8, 101_u8, 46_u8, 99_u8, 111_u8, 110_u8, 102_u8];
+
+fn holds_byte(factory: &HandleFactory, file: &ReadFile, expected: u8) -> result: Bool writes(factory), writes(file) waits {
+  let bytes = array_filled::<u8, 2>(value: 0_u8);
+  match std::fs::read_at(factory: factory, file: file, destination: &bytes[0_u64..2_u64], file_offset: 0_u64, start: 0_u64, end: 2_u64) {
+    Ok(value: next) => {
+      if next != 1_u64 {
+        return False();
+      }
+    }
+    Err(error: problem) => {
+      return False();
+    }
+  }
+  let same = bytes[0_u64] == expected;
+  return same;
+}
+
+fn read_config(factory: &HandleFactory, root: &DirectoryRead, name: &[u8], destination: &[u8]) -> next: u64 reads(root), reads(name), writes(factory), writes(destination) waits contract {
+  ensures next <= destination^.len;
+} {
+  match std::fs::open_file(factory: factory, root: root, name: name, start: 0_u64, end: name^.len) {
+    Ok(value: file) => {
+      let length = destination^.len;
+      match std::fs::read_at(factory: factory, file: &file, destination: destination, file_offset: 0_u64, start: 0_u64, end: length) {
+        Ok(value: read) => {
+          std::fs::close_read(factory: factory, file: move file);
+          return read;
+        }
+        Err(error: problem) => {
+          std::fs::close_read(factory: factory, file: move file);
+          return 0_u64;
+        }
+      }
+    }
+    Err(error: problem) => {
+      return 0_u64;
+    }
+  }
+}
+
+fn open_window(factory: &HandleFactory, paths: &HostPaths, base: &DirectoryRead, path: &[u8], encoding: PathEncoding, expected: u8) -> result: u8 reads(paths), reads(base), reads(path), writes(factory) waits {
+  match std::fs::open_host_read_bytes(factory: factory, paths: paths, base: base, path: path, start: 0_u64, end: path^.len, encoding: encoding) {
+    Ok(value: file) => {
+      let right = holds_byte(factory: factory, file: &file, expected: expected);
+      std::fs::close_read(factory: factory, file: move file);
+      if right {
+        return 0_u8;
+      }
+      return 2_u8;
+    }
+    Err(error: problem) => {
+      return 3_u8;
+    }
+  }
+}
+
+fn open_listed(factory: &HandleFactory, paths: &HostPaths, cwd: &DirectoryRead, base: &DirectoryRead, name: &[u8], encoding: PathEncoding, expected: u8) -> result: u8 reads(paths), reads(cwd), reads(base), reads(name), writes(factory) waits {
+  let listed = array_filled::<u8, 1024>(value: 0_u8);
+  let listed_end = read_config(factory: factory, root: cwd, name: name, destination: &listed[0_u64..1024_u64]);
+  if listed_end > 0_u64 {
+    if listed_end <= 1024_u64 {
+      return open_window(factory: factory, paths: paths, base: base, path: &listed[0_u64..listed_end], encoding: encoding, expected: expected);
+    }
+  }
+  return 1_u8;
+}
+
+fn open_argument(args: &std::text::Args, factory: &HandleFactory, paths: &HostPaths, base: &DirectoryRead) -> result: u8 reads(args), reads(paths), reads(base), writes(factory) waits {
+  match std::text::arg_get(args: args, position: 1_u64) {
+    Ok(value: text) => {
+      match std::fs::open_host_read(factory: factory, paths: paths, base: base, path: &text) {
+        Ok(value: file) => {
+          let right = holds_byte(factory: factory, file: &file, expected: 82_u8);
+          std::fs::close_read(factory: factory, file: move file);
+          if right {
+            return 0_u8;
+          }
+          return 22_u8;
+        }
+        Err(error: problem) => {
+          return 23_u8;
+        }
+      }
+    }
+    Err(error: problem) => {
+      return 21_u8;
+    }
+  }
+}
+
+fn exercise(args: &std::text::Args, factory: &HandleFactory, paths: &HostPaths, cwd: &DirectoryRead, base: &DirectoryRead) -> result: u8 reads(args), reads(paths), reads(cwd), reads(base), writes(factory) waits {
+  let native = PathEncoding::NativeBytes();
+  let parent = open_listed(factory: factory, paths: paths, cwd: cwd, base: base, name: &parent_config[0_u64..11_u64], encoding: native, expected: 82_u8);
+  if parent != 0_u8 {
+    return parent;
+  }
+  let text = PathEncoding::Utf8();
+  let middle = open_listed(factory: factory, paths: paths, cwd: cwd, base: base, name: &middle_config[0_u64..11_u64], encoding: text, expected: 68_u8);
+  if middle != 0_u8 {
+    return middle +wrap 10_u8;
+  }
+  return open_argument(args: args, factory: factory, paths: paths, base: base);
+}
+
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
+  doc "Host paths follow symbolic links before and at their last component and resolve dot-dot after the link before it: from a base directory, link/../marker reads the marker beside the link's target rather than the one beside the link, an absolute path through a linked directory reads the file below its target, and a relative argument naming a link to a file reads that file below the base rather than a same-named file in the working directory. Before HostPaths exists name resolution rejects; collapsing link/.. lexically exits 2, refusing a linked path exits 3, 13 or 23, reading a decoy exits 12 or 22, and an invocation without the authority exits 9.";
+  let std::process::Inputs(args: args, cwd: directory, handles: factory, host_paths: host_paths, ..) = move inputs;
+  let std::fs::Directory(read: reader, write: writer) = move directory;
+  std::fs::close_directory_write(factory: &factory, directory: move writer);
+  let outcome = 9_u8;
+  match move host_paths {
+    Some(value: paths) => {
+      match std::fs::open_directory(factory: &factory, root: &reader, name: &top[0_u64..3_u64], start: 0_u64, end: 3_u64) {
+        Ok(value: base) => {
+          set outcome = exercise(args: &args, factory: &factory, paths: &paths, cwd: &reader, base: &base);
+          std::fs::close_directory(factory: &factory, directory: move base);
+        }
+        Err(error: problem) => {
+          set outcome = 8_u8;
+        }
+      }
+    }
+    None() => {
+    }
+  }
+  std::fs::close_directory(factory: &factory, directory: move reader);
+  return std::process::exit_status(code: outcome);
+}

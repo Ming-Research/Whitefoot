@@ -49,7 +49,7 @@ use whitefoot::{
 
 use crate::support::{PROGRAM_DEADLINE, ProgramChild, append_runtime_objects};
 
-use super::corpus::{self, Arrangement, Case, Expectation, Span, Verdict};
+use super::corpus::{self, Arrangement, Case, Expectation, FixtureContent, Span, Verdict};
 use super::json;
 
 static NEXT_INVOCATION: AtomicU64 = AtomicU64::new(0);
@@ -167,16 +167,23 @@ fn execute(module: &str, arrange: Option<&Arrangement>) -> Verdict {
     let arrange = arrange.unwrap_or(&default);
     let directory = invocation_directory();
     let executable = link(module, &directory);
+    // Fixtures are made in listed order; a link's target need not exist.
     for fixture in &arrange.files {
         let path = directory.join(Path::new(std::ffi::OsStr::from_bytes(&fixture.path)));
-        match &fixture.bytes {
-            Some(bytes) => {
-                if let Some(parent) = path.parent() {
-                    std::fs::create_dir_all(parent).expect("fixture parent directory");
-                }
-                std::fs::write(&path, bytes).expect("write fixture file");
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("fixture parent directory");
+        }
+        match &fixture.content {
+            FixtureContent::File(bytes) => {
+                std::fs::write(&path, bytes.resolve(&directory)).expect("write fixture file");
             }
-            None => std::fs::create_dir_all(&path).expect("create fixture directory"),
+            FixtureContent::Directory => {
+                std::fs::create_dir_all(&path).expect("create fixture directory");
+            }
+            FixtureContent::Link(target) => {
+                std::os::unix::fs::symlink(std::ffi::OsStr::from_bytes(target), &path)
+                    .expect("create fixture link");
+            }
         }
     }
 
@@ -187,6 +194,7 @@ fn execute(module: &str, arrange: Option<&Arrangement>) -> Verdict {
     // leaves the invocation's own default vector, which is exactly the one
     // element the link step produced.
     if let Some(argv) = &arrange.argv {
+        let argv: Vec<Vec<u8>> = argv.iter().map(|bytes| bytes.resolve(&directory)).collect();
         let (invoked, rest) = argv.split_first().expect("argv is nonempty");
         command.arg0(std::ffi::OsStr::from_bytes(invoked));
         command.args(rest.iter().map(|bytes| std::ffi::OsStr::from_bytes(bytes)));

@@ -347,6 +347,9 @@ jobs:
       # on default and native-disabled routes through the shared file adapter.
       # programs::stop_signals also runs its PRE-2 lifecycle manifest case in
       # an isolated console, plus real control events on both host routes.
+      # programs::host_paths opens host paths in the Win32 dialect and from
+      # UTF-8 and UTF-16 byte windows; the conformance adapter is POSIX-only,
+      # so this is the Windows evidence for the host-path opens.
       - name: Construct and run shared Windows program cases
         timeout-minutes: 8
         env:
@@ -355,4 +358,4 @@ jobs:
           RUST_MIN_STACK: 8388608
         run: |
           cargo test --manifest-path compiler/Cargo.toml --profile gate --locked \
-            --test corpus -- programs::windows:: programs::network:: programs::file_replacement:: programs::stop_signals:: programs::driver_count:: conformance::file_replacement:: native_windows::
+            --test corpus -- programs::windows:: programs::network:: programs::file_replacement:: programs::stop_signals:: programs::driver_count:: programs::host_paths:: conformance::file_replacement:: native_windows::
