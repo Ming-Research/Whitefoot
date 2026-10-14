@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 the owner's agent instructions own the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-13 A window reference survives a call when its formation bounds are re-proved after it
+
+Nodes: compiler/checker-facts
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the design-tree change: when a reference into a window crosses a call, re-prove its formation bounds from the facts after the call and keep it when they hold? (Ming-Research/Whitefoot#440, head 61c635f54)" (translated).
+
+Summary: The reference-validity decision adds one sentence. Where the specification lets a window reference survive, its formation bounds reuse the existing retained-question record but are judged after the call's invalidation and postcondition publication, destructured results included, and the reference is kept when they are proved, because the specification keeps a reference valid while its bounds hold, instead of invalidating every window reference at any call that writes the window's length, end or filled part. A write to a prefix of the reference's path, a moved Ring start, and `take_back` and `remove_at`, whose specified guarantees exclude those bounds, still invalidate it independently.
+
 ## 2026-10-13 One release classification decides whether release does work, and key sets and concurrent hash maps release runtime storage
 
 Nodes: compiler/cleanup-traversal, language/ownership/linearity, language/waiting/shared-objects/keyed-tables

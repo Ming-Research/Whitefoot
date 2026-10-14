@@ -267,6 +267,29 @@ impl Analyzer<'_, '_> {
         expression: &CheckedExpression,
         state: &mut ProofFlowState,
     ) -> ExpressionJudgment {
+        let judgment = self.expression_effects_before_result(expression, state);
+        self.judge_expression_window_bounds(expression, state);
+        judgment
+    }
+
+    fn judge_expression_window_bounds(
+        &mut self,
+        expression: &CheckedExpression,
+        state: &mut ProofFlowState,
+    ) {
+        if let CheckedExpression::UserCall { call, .. } = expression {
+            self.judging().judge_window_bounds(call, state);
+        }
+    }
+
+    /// A direct result destination publishes its S12 relations after its
+    /// own commit. Its window bounds must see those relations too, before
+    /// any subsequent source statement can add facts.
+    fn expression_effects_before_result(
+        &mut self,
+        expression: &CheckedExpression,
+        state: &mut ProofFlowState,
+    ) -> ExpressionJudgment {
         let mut judgment = self.judge_expression(expression, state);
         let mut events = Vec::new();
         self.input.collect_expression_kills(expression, &mut events);
@@ -327,7 +350,7 @@ impl Analyzer<'_, '_> {
         let affine_value = self
             .reasoning()
             .affine_expression_form(value, &mut state.affine);
-        let judgment = self.expression_effects(value, state);
+        let judgment = self.expression_effects_before_result(value, state);
         self.reasoning()
             .finish_result(value, &judgment, &mut result, state);
         let ExpressionJudgment {
@@ -577,6 +600,7 @@ impl Analyzer<'_, '_> {
         {
             state.results.insert(place.binding, result);
         }
+        self.judge_expression_window_bounds(value, state);
     }
 
     pub(super) fn walk_statement(
@@ -637,7 +661,7 @@ impl Analyzer<'_, '_> {
                     .reasoning()
                     .mint_construct_placements(node_path, value, state);
                 let mut result = self.capture_result(node_path, value, state);
-                let judgment = self.expression_effects(value, state);
+                let judgment = self.expression_effects_before_result(value, state);
                 self.reasoning()
                     .finish_result(value, &judgment, &mut result, state);
                 if !result.is_empty() {
@@ -775,6 +799,7 @@ impl Analyzer<'_, '_> {
                         );
                     }
                 }
+                self.judge_expression_window_bounds(value, state);
                 true
             }
             // [GRAM-4, CALL-4] `let (a, b) = f(...);`. The call is judged once;
@@ -793,7 +818,7 @@ impl Analyzer<'_, '_> {
                 let taken = self
                     .reasoning()
                     .mint_destructuring_placements(node_path, bindings, value, state);
-                let judgment = self.expression_effects(value, state);
+                let judgment = self.expression_effects_before_result(value, state);
                 let mut destinations = Vec::with_capacity(bindings.len());
                 for (binding, ty, _) in bindings {
                     self.declare(*binding);
@@ -839,6 +864,7 @@ impl Analyzer<'_, '_> {
                         state,
                     );
                 }
+                self.judge_expression_window_bounds(value, state);
                 true
             }
             CheckedStatement::PropagateLet {

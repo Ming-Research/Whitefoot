@@ -694,8 +694,7 @@ impl<'unit> Checker<'_, 'unit> {
             bindings,
         )?;
         self.types
-            .declarations
-            .invalidate_window_operation_references(signature, &substituted, bindings)?;
+            .invalidate_window_operation_references(node, signature, &substituted, bindings)?;
         self.project_call_effects(
             node,
             function,
@@ -1907,28 +1906,19 @@ impl<'unit> TypeContext<'unit> {
     }
 }
 
-impl<'unit> DeclarationInventory<'unit> {
-    /// [OP-10] the calls that end the bound a reference into a window was
-    /// formed under.
-    ///
-    /// Of the window operations, `place_back`'s `ensures` carries
-    /// `i < r.len` across the call and `insert_at` only changes a slot's
-    /// occupant, so neither ends it; the rest move a boundary down, move a
-    /// run between two windows, shift every logical index, or remake the
-    /// block whole. Any other callee whose row writes a window's `last` or
-    /// `filled` may take elements back through it as `take_back` and
-    /// `remove_at` do, and no `ensures` is read here to show that it does
-    /// not, so its call ends the bound as well. Every reference into such a
-    /// window dies [REF-2, REF-4].
-    /// Only written entries identify an operated window: a by-value
-    /// argument contributes a read, which ends no reference's bound [EFF-5].
+impl<'unit> TypeContext<'unit> {
+    /// [OP-10] retain each potentially affected selection's formation bound
+    /// as a post-call preservation query where OP-10 permits survival.
+    /// Canonical take_back/remove_at, Ring origin shifts and ordinary
+    /// prefix writes retain their unconditional invalidations [REF-2].
     fn invalidate_window_operation_references(
         &self,
+        node: NodeId,
         signature: &FunctionSignature,
         entries: &[SubstitutedEntry],
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
     ) -> Result<(), CheckStop> {
-        const BOUND_ENDING_ROWS: [&str; 8] = [
+        const BOUND_CHANGING_ROWS: [&str; 8] = [
             "take_back",
             "remove_at",
             "append",
@@ -1938,15 +1928,16 @@ impl<'unit> DeclarationInventory<'unit> {
             "grow",
             "grow_paged",
         ];
-        let prelude = self.tree.is_prelude_node(signature.node)?;
-        let window_operation = prelude && BOUND_ENDING_ROWS.contains(&signature.name.as_str());
+        let prelude = self.declarations.tree.is_prelude_node(signature.node)?;
+        let site = self.declarations.tree.path(node)?;
+        let window_operation = prelude && BOUND_CHANGING_ROWS.contains(&signature.name.as_str());
         for entry in entries {
             if !entry.write {
                 continue;
             }
             // A row entry names a part or a measure word of the window --
             // `writes(window.filled)`, `writes(window.len)` -- and the window
-            // whose bound the call ends is the place below that step.
+            // whose bound the call may change is the place below that step.
             let cut = entry
                 .place
                 .path
@@ -1968,10 +1959,22 @@ impl<'unit> DeclarationInventory<'unit> {
             };
             let shifts_origin =
                 prelude && matches!(signature.name.as_str(), "place_front" | "take_front");
-            Checker::invalidate_window_references(bindings, &window, shifts_origin);
+            // OP-10 explicitly invalidates selections at these two removal
+            // operations, even if other facts prove their old bound. A source
+            // helper is judged by its own row and published postconditions.
+            let removes_selection =
+                prelude && matches!(signature.name.as_str(), "take_back" | "remove_at");
+            if shifts_origin || removes_selection {
+                Checker::invalidate_window_references(bindings, &window, shifts_origin);
+            } else {
+                self.preserve_window_references(site, bindings, &window)?;
+            }
         }
         Ok(())
     }
+}
+
+impl<'unit> DeclarationInventory<'unit> {
     /// [STOR-8] a compilation unit carrying the no-heap declaration cannot
     /// call an allocating prelude row.
     ///
