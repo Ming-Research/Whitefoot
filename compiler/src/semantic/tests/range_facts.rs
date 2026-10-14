@@ -699,7 +699,7 @@ fn a_term_whose_value_passes_i128_is_unsupported_not_clamped() {
 /// coefficient (2^64 - 1)^2 leaves `i128` and the walk forgets its value.
 fn forgotten_product(statement: &str) -> Vec<u8> {
     format!(
-        "fn need(xs: &[u64], v: u64) -> result: unit reads(xs) contract {{
+        "fn need(xs: &[u64], v: u64) -> result: unit pure contract {{
   requires forall matched(k in 0_u64..xs^.len): xs^[k] == v;
 }} {{
   return unit;
