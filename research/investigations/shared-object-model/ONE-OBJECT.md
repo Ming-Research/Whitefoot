@@ -67,30 +67,51 @@ root.
 
 ## 2. The model
 
-### 2.1 One handle per statement
+### 2.1 One handle per statement, nothing else in the header
 
-An atomic statement names exactly one handle place. Its header binds the
-object's state and may name selections from that state whose identity is a
-run-time value (map entries, key-set entries, a shard), because those must be
-known before any of them is locked.
-
-    atomic s = &store, slot = &s^.keys[key] {
-      ... slot^ ...         // the entry
-      ... s^.meta ...       // a field: found by the compiler, no header item
+    atomic s = &store {
+      let slot = &s^.keys[key];   // a local name for a path, not a hold
+      ... slot^ ... s^.meta ...
     }
 
-- `s` is a reference to the whole state. Every other header item is a place
-  formed *from `s`*, so it is an ordinary path below one root. Two entries
-  `&s^.dbs[i][k1]` and `&s^.dbs[j][k2]` are compared exactly as two
-  subscripts are [OWN-7]: disjoint when `i != j` or the keys are proved
-  different, otherwise possibly overlapping.
-- The semantics is unchanged from SHARE-3: the block has the whole state at
-  one point. What is actually locked is the implementation's choice, derived
-  from the block's footprint (section 3), as SHARE-3's last sentence already
-  permits.
-- Header syntax is open (section 9.1); the form above is the one that needs
-  the least new grammar, because `atomic x = &place` stays the only target
-  form and the rest are ordinary reference bindings.
+The header names the object and nothing else: `atomic s = &h`, with the
+optional guard and deadline. The block has the whole state at one point
+[SHARE-3]; which parts are locked is lowering's choice (section 3). The header
+carries no list of parts because the compiler can find every part such a list
+could name (owner, 2026-10-14: "the best solution is fully automatic
+inference"):
+
+- A field is found from the block's footprint, proofs included (section 2.5).
+- A map entry `s^.t[k]`, a key-set selection `s^.t[ks]` and an element of an
+  array of maps `s^.dbs[i]` need their key or index before the lock is taken,
+  because a map's entries are locked together in sorted key order. When the
+  key's storage and its binding are written, moved and released nowhere in
+  the block (the block's write footprint, including calls' projected rows
+  [EFF-5], does not overlap them), the key's value is the one it has when the
+  statement begins, and lowering locks that entry, with the map's other such
+  entries, at the map's first use. Otherwise lowering holds the map whole.
+  Both are correct; the second is slower, and `--lock-ledger` reports it.
+- A key computed from held state (a key name stored in an entry) cannot be
+  known before the hold by any rule. The map is held whole, or the writer uses
+  two statements: the first reads the key, the second locks both entries and
+  checks that the first still names the second.
+
+The design tree rejected "a table with header entries taken at its first use
+in the block" because the take could read key bytes the block had written or
+released, and rejected the other repair, refusing every write or release of a
+key's storage in the block, because it refuses programs for a lowering's
+timing (compiler/waiting-contexts/state-locks). This rule does neither: a key
+the block writes is never locked in advance, and no program is refused; its
+map is held whole instead.
+
+**A leading block that computes the keys was considered and is not proposed**
+(owner's question, 2026-10-14). If it reads no held state, it has exactly the
+power of code written before `atomic`, which needs no syntax. If it reads
+held state, it reads that state before holding it, so its keys can be stale
+when the locks are taken; making that sound needs a validation and retry
+(the "optimistic lock location prediction" of deterministic databases), which
+a block that runs once, moves values and writes locals cannot have. So keys
+are computed before the statement, and the compiler finds them.
 
 ### 2.2 Where the special state kinds live
 
@@ -127,9 +148,10 @@ A shared state's parts differ only in how they are accessed:
   function that does not wait, and is its own point in the one total order of
   shared effects [SHARE-3, WAIT-2]. Cells are explicitly *outside* every
   atomic domain: no statement's atomicity covers them, and their type says so.
-- **Frozen parts** (optional, section 9.4): written only at construction,
-  readable through any handle without a statement, as `Frozen<T>`'s `inner`
-  is today [SHARE-1].
+- **Frozen parts: not proposed.** A part no statement writes is already read
+  without a lock (section 3.1), so a frozen part would only add reading
+  outside a statement, which `Frozen<T>` [SHARE-1] already gives as a
+  separate object. `Frozen<T>` stays as it is.
 
 The decision cell (#364) is a cell of `DecisionState` with
 compare-and-exchange from `Open`. #403's atomic value is a cell of `u64` with
@@ -169,9 +191,9 @@ would add it without merging atomic regions.
 
 One root per statement, with ordinary paths below it. Specifically:
 
-- Separation between header selections and fields is OWN-7 on paths below one
+- Separation between entries, shards and fields is OWN-7 on paths below one
   root. Map entries under byte keys need a key-disequality fact to be proved
-  apart; key-set entries already compare by integer index (section 9.5).
+  apart; key-set entries already compare by integer index (section 9, open choice 2).
 - Facts about the state hold from the statement's entry to its exit and are
   killed at exit like the facts of any reference whose referent leaves scope
   [REF-2].
@@ -211,31 +233,66 @@ statement and keep their own designs:
 
 ## 3. Lock units and lock order (lowering)
 
-### 3.1 Units follow the declared structure
+### 3.1 Units are computed from the program's statements
 
-A lock unit is a part the declaration fixes as independent:
+An executable's composition lowers its whole closure
+(compiler/incremental-compilation, first decision), so lowering sees every
+atomic statement on every shared state type of the program. For each such
+type and instance it computes:
 
-- each map is a family of units (its entries, and its whole gate), as today;
-- each `Shards` is a family of units (its slots), as today;
-- every other top-level field of the state is one unit;
-- a fixed-length array field whose element type contains a map or shards is
-  expanded element by element, recursively through the element's fields.
+1. **Never-written parts.** A part that no statement writes, moves or swaps
+   after construction is read without any lock. The state is initialized
+   before any handle to it exists elsewhere, and a handle reaches another
+   context only through a spawn or a held statement, both of which order the
+   initialization before the read.
+2. **Units by co-access.** Every field, every map, every `Shards` and every
+   element of an array of maps or shards starts as a candidate unit. A part P
+   is protected by another unit Q's lock when every statement that writes P
+   holds Q exclusively and every statement that reads P holds Q in either
+   mode; P then has no lock of its own. Parts always used together therefore
+   share one lock, parts used apart keep separate locks, and the writer does
+   not arrange fields for locking.
+3. **Modes.** A unit no statement writes in a given statement is held for
+   reading there (`gran-read-hold-read-only`).
 
-The writer controls granularity with the structure itself: fields that change
-together go into one struct-typed field and are one unit; fields that change
-apart are separate fields. This is the grain today's programs get from
-separate objects, with no new syntax. Holding a subtree whole (a whole
-`s^.dbs` for FLUSHALL) takes each unit inside it in order. No unit has an
-"intention" counter on its ancestors, so no hold writes a line shared by
-statements that touch different parts (section 4, R2).
+Acceptance never depends on this analysis: module verdicts stay modular and
+whole-program information only selects how an accepted statement is lowered.
+The design tree's rejection of "an order of store types inferred from every
+atomic statement of the program", because it needs every function body, was
+about acceptance; here the order is the declaration's (section 3.2) and only
+lowering reads every body. The costs are performance at a distance, since a
+new statement elsewhere can split or merge a type's units, which
+`--lock-ledger` shows, and recomputing a type's units when any statement on it
+changes in an incremental build.
+
+**A part used in one place still needs a lock.** One statement in the source
+runs in as many contexts as reach it: Firn's SET statement runs in every
+connection's context at once. Eliding the lock of a part reached by only one
+context would need a proof that its statements execute in one context (one
+spawn site, executed once, the creator not touching it afterwards). That proof
+is fragile under ordinary edits, and a part only one context uses normally
+belongs in that context's locals, so it is not proposed. What the analysis
+does elide is the lock of a part that is never written (1) or always used
+together with another unit (2).
+
+**Possible later: word parts lowered to hardware atomics.** A word-sized part
+that every statement touches at most once, by one load, store or
+read-modify-write, after all its other locks, could use a hardware atomic
+instead of a lock with the statement's one-point meaning intact (#403's
+conditions). It is fragile in the same way: one statement elsewhere that
+reads two such counters together disables it for both. Explicit cells
+(section 2.3) remain the form whose cost the writer can see.
 
 ### 3.2 One static order
+
+Holding a part whole (a whole `s^.dbs` for FLUSHALL) takes each unit inside it
+in order; no unit keeps a counter on the parts enclosing it.
 
 Units are ordered by their position in the state's declaration (field order,
 then array index, then, within a map, the sorted key order of today). A
 statement takes each unit at its first use on the path, together with every
-earlier unit it will need and has not taken, and takes header entries and
-guard-read units before the guard, which are today's rules with field order in
+earlier unit it will need and has not taken, and takes the entries and units
+its guard reads before the guard, which are today's rules with field order in
 place of the order of type names and with the run-time identity order gone.
 The writer now chooses the order: a part needed only conditionally (Firn's
 `meta` when logging) can be declared after the parts every command uses, the
@@ -268,11 +325,11 @@ cache lines written are the same; one handle read fewer.
   different parts. Lowering pads each unit's lock word, and each cell, to its
   own line (128 bytes on cores that fetch line pairs). Cost: one or two lines
   per unit, negligible beside a map.
-- **R2 coarse units or ancestor counters.** If all scalar fields shared one
+- **R2 coarse units or ancestor counters.** If unrelated fields shared one
   lock, or if every statement registered on an object-wide gate, unrelated
-  statements would meet. Section 3.1's unit rule and the absence of
-  intention counters prevent both. The object header (count, descriptor) is
-  read-only on the statement path.
+  statements would meet. Section 3.1 merges only parts that are always used
+  together, and there are no intention counters on enclosing parts. The
+  object header (count, descriptor) is read-only on the statement path.
 - **R3 spurious wakes.** Watches per object would wake every guard on any
   write. Section 3.3 keeps them per unit, matching today's separate objects.
 - **R4 a callee given the whole state.** A call whose row reaches `s` whole
@@ -325,8 +382,9 @@ slower than the same statement on separate objects beyond twin noise
 - **Read holds (`gran-read-hold-read-only`):** per unit, derived from the
   footprint; no language change.
 - **Shards (`firn-req-shared-max`, `firn-req-shards-owned`):** a `Shards`
-  field; Firn's "lock a key and my shard" is `slot = &s^.keys[k]`, `part =
-  &s^.parts[mine]` in one header.
+  field; Firn's "lock a key and my shard" is one block using `&s^.keys[k]`
+  and `&s^.parts[mine]`, with `mine` taken from `any_shard()` before the
+  statement, so both are locked alone.
 - **Deadline (`firn-req-wait-key-or-flag`):** `until d { } else { }`
   unchanged, and simpler to withdraw: a pending statement's partial holds are
   units of one object, released in reverse order.
@@ -349,8 +407,9 @@ cancellation view, read for its `fired` flag. The keyspace becomes one object:
 
     // before (firn/commands/strings.wf and 40 others)
     atomic slot = &store^.keys[key], m = &store^.meta { ... }
-    // after
-    atomic s = &store, slot = &s^.keys[key] { ... s^.meta ... }
+    // after: the key is a slice of the read-only input, so its entry is
+    // locked alone; meta is locked at its first use
+    atomic s = &store { let slot = &s^.keys[key]; ... s^.meta ... }
 
 The `select-db` branch is where the multi-object form hurts most and where one
 object helps most. Today it names sixteen databases as sixteen targets
@@ -358,9 +417,10 @@ object helps most. Today it names sixteen databases as sixteen targets
 `commands/info.wf:485`, `commands/eviction.wf:495`, `commands/databases.wf:522`)
 and passes them to helpers with sixteen reference parameters
 (`held_databases_run`). With `dbs: Array<ConcurrentHashMap<Entry>, 16>` the
-header is `atomic s = &store` and the helper takes `&s^.dbs`. MOVE is
+header is `atomic s = &store` and the helper takes `&s^.dbs`. MOVE is, with
+`from`, `into` and the key all fixed when the statement begins,
 
-    atomic s = &store, source = &s^.dbs[from][key], target = &s^.dbs[into][key] { ... }
+    atomic s = &store { move_value(from: &s^.dbs[from][key], to: &s^.dbs[into][key]); ... }
 
 after Redis's own refusal of `from == into`, and SWAPDB is
 `swap(first: &s^.dbs[left], second: &s^.dbs[right])` under `left != right`,
@@ -396,18 +456,19 @@ files with a multi-target statement; the rest are rewritten into one object).
 
 ## 9. Open choices
 
-1. **Header syntax.** (a) `atomic s = &store, slot = &s^.keys[key]` (above);
-   (b) selections written relative to the handle, `atomic s = &store
-   [keys[key]]`; (c) entries named inside the block with a `hold` form. (a)
-   adds least grammar.
-2. **Lock-unit rule.** Section 3.1's default (top-level fields, maps, shards,
-   arrays of independent parts) or a finer one (every field). Finer units
-   cost more acquisitions per statement.
-3. **Guards over cells.** Allow (section 2.4) or express cancellation only
+Settled in discussion with the owner (2026-10-14):
+
+- **Header:** the object alone, with entries inferred (section 2.1); no
+  leading key block.
+- **Lock units:** computed from the program's statements (section 3.1), not a
+  structural rule.
+- **Frozen parts:** not added; `Frozen<T>` stays (section 2.3).
+
+Still open:
+
+1. **Guards over cells.** Allow (section 2.4) or express cancellation only
    through `until` and a cancellation clause on the statement.
-4. **Frozen parts.** Whether `Frozen<T>` stays a separate kind or becomes a
-   part kind of any shared state.
-5. **Two keys of one table.** Either a prelude byte comparison whose `false`
+2. **Two keys of one table.** Either a prelude byte comparison whose `false`
    result is a key-disequality fact for OWN-7, or the existing key-set form,
    whose entries compare by integer index. The first is one new fact kind,
    general rather than shared-specific; the second needs nothing new and is
@@ -439,6 +500,9 @@ by key fact; a field and an entry in one statement; a cross-field type
 invariant held by a statement that mentions only one field in code (it must
 hold both); a cell operated inside another object's statement; a guard over a
 cell woken by a store; a statement whose cell operation precedes a later
-lazily taken unit (the lowering must take the unit first). Programs: Firn's
+lazily taken unit (the lowering must take the unit first). Compiler tests: a
+key the block writes makes its map a whole hold, and an unwritten key an
+entry hold (`--lock-ledger`); a never-written field is read without a lock; two
+fields always used together share one lock and fields used apart do not. Programs: Firn's
 SET shape, MOVE and SWAPDB over `dbs`, the cancellation guard. Measurements as
 in criterion 4.
