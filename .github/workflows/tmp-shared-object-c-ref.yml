@@ -1,0 +1,50 @@
+# Temporary measurement workflow: C reference programs for the one-object redesign.
+# Remove before this branch is marked ready. See
+# research/experiments/shared-object-c-ref/README.md.
+name: tmp-shared-object-c-ref
+
+on:
+  workflow_dispatch:
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: tmp-shared-object-c-ref-14900k
+  cancel-in-progress: false
+
+jobs:
+  measure:
+    runs-on: [self-hosted, 14900k]
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the runner and record its state
+        run: |
+          out="$RUNNER_TEMP/cref-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          mkdir -p "$out"
+          echo "CREF_OUT=$out" >> "$GITHUB_ENV"
+          awk -F ': ' '/^model name/ { print $2; exit }' /proc/cpuinfo | grep -F i9-14900K
+          {
+            echo "== lscpu"; lscpu
+            echo "== governor"; cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor || true
+            echo "== kernel"; uname -a
+            echo "== load"; cat /proc/loadavg
+            echo "== clang"; /usr/bin/clang --version
+          } | tee "$out/machine.txt"
+      - name: Build and run every arm
+        run: bash research/experiments/shared-object-c-ref/run.sh --out "$CREF_OUT" 2>&1 | tee "$CREF_OUT/run.log"
+      - name: Summarize
+        if: always()
+        run: |
+          if [ -f "$CREF_OUT/raw.tsv" ]; then
+            python3 research/experiments/shared-object-c-ref/summarize.py "$CREF_OUT/raw.tsv" | tee "$CREF_OUT/summary.txt"
+            cat "$CREF_OUT/summary.txt" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cref-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: warn
+          path: ${{ env.CREF_OUT }}/
