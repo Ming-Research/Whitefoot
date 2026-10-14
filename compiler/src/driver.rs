@@ -9,8 +9,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 mod cache;
 mod diagnostic;
+mod module_syntax;
 mod packages;
 mod reads;
+mod segments;
 
 pub(crate) mod launcher;
 pub use launcher::require_executable_runner;
@@ -197,8 +199,8 @@ pub enum CompilationFailureKind {
     Backend,
 }
 
-/// One compiler stop: its stage, its category, the numbered rule when it is a
-/// source rejection, and the record a reader is shown.
+/// One compiler stop, containing the ordered segment rejections or the single
+/// rejection or toolchain failure selected by a later stage.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CompilationFailure {
     stage: CompilationStage,
@@ -206,6 +208,36 @@ pub struct CompilationFailure {
     rule_id: Option<&'static str>,
     /// Boxed so a successful compilation's `Result` stays small.
     record: Box<Record>,
+    coordinate: Option<crate::SyntaxCoordinate>,
+    additional: Vec<Self>,
+}
+
+/// One source rejection's structured evidence, retained in recorded verdicts.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SourceDiagnostic {
+    rule: String,
+    coordinate: Option<crate::SyntaxCoordinate>,
+    expected: Option<Vec<String>>,
+}
+
+impl SourceDiagnostic {
+    /// Returns the numbered rule this rejection cites.
+    #[must_use]
+    pub fn rule(&self) -> &str {
+        &self.rule
+    }
+
+    /// Returns the original source ordinal and byte interval, when source-local.
+    #[must_use]
+    pub const fn source_coordinate(&self) -> Option<crate::SyntaxCoordinate> {
+        self.coordinate
+    }
+
+    /// Returns grammar-ordered expected terminal labels for a grammar failure.
+    #[must_use]
+    pub fn expected(&self) -> Option<&[String]> {
+        self.expected.as_deref()
+    }
 }
 
 /// Where a rejection is written: a record's display path and the one-based
@@ -277,6 +309,8 @@ impl CompilationFailure {
             kind,
             rule_id: None,
             record: Box::new(Record::opaque(&detail)),
+            coordinate: None,
+            additional: Vec::new(),
         }
     }
 
@@ -313,6 +347,8 @@ impl CompilationFailure {
             kind: CompilationFailureKind::Source,
             rule_id: Some(rule),
             record: Box::new(Record::placed(issue, bundle, at)),
+            coordinate: None,
+            additional: Vec::new(),
         }
     }
 
@@ -342,6 +378,8 @@ impl CompilationFailure {
                 kind: CompilationFailureKind::Compiler,
                 rule_id: None,
                 record,
+                coordinate: Some(coordinate),
+                additional: Vec::new(),
             }
         } else {
             Self {
@@ -349,11 +387,13 @@ impl CompilationFailure {
                 kind: CompilationFailureKind::Source,
                 rule_id: Some(rule),
                 record,
+                coordinate: Some(coordinate),
+                additional: Vec::new(),
             }
         }
     }
 
-    /// Returns the stage that did not produce a complete result.
+    /// Returns the stage of the first reported rejection.
     #[must_use]
     pub const fn stage(&self) -> CompilationStage {
         self.stage
@@ -379,10 +419,42 @@ impl CompilationFailure {
     /// error[RULE]: Kind` shape -- `whitefootc: compiler failure in Stage:
     /// Kind` for a stop that is not a source rejection -- the marked source
     /// line, then one indented `label: value` line per payload field. The JSON
-    /// form is one complete object on one line with the same payload field
-    /// names. Both are deterministic for one compiler executable.
+    /// form is one complete object per rejection on its own line with the same
+    /// payload field names. Both are deterministic for one compiler executable.
     #[must_use]
     pub fn render(&self, format: DiagnosticFormat) -> String {
+        self.diagnostics()
+            .map(|diagnostic| diagnostic.render_diagnostic(format))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// Returns each rejection in source order; later stages return one record.
+    pub fn diagnostics(&self) -> impl Iterator<Item = &Self> {
+        core::iter::once(self).chain(self.additional.iter())
+    }
+
+    /// Returns the source coordinate of this record, when it has one.
+    #[must_use]
+    pub const fn source_coordinate(&self) -> Option<crate::SyntaxCoordinate> {
+        self.coordinate
+    }
+
+    fn source_diagnostics(&self) -> Vec<SourceDiagnostic> {
+        self.diagnostics()
+            .filter_map(|diagnostic| {
+                diagnostic.rule_id().map(|rule| SourceDiagnostic {
+                    rule: rule.to_owned(),
+                    coordinate: diagnostic.coordinate,
+                    expected: diagnostic.record.expected_terminals().map(<[String]>::to_vec),
+                })
+            })
+            .collect()
+    }
+
+    /// Renders this individual record, without the other segment rejections.
+    #[must_use]
+    pub fn render_diagnostic(&self, format: DiagnosticFormat) -> String {
         let category = format!("{:?}", self.kind);
         let stage = format!("{:?}", self.stage);
         // A source rejection is always in the source stages, so its rule is
@@ -421,7 +493,7 @@ impl CompilationFailure {
         self.record.location()
     }
 
-    /// Returns the exact numbered source rule this rejection cites.
+    /// Returns the exact numbered source rule the first rejection cites.
     ///
     /// Present for every [`CompilationFailureKind::Source`] stop, at whichever
     /// stage selected it, and absent for every stop that is not a
@@ -678,8 +750,9 @@ fn with_library_records<'input>(
 
 /// Checks every module of a module program's own package and of the
 /// packages it binds against its dependencies' interfaces, in package and
-/// row order, without selecting an entry, and returns the first rejected
-/// module's failure [MOD-8, MOD-11]. Standard library modules are checked
+/// row order, without selecting an entry. DIAG-1 first reports every source
+/// segment rejection together; later stages return the first rejected module's
+/// failure [MOD-8, MOD-11]. Standard library modules are checked
 /// with the library.
 ///
 /// `inputs` are the modules' interface and implementation records, each
@@ -692,6 +765,25 @@ pub fn check_module_program(
     let inputs = &with_library_records(graph, inputs);
     let modules = graph.program_modules().collect::<Vec<_>>();
     require_module_verdicts(graph, inputs, &modules, limits, None)
+}
+
+/// Checks a module program through the same DIAG-1 program-wide syntax gate
+/// and MOD-8 module verdicts as [`check_module_program`], retaining accepted
+/// module verdicts and proof receipts in `cache`.
+///
+/// # Errors
+///
+/// Returns every independent syntax-segment rejection together, or the first
+/// failure of a later stage, exactly as the uncached program check does.
+pub fn check_module_program_with_cache(
+    graph: &crate::ModuleGraph,
+    inputs: &[SourceInput<'_>],
+    limits: CompilerLimits,
+    cache: &BuildCache,
+) -> Result<(), CompilationFailure> {
+    let inputs = &with_library_records(graph, inputs);
+    let modules = graph.program_modules().collect::<Vec<_>>();
+    require_module_verdicts(graph, inputs, &modules, limits, Some(cache))
 }
 
 /// Checks one module against the interfaces it may name [MOD-8]: the
@@ -803,13 +895,15 @@ pub enum CheckOutcome {
         /// The pending interface function declarations, in source order.
         pending: Vec<String>,
     },
-    /// The check's first source rejection, and the failing tasks an impact
-    /// report lists, the first of which is that rejection [MOD-8].
+    /// The check's source rejection report and the failing tasks an impact
+    /// report lists [MOD-8]. Syntax reports contain every rejected segment.
     Rejected {
-        /// The numbered rule the rejection cites.
+        /// The numbered rule the first rejection cites.
         rule: Option<String>,
         /// The rejection as a fresh check renders it.
         failure: String,
+        /// Structured records in the same order as the rejection report.
+        diagnostics: Vec<SourceDiagnostic>,
         /// One task per failing definition, body or declaration.
         tasks: Vec<ImpactTask>,
         /// Whether the tasks name every failure of the check; a list that
@@ -952,8 +1046,20 @@ pub fn module_verdict(
     let inputs = &with_library_records(graph, inputs);
     let target = registered_module(graph, module)?;
     let check = ModuleCheck::new(graph, inputs, target, interface_only);
+    module_verdict_using(graph, inputs, module, &check, limits, cache, None)
+}
+
+fn module_verdict_using(
+    graph: &crate::ModuleGraph,
+    inputs: &[SourceInput<'_>],
+    module: &str,
+    check: &ModuleCheck<'_>,
+    limits: CompilerLimits,
+    cache: Option<&BuildCache>,
+    prepared: Option<CanonicalSyntaxUnit>,
+) -> Result<CheckVerdict, CompilationFailure> {
     if let Some(cache) = cache
-        && let Some(pending) = validated_acceptance(graph, inputs, &check, limits, cache)?
+        && let Some(pending) = validated_acceptance(graph, inputs, check, limits, cache)?
     {
         return Ok(CheckVerdict {
             subject: module.to_owned(),
@@ -967,7 +1073,7 @@ pub fn module_verdict(
         cache,
         MODULE_VERDICTS,
         (&check.material, &check.reading),
-        || match check.run(graph, limits, cache) {
+        || match check.run_using(graph, limits, cache, prepared) {
             Ok(checked) => {
                 judged = checked;
                 let pending = judged
@@ -977,7 +1083,7 @@ pub fn module_verdict(
                 Ok(CheckOutcome::Accepted { pending })
             }
             Err(failure) if failure.kind() == CompilationFailureKind::Source => {
-                module_rejection(graph, &check, &failure, limits, cache)
+                module_rejection(graph, check, &failure, limits, cache)
             }
             Err(failure) => Err(failure),
         },
@@ -985,7 +1091,7 @@ pub fn module_verdict(
     if let Some(cache) = cache
         && !judged.is_empty()
     {
-        record_acceptances(graph, inputs, &check, &judged, limits, cache);
+        record_acceptances(graph, inputs, check, &judged, limits, cache);
     }
     Ok(verdict)
 }
@@ -998,7 +1104,9 @@ pub fn module_verdict(
 /// interface as a pending private declaration. Callers keep using the
 /// written boundary, so the next check reports the next failure. A failure
 /// in no function, or a private header the interface cannot state, ends the
-/// list, which is then not known to be complete.
+/// list, which is then not known to be complete. A syntax rejection already
+/// lists every failed segment; those tasks are retained together and no
+/// semantic impact walk begins before syntax admission.
 fn module_rejection(
     graph: &crate::ModuleGraph,
     check: &ModuleCheck<'_>,
@@ -1006,6 +1114,14 @@ fn module_rejection(
     limits: CompilerLimits,
     cache: Option<&BuildCache>,
 ) -> Result<CheckOutcome, CompilationFailure> {
+    if matches!(
+        first.stage(),
+        CompilationStage::Lexing
+            | CompilationStage::TerminalClassification
+            | CompilationStage::Parsing
+    ) {
+        return outcome_of(Err(first.clone()), &check.selected);
+    }
     let mut texts = check
         .selected
         .iter()
@@ -1086,6 +1202,7 @@ fn module_rejection(
     Ok(CheckOutcome::Rejected {
         rule: first.rule_id().map(str::to_owned),
         failure: first.to_string(),
+        diagnostics: first.source_diagnostics(),
         tasks,
         complete,
     })
@@ -1197,7 +1314,7 @@ fn impact_task(
         function,
         rule: failure.rule_id().map(str::to_owned),
         location: failure.location(),
-        failure: failure.to_string(),
+        failure: failure.render_diagnostic(DiagnosticFormat::Text),
     }
 }
 
@@ -1313,31 +1430,36 @@ impl<'input> ModuleCheck<'input> {
     /// read of other modules, then the same for the interface of every
     /// module of its dependency closure, whose judgments the accepted check
     /// also made; or the check's failure.
-    fn run(
+    fn run_using(
         &self,
         graph: &crate::ModuleGraph,
         limits: CompilerLimits,
         cache: Option<&BuildCache>,
+        prepared: Option<CanonicalSyntaxUnit>,
     ) -> Result<Vec<Judged>, CompilationFailure> {
-        with_checked_program_using(
-            &self.selected,
-            Some(graph.modules()),
-            limits,
-            cache,
-            |_, resolved| {
-                let reads = reads::DeclarationReads::new(resolved);
-                Ok(std::iter::once(self.target)
-                    .chain(graph.dependency_closure(self.target))
-                    .map(|module| Judged {
-                        module,
-                        pending: pending_declarations(resolved, module),
-                        read: reads
-                            .as_ref()
-                            .and_then(|reads| reads.read_declarations(module)),
-                    })
-                    .collect())
-            },
-        )
+        let continuation = |_: CheckedProgram, resolved: &ResolvedSyntaxUnit| {
+            let reads = reads::DeclarationReads::new(resolved);
+            Ok(std::iter::once(self.target)
+                .chain(graph.dependency_closure(self.target))
+                .map(|module| Judged {
+                    module,
+                    pending: pending_declarations(resolved, module),
+                    read: reads
+                        .as_ref()
+                        .and_then(|reads| reads.read_declarations(module)),
+                })
+                .collect())
+        };
+        match prepared {
+            Some(canonical) => with_canonical_program_using(canonical, cache, continuation),
+            None => with_checked_program_using(
+                &self.selected,
+                Some(graph.modules()),
+                limits,
+                cache,
+                continuation,
+            ),
+        }
     }
 
     /// Records an acceptance under the module's own records and graph facts,
@@ -1600,7 +1722,8 @@ fn validated_acceptance(
 /// [MOD-8] a composition holds only while every selected module's own
 /// verdict does. Each module is checked against its dependencies' interfaces
 /// alone, in row order, reusing an acceptance a cache recorded for exactly
-/// its inputs, and the first rejected module's failure is the composition's.
+/// its inputs. DIAG-1 admits syntax across all selected records first; the
+/// first subsequent rejected module's failure is the composition's.
 fn require_module_verdicts(
     graph: &crate::ModuleGraph,
     inputs: &[SourceInput<'_>],
@@ -1608,10 +1731,14 @@ fn require_module_verdicts(
     limits: CompilerLimits,
     cache: Option<&BuildCache>,
 ) -> Result<(), CompilationFailure> {
-    for module in modules {
-        let check = ModuleCheck::new(graph, inputs, *module, false);
+    let checks = modules
+        .iter()
+        .map(|module| ModuleCheck::new(graph, inputs, *module, false))
+        .collect::<Vec<_>>();
+    let prepared = module_syntax::prepare(graph, inputs, &checks, limits, cache)?;
+    for (check, canonical) in checks.iter().zip(prepared) {
         if let Some(cache) = cache
-            && validated_acceptance(graph, inputs, &check, limits, cache)?.is_some()
+            && validated_acceptance(graph, inputs, check, limits, cache)?.is_some()
         {
             continue;
         }
@@ -1624,9 +1751,9 @@ fn require_module_verdicts(
         }
         // A rejection is left to a module check, which records it with its
         // impact report; a build needs only its first failure.
-        let judged = check.run(graph, limits, cache)?;
+        let judged = check.run_using(graph, limits, cache, canonical)?;
         if let Some(cache) = cache {
-            record_acceptances(graph, inputs, &check, &judged, limits, cache);
+            record_acceptances(graph, inputs, check, &judged, limits, cache);
             let pending = judged
                 .first()
                 .map(|judged| judged.pending.clone())
@@ -1643,7 +1770,7 @@ fn require_module_verdicts(
 }
 
 /// A composition check's result as a verdict records it: an acceptance, or a
-/// source rejection with its one task. Any other failure returns as it is
+/// source rejection with one task per diagnostic. Any other failure returns as it is
 /// and is never recorded.
 fn outcome_of(
     result: Result<Vec<String>, CompilationFailure>,
@@ -1656,11 +1783,27 @@ fn outcome_of(
                 .iter()
                 .map(|input| input.bytes().to_vec())
                 .collect::<Vec<_>>();
-            let item = failing_item(&failure, records, &texts);
+            let tasks = failure
+                .diagnostics()
+                .map(|diagnostic| {
+                    let item = if matches!(
+                        diagnostic.stage(),
+                        CompilationStage::Lexing
+                            | CompilationStage::TerminalClassification
+                            | CompilationStage::Parsing
+                    ) {
+                        None
+                    } else {
+                        failing_item(diagnostic, records, &texts)
+                    };
+                    impact_task(diagnostic, records, item.as_ref())
+                })
+                .collect();
             Ok(CheckOutcome::Rejected {
                 rule: failure.rule_id().map(str::to_owned),
                 failure: failure.to_string(),
-                tasks: vec![impact_task(&failure, records, item.as_ref())],
+                diagnostics: failure.source_diagnostics(),
+                tasks,
                 complete: false,
             })
         }
@@ -1784,7 +1927,9 @@ pub fn entry_verdict(
         (&modules, &selected),
         RecordOrder::Sorted,
     );
-    let mut reading = rejection_reading(graph, &selected);
+    // Program-wide syntax diagnostics retain the input unit's source ordinals,
+    // so even records outside this entry fix their mapping in a cached rejection.
+    let mut reading = rejection_reading(graph, inputs);
     // A named entry's rejection quotes where the graph writes it.
     if let Some(place) = selection.written {
         let mut fields = Fields::default();
@@ -1816,18 +1961,35 @@ pub fn entry_verdict(
         || {
             // Each module's verdict reads only its own records and its
             // dependencies' interfaces, so the verdicts are independent and
-            // run concurrently. The first rejection or failure in module
-            // order is the one reported; unlike a sequential walk, every
-            // module is checked even after an earlier one rejects, and a
-            // panic in any of them propagates.
-            let verdicts = crate::in_parallel(&modules, |module| {
-                let name = graph
-                    .modules()
-                    .get(module.index())
-                    .map_or_else(String::new, crate::ModuleRecord::qualified_name);
+            // run concurrently after program-wide syntax admission. The first
+            // later-stage rejection or failure in module order is reported.
+            // Every module is checked even after an earlier one rejects,
+            // and a panic in any of them propagates.
+            let checks = modules
+                .iter()
+                .map(|module| ModuleCheck::new(graph, inputs, *module, false))
+                .collect::<Vec<_>>();
+            let prepared = match module_syntax::prepare(graph, inputs, &checks, limits, cache) {
+                Ok(prepared) => prepared,
+                Err(failure) => return outcome_of(Err(failure), inputs),
+            };
+            let work = checks
+                .iter()
+                .zip(prepared.into_iter().map(std::sync::Mutex::new))
+                .collect::<Vec<_>>();
+            let verdicts = crate::in_parallel(&work, |(check, prepared)| {
+                let name = module_name(graph, check.target);
                 match known.iter().find(|verdict| verdict.subject == name) {
                     Some(verdict) => Ok(verdict.clone()),
-                    None => module_verdict(graph, inputs, &name, false, limits, cache),
+                    None => module_verdict_using(
+                        graph,
+                        inputs,
+                        &name,
+                        check,
+                        limits,
+                        cache,
+                        prepared.lock().expect("one owner per prepared module").take(),
+                    ),
                 }
             });
             for verdict in verdicts {
@@ -2123,15 +2285,17 @@ fn encode_outcome(outcome: &CheckOutcome, reading: &[u8]) -> Vec<u8> {
         CheckOutcome::Rejected {
             rule,
             failure,
+            diagnostics,
             tasks,
             complete,
         } => {
             fields
-                .push(b"rejected")
+                .push(b"rejected-diagnostics")
                 .push(rule.as_deref().unwrap_or_default().as_bytes())
                 .push(failure.as_bytes())
                 .push(reading)
-                .push(if *complete { b"complete" } else { b"partial" });
+                .push(if *complete { b"complete" } else { b"partial" })
+                .push(&encode_diagnostics(diagnostics));
             for task in tasks {
                 let (path, line, column) = task.location.as_ref().map_or_else(
                     || (String::new(), String::new(), String::new()),
@@ -2157,6 +2321,89 @@ fn encode_outcome(outcome: &CheckOutcome, reading: &[u8]) -> Vec<u8> {
     fields.into_bytes()
 }
 
+/// Nested length-prefixed fields retain each diagnostic independently of prose.
+fn encode_diagnostics(diagnostics: &[SourceDiagnostic]) -> Vec<u8> {
+    let mut records = Fields::default();
+    for diagnostic in diagnostics {
+        let mut fields = Fields::default();
+        fields.push(diagnostic.rule.as_bytes());
+        let mut coordinate = Fields::default();
+        if let Some(at) = diagnostic.coordinate {
+            coordinate
+                .push(at.source().ordinal().to_string().as_bytes())
+                .push(at.start().value().to_string().as_bytes())
+                .push(at.end().value().to_string().as_bytes());
+        }
+        fields.push(&coordinate.into_bytes());
+        match &diagnostic.expected {
+            None => {
+                fields.push(b"none");
+            }
+            Some(expected) => {
+                fields.push(b"expected");
+                for terminal in expected {
+                    fields.push(terminal.as_bytes());
+                }
+            }
+        }
+        records.push(&fields.into_bytes());
+    }
+    records.into_bytes()
+}
+
+fn decode_diagnostics(payload: &[u8]) -> Option<Vec<SourceDiagnostic>> {
+    let records = Fields::parse(payload)?;
+    if records.is_empty() {
+        return None;
+    }
+    records
+        .iter()
+        .map(|record| {
+            let fields = Fields::parse(record)?;
+            let [rule, coordinate, expectation, terminals @ ..] = fields.as_slice() else {
+                return None;
+            };
+            let rule = std::str::from_utf8(rule).ok()?.to_owned();
+            if rule.is_empty() {
+                return None;
+            }
+            let coordinates = Fields::parse(coordinate)?;
+            let coordinate = match coordinates.as_slice() {
+                [] => None,
+                [source, start, end] => {
+                    let source = std::str::from_utf8(source).ok()?.parse().ok()?;
+                    let start = std::str::from_utf8(start).ok()?.parse().ok()?;
+                    let end = std::str::from_utf8(end).ok()?.parse().ok()?;
+                    if start > end {
+                        return None;
+                    }
+                    Some(crate::SyntaxCoordinate::new(
+                        crate::SourceId::from_ordinal(source),
+                        crate::ByteOffset::new(start),
+                        crate::ByteOffset::new(end),
+                    ))
+                }
+                _ => return None,
+            };
+            let expected = match *expectation {
+                b"none" if terminals.is_empty() => None,
+                b"expected" => Some(
+                    terminals
+                        .iter()
+                        .map(|terminal| std::str::from_utf8(terminal).ok().map(str::to_owned))
+                        .collect::<Option<Vec<_>>>()?,
+                ),
+                _ => return None,
+            };
+            Some(SourceDiagnostic {
+                rule,
+                coordinate,
+                expected,
+            })
+        })
+        .collect()
+}
+
 /// A recorded outcome, or `None` when the payload is malformed or records a
 /// rejection read in another way than `reading`.
 fn decode_outcome(payload: &[u8], reading: &[u8]) -> Option<CheckOutcome> {
@@ -2169,7 +2416,7 @@ fn decode_outcome(payload: &[u8], reading: &[u8]) -> Option<CheckOutcome> {
                 .map(|name| text(name))
                 .collect::<Option<Vec<_>>>()?,
         }),
-        [b"rejected", rule, failure, recorded, complete, tasks @ ..]
+        [b"rejected-diagnostics", rule, failure, recorded, complete, diagnostics, tasks @ ..]
             if *recorded == reading && tasks.len() % 7 == 0 =>
         {
             let optional = |field: &[u8]| (!field.is_empty()).then(|| text(field)).flatten();
@@ -2200,6 +2447,7 @@ fn decode_outcome(payload: &[u8], reading: &[u8]) -> Option<CheckOutcome> {
             Some(CheckOutcome::Rejected {
                 rule: optional(rule),
                 failure: text(failure)?,
+                diagnostics: decode_diagnostics(diagnostics)?,
                 tasks,
                 complete: *complete == b"complete",
             })
@@ -2562,6 +2810,36 @@ fn canonical_syntax(
     limits: CompilerLimits,
     graph: bool,
 ) -> Result<CanonicalSyntaxUnit, CompilationFailure> {
+    let parsed = segment_syntax(bundle, limits, graph)??;
+    finish_syntax(bundle, parsed, limits)
+}
+
+/// Establishes segment admission while retaining the complete derivation,
+/// whose failure is selected only after every segment has been judged.
+fn segment_syntax(
+    bundle: &SourceBundle,
+    limits: CompilerLimits,
+    graph: bool,
+) -> Result<Result<crate::ParsedBundle, CompilationFailure>, CompilationFailure> {
+    let parsed = derive_syntax(bundle, limits, graph, false);
+    if !parsed
+        .as_ref()
+        .is_ok_and(|parsed| segments::aligns(bundle, parsed, graph))
+    {
+        // Whole-source success alone cannot establish segment success: a raw
+        // boundary may split a noncanonical declaration. Whole-source failure
+        // likewise cannot select a diagnostic before the independent segments.
+        segments::check(bundle, limits, graph)?;
+    }
+    Ok(parsed)
+}
+
+fn derive_syntax(
+    bundle: &SourceBundle,
+    limits: CompilerLimits,
+    graph: bool,
+    graph_segment: bool,
+) -> Result<crate::ParsedBundle, CompilationFailure> {
     let lexed = match lex(bundle, limits.lexer) {
         LexOutcome::Complete(complete) => complete,
         LexOutcome::SourceIssue(issue) => {
@@ -2625,7 +2903,9 @@ fn canonical_syntax(
             ));
         }
     };
-    let parsed = match if graph {
+    let parsed = match if graph_segment {
+        crate::syntax::parse_graph_segment(classified, limits.parser)
+    } else if graph {
         parse_graph(classified, limits.parser)
     } else {
         parse(classified, limits.parser)
@@ -2663,6 +2943,14 @@ fn canonical_syntax(
             ));
         }
     };
+    Ok(parsed)
+}
+
+fn finish_syntax(
+    bundle: &SourceBundle,
+    parsed: crate::ParsedBundle,
+    limits: CompilerLimits,
+) -> Result<CanonicalSyntaxUnit, CompilationFailure> {
     let finalized = match finalize(parsed, limits.finalizer) {
         FinalizeOutcome::Complete(complete) => *complete,
         FinalizeOutcome::ResourceFailure(failure) => {
@@ -2750,6 +3038,21 @@ where
     }
     .map_err(CompilationFailure::source_envelope)?;
     let canonical = canonical_syntax(&bundle, limits, false)?;
+    with_canonical_program_using(canonical, receipts, continuation)
+}
+
+/// Resumes the ordinary front end after all records have passed DIAG-1's
+/// syntax stages. Module-program admission retains this capability so the
+/// module verdict uses its original derivation rather than parsing again.
+fn with_canonical_program_using<T, F>(
+    canonical: CanonicalSyntaxUnit,
+    receipts: Option<&BuildCache>,
+    continuation: F,
+) -> Result<T, CompilationFailure>
+where
+    F: FnOnce(CheckedProgram, &ResolvedSyntaxUnit) -> Result<T, CompilationFailure>,
+{
+    let bundle = canonical.classified_bundle().source_bundle().clone();
     let resolved = match resolve(canonical) {
         ResolutionOutcome::Complete(complete) => complete,
         ResolutionOutcome::SourceIssue { issue, .. } => {
@@ -2814,6 +3117,8 @@ where
                     unsupported.node.coordinate(),
                     Anchor::Start,
                 )),
+                coordinate: Some(unsupported.node.coordinate()),
+                additional: Vec::new(),
             });
         }
         SemanticOutcome::CompilerFailure { failure, .. } => {
@@ -2929,7 +3234,8 @@ fn lower_selected(
             if let Some(failure) = caller_failure {
                 let mut comment = crate::backend::emission::Module::default();
                 comment.text(format!(
-                    "\n; Executable caller was not admitted: {failure}\n"
+                    "\n; Executable caller was not admitted: {}\n",
+                    failure.replace('\n', "\n; ")
                 ));
                 module.append(comment)?;
             }

@@ -12,6 +12,7 @@
 
 mod backend;
 mod cycles;
+mod diagnostic_repairs;
 mod driver;
 mod graph;
 mod ir;

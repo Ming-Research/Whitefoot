@@ -709,6 +709,7 @@ fn verdict_json(kind: &str, verdict: &CheckVerdict, analyses: Analyses) -> Strin
         CheckOutcome::Rejected {
             rule,
             failure,
+            diagnostics,
             tasks,
             complete,
         } => {
@@ -719,6 +720,14 @@ fn verdict_json(kind: &str, verdict: &CheckVerdict, analyses: Analyses) -> Strin
                     .map_or_else(|| "null".to_owned(), json_string)
             ));
             fields.push(format!("\"failure\":{}", json_string(failure)));
+            fields.push(format!(
+                "\"diagnostics\":[{}]",
+                diagnostics
+                    .iter()
+                    .map(source_diagnostic_json)
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ));
             let optional = |text: Option<&str>| text.map_or_else(|| "null".to_owned(), json_string);
             let tasks = tasks
                 .iter()
@@ -744,6 +753,30 @@ fn verdict_json(kind: &str, verdict: &CheckVerdict, analyses: Analyses) -> Strin
     if let Some((reused, recorded)) = analyses {
         fields.push(format!(
             "\"analyses_reused\":{reused},\"analyses_recorded\":{recorded}"
+        ));
+    }
+    format!("{{{}}}", fields.join(","))
+}
+
+/// Structured source evidence is identical in fresh and cached verdict reports.
+fn source_diagnostic_json(diagnostic: &whitefoot::SourceDiagnostic) -> String {
+    let mut fields = vec![format!("\"rule\":{}", json_string(diagnostic.rule()))];
+    if let Some(at) = diagnostic.source_coordinate() {
+        fields.push(format!(
+            "\"source_ordinal\":{},\"byte_start\":{},\"byte_end\":{}",
+            at.source().ordinal(),
+            at.start().value(),
+            at.end().value()
+        ));
+    }
+    if let Some(expected) = diagnostic.expected() {
+        fields.push(format!(
+            "\"expected\":[{}]",
+            expected
+                .iter()
+                .map(|terminal| json_string(terminal))
+                .collect::<Vec<_>>()
+                .join(",")
         ));
     }
     format!("{{{}}}", fields.join(","))

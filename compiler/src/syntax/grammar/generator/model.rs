@@ -324,9 +324,19 @@ impl Grammar {
                         .index
                         .get(name)
                         .unwrap_or_else(|| panic!("unknown production reference {name}"));
-                    // GRAM-9: every `atom` reference outside `expr` is an
-                    // atom-only position.
-                    let atom_only = name == "atom" && owner != "expr";
+                    // GRAM-9 owns these atom-only occurrences. `expr` and
+                    // `affine_factor` admit a call as another alternative.
+                    let atom_only = name == "atom"
+                        && matches!(
+                            owner,
+                            "atom_list"
+                                | "fieldinit"
+                                | "infix_tail"
+                                | "psuffix"
+                                | "range_tail"
+                                | "for_binding"
+                                | "range_binder"
+                        );
                     (Kind::Production(target), Vec::new(), atom_only)
                 }
             }
