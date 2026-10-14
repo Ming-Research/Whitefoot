@@ -11,6 +11,14 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-14 v0.152: a requirement displaced by a constant gives an exact entry relation
+
+Rules: changed ENT-3.S4
+
+Owner-approved: On the shared status board on 2026-10-14, written in Chinese, the owner chose option A, "approve: recognise it" (translated), on the card "does the specification recognise a `requires` side that is one term plus a constant, such as `i + 1_u32 <= b`, or its widening conversion, as an exact two-term relation?" (translated), and ruled that the rule registering the exact relation at function entry define each comparison side recursively by the shapes the checker accepts: a term, constant or measure term; its widening conversion; a sum with a term on at most one side; a difference with no term in the subtrahend; a product with no term on either side; the compiler does not change, and the specification change is approved with Whitefoot#472 (translated). This amendment was written as v0.151 and renumbered to v0.152 because main reached v0.151 first.
+
+Summary: ENT-3.S4 establishes the exact relation R when G's complete root is one integer comparison whose sides are each an entry side: an admitted term, constant or measure term, or a widening conversion of one, or a sum, difference or product of entry sides that folds to a constant around at most one term. The checker already registered these forms, so the compiler is unchanged and no accepted program changes its result; the rule states the checker's range in the specification, in line with the postcondition side, which admits a datum displaced by a constant. Comparison-origin shape (a) [ENT-3] is unchanged. Selection ground: conversion and constant displacement preserve the mathematical value, so the form is sound, and a writer's natural `i + 1 <= b` otherwise rests on the implementation, not the specification. Evidence: conformance cases ent3-pos-s4-displaced-requirement-chain, ent3-pos-s4-widened-displaced-requirement-chain, ent3-pos-s4-nested-displaced-requirement, ent3-pos-s4-displaced-widened-requirement, ent3-pos-s4-widened-displaced-requirement-max, ent3-neg-s4-scaled-requirement-chain, fn8-neg-widened-displaced-requirement-call and fn8-neg-widened-displaced-requirement-over-max.
+
 ## 2026-10-13 v0.151: key sets and concurrent hash maps have nonempty release, and the executable release graph is defined apart from the type ownership closure
 
 Rules: changed PROV-6, STOR-3, SHARE-1
