@@ -733,3 +733,55 @@ SHARE-2 paragraph and placement rows (not merged), the decision-cell-free
 boundary in PAR-1, PAR-2, SHARE-2 and SHARE-3, the cancellation-state update as
 a kind of shared effect. Added: section 2.3's one section and the guard rule of
 section 2.4.
+
+## 12. Decisions of 2026-10-14, in one place
+
+Settled with the owner item by item; the board items named carry each one.
+
+- **Model** (card `shared-object-model-adopt`, A): one atomic statement holds
+  one shared object; maps and shards are fields of a shared state; the header
+  names only the object; lowering infers the locked entries (an entry whose
+  key's storage and binding the block never writes, moves or releases is
+  locked alone, otherwise the map whole) and the lock units (never-written
+  parts lock-free, parts always used together share one mutex, read-only uses
+  take read holds), orders units by declaration and registers watches per
+  unit. Every lock optimization is equivalent to locking the whole object.
+  Plus the study's three additions: an operation that detaches a map's
+  contents for release outside the statement (FLUSHALL); no fact from an
+  atomic value in a guard; the two rules for explicit-close state. Item
+  `one-object-statement`.
+- **Atomic values** (item `atomic-value`): `Atomic<T>`, a one-word shared
+  object; T an integer, `Bool` or payload-free enum (instants as nanoseconds
+  in `u64`); load, store, exchange, compare-and-exchange for all, wrapping add,
+  bounded saturating add (stops at 2^63 and returns none), max, min and
+  bitwise and/or/xor for integers, and/or/xor for `Bool`; sequentially
+  consistent only; usable anywhere, including guards; a statement takes all its
+  locks before its first atomic operation. The decision cell becomes a library
+  type over `Atomic<DecisionState>`; `SharedRead` is removed (its only user was
+  cancellation); cancellation sources and watches hold an `Atomic<Bool>` with
+  watchers, and the cancellation-state update stops being its own kind of
+  shared effect.
+- **Shards** (item `shards-field`): a `Shards<T>` field; a block's access is the
+  executing thread's part; whole access only by a merged read and a take that
+  resets every part, with an initial value and a merge function; no
+  `any_shard()`, no subscript.
+- **Deadline** (card `wait-key-or-cancel-form`, A; item
+  `firn-req-wait-key-or-flag`): `when g until d { } else { }` covers both a lock
+  not obtained and a guard never true; no cancel watch for now. The busy-script
+  timer is a start instant in an atomic value plus this deadline; spawn in a
+  block goes to the backlog (`atomic-block-spawn`).
+- **Progress** (card `single-driver-progress-direction`, A; item
+  `firn-req-single-driver-progress`): the #389 whole-service handoff also
+  triggers on a non-empty ready queue and a due timer; WAIT-2 gains the bounded
+  promise; the yield check becomes one load of a per-thread flag the monitor
+  sets.
+- **Thresholds**: performance is judged against a C program giving the same
+  guarantee by the best known method: throughput at least 0.9 of it, longest
+  latency at most twice its longest under the same load.
+- **Release descriptor** (item `release-action-declared`): the #392 table of
+  self-changing host handles becomes a descriptor property; no identity column.
+- **Superseded** (shared-object-model row `superseded-records`): the 10-05
+  multi-target statement and map placement, type-then-identity lock order and
+  duplicate merging, the rejection of general atomic fields, the decision cell,
+  `SharedRead`, the cancellation-state update, #403's target-only atomic value,
+  `any_shard()`, and the description-plus-identity direction.
