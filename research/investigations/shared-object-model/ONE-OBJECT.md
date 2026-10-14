@@ -93,9 +93,9 @@ meaning. The split is the one the lock-inference literature makes: the
 programmer marks atomic sections and the compiler infers the locks
 (McCloskey et al., "Autolocker", POPL 2006; Emmi et al., "Lock allocation",
 POPL 2007; Cherem, Chilimbi and Gulwani, "Inferring locks for atomic
-sections", PLDI 2008). The other mode the language offers is the cell (section
-2.3), whose every operation is its own instant, for values where a single
-operation is all the atomicity wanted.
+sections", PLDI 2008). The other mode the language offers is the atomic value
+(section 2.3), whose every operation is its own instant, for values where a
+single operation is all the atomicity wanted.
 
 ## 2. The model
 
@@ -105,6 +105,11 @@ operation is all the atomicity wanted.
       let slot = &s^.keys[key];   // a local name for a path, not a hold
       ... slot^ ... s^.meta ...
     }
+
+**Principle (owner, 2026-10-14):** an atomic statement means exclusive access
+to the whole shared object; every lock optimization the compiler makes must be
+equivalent to locking the whole object, and under that equivalence it may make
+any optimization.
 
 The header names the object and nothing else: `atomic s = &h`, with the
 optional guard and deadline. The block has the whole state at one point
@@ -154,7 +159,7 @@ state of an object" to "a part of a shared state":
 |---|---|---|
 | `ConcurrentHashMap<V>` | the whole state of a `Shared` | any field (at any depth, including a fixed array element) of a shared state; never a local, never moved in or out whole; exchanged only by `swap` |
 | `Shards<T>` (#385) | the whole state | the same as the map |
-| a cell (section 2.3) | `DecisionCell` handle; #403's `AtomicValue` state | a field of a shared state |
+| an atomic value (section 2.3) | `DecisionCell` handle; #403's `AtomicValue` state | its own one-word object, `Atomic<T>`, whose handle may be anywhere a handle may |
 
 This keeps the owner's principle of 2026-10-05, "a concurrent hash table is
 shared by nature; a type's behavior should not change with where it is put"
@@ -166,65 +171,115 @@ movable value (Q18), so the checker had to track which state a table belonged
 to. A map that can only ever be a part of a shared state is reached only by a
 path from that state's binding, so there is nothing to track.
 
-### 2.3 Three kinds of part
+### 2.3 Atomic values: one-word objects whose statements are single operations
 
-A shared state's parts differ only in how they are accessed:
+Everything in a shared state is held state, reached inside an atomic statement
+as if the whole object were locked. The one other kind of shared state is the
+**atomic value** (`Atomic<T>`, name open): a shared object whose state is one
+word, `T` an integer type, `Bool` or an enum whose variants carry no payload,
+and whose only statements are single operations:
 
-- **Held parts** (the default): reached only inside an atomic statement on
-  the object, at the statement's one point.
-- **Cell parts**: a word-sized value (an integer, `Bool` or a tag-only enum)
-  operated on by one instant operation: load, store, exchange, add (wrapping
-  or saturating), max, min, bitwise or/and, compare-and-exchange. An
-  operation never waits, may be written anywhere a handle or a held binding
-  reaches the cell, including inside another statement's block and in a
-  function that does not wait, and is its own point in the one total order of
-  shared effects [SHARE-3, WAIT-2]. Cells are explicitly *outside* every
-  atomic domain: no statement's atomicity covers them, and their type says so.
-- **Frozen parts: not proposed.** A part no statement writes is already read
-  without a lock (section 3.1), so a frozen part would only add reading
-  outside a statement, which `Frozen<T>` [SHARE-1] already gives as a
-  separate object. `Frozen<T>` stays as it is. It is not a reader-writer
-  lock: no operation writes a frozen object's value and its type may hold no
-  shared handle, cell or host handle [SHARE-1], so no writer exists and a
-  read without a lock cannot see a partial write. A changed value is a new
-  frozen object whose handle replaces the old one; readers holding the old
-  handle keep reading the old value until they release it. The
-  reader-writer behaviour, for state that does change, is the read hold that
-  lowering derives inside an atomic statement (section 3.1, item 3).
+| operation | integers | `Bool` | payload-free enum |
+|---|---|---|---|
+| load, store, exchange, compare-and-exchange | yes | yes | yes |
+| add: wrapping, and #403's bounded saturating add | yes | | |
+| max, min | yes | | |
+| and, or, xor | bitwise | logical | |
 
-The decision cell (#364) is a cell of `DecisionState` with
-compare-and-exchange from `Open`. #403's atomic value is a cell of `u64` with
-add and max. A cancellation's `fired` is a cell of `Bool`. Each needs no rule
-of its own: the 13 rules the decision cell changed and #403's "one operation
-per path, outside loops, no alias" become the one cell rule.
+Handles are made and shared as `Shared` handles are (`atomic_new`,
+`atomic_share`, names open) and live wherever a handle may: a local, a
+context's arguments, a struct a context keeps. An operation is an atomic
+statement with one step on a one-word object, which the hardware performs as
+one instruction, so it never waits. Because it never waits it is admitted
+anywhere: inside another statement's block, in a guard (loads only, section
+2.4) and in a function that does not wait. This keeps "one statement, one
+object": each operation is its own statement on its own object, and since
+none waits, none can be part of a cycle of waits.
 
-One ordering rule ties cells to statements, generalized from #403's finding
-that a sequence number taken at the statement's lock point orders statements
-consistently with their effects: **inside an atomic statement, every lock the
-statement takes is taken before its first cell operation.** The statement's
-point can then be placed immediately before that operation (two-phase locking
-makes any point between the last acquisition and the first release valid),
-so a sequence number taken there orders statements by effect, and a decision
-claimed there is visible to others before the long statement ends.
+**Meaning.** Every operation is one point in the total order of shared effects
+[SHARE-3, WAIT-2]: sequentially consistent, with no weaker order offered, so
+the language gains no memory model. Cost: on x86-64 a load is a plain load, a
+read-modify-write is the locked instruction it would be anyway (max and min
+are a compare-and-exchange loop) and a store is an exchange; on AArch64,
+load-acquire, store-release and the LSE read-modify-writes, which include an
+atomic maximum.
+
+**Ordering with the enclosing statement** (generalized from #403): inside an
+atomic statement, every lock the statement takes is taken before its first
+operation on an atomic value. The statement's point can then be placed
+immediately before that operation, since two-phase locking makes any point
+between the last acquisition and the first release valid, so a sequence number
+taken there orders statements by effect, and a verdict claimed there is
+visible before the long statement ends.
+
+**Checker.** An operation's result is a fresh value; no fact about an atomic
+value's content is kept from one operation to the next, since others change it
+at any point. A function that operates on one carries the shared-effect marker
+(section 2.6).
+
+**Why its own object and not a field of a shared state** (the previous draft
+of this section). A field would be reached through a handle without a
+statement, a second way into a state; one inside a map entry would have to
+outlive the entry's removal; and a long statement holding the object would
+still have to let others reach it. A one-word object needs none of this: it is
+today's `DecisionCell` generalized, with the same handle lifetime.
+
+The decision verdict becomes `Atomic<DecisionState>` with compare-and-exchange
+from `Open`; #403's atomic value becomes `Atomic<u64>` with add and max; a
+cancellation's `fired` becomes `Atomic<Bool>`. The 13 rules the decision cell
+changed and #403's "one operation per path, outside loops, no alias" become
+this one section.
+
+**What it gives up.** The design tree rejected general atomic fields because
+they expose single reads and writes inside what the context meaning makes one
+step (language/waiting/shared-objects). An atomic value does expose them: a
+program can load, decide and store, and lose a race to another context doing
+the same. That is a race condition, not a data race, which CAP-1 already does
+not exclude; the type shows where it can happen, and compare-and-exchange is
+the operation that avoids it. Adopting this reverses that rejection in full,
+which the owner decides; the decision cell reversed it in part.
+
+**Frozen parts: not proposed.** A part no statement writes is already read
+without a lock (section 3.1), so a frozen part would only add reading outside
+a statement, which `Frozen<T>` [SHARE-1] already gives as a separate object.
+`Frozen<T>` stays as it is. It is not a reader-writer lock: no operation writes
+a frozen object's value and its type may hold no shared handle, decision cell
+or host handle [SHARE-1], so no writer exists and a read without a lock cannot
+see a partial write. A changed value is a new frozen object whose handle
+replaces the old one; readers holding the old handle keep reading the old
+value until they release it. The reader-writer behaviour, for state that does
+change, is the read hold that lowering derives inside an atomic statement
+(section 3.1, item 3).
 
 ### 2.4 Crossing objects
 
-The only interaction between two objects inside one statement is through
-cells: a block may operate on another object's cell, because a cell holds
-nothing and waits for nothing. Nothing else crosses: no statement holds a
-second object.
+The only interaction between two objects inside one statement is an operation
+on an atomic value, which holds nothing and waits for nothing. No statement
+holds a second object.
 
 The recurring cross-object need in the repository is a guard of the form
 "work is available or this was cancelled" (`cancellation.wf`,
 `cancel-guard-run-readiness`, Firn's `refresh_idle_limit`). Proposed: a guard
-may load cells of any object. A cell write checks the cell's watcher word
-(one load on a line it already owns) and, when watches exist, wakes them as a
-write to a held part does today. A guard's held reads take effect at the
-statement's point and its cell loads at their own points before it; since a
-cancellation cell only goes from false to true, the guard that saw it true
-remains true. Waiting on two independent objects' *held* state (a Go-style
-select over two channels) is not expressible; section 8 gives the syntax that
-would add it without merging atomic regions.
+may load atomic values. Every write to an atomic value checks the value's
+watcher word, one load on the line the write already owns, and when watches
+exist wakes them as a write to held state does today. The guard's held reads
+take effect at the statement's point and its loads right after it (the
+ordering rule of section 2.3); a cancellation flag only goes from false to
+true, so a guard that saw it true stays true. Waiting on the held state of two
+independent objects (a Go-style select) is not expressible; section 8 gives
+the syntax that would add it without merging atomic regions.
+
+### 2.4.1 The needs and where each goes
+
+| need | example | form | ground |
+|---|---|---|---|
+| a counter every command writes and a report reads | INFO's command and hit counts | a `Shards` field of the state | one word written by every core reached 118 M/s on 8 P-cores for C's atomic add against 1,994 M/s for a line per thread (run 38304337014); shards reached 0.60 of the per-thread line (run 38458676162) |
+| a maximum that rises rarely | `used_memory_peak` | `Atomic<u64>`: load, then max only when larger | loads of a line nobody writes leave it in every core's cache; only a new peak writes |
+| one number line in effect order | AOF sequence | `Atomic<u64>` add inside the key's statement | must be global; ordering rule of section 2.3 |
+| a one-shot verdict visible mid-statement | SCRIPT KILL | `Atomic<DecisionState>` compare-and-exchange | in the held object, KILL would wait for the script |
+| a flag read often and set rarely | cancel, stop, busy, shutdown | `Atomic<Bool>` | read in loops inside other statements' blocks and in guards |
+| a scalar setting every command reads | timeouts, memory limit | `Atomic<T>`, or a `Frozen` value replaced whole | a load per command, a store per CONFIG SET |
+| several values that change together | `Meta` | held state | the lock optimizations of section 3, equivalent to locking the object |
 
 ### 2.5 What the checker sees
 
@@ -263,7 +318,8 @@ statement and keep their own designs:
   needs checking against the reasons the lease study (card `lease-direction`)
   rejected "the last handle takes the state back" before it is proposed.
 - **Effects (class 5):** the effect row gains one marker for "may perform
-  shared effects" (statements, cell operations, cancellation firing);
+  shared effects" (statements, operations on atomic values, cancellation
+  firing);
   `waits` implies it. Merging and reordering rules and PAR-1/PAR-2 consult
   only it, and the declaration-derived "decision-cell-free boundary"
   [SHARE-3, PAR-1, PAR-2] retires. This is the one place where shared state
@@ -319,7 +375,7 @@ that every statement touches at most once, by one load, store or
 read-modify-write, after all its other locks, could use a hardware atomic
 instead of a lock with the statement's one-point meaning intact (#403's
 conditions). It is fragile in the same way: one statement elsewhere that
-reads two such counters together disables it for both. Explicit cells
+reads two such counters together disables it for both. Explicit atomic values
 (section 2.3) remain the form whose cost the writer can see.
 
 ### 3.2 One static order
@@ -361,7 +417,7 @@ cache lines written are the same; one handle read fewer.
 
 - **R1 false sharing.** Parts of one object sit in one allocation; two units'
   lock words on one cache line would bounce between cores that touch
-  different parts. Lowering pads each unit's lock word, and each cell, to its
+  different parts. Lowering pads each unit's lock word to its
   own line (128 bytes on cores that fetch line pairs). Cost: one or two lines
   per unit, negligible beside a map.
 - **R2 coarse units or ancestor counters.** If unrelated fields shared one
@@ -387,7 +443,7 @@ cache lines written are the same; one handle read fewer.
   `scripts`), so spawning a connection retains one object;
 - the lock order is chosen by the writer (section 3.2), so conditional parts
   cost nothing when unused regardless of their type;
-- cell operations replace exclusive statements for counters, flags and
+- atomic values replace exclusive statements for flags, maxima and
   sequences: on 8 P-cores a hardware add on one word ran 118 M/s against
   2.81 M/s for an exclusive statement on one object (board item
   `firn-req-shared-max`, run 38304337014), with shards still the answer for
@@ -414,10 +470,11 @@ slower than the same statement on separate objects beyond twin noise
   follow the sealed-value rule of #484.
 - **Explicit-close values (class 4):** section 2.6.
 - **Effects (class 5):** section 2.6.
-- **Global sequence (`firn-req-sequence-take`):** a `u64` cell in the store,
-  added inside the key's statement after its locks (section 2.3). #403's
-  `AtomicValue` type and its special rules are not needed.
-- **Decision verdict (`firn-req-attempt-publish`):** a `DecisionState` cell.
+- **Global sequence (`firn-req-sequence-take`):** an `Atomic<u64>` added
+  inside the key's statement after its locks (section 2.3). #403's
+  `AtomicValue` placement and its special rules are not needed.
+- **Decision verdict (`firn-req-attempt-publish`):** an
+  `Atomic<DecisionState>`.
 - **Read holds (`gran-read-hold-read-only`):** per unit, derived from the
   footprint; no language change.
 - **Shards (`firn-req-shared-max`, `firn-req-shards-owned`):** a `Shards`
@@ -505,13 +562,18 @@ Settled in discussion with the owner (2026-10-14):
 
 Still open:
 
-1. **Guards over cells.** Allow (section 2.4) or express cancellation only
-   through `until` and a cancellation clause on the statement.
+1. **Guards over atomic values.** Allow (section 2.4) or express
+   cancellation only through `until` and a cancellation clause on the
+   statement.
 2. **Two keys of one table.** Either a prelude byte comparison whose `false`
    result is a key-disequality fact for OWN-7, or the existing key-set form,
    whose entries compare by integer index. The first is one new fact kind,
    general rather than shared-specific; the second needs nothing new and is
    what Firn's RENAME already does.
+3. **Atomic values (section 2.3):** reverse the rejection of general atomic
+   fields in full; a one-word object rather than a field of a shared state;
+   the name; the operation table and its add modes; sequential consistency
+   only.
 
 ## 10. Criteria and check plan, fixed before work
 
@@ -537,8 +599,9 @@ or criterion 4 fails beyond twin noise.
 handles (negative, citing SHARE-2); two map entries proved apart by index and
 by key fact; a field and an entry in one statement; a cross-field type
 invariant held by a statement that mentions only one field in code (it must
-hold both); a cell operated inside another object's statement; a guard over a
-cell woken by a store; a statement whose cell operation precedes a later
+hold both); an atomic value operated on inside another object's statement; a
+guard over an atomic value woken by a store; a statement whose operation on an
+atomic value precedes a later
 lazily taken unit (the lowering must take the unit first). Compiler tests: a
 key the block writes makes its map a whole hold, and an unwritten key an
 entry hold (`--lock-ledger`); a never-written field is read without a lock; two
