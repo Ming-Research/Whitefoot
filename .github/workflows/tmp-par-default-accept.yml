@@ -16,8 +16,9 @@
 # copy of demand) and three shifted-seq layout controls at one worker.
 #
 # smoke runs on a GitHub-hosted runner: same-source and flag checks, twin
-# bytes, layout shifts, every oracle at every width, the frozen machine-code
-# identity, the reducer's self-test and two unpinned rounds at reduced
+# bytes, layout shifts, every oracle at every width, the machine-code
+# identity (research/experiments/par-default/identity.py, on this branch; only
+# the runner, sources and manifest it reads are frozen), the reducer's self-test and two unpinned rounds at reduced
 # repetitions. It decides nothing. pilot (six rounds; decides only the
 # decisive round count) and main (`blocks` rounds plus one rerun of each
 # exceeding cell; carries the registered verdict) run only on the 14900K
@@ -131,11 +132,11 @@ jobs:
             find research/experiments/par-demand -type f -exec sha256sum {} + | sort -k2
           } > "$RUNNER_TEMP/host.txt"
           { echo "BASE=$base"; echo "BASE_TREE=$base_tree"; echo "CANDIDATE=$(git rev-parse HEAD)"; } >> "$GITHUB_ENV"
-      - name: Check the reducer and the frozen identity checker with wrong evidence
+      - name: Check the reducer and the identity checker with wrong evidence
         run: |
           set -euo pipefail
           python3 -B research/experiments/par-default/accept.py --self-test
-          python3 -B research/experiments/par-demand/identity.py --self-test --clang /usr/bin/clang
+          python3 -B research/experiments/par-default/identity.py --self-test --clang /usr/bin/clang
       - name: Build current main's compiler and the candidate compiler
         run: |
           set -euo pipefail
@@ -178,7 +179,7 @@ jobs:
         run: |
           set -euo pipefail
           perl .github/run-check.pl par-default/identity \
-            python3 -B research/experiments/par-demand/identity.py \
+            python3 -B research/experiments/par-default/identity.py \
               --build "$RUNNER_TEMP/s3" --output "$RUNNER_TEMP/s3/sequential-identity.json"
       - name: Verify every oracle, then interleave arms, widths and rounds
         env:
