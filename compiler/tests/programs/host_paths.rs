@@ -42,6 +42,24 @@ fn publishes(
         Some(0),
         "route {native}, argument {argument:?}: {published:?}"
     );
+    let listing = |path: &Path| -> Vec<String> {
+        std::fs::read_dir(path)
+            .map(|entries| {
+                entries
+                    .flatten()
+                    .map(|entry| entry.path().display().to_string())
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    assert!(
+        data.join("appendonly.aof").exists(),
+        "route {native}, argument {argument:?}, directory {directory:?}: no log; data {:?}, \
+         directory {:?}, parent {:?}",
+        listing(data),
+        listing(directory),
+        listing(data.parent().expect("a parent")),
+    );
     assert_eq!(
         std::fs::read(data.join("appendonly.aof")).expect("the published log"),
         b"hello\n",

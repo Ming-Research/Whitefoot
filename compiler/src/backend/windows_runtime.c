@@ -1225,8 +1225,8 @@ HANDLE wf__windows_open_directory_for_sync(HANDLE root, int *error_code) {
  * remainder, so a rename of base or its parents cannot redirect it; every
  * other path is looked up from `\??\` by its full spelling. Base's own
  * spelling, which the joined forms need, is the one the host reports for its
- * handle at the open. The scratch blocks are the process heap's, as the
- * registry's are, and are freed before the worker returns. */
+ * handle at the open. The scratch blocks are mapped pages, never the host
+ * heap (the descriptor registry is its one user), and are freed before the worker returns. */
 
 static int wf_windows_path_separator(uint16_t unit) {
     return unit == UINT16_C('\\') || unit == UINT16_C('/');
@@ -1248,12 +1248,14 @@ static WCHAR *wf_windows_units_take(size_t units) {
     if (units == 0 || units > SIZE_MAX / sizeof(WCHAR)) {
         return NULL;
     }
-    return (WCHAR *)HeapAlloc(GetProcessHeap(), 0, units * sizeof(WCHAR));
+    return (WCHAR *)VirtualAlloc(
+        NULL, units * sizeof(WCHAR), MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE
+    );
 }
 
 static void wf_windows_units_give(WCHAR **block) {
     if (*block != NULL) {
-        if (HeapFree(GetProcessHeap(), 0, *block) == FALSE) {
+        if (VirtualFree(*block, 0, MEM_RELEASE) == FALSE) {
             wf_windows_fail("a host-path scratch block could not be freed");
         }
         *block = NULL;
