@@ -105,6 +105,10 @@ pub(super) struct Walker<'program> {
     /// deeper, or its written set took more walks to settle, than this
     /// checker follows.
     pub(super) imprecise: Option<NodePath>,
+    /// The first site where the walk's own `i128` arithmetic failed and it
+    /// forgot the value it was forming. The arithmetic is exact [RANGE-3],
+    /// so what the walk then leaves unproved is a checker limit.
+    pub(super) arithmetic: Option<NodePath>,
     pub(super) certified: Vec<CertifiedLoop>,
     pub(super) deferred: Vec<(usize, DeferredAnswer)>,
     /// Whether each visited or excluded control-flow region was ever entered
@@ -218,6 +222,7 @@ impl<'program> Walker<'program> {
             facts: Vec::new(),
             issues: Vec::new(),
             imprecise: None,
+            arithmetic: None,
             certified: Vec::new(),
             dry: 0,
             recording: None,
@@ -523,6 +528,14 @@ impl<'program> Walker<'program> {
         }
     }
 
+    /// `value`, recording the walk's arithmetic limit where it is `None`.
+    pub(super) fn checked(&mut self, value: Option<Linear>) -> Option<Linear> {
+        if value.is_none() {
+            self.arithmetic.get_or_insert_with(|| self.cite.clone());
+        }
+        value
+    }
+
     // ----- obligations -----
 
     /// Whether `clause`, framed by `frame`, holds in `state`: for fresh bound
@@ -533,7 +546,7 @@ impl<'program> Walker<'program> {
         clause: &CheckedRangeClause,
         frame: &Frame,
     ) -> Result<Option<Option<NodePath>>, Capacity> {
-        if facts::vacuous(&mut self.world, clause, frame) {
+        if facts::vacuous(&mut self.world, clause, frame)? {
             return Ok(None);
         }
         let binders: Vec<Linear> = clause
@@ -541,8 +554,10 @@ impl<'program> Walker<'program> {
             .iter()
             .map(|_| self.world.opaque(None))
             .collect();
-        let Some(formed) = facts::form(&mut self.world, clause, frame, &binders, &[]) else {
-            return Ok(Some(None));
+        let formed = match facts::form(&mut self.world, clause, frame, &binders, &[]) {
+            Ok(formed) => formed,
+            Err(facts::Unformed::Unviewed) => return Ok(Some(None)),
+            Err(facts::Unformed::Arithmetic) => return Err(Capacity::Arithmetic),
         };
         for (position, conclusion) in formed.conclusions.iter().enumerate() {
             let (units, choices) = state.premises(&self.world);
@@ -777,14 +792,21 @@ impl<'program> Walker<'program> {
                         self.ordinary_relation_places(&mut state, relation);
                     }
                 }
-                let written = self.written_instances(&state, &proof.uses);
-                self.ordinary_goal(
-                    &state,
-                    &proof.node_path,
-                    &ObligationSubject::SourceProof,
-                    literals.as_deref().map_err(|failure| *failure),
-                    written.as_deref(),
-                );
+                match self.written_instances(&state, &proof.uses) {
+                    Err(facts::Unformed::Arithmetic) => {
+                        self.ordinary_arithmetic_limit(
+                            &proof.node_path,
+                            &ObligationSubject::SourceProof,
+                        );
+                    }
+                    written => self.ordinary_goal(
+                        &state,
+                        &proof.node_path,
+                        &ObligationSubject::SourceProof,
+                        literals.as_deref().map_err(|failure| *failure),
+                        written.as_deref().ok(),
+                    ),
+                }
                 if let Ok(literals) = literals {
                     state.conds.extend(literals);
                 }
@@ -1623,7 +1645,7 @@ impl<'program> Walker<'program> {
                 ) => {
                     let index = evaluated.clone().unwrap_or_else(|| unreachable!());
                     let mut indices = prefix;
-                    match offset.plus(&index) {
+                    match self.checked(offset.plus(&index)) {
                         Some(absolute) => {
                             indices.push(absolute);
                             Target::Element {
@@ -1740,7 +1762,7 @@ impl<'program> Walker<'program> {
         };
         self.ordinary_bound(state, &place.obligation, &index, Some(length));
         let mut indices = prefix;
-        indices.push(offset.plus(&index)?);
+        indices.push(self.checked(offset.plus(&index))?);
         let mut projection = Some(Vec::new());
         for step in &place.path {
             if let CheckedPlaceStep::Subscript(subscript) = step {
@@ -2460,7 +2482,10 @@ impl<'program> Walker<'program> {
                         prefix,
                         offset,
                         ..
-                    } => match (offset.plus(&start), end.minus(&start)) {
+                    } => match (
+                        self.checked(offset.plus(&start)),
+                        self.checked(end.minus(&start)),
+                    ) {
                         (Some(offset), Some(length)) => Value::Ref(View::Run {
                             container,
                             prefix,
@@ -2959,8 +2984,8 @@ impl<'program> Walker<'program> {
         let mut backedges = self.continues.remove(&id.0).unwrap_or_default();
         backedges.extend(end);
         for mut end in backedges {
-            let next = index
-                .plus_constant(1)
+            let next = self
+                .checked(index.plus_constant(1))
                 .unwrap_or_else(|| self.world.opaque(None));
             end.values.insert(binder, Value::Int(next));
             self.ordinary_invariants(&mut end, affine);
@@ -3123,13 +3148,14 @@ impl<'program> Walker<'program> {
             let _ = clause;
             for argument in &step.arguments {
                 match self.certificate_term(entry, &frame, argument, &iterations) {
-                    Some(value) => arguments.push(value),
-                    None => {
+                    Ok(value) => arguments.push(value),
+                    Err(facts::Unformed::Unviewed) => {
                         failure.get_or_insert(ApartFailure::Use {
                             step: step.node.clone(),
                             reason: "an argument names a place the judgment cannot view",
                         });
                     }
+                    Err(facts::Unformed::Arithmetic) => beyond_arithmetic = true,
                 }
             }
             written_instances.push((fact, arguments, iterations.to_vec()));
@@ -3256,7 +3282,7 @@ impl<'program> Walker<'program> {
         frame: &Frame,
         term: &CheckedRangeTerm,
         iterations: &[Linear],
-    ) -> Option<Linear> {
+    ) -> Result<Linear, facts::Unformed> {
         // A certificate argument names the loop's own state: form it in a
         // frame over the entry state, its iterations bound.
         let clause = CheckedRangeClause {
@@ -3282,6 +3308,7 @@ impl<'program> Walker<'program> {
             .conclusions
             .first()
             .map(|conclusion| conclusion.conclusions[0].left.clone())
+            .ok_or(facts::Unformed::Unviewed)
     }
 
     // ----- affine relations -----
