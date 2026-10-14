@@ -11,6 +11,14 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-13 v0.151: a contract clause's constants are judged by mathematical value within i128 and rejected at the clause
+
+Rules: changed INV-1, MSR-5, RANGE-1
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the specification and design-tree change of Whitefoot#481 (head commit c48b3ec1ddbe): constants in a contract clause are judged by their real value, and one beyond i128 is reported at the clause instead of being silently dropped?" (translated); it carries out the owner's earlier ruling, option A, on the card "when constant arithmetic in a contract clause leaves i128, is the clause rejected there (the same rule as invariants) or computed exactly?" (translated).
+
+Summary: A contract clause's `+ - *` borrowed INV-1's arithmetic, which rejects "at the owning invariant", but a clause has none, and the checker silently dropped a clause relation whose folding left `i128` and later reported a misleading OP-2 in the body. INV-1 now judges each formation value (each operation value's constant and coefficients, and each normalized bound's coefficients and right-hand constant) by its mathematical value, which must lie in `i128` whatever the evaluation order; a loop-header `x > m` with m = -2^127 is therefore formed, while `x < m` is still rejected. MSR-5 makes a clause's formation values INV-1's, counts the structural ceilings once over the whole clause, and rejects a value outside `i128` or a ceiling excess as a hard error at the `clause_expr`; a type invariant, judged as a requires clause [TYPE-11], follows it. RANGE-1 forms each range term's `+ - *` checked instead of saturating. Selection ground: the owner's ruling to reject at the clause with the same rule as invariants. Refused: exact unbounded clause constants.
+
 ## 2026-10-13 v0.150: `match` branches on integer constant values
 
 Rules: added GRAM-12, ENT-3.S17; changed GRAM-4, GRAM-6, TYPE-6, DIAG-1, OWN-13, ERR-2, ENT-1, ENT-2, ENT-3, ENT-4, ENT-5, RANGE-2, RANGE-3

@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 the owner's agent instructions own the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-13 Contract clause constants are judged by value within i128, and stored facts keep saturating arithmetic
+
+Nodes: language/checks-and-proofs
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the specification and design-tree change of Whitefoot#481 (head commit c48b3ec1ddbe): constants in a contract clause are judged by their real value, and one beyond i128 is reported at the clause instead of being silently dropped?" (translated).
+
+Summary: The 4096-node ceiling decision now covers one invariant's or one contract clause's formation. A clause's `+ - *` and normalized bounds fold exactly, each value within `i128` judged by its mathematical value and rejected where formed, as an invariant is, and range terms are formed checked. Stored facts, their closure and bound combination keep saturating `i128` arithmetic: a clause's or a range formation's folded constant goes through the zero term into its fact's constant, and a constant term beyond plus or minus 2^66 is refused, so every term lies within plus or minus 2^66 and clamping at an `i128` endpoint never changes whether a fact holds. Refused: exact unbounded constants in the fact store.
+
 ## 2026-10-13 Match branches on integer constant values, with one exclusion fact for `else` and one switch
 
 Nodes: compiler/checker-facts, compiler/match-dispatch-lowering, compiler/range-judgment, compiler/structured-emission, language/checks-and-proofs/automatic-facts, language/checks-and-proofs/range-facts, language/dispatch, language/grammar, language/name-resolution, language/surface-form/match-form
