@@ -759,7 +759,7 @@ impl<'unit> TypeContext<'unit> {
     }
     /// Runs `query` in the declaration-only proof context of one contract
     /// hypothesis: no callee, contract query or verified summary is visible.
-    fn with_contract_context<ResultValue>(
+    pub(in crate::semantic::check) fn with_contract_context<ResultValue>(
         &self,
         function: &CheckedFunction,
         query: impl FnOnce(&EntailmentContext<'_>) -> ResultValue,

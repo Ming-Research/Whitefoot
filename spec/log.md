@@ -11,6 +11,22 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-14 v0.152: a requirement displaced by a constant gives an exact entry relation
+
+Rules: changed ENT-3.S4
+
+Owner-approved: On the shared status board on 2026-10-14, written in Chinese, the owner chose option A, "approve: recognise it" (translated), on the card "does the specification recognise a `requires` side that is one term plus a constant, such as `i + 1_u32 <= b`, or its widening conversion, as an exact two-term relation?" (translated), and ruled that the rule registering the exact relation at function entry define each comparison side recursively by the shapes the checker accepts: a term, constant or measure term; its widening conversion; a sum with a term on at most one side; a difference with no term in the subtrahend; a product with no term on either side; the compiler does not change, and the specification change is approved with Whitefoot#472 (translated). This amendment was written as v0.151 and renumbered to v0.152 because main reached v0.151 first.
+
+Summary: ENT-3.S4 establishes the exact relation R when G's complete root is one integer comparison whose sides are each an entry side: an admitted term, constant or measure term, or a widening conversion of one, or a sum, difference or product of entry sides that folds to a constant around at most one term. The checker already registered these forms, so the compiler is unchanged and no accepted program changes its result; the rule states the checker's range in the specification, in line with the postcondition side, which admits a datum displaced by a constant. Comparison-origin shape (a) [ENT-3] is unchanged. Selection ground: conversion and constant displacement preserve the mathematical value, so the form is sound, and a writer's natural `i + 1 <= b` otherwise rests on the implementation, not the specification. Evidence: conformance cases ent3-pos-s4-displaced-requirement-chain, ent3-pos-s4-widened-displaced-requirement-chain, ent3-pos-s4-nested-displaced-requirement, ent3-pos-s4-displaced-widened-requirement, ent3-pos-s4-widened-displaced-requirement-max, ent3-neg-s4-scaled-requirement-chain, fn8-neg-widened-displaced-requirement-call and fn8-neg-widened-displaced-requirement-over-max.
+
+## 2026-10-13 v0.151: key sets and concurrent hash maps have nonempty release, and the executable release graph is defined apart from the type ownership closure
+
+Rules: changed PROV-6, STOR-3, SHARE-1
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve Ming-Research/Whitefoot#437 (head 47003fdd5)'s specification revision and design-tree change: key sets and concurrent hash maps count as types whose release does work?" (translated), adding the comment that the root cause is that the checker does not know which values hold runtime resources and that adding exceptions one by one is a stopgap (translated); that broader question is recorded as its own board item. This amendment was written as v0.149 and renumbered to v0.151 because main reached v0.150 first.
+
+Summary: PROV-6 adds ConcurrentHashMap and KeySet to the types whose release performs an action, separates the type ownership closure (read by linearity, which keeps a constant-zero Array's element type) from the executable release graph (read by release and guaranteed tail calls, in which a constant-zero Array or window contributes no element edge), and judges a type parameter by its capability bounds. STOR-3 states that a KeySet returns its runtime-held storage on release and that a ConcurrentHashMap releases each held value before returning its storage, and routes every opaque type to these per-type actions; SHARE-1 points to STOR-3 instead of stating the map's value release itself. The rules that read these definitions, such as FN-10 and DIAG-2, keep their text and now resolve to the executable release graph. Selection ground: a guaranteed tail call holding a KeySet with a live reference to it was accepted on main although the backend returns the set's storage before the jump, leaving the reference dangling; the checker followed a release list that omitted the type.
+
 ## 2026-10-13 v0.150: `match` branches on integer constant values
 
 Rules: added GRAM-12, ENT-3.S17; changed GRAM-4, GRAM-6, TYPE-6, DIAG-1, OWN-13, ERR-2, ENT-1, ENT-2, ENT-3, ENT-4, ENT-5, RANGE-2, RANGE-3
