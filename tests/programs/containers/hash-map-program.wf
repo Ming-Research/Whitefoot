@@ -392,6 +392,7 @@ fn hash_map_test_scan_visit(env: &HashMapScanSeen, key: &u64, value: &u64) -> re
 }
 
 fn hash_map_test_scan_consume(env: &HashMapScanSeen, key: u64, value: u64) -> result: unit writes(env) {
+  set env^.total = env^.total +wrap 1_u64;
   return unit;
 }
 
