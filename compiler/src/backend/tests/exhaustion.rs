@@ -155,7 +155,7 @@ pub(super) fn assert_stack_probes(module: &str) {
         "the module declares its one attribute group once:\n{module}"
     );
     assert!(
-        module.contains(&format!("attributes #0 = {{ {HOST_STACK_PROBE} }}")),
+        module.contains(&format!("attributes #0 = {{ {HOST_STACK_PROBE} uwtable }}")),
         "the group must name this host's probing helper:\n{module}"
     );
 }
@@ -1050,7 +1050,9 @@ fn ablate_probe(module: &str, signature: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n");
-    ablated.push_str("\nattributes #1 = { \"no-stack-arg-probe\" }\n");
+    // The control differs from group 0 only in its probe, so it keeps
+    // `uwtable`: without it the unwind directives would differ too.
+    ablated.push_str("\nattributes #1 = { \"no-stack-arg-probe\" uwtable }\n");
     ablated
 }
 
