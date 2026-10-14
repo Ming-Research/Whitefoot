@@ -17,7 +17,7 @@ use JSON::PP qw(decode_json encode_json);
 open my $file, '<', $ARGV[0] or die $!;
 my $workflow = do { local $/; <$file> };
 my ($matrix) = $workflow =~ /matrix=\$\(jq [^\n]*\n\s*'([^']+)'\)/;
-my ($qualify) = $workflow =~ /groups=\$\(jq -er '([^']+)' <<< "\$GATE_GROUPS"\)/;
+my ($qualify) = $workflow =~ /GATE_GROUPS=\$\(jq -c '([^']+)' <<< "\$GATE_GROUPS"\)/;
 defined $matrix && defined $qualify or die "gate matrix: missing workflow jq expressions\n";
 sub jq {
     open my $output, '-|', 'jq', @_ or die $!;
@@ -80,7 +80,7 @@ for my $job (@$jobs) {
         or die "gate matrix: matrix changed the Make-owned group or shard\n";
 }
 my $required = jq('-nr', '--argjson', 'inventory', encode_json(\@groups),
-    '$inventory | ' . $qualify);
+    '$inventory | (' . $qualify . ') | .[]');
 names_equal([grep { $_ ne '' } split /\n/, $required], \@expected, 'complete fifteen-job qualification');
 my $draft = decode_json(jq('-cn', '--argjson', 'groups', encode_json(\@groups),
     '--argjson', 'platforms', '["ubuntu-24.04"]', $matrix));

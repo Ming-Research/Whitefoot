@@ -363,6 +363,9 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           GATE_GROUPS: ${{ needs.groups.outputs.groups }}
         run: |
+          # The script takes a JSON array of "<name> (<os>)" strings.
+          GATE_GROUPS=$(jq -c '[.[] | "\(.name) (\(.os))"]' <<< "$GATE_GROUPS")
+          export GATE_GROUPS
           script=.github/gate-both-platforms.sh
           [ -f "$script" ] || script=default-branch/.github/gate-both-platforms.sh
           sh "$script"
