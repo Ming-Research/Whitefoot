@@ -71,8 +71,13 @@ checking work, and without runtime checks?
 Option A′ as the owner ruled it:
 
 1. A struct's type invariants travel with its value into fields, `Option`
-   and enum payloads, storage shapes, `Box`, shared objects and map entries,
-   and are assumed when the value is read.
+   and enum payloads, storage shapes, `Box`, shared objects and map entries.
+   They belong to the implicit requirement and postcondition of every
+   hand-off of a value that owns the struct value, so a body takes each
+   instance it uses from the hand-off that delivered the value (body entry,
+   a call's return, a construction, an atomic block's entry), never from
+   the read alone: the read only retrieves what that hand-off established,
+   provided no write since then may have broken it.
 2. Inside a function body or an atomic block a value may be temporarily
    broken. A write that can falsify an invariant kills the facts that
    depend on it at once.
