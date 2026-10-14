@@ -5,6 +5,8 @@ name: tmp-shared-object-c-ref
 
 on:
   workflow_dispatch:
+  push:
+    paths: [.github/workflows/tmp-shared-object-c-ref.yml]
 
 defaults:
   run:
@@ -16,6 +18,7 @@ concurrency:
 
 jobs:
   measure:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: [self-hosted, 14900k]
     timeout-minutes: 120
     steps:
