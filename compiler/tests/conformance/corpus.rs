@@ -207,6 +207,131 @@ pub fn load() -> Vec<Case> {
     cases
 }
 
+/// Selects manifest positions for this invocation, retaining their order.
+/// An ordinary invocation without a case shard checks the complete list.
+pub fn case_shard(cases: Vec<Case>) -> Vec<Case> {
+    let value = std::env::var_os("WHITEFOOT_CASE_SHARD");
+    let (index, count) =
+        parse_case_shard(value.as_deref()).unwrap_or_else(|error| panic!("{error}"));
+    let total = cases.len();
+    let selected = select_case_shard(cases, (index, count));
+    println!(
+        "case shard {index}/{count}: {} of {total} cases",
+        selected.len()
+    );
+    selected
+}
+
+fn parse_case_shard(value: Option<&std::ffi::OsStr>) -> Result<(usize, usize), String> {
+    let Some(value) = value else {
+        return Ok((1, 1));
+    };
+    let invalid = || format!("WHITEFOOT_CASE_SHARD must be i/N with 1 <= i <= N, got {value:?}");
+    let value = value.to_str().ok_or_else(invalid)?;
+    let (index, count) = value.split_once('/').ok_or_else(invalid)?;
+    if [index, count].iter().any(|part| {
+        part.is_empty() || part.starts_with('0') || !part.bytes().all(|byte| byte.is_ascii_digit())
+    }) {
+        return Err(invalid());
+    }
+    let index = index.parse::<usize>().map_err(|_| invalid())?;
+    let count = count.parse::<usize>().map_err(|_| invalid())?;
+    if index > count {
+        return Err(invalid());
+    }
+    Ok((index, count))
+}
+
+fn select_case_shard<T>(cases: Vec<T>, (index, count): (usize, usize)) -> Vec<T> {
+    cases
+        .into_iter()
+        .enumerate()
+        .filter_map(|(position, case)| (position % count == index - 1).then_some(case))
+        .collect()
+}
+
+#[test]
+fn case_shards_cover_each_manifest_position_once_in_manifest_order() {
+    use std::ffi::OsStr;
+
+    let cases = vec!["z", "a", "t", "b", "r", "c", "p", "d", "n", "e", "l"];
+    for count in 1..=5 {
+        let mut union = Vec::new();
+        for index in 1..=count {
+            let value = format!("{index}/{count}");
+            let shard = parse_case_shard(Some(OsStr::new(&value))).unwrap();
+            assert_eq!(shard, (index, count));
+            let selected = select_case_shard(cases.clone(), shard);
+            let expected = cases
+                .iter()
+                .copied()
+                .skip(index - 1)
+                .step_by(count)
+                .collect::<Vec<_>>();
+            assert_eq!(selected, expected, "case shard {index}/{count}");
+            union.extend(selected);
+        }
+        let mut expected = cases.clone();
+        expected.sort_unstable();
+        union.sort_unstable();
+        assert_eq!(union, expected, "case shards 1..={count}");
+    }
+    assert_eq!(select_case_shard(cases.clone(), (1, 1)), cases);
+}
+
+#[test]
+fn case_shards_default_to_the_whole_list_and_allow_empty_partitions() {
+    use std::ffi::OsStr;
+
+    assert_eq!(parse_case_shard(None), Ok((1, 1)));
+    assert_eq!(parse_case_shard(Some(OsStr::new("1/1"))), Ok((1, 1)));
+    assert_eq!(parse_case_shard(Some(OsStr::new("3/3"))), Ok((3, 3)));
+    assert_eq!(select_case_shard(Vec::<usize>::new(), (1, 1)), vec![]);
+    assert_eq!(select_case_shard(vec![0, 1], (3, 3)), vec![]);
+    assert_eq!(select_case_shard(vec![0, 1, 2], (3, 3)), vec![2]);
+    let maximum = format!("{0}/{0}", usize::MAX);
+    assert_eq!(
+        parse_case_shard(Some(OsStr::new(&maximum))),
+        Ok((usize::MAX, usize::MAX))
+    );
+}
+
+#[test]
+fn invalid_case_shards_report_the_variable_and_its_required_range() {
+    use std::ffi::OsStr;
+
+    for value in [
+        "",
+        "0/1",
+        "1/0",
+        "2/1",
+        "1",
+        "1/2/3",
+        "01/2",
+        "1/02",
+        "-1/2",
+        "+1/2",
+        "1/ 2",
+        "1.0/2",
+        "１/2",
+        "1/9999999999999999999999999999999999999999",
+    ] {
+        let error = parse_case_shard(Some(OsStr::new(value))).unwrap_err();
+        assert!(error.contains("WHITEFOOT_CASE_SHARD must be i/N with 1 <= i <= N"));
+        assert!(error.contains(&format!("{value:?}")));
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn nonunicode_case_shards_fail_instead_of_selecting_the_whole_list() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    let error = parse_case_shard(Some(OsStr::from_bytes(&[0xff]))).unwrap_err();
+    assert!(error.contains("WHITEFOOT_CASE_SHARD must be i/N with 1 <= i <= N"));
+}
+
 fn case(value: &Value) -> Result<Case, String> {
     let id = value
         .get("id")

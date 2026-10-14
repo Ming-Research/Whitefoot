@@ -1,6 +1,9 @@
 #!/bin/sh
 # Exercise the gate wrapper's ownership and exit-status boundaries cheaply.
 set -eu
+case "$0" in */*) shards=${0%/*}/shard-tests.pl ;; *) shards=./shard-tests.pl ;; esac
+if test "${1:-}" = --shards-only; then exec perl "$shards" --self-test; fi
+perl "$shards" --self-test
 runner=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)/run-check.pl
 work=$(mktemp -d "${TMPDIR:-/tmp}/whitefoot-check-test.XXXXXX")
 holder=

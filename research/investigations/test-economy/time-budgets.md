@@ -854,6 +854,198 @@ request opened after its branch's last push gets no run of its own either;
 that head cannot merge until `main` is merged into it, and the push that
 does so is checked.
 
+## Six-minute gate with test and case shards
+
+The question is whether three independently built unit shards and three corpus
+shards can finish the complete correctness gate within 360 s without runner
+queueing. A trial rejects the scheduling proposal if the gate exceeds 360 s,
+any correctness check fails, or a test's partitions omit or repeat a case
+across shards. The comparison keeps the existing compiler profile, cases,
+verdicts and assertions.
+
+Gate-log measurements collected for this goal summarize the five most recent
+successful main gates on Linux hosted runners before the first sharded trial:
+
+| Group | Job wall median | Setup | Compilation | Test execution |
+|---|---:|---:|---:|---:|
+| unit | 349 s | 43 s | 160 s | 143 s |
+| corpus | 341 s | 37 s | 103 s | 194 s |
+
+Static and runtime job-wall medians were 103 s and 66 s. These are separate
+medians, so the phase values need not sum to the job median. Completion gaps
+were at most 14 s for corpus and 6 s for unit. Caching had been tried without
+saving compilation: the compiler crate recompiled on every push. These logs
+motivated paying compilation independently in parallel and dividing test
+names, with an estimated slowest job of about 250 s; they were a scheduling
+estimate, not a same-source compiler-performance comparison.
+
+The first trial, [gate run for the sharding PR](https://github.com/Ming-Research/Whitefoot/actions/runs/38446419397)
+at the [initial sharding revision](https://github.com/Ming-Research/Whitefoot/commit/96442488c575fd0daf56d57a8f5bb995e7eb7c17),
+was reported green with complete counts: unit selected 908 + 908 + 908 of
+2724 names; the CLI selected 9 + 9 + 8 of 26; the corpus integration target
+selected 57 + 57 + 56 of 170, including one ignored test. Its reported total
+was 394 s, exceeding the 360 s goal.
+
+| Corpus shard | Test execution |
+|---|---:|
+| 1/3 | 26 s |
+| 2/3 | 196 s |
+| 3/3 | 36 s |
+
+Both `the_corpus_reaches_its_declared_verdict_through_the_ordinary_compiler_path`
+and `a_shared_proof_receipt_cache_reaches_every_declared_source_verdict` landed
+in shard 2/3. Each walked the complete conformance manifest on one test thread
+and took roughly 190 s, bounding that shard. A completion gap is a lower bound,
+not a bound on a test's duration, so the short gaps had concealed these walks.
+
+The next trial partitions ordinary names as before and invokes these two
+tests in every corpus shard with disjoint manifest-position subsets. The
+receipt-cache test retains reverse and forward passes over each subset and
+its reuse assertion. The loader appends case-bearing manifest lines in file
+order, without directory or hash iteration. Source inspection finds 2842
+cases, so the three case subsets should contain 948, 947 and 947 cases for
+each adapter test. The supplied log summary above is the evidence for the
+first trial. No case, manifest entry, expected verdict or existing assertion
+changes in this comparison.
+
+The [case-sharded trial](https://github.com/Ming-Research/Whitefoot/actions/runs/38449518339)
+at the [case-sharding revision](https://github.com/Ming-Research/Whitefoot/commit/8bffb97d62464176d06aa958cd102672b90e0674)
+was reported to finish in 273 s, meeting the 360 s target with every unit and
+corpus shard green. The static group's repository-invariants stage still
+failed: 26.0 s against its unchanged 25 s budget on AMD EPYC 7763, compared
+with 23.0 s for [main's stage on that CPU model](https://github.com/Ming-Research/Whitefoot/actions/runs/38434594263).
+Its log places the research-input check's completion at 18:47:53.22 and the
+shard self-test's completion at 18:47:56.30, about 3.1 s later. This identifies
+the added self-test work as the cause to remove; the budget is not raised.
+In that run, the receipt-cache test reused 83421, 86156 and 84387 analyses in
+case shards 1/3, 2/3 and 3/3 respectively; reuse within each subset does not
+exercise receipt interactions between cases assigned to different shards.
+
+### Cheap shard self-test
+
+The next change must keep the partition, native parsing, command selection,
+failure and environment-isolation checks while taking well under 0.5 s on a
+hosted runner. A lost property or a self-test above 0.5 s rejects the change.
+The shard-only path has no sleeps: its cost comes from launching the same
+helper, mock Cargo and text utilities for individual assertions. It can
+exercise the shared production functions in one Perl process, retaining
+external commands only to check the real command boundary.
+
+Before the change, the explicitly permitted Mac command
+`time sh .github/test-run-check.sh --shards-only` passed in 2.062 s real,
+1.14 s user and 0.46 s system. A separate counting run found 285 external
+command launches: 161 Perl, 58 grep, 22 cmp, 16 cat, 15 awk, 5 sort, two each
+of wc and tr, and one each of dirname, mktemp, chmod and rm. This counts
+external child PIDs, excluding the entry shell and shell bookkeeping for
+command substitutions. These Mac observations identify and check the local
+cost; hosted observations are recorded below.
+
+After the refactor, the same command passed in 0.029 s real, 0.02 s user and
+0.01 s system on the same Mac. Pure parsing, partitioning and invocation
+checks use the production functions and orchestration with in-process Cargo
+replies. Two real pipe children retain argument, streamed-output, exit and
+signal checks. The shard-only entry replaces its shell with Perl before any
+temporary-directory setup: three interpreter launches in total, of which
+only two are child spawns. The ordinary wrapper self-tests remain unchanged.
+This removes repeated startup rather than reducing checked properties. In the
+[two-shard macOS trial](https://github.com/Ming-Research/Whitefoot/actions/runs/38460618651),
+Linux static logged the research-input check at 20:10:55.5743788 UTC and
+`test shards: partition` at 20:10:55.6975058 UTC, an interval of about 0.123 s.
+macOS static logged those lines at 20:10:41.1752770 and 20:10:41.2137010 UTC,
+about 0.038 s apart. These observed intervals include startup and output
+delivery after the preceding check, rather than a separate self-test timer;
+both are under 0.5 s. Both static jobs and their unchanged budget verdicts
+passed.
+
+### macOS without self-queueing
+
+At the [main-receipt scheduling revision](https://github.com/Ming-Research/Whitefoot/commit/9ea0797a8556da3341d7402fde8d202ccc846e95),
+the [PR gate](https://github.com/Ming-Research/Whitefoot/actions/runs/38454996504)
+was reported green in 4 min 46 s. A throwaway branch's
+[forced main-push matrix trial](https://github.com/Ming-Research/Whitefoot/actions/runs/38455013023)
+was green on Linux and macOS, including the whole receipt-cache job in
+3 min 48 s and the final platform qualification, but took about 12 min.
+The account allowed at most five concurrent hosted macOS jobs, while the
+sharded matrix requested eight: macOS corpus 2/3 started at +3.5 min, runtime
+at +5.9 min and corpus 1/3 at +6.2 min from the run's start. Before sharding,
+its four macOS jobs did not queue on themselves, motivating the trial with
+whole macOS groups.
+
+At the [whole-macOS scheduling revision](https://github.com/Ming-Research/Whitefoot/commit/b55ea829cb7460e07689ff04a7cfd38a22ecd355),
+the [Linux push run](https://github.com/Ming-Research/Whitefoot/actions/runs/38458067419)
+was reported to finish in about 4 min 50 s; its only failure was the known,
+unrelated runtime edge-stage overrun of 15.6 s against 15 s. The
+[manual both-platform run](https://github.com/Ming-Research/Whitefoot/actions/runs/38458077773)
+reported macOS unit at 336 s (208 s build and 127 s tests) and corpus at
+314 s (146 s build and 168 s tests), plus about 35 s setup each. Whole unit
+therefore needed about 6.2 min without queueing, exceeding the six-minute goal.
+Keep three Linux shards per unit/corpus group and use two on macOS: the
+predicted slowest macOS job is about 35 + 208 + 64 = 307 s, or 5.1 min.
+Six macOS jobs share five concurrent slots; with no external queue, the
+expected sixth job is a short group (runtime about 1 min, static about
+2 min), waiting for another short group and finishing before the unit
+shards. This prediction assumes a short sixth job; CI must check the actual
+start order and completion time. Three shards would restore the eight-job matrix
+whose queue reached about six minutes in the forced main-matrix trial above.
+The subsequent [two-shard macOS trial](https://github.com/Ming-Research/Whitefoot/actions/runs/38460618651)
+at the [per-platform sharding revision](https://github.com/Ming-Research/Whitefoot/commit/1904f4d0908dfe1e2d3ec4300f140ec9467c4ce6)
+was green on both platforms in 7 min 09 s. The supplied completion summary
+reports Linux jobs at no more than 4 min 25 s and macOS jobs at about
+5.5 min. macOS unit 1/2 and corpus 2/2 started about one minute after the
+run's other macOS jobs. This is runner queueing, visible by comparing job
+start times with the run's creation time: the account-wide macOS concurrency
+limit is five, and other sessions' macOS jobs were running. Removing that
+wait estimates a run of about six minutes, on the target line rather than
+comfortably below it. macOS unit's measured 208 s build is a floor that
+test sharding cannot remove. The trial did not confirm the assumption that
+only a short sixth job would wait.
+
+### Shard mechanics and pre-merge receipt coverage
+
+The Makefile owns the per-platform inventory: three unit and corpus shards
+each on Linux, two each on macOS, with static and runtime whole. Each shard
+compiles its own targets. For each test binary, the helper uses libtest's
+native terse listing, bytewise-sorts names, and assigns zero-based position
+`p` to shard `i/N` when `p mod N == i-1`. Corpus discovers both the
+whitefootc bin and Cargo's integration targets and invokes each binary
+separately with `--exact` and its selected names. Ignored names are listed
+but remain ignored when run. Each invocation asserts that libtest's passed,
+failed and ignored summary counts sum to the names supplied; a missing or
+extra reported test fails the shard.
+
+The corpus integration target's two whole-manifest adapter tests instead
+run in every shard, in a separate invocation with `WHITEFOOT_CASE_SHARD=i/N`.
+Only that invocation receives the variable; the ordinary partitioned
+invocation does not. Both tests select manifest positions by the same
+round-robin rule, retaining manifest order. The receipt-cache test keeps
+its reverse and forward passes over the selected subset and all existing
+assertions. A listed test that ignores the variable repeats its complete
+cases in every shard; a reader missing from the list receives no variable
+and runs its complete cases in its one name shard. Either list error adds
+work rather than dropping coverage. Local `SHARD=1/1` retains the plain
+complete command with no variable and no duplicate receipt invocation.
+
+Every checked gate now adds the whole receipt-cache test as a parallel
+Linux-only job, requiring it green along with every platform's own shard
+inventory. Its single process uses one receipt cache over all cases with
+no case-shard variable, checking cross-shard interactions before merge;
+the sharded receipt runs retain partial cache coverage on both platforms.
+The [whole-receipt trial](https://github.com/Ming-Research/Whitefoot/actions/runs/38455013023)
+measured that job at 3 min 48 s, below the Linux unit jobs of up to
+4 min 25 s in the two-shard macOS trial above. This cross-run comparison
+supports running it in parallel without extending the measured Linux
+critical path; it does not promise the same ordering on every runner.
+Linux-only placement preserves the six-job macOS inventory. Main-push
+selection is removed; Linux-only runs require all nine Linux jobs, and
+both-platform qualification requires those nine plus all six macOS jobs.
+
+The `check/unit`, `check/corpus`, `compiler/test-unit` and
+`compiler/test-corpus` budget rows are now loose: a shard runs about a third
+of the Linux tests or half of the macOS tests, while group builds remain
+whole. Recompute Linux values once 20 sharded runs per CPU model exist,
+using the documented maximum plus 10%, rounded up to 5 s with a 10 s floor.
+No rows change now. The whole-receipt group and test rows remain provisional.
+
 ## Daily loop
 
 One edit, measured in the local container with the new defaults: an unused
