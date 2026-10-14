@@ -389,7 +389,7 @@ fn emit_module(
     // A build launcher can select the sequential clone of its ordinary entry.
     // The clone set is closed upwards through the module's call graph and
     // does not depend on the presence or spelling of a selected entry.
-    let clones = if thunks.is_used() {
+    let clones = if thunks.is_used() || thunks.selects_sequential_entry() {
         sequential_clone_set(program)
     } else if frontiers.is_used() {
         frontier_clones
@@ -1948,7 +1948,6 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         if self.incoming.first().is_some_and(|edges| !edges.is_empty()) {
             return Err(BackendFailure::InvalidIr);
         }
-        let arguments = ordinary_call_arguments(self.program, self.function, public)?;
         let spent = RecursiveFrontiers::exhausted(self.function.name());
         let body = block_label(IrBlockId::from_index(0).ok_or(BackendFailure::InvalidIr)?);
         self.output.open_block(GRAIN_ENTRY_LABEL.to_owned());
@@ -1956,37 +1955,53 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             write!(self.output, "  %wf.budget.next = sub i64 %wf.budget, 1\n  %wf.grain = icmp sgt i64 %wf.budget, 0\n  br i1 %wf.grain, label %{body}, label %{GRAIN_SPENT_LABEL}\n").map_err(|_| BackendFailure::TextEmission)?;
             self.output.open_block(GRAIN_SPENT_LABEL.to_string());
         };
+        self.emit_clone_transfer(public, &spent, "%wf.spent")?;
+        self.grain_next = Some("%wf.budget.next".to_owned());
+        Ok(())
+    }
+
+    /// Calls `clone`, a sequential clone with this function's public ABI, on
+    /// this activation's own arguments and returns its result through this
+    /// body's ABI, naming a register-returned result `name`. A
+    /// register-returned clone returns its value there, and this body stores
+    /// it through its own destination.
+    fn emit_clone_transfer(
+        &mut self,
+        public: &FunctionAbi,
+        clone: &str,
+        name: &str,
+    ) -> Result<(), BackendFailure> {
+        let arguments = ordinary_call_arguments(self.program, self.function, public)?;
         match public.result() {
             ResultAbi::Destination(_) => {
                 {
-                    self.output.symbol(spent.to_string());
-                    writeln!(self.output, "  call void @{spent}({arguments})\n  ret void")
+                    self.output.symbol(clone.to_string());
+                    writeln!(self.output, "  call void @{clone}({arguments})\n  ret void")
                 }
                 .map_err(|_| BackendFailure::TextEmission)?;
             }
             ResultAbi::StoredValue(ty) => {
                 let result = self.output.type_name(self.program, ty)?;
                 {
-                    self.output.symbol(spent.to_string());
+                    self.output.symbol(clone.to_string());
                     writeln!(
                         self.output,
-                        "  %wf.spent = call {result} @{spent}({arguments})\n  \
-                     store {result} %wf.spent, ptr {RESULT_POINTER}\n  ret void"
+                        "  {name} = call {result} @{clone}({arguments})\n  \
+                     store {result} {name}, ptr {RESULT_POINTER}\n  ret void"
                     )
                 }
                 .map_err(|_| BackendFailure::TextEmission)?;
             }
             ResultAbi::Value(ty) => {
                 let result = self.output.type_name(self.program, ty)?;
-                self.output.symbol(spent.to_string());
+                self.output.symbol(clone.to_string());
                 writeln!(
                     self.output,
-                    "  %wf.spent = call {result} @{spent}({arguments})\n  ret {result} %wf.spent"
+                    "  {name} = call {result} @{clone}({arguments})\n  ret {result} {name}"
                 )
                 .map_err(|_| BackendFailure::TextEmission)?;
             }
         }
-        self.grain_next = Some("%wf.budget.next".to_owned());
         Ok(())
     }
 
@@ -2163,6 +2178,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 .push(Parameter::named("i64", "%wf.budget"));
         }
         self.emit_grain_entry(&public)?;
+        self.emit_size_entry(&public)?;
         if waiting {
             self.emit_frame_entry()?;
         }

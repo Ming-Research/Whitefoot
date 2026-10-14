@@ -1,4 +1,5 @@
-//! Runtime counted extents for the once-per-loop scheduling estimate.
+//! Runtime counted extents for the once-per-loop scheduling estimate and for
+//! the price of a statement-group call offer.
 //!
 //! This pass runs after checking. Unavailable expressions keep the static
 //! price; no estimate is an acceptance fact or a reason to omit source work.
@@ -331,6 +332,30 @@ impl<'ir> Environment<'ir> {
         }
     }
 
+    /// Whether `work` reads only values fixed for the whole activation from
+    /// its entry: u64 formals, the length of a range or run formal, which is
+    /// part of its descriptor, and the Array length behind a read-only Box
+    /// reference formal, which the checked absence of writes keeps fixed.
+    /// The length behind a buffer address is not one: a write through the
+    /// formal before the call can change what the call later reads.
+    fn entry_value(&self, work: &Work) -> bool {
+        match work {
+            Work::Constant(_) => true,
+            Work::Value(value) => self.function.parameters().contains(&(*value, U64)),
+            Work::Length(value) => self.function.parameters().iter().any(|(parameter, ty)| {
+                parameter == value && matches!(ty, IrType::Range { .. } | IrType::Run { .. })
+            }),
+            Work::BoxArrayLength(value) => {
+                self.function.readonly_reference_parameters.contains(value)
+            }
+            Work::Sum(parts) => parts.iter().all(|part| self.entry_value(part)),
+            Work::Product(left, right) | Work::Difference(left, right) => {
+                self.entry_value(left) && self.entry_value(right)
+            }
+            Work::Quotient(value, _) => self.entry_value(value),
+        }
+    }
+
     fn instantiate(&mut self, work: &Work, callee: &IrFunction, arguments: &[IrValueId]) -> Work {
         let actual = |value| {
             callee
@@ -529,14 +554,41 @@ fn cost(environment: &mut Environment<'_>) -> Cost {
     }
 }
 
-pub(super) fn assign(functions: &mut [IrFunction], static_costs: &[u64]) {
-    if !functions
+/// One handed-out statement-group call's price: its callee's whole-call
+/// summary bound to the call's arguments, in two forms.
+pub(super) struct MemberPrice {
+    /// Over the call's own argument values, which every evaluation at the
+    /// call site can read.
+    pub(super) site: Work,
+    /// Traced through the caller's definitions: a constant when no argument
+    /// varies at run time, and otherwise over whatever leaves the trace ends
+    /// at.
+    pub(super) traced: Work,
+    /// Whether [`Self::traced`] reads only entry values of the caller
+    /// ([`Environment::entry_value`]), so it can be decided at its entry.
+    pub(super) at_entry: bool,
+}
+
+/// Every handed-out statement-group call member's price, by caller ordinal
+/// and the value the call defines.
+pub(super) type MemberPrices = HashMap<(usize, IrValueId), MemberPrice>;
+
+/// Fills in every split site's runtime extent estimate and returns the price
+/// of every handed-out call member, from one set of call summaries.
+pub(super) fn assign(functions: &mut [IrFunction], static_costs: &[u64]) -> MemberPrices {
+    let splits = functions
         .iter()
-        .any(|function| function.synthesis() == Some(IrSynthesis::Chunk))
-    {
-        return;
+        .any(|function| function.synthesis() == Some(IrSynthesis::Chunk));
+    let offers = functions.iter().any(|function| {
+        function
+            .overlaps
+            .iter()
+            .any(|overlap| !overlap.handed_out().is_empty())
+    });
+    if !splits && !offers {
+        return MemberPrices::new();
     }
-    let plans = {
+    let (plans, prices) = {
         let mut environments: Vec<_> = functions.iter().map(Environment::new).collect();
         let costs: Vec<_> = environments.iter_mut().map(cost).collect();
         let mut summaries: Vec<_> = costs
@@ -619,7 +671,53 @@ pub(super) fn assign(functions: &mut [IrFunction], static_costs: &[u64]) {
                 }
             }
         }
-        plans
+        let mut prices = MemberPrices::new();
+        for (ordinal, environment) in environments.iter_mut().enumerate() {
+            let function = environment.function;
+            let handed_out: BTreeSet<_> = function
+                .overlaps
+                .iter()
+                .flat_map(|overlap| overlap.handed_out().iter().copied())
+                .collect();
+            if handed_out.is_empty() {
+                continue;
+            }
+            for instruction in function
+                .blocks()
+                .iter()
+                .flat_map(|block| block.instructions())
+            {
+                let IrInstruction::Define {
+                    result,
+                    operation:
+                        IrOperation::Call {
+                            function: callee,
+                            arguments,
+                        },
+                    ..
+                } = instruction
+                else {
+                    continue;
+                };
+                if !handed_out.contains(result) {
+                    continue;
+                }
+                let whole = &summaries[*callee as usize].whole;
+                let callee = &functions[*callee as usize];
+                let site = bind_site(whole, callee, arguments);
+                let traced = environment.instantiate(whole, callee, arguments);
+                let at_entry = environment.entry_value(&traced);
+                prices.insert(
+                    (ordinal, *result),
+                    MemberPrice {
+                        site,
+                        traced,
+                        at_entry,
+                    },
+                );
+            }
+        }
+        (plans, prices)
     };
     for (function, block, instruction, work) in plans {
         if let IrInstruction::Define {
@@ -632,6 +730,7 @@ pub(super) fn assign(functions: &mut [IrFunction], static_costs: &[u64]) {
             *destination = Some(work);
         }
     }
+    prices
 }
 
 fn bind_site(work: &Work, function: &IrFunction, arguments: &[IrValueId]) -> Work {

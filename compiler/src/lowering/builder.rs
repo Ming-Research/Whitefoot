@@ -223,9 +223,9 @@ pub(crate) fn lower_checked_from(
     for function in &mut functions {
         parameters::prune_block_parameters(function, 0, &[])?;
     }
-    let weights = split::assign_weights(&mut functions);
+    let (weights, prices) = split::assign_weights(&mut functions);
     if call_grain == CallGrain::WorkUnit {
-        call_grain::prune(&mut functions, &weights, &mut actualization);
+        call_grain::prune(&mut functions, &weights, &prices, &mut actualization);
     }
     let nominal_ceilings = nominals
         .iter()
@@ -975,6 +975,8 @@ impl<'program> IrBuilder<'program> {
                 .collect::<Result<Vec<_>, LoweringFailure>>()?,
             overlaps,
             counted_ranges: self.counted_ranges,
+            priced_offers: Vec::new(),
+            entry_selection: Vec::new(),
             synthesis,
             waits: false,
         })

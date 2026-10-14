@@ -147,6 +147,8 @@ mod tests {
             values: types.clone(),
             counted_ranges: Vec::new(),
             overlaps: Vec::new(),
+            priced_offers: Vec::new(),
+            entry_selection: Vec::new(),
             synthesis: None,
             waits: false,
             blocks: vec![

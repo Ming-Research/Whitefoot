@@ -847,9 +847,11 @@ pub enum IrPlaceStep {
     EntriesElement { offset: IrValueId },
 }
 
-/// A total, nonnegative estimate evaluated only for a parallel split budget.
-/// Its leaves are existing scalar captures or descriptor lengths, never
-/// element reads or user calls. Arithmetic saturates rather than overflowing.
+/// A total, nonnegative scheduling estimate: a parallel split's budget
+/// weight, or the argument-dependent price of a statement-group call offer
+/// ([`IrOfferPrice`]). Its leaves are existing scalar values, captures or
+/// descriptor lengths, never element reads or user calls. Arithmetic
+/// saturates rather than overflowing.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum IrWorkEstimate {
     Constant(u64),
@@ -1925,6 +1927,22 @@ pub struct IrOverlap {
     pub(crate) members: Vec<IrValueId>,
 }
 
+/// The run-time half of a call offer's price under `--par`'s call grain: the
+/// callee's whole-call work summary bound to the call's arguments, folded to
+/// `coefficient * work + constant` and compared with the work unit as
+/// `work >= at_least`, so that one compare decides a single-leaf price.
+///
+/// Scheduling only: the offer it guards is a permission the target may
+/// decline, and a declined offer is the ordinary call its refused edge
+/// already makes, so no value, acceptance or proof reads it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IrOfferPrice {
+    /// The argument-dependent part of the price.
+    pub(crate) work: IrWorkEstimate,
+    /// The least `work` whose price reaches the work unit.
+    pub(crate) at_least: u64,
+}
+
 impl IrOverlap {
     /// The value whose definition is the group's join site: the last member,
     /// which runs on the calling thread.
@@ -2094,6 +2112,15 @@ pub struct IrFunction {
     /// Counted extents retained only for the scheduler's work estimate.
     pub(crate) counted_ranges: Vec<IrCountedRange>,
     pub(crate) overlaps: Vec<IrOverlap>,
+    /// Handed-out members of [`Self::overlaps`] whose offer is made only when
+    /// their price, decided at the call from its arguments, reaches the work
+    /// unit; every other handed-out member is offered unconditionally.
+    pub(crate) priced_offers: Vec<(IrValueId, IrOfferPrice)>,
+    /// When nonempty, the overlapped world enters this function's sequential
+    /// clone at entry whenever every listed price, read from entry values, is
+    /// below the work unit. Lowering sets it only where those prices are every
+    /// hand-out this function can reach.
+    pub(crate) entry_selection: Vec<IrOfferPrice>,
     pub(crate) synthesis: Option<IrSynthesis>,
     /// [WAIT-1] whether the function waits: its declaration writes `waits`,
     /// or it is the wrapper a context start runs. The backend lowers such a
@@ -2140,6 +2167,20 @@ impl IrFunction {
     /// source order and pairwise disjoint in their members.
     pub fn overlaps(&self) -> &[IrOverlap] {
         &self.overlaps
+    }
+
+    /// The price that decides whether `member`'s offer is made at run time,
+    /// or `None` when it is offered whenever it is handed out.
+    pub(crate) fn offer_price(&self, member: IrValueId) -> Option<&IrOfferPrice> {
+        self.priced_offers
+            .iter()
+            .find_map(|(value, price)| (*value == member).then_some(price))
+    }
+
+    /// The prices whose being all below the work unit at entry selects the
+    /// sequential clone in the overlapped world.
+    pub(crate) fn entry_selection(&self) -> &[IrOfferPrice] {
+        &self.entry_selection
     }
 
     pub(crate) fn contains_buffer(&self) -> bool {

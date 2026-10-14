@@ -1,0 +1,172 @@
+# TEMPORARY. Serves research/investigations/call-grain-args: the measurement of
+# "price a call by its arguments" on the owner's i9-14900K. Removed after the
+# run (with research/experiments/call-grain-args), before the branch is ready.
+#
+# Dispatch from the work branch:
+#   gh workflow run tmp-call-grain.yml --ref claude/call-grain-args -f mode=smoke
+#   gh workflow run tmp-call-grain.yml --ref claude/call-grain-args -f mode=pilot
+#   gh workflow run tmp-call-grain.yml --ref claude/call-grain-args -f mode=main -f rounds=N
+# smoke: GitHub-hosted, short, no verdict; checks the wiring, the calibration,
+#   the identity checks and their controls. pilot: the 14900K, 4 rounds, no
+#   verdict; prints the sizes, the spreads and the block count (rounds) to
+#   freeze. main: the 14900K, the frozen rounds (even, 10 to 30), one rerun of
+#   each cell that did not pass, and the verdict. pilot and main refuse any
+#   other host.
+# The candidate is this branch's head; the base is `base` (default: the merge
+# base with origin/main), built beside it. Tell the other sessions before a
+# pilot or main run and check the runner is idle: it occupies the machine.
+#
+# research-boundary: manual-only
+# Explicitly requested measurement; no push or pull-request trigger. The
+# result is copied by hand into the investigation README with this run's id
+# because job logs and artifacts expire.
+name: tmp-call-grain
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: smoke (hosted, no verdict), pilot (14900K, no verdict) or main (14900K, verdict)
+        type: choice
+        options: [smoke, pilot, main]
+        default: smoke
+      rounds:
+        description: Rounds (smoke and pilot ignore it; main needs the pilot's even count, 10 to 30)
+        type: string
+        default: "10"
+      base:
+        description: Commit of main's compiler; empty means the merge base with origin/main
+        type: string
+        default: ""
+      target_ms:
+        description: Target wall time of one arm-run of the pair, in milliseconds
+        type: string
+        default: "1000"
+defaults:
+  run:
+    shell: bash
+concurrency:
+  group: tmp-call-grain-${{ inputs.mode == 'smoke' && github.run_id || '14900k' }}
+  cancel-in-progress: false
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+  EXP: research/experiments/call-grain-args
+jobs:
+  measure:
+    name: call-grain-args (${{ inputs.mode }})
+    runs-on: ${{ inputs.mode == 'smoke' && 'ubuntu-24.04' || fromJSON('["self-hosted", "14900k"]') }}
+    timeout-minutes: ${{ inputs.mode == 'main' && 480 || inputs.mode == 'pilot' && 150 || 60 }}
+    env:
+      MODE: ${{ inputs.mode }}
+      WHITEFOOT_CHECK_TIMEOUT: "21600"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check the host and its tools
+        run: |
+          if [ -d "$HOME/.cargo/bin" ]; then
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+          for tool in /usr/bin/clang cargo make python3 git awk sed objdump perl lscpu; do
+            command -v "$tool" >/dev/null || { echo "::error::missing tool $tool"; exit 1; }
+          done
+          lscpu | grep -E '^(Model name|CPU\(s\)):'
+          if [ "$MODE" != smoke ]; then
+            lscpu | grep -q '14900K' || { echo "::error::pilot and main run only on the i9-14900K"; exit 1; }
+            command -v taskset >/dev/null || { echo "::error::missing taskset"; exit 1; }
+            echo "load before the run: $(cat /proc/loadavg)"
+          fi
+          rustup default stable || true
+      - name: Select the two revisions
+        env:
+          BASE_INPUT: ${{ inputs.base }}
+        run: |
+          git fetch --no-tags origin '+refs/heads/main:refs/remotes/origin/main'
+          base=${BASE_INPUT:-$(git merge-base origin/main HEAD)}
+          git rev-parse --verify "$base^{commit}" >/dev/null
+          test "$base" != "$(git rev-parse HEAD)" || { echo "::error::base equals the candidate"; exit 1; }
+          git diff --quiet "$base" HEAD -- compiler && { echo "::error::no compiler change between base and candidate"; exit 1; }
+          git worktree add --detach "$RUNNER_TEMP/baseline" "$base"
+          echo "BASE=$base" >> "$GITHUB_ENV"
+          echo "OUT=$RUNNER_TEMP/call-grain" >> "$GITHUB_ENV"
+          echo "base $base candidate $(git rev-parse HEAD)"
+      - name: Check the experiment's own instruments
+        run: python3 -B "$EXP/selftest.py"
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            compiler/target
+            ${{ runner.temp }}/baseline-target
+          key: ${{ runner.os }}-${{ runner.arch }}-call-grain-${{ inputs.mode == 'smoke' && 'hosted' || '14900k' }}-${{ hashFiles('compiler/Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-call-grain-${{ inputs.mode == 'smoke' && 'hosted' || '14900k' }}-${{ hashFiles('compiler/Cargo.lock') }}-
+      - name: Build the candidate compiler
+        run: |
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
+          WHITEFOOT_CHECK_TIMEOUT=900 perl .github/run-check.pl call-grain-candidate-compiler \
+            cargo build --manifest-path compiler/Cargo.toml --locked --profile gate --bin whitefootc
+      - name: Build the base compiler
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/baseline-target
+        run: |
+          WHITEFOOT_CHECK_TIMEOUT=900 perl .github/run-check.pl call-grain-base-compiler \
+            cargo build --manifest-path "$RUNNER_TEMP/baseline/compiler/Cargo.toml" --locked --profile gate --bin whitefootc
+      - name: Set the experiment arguments
+        run: |
+          {
+            echo "ARGS=--mode $MODE --out $OUT --base-root $RUNNER_TEMP/baseline --cand-root $GITHUB_WORKSPACE --base-wfc $RUNNER_TEMP/baseline-target/gate/whitefootc --cand-wfc $GITHUB_WORKSPACE/compiler/target/gate/whitefootc --target-ms ${{ inputs.target_ms }}"
+          } >> "$GITHUB_ENV"
+          case "$MODE" in
+            smoke) echo "SHAPE=--extents 3 1000 100000 --kernels mandelbrot --rounds 4 --target-ms 20" >> "$GITHUB_ENV" ;;
+            pilot) echo "SHAPE=--rounds 4" >> "$GITHUB_ENV" ;;
+            main)
+              rounds=${{ inputs.rounds }}
+              if [ $((rounds % 2)) -ne 0 ] || [ "$rounds" -lt 10 ] || [ "$rounds" -gt 30 ]; then
+                echo "::error::main needs an even round count from 10 to 30 (the pilot's projection)"; exit 1
+              fi
+              echo "SHAPE=--rounds $rounds" >> "$GITHUB_ENV" ;;
+          esac
+      - name: Calibrate the per-element work against main's ledger
+        run: perl .github/run-check.pl call-grain-calibrate python3 -B "$EXP/run.py" calibrate $ARGS $SHAPE
+      - name: Build every arm and its twin
+        run: perl .github/run-check.pl call-grain-build python3 -B "$EXP/run.py" build $ARGS $SHAPE
+      - name: Identity checks and their controls
+        run: perl .github/run-check.pl call-grain-identity python3 -B "$EXP/run.py" identity $ARGS $SHAPE
+      - name: Verify every image against its oracle
+        run: perl .github/run-check.pl call-grain-verify python3 -B "$EXP/run.py" verify $ARGS $SHAPE
+      - name: Size the pair cells
+        run: perl .github/run-check.pl call-grain-size python3 -B "$EXP/run.py" size $ARGS $SHAPE
+      - name: Measure, attempt 1
+        run: perl .github/run-check.pl call-grain-measure python3 -B "$EXP/run.py" measure $ARGS $SHAPE --attempt 1
+      - name: Reduce attempt 1
+        run: python3 -B "$EXP/run.py" summarize $ARGS $SHAPE
+      - name: Measure, attempt 2 (each cell that did not pass; main only)
+        if: inputs.mode == 'main'
+        run: |
+          if [ "$(tr -d '[]\n ' < "$OUT/rerun.json")" != "" ]; then
+            perl .github/run-check.pl call-grain-rerun python3 -B "$EXP/run.py" measure $ARGS $SHAPE --attempt 2 --only "$OUT/rerun.json"
+          else
+            echo "no cell needs a rerun"
+          fi
+      - name: Reduce and publish
+        if: always()
+        run: |
+          python3 -B "$EXP/run.py" summarize $ARGS $SHAPE > "$OUT/final.txt" || true
+          { echo "## call-grain-args ($MODE)"; echo; echo '```text'; cat "$OUT/final.txt" 2>/dev/null || echo 'no summary'; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: call-grain-args-${{ inputs.mode }}
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/call-grain/*.json
+            ${{ runner.temp }}/call-grain/*.tsv
+            ${{ runner.temp }}/call-grain/*.txt
+            ${{ runner.temp }}/call-grain/identity-diffs/
+            ${{ runner.temp }}/call-grain/gen/
+            ${{ runner.temp }}/call-grain/identity-llvm/
+            ${{ runner.temp }}/call-grain/images/*/*.ledger

@@ -3537,3 +3537,170 @@ fn whitefoot_compile_layout(source: &[u8]) -> (String, Vec<String>) {
     .map(|(module, ledger)| (module.into_string(), ledger))
     .expect("layout source must compile")
 }
+
+/// `mix_words` loops over its range, so its work is its callee summary's
+/// `k * len(words) + c`. `mix_both` passes it its own range formal, and
+/// `fixed_pair` passes it three-word ranges of a local array.
+const PRICED_PAIR: &str = r#"fn mix(seed: u64) -> result: u64 pure {
+  let state = seed;
+  let round = 0_u64;
+  loop @rounds {
+    let done = round == 24_u64;
+    if done {
+      break @rounds;
+    }
+    let shifted = irotl(state, 27_u32);
+    let scaled = state *wrap 6364136223846793005_u64;
+    set state = ixor(shifted, scaled);
+    set state = state +wrap 1442695040888963407_u64;
+    set round = round +wrap 1_u64;
+  }
+  return state;
+}
+
+fn mix_words(words: &[u64]) -> result: u64 writes(words) {
+  let count = words^.len;
+  let state = 0_u64;
+  for (i in 0_u64..count) {
+    let word = words^[i];
+    let input = ixor(state, word);
+    let mixed = mix(seed: input);
+    set words^[i] = mixed;
+    set state = mixed;
+  }
+  return state;
+}
+
+fn mix_both(left: &[u64], right: &[u64]) -> result: u64 writes(left), writes(right) {
+  let first = mix_words(words: left);
+  let second = mix_words(words: right);
+  return first +wrap second;
+}
+
+fn fixed_pair() -> result: u64 pure {
+  let cells = array_filled::<u64, 6>(value: 1_u64);
+  let low_cells = &cells[0_u64..3_u64];
+  let high_cells = &cells[3_u64..6_u64];
+  let low = mix_words(words: low_cells);
+  let high = mix_words(words: high_cells);
+  return low +wrap high;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let cells = box_array_filled::<u64>(count: 8_u64, value: 1_u64);
+  let left = &cells.inner[0_u64..4_u64];
+  let right = &cells.inner[4_u64..8_u64];
+  let total = mix_both(left: left, right: right);
+  if total == 0_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+
+/// A callee whose work grows with its range argument is priced by the call's
+/// own arguments rather than by its static work, which charges the loop
+/// sixteen trips. Bound to `mix_both`'s range formal, the price depends on a
+/// run-time length, so the offer is kept and decided per call; bound to
+/// `fixed_pair`'s three-word ranges, it is a constant below the unit, so that
+/// offer is omitted at compile time as before. Before pricing by arguments
+/// both offers were omitted at static work far below the unit, so the ledger
+/// named `mix_both`'s offer as omitted and no part of the module below
+/// existed.
+#[test]
+fn call_grain_prices_a_size_dependent_callee_by_its_arguments() {
+    let (_, ledger) = crate::compile_with_permission_ledger(
+        &[crate::SourceInput::new("test.wf", PRICED_PAIR.as_bytes())],
+        crate::CompilerLimits::default(),
+        crate::OverlapLowering::OnWithCallGrain,
+    )
+    .expect("the priced pair compiles");
+    assert!(
+        !ledger
+            .iter()
+            .any(|line| line.contains("mix_both  call grain: omitted offer")),
+        "the size-dependent offer is not omitted: {ledger:?}"
+    );
+    assert!(
+        ledger.iter().any(|line| line
+            .starts_with("PAR actualization  mix_both  call grain: priced offer of mix_words (")),
+        "the size-dependent offer is priced by its arguments: {ledger:?}"
+    );
+    assert!(
+        ledger.iter().any(|line| line.starts_with(
+            "PAR actualization  fixed_pair  call grain: omitted offer of mix_words (static work "
+        )),
+        "a constant small price still omits the offer: {ledger:?}"
+    );
+    assert!(
+        ledger.iter().any(|line| line.starts_with(
+            "PAR actualization  mix_both  call grain: entry runs the sequential version when len(v"
+        )),
+        "the price reads only mix_both's entry values, so entry decides it: {ledger:?}"
+    );
+}
+
+/// The entry selection and the per-call comparison exist only in the
+/// overlapped world. `mix_both`'s overlapped body compares its range length
+/// once at entry and enters its sequential clone when the offer would be
+/// below the unit, and compares again before acquiring a lane; both are one
+/// compare of the length, with no multiplication. Every clone, the code the
+/// one-worker run executes, is the sequential lowering of its function, and
+/// `fixed_pair`, whose offer is omitted, is emitted as in the sequential
+/// build. Before pricing by arguments `mix_both`'s offer was omitted, so the
+/// module had no clone of it and the first lookup below fails.
+#[test]
+fn a_priced_offer_selects_the_sequential_clone_only_in_the_overlapped_world() {
+    let priced = super::emit_lowered(
+        PRICED_PAIR.as_bytes(),
+        crate::OverlapLowering::OnWithCallGrain,
+    );
+    let sequential = super::emit_lowered(PRICED_PAIR.as_bytes(), crate::OverlapLowering::Off);
+    let clone = function_body(&priced, "@wf__par_seq_mix_both");
+    let overlapped = function_body(&priced, "@wf_mix_both");
+    assert!(
+        overlapped.contains("par.size:")
+            && overlapped.contains("call i64 @wf__par_seq_mix_both(")
+            && overlapped.contains("call void @wf__par_publish("),
+        "the overlapped body selects the clone at entry and still offers:\n{overlapped}"
+    );
+    assert_eq!(
+        overlapped.matches("icmp ult i64").count(),
+        2,
+        "one entry compare and one compare before the acquisition:\n{overlapped}"
+    );
+    assert!(
+        !overlapped.contains("umul"),
+        "a one-leaf price folds to a compare of the leaf:\n{overlapped}"
+    );
+    assert!(
+        !clone.contains("par.size") && !clone.contains("@wf__par_acquire_lane("),
+        "the clone neither selects nor offers:\n{clone}"
+    );
+    assert!(!sequential.contains("par.size"), "{sequential}");
+    let mut cloned = clone_symbols(&priced);
+    cloned.sort_unstable();
+    let mut functions: Vec<_> = cloned
+        .iter()
+        .map(|symbol| symbol.trim_end_matches(".body"))
+        .collect();
+    functions.dedup();
+    assert_eq!(functions, ["@wf__par_seq_main", "@wf__par_seq_mix_both"]);
+    for symbol in &cloned {
+        let restored = function_body(&priced, symbol).replace("@wf__par_seq_", "@wf_");
+        let reference = function_body(&sequential, &symbol.replace("@wf__par_seq_", "@wf_"));
+        assert_eq!(
+            restored, reference,
+            "{symbol} is not the sequential lowering of its function"
+        );
+    }
+    for symbol in ["@wf_fixed_pair", "@wf_mix_words", "@wf_mix"] {
+        assert_eq!(
+            function_body(&priced, symbol),
+            function_body(&sequential, symbol),
+            "{symbol} has one lowering"
+        );
+    }
+    let output = compile_and_run(&priced);
+    assert!(output.status.success(), "{output:?}");
+}
