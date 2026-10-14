@@ -1,7 +1,3 @@
-// Class 1 probe (shared-object-model): the one-object form of the conformance
-// case share-neg-targets-same-type-one-call. The two counters are two fields
-// of one shared state instead of two objects. Expected today: accepted, since
-// two distinct fields below one root are disjoint [OWN-7].
 struct Pair {
   first: u8;
   second: u8;

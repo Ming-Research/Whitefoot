@@ -1,7 +1,3 @@
-// Class 1 probe (shared-object-model): the one-object form of Firn's
-// clear_both, two concurrent hash maps as an array field of one state. The
-// one-object model needs this; today TYPE-9 admits a map only as the whole
-// state of a shared object. Expected today: rejected citing TYPE-9.
 struct Databases {
   dbs: Array<ConcurrentHashMap<u64>, 2>;
 }

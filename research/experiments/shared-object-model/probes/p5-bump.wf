@@ -1,6 +1,3 @@
-// Class 5 probe (shared-object-model): a function whose row is pure but which
-// changes shared state. Expected today: accepted only with `waits`, which
-// EFF-3 excludes from deduplication and reordering.
 fn bump(counter: Shared<u8>) -> result: unit pure waits {
   atomic count = &counter {
     set count^ = count^ +wrap 1_u8;

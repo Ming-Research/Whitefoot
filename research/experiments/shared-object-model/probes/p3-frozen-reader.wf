@@ -1,6 +1,3 @@
-// Class 3 probe (shared-object-model): a value read through a frozen
-// object's `inner` carries its type invariant. Board item expectation under
-// the unified design: accepted. Predicted today: rejected at the subtraction.
 struct Window {
   next: u64;
   len: u64;

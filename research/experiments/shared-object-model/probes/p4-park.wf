@@ -1,6 +1,3 @@
-// Class 4 probe (shared-object-model): a value that must be closed
-// explicitly (a nodrop struct, standing for a write file handle) parked in a
-// shared object. Expected today: rejected, since Shared<T> requires T: drop.
 nodrop struct Ticket {
   n: u64;
 }
