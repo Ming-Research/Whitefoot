@@ -544,9 +544,12 @@ impl FunctionEmitter<'_, '_> {
         )?;
         self.output.open_block(format!("{prefix}.allocate"));
         let block = format!("%{prefix}.block.allocation");
+        let alignment = heap_allocation_alignment(self.target, self.program, root.block_type)?;
+        let (allocator, alignment_argument) = heap_call(self.target, "wf__heap_take", alignment);
+        self.output.symbol(allocator);
         writeln!(
             self.output,
-            "  {block} = call ptr @wf__heap_take(i64 {block_bytes})\n  %{prefix}.ok = icmp ne ptr {block}, null\n  br i1 %{prefix}.ok, label %{prefix}.zero.entry, label %{prefix}.block.failed"
+            "  {block} = call ptr @{allocator}(i64 {block_bytes}{alignment_argument})\n  %{prefix}.ok = icmp ne ptr {block}, null\n  br i1 %{prefix}.ok, label %{prefix}.zero.entry, label %{prefix}.block.failed"
         )?;
         let private = PrivateRoot {
             pointer,
@@ -556,6 +559,7 @@ impl FunctionEmitter<'_, '_> {
             original,
             spec: ordinal,
             block_bytes: Some(block_bytes.clone()),
+            alignment,
         };
         self.output.open_block(format!("{prefix}.block.failed"));
         let mut acquired = previous.to_vec();
@@ -636,6 +640,9 @@ impl FunctionEmitter<'_, '_> {
     ) -> Result<(), BackendFailure> {
         self.output.symbol("wf__heap_give");
         for (ordinal, root) in roots.iter().enumerate() {
+            let (release_symbol, alignment_argument) =
+                heap_call(self.target, "wf__heap_give", root.alignment);
+            self.output.symbol(release_symbol);
             if let Some(bytes) = &root.block_bytes {
                 let release = format!("{prefix}.{ordinal}.release");
                 writeln!(self.output, "  br label %{release}.entry")?;
@@ -650,14 +657,22 @@ impl FunctionEmitter<'_, '_> {
                 self.output.open_block(format!("{release}.body"));
                 writeln!(
                     self.output,
-                    "  %{release}.slot = getelementptr inbounds ptr, ptr {}, i64 %{release}.i\n  %{release}.block = load ptr, ptr %{release}.slot\n  call void @wf__heap_give(ptr %{release}.block, i64 {bytes})\n  %{release}.next = add i64 %{release}.i, 1\n  br label %{release}.head",
+                    "  %{release}.slot = getelementptr inbounds ptr, ptr {}, i64 %{release}.i\n  %{release}.block = load ptr, ptr %{release}.slot\n  call void @{release_symbol}(ptr %{release}.block, i64 {bytes}{alignment_argument})\n  %{release}.next = add i64 %{release}.i, 1\n  br label %{release}.head",
                     root.pointer
                 )?;
                 self.output.open_block(format!("{release}.done"));
             }
+            let alignment = if root.block_bytes.is_some() {
+                8
+            } else {
+                root.alignment
+            };
+            let (release_symbol, alignment_argument) =
+                heap_call(self.target, "wf__heap_give", alignment);
+            self.output.symbol(release_symbol);
             writeln!(
                 self.output,
-                "  call void @wf__heap_give(ptr {}, i64 {})",
+                "  call void @{release_symbol}(ptr {}, i64 {}{alignment_argument})",
                 root.pointer, root.bytes
             )?;
         }

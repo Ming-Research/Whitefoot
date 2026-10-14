@@ -35,6 +35,18 @@ pub(crate) enum TargetLayoutFailure {
     UnsupportedHost,
     InvalidIr,
     Unrepresentable(TargetObject),
+    /// A runtime allocation failure retains its concrete payload and owning
+    /// IR function so the driver can recover the source call that requires it.
+    Allocation {
+        function: usize,
+        ty: IrType,
+        size: Option<u64>,
+        alignment: Option<u64>,
+        maximum_size: u64,
+        maximum_alignment: u64,
+        ceiling: Option<IrLayoutCeiling>,
+        object: TargetObject,
+    },
 }
 
 /// Physical discriminant width for dense semantic tags `0..variant_count`.
@@ -60,6 +72,7 @@ pub(crate) struct TargetLayout {
     address_index_max: u64,
     allocator_parameter_max: u64,
     allocator_alignment: u64,
+    allocation_alignment_max: u64,
     stack_probe: &'static str,
 }
 
@@ -79,6 +92,7 @@ impl TargetLayout {
                 address_index_max: i64::MAX as u64,
                 allocator_parameter_max: u64::MAX,
                 allocator_alignment: 8,
+                allocation_alignment_max: 4096,
             }),
             "x86_64-apple-darwin" => Ok(Self {
                 triple: "x86_64-apple-darwin",
@@ -87,6 +101,7 @@ impl TargetLayout {
                 address_index_max: i64::MAX as u64,
                 allocator_parameter_max: u64::MAX,
                 allocator_alignment: 8,
+                allocation_alignment_max: 4096,
             }),
             "aarch64-unknown-linux-gnu" => Ok(Self {
                 triple: "aarch64-unknown-linux-gnu",
@@ -95,6 +110,7 @@ impl TargetLayout {
                 address_index_max: i64::MAX as u64,
                 allocator_parameter_max: u64::MAX,
                 allocator_alignment: 8,
+                allocation_alignment_max: 4096,
             }),
             "x86_64-unknown-linux-gnu" => Ok(Self {
                 triple: "x86_64-unknown-linux-gnu",
@@ -103,6 +119,7 @@ impl TargetLayout {
                 address_index_max: i64::MAX as u64,
                 allocator_parameter_max: u64::MAX,
                 allocator_alignment: 8,
+                allocation_alignment_max: 4096,
             }),
             "x86_64-pc-windows-msvc" => Ok(Self {
                 triple: "x86_64-pc-windows-msvc",
@@ -115,6 +132,7 @@ impl TargetLayout {
                 address_index_max: i64::MAX as u64,
                 allocator_parameter_max: u64::MAX,
                 allocator_alignment: 8,
+                allocation_alignment_max: 4096,
             }),
             _ => Err(TargetLayoutFailure::UnsupportedHost),
         }
@@ -200,10 +218,15 @@ impl TargetLayout {
     }
 
     /// Minimum alignment guaranteed by the selected target's heap allocator.
-    /// Keeping this explicit checks wider element representations against the
-    /// allocator promise rather than assuming the address ABI guarantees it.
+    /// Wider requests use the runtime's explicitly aligned allocation path.
     pub(super) const fn runtime_allocation_alignment(self) -> u64 {
         self.allocator_alignment
+    }
+
+    /// Largest requested alignment implemented by the runtime allocation ABI.
+    /// This fixed compiler policy does not depend on the host's page size.
+    pub(super) const fn runtime_allocation_alignment_max(self) -> u64 {
+        self.allocation_alignment_max
     }
 
     /// Retains the selected target ABI while replacing only the heap-domain
@@ -215,7 +238,7 @@ impl TargetLayout {
         alignment: u64,
     ) -> Self {
         self.allocator_parameter_max = byte_maximum;
-        self.allocator_alignment = alignment;
+        self.allocation_alignment_max = alignment;
         self
     }
 
@@ -1172,6 +1195,28 @@ pub(super) fn validate_program(
 ) -> Result<(), TargetLayoutFailure> {
     let mut layouts = LayoutComputer::new(target, program.nominals(), program.elements());
 
+    // Allocation obligations run first so an unrepresentable payload retains
+    // the operation that requires it, rather than failing in the global type
+    // inventory without an origin. The complete materialization checks below
+    // remain mandatory, including representations not used by an allocation.
+    for (index, function) in program.functions().iter().enumerate() {
+        for block in function.blocks() {
+            for instruction in block.instructions() {
+                if let IrInstruction::Define { ty, operation, .. } = instruction
+                    && allocation_payload(program, operation).is_some()
+                {
+                    validate_located_allocation(
+                        &mut layouts,
+                        program,
+                        function,
+                        index,
+                        *ty,
+                        operation,
+                    )?;
+                }
+            }
+        }
+    }
     for nominal in program.nominals() {
         layouts.layout(IrType::Nominal(nominal.id()))?;
     }
@@ -1224,10 +1269,91 @@ fn validate_function(
                 continue;
             };
             layouts.layout(*ty)?;
-            validate_target_obligation(layouts, program, function, *ty, operation)?;
+            if allocation_payload(program, operation).is_none() {
+                validate_target_obligation(layouts, program, function, *ty, operation)?;
+            }
         }
     }
     Ok(())
+}
+
+fn validate_located_allocation(
+    layouts: &mut LayoutComputer<'_>,
+    program: &IrProgram,
+    function: &IrFunction,
+    function_index: usize,
+    ty: IrType,
+    operation: &IrOperation,
+) -> Result<(), TargetLayoutFailure> {
+    validate_target_obligation(layouts, program, function, ty, operation).map_err(|failure| {
+        let TargetLayoutFailure::Unrepresentable(object) = failure else {
+            return failure;
+        };
+        let Some(payload) = allocation_payload(program, operation) else {
+            return failure;
+        };
+        let actual = layouts.layout(payload).ok();
+        let ceiling = match operation {
+            IrOperation::SegmentsFill { layout_ceiling, .. }
+            | IrOperation::BufferFill { layout_ceiling, .. } => Some(*layout_ceiling),
+            IrOperation::WindowBlockNew { obligations, .. }
+            | IrOperation::WindowGrow { obligations, .. } => Some(obligations.layout_ceiling),
+            _ => None,
+        }
+        .filter(|ceiling| {
+            actual.is_some_and(|actual| {
+                !ceiling.size.permits(actual.size)
+                    || actual.align > ceiling.align
+                    || !ceiling.stride.permits(actual.size)
+            })
+        });
+        TargetLayoutFailure::Allocation {
+            function: function_index,
+            ty: payload,
+            size: actual.map(|layout| layout.size),
+            alignment: actual.map(|layout| layout.align),
+            maximum_size: layouts.target.runtime_allocation_max(),
+            maximum_alignment: layouts.target.runtime_allocation_alignment_max(),
+            ceiling,
+            object,
+        }
+    })
+}
+
+fn allocation_payload(program: &IrProgram, operation: &IrOperation) -> Option<IrType> {
+    let nominal = match operation {
+        IrOperation::BoxNew { nominal, .. }
+        | IrOperation::SegmentsFill { nominal, .. }
+        | IrOperation::BufferFill { nominal, .. }
+        | IrOperation::WindowBlockNew { nominal, .. }
+        | IrOperation::WindowGrow { nominal, .. }
+        | IrOperation::SharedNew { nominal }
+        | IrOperation::DecisionCellNew { nominal }
+        | IrOperation::ConcurrentHashMapNew { nominal, .. } => *nominal,
+        _ => return None,
+    };
+    let payload = match program.nominal(nominal)?.kind() {
+        IrNominalKind::Box { referent, .. } => *referent,
+        IrNominalKind::Shared { state, .. } => *state,
+        _ => return None,
+    };
+    match payload {
+        IrType::Buffer { element }
+        | IrType::Segments { element }
+        | IrType::Window {
+            element,
+            capacity: None,
+            ..
+        } => program.element(element),
+        IrType::Nominal(id) => match program.nominal(id)?.kind() {
+            IrNominalKind::Shared {
+                shape: IrShared::Map { entry },
+                ..
+            } => Some(*entry),
+            _ => Some(payload),
+        },
+        _ => Some(payload),
+    }
 }
 
 /// Qualifies the terms the emitter uses for `header + count * stride`: the
@@ -1304,7 +1430,7 @@ fn runtime_capacity_layout(
         actual.align,
         TargetObject::Representation,
     )?;
-    if actual.align.max(8) > layouts.target.runtime_allocation_alignment() {
+    if actual.align.max(8) > layouts.target.runtime_allocation_alignment_max() {
         return Err(TargetLayoutFailure::Unrepresentable(
             TargetObject::RuntimeSizedAllocation,
         ));
@@ -1353,12 +1479,12 @@ fn validate_target_obligation(
             if result_type != IrType::Nominal(*nominal) {
                 return Err(TargetLayoutFailure::InvalidIr);
             }
-            let referent = match program
+            let (referent, release) = match program
                 .nominal(*nominal)
                 .ok_or(TargetLayoutFailure::InvalidIr)?
                 .kind()
             {
-                IrNominalKind::Box { referent, .. } => *referent,
+                IrNominalKind::Box { referent, release } => (*referent, *release),
                 _ => return Err(TargetLayoutFailure::InvalidIr),
             };
             if function.value_type(*value) != Some(referent) {
@@ -1367,8 +1493,16 @@ fn validate_target_obligation(
             let allocation = layouts
                 .layout(referent)
                 .map_err(|failure| as_object(failure, TargetObject::RuntimeSizedAllocation))?;
-            if allocation.size > layouts.target.runtime_allocation_max()
-                || allocation.align > layouts.target.runtime_allocation_alignment()
+            let complete_size = if release == crate::IrReleaseClass::Frozen {
+                allocation
+                    .size
+                    .checked_add(crate::backend::FROZEN_HEADER_BYTES)
+                    .and_then(|size| size.checked_add(allocation.align.max(16) - 1))
+            } else {
+                Some(allocation.size)
+            };
+            if complete_size.is_none_or(|size| size > layouts.target.runtime_allocation_max())
+                || allocation.align > layouts.target.runtime_allocation_alignment_max()
             {
                 return Err(TargetLayoutFailure::Unrepresentable(
                     TargetObject::RuntimeSizedAllocation,
@@ -1397,8 +1531,10 @@ fn validate_target_obligation(
             if allocation
                 .size
                 .checked_add(crate::backend::SHARED_STATE_OFFSET)
+                .and_then(|size| size.checked_add(8))
+                .and_then(|size| size.checked_add(allocation.align.max(8) - 1))
                 .is_none_or(|size| size > layouts.target.runtime_allocation_max())
-                || allocation.align > crate::backend::SHARED_STATE_OFFSET
+                || allocation.align > layouts.target.runtime_allocation_alignment_max()
             {
                 return Err(TargetLayoutFailure::Unrepresentable(
                     TargetObject::RuntimeSizedAllocation,
@@ -1406,7 +1542,7 @@ fn validate_target_obligation(
             }
         }
         // [SHARE-1] a table keeps each entry's `Option<V>` in a slot of a
-        // node the runtime carves, aligned to at most 16 bytes.
+        // node the runtime carves at the requested entry alignment.
         IrOperation::ConcurrentHashMapNew { nominal, .. } => {
             if result_type != IrType::Nominal(*nominal) {
                 return Err(TargetLayoutFailure::InvalidIr);
@@ -1434,7 +1570,9 @@ fn validate_target_obligation(
             let slot = layouts
                 .layout(*entry)
                 .map_err(|failure| as_object(failure, TargetObject::RuntimeSizedAllocation))?;
-            if slot.size > layouts.target.runtime_allocation_max() || slot.align > 16 {
+            if slot.size > layouts.target.runtime_allocation_max()
+                || slot.align > layouts.target.runtime_allocation_alignment_max()
+            {
                 return Err(TargetLayoutFailure::Unrepresentable(
                     TargetObject::RuntimeSizedAllocation,
                 ));

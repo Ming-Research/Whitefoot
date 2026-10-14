@@ -83,6 +83,60 @@ int memory_probe(void) {
     assert_eq!(output.status.code(), Some(0), "{output:?}");
 }
 
+/// The upper supported alignment crosses the host pool's 512-byte floor.
+/// Check native aligned heap resize, immutable-empty growth and the distinct
+/// shared/frozen pool provenance and accounting through their production ABI.
+#[test]
+fn aligned_heap_and_pool_storage_preserve_alignment_and_accounting() {
+    let llvm = r#"declare i32 @alignment_probe()
+declare i32 @wf__floor_run(i32, ptr)
+define i32 @main(i32 %argc, ptr %argv) {
+  %status = call i32 @wf__floor_run(i32 %argc, ptr %argv)
+  ret i32 %status
+}
+define i32 @wf__main_body(i32 %argc, ptr %argv) {
+  %status = call i32 @alignment_probe()
+  ret i32 %status
+}
+"#;
+    let host = include_str!("heap_alignment_probe.c");
+    let output = super::compile_link_and_run(llvm, Some(host), &[]);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+}
+
+/// Grant rounding must retain the signed byte-counter domain before a host
+/// mapping is attempted. These queries allocate nothing: the last complete
+/// 64-KiB grant succeeds and its next byte takes the runtime exhaustion edge.
+#[test]
+fn runtime_pool_grant_rounding_preserves_the_signed_size_limit() {
+    let largest = i64::MAX as u64 - 65535;
+    for (request, accepted) in [(largest, true), (largest + 1, false)] {
+        let llvm = format!(
+            "declare i64 @wf__runtime_granted(i64)\n\
+             declare i32 @wf__floor_run(i32, ptr)\n\
+             define i32 @main(i32 %argc, ptr %argv) {{\n\
+               %status = call i32 @wf__floor_run(i32 %argc, ptr %argv)\n\
+               ret i32 %status\n}}\n\
+             define i32 @wf__main_body(i32 %argc, ptr %argv) {{\n\
+               %bytes = call i64 @wf__runtime_granted(i64 {request})\n\
+               %valid = icmp eq i64 %bytes, {largest}\n\
+               %status = select i1 %valid, i32 0, i32 1\n\
+               ret i32 %status\n}}\n"
+        );
+        let output = super::compile_link_and_run(&llvm, None, &[]);
+        if accepted {
+            assert_eq!(output.status.code(), Some(0), "{output:?}");
+        } else {
+            assert!(!output.status.success(), "{output:?}");
+            assert!(
+                String::from_utf8_lossy(&output.stderr)
+                    .contains("no memory could be reserved for a waiting function's frame"),
+                "{output:?}"
+            );
+        }
+    }
+}
+
 /// Resident failure/success and UTF-8 success/error cross the production C
 /// bodies and LLVM register wrappers. Sleep also writes its three-byte result
 /// next to a sentinel, exposing a stale wider result write. These observations
@@ -905,5 +959,9 @@ fn frame_record_sizes_are_the_runtime_s_own() {
     assert_eq!(
         defined("WF_SHARED_STATE_OFFSET"),
         crate::backend::SHARED_STATE_OFFSET
+    );
+    assert_eq!(
+        defined("WF_FROZEN_HEADER_BYTES"),
+        crate::backend::FROZEN_HEADER_BYTES
     );
 }

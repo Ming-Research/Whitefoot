@@ -4466,6 +4466,63 @@ static void entries_noninserting(void) {
     wf_cmap_destroy(map);
 }
 
+/* Extended-alignment entries use the pool with provenance padding; ordinary
+ * 16-byte entries keep chunk accounting. Cover deletion and deferred drain,
+ * plus the immutable missing-entry slot, at the upper alignment boundary. */
+static void entries_overaligned(void) {
+    int64_t pool_before = atomic_load(&pool_bytes_out);
+    int64_t mapped_before = atomic_load(&mapped_bytes_out);
+    int64_t blocks_before = atomic_load(&blocks_out);
+    for (uint64_t align = 16; align <= 4096; align *= 2) {
+        wf_cmap *map = wf_cmap_create_entries(align, align, 1);
+        wf_cmap_user *u = wf_cmap_user_at(map, 0);
+        if ((uintptr_t)map->none % align != 0)
+            fail("absent entry has wrong alignment", (uintptr_t)map->none % align, 0);
+        for (uint64_t i = 0; i < align; ++i)
+            if (((unsigned char *)map->none)[i] != 0)
+                fail("absent entry is not zero", i, 0);
+        int64_t empty_pool = atomic_load(&pool_bytes_out);
+        unsigned char key[3] = {1, 2, 3};
+        for (unsigned round = 0; round < 2; ++round) {
+            wf_cmap_entry entry;
+            unsigned char *slot = wf_cmap_lock_entry(u, key, sizeof key, 0, &entry);
+            if ((uintptr_t)slot % align != 0)
+                fail("entry has wrong alignment", (uintptr_t)slot % align, 0);
+            memset(slot, 91, (size_t)align);
+            wf_cmap_unlock_entry(u, &entry, 0, 1);
+            if (align > ENTRY_GRAIN) {
+                size_t bytes = (size_t)node_bytes(map, sizeof key) + sizeof(void *) + align - 1;
+                int64_t expected = empty_pool + (int64_t)test_granted(bytes);
+                if (atomic_load(&pool_bytes_out) != expected)
+                    fail("aligned entry omits granted padding", atomic_load(&pool_bytes_out), expected);
+            }
+            slot = wf_cmap_lock_entry(u, key, sizeof key, 0, &entry);
+            for (uint64_t i = 0; i < align; ++i)
+                if (slot[i] != 91) fail("aligned entry lost bytes", i, 91);
+            wf_cmap_unlock_entry(u, &entry, 0, 0);
+            if (atomic_load(&pool_bytes_out) != empty_pool)
+                fail("aligned entry release retained its pool grant", atomic_load(&pool_bytes_out), empty_pool);
+        }
+        unsigned char long_key[600] = {0};
+        wf_cmap_entry entry;
+        unsigned char *slot = wf_cmap_lock_entry(u, long_key, sizeof long_key, 0, &entry);
+        if ((uintptr_t)slot % align != 0)
+            fail("large entry has wrong alignment", (uintptr_t)slot % align, 0);
+        memset(slot, 73, (size_t)align);
+        wf_cmap_unlock_entry(u, &entry, 0, 1);
+        slot = wf_cmap_drain(map);
+        if (slot == NULL || slot[align - 1] != 73)
+            fail("drain lost aligned payload", 0, 73);
+        if (wf_cmap_drain(map) != NULL)
+            fail("drain returned a duplicate aligned payload", 1, 0);
+        wf_cmap_destroy(map);
+        if (atomic_load(&pool_bytes_out) != pool_before ||
+            atomic_load(&mapped_bytes_out) != mapped_before ||
+            atomic_load(&blocks_out) != blocks_before)
+            fail("aligned map release leaked storage", atomic_load(&blocks_out), blocks_before);
+    }
+}
+
 /* PRE-2's requests outside the host pool: the exact mapping threshold,
  * live nodes rather than chunk capacity, reuse, and drain after the value
  * is released. Script moves to isolate a freed other-size table and
@@ -4583,6 +4640,7 @@ int main(int argc, char **argv) {
     if (argc != 1) return 2;
     entries_noninserting();
     if (ENTRY_TESTS) {
+        entries_overaligned();
         heap_accounting();
         entries_huge_capacity();
         entries_sequential();
