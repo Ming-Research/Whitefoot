@@ -2524,7 +2524,7 @@ alias close_directory = std::fs::close_directory;
 alias exit_status = std::process::exit_status;
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, process_id: unused_process_id) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
   std::fs::close_directory_write(factory: &factory, directory: move unused_cwd_write);
   close_directory(factory: &factory, directory: move unused_cwd);
@@ -2567,7 +2567,7 @@ alias close_directory = std::fs::close_directory;
 alias exit_status = std::process::exit_status;
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, process_id: unused_process_id) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
   std::fs::close_directory_write(factory: &factory, directory: move unused_cwd_write);
   close_directory(factory: &factory, directory: move unused_cwd);
@@ -2586,7 +2586,7 @@ alias close_directory = std::fs::close_directory;
 alias exit_status = std::process::exit_status;
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, process_id: unused_process_id) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
   std::fs::close_directory_write(factory: &factory, directory: move unused_cwd_write);
   close_directory(factory: &factory, directory: move unused_cwd);
@@ -2604,7 +2604,7 @@ alias Inputs = std::process::Inputs;
 alias exit_status = std::process::exit_status;
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: unused_args, drivers: unused_driver_count, cwd: directory_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let Inputs(args: unused_args, drivers: unused_driver_count, cwd: directory_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, process_id: unused_process_id) = move inputs;
   let std::fs::Directory(read: directory, write: directory_write) = move directory_directory;
   std::fs::close_directory_write(factory: &factory, directory: move directory_write);
   let DirectoryRead() = move directory;
@@ -2622,7 +2622,7 @@ alias close_directory = std::fs::close_directory;
 alias exit_status = std::process::exit_status;
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: unused_args, drivers: unused_driver_count, cwd: directory_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let Inputs(args: unused_args, drivers: unused_driver_count, cwd: directory_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, process_id: unused_process_id) = move inputs;
   let std::fs::Directory(read: directory, write: directory_write) = move directory_directory;
   std::fs::close_directory_write(factory: &factory, directory: move directory_write);
   close_directory(factory: &factory, directory: move directory);
@@ -3913,7 +3913,7 @@ fn make(count: u64) -> made: Box<Slots<u8>> pure {
 }
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: args, drivers: unused_driver_count, cwd: cwd_directory, stdout: out, stderr: err, handles: files, stdin: unused, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let Inputs(args: args, drivers: unused_driver_count, cwd: cwd_directory, stdout: out, stderr: err, handles: files, stdin: unused, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, process_id: unused_process_id) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   std::fs::close_directory_write(factory: &files, directory: move cwd_write);
   close_directory(factory: &files, directory: move cwd);

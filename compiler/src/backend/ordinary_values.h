@@ -106,6 +106,9 @@ WF_RESULT_UNION(wf_stop_result, uint8_t, wf_io_error);
 WF_RESULT_UNION(wf_open_result, wf_value, wf_io_error);
 WF_RESULT_UNION(wf_connect_result, wf_connection, wf_io_error);
 WF_RESULT_UNION(wf_accept_result, wf_accepted_connection, wf_io_error);
+/* `OpenFilesLimit`, its two u64 fields in declaration order. */
+typedef struct { uint64_t soft; uint64_t hard; } wf_open_files_limit;
+WF_RESULT_UNION(wf_limit_result, wf_open_files_limit, wf_io_error);
 #undef WF_RESULT_UNION
 /* `Instant` has its declared u64 field's representation. `Option<Instant>`:
  * one payload-carrying variant keeps the product layout,
@@ -114,16 +117,19 @@ WF_RESULT_UNION(wf_accept_result, wf_accepted_connection, wf_io_error);
 typedef struct { uint64_t ticks; } wf_instant;
 typedef struct { uint8_t tag; wf_instant value; } wf_deadline;
 typedef struct { uint8_t tag; uint64_t value; } wf_optional_bytes;
+/* `Option<i64>`, the local offset reading, in the same product layout. */
+typedef struct { uint8_t tag; int64_t value; } wf_optional_i64;
 /* Result<unit, unit> fits the return registers and keeps both payloads. */
 typedef struct { uint8_t tag; uint8_t value; uint8_t error; } wf_sleep_result;
 _Static_assert(sizeof(wf_sleep_result) == 3, "ordinary sleep Result layout");
 #define WF_OPTION_SOME 1u
 /* `Inputs`, its fields in declaration order; `cwd` is the two halves of a
- * `Directory`. */
+ * `Directory` and `process_id` is an `Option<u64>`. */
 typedef struct {
     wf_value args;
     uint64_t drivers;
     wf_value cwd_read, cwd_write, out, err, handles, in, clock, wall_clock, stops, memory_meter;
+    wf_optional_bytes process_id;
 } wf_inputs;
 
 _Static_assert(sizeof(wf_value) == 32 && _Alignof(wf_value) == 16, "ordinary opaque layout");
@@ -151,11 +157,17 @@ _Static_assert(offsetof(wf_deadline, value) == 8 && sizeof(wf_deadline) == 16,
                "ordinary Option<Instant> layout");
 _Static_assert(offsetof(wf_inputs, drivers) == 32 &&
                offsetof(wf_inputs, cwd_read) == 48 &&
-               sizeof(wf_inputs) == 368, "ordinary Inputs layout");
+               offsetof(wf_inputs, process_id) == 368 &&
+               sizeof(wf_inputs) == 384, "ordinary Inputs layout");
 _Static_assert(offsetof(wf_optional_bytes, value) == 8 && sizeof(wf_optional_bytes) == 16,
                "ordinary Option<u64> layout");
+_Static_assert(offsetof(wf_optional_i64, value) == 8 && sizeof(wf_optional_i64) == 16,
+               "ordinary Option<i64> layout");
 
 _Static_assert(sizeof(wf_stop_result) == 16, "ordinary stop Result layout");
+_Static_assert(offsetof(wf_limit_result, ok.value) == 8 &&
+               offsetof(wf_limit_result, err.error) == 4 &&
+               sizeof(wf_limit_result) == 24, "ordinary open-files limit Result layout");
 
 _Static_assert(sizeof(((wf_io_error *)0)->tag) == 1 &&
                offsetof(wf_io_error, tag) == 0 && offsetof(wf_io_error, code) == 4 &&
@@ -269,6 +281,9 @@ void wf__body_instant_after(wf_instant *result, const wf_instant *instant, uint6
 uint64_t wf__body_nanoseconds_from(const wf_instant *earlier, const wf_instant *later);
 _Bool wf__body_instant_reached(const wf_instant *deadline, const wf_instant *instant);
 int64_t wf__body_unix_nanoseconds(const wf_value *clock);
+void wf__body_local_offset_seconds(wf_optional_i64 *result, const wf_value *clock, int64_t at);
+void wf__body_open_files_limit(wf_limit_result *result, const wf_value *factory);
+void wf__body_raise_open_files_limit(wf_limit_result *result, wf_value *factory, uint64_t wanted);
 void wf__body_sleep_until(wf_sleep_result *result, const wf_instant *deadline, const wf_cancel_handle *cancel);
 
 void wf__body_stop_listen(wf_open_result *result, wf_value *factory, const wf_value *stops);

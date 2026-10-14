@@ -30,7 +30,14 @@ mod programs {
     mod heap;
     #[cfg(unix)]
     mod image;
+    // The expected offsets name IANA zones, which POSIX `TZ` accepts and the
+    // Windows C runtime's `TZ` format does not.
+    #[cfg(unix)]
+    mod local_time;
     mod memory;
+    // POSIX `RLIMIT_NOFILE`, set through the shell's `ulimit`.
+    #[cfg(unix)]
+    mod open_files;
     #[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
     mod snapshot_export;
     mod network;
