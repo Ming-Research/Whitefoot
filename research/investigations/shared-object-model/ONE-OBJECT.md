@@ -171,6 +171,26 @@ movable value (Q18), so the checker had to track which state a table belonged
 to. A map that can only ever be a part of a shared state is reached only by a
 path from that state's binding, so there is nothing to track.
 
+### 2.2.1 Shards as a field (owner, 2026-10-14)
+
+`Shards<T>` is a field type of a shared state. A place through such a field,
+used as a place of `T` inside a block, is the part of the thread executing the
+statement; lowering acquires only that part's ticket lock (one fetch-add on a
+line only that thread writes), changes the value with ordinary loads and
+stores and releases it with one store. `any_shard()` and the selector value are
+retired: the old header needed an index atom, the new one names only the
+object. There is no subscript and the number of parts is not observable.
+Proposed whole access (form open until the specification): the shards are made
+with an initial value and a merge function, and only two whole operations
+exist, a merged read (INFO) and a take that returns the merged value and resets
+every part (CONFIG RESETSTAT, the AOF batch). When the merge function is
+associative and commutative (sum, maximum, merging two sequence-ordered runs),
+the result does not depend on which part a write landed in. Reading the local
+part gives only that part, which a buffer needs (its own length before an
+append). Thresholds for shards are relative to a C program giving the same
+guarantee by the best known method: throughput at least 0.9 of it, longest
+whole read at most twice its longest under the same load.
+
 ### 2.3 Atomic values: one-word objects whose statements are single operations
 
 Everything in a shared state is held state, reached inside an atomic statement
