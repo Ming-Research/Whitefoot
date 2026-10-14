@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 the owner's agent instructions own the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-13 An allocation that does not fit the heap names its type, layout, limit and call
+
+Nodes: compiler/diagnostic-rendering
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the design-tree decision Ming-Research/Whitefoot#474 (head bdde071c2) adds: when an allocation does not fit the heap, the error names the type, its layout, the exceeded limit and the call position in the source?" (translated).
+
+Summary: A target layout failure caused by a runtime allocation now names the payload type, its size and alignment, the violated target limit with its value, and the nearest writer-written call requiring the allocation, found through the call origins lowering already records, because a writer can repair a source-valid program only from those; an unlocated allocation category, guessing the call from source text or symbol names, and moving target representability into source acceptance were rejected, the last because STOR-6 places it after checking. Allocation obligations are checked before the program-wide layout walk so the failure keeps its allocation; every check still runs before emission and the failure cites no source-language rule.
+
 ## 2026-10-13 One release classification decides whether release does work, and key sets and concurrent hash maps release runtime storage
 
 Nodes: compiler/cleanup-traversal, language/ownership/linearity, language/waiting/shared-objects/keyed-tables

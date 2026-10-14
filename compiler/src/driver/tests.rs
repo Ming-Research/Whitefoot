@@ -2904,6 +2904,135 @@ fn unrepresentable_array_is_a_target_failure_without_a_source_rule() {
     assert!(failure.detail().contains("Unrepresentable"));
 }
 
+fn assert_located_allocation_failure(
+    failure: &super::CompilationFailure,
+    path: &str,
+    line: u64,
+    column: u64,
+    expected: &[&str],
+) {
+    assert_eq!(failure.stage(), CompilationStage::TargetLayout);
+    assert_eq!(failure.kind(), CompilationFailureKind::TargetLayout);
+    assert_eq!(failure.rule_id(), None);
+    let location = failure
+        .location()
+        .expect("the writer's allocation call is retained");
+    assert_eq!(location.path(), path);
+    assert_eq!(location.line(), line);
+    assert_eq!(location.column(), column);
+    let text = failure.render(super::DiagnosticFormat::Text);
+    assert!(
+        text.starts_with(&format!("{path}:{line}:{column}:")),
+        "{text}"
+    );
+    let json = failure.render(super::DiagnosticFormat::Json);
+    assert!(
+        json.contains(&format!(
+            "\"file\":\"{path}\",\"line\":{line},\"column\":{column}"
+        )),
+        "{json}"
+    );
+    for expected in expected {
+        assert!(text.contains(*expected), "missing {expected}: {text}");
+        assert!(json.contains(*expected), "missing {expected}: {json}");
+    }
+    assert!(!json.contains("\"rule\":"), "{json}");
+}
+
+#[test]
+fn unsupported_heap_payloads_keep_their_layout_and_writer_allocation_in_text_and_json() {
+    for (path, source, line, column, size) in [
+        (
+            "meter-box.wf",
+            "fn allocate(value: std::process::MemoryMeter) -> result: unit pure {\n  let cell = box_new::<std::process::MemoryMeter>(value: move value);\n  return unit;\n}\n\nfn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 0_u8);\n}\n",
+            2,
+            14,
+            32,
+        ),
+        (
+            "meter-zero-slots.wf",
+            "fn main() -> status: std::process::ExitStatus pure {\n  let cells = box_slots_new::<std::process::MemoryMeter>(capacity: 0_u64);\n  free_empty(window: move cells);\n  return std::process::exit_status(code: 0_u8);\n}\n",
+            2,
+            15,
+            32,
+        ),
+        (
+            "meter-empty-slots.wf",
+            "fn main() -> status: std::process::ExitStatus pure {\n  let cells = box_slots_new::<std::process::MemoryMeter>(capacity: 1_u64);\n  free_empty(window: move cells);\n  return std::process::exit_status(code: 0_u8);\n}\n",
+            2,
+            15,
+            32,
+        ),
+        (
+            "meter-filled-slots.wf",
+            "fn allocate(value: std::process::MemoryMeter) -> result: unit pure {\n  let cells = box_slots_new::<std::process::MemoryMeter>(capacity: 1_u64);\n  place_back(window: &cells.inner, value: move value);\n  return unit;\n}\n\nfn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 0_u8);\n}\n",
+            2,
+            15,
+            32,
+        ),
+        (
+            "meter-hash-map.wf",
+            "fn main() -> status: std::process::ExitStatus pure {\n  let map = std::collections::hash_map::hash_map_new::<u64, std::process::MemoryMeter, 1>(capacity: 1_u64);\n  return std::process::exit_status(code: 0_u8);\n}\n",
+            2,
+            13,
+            48,
+        ),
+    ] {
+        let input = SourceInput::new(path, source.as_bytes());
+        check(&[input], CompilerLimits::default())
+            .expect("heap target qualification must not change source acceptance");
+        let failure = compile(&[input], CompilerLimits::default())
+            .expect_err("the ordinary heap guarantee is still eight bytes");
+        if path == "meter-hash-map.wf" {
+            assert!(failure.detail().contains("HashMapSlot"), "{failure}");
+        }
+        let size = format!("payload size {size} bytes");
+        assert_located_allocation_failure(
+            &failure,
+            path,
+            line,
+            column,
+            &[
+                "MemoryMeter",
+                &size,
+                "alignment 16 bytes",
+                "allocation alignment limit 8 bytes",
+            ],
+        );
+    }
+}
+
+#[test]
+fn a_huge_heap_element_keeps_its_allocation_before_global_layout_qualification() {
+    let source = b"struct Giant {\n  words: Array<u64, 1152921504606846976>;\n}\n\nfn main() -> status: std::process::ExitStatus pure {\n  let cells = box_slots_new::<Giant>(capacity: 0_u64);\n  free_empty(window: move cells);\n  return std::process::exit_status(code: 0_u8);\n}\n";
+    let input = SourceInput::new("giant-payload.wf", source);
+    check(&[input], CompilerLimits::default()).expect("a huge target payload remains source-valid");
+    let failure = compile(&[input], CompilerLimits::default())
+        .expect_err("the element exceeds the selected target's address domain");
+    assert_located_allocation_failure(
+        &failure,
+        "giant-payload.wf",
+        6,
+        15,
+        &[
+            "Giant",
+            "payload size 9223372036854775808 bytes",
+            "alignment 8 bytes",
+            "address-index byte limit 9223372036854775807",
+        ],
+    );
+}
+
+#[test]
+fn representable_u64_heap_payloads_still_compile_on_the_default_target() {
+    let source = b"fn main() -> status: std::process::ExitStatus pure {\n  let cell = box_new::<u64>(value: 7_u64);\n  let cells = box_slots_new::<u64>(capacity: 1_u64);\n  place_back(window: &cells.inner, value: 9_u64);\n  return std::process::exit_status(code: 0_u8);\n}\n";
+    compile(
+        &[SourceInput::new("ordinary-heap.wf", source)],
+        CompilerLimits::default(),
+    )
+    .expect("ordinary allocator alignment remains supported");
+}
+
 #[test]
 fn a_loop_frame_outside_the_selected_address_domain_stays_a_target_failure() {
     use crate::target::{TargetLayout, TargetLayoutFailure, TargetObject};
