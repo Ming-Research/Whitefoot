@@ -480,10 +480,12 @@ fn hash_map_test_scan() -> result: u64 pure {
       break @mutate;
     }
     if step < 200_u64 {
-      hash_map_test_scan_remove(map: &map, key: 100_u64 + step, env: &env);
+      let doomed = 100_u64 + step;
+      hash_map_test_scan_remove(map: &map, key: doomed, env: &env);
     }
     if step < 100_u64 {
-      hash_map_test_scan_put(map: &map, key: 300_u64 + step, env: &env, seen: &seen);
+      let fresh = 300_u64 + step;
+      hash_map_test_scan_put(map: &map, key: fresh, env: &env, seen: &seen);
     }
     if step == 40_u64 {
       let rebuilt = hash_map_rehash::<HashMapIdentityKey, u64, 1024>(map: &map, env: &env);

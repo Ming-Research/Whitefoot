@@ -343,7 +343,8 @@ fn hash_map_relink<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &Hash
           let home = hash_map_home(hash: hash, shift: map^.shift, count: buckets);
           let first = hash_map_link(links: &map^.heads, index: home);
           hash_map_link_set(links: &map^.links, index: index, value: first);
-          hash_map_link_set(links: &map^.heads, index: home, value: index +wrap 1_u64);
+          let named = index +wrap 1_u64;
+          hash_map_link_set(links: &map^.heads, index: home, value: named);
         }
         None() => {
         }
@@ -442,7 +443,8 @@ fn hash_map_remove<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &Hash
       if previous == 0_u64 {
         hash_map_link_set(links: &map^.heads, index: home, value: following);
       } else {
-        hash_map_link_set(links: &map^.links, index: previous -sat 1_u64, value: following);
+        let before_link = previous -sat 1_u64;
+        hash_map_link_set(links: &map^.links, index: before_link, value: following);
       }
       hash_map_link_set(links: &map^.links, index: index, value: map^.reuse);
       set map^.reuse = link;
