@@ -65,6 +65,38 @@ separable: one object, an unbounded number of dynamically created parts, each
 locked alone, with the checker comparing two entries as two subscripts of one
 root.
 
+### 1.1 What `atomic` states once locks are inferred
+
+With the header reduced to the object and every lock derived (sections 2.1
+and 3), `atomic` carries no locking information. It is not sugar: it states
+the three things no analysis can recover from the code, and lock inference
+takes them as its input.
+
+1. **Which steps are one step.** Two contexts each running `let n =
+   s^.count; set s^.count = n +wrap 1;` add 2 if the read and the write are
+   one step and may add 1 if they are two; a balance check and its debit must
+   be one step, a log line after them need not be. Which grouping the writer
+   meant is the program's meaning, so the language must state it; a compiler
+   that chose the boundaries would choose the program's outcomes.
+2. **Where facts about shared state hold.** Inside the block nobody else
+   changes the state, so `if s^.balance >= x` proves the subtraction that
+   follows; outside, another context may write between any two steps, so no
+   fact about the state survives from one step to the next. The block is the
+   scope of those facts and its end kills them [REF-2].
+3. **Which object, and where waiting is excluded.** The header fixes the
+   object (the atomic domain) when the statement begins; the block may not
+   wait [WAIT-1, SHARE-2], and the guard and deadline attach to it.
+
+Under the multi-object form the header was also a lock declaration (choosing
+targets chose locks); separating the two leaves `atomic` with only its
+meaning. The split is the one the lock-inference literature makes: the
+programmer marks atomic sections and the compiler infers the locks
+(McCloskey et al., "Autolocker", POPL 2006; Emmi et al., "Lock allocation",
+POPL 2007; Cherem, Chilimbi and Gulwani, "Inferring locks for atomic
+sections", PLDI 2008). The other mode the language offers is the cell (section
+2.3), whose every operation is its own instant, for values where a single
+operation is all the atomicity wanted.
+
 ## 2. The model
 
 ### 2.1 One handle per statement, nothing else in the header
@@ -151,7 +183,14 @@ A shared state's parts differ only in how they are accessed:
 - **Frozen parts: not proposed.** A part no statement writes is already read
   without a lock (section 3.1), so a frozen part would only add reading
   outside a statement, which `Frozen<T>` [SHARE-1] already gives as a
-  separate object. `Frozen<T>` stays as it is.
+  separate object. `Frozen<T>` stays as it is. It is not a reader-writer
+  lock: no operation writes a frozen object's value and its type may hold no
+  shared handle, cell or host handle [SHARE-1], so no writer exists and a
+  read without a lock cannot see a partial write. A changed value is a new
+  frozen object whose handle replaces the old one; readers holding the old
+  handle keep reading the old value until they release it. The
+  reader-writer behaviour, for state that does change, is the read hold that
+  lowering derives inside an atomic statement (section 3.1, item 3).
 
 The decision cell (#364) is a cell of `DecisionState` with
 compare-and-exchange from `Open`. #403's atomic value is a cell of `u64` with
