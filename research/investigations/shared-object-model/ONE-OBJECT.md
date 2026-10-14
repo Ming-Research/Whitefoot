@@ -554,6 +554,8 @@ files with a multi-target statement; the rest are rewritten into one object).
 
 Settled in discussion with the owner (2026-10-14):
 
+- **Principle:** every lock optimization is equivalent to locking the whole
+  object (section 2.1).
 - **Header:** the object alone, with entries inferred (section 2.1); no
   leading key block.
 - **Lock units:** computed from the program's statements (section 3.1), not a
