@@ -272,6 +272,7 @@ fn hash_map_exchange<K, V>(cells: &Box<Slots<HashMapSlot<K, V>>>, index: u64, ke
     }
   }
 }
+
 fn hash_map_try_put<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &HashMap<K, V, ceiling>, key: K, value: V, env: &E) -> result: HashMapPut<K, V> reads(env), writes(map) contract {
   ensures map^.cells.inner.len == entry(map)^.cells.inner.len;
   ensures map^.cells.inner.cap == entry(map)^.cells.inner.cap;
