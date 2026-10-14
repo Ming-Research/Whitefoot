@@ -5,6 +5,13 @@ Newest first. One entry per approved change of the tree: a dated title,
 the owner's agent instructions own the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-13 An atomic target named only in proofs is held from statement entry
+
+Nodes: compiler/waiting-contexts/state-locks
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the design-tree change: an atomic target that appears only in proofs takes its lock at statement entry? (Ming-Research/Whitefoot#434, head 5811a8c89)" (translated).
+
+Summary: The lock-order decision's entry-acquired groups gain the groups of targets with no executable use in the guard and block, acquired with every earlier group, because once proofs are erased such a target has no first use to acquire at and entry acquisition keeps the hold SHARE-1 requires, instead of omitting its lock; "before the guard" is reworded to "before the guard or block" without changing the choice. The checker now counts invariant and `use` mentions toward SHARE-2's naming rule.
 ## 2026-10-13 One release classification decides whether release does work, and key sets and concurrent hash maps release runtime storage
 
 Nodes: compiler/cleanup-traversal, language/ownership/linearity, language/waiting/shared-objects/keyed-tables
