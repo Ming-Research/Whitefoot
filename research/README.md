@@ -129,6 +129,10 @@ the work-branch and merge boundary.
   a keyed table as a field whose entries are named in the statement's header,
   locking by parts as an implementation liberty with its order, taking and
   release, and the forms it replaced.
+- [One object model for shared state](investigations/shared-object-model/DESIGN.md):
+  the question, comparison and rejection criteria, fixed before any
+  measurement, for a model of description plus identity covering the five
+  classes of shared-object conflict.
 - [Meta commit](investigations/meta-commit/README.md): whether two atomic
   statements on different keys of a shared map compute at the same time and
   meet only when each takes the next sequence number from a shared Meta object
