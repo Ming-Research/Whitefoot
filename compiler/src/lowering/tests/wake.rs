@@ -28,6 +28,10 @@ fn is_ready(gate: &Gate) -> result: Bool reads(gate) {{
   return gate^.ready;
 }}
 
+fn is_not_ready(gate: &Gate) -> result: Bool reads(gate.ready) {{
+  return bnot(gate^.ready);
+}}
+
 fn main() -> status: std::process::ExitStatus pure waits {{
   let no = False();
   let opened = Phase::Open();
@@ -206,9 +210,7 @@ fn a_captured_local_is_read_where_the_watch_registers() {
 #[test]
 fn every_dropped_form_registers_no_test() {
     for guard in [
-        // A helper call: its result has no checkable relation to the state.
-        "is_ready(gate: g)",
-        // Exclusive or keeps no polarity.
+        // Exclusive or keeps no atom polarity.
         "bxor(g^.ready, g^.open)",
         // A guard over locals alone reads nothing a write can change.
         "mine == 1_u64",
@@ -216,6 +218,458 @@ fn every_dropped_form_registers_no_test() {
     ] {
         only_test(guard, |_, test| {
             assert!(test.is_none(), "`{guard}` registers no test: {test:?}");
+        });
+    }
+}
+
+#[test]
+fn a_helper_returning_a_bool_field_keeps_the_inline_atom() {
+    for (guard, comparison) in [
+        ("g^.ready", IrWakeComparison::NotEqual),
+        ("is_ready(gate: g)", IrWakeComparison::NotEqual),
+        ("bnot(g^.ready)", IrWakeComparison::Equal),
+        ("is_not_ready(gate: g)", IrWakeComparison::Equal),
+    ] {
+        only_test(guard, |program, test| {
+            let test = test.expect("the returned field registers a test");
+            assert_eq!(atoms(program, test), [(READY, comparison, Read::False)]);
+            assert_eq!(test.program, [IrWakeCode::Atom(0)]);
+        });
+    }
+}
+
+/// `written` can satisfy the guard; changing `unrelated` alone cannot.
+/// The helpers deliberately reuse the caller's names in different roles:
+/// checked binding IDs are local to their function, so substitution must
+/// resolve the caller's actual argument before entering another helper.
+fn progress_guard(guard: &str) -> String {
+    format!(
+        r#"struct Progress {{
+  written: u64;
+  unrelated: u64;
+}}
+
+fn covered(progress: &Progress, target: u64) -> ready: Bool reads(progress.written) {{
+  return progress^.written >= target;
+}}
+
+fn forwarded(p: u64, target: &Progress) -> ready: Bool reads(target.written) {{
+  return covered(progress: target, target: p);
+}}
+
+fn scalar_covered(value: u64, limit: u64) -> ready: Bool pure {{
+  return value >= limit;
+}}
+
+fn several_statements(progress: &Progress, target: u64) -> ready: Bool reads(progress.written) {{
+  let observed = progress^.written >= target;
+  return observed;
+}}
+
+fn recursive(value: u64) -> ready: Bool pure {{
+  return recursive(value: value);
+}}
+
+fn main() -> status: std::process::ExitStatus pure waits {{
+  let initial = Progress(written: 0_u64, unrelated: 0_u64);
+  let state = shared_new::<Progress>(value: initial);
+  let target = 7_u64;
+  atomic p = &state when {guard} {{
+    set p^.unrelated = 1_u64;
+  }}
+  return std::process::exit_status(code: 0_u8);
+}}
+"#
+    )
+}
+
+#[test]
+fn helper_inline_forwarded_and_scalar_guards_keep_the_same_progress_filter() {
+    for guard in [
+        "p^.written >= 7_u64",
+        "covered(progress: p, target: 7_u64)",
+        "forwarded(p: 7_u64, target: p)",
+        "scalar_covered(value: p^.written, limit: 7_u64)",
+    ] {
+        with_ir(progress_guard(guard).as_bytes(), |program| {
+            let tests = watch_tests(program);
+            assert_eq!(tests.len(), 1, "{guard}: {tests:?}");
+            let test = tests[0]
+                .as_ref()
+                .expect("each spelling keeps the progress filter");
+            // The complete filter is written >= 7, with no atom over
+            // unrelated: written below 7 refuses every unrelated write,
+            // and written reaching 7 admits the wake.
+            assert_eq!(
+                atoms(program, test),
+                [(0, IrWakeComparison::GreaterEqual, Read::Bits(7))],
+                "{guard}"
+            );
+            assert_eq!(test.program, [IrWakeCode::Atom(0)], "{guard}");
+        });
+    }
+}
+
+#[test]
+fn forwarded_helper_captures_the_callers_local_despite_binding_name_collisions() {
+    for (guard, comparison) in [
+        ("p^.written >= target", IrWakeComparison::GreaterEqual),
+        (
+            "covered(progress: p, target: target)",
+            IrWakeComparison::GreaterEqual,
+        ),
+        (
+            "forwarded(p: target, target: p)",
+            IrWakeComparison::GreaterEqual,
+        ),
+    ] {
+        with_ir(progress_guard(guard).as_bytes(), |program| {
+            let tests = watch_tests(program);
+            assert_eq!(tests.len(), 1, "{guard}: {tests:?}");
+            let test = tests[0]
+                .as_ref()
+                .expect("a local actual argument stays captured");
+            assert_eq!(
+                atoms(program, test),
+                [(0, comparison, Read::Bits(7))],
+                "{guard}"
+            );
+            assert_eq!(test.program, [IrWakeCode::Atom(0)], "{guard}");
+            let IrWakeOperand::Value(position) = test.atoms[0].operand else {
+                panic!("the caller's target is a captured value: {test:?}");
+            };
+            assert_eq!(
+                function(program, "main").value_type(test.values[position]),
+                Some(IrType::Integer {
+                    signed: false,
+                    width: 64,
+                }),
+                "the captured actual argument is the caller's scalar, not its state reference"
+            );
+        });
+    }
+}
+
+#[test]
+fn a_helper_with_local_statements_registers_the_full_guard_callback() {
+    with_ir(
+        progress_guard("several_statements(progress: p, target: 7_u64)").as_bytes(),
+        |program| {
+            let tests = watch_tests(program);
+            assert_eq!(tests.len(), 1, "{tests:?}");
+            let test = tests[0].as_ref().expect("a full guard filter");
+            let callback = test.callback.expect("statements use a callback");
+            assert!(test.atoms.is_empty() && test.program.is_empty(), "{test:?}");
+            assert_eq!(
+                test.values.len(),
+                1,
+                "only the live state is captured: {test:?}"
+            );
+            assert!(matches!(
+                function(program, "main").value_type(test.values[0]),
+                Some(IrType::Address(_))
+            ));
+            let thunk = &program.functions()[callback as usize];
+            let parameters = thunk.parameters();
+            assert_eq!(
+                parameters.len(),
+                1,
+                "the literal needs no capture: {thunk:?}"
+            );
+            assert!(matches!(parameters[0].1, IrType::Address(_)));
+            let arguments = thunk
+                .blocks()
+                .iter()
+                .flat_map(IrBlock::instructions)
+                .find_map(|instruction| match instruction {
+                    IrInstruction::Define {
+                        operation:
+                            IrOperation::Call {
+                                function: callee,
+                                arguments,
+                                ..
+                            },
+                        ..
+                    } if program.functions()[*callee as usize].name() == "several_statements" => {
+                        Some(arguments)
+                    }
+                    _ => None,
+                })
+                .expect("the callback computes the source guard");
+            assert_eq!(arguments.len(), 2, "state and literal target: {thunk:?}");
+            assert_eq!(arguments[0], parameters[0].0);
+            assert!(
+                thunk.blocks().iter().flat_map(IrBlock::instructions).any(
+                    |instruction| matches!(instruction,
+                        IrInstruction::Define {
+                            result,
+                            operation: IrOperation::Constant(IrConstant::Integer { bits: 7, .. }),
+                            ..
+                        } if *result == arguments[1])
+                ),
+                "the callback defines its literal target directly: {thunk:?}"
+            );
+        },
+    );
+}
+
+const MULTI_STATEMENT_HELPERS: &str = r#"struct Progress {
+  written: u64;
+  unrelated: u64;
+  failure: Option<u64>;
+  stopping: Bool;
+}
+
+fn reply_ready(progress: &Progress, sequence: u64) -> ready: Bool reads(progress.written), reads(progress.failure) {
+  let covered = progress^.written >= sequence;
+  if covered {
+    return True();
+  }
+  match progress^.failure {
+    None() => {
+      return False();
+    }
+    Some(..) => {
+      return True();
+    }
+  }
+}
+
+fn rebuilding_ready(progress: &Progress, sequence: u64) -> ready: Bool reads(progress.stopping), reads(progress.written), reads(progress.failure) {
+  let stopping = progress^.stopping;
+  if stopping {
+    return True();
+  }
+  return reply_ready(progress: progress, sequence: sequence);
+}
+
+fn external_ready(progress: &Progress, sequence: &u64) -> ready: Bool reads(progress.written), reads(sequence) {
+  let covered = progress^.written >= sequence^;
+  return covered;
+}
+
+"#;
+
+fn multi_statement_guard(guard: &str) -> String {
+    format!(
+        r#"{MULTI_STATEMENT_HELPERS}fn main() -> status: std::process::ExitStatus pure waits {{
+  let clear = None<u64>();
+  let no = False();
+  let initial = Progress(written: 0_u64, unrelated: 0_u64, failure: clear, stopping: no);
+  let state = shared_new::<Progress>(value: initial);
+  let sequence = 19_u64;
+  atomic p = &state when {guard} {{
+    set p^.unrelated = 1_u64;
+  }}
+  return std::process::exit_status(code: 0_u8);
+}}
+"#
+    )
+}
+
+#[test]
+fn full_guard_callbacks_keep_matches_nested_calls_and_the_waiters_sequence() {
+    for helper in ["reply_ready", "rebuilding_ready"] {
+        let guard = format!("{helper}(progress: p, sequence: sequence)");
+        with_ir(multi_statement_guard(&guard).as_bytes(), |program| {
+            let tests = watch_tests(program);
+            assert_eq!(tests.len(), 1);
+            let test = tests[0].as_ref().expect("multi-statement guard is filtered");
+            let thunk = &program.functions()[test.callback.expect("full guard callback") as usize];
+            assert!(test.atoms.is_empty() && test.program.is_empty(), "{test:?}");
+            assert_eq!(test.values.len(), 2, "state and scalar sequence: {test:?}");
+            assert!(
+                matches!(
+                    function(program, "main").value_type(test.values[0]),
+                    Some(IrType::Address(_))
+                ),
+                "the state must be read at wake time"
+            );
+            assert!(
+                matches!(
+                    definition(program, test.values[1]),
+                    IrOperation::Constant(IrConstant::Integer { bits: 19, .. })
+                ),
+                "capture the caller's sequence, not a helper-local binding"
+            );
+            let parameters = thunk.parameters();
+            assert_eq!(parameters.len(), 2, "{thunk:?}");
+            assert_eq!(
+                parameters[1].1,
+                IrType::Integer {
+                    signed: false,
+                    width: 64,
+                }
+            );
+            let call = thunk
+                .blocks()
+                .iter()
+                .flat_map(IrBlock::instructions)
+                .find_map(|instruction| match instruction {
+                    IrInstruction::Define {
+                        operation:
+                            IrOperation::Call {
+                                function: callee,
+                                arguments,
+                                ..
+                            },
+                        ..
+                    } if program.functions()[*callee as usize].name() == helper => Some(arguments),
+                    _ => None,
+                })
+                .expect("callback calls the actual source guard");
+            assert_eq!(call.as_slice(), [parameters[0].0, parameters[1].0]);
+            assert!(
+                function(program, "reply_ready").blocks().len() > 1,
+                "the helper keeps its if and match control flow"
+            );
+            assert!(
+                function(program, "rebuilding_ready")
+                    .blocks()
+                    .iter()
+                    .flat_map(IrBlock::instructions)
+                    .any(|instruction| matches!(instruction,
+                        IrInstruction::Define { operation: IrOperation::Call { function: callee, .. }, .. }
+                            if program.functions()[*callee as usize].name() == "reply_ready")),
+                "nested calls remain ordinary checked helper calls"
+            );
+        });
+    }
+}
+
+#[test]
+fn a_guard_capturing_an_external_reference_stays_unfiltered() {
+    with_ir(
+        multi_statement_guard("external_ready(progress: p, sequence: &sequence)").as_bytes(),
+        |program| {
+            let tests = watch_tests(program);
+            assert_eq!(tests.len(), 1);
+            assert!(
+                tests[0].is_none(),
+                "external references are not immutable captures: {tests:?}"
+            );
+        },
+    );
+}
+
+#[test]
+fn a_multi_statement_guard_reads_boxed_storage_length_from_the_written_state() {
+    let source = br#"struct Logged {
+  pending: Box<Slots<u8>>;
+  written: u64;
+}
+
+fn drained(progress: &Logged, sequence: u64) -> ready: Bool reads(progress.pending), reads(progress.written) {
+  let covered = progress^.written >= sequence;
+  let empty = progress^.pending.inner.len == 0_u64;
+  return band(covered, empty);
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let pending = box_slots_new::<u8>(capacity: 8_u64);
+  let initial = Logged(pending: move pending, written: 0_u64);
+  let state = shared_new::<Logged>(value: move initial);
+  let sequence = 19_u64;
+  atomic progress = &state when drained(progress: progress, sequence: sequence) {
+    set progress^.written = sequence;
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    with_ir(source, |program| {
+        let tests = watch_tests(program);
+        assert_eq!(tests.len(), 1);
+        let test = tests[0]
+            .as_ref()
+            .expect("boxed storage length remains a live read");
+        let thunk = &program.functions()[test.callback.expect("full helper callback") as usize];
+        assert_eq!(test.values.len(), 2, "capture only state and sequence: {test:?}");
+        assert!(
+            thunk.blocks().iter().flat_map(IrBlock::instructions).any(
+                |instruction| matches!(instruction,
+                    IrInstruction::Define { operation: IrOperation::Call { function: callee, .. }, .. }
+                        if program.functions()[*callee as usize].name() == "drained")
+            ),
+            "the filter calls the source helper: {thunk:?}"
+        );
+    });
+}
+
+#[test]
+fn a_full_guard_reading_another_target_stays_unfiltered_for_both_objects() {
+    const HELPER: &str = r#"fn matching_states(left: &Left, right: &Right) -> ready: Bool reads(left.n), reads(right.m) {
+  let matching = left^.n == right^.m;
+  if matching {
+    return True();
+  }
+  return False();
+}
+
+"#;
+    let source = two_targets("matching_states(left: p, right: q)")
+        .replace("fn main()", &format!("{HELPER}fn main()"));
+    with_ir(source.as_bytes(), |program| {
+        let tests = watch_tests(program);
+        assert_eq!(tests.len(), 2);
+        assert!(
+            tests.iter().all(Option::is_none),
+            "a wake scan has only the written object's state: {tests:?}"
+        );
+    });
+}
+
+#[test]
+fn a_recursive_helper_stops_expansion_and_registers_no_filter() {
+    with_ir(
+        progress_guard("recursive(value: p^.written)").as_bytes(),
+        |program| {
+            let tests = watch_tests(program);
+            assert_eq!(tests.len(), 1, "{tests:?}");
+            assert!(
+                tests[0].is_none(),
+                "a call cycle must weaken to no filter: {tests:?}"
+            );
+        },
+    );
+}
+
+#[test]
+fn a_helper_reference_argument_preserves_its_projected_state_path() {
+    for guard in [
+        "p^.progress.written >= 7_u64",
+        "covered(progress: &p^.progress, target: 7_u64)",
+        "forwarded(p: 7_u64, target: &p^.progress)",
+    ] {
+        let source = progress_guard(guard)
+            .replace(
+                "fn main()",
+                "struct Envelope {\n  unrelated: u64;\n  progress: Progress;\n}\n\nfn main()",
+            )
+            .replace(
+                "let state = shared_new::<Progress>(value: initial);",
+                "let envelope = Envelope(unrelated: 0_u64, progress: initial);\n  let state = shared_new::<Envelope>(value: envelope);",
+            );
+        with_ir(source.as_bytes(), |program| {
+            let tests = watch_tests(program);
+            assert_eq!(tests.len(), 1, "{guard}: {tests:?}");
+            let test = tests[0]
+                .as_ref()
+                .expect("the projected argument keeps its filter");
+            assert_eq!(
+                atoms(program, test),
+                [(0, IrWakeComparison::GreaterEqual, Read::Bits(7))]
+            );
+            assert_eq!(test.program, [IrWakeCode::Atom(0)]);
+            let IrOperation::ProjectAddress { address, .. } =
+                definition(program, test.values[test.atoms[0].field])
+            else {
+                panic!("the scalar field has a projected address: {test:?}");
+            };
+            assert_eq!(
+                field_index(program, address),
+                1,
+                "the scalar is inside progress, not the envelope's unrelated field"
+            );
         });
     }
 }
@@ -320,6 +774,61 @@ fn each_object_of_several_gets_the_condition_on_its_own_state() {
         assert_eq!(tests.len(), 2, "{tests:?}");
         assert!(tests.iter().all(Option::is_none), "{tests:?}");
     });
+}
+
+#[test]
+fn helpers_over_several_targets_preserve_conjuncts_and_weaken_disjuncts() {
+    const HELPERS: &str = r#"fn both(left: &Left, right: &Right) -> ready: Bool reads(left.ready), reads(right.ready) {
+  return band(left^.ready, right^.ready);
+}
+
+fn either(left: &Left, right: &Right) -> ready: Bool reads(left.ready), reads(right.ready) {
+  return bor(left^.ready, right^.ready);
+}
+
+fn matching(left: &Left, right: &Right) -> ready: Bool reads(left.n), reads(right.m) {
+  return left^.n == right^.m;
+}
+
+"#;
+    for (guard, kept) in [
+        ("band(p^.ready, q^.ready)", true),
+        ("both(left: p, right: q)", true),
+        ("bor(p^.ready, q^.ready)", false),
+        ("either(left: p, right: q)", false),
+        ("p^.n == q^.m", false),
+        ("matching(left: p, right: q)", false),
+    ] {
+        let source = two_targets(guard).replace("fn main()", &format!("{HELPERS}fn main()"));
+        with_ir(source.as_bytes(), |program| {
+            let tests = watch_tests(program);
+            assert_eq!(tests.len(), 2, "{guard}: {tests:?}");
+            for test in &tests {
+                if kept {
+                    let test = test
+                        .as_ref()
+                        .expect("each conjunct belongs to its own object");
+                    assert_eq!(
+                        atoms(program, test),
+                        [(1, IrWakeComparison::NotEqual, Read::False)]
+                    );
+                    assert_eq!(test.program, [IrWakeCode::Atom(0)]);
+                } else {
+                    assert!(
+                        test.is_none(),
+                        "a write to either target may satisfy {guard}: {test:?}"
+                    );
+                }
+            }
+            if kept {
+                assert_ne!(
+                    tests[0].as_ref().expect("left filter").values[0],
+                    tests[1].as_ref().expect("right filter").values[0],
+                    "the two helpers' atoms must stay rooted in separate target states"
+                );
+            }
+        });
+    }
 }
 
 /// The write flag of every object release in `main`.
