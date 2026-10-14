@@ -200,6 +200,22 @@ The argument rests on one invariant of the abstract state, written SI:
 Consequence: a sealed place holds a valid value. Every rule below either
 preserves SI or rejects the program.
 
+**SI as a chain of hand-offs.** Proof is continuous: a fact is used only
+after a hand-off proved it, as for any requirement and postcondition. A
+struct's invariants are the implicit requirement and postcondition of every
+hand-off of a value that owns the struct value: the caller proves them
+before a call (T5) and the body receives them at entry (T1); the callee
+proves them at each exit (T7) and the caller receives them when the call
+returns (T6); a construction proves them over its operands and its result
+is received valid; a store into any place but a complete own local binding
+is itself a hand-off (T5), proved before the store. Between two hand-offs
+the body runs the ordinary proof rules, and a write that may falsify an
+instance kills the facts over it and records the debt that names the write.
+SI therefore says: for a place no debt may denote, the fact the delivering
+hand-off established has not been touched since. T13 adds no assumption of
+its own: it retrieves that hand-off's fact at the read, and Result 1 is the
+induction that every hand-off in the chain was proved.
+
 ### Transfer rules
 
 T1 **Body entry.** D is empty. Every parameter value and every reference
@@ -366,7 +382,9 @@ T12 **Loop header.** D at a header is the least set containing the
 entering edge's debts and every backedge's and `continue`'s debts. It is
 computed by monotone iteration (see [result 3](#result-3-the-added-work-is-polynomial)).
 
-T13 **Assumption at a sealed place.** A new ENT-3 fact source: when a
+T13 **Instance at a sealed place** (the delivering hand-off's fact,
+retrieved; see [SI as a chain of hand-offs](#the-sealing-invariant)). A new
+ENT-3 fact source: when a
 statement reads a fragment-integer place q that is a binder datum of an
 invariant I at an anchor a (q = a.d), and `(a, I)` has no debt that may
 denote it, and a's root is live, and every payload step in a carries a
