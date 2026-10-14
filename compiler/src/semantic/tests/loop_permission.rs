@@ -921,9 +921,9 @@ fn main() -> status: std::process::ExitStatus pure {
 fn a_set_of_iteration_own_storage_is_permitted() {
     let source = b"fn main() -> status: std::process::ExitStatus pure {
   for @swap (i in 0_u64..8_u64) {
-    let held = array_filled::<u64, 4>(value: 0_u64);
+    let observed_state = array_filled::<u64, 4>(value: 0_u64);
     let fresh = array_filled::<u64, 4>(value: i);
-    set held = fresh;
+    set observed_state = fresh;
   }
   return std::process::exit_status(code: 0_u8);
 }
@@ -1159,10 +1159,10 @@ fn carried_state_that_is_no_reduction_is_denied_by_condition_one() {
 #[test]
 fn a_set_of_enclosing_storage_is_denied_by_condition_one() {
     let source = b"fn main() -> status: std::process::ExitStatus pure {
-  let held = array_filled::<u64, 4>(value: 0_u64);
+  let observed_state = array_filled::<u64, 4>(value: 0_u64);
   for @swap (i in 0_u64..8_u64) {
     let fresh = array_filled::<u64, 4>(value: i);
-    set held = fresh;
+    set observed_state = fresh;
   }
   return std::process::exit_status(code: 0_u8);
 }

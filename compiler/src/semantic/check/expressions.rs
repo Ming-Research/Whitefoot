@@ -1,6 +1,7 @@
 pub(in crate::semantic::check) mod calls;
 pub(in crate::semantic::check) mod equality;
 pub(in crate::semantic::check) mod flat_storage;
+mod ownership;
 mod places;
 
 use crate::semantic::check::CheckContext;
@@ -283,7 +284,7 @@ impl<'unit> Checker<'_, 'unit> {
                 SemanticRule::Type7,
                 node,
                 SemanticIssueKind::MissingDereference {
-                    mechanical_fix: "write `p^`",
+                    mechanical_fix: "write `p^`".to_owned(),
                 },
             );
         }
@@ -771,10 +772,12 @@ impl<'unit> Checker<'_, 'unit> {
             .direct_token_with(node, TerminalPredicate::Literal)?
         {
             let bytes = self.types.declarations.tree.token_bytes(literal)?;
-            if matches!(bytes, b"0_T" | b"1_T") {
-                return self
-                    .types
-                    .check_generic_numeric_identity(context, node, bytes == b"1_T");
+            if crate::syntax::terminal::is_generic_numeric_literal(bytes) {
+                return self.types.check_generic_numeric_identity(
+                    context,
+                    node,
+                    bytes.first() == Some(&b'1'),
+                );
             }
             return Ok(TypedExpression::owned(
                 CheckedExpression::Constant(self.types.declarations.parse_literal(node, literal)?),
@@ -947,7 +950,11 @@ impl<'unit> Checker<'_, 'unit> {
                             SemanticRule::Type7,
                             use_node,
                             SemanticIssueKind::MissingDereference {
-                                mechanical_fix: "write `p^`",
+                                mechanical_fix: self.reference_payload_repair(
+                                    check_context,
+                                    &local,
+                                    &self.types.declarations.tree.source_spelling(node)?,
+                                )?,
                             },
                         );
                     }
@@ -955,9 +962,14 @@ impl<'unit> Checker<'_, 'unit> {
                         return self.types.declarations.issue_node(
                             SemanticRule::Own1,
                             use_node,
-                            SemanticIssueKind::MoveOfCopy {
-                                mechanical_fix: "use the copy place without `move`",
-                            },
+                            self.ownership_issue(
+                                check_context,
+                                node,
+                                local.ty,
+                                true,
+                                Some(local.mode),
+                                None,
+                            )?,
                         );
                     }
                     self.check_reference_valid(&local, use_node)?;
@@ -1000,18 +1012,14 @@ impl<'unit> Checker<'_, 'unit> {
                     return self.types.declarations.issue_node(
                         SemanticRule::Own1,
                         use_node,
-                        SemanticIssueKind::MoveOfCopy {
-                            mechanical_fix: self.copy_move_repair(use_node)?,
-                        },
+                        self.ownership_issue(check_context, node, ty, true, None, None)?,
                     );
                 }
                 if !copy && !options.explicit_move {
                     return self.types.declarations.issue_node(
                         SemanticRule::Own1,
                         use_node,
-                        SemanticIssueKind::BareAffineUse {
-                            mechanical_fix: "write `move p` for the affine place",
-                        },
+                        self.ownership_issue(check_context, node, ty, false, None, None)?,
                     );
                 }
                 // [SET-1] a `move` of a target place of this statement's
@@ -1085,6 +1093,7 @@ impl<'unit> Checker<'_, 'unit> {
                 // prefix names storage the move has carried away, and
                 // [REF-2] says a move never re-roots an existing reference.
                 if !copy && !read_out {
+                    self.record_held_write(use_node, &ResolvedPlace::fields(local.binding, fields.clone()));
                     self.types.invalidate_references(
                         bindings,
                         &ResolvedPlace::fields(local.binding, fields.clone()),
@@ -1114,6 +1123,16 @@ impl<'unit> Checker<'_, 'unit> {
                             &super::references::InvalidationEvent::PrefixMoved,
                         )?;
                     }
+                }
+                // [SHARE-1, WIN-3] the consume also releases each unselected
+                // resource part of the root here, which an atomic statement's
+                // handle place may be, so every handle watch observes exactly
+                // the parts this consume releases as well as the moved place.
+                for drop in &residual_drops {
+                    super::references::HandleWatch::observe(
+                        bindings,
+                        &ResolvedPlace::fields(local.binding, drop.fields.clone()),
+                    );
                 }
                 let access = ResolvedPlace::fields(local.binding, access_fields);
                 let mut effects = EffectSet::NONE;
@@ -1168,9 +1187,14 @@ impl<'unit> Checker<'_, 'unit> {
                     return self.types.declarations.issue_node(
                         SemanticRule::Own1,
                         use_node,
-                        SemanticIssueKind::MoveOfCopy {
-                            mechanical_fix: self.copy_move_repair(use_node)?,
-                        },
+                        self.ownership_issue(
+                            check_context,
+                            node,
+                            CheckedType::Integer(self.types.const_generic_type(declaration)?),
+                            true,
+                            None,
+                            None,
+                        )?,
                     );
                 }
                 if !suffixes.is_empty() {
@@ -1207,12 +1231,24 @@ impl<'unit> Checker<'_, 'unit> {
             }
             DeclarationClass::NamedConst => {
                 if options.explicit_move {
+                    let constant_id = self
+                        .types
+                        .constants
+                        .get(&declaration)
+                        .copied()
+                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                    let constant_type = self.types.constant(constant_id)?.ty;
                     return self.types.declarations.issue_node(
                         SemanticRule::Own1,
                         use_node,
-                        SemanticIssueKind::MoveOfCopy {
-                            mechanical_fix: self.copy_move_repair(use_node)?,
-                        },
+                        self.ownership_issue(
+                            check_context,
+                            node,
+                            constant_type,
+                            true,
+                            None,
+                            None,
+                        )?,
                     );
                 }
                 let constant = self
@@ -1226,9 +1262,14 @@ impl<'unit> Checker<'_, 'unit> {
                     return self.types.declarations.issue_node(
                         SemanticRule::Own1,
                         use_node,
-                        SemanticIssueKind::BareAffineUse {
-                            mechanical_fix: "read the const through a field, subscript or measure supported by its type, or take a `&` reference",
-                        },
+                        self.ownership_issue(
+                            check_context,
+                            node,
+                            constant.ty,
+                            false,
+                            None,
+                            Some(super::repairs::writer_ownership::constant().to_owned()),
+                        )?,
                     );
                 }
                 // [CONST-2, OWN-1] a whole const read requires copy;
@@ -1400,18 +1441,6 @@ impl<'unit> Checker<'_, 'unit> {
         )
     }
 
-    /// [OWN-1, DIAG-1] struct destructuring uses the same copy spelling as
-    /// every other place use; name the complete repaired form at that site.
-    fn copy_move_repair(&self, use_node: NodeId) -> Result<&'static str, CheckStop> {
-        Ok(
-            if self.types.declarations.tree.production(use_node)? == Production::LetStmt {
-                "remove `move` from the destructuring: let N(f: a, ...) = p;"
-            } else {
-                "use the copy place without `move`"
-            },
-        )
-    }
-
     /// [PROV-6] the operand of struct destructuring, judged by [OWN-1]
     /// as an ordinary copying or consuming place use.
     pub(super) fn check_consumed_place(
@@ -1548,7 +1577,7 @@ impl<'unit> Checker<'_, 'unit> {
                     SemanticRule::Type7,
                     atom,
                     SemanticIssueKind::MissingDereference {
-                        mechanical_fix: "write `holder^`",
+                        mechanical_fix: "write `holder^`".to_owned(),
                     },
                 );
             }
@@ -1605,7 +1634,7 @@ impl<'unit> Checker<'_, 'unit> {
                 node,
                 SemanticIssueKind::ContainerConstruction {
                     nominal: constructor_name,
-                    mechanical_fix: "build it with a construction function [OP-13]".to_owned(),
+                    mechanical_fix: super::repairs::CONTAINER_CONSTRUCTION.to_owned(),
                 },
             );
         }
@@ -1911,7 +1940,7 @@ impl<'unit> Checker<'_, 'unit> {
                     SemanticRule::Type7,
                     atom,
                     SemanticIssueKind::MissingDereference {
-                        mechanical_fix: "write `holder^`",
+                        mechanical_fix: "write `holder^`".to_owned(),
                     },
                 );
             }
@@ -2415,7 +2444,7 @@ impl<'unit> TypeContext<'unit> {
         }
         Ok((fields, ty))
     }
-    fn check_generic_numeric_identity(
+    pub(in crate::semantic::check) fn check_generic_numeric_identity(
         &self,
         context: FunctionContext<'_, '_>,
         node: NodeId,

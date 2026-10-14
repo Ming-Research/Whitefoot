@@ -45,7 +45,7 @@ deps:
 
 build: $(BUILD)/zipfgen $(BINS) $(MANAGED)
 
-$(BUILD)/entry-reads: entry_reads.c $(RUNTIME_BACKEND)/concurrent_map.c $(RUNTIME_BACKEND)/concurrent_map.h | $(BUILD)
+$(BUILD)/entry-reads: entry_reads.c $(RUNTIME_BACKEND)/concurrent_map.c $(RUNTIME_BACKEND)/concurrent_map.h $(RUNTIME_BACKEND)/concurrent_map_layout.h | $(BUILD)
 	$(CC) $(CFLAGS) -I$(RUNTIME_BACKEND) -o $@ entry_reads.c
 
 # The holds of DESIGN.md's shared reads: an empty block and replies of 100
@@ -59,9 +59,9 @@ $(BUILD)/zipfgen: zipfgen.c workload.h | $(BUILD)
 $(BUILD)/driver-%.o: driver.c cmap.h workload.h | $(BUILD)
 	$(CC) $(CFLAGS) -DCM_PREFIX=$* -c -o $@ driver.c
 
-$(BUILD)/impl-wf_index.o: native/wf_index.c cmap.h $(RUNTIME_BACKEND)/concurrent_map.c $(RUNTIME_BACKEND)/concurrent_map.h | $(BUILD)
+$(BUILD)/impl-wf_index.o: native/wf_index.c cmap.h $(RUNTIME_BACKEND)/concurrent_map.c $(RUNTIME_BACKEND)/concurrent_map.h $(RUNTIME_BACKEND)/concurrent_map_layout.h | $(BUILD)
 	$(CC) $(CFLAGS) -I$(RUNTIME_BACKEND) -DCM_PREFIX=wf_index -c -o $@ $<
-$(BUILD)/impl-wf_index_locked.o: native/wf_index.c cmap.h $(RUNTIME_BACKEND)/concurrent_map.c $(RUNTIME_BACKEND)/concurrent_map.h | $(BUILD)
+$(BUILD)/impl-wf_index_locked.o: native/wf_index.c cmap.h $(RUNTIME_BACKEND)/concurrent_map.c $(RUNTIME_BACKEND)/concurrent_map.h $(RUNTIME_BACKEND)/concurrent_map_layout.h | $(BUILD)
 	$(CC) $(CFLAGS) -I$(RUNTIME_BACKEND) -DCM_PREFIX=wf_index_locked -DWF_CMAP_LOCKED_READ -c -o $@ $<
 $(BUILD)/impl-empty.o: native/empty.c cmap.h | $(BUILD)
 	$(CC) $(CFLAGS) -DCM_PREFIX=empty -c -o $@ $<

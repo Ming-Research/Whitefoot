@@ -83,6 +83,9 @@ void wf__completion_file_close_submit(
     int descriptor,
     void *record
 );
+/* A runtime-owned child completion runs on the closed helper adapter. */
+int wf__completion_snapshot_finish_submit(void *owner, uint32_t abort_requested,
+                                         void *record);
 
 /* One write at the end of a file opened for appending, which waits on the
  * host's storage and never on another party, so it is a kind of its own

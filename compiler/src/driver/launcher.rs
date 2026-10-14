@@ -17,6 +17,30 @@ use crate::{BackendFailure, IrNominalKind, IrProgram, IrSourceMode, IrType};
 const INPUTS: &str = "std.process.Inputs";
 const EXIT_STATUS: &str = "std.process.ExitStatus";
 
+/// Checks the emitted executable runner before a native link. Checked source
+/// without this build caller remains a callable library, not a source error.
+pub fn require_executable_runner(module: &str) -> Result<(), String> {
+    if module.contains("\ndefine i32 @wf__main_body(") {
+        return Ok(());
+    }
+    let refusal = module
+        .lines()
+        .find_map(|line| line.strip_prefix("; Executable caller was not admitted: "));
+    let (detail, caller_repair) = refusal.map_or_else(
+        || (String::new(), String::new()),
+        |reason| {
+            (
+                format!(": its generated caller was not admitted: {reason}"),
+                format!("; {}", crate::semantic::executable_caller_repair()),
+            )
+        },
+    );
+    let repair = crate::semantic::executable_runner_repair();
+    Err(format!(
+        "the selected function has no executable runner{detail}; the checked module is a library, which --emit-llvm can write; repair: {repair}{caller_repair}"
+    ))
+}
+
 pub(crate) fn render(program: &IrProgram, selected: &str) -> Result<Module, BackendFailure> {
     let Some(main) = program
         .functions()

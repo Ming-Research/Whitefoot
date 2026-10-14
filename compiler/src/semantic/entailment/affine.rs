@@ -305,7 +305,8 @@ impl AffineResidualScratch {
                 )?;
                 // Do not regroup target - premise: multiplying a MIN
                 // coefficient by -1 must still fail before cancellation.
-                checked_sub(target.upper(), checked_mul(accumulated.upper(), 1)?)
+                let bound = checked_mul(accumulated.upper(), 1)?;
+                checked_sub(target.upper(), bound)
             })();
             let Ok(upper) = upper else { continue };
             let residual = AffineInequalityView {

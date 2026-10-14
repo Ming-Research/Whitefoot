@@ -51,8 +51,8 @@ fn main() -> status: std::process::ExitStatus pure {
     return std::process::exit_status(code: 11_u8);
   }
   if 0_u64 < large.inner.len {
-    let held = take_back(window: &large.inner);
-    if held != 11_u64 {
+    let observed = take_back(window: &large.inner);
+    if observed != 11_u64 {
       return std::process::exit_status(code: 12_u8);
     }
   } else {

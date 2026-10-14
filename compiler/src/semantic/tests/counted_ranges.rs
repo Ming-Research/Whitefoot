@@ -115,7 +115,7 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         SemanticRule::Type7,
         SemanticIssueKind::MissingDereference {
-            mechanical_fix: "write `holder^`",
+            mechanical_fix: "write `holder^`".to_owned(),
         },
     );
 
@@ -136,7 +136,7 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         SemanticRule::Type7,
         SemanticIssueKind::MissingDereference {
-            mechanical_fix: "write `holder^`",
+            mechanical_fix: "write `holder^`".to_owned(),
         },
     );
 
@@ -154,7 +154,7 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         SemanticRule::Type7,
         SemanticIssueKind::MissingDereference {
-            mechanical_fix: "write `holder^`",
+            mechanical_fix: "write `holder^`".to_owned(),
         },
     );
 
@@ -417,8 +417,8 @@ fn a_counted_binders_reference_does_not_make_it_writable() {
     assert_only_rule(
         br#"fn main() -> status: std::process::ExitStatus pure {
   for (i in 0_u64..2_u64) {
-    let held = &i;
-    let aliased = held;
+    let observed = &i;
+    let aliased = observed;
     set aliased^ = 9_u64;
   }
   return std::process::exit_status(code: 0_u8);
@@ -438,12 +438,12 @@ fn a_counted_binders_reference_does_not_make_it_writable() {
 fn examine(flag: Bool) -> result: unit pure {
   for (i in 0_u64..2_u64) {
     let spare = 0_u64;
-    let held = if flag {
+    let observed = if flag {
       give &spare;
     } else {
       give &i;
     }
-    overwrite(target: held);
+    overwrite(target: observed);
   }
   return unit;
 }
