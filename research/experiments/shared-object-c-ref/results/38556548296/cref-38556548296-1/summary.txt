@@ -1,0 +1,80 @@
+Blocks: 3; cells: 270
+
+A1/A2: atomic fetch_add
+  arm                                  2 P       4 P       8 P    8 P+HT   (M ops/s, median of blocks)
+  A1 perthread-faa                   553.0    1106.4    2212.8    1563.3
+  A1t perthread-faa (twin)           552.5    1106.4    2212.9    1562.7
+  A2 shared-faa                      113.8     136.3     121.2      91.6
+
+A3/A4: sharded counters
+  arm                                  2 P       4 P       8 P    8 P+HT   (M ops/s, median of blocks)
+  A3 shard-ticket, no reader         390.5     781.0    1562.3    1926.8
+  A3r shard-ticket, reader           390.4     781.1    1561.7    1924.7
+  A4 shard-asym, no reader          1983.8    3967.5    7932.0   15493.7
+  A4r shard-asym, reader            1981.1    3960.7    7915.9   15387.6
+
+Reader runs (one whole read per millisecond)
+  arm / cpus                           reads  median us   p99 us  max us (med)  max us (worst)
+  A3r 2 P                               4999        0.2      0.3          89.4           101.0
+  A3r 4 P                               4999        0.4      0.7           0.9            65.5
+  A3r 8 P                               4999        0.8      1.1           1.5             1.5
+  A3r 8 P+HT                            4999        1.4      1.7           2.1            39.0
+  A4r 2 P                               4999        0.9      1.0           2.9             2.9
+  A4r 4 P                               4999        1.1      1.2           2.0             2.5
+  A4r 8 P                               4999        1.5      1.6           2.5           102.9
+  A4r 8 P+HT                            4998        2.3      2.5           5.5           153.8
+
+A5: layout of parts
+  arm                                  2 P       4 P       8 P    8 P+HT   (M ops/s, median of blocks)
+  A5a 16-byte mallocs                376.4     753.0     865.5    1308.2
+  A5b aligned 64                     376.4     753.0    1506.0    1942.7
+  A5c one alloc, 16 apart             65.0      55.5     110.3     247.0
+  A5d one alloc, 64 apart            376.4     753.0    1506.0    1942.3
+  A5e one alloc, 128 apart           376.4     752.5    1506.0    1942.7
+
+A6: atomic operations
+  arm                                  2 P       4 P       8 P    8 P+HT   (M ops/s, median of blocks)
+  A6 shared load                    1982.8    3966.0    7931.3   15751.7
+  A6 shared fetch_add                110.7     136.5     116.5      99.6
+  A6 shared exchange                 152.6     146.5     116.9      87.6
+  A6 shared CAS loop                  75.4      57.5      54.9      30.0
+  A6 per-thread load                1981.9    3964.3    7928.0   15744.2
+  A6 per-thread fetch_add            553.1    1106.6    2213.3    1561.7
+  A6 per-thread exchange             530.8    1061.9    2123.8    1754.0
+  A6 per-thread CAS loop             310.7     621.6    1243.3    1849.7
+
+A7: sequence structure
+  arm                                  2 P       4 P       8 P    8 P+HT   (M ops/s, median of blocks)
+  A7 noseq                           330.0     593.8    1228.5    1520.4
+  A7 seq                              55.3      48.2      52.1      59.0
+
+A8: deadline wait, lateness in microseconds (median of blocks)
+  cpus                       median      p99  max (med)  max (worst)
+  1 thread, CPU 0              55.6     56.1      159.3       1302.5
+  8 threads, 8 P-cores         51.1     58.3      400.2        676.7
+
+Ratios
+  ratio                                2 P       4 P       8 P    8 P+HT
+  A1t/A1 (noise)                     0.999     1.000     1.000     1.000
+  A3/A1                              0.706     0.706     0.706     1.233
+  A3r/A1                             0.706     0.706     0.706     1.231
+  A4/A1                              3.587     3.586     3.585     9.911
+  A4r/A1                             3.583     3.580     3.577     9.843
+  A4r/A4                             0.999     0.998     0.998     0.993
+  A3r/A3                             1.000     1.000     1.000     0.999
+  A5a/A5b                            1.000     1.000     0.575     0.673
+  A5c/A5b                            0.173     0.074     0.073     0.127
+  A5d/A5b                            1.000     1.000     1.000     1.000
+  A5e/A5b                            1.000     0.999     1.000     1.000
+  A7 seq/noseq                       0.168     0.081     0.042     0.039
+  A6 shared load/A1                  3.586     3.585     3.584    10.076
+  A6 shared faa/A1                   0.200     0.123     0.053     0.064
+  A6 shared xchg/A1                  0.276     0.132     0.053     0.056
+  A6 shared cas/A1                   0.136     0.052     0.025     0.019
+  A6 per-thread load/A1              3.584     3.583     3.583    10.071
+  A6 per-thread faa/A1               1.000     1.000     1.000     0.999
+  A6 per-thread xchg/A1              0.960     0.960     0.960     1.122
+  A6 per-thread cas/A1               0.562     0.562     0.562     1.183
+  A2/A1                              0.206     0.123     0.055     0.059
+
+A5 byte distance between part 0 and part 1: A5a=4992, A5b=128, A5c=16, A5d=64, A5e=128
