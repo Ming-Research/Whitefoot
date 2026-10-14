@@ -85,13 +85,6 @@ fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputSt
                     }
                   }
                 }
-                let page_length = page.len;
-                let chunk_fits = chunk <= page_length;
-                if chunk_fits {
-                } else {
-                  close_read(factory: files, file: move file);
-                  return exit_status(code: 12_u8);
-                }
                 let no_deadline = None<std::time::Instant>();
                 let wait_cancel_1 = std::time::cancel_never();
                 let wait_outcome_1 = write_once(factory: files, output: out, source: page_window, start: 0_u64, end: chunk, deadline: no_deadline, cancel: &wait_cancel_1);

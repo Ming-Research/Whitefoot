@@ -42,6 +42,9 @@ struct ArmDescriptor {
 }
 
 pub(super) struct MatchResult {
+    /// [OP-5] the complete condition `expr` of an `if` or `value_if`, whose
+    /// source redundancy the entailment walk judges; `None` for a source match.
+    pub(super) condition: Option<crate::NodePath>,
     pub(super) scrutinee: CheckedExpression,
     pub(super) match_type: CheckedMatchType,
     pub(super) arms: Vec<CheckedMatchArm>,
@@ -377,6 +380,7 @@ impl<'unit> Checker<'_, 'unit> {
             )?;
         }
         Ok(MatchResult {
+            condition: None,
             scrutinee: scrutinee.expression,
             match_type,
             arms,
@@ -537,6 +541,7 @@ impl<'unit> Checker<'_, 'unit> {
                 )?;
                 BlockResult {
                     statements: vec![CheckedStatement::Match {
+                        condition: chained.condition,
                         node_path: self.types.declarations.tree.path(*nested)?.clone(),
                         scrutinee: chained.scrutinee,
                         match_type: chained.match_type,
@@ -644,6 +649,7 @@ impl<'unit> Checker<'_, 'unit> {
                 .map_err(|stop| self.conditional_join_repair(check_context, &base_bindings, stop))?;
         }
         Ok(MatchResult {
+            condition: Some(self.types.declarations.tree.path(expression_node)?.clone()),
             scrutinee: condition.expression,
             match_type: CheckedMatchType::Enum(CheckedEnumType::Bool),
             arms,

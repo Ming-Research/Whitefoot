@@ -22,13 +22,9 @@ fn fill(counter: &Counter, steps: u64) -> result: unit writes(counter) contract 
 }
 
 fn main() -> status: ExitStatus pure {
-  doc "Fills 5 by 3 steps after checking the room.";
+  doc "Fills 5 by 3 steps with the initial field proving the room.";
   let counter = Counter(count: 5_u64);
   let kept = counter.count;
-  if kept <= 797_u64 {
-  } else {
-    return exit_status(code: 1_u8);
-  }
   fill(counter: &counter, steps: 3_u64);
   let count = counter.count;
   if count == 8_u64 {

@@ -12,13 +12,8 @@ fn get(b: &[u8], i: u64, half: u64) -> result: u8 reads(b) {
   let lower = i < half;
   if lower {
   } else {
-    let upper_start = i >= half;
-    if upper_start {
-      let upper_end = i < spare;
-      if upper_end {
-      } else {
-        return 0_u8;
-      }
+    let upper_end = i < spare;
+    if upper_end {
     } else {
       return 0_u8;
     }

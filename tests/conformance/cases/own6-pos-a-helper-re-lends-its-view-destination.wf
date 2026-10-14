@@ -28,10 +28,6 @@ fn main() -> status: ExitStatus pure {
   let window = &table[0_u64..2_u64];
   let count = outer(destination: window, value: 200_u8);
   let seen = window^.len;
-  if seen == 2_u64 {
-  } else {
-    return exit_status(code: 201_u8);
-  }
   let first = table[0_u64];
   let second = table[1_u64];
   if first == 200_u8 {
@@ -42,5 +38,6 @@ fn main() -> status: ExitStatus pure {
   } else {
     return exit_status(code: 203_u8);
   }
-  return exit_status(code: 0_u8);
+  let code = cvt::<u64, u8>(seen);
+  return exit_status(code: code);
 }
