@@ -1,0 +1,22 @@
+struct Index {
+  value: u64;
+  invariant bounded(index): index.value < 16_u64;
+}
+
+fn lookup(index: &Index, table: &Array<u64, 16>) -> result: u64 reads(index), reads(table) {
+  let at = index^.value;
+  let got = table^[at];
+  return got;
+}
+
+fn bump(x: &u64) -> result: unit writes(x) {
+  set x^ = 31_u64;
+  return unit;
+}
+
+fn bump_then_hand_off(table: &Array<u64, 16>) -> result: u64 reads(table) {
+  let idx = Index(value: 3_u64);
+  bump(x: &idx.value);
+  let got = lookup(index: &idx, table: table);
+  return got;
+}

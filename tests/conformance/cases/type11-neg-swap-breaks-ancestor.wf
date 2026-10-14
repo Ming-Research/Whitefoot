@@ -1,0 +1,26 @@
+nocopy struct Index {
+  value: u64;
+  invariant bounded(index): index.value < 16_u64;
+}
+
+struct Pairing {
+  low: Index;
+  high: Index;
+  invariant ordered(pairing): pairing.low.value <= pairing.high.value;
+}
+
+fn spread(pairing: &Pairing) -> result: u64 reads(pairing) {
+  let h = pairing^.high.value;
+  let l = pairing^.low.value;
+  let d = h - l;
+  return d;
+}
+
+fn swap_fields() -> result: u64 pure {
+  let a = Index(value: 1_u64);
+  let b = Index(value: 2_u64);
+  let pairing = Pairing(low: move a, high: move b);
+  swap(first: &pairing.low, second: &pairing.high);
+  let got = spread(pairing: &pairing);
+  return got;
+}

@@ -1,0 +1,14 @@
+struct Inner {
+  value: u64;
+  invariant bounded(inner): inner.value < 16_u64;
+}
+
+struct Outer {
+  inner: Inner;
+}
+
+fn pick(outer: &Outer, table: &Array<u64, 16>) -> result: u64 reads(outer.inner), reads(table) {
+  let at = outer^.inner.value;
+  let got = table^[at];
+  return got;
+}

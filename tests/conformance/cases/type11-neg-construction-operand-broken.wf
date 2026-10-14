@@ -1,0 +1,15 @@
+struct Index {
+  value: u64;
+  invariant bounded(index): index.value < 16_u64;
+}
+
+struct Holder {
+  index: Index;
+}
+
+fn construct_broken() -> result: unit pure {
+  let idx = Index(value: 3_u64);
+  set idx.value = 31_u64;
+  let holder = Holder(index: idx);
+  return unit;
+}

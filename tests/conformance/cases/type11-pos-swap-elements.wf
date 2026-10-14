@@ -1,0 +1,19 @@
+nocopy struct Index {
+  value: u64;
+  invariant bounded(index): index.value < 16_u64;
+}
+
+fn size(indexes: &Slots<Index, 2>) -> result: u64 reads(indexes.len) {
+  return indexes^.len;
+}
+
+fn swap_elements() -> result: u64 pure {
+  let first = Index(value: 1_u64);
+  let second = Index(value: 2_u64);
+  let indexes = slots_new::<Index, 2>();
+  place_back(window: &indexes, value: move first);
+  place_back(window: &indexes, value: move second);
+  swap(first: &indexes[0_u64], second: &indexes[1_u64]);
+  let n = size(indexes: &indexes);
+  return n;
+}

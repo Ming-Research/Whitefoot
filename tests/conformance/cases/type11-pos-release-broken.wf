@@ -1,0 +1,11 @@
+nocopy struct Index {
+  value: u64;
+  invariant bounded(index): index.value < 16_u64;
+}
+
+fn release_broken() -> result: unit pure {
+  let idx = Index(value: 3_u64);
+  set idx.value = 31_u64;
+  release::<Index>(value: move idx);
+  return unit;
+}

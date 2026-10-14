@@ -1,0 +1,9 @@
+struct Index {
+  value: u64;
+  invariant bounded(index): index.value < 16_u64;
+}
+
+fn spoil(index: &Index) -> result: unit writes(index.value) {
+  set index^.value = 31_u64;
+  return unit;
+}

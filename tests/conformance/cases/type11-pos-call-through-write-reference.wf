@@ -1,0 +1,23 @@
+struct Index {
+  value: u64;
+  invariant bounded(index): index.value < 16_u64;
+}
+
+struct Holder {
+  index: Index;
+}
+
+fn fix(index: &Index) -> result: unit writes(index.value) {
+  set index^.value = 31_u64;
+  set index^.value = 4_u64;
+  return unit;
+}
+
+fn after_fix(table: &Array<u64, 16>) -> result: u64 reads(table) {
+  let seed = Index(value: 3_u64);
+  let holder = Holder(index: seed);
+  fix(index: &holder.index);
+  let at = holder.index.value;
+  let got = table^[at];
+  return got;
+}

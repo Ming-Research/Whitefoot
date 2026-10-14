@@ -1,0 +1,27 @@
+struct Index {
+  value: u64;
+  invariant bounded(index): index.value < 16_u64;
+}
+
+struct Cursor {
+  index: Index;
+  limit: u64;
+  invariant within(cursor): cursor.index.value < cursor.limit;
+}
+
+fn rewrite(index: &Index) -> result: unit writes(index.value) {
+  set index^.value = 15_u64;
+  return unit;
+}
+
+fn limit_of(cursor: &Cursor) -> result: u64 reads(cursor.limit) {
+  return cursor^.limit;
+}
+
+fn ancestor_broken() -> result: u64 pure {
+  let idx = Index(value: 1_u64);
+  let cursor = Cursor(index: idx, limit: 4_u64);
+  rewrite(index: &cursor.index);
+  let got = limit_of(cursor: &cursor);
+  return got;
+}

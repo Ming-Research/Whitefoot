@@ -1,0 +1,12 @@
+struct Index {
+  value: u64;
+  invariant bounded(index): index.value < 16_u64;
+}
+
+fn store_broken() -> result: unit pure {
+  let idx = Index(value: 3_u64);
+  set idx.value = 31_u64;
+  let indexes = slots_new::<Index, 2>();
+  place_back(window: &indexes, value: idx);
+  return unit;
+}

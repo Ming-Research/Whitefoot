@@ -1,0 +1,23 @@
+struct Index {
+  value: u64;
+  invariant bounded(index): index.value < 16_u64;
+}
+
+fn size(indexes: &Slots<Index, 2>) -> result: u64 reads(indexes.len) {
+  return indexes^.len;
+}
+
+fn restore_each() -> result: u64 pure {
+  let first = Index(value: 1_u64);
+  let second = Index(value: 2_u64);
+  let indexes = slots_new::<Index, 2>();
+  place_back(window: &indexes, value: first);
+  place_back(window: &indexes, value: second);
+  for (k in 0_u64..2_u64) {
+    let r = &indexes[k];
+    set r^.value = 31_u64;
+    set r^.value = 3_u64;
+  }
+  let n = size(indexes: &indexes);
+  return n;
+}

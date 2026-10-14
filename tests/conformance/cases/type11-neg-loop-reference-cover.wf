@@ -1,0 +1,32 @@
+struct Link {
+  v: u64;
+  next: Option<Box<Link>>;
+  invariant small(link): link.v < 16_u64;
+}
+
+fn inspect(link: &Link) -> result: u64 reads(link.v) {
+  let got = link^.v;
+  return got;
+}
+
+fn walk() -> result: u64 pure {
+  let end = None<Box<Link>>();
+  let tail = Link(v: 1_u64, next: move end);
+  let boxed = box_new::<Link>(value: move tail);
+  let more = Some<Box<Link>>(value: move boxed);
+  let head = Link(v: 2_u64, next: move more);
+  let cursor = &head;
+  for (i in 0_u64..1_u64) {
+    set cursor^.v = 31_u64;
+    match cursor^.next {
+      Some(value: child) => {
+        set cursor = &child^.inner;
+      }
+      None() => {
+        break;
+      }
+    }
+  }
+  let got = inspect(link: &head);
+  return got;
+}
