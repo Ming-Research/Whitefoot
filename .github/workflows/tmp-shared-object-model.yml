@@ -59,7 +59,7 @@ jobs:
             compiler/target/gate/whitefootc --emit-llvm -o "$out/${probe%.wf}.ll" "$dir/$probe" \
               > "$out/${probe%.wf}.txt" 2>&1 || status=$?
             if [ "$status" -eq 0 ]; then observed=accept; else observed="reject ($status)"; fi
-            first=$(grep -m1 -E 'error|ERROR|\[[A-Z]+-[0-9]' "$out/${probe%.wf}.txt" | tr '|' '/' | cut -c1-220)
+            first=$(grep -m1 -E 'error|ERROR|\[[A-Z]+-[0-9]' "$out/${probe%.wf}.txt" | tr '|' '/' | cut -c1-220 || true)
             echo "=== $probe expected=$expected ($rule) observed=$observed"
             cat "$out/${probe%.wf}.txt"
             echo "| $probe | $expected | $observed | $first |" >> "$GITHUB_STEP_SUMMARY"
