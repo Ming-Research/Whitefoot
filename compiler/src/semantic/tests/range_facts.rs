@@ -733,7 +733,7 @@ fn a_walk_that_forgot_a_value_past_i128_leaves_nothing_rejected() {
     // walk issue and the invariant stays an unproved deferred goal; each
     // would be a rejection, but the walk lost the value to its own
     // arithmetic, so the verdict is the checker's limit [RANGE-3].
-    for statement in ["need(xs: xs, v: {value});", "invariant held: e == {value};"] {
+    for statement in ["need(xs: xs, v: {value});", "invariant agrees: e == {value};"] {
         let held = statement.replace("{value}", "first");
         with_semantics(&forgotten_product(&held), |outcome| {
             assert!(
