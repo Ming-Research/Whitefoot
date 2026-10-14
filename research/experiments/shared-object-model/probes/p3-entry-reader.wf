@@ -3,7 +3,7 @@ const name: Array<u8, 1> =[97_u8];
 struct Window {
   next: u64;
   len: u64;
-  invariant(w): w^.next <= w^.len;
+  invariant ordered(w): w.next <= w.len;
 }
 
 fn remaining(w: &Window) -> result: u64 reads(w) {
@@ -15,7 +15,8 @@ fn main() -> status: std::process::ExitStatus pure waits {
   let store = shared_map_new::<Window>(capacity: 0_u64);
   let key = &name[0_u64..1_u64];
   atomic e = &store[key] {
-    set e^ = Some<Window>(value: Window(next: 1_u64, len: 4_u64));
+    let fresh = Window(next: 1_u64, len: 4_u64);
+    set e^ = Some<Window>(value: fresh);
   }
   let out = 0_u64;
   atomic e = &store[key] {

@@ -1,7 +1,7 @@
 struct Window {
   next: u64;
   len: u64;
-  invariant(w): w^.next <= w^.len;
+  invariant ordered(w): w.next <= w.len;
 }
 
 fn remaining(w: &Window) -> result: u64 reads(w) {

@@ -8,6 +8,6 @@ fn bump(counter: Shared<u8>) -> result: unit pure waits {
 fn main() -> status: std::process::ExitStatus pure waits {
   let c = shared_new::<u8>(value: 1_u8);
   let d = shared_share::<u8>(shared: &c);
-  bump(counter: d);
+  bump(counter: move d);
   return std::process::exit_status(code: 0_u8);
 }

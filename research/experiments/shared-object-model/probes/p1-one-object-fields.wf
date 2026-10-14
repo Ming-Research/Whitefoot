@@ -10,7 +10,8 @@ fn bump_both(first: &u8, second: &u8) -> result: unit writes(first), writes(seco
 }
 
 fn main() -> status: std::process::ExitStatus pure waits {
-  let h = shared_new::<Pair>(value: Pair(first: 2_u8, second: 3_u8));
+  let pair = Pair(first: 2_u8, second: 3_u8);
+  let h = shared_new::<Pair>(value: pair);
   atomic s = &h {
     bump_both(first: &s^.first, second: &s^.second);
   }
