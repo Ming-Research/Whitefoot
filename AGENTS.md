@@ -223,8 +223,9 @@ build time apart from test and program execution.
   map's runtime or its test (that test under AddressSanitizer and
   ThreadSanitizer, on the PR's head),
   `compute-regression.yml` on PRs that touch measured inputs (paired WF-to-WF
-  timing), and `io-bench.yml` and `compute-bench.yml` on request, which are
-  experiments and never a gate.
+  timing; each push to `main` there only builds and caches that commit's
+  compiler for later PRs' merge-base baselines), and `io-bench.yml` and
+  `compute-bench.yml` on request, which are experiments and never a gate.
 - Compiler releases: `compiler-release.yml`, dispatched when a downstream
   project needs a main commit, publishes that commit's compiler as release
   `wf-<12 hex digits>`, or an unmerged commit's as experiment release
