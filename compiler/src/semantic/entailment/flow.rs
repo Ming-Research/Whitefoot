@@ -226,6 +226,8 @@ struct LoopFrame {
     /// the private endpoint-capture scope as well as source binding scopes.
     capture_path: Option<Vec<u32>>,
     breaks: Vec<ProofFlowState>,
+    /// Diagnostic origins of break predecessors; never used by transport.
+    break_sites: Vec<crate::NodePath>,
     continues: Vec<FlowEdge>,
 }
 
@@ -358,6 +360,9 @@ struct ProofFlowState {
     /// cells on a copy of its state, and when they alone discharge it, the
     /// repair names these writes [ENT-5].
     measure_kills: Vec<MeasureKill>,
+    /// Failed optional header transport, used only after a proof rejection
+    /// to explain a missing premise. No proof judgment reads these records.
+    lost_headers: Vec<LostHeaderRelation>,
     /// The kill events applied on this path since the innermost enclosing
     /// loop head, kept only where debug assertions are on: at the loop's back
     /// edge every one must be an event of the summary its head subtracted
@@ -378,6 +383,27 @@ struct MeasureKill {
     /// would leave `term` alone [EFF-2, DIAG-1]; false for every write that
     /// is not a callee's declared write.
     narrowable: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct LostHeaderRelation {
+    template: SourceLoopInvariantRef,
+    name: String,
+    relation: String,
+    conjunct: String,
+    incoming: crate::NodePath,
+    components: LostHeaderComponents,
+    kills: Vec<MeasureKill>,
+    bindings: Vec<BindingId>,
+    support: Vec<TermKind>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum LostHeaderComponents {
+    Frozen(Vec<AffineInequality>),
+    /// Exit joins have no active template to transport. Their diagnostic
+    /// query owns its atoms, so retain source instead of those private IDs.
+    Exit(Box<CheckedAffineRelation>),
 }
 
 impl ProofFlowState {
@@ -791,6 +817,7 @@ struct AffineL0Postings {
 /// FactState::close changes that identity after facts or inventories change.
 /// The index stores no derivation IDs: selected parents still come from this
 /// view and the vocabulary's one ledger at the point of the query.
+#[derive(Clone)]
 struct AffineL0Cache {
     closed: Rc<ClosedState>,
     index: Rc<LazyAffineL0Index>,
@@ -1339,6 +1366,10 @@ fn analyze_candidate_inner(
     context: &EntailmentContext<'_>,
 ) -> FunctionEntailment {
     let run = run(function, context);
+    entailment_from_run(function, run)
+}
+
+fn entailment_from_run(function: &CheckedFunction, run: AnalysisRun) -> FunctionEntailment {
     let mut entailment = FunctionEntailment {
         body_disposition: run.body_disposition,
         operation_intervals: run.operation_intervals,
@@ -1362,6 +1393,7 @@ fn analyze_candidate_inner(
 }
 
 struct AnalysisRun {
+    diagnostic_contradiction: bool,
     operation_intervals: BTreeMap<crate::NodePath, Option<Vec<operation_facts::Interval>>>,
     body_disposition: super::super::model::CheckedBodyDisposition,
     obligations: Vec<ObligationOutcome>,
@@ -1378,8 +1410,12 @@ struct AnalysisRun {
 }
 
 fn run(function: &CheckedFunction, context: &EntailmentContext<'_>) -> AnalysisRun {
+    run_analyzer(Analyzer::new(context, function))
+}
+
+fn run_analyzer(mut analyzer: Analyzer<'_, '_>) -> AnalysisRun {
+    let function = analyzer.input.function;
     let _work = super::work::function(&function.name);
-    let mut analyzer = Analyzer::new(context, function);
     analyzer.input.collect_bindings();
     analyzer.input.collect_postcondition_entry_images();
     let mut state = ProofFlowState {
@@ -1461,6 +1497,11 @@ fn run(function: &CheckedFunction, context: &EntailmentContext<'_>) -> AnalysisR
         goals: analyzer.vocabulary.goals.into_inventory(),
     };
     AnalysisRun {
+        diagnostic_contradiction: analyzer
+            .input
+            .restored_summary
+            .as_ref()
+            .is_some_and(|restored| restored.contradiction.get()),
         operation_intervals: analyzer.output.operation_intervals,
         body_disposition,
         obligations: analyzer.output.obligations,
@@ -1491,6 +1532,7 @@ impl<'check, 'unit> Analyzer<'check, 'unit> {
                 places: PlaceMap::default(),
                 entry_images: Vec::new(),
                 postcondition_entry_images: Vec::new(),
+                restored_summary: None,
             },
             vocabulary: Vocabulary {
                 terms: TermTable::new(),
@@ -1884,11 +1926,174 @@ struct Input<'check, 'unit> {
     /// flow state tracks invalidation once per structural image, while each
     /// FN-9 proof consults only the images its own relation references.
     postcondition_entry_images: Vec<Vec<usize>>,
+    /// Populated only by the rejection-only counterfactual query. Neither
+    /// this premise nor any result of that private walk is retained.
+    restored_summary: Option<RestoredSummary>,
+}
+
+struct RestoredSummary {
+    call: super::ConcreteCallOccurrence,
+    /// The schedule's prospective identity for this private hypothesis,
+    /// never an independently verified summary or a retained proof.
+    postconditions: Vec<(
+        super::super::postcondition::CheckedPostcondition,
+        super::VerifiedPostconditionSummary,
+    )>,
+    contradiction: std::cell::Cell<bool>,
+}
+
+/// Reuse ordinary publication and transfer on a private walk, changing one
+/// unavailable summary set at one call only. No private proof identity leaves.
+pub(super) fn unavailable_summary_discharges_record(
+    function: &CheckedFunction,
+    context: &EntailmentContext<'_>,
+    call: &super::ConcreteCallOccurrence,
+    postconditions: &[(
+        super::super::postcondition::CheckedPostcondition,
+        super::VerifiedPostconditionSummary,
+    )],
+    target: usize,
+) -> bool {
+    let discharged = |entailment: &FunctionEntailment| {
+        entailment
+            .answers
+            .get(target)
+            .copied()
+            .flatten()
+            .map(|answer| answer.discharged(entailment))
+    };
+    let baseline = entailment_from_run(function, run(function, context));
+    if discharged(&baseline) != Some(false) {
+        return false;
+    }
+    let mut analyzer = Analyzer::new(context, function);
+    analyzer.input.restored_summary = Some(RestoredSummary {
+        call: call.clone(),
+        postconditions: postconditions.to_vec(),
+        contradiction: std::cell::Cell::new(false),
+    });
+    let restored = run_analyzer(analyzer);
+    if restored.diagnostic_contradiction {
+        return false;
+    }
+    let restored = entailment_from_run(function, restored);
+    discharged(&restored) == Some(true) && !record_uses_contradiction(&restored, target)
+}
+
+fn record_uses_contradiction(entailment: &FunctionEntailment, target: usize) -> bool {
+    use super::super::obligations::RecordAnswer;
+
+    let Some(answer) = entailment.answers.get(target).copied().flatten() else {
+        return true;
+    };
+    let mut parents = match answer {
+        RecordAnswer::Obligation(index) => {
+            let outcome = &entailment.obligations[index];
+            if outcome.contradictory {
+                return true;
+            }
+            outcome.derivation.into_iter().collect::<Vec<_>>()
+        }
+        RecordAnswer::CallGoal(index) => {
+            let outcome = &entailment.call_goals[index];
+            if outcome.evidence.contains(&CallGoalEvidence::AllDerivable) {
+                return true;
+            }
+            outcome.derivation.into_iter().collect()
+        }
+        RecordAnswer::LoopInvariant(index) => {
+            let outcome = &entailment.loop_invariants[index];
+            let mut parents = Vec::new();
+            for evidence in std::iter::once(&outcome.base_evidence)
+                .chain(outcome.inputs.iter().map(|input| &input.evidence))
+            {
+                if evidence.contradiction.is_some() {
+                    return true;
+                }
+                parents.extend(&evidence.components);
+            }
+            parents
+        }
+        RecordAnswer::Postcondition(index) => entailment.postconditions[index]
+            .exits
+            .iter()
+            .filter_map(|exit| exit.derivation)
+            .collect(),
+        // Targets, use premises and certificate residuals all read the same
+        // ordinary state; the observer checks it after term formation too.
+        RecordAnswer::SourceProof(_) => Vec::new(),
+        RecordAnswer::Uninhabited => return true,
+    };
+    let mut seen = HashSet::new();
+    while let Some(parent) = parents.pop() {
+        if !seen.insert(parent) {
+            continue;
+        }
+        let Some(node) = entailment.derivations.nodes.get(parent.0 as usize) else {
+            return true;
+        };
+        if matches!(
+            node,
+            DerivationNode::L0Contradiction { .. }
+                | DerivationNode::GoalContradiction { .. }
+                | DerivationNode::JoinContradiction { .. }
+                | DerivationNode::MaterializedContradiction { .. }
+        ) {
+            return true;
+        }
+        node.for_each_parent(|parent| parents.push(parent));
+    }
+    false
+}
+
+impl Reasoning<'_, '_, '_> {
+    /// Observe actual flow states, never a proof's temporary negated goal.
+    /// A contradictory predecessor must not disappear at a join and make
+    /// the restored summary appear to prove an unrelated target.
+    fn observe_summary_context(&mut self, state: &ProofFlowState) {
+        let Some(restored) = &self.input.restored_summary else {
+            return;
+        };
+        if restored.contradiction.get() {
+            return;
+        }
+        let Ok(contradiction) = AffineInequality::from_forms(
+            &AffineForm::constant(1),
+            &AffineForm::constant(0),
+            &mut AffineCheckState::new(),
+        ) else {
+            restored.contradiction.set(true);
+            return;
+        };
+        let mut vocabulary = self.vocabulary.clone();
+        // Queries lazily mint affine measure images through interior
+        // mutability. Their atoms belong to the cloned vocabulary too:
+        // retaining them in the walked state would reuse private identities.
+        let state = state.clone();
+        let mut query = Reasoning {
+            input: self.input,
+            vocabulary: &mut vocabulary,
+        };
+        if query
+            .prove(
+                ProofContext::new(&state.facts, &state.affine),
+                ProofGoal::Affine {
+                    inequality: &contradiction,
+                    right: None,
+                },
+            )
+            .disposition
+            == ProofDisposition::Proved
+        {
+            restored.contradiction.set(true);
+        }
+    }
 }
 
 /// The terms, goals, affine atoms and derivation ledger every judgment is
 /// stated in, with the canonical records keyed by them and the ordinals that
 /// number the ledger's retained roots.
+#[derive(Clone)]
 struct Vocabulary {
     terms: TermTable,
     goals: GoalTable,

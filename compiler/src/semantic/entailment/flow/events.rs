@@ -1190,11 +1190,33 @@ impl Reasoning<'_, '_, '_> {
         events: &[KillEvent],
         shared_event: Option<FlowEventId>,
     ) {
+        self.invalidate_lost_headers(separations, states, events);
         let removed = self.apply_kills_one(separations, &mut states.facts, events);
         self.record_measure_kills(separations, states, events, &removed);
         self.apply_affine_kills(separations, &mut states.affine, events);
         self.invalidate_entry_images(states, separations, events, shared_event);
         states.record_writes(events);
+    }
+
+    /// Diagnostic relations describe the images at their failed join. Keep
+    /// them across unrelated writes, and discard them when that support dies.
+    pub(super) fn invalidate_lost_headers(
+        &self,
+        separations: &dyn SeparationOracle,
+        states: &mut ProofFlowState,
+        events: &[KillEvent],
+    ) {
+        states.lost_headers.retain(|loss| {
+            !events.iter().any(|event| {
+                event.root_binding().is_some_and(|binding| loss.bindings.contains(&binding))
+                    || loss.support.iter().any(|kind| {
+                        self.vocabulary
+                            .terms
+                            .interned(kind)
+                            .is_none_or(|term| self.event_kills_term(separations, term, event))
+                    })
+            })
+        });
     }
 
     /// [WIN-2, ENT-5] the indices the entry state of `events` proves live,

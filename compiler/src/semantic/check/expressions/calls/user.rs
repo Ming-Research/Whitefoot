@@ -485,7 +485,7 @@ impl<'unit> Checker<'_, 'unit> {
                             }
                             super::super::super::references::ReferenceValidity::Valid => "",
                         },
-                        mechanical_fix: super::super::super::references::REF2_FORM_AGAIN,
+                        mechanical_fix: super::super::super::references::REF2_FORM_AGAIN.to_owned(),
                     },
                 );
             }
@@ -697,12 +697,15 @@ impl<'unit> Checker<'_, 'unit> {
             .declarations
             .invalidate_window_operation_references(signature, &substituted, bindings)?;
         self.project_call_effects(
+            FunctionContext {
+                check_context,
+                function,
+            },
             node,
-            function,
             &substituted,
             bindings,
             &mut effects,
-            formal.is_none().then_some(signature.parameters.as_slice()),
+            (signature, formal.is_none()),
         )?;
         if formal.is_none() && self.body.repair_calls.is_some() {
             let call = self.effect_repair_call(
@@ -1181,14 +1184,15 @@ impl<'unit> Checker<'_, 'unit> {
     /// atomic statement's binder contributes its path for that statement,
     /// which removes it [SHARE-3].
     fn project_call_effects(
-        &self,
+        &mut self,
+        context: FunctionContext<'_, '_>,
         node: NodeId,
-        caller: &FunctionSignature,
         entries: &[SubstitutedEntry],
         bindings: &HashMap<DeclarationId, LocalBinding>,
         effects: &mut EffectSet,
-        retained_reference_parameters: Option<&[ParameterSignature]>,
+        (signature, retain_reference_parameters): (&FunctionSignature, bool),
     ) -> Result<(), CheckStop> {
+        let caller = context.function;
         for entry in entries {
             for path in self.effect_paths_for_place(node, &entry.place, bindings)? {
                 if !caller
@@ -1199,8 +1203,20 @@ impl<'unit> Checker<'_, 'unit> {
                 {
                     continue;
                 }
-                if retained_reference_parameters
-                    .is_some_and(|parameters| parameters[entry.argument].mode != CheckedMode::Own)
+                if entry.write && self.body.rewritten_index_repair.is_none() {
+                    self.body.rewritten_index_repair = self
+                        .rewritten_index_repair(
+                            context,
+                            node,
+                            &entry.place,
+                            bindings,
+                            Some(signature),
+                        )
+                        .ok()
+                        .flatten();
+                }
+                if retain_reference_parameters
+                    && signature.parameters[entry.argument].mode != CheckedMode::Own
                 {
                     if !self.types.effect_repairs.is_capture() {
                         if entry.write {

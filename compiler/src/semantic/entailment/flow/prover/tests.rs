@@ -907,6 +907,60 @@ fn affine_preparation_keeps_later_distinct_bridge_success_and_parents() {
 }
 
 #[test]
+fn summary_contradiction_observer_keeps_lazy_images_private() {
+    with_analyzer(|analyzer| {
+        let function = analyzer.input.function.id;
+        analyzer.input.restored_summary = Some(RestoredSummary {
+            call: super::super::super::ConcreteCallOccurrence {
+                caller: function,
+                node_path: crate::NodePath { components: vec![] },
+                callee: function,
+            },
+            postconditions: Vec::new(),
+            contradiction: std::cell::Cell::new(false),
+        });
+        let measure = cache_measure(analyzer, 0);
+        let mut state = ProofFlowState::default();
+        let affine = state.affine.clone();
+        let atom_count = analyzer.vocabulary.affine_atoms.len();
+        let term_count = analyzer.vocabulary.terms.ids().count();
+        let derivation_count = analyzer.vocabulary.derivations.nodes.len();
+        analyzer.reasoning().observe_summary_context(&state);
+        assert_eq!(state.affine, affine);
+        assert_eq!(analyzer.vocabulary.affine_atoms.len(), atom_count);
+        assert_eq!(analyzer.vocabulary.terms.ids().count(), term_count);
+        assert_eq!(
+            analyzer.vocabulary.derivations.nodes.len(),
+            derivation_count
+        );
+        assert!(
+            !analyzer
+                .input
+                .restored_summary
+                .as_ref()
+                .unwrap()
+                .contradiction
+                .get()
+        );
+        analyzer.vocabulary.measure_atom(measure, &state.affine);
+        assert_eq!(analyzer.vocabulary.affine_atoms.len(), atom_count + 1);
+        assert_eq!(state.affine.measure_atoms.borrow().len(), 1);
+
+        cache_bound(analyzer, &mut state.facts, ZERO, ZERO, -1);
+        analyzer.reasoning().observe_summary_context(&state);
+        assert!(
+            analyzer
+                .input
+                .restored_summary
+                .as_ref()
+                .unwrap()
+                .contradiction
+                .get()
+        );
+    });
+}
+
+#[test]
 fn affine_index_cache_matches_full_rebuild_for_ordered_images() {
     with_integer_parameters(&[IntegerType::I32; 3], |analyzer| {
         let mut affine = AffineFlowState::default();

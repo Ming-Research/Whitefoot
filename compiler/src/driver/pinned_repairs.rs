@@ -13,6 +13,7 @@ use super::{CompilationFailureKind, CompilerLimits, compile};
 use crate::SourceInput;
 
 mod call_separations;
+mod captured_indices;
 mod cell_consumption;
 mod clause_requirements;
 mod collisions_and_killed_facts;
@@ -21,14 +22,17 @@ mod enum_routed_ensures;
 mod entry_formers;
 mod floats;
 mod interface_applications;
+mod lost_header_relations;
 mod postcondition_places;
 mod prelude_opaque;
 mod qualified_constants;
 mod recursive_effects;
 mod remaining_repairs;
+mod rewritten_effect_indices;
 mod selector_scope;
 mod shared_maps;
 mod storage_destructuring;
+mod unavailable_summaries;
 mod writer_operations;
 mod writer_ownership;
 mod writer_references;
@@ -3804,20 +3808,24 @@ fn each_pinned_repair_is_carried_out_by_its_programs() {
     for pair in REPAIRS
         .iter()
         .chain(call_separations::CALL_SEPARATIONS)
+        .chain(captured_indices::CAPTURED_INDICES)
         .chain(cell_consumption::CELL_CONSUMPTION)
         .chain(content_moves::CONTENT_MOVES)
         .chain(prelude_opaque::PRELUDE_OPAQUE)
         .chain(qualified_constants::QUALIFIED_CONSTANTS)
         .chain(recursive_effects::RECURSIVE_EFFECTS)
+        .chain(rewritten_effect_indices::REWRITTEN_EFFECT_INDICES)
         .chain(remaining_repairs::REMAINING_REPAIRS)
         .chain(storage_destructuring::STORAGE_DESTRUCTURING)
         .chain(shared_maps::SHARED_MAPS)
         .chain(floats::FLOATS)
         .chain(interface_applications::INTERFACE_APPLICATIONS)
+        .chain(lost_header_relations::LOST_HEADER_RELATIONS)
         .chain(selector_scope::SELECTOR_SCOPE)
         .chain(enum_routed_ensures::ENUM_ROUTED_ENSURES)
         .chain(entry_formers::ENTRY_FORMERS)
         .chain(collisions_and_killed_facts::COLLISIONS_AND_KILLED_FACTS)
+        .chain(unavailable_summaries::UNAVAILABLE_SUMMARIES)
         .chain(clause_requirements::CLAUSE_REQUIREMENTS)
         .chain(writer_operations::WRITER_OPERATIONS)
         .chain(writer_ownership::WRITER_OWNERSHIP)

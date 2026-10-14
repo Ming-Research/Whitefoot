@@ -868,7 +868,7 @@ impl Report for SemanticIssueKind {
             BehaviorArgumentMismatch { expected, mechanical_fix };
             UnforwardedGroupApplication { mechanical_fix };
             ImmutableSetTarget;
-            InvalidSetTarget { root_class, required_classes };
+            InvalidSetTarget { root_class, required_classes, mechanical_fix };
             ImmutableWrittenArgument { binding, mechanical_fix };
             LinearValueNotConsumed { binding, obligation, mechanical_fix };
             LinearValuePartiallyConsumed { obligation, residual, mechanical_fix };

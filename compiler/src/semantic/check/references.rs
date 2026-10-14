@@ -842,7 +842,7 @@ impl<'unit> Checker<'_, 'unit> {
                 SemanticIssueKind::InvalidReferenceUse {
                     binder: self.types.declarations.declaration_spelling(declaration)?,
                     event: event.phrase(),
-                    mechanical_fix: REF2_FORM_AGAIN,
+                    mechanical_fix: REF2_FORM_AGAIN.to_owned(),
                 },
             ),
             ReferenceValidity::Valid if !reference.loop_dependencies().is_empty() => {

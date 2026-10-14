@@ -793,7 +793,7 @@ pub(crate) struct IndexCaptureSubstitution {
 }
 
 impl DerivationNode {
-    fn for_each_parent(&self, mut visit: impl FnMut(DerivationId)) {
+    pub(super) fn for_each_parent(&self, mut visit: impl FnMut(DerivationId)) {
         match self {
             Self::OriginTransport {
                 parent, origins, ..
@@ -2314,7 +2314,7 @@ struct GoalRecord {
 }
 
 /// Per-function interning table for [ENT-2]'s finite goal universe.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct GoalTable {
     pub(crate) integer_comparisons: WordHashMap<GoalId, (GoalExpression, i128, GoalSign)>,
     ids: HashMap<GoalExpression, GoalId>,
@@ -4043,7 +4043,7 @@ type ZeroBounds = (
 /// later bound makes dominated keeps its merge, which leaves a component
 /// larger than needed and every reading still exact. A replaced standing
 /// fact can weaken a bound and rebuilds the structure.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct ImplicitStructure {
     consumed: usize,
     measure_replacements: usize,

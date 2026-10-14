@@ -360,7 +360,7 @@ impl<'unit> DeclarationInventory<'unit> {
             kind: SemanticIssueKind::UndischargedSourceProof {
                 name: outcome.name.clone(),
                 obligation,
-                mechanical_fix,
+                mechanical_fix: mechanical_fix.to_owned(),
             },
             request: None,
         })
@@ -451,7 +451,7 @@ impl<'unit> TypeContext<'unit> {
     }
     /// The issue one undischarged record reports: its rule selects the kind,
     /// and the record with the judgment that answered it fill it in.
-    fn undischarged_issue(
+    pub(super) fn undischarged_issue(
         &self,
         function: &CheckedFunction,
         record: &ObligationRecord,
@@ -461,9 +461,19 @@ impl<'unit> TypeContext<'unit> {
             (SemanticRule::Inv1, RecordAnswer::LoopInvariant(index)) => self
                 .declarations
                 .undischarged_loop_invariant(&function.entailment, index),
-            (SemanticRule::Inv1 | SemanticRule::Prf1, RecordAnswer::SourceProof(index)) => self
-                .declarations
-                .undischarged_source_proof(&function.entailment, index),
+            (SemanticRule::Inv1 | SemanticRule::Prf1, RecordAnswer::SourceProof(index)) => {
+                let mut issue = self
+                    .declarations
+                    .undischarged_source_proof(&function.entailment, index)?;
+                if let Some(note) = &function.entailment.source_proofs[index].lost_header
+                    && let SemanticIssueKind::UndischargedLocalInvariant {
+                        mechanical_fix, ..
+                    } = &mut issue.kind
+                {
+                    *mechanical_fix = self.lost_header_repair(function, note)?;
+                }
+                Ok(issue)
+            }
             (
                 SemanticRule::Op4
                 | SemanticRule::Op2
@@ -545,6 +555,64 @@ impl<'unit> TypeContext<'unit> {
         Ok(calls)
     }
 
+    /// Name the failed incoming relation and the callee contract which can
+    /// preserve it, when its measure maps to a simple reference argument.
+    fn lost_header_repair(
+        &self,
+        function: &CheckedFunction,
+        note: &crate::semantic::entailment::LostHeaderRelationNote,
+    ) -> Result<String, CheckStop> {
+        let (_, line) = self.declarations.tree.source_line(&note.incoming)?;
+        let calls = self.killing_calls(function, &note.calls)?;
+        let mut clauses = Vec::new();
+        for note in &note.calls {
+            let node = self
+                .declarations
+                .tree
+                .node_with_path(&note.source)
+                .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+            let mut clause = None;
+            if let Some(list) = self
+                .declarations
+                .tree
+                .first_child_with(node, Production::FieldinitList)?
+            {
+                for field in self
+                    .declarations
+                    .tree
+                    .children_with(list, Production::Fieldinit)?
+                {
+                    let Some(atom) = self
+                        .declarations
+                        .tree
+                        .first_child_with(field, Production::Atom)?
+                    else {
+                        continue;
+                    };
+                    let actual = self.declarations.tree.source_spelling(atom)?;
+                    if actual.is_empty()
+                        || !actual.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+                    {
+                        continue;
+                    }
+                    let Some(suffix) = note.measure.strip_prefix(&format!("{actual}^")) else {
+                        continue;
+                    };
+                    if !suffix.starts_with('.') || suffix.contains('[') {
+                        continue;
+                    }
+                    let formal = self.declarations.identifier(field)?;
+                    clause = Some(format!(
+                        "ensures {formal}^{suffix} == entry({formal})^{suffix};"
+                    ));
+                    break;
+                }
+            }
+            clauses.push(clause);
+        }
+        Ok(repairs::lost_header_relation(note, line, &calls, &clauses))
+    }
+
     /// [ENT-6] one undischarged source obligation, reported under its
     /// record's rule with the repair what its goal reads selects.
     fn undischarged_obligation(
@@ -608,39 +676,40 @@ impl<'unit> TypeContext<'unit> {
                 // A definition's place is formed by the first requirement
                 // reaching it, and otherwise at the returns of the
                 // postconditions reaching it [ENT-2].
-                let mechanical_fix =
-                    if super::obligations::requirement_forms_site(function, &outcome.node_path) {
-                        let existing = self.with_contract_context(function, |context| {
-                            super::super::entailment::matching_requirement(
-                                function, context, outcome,
-                            )
-                        });
-                        let existing = existing
-                            .and_then(|path| self.declarations.tree.node_with_path(&path))
-                            .map(|node| self.declarations.tree.source_spelling(node))
-                            .transpose()?;
-                        repairs::clause_bounds(&case, constant_offset, existing.as_deref())
-                    } else if let Some(exit) = &outcome.selected_return {
-                        let (_, line) = self.declarations.tree.source_line(&exit.statement)?;
-                        // [FORM-2] a requirement is spelled canonically, so
-                        // one the contract already writes has this spelling.
-                        let required = format!("requires {};", exit.requirement);
-                        let held = function.requirements.iter().any(|requirement| {
-                            requirement.subject.is_none()
-                                && self
-                                    .declarations
-                                    .tree
-                                    .path_spelling(&requirement.clause)
-                                    .is_ok_and(|spelling| spelling == required)
-                        });
-                        repairs::postcondition_bounds(&case, constant_offset, line, exit, held)
-                    } else if let (Some(note), false) =
-                        (outcome.killed_by.first(), calls.is_empty())
-                    {
-                        repairs::bounds_after_kill(&case, &note.measure, &calls)
-                    } else {
-                        repairs::bounds(&case, constant_offset)
-                    };
+                let mechanical_fix = if let Some(note) = &outcome.lost_header {
+                    self.lost_header_repair(function, note)?
+                } else if super::obligations::requirement_forms_site(function, &outcome.node_path) {
+                    let existing = self.with_contract_context(function, |context| {
+                        super::super::entailment::matching_requirement(
+                            function, context, outcome,
+                        )
+                    });
+                    let existing = existing
+                        .and_then(|path| self.declarations.tree.node_with_path(&path))
+                        .map(|node| self.declarations.tree.source_spelling(node))
+                        .transpose()?;
+                    repairs::clause_bounds(&case, constant_offset, existing.as_deref())
+                } else if let Some(exit) = &outcome.selected_return {
+                    let (_, line) = self.declarations.tree.source_line(&exit.statement)?;
+                    // [FORM-2] a requirement is spelled canonically, so
+                    // one the contract already writes has this spelling.
+                    let required = format!("requires {};", exit.requirement);
+                    let held = function.requirements.iter().any(|requirement| {
+                        requirement.subject.is_none()
+                            && self
+                                .declarations
+                                .tree
+                                .path_spelling(&requirement.clause)
+                                .is_ok_and(|spelling| spelling == required)
+                    });
+                    repairs::postcondition_bounds(&case, constant_offset, line, exit, held)
+                } else if let (Some(note), false) =
+                    (outcome.killed_by.first(), calls.is_empty())
+                {
+                    repairs::bounds_after_kill(&case, &note.measure, &calls)
+                } else {
+                    repairs::bounds(&case, constant_offset)
+                };
                 SemanticIssueKind::UndischargedBoundsObligation {
                     mechanical_fix,
                     residual,
@@ -700,7 +769,7 @@ impl<'unit> TypeContext<'unit> {
                     .ok_or(SemanticCompilerFailure::InvalidResolution)?;
                 SemanticIssueKind::InvalidHeldContract {
                     reason: format!("{}: {residual}", self.declarations.tree.source_spelling(requirement)?),
-                    mechanical_fix: super::held::REPAIR,
+                    mechanical_fix: super::held::REPAIR.to_owned(),
                 }
             }
             (SemanticRule::Eff5, ObligationFamily::CallSeparation(query)) => {
@@ -714,19 +783,19 @@ impl<'unit> TypeContext<'unit> {
                 );
                 SemanticIssueKind::UndischargedCallSeparation {
                     residual,
-                    mechanical_fix,
+                    mechanical_fix: mechanical_fix.to_owned(),
                 }
             }
             (SemanticRule::Op11, ObligationFamily::ExchangeSeparation(_)) => {
                 SemanticIssueKind::UndischargedCallSeparation {
                     residual,
-                    mechanical_fix: "prove before the `swap` that the two positions are distinct, or exchange places that are equal or disjoint without an ancestor relation",
+                    mechanical_fix: "prove before the `swap` that the two positions are distinct, or exchange places that are equal or disjoint without an ancestor relation".to_owned(),
                 }
             }
             (SemanticRule::Share2, ObligationFamily::AtomicTargetSeparation(_)) => {
                 SemanticIssueKind::UndischargedCallSeparation {
                     residual,
-                    mechanical_fix: SHARE2_PROVE_THE_HANDLE_PLACES_APART,
+                    mechanical_fix: SHARE2_PROVE_THE_HANDLE_PLACES_APART.to_owned(),
                 }
             }
             (SemanticRule::Ref2, ObligationFamily::ReferencePreservation(query)) => {
@@ -738,7 +807,7 @@ impl<'unit> TypeContext<'unit> {
                 SemanticIssueKind::InvalidReferenceUse {
                     binder: use_site.binder.clone(),
                     event: use_site.event,
-                    mechanical_fix: references::REF2_FORM_AGAIN,
+                    mechanical_fix: references::REF2_FORM_AGAIN.to_owned(),
                 }
             }
             (SemanticRule::Ref4, ObligationFamily::RangeFormation) => {
@@ -857,11 +926,22 @@ impl<'unit> TypeContext<'unit> {
                 })
             })
             .collect::<Result<Vec<_>, CheckStop>>()?;
-        let mechanical_fix = repairs::call_requirement(
-            &case,
-            &ranges,
-            repairs::range_goal_shape(&outcome.goal.root),
-        );
+        let captured_index_repair = if outcome.disposition == CallGoalDisposition::Unproved {
+            self.captured_index_requirement_repair(&outcome.goal.root, &outcome.rendered_goal)?
+        } else {
+            None
+        };
+        let mechanical_fix = if let Some(note) = &outcome.lost_header {
+            self.lost_header_repair(function, note)?
+        } else {
+            captured_index_repair.unwrap_or_else(|| {
+                repairs::call_requirement(
+                    &case,
+                    &ranges,
+                    repairs::range_goal_shape(&outcome.goal.root),
+                )
+            })
+        };
         Ok(SemanticIssue {
             rule: SemanticRule::Fn8,
             location,
@@ -877,6 +957,33 @@ impl<'unit> TypeContext<'unit> {
             request: None,
         })
     }
+    /// [REF-1, DIAG-1] read existing capture provenance only after the
+    /// requirement has failed; none of this wording participates in proof.
+    fn captured_index_requirement_repair(
+        &self,
+        goal: &GoalExpression,
+        rendered: &str,
+    ) -> Result<Option<String>, CheckStop> {
+        use super::super::places::{CaptureId, CapturedTerm};
+
+        let Some(index) = repairs::unnameable_element_index(goal) else {
+            return Ok(None);
+        };
+        match (index.capture, index.term) {
+            (CaptureId::Source(occurrence), CapturedTerm::Superseded(_)) => {
+                let node = usize::try_from(occurrence)
+                    .ok()
+                    .and_then(NodeId::from_index)
+                    .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                let spelling = self.declarations.tree.source_spelling(node)?;
+                Ok(Some(repairs::requirement_after_index_write(
+                    rendered, &spelling,
+                )))
+            }
+            _ => Ok(None),
+        }
+    }
+
     /// [REF-4, DIAG-1] one range endpoint as a repair spells it, and whether
     /// a relation can name it. An endpoint no relation names is spelled from
     /// the source occurrence that evaluated it, a field or element read that
@@ -976,7 +1083,9 @@ impl<'unit> TypeContext<'unit> {
                     selector: self.declarations.node_location(&proof.selector)?,
                     relation: exit.residual.clone(),
                     disposition,
-                    mechanical_fix: if self
+                    mechanical_fix: if let Some(note) = &exit.lost_header {
+                        self.lost_header_repair(function, note)?
+                    } else if self
                         .declarations
                         .tree
                         .node_with_path(&exit.statement)
@@ -992,8 +1101,9 @@ impl<'unit> TypeContext<'unit> {
                                 &self.editable_functions()?,
                             ),
                         )
+                        .to_owned()
                     } else {
-                        repairs::propagated_postcondition(repair)
+                        repairs::propagated_postcondition(repair).to_owned()
                     },
                 },
             )),

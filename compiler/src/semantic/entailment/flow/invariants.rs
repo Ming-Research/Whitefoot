@@ -6,6 +6,100 @@ use super::render::BinderSpelling;
 use super::*;
 
 impl Reasoning<'_, '_, '_> {
+    /// Optional transport failures can explain an already failed judgment,
+    /// but cannot supply facts to its state, ledger, or proof memo.
+    pub(super) fn explain_lost_header(
+        &self,
+        state: &ProofFlowState,
+        goals: &[ProofGoal<'_>],
+    ) -> Option<super::super::LostHeaderRelationNote> {
+        state.lost_headers.iter().find_map(|loss| {
+            let mut vocabulary = self.vocabulary.clone();
+            vocabulary.affine_l0_cache = None;
+            let mut explanation = Reasoning {
+                input: self.input,
+                vocabulary: &mut vocabulary,
+            };
+            let mut view = state.clone();
+            let components = match &loss.components {
+                LostHeaderComponents::Frozen(components) => components.clone(),
+                LostHeaderComponents::Exit(relation) => {
+                    let (instance, formed) =
+                        explanation.relation_instance(relation, &view, None).ok()?;
+                    view = formed;
+                    instance.components
+                }
+            };
+            for inequality in &components {
+                let negation = inequality.negated(&mut AffineCheckState::new()).ok()?;
+                if explanation
+                    .prove(
+                        ProofContext::new(&view.facts, &view.affine),
+                        ProofGoal::Affine {
+                            inequality: &negation,
+                            right: None,
+                        },
+                    )
+                    .disposition
+                    == ProofDisposition::Proved
+                {
+                    return None;
+                }
+            }
+            let mut restored = view.affine.clone();
+            restored.facts.extend(components.iter().map(|inequality| {
+                ActiveAffineFact {
+                    inequality: inequality.clone(),
+                    evidence: AffineFactEvidence::Source(
+                        SourceAffineFactRef::LoopInvariant(loss.template),
+                    ),
+                }
+            }));
+            let contradiction = AffineInequality::from_forms(
+                &AffineForm::constant(1),
+                &AffineForm::constant(0),
+                &mut AffineCheckState::new(),
+            )
+            .ok()?;
+            if explanation
+                .prove(
+                    ProofContext::new(&view.facts, &restored),
+                    ProofGoal::Affine {
+                        inequality: &contradiction,
+                        right: None,
+                    },
+                )
+                .disposition
+                == ProofDisposition::Proved
+            {
+                return None;
+            }
+            if !goals.iter().all(|goal| {
+                let proof = explanation.prove(ProofContext::new(&view.facts, &restored), *goal);
+                proof.disposition == ProofDisposition::Proved
+                    && proof.route != Some(ProofRoute::Contradiction)
+            }) {
+                return None;
+            }
+            Some(super::super::LostHeaderRelationNote {
+                name: loss.name.clone(),
+                relation: loss.relation.clone(),
+                conjunct: loss.conjunct.clone(),
+                incoming: loss.incoming.clone(),
+                calls: loss
+                    .kills
+                    .iter()
+                    .map(|kill| MeasureKillNote {
+                        source: kill.source.clone(),
+                        written: self.input.render_place(&kill.written),
+                        measure: self.render_term(kill.term),
+                        narrowable: false,
+                    })
+                    .collect(),
+            })
+        })
+    }
+
     pub(super) fn checked_affine_form(
         &mut self,
         expression: &CheckedAffineExpression,
