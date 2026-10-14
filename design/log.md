@@ -13,6 +13,13 @@ Owner-approved: On the shared status board on 2026-10-13, written in Chinese, th
 
 Summary: A target layout failure caused by a runtime allocation now names the payload type, its size and alignment, the violated target limit with its value, and the nearest writer-written call requiring the allocation, found through the call origins lowering already records, because a writer can repair a source-valid program only from those; an unlocated allocation category, guessing the call from source text or symbol names, and moving target representability into source acceptance were rejected, the last because STOR-6 places it after checking. Allocation obligations are checked before the program-wide layout walk so the failure keeps its allocation; every check still runs before emission and the failure cites no source-language rule.
 
+## 2026-10-13 One release classification decides whether release does work, and key sets and concurrent hash maps release runtime storage
+
+Nodes: compiler/cleanup-traversal, language/ownership/linearity, language/waiting/shared-objects/keyed-tables
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve Ming-Research/Whitefoot#437 (head 47003fdd5)'s specification revision and design-tree change: key sets and concurrent hash maps count as types whose release does work?" (translated), adding the comment that the root cause is that the checker does not know which values hold runtime resources and that adding exceptions one by one is a stopgap (translated); that broader question is recorded as its own board item.
+
+Summary: Semantic tail-transfer eligibility and backend cleanup emission read one cycle-safe type-release classification instead of separate lists in the checker, the IR and the backend, which had diverged and let a KeySet's release pass as empty; the parallel mode's broader storage-reclaim question derives from the same shapes and stays conservative. Release-action emptiness follows the actions a type can execute, so a constant-zero Array, Slots or Ring contributes no element action while its element type keeps its linearity obligation. A KeySet returns its runtime-held storage on release and a ConcurrentHashMap releases its held values and then returns its storage, independently of their declared fields.
 ## 2026-10-13 The range walk checks every object partition of possibly aliased atomic targets
 
 Nodes: compiler/range-judgment
