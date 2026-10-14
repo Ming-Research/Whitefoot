@@ -250,13 +250,17 @@ fn hash_map_operations_preserve_owned_pairs_in_both_lowering_modes() {
         "containers/hash-map-program.wf",
         include_bytes!("../../../tests/programs/containers/hash-map-program.wf"),
     )];
-    // Seventeen map backings, ten payload/query child Boxes, and one fresh
+    // Before the home-bucket chains: seventeen map backings, ten payload/query child Boxes, and one fresh
     // Box returned by the borrowed edit callback and consumed by its caller.
     // The growth case adds ten backings: a map of eight buckets, its doubled
     // and its same-capacity rebuild, a map of three buckets and its doubled
     // rebuild, two maps of sixteen buckets, one doubled and one rebuilt at the
-    // same capacity, and a map at its ceiling that is not rebuilt.
-    execute_container_program("hash-map", &sources, 38, false);
+    // same capacity, and a map at its ceiling that is not rebuilt: 38 in all.
+    // Every HashMap now also owns a link array and a head array, capacity growth
+    // reallocates both, and the resumable-scan case builds maps of up to 512
+    // slots, so the observed total is 120; the count is read from the CI
+    // observer, not derived.
+    execute_container_program("hash-map", &sources, 120, false);
 }
 
 #[test]
