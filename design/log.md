@@ -13,6 +13,13 @@ Owner-approved: On the shared status board on 2026-10-13, written in Chinese, th
 
 Summary: The final job "Gate on both platforms" failed one pull request four times while every group was green, twice on HTTP 502 or 504 answers and twice on listings that lacked jobs which had passed, and on this branch a duplicate run cancelled one second after the run it duplicated had finished a job made that cancellation the latest entry. The job now retries each GitHub query up to five times with doubling waits, lists runs and jobs again up to four times while an expected job has no entry, leaves cancelled jobs out, and fails at once on any job whose latest completed run did not succeed and on a job still absent after the last listing. Refused: trusting one listing and re-running the whole run on an API error, and listing again after a failure.
 
+## 2026-10-13 One release classification decides whether release does work, and key sets and concurrent hash maps release runtime storage
+
+Nodes: compiler/cleanup-traversal, language/ownership/linearity, language/waiting/shared-objects/keyed-tables
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve Ming-Research/Whitefoot#437 (head 47003fdd5)'s specification revision and design-tree change: key sets and concurrent hash maps count as types whose release does work?" (translated), adding the comment that the root cause is that the checker does not know which values hold runtime resources and that adding exceptions one by one is a stopgap (translated); that broader question is recorded as its own board item.
+
+Summary: Semantic tail-transfer eligibility and backend cleanup emission read one cycle-safe type-release classification instead of separate lists in the checker, the IR and the backend, which had diverged and let a KeySet's release pass as empty; the parallel mode's broader storage-reclaim question derives from the same shapes and stays conservative. Release-action emptiness follows the actions a type can execute, so a constant-zero Array, Slots or Ring contributes no element action while its element type keeps its linearity obligation. A KeySet returns its runtime-held storage on release and a ConcurrentHashMap releases its held values and then returns its storage, independently of their declared fields.
 ## 2026-10-13 The range walk checks every object partition of possibly aliased atomic targets
 
 Nodes: compiler/range-judgment
