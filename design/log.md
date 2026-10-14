@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 the owner's agent instructions own the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-13 Range terms are formed over exact integers and narrowed to i128 only at the end
+
+Nodes: compiler/range-judgment
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the design-tree change of #477 (head 62423aec5): range terms are normalized over exact integers, narrowed to i128 only at the end, and report 'not yet supported' when they do not fit?" (translated).
+
+Summary: The range judgment formed range terms with saturating i128 arithmetic, so a term whose intermediate product passed i128 while its normalized value fit was clamped and the checker decided a different clause from the one written: on main a postcondition false for every u64 was accepted and one true for every u64 was rejected. Range terms are now formed and normalized over exact integers, only the final coefficients and constant are narrowed to i128, and a final value outside i128, like any overflow of the judgment's own checked arithmetic, stops as the unsupported range-arithmetic capability. Saturating intermediates were rejected because they decide a different clause; checking i128 at every formation step was rejected because the limit would depend on how the writer associated the term.
+
 ## 2026-10-13 One release classification decides whether release does work, and key sets and concurrent hash maps release runtime storage
 
 Nodes: compiler/cleanup-traversal, language/ownership/linearity, language/waiting/shared-objects/keyed-tables
