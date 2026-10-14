@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 the owner's agent instructions own the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-14 An enum's route states are computed only for values a later reader demands
+
+Nodes: compiler/checker-facts
+
+Owner-approved: On the shared status board on 2026-10-14, written in Chinese, the owner chose option A, "approve the revision" (translated), on the card "approve changing the design-tree decision 'when an enum's per-branch conditional state is established' to 'only for values something later reads'? (#459, head 689967dba)" (translated).
+
+Summary: Per-branch ensures for own enums established route states wherever evidence arose, so programs writing no such ensures paid for snapshots, closures and joins of states nothing read; constructing one variant stored a context for every field of the other variants, and the Halo VM test host's check grew from about 2 s to about 630 s. The checker now collects, alongside binding types, which values a later match, error propagation, routed ensures or nested routed requirement reads, and omits conditional-state computations with no reachable reader; a read value keeps every version and every source through copies, assignments and `give`, and a routed call still establishes the root that diagnostics require. Establishing states at every evidence site regardless of readers is rejected because the omitted work feeds no proof and no required diagnostic root. Interleaved hosted-runner timings: Halo VM module 1.025x and Firn 0.978x against the revision before per-branch ensures, Halo VM test host 1.005x against wf-d837678c6905.
+
 ## 2026-10-13 A postcondition's places are formed at each selected return and a formal offset is substituted at each call
 
 Nodes: language/checks-and-proofs/requires-entry-contract
