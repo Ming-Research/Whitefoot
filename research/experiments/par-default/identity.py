@@ -937,6 +937,11 @@ def skeleton(lines):
             first, second = operands
             if (_register(first) and (_register(second) or _slot(second))) or (_slot(first) and _register(second)):
                 continue
+        if head in ('movaps', 'movapd', 'movdqa', 'movups', 'movupd', 'movdqu') and len(operands) == 2:
+            first, second = operands
+            if ((first.startswith('%xmm') and (second.startswith('%xmm') or _slot(second)))
+                    or (_slot(first) and second.startswith('%xmm'))):
+                continue
         kept.append((at, line))
     kept_at = [at for at, _ in kept]
     result = []
@@ -1775,7 +1780,8 @@ def _classify_construction(record, wrapper, selected_roots, writer_evidence, inv
     pool = dispatch.get('pool_decisions_per_timed_call')
     accounting = record.get('versioned_region_accounting', {})
     accounted = {function for function, kind in accounting.items()
-                 if kind == 'outside-timed-path' or kind == 'indirect-clone-compared'
+                 if kind in ('outside-timed-path', 'clone-inlined-into-compared-body')
+                 or kind == 'indirect-clone-compared'
                  and 'wf__par_seq_' + function.removeprefix('wf_') in compared}
     path = record.get('entry_version_active_path', {})
     entry_version_path = (path.get('verified') is True
@@ -1915,7 +1921,10 @@ def check_workload(name, build):
                         'state_preservation': 'unverified; CFG selection does not establish ABI preservation'}
                     record['entry_adapter_provenance'] = provenance
                 if diff:
-                    failure(wrapper, 'normalized timed sequential wrapper differs', diff)
+                    skeleton_diff = skeleton_difference(left, right)
+                    failure(wrapper, 'normalized timed sequential wrapper differs',
+                            dict(diff, **({'skeleton_difference': skeleton_diff, 'skeleton_lengths': [len(skeleton(left)), len(skeleton(right))]}
+                                          if skeleton_diff else {})))
                 else:
                     # Text equality after deleting a call cannot prove that
                     # live caller-clobbered values or flags survive that call.
@@ -1972,6 +1981,10 @@ def check_workload(name, build):
             # unreachable from the wrapper, or reachable with its sequential
             # clone compared above; anything else stays a failure.
             reach = ir_call_reach(ir, wrapper)
+            machine_calls = set()
+            for function in {wrapper, *seen}:
+                if function in demand:
+                    machine_calls |= direct_calls(demand[function], functions=demand)
             accounting = {}
             for function in sorted(inventory - covered):
                 clone = 'wf__par_seq_' + function.removeprefix('wf_')
@@ -1979,6 +1992,10 @@ def check_workload(name, build):
                     accounting[function] = 'outside-timed-path'
                 elif clone in seen:
                     accounting[function] = 'indirect-clone-compared'
+                elif clone not in machine_calls:
+                    # Reachable in IR, but no compared function calls its clone:
+                    # the optimizer inlined it into a compared body.
+                    accounting[function] = 'clone-inlined-into-compared-body'
             record['versioned_region_accounting'] = accounting
             if inventory != covered | set(accounting):
                 failure(wrapper, f'versioned regions not covered: {sorted(inventory - covered - set(accounting))}')
@@ -2005,7 +2022,13 @@ def check_workload(name, build):
                     try:
                         exit_at, kind = clone_transfer(instructions, clone)
                     except IdentityError as error:
-                        failure(function, f'unsupported optimized cheap-region shape: {error}')
+                        addresses = {insn.address for insn in instructions}
+                        failure(function, f'unsupported optimized cheap-region shape: {error}', {'diagnostic': {
+                            'clone': clone, 'instruction_count': len(instructions),
+                            'external_transfers': sorted({f'{insn.mnemonic} {target(insn)[1]}' for insn in instructions
+                                                          if insn.mnemonic in ('jmp', 'call') and target(insn)
+                                                          and target(insn)[0] not in addresses}),
+                            'instructions': [f'{insn.mnemonic} {insn.operands}'[:90] for insn in instructions[:120]]}})
                         shapes_ok = False
                         continue
                     prefix = {node for node in reachable(edges) if exit_at in reachable(edges, node)}
@@ -2061,6 +2084,13 @@ def shape_self_test():
     for name, lines in wrong.items():
         if skeleton_difference(seq, lines) is None:
             raise IdentityError(f'shape self-test accepted a wrong shape: {name}')
+
+    if skeleton_difference(['movaps %xmm0,%xmm1', 'addsd %xmm1,%xmm2', 'movaps %xmm2,0x10(%rsp)', 'ret'],
+                           ['addsd %xmm0,%xmm3', 'ret']) is not None:
+        raise IdentityError('shape self-test rejected vector register copies')
+    if skeleton_difference(['movaps %xmm0,%xmm1', 'addsd %xmm1,%xmm2', 'ret'],
+                           ['mulsd %xmm0,%xmm3', 'ret']) is None:
+        raise IdentityError('shape self-test accepted a changed vector operation')
 
     def code(*rows):
         return [Instruction(address, mnemonic, operands) for address, mnemonic, operands in rows]
@@ -2242,7 +2272,9 @@ def main():
     output.write_text(json.dumps(result, indent=2) + '\n')
     for record in records.values():
         for failure in record['failures']:
-            print(f"{failure['workload']} / {failure['function']} [{failure['category']}]: {failure['reason']}" + (f"; instruction {failure['instruction']}: seq={failure['seq']!r}, demand={failure['demand']!r}" if 'instruction' in failure else ''))
+            print(f"{failure['workload']} / {failure['function']} [{failure['category']}]: {failure['reason']}" + (f"; instruction {failure['instruction']}: seq={failure['seq']!r}, demand={failure['demand']!r}" if 'instruction' in failure else '')
+                  + (f"; skeleton difference {failure['skeleton_difference']} of lengths {failure['skeleton_lengths']}" if 'skeleton_difference' in failure else '')
+                  + (f"; transfers {failure['diagnostic']['external_transfers']}, {failure['diagnostic']['instruction_count']} instructions" if 'diagnostic' in failure else ''))
     for category, rows in categories.items():
         print(f"{category}: {len(rows)} evidenced differences")
     print('Cold support boundary: wf_resource_record_abort; common IR/call inventory proved, writer machine identity excluded')
