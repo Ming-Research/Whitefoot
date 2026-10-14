@@ -1,0 +1,22 @@
+// Class 1 probe (shared-object-model): the one-object form of the conformance
+// case share-neg-targets-same-type-one-call. The two counters are two fields
+// of one shared state instead of two objects. Expected today: accepted, since
+// two distinct fields below one root are disjoint [OWN-7].
+struct Pair {
+  first: u8;
+  second: u8;
+}
+
+fn bump_both(first: &u8, second: &u8) -> result: unit writes(first), writes(second) {
+  set first^ = first^ +wrap 1_u8;
+  set second^ = second^ +wrap 1_u8;
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let h = shared_new::<Pair>(value: Pair(first: 2_u8, second: 3_u8));
+  atomic s = &h {
+    bump_both(first: &s^.first, second: &s^.second);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

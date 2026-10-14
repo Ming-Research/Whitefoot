@@ -1,0 +1,17 @@
+// Class 1 probe (shared-object-model): the one-object form of Firn's
+// clear_both, two concurrent hash maps as an array field of one state. The
+// one-object model needs this; today TYPE-9 admits a map only as the whole
+// state of a shared object. Expected today: rejected citing TYPE-9.
+struct Databases {
+  dbs: Array<ConcurrentHashMap<u64>, 2>;
+}
+
+fn clear_both(first: &ConcurrentHashMap<u64>, second: &ConcurrentHashMap<u64>) -> result: unit writes(first), writes(second) {
+  map_clear::<u64>(map: first);
+  map_clear::<u64>(map: second);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  return std::process::exit_status(code: 0_u8);
+}

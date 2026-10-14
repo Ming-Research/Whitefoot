@@ -1,0 +1,8 @@
+p1-one-object-fields.wf	accept	OWN-7 (two fields of one root)
+p1-maps-as-fields.wf	reject	TYPE-9 (a map only as a whole state)
+p3-local-control.wf	accept	TYPE-11 (control)
+p3-held-reader.wf	accept	TYPE-11 (whole struct target sealed at block entry)
+p3-frozen-reader.wf	reject	OP or ENT obligation at the subtraction (board prediction)
+p3-entry-reader.wf	reject	OP or ENT obligation at the subtraction (board prediction)
+p4-park.wf	reject	FN-2 (Shared<T: drop>)
+p5-bump.wf	accept	SHARE-2 and WAIT-1 (atomic in a waiting function)

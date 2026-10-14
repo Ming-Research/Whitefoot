@@ -1,0 +1,22 @@
+// Class 3 control (shared-object-model): the same reader over a local value.
+// Expected today: accepted. If this is rejected, the frozen and held probes
+// say nothing about shared state.
+struct Window {
+  next: u64;
+  len: u64;
+  invariant(w): w^.next <= w^.len;
+}
+
+fn remaining(w: &Window) -> result: u64 reads(w) {
+  let r = w^.len - w^.next;
+  return r;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let w = Window(next: 1_u64, len: 4_u64);
+  let r = remaining(w: &w);
+  if r != 3_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

@@ -1,0 +1,25 @@
+// Class 4 probe (shared-object-model): a value that must be closed
+// explicitly (a nodrop struct, standing for a write file handle) parked in a
+// shared object. Expected today: rejected, since Shared<T> requires T: drop.
+nodrop struct Ticket {
+  n: u64;
+}
+
+fn close_ticket(t: Ticket) -> result: u64 pure {
+  let Ticket(n: n) = t;
+  return n;
+}
+
+fn park(t: Ticket) -> slot: Shared<Option<Ticket>> pure {
+  let present = Some<Ticket>(value: t);
+  return shared_new::<Option<Ticket>>(value: present);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let t = Ticket(n: 1_u64);
+  let n = close_ticket(t: t);
+  if n != 1_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}
