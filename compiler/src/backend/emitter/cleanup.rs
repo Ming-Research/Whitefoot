@@ -216,19 +216,24 @@ pub(super) fn program_uses_shared(program: &IrProgram) -> Result<bool, BackendFa
 /// The runtime's shared-object entries (`completion/bridge.h`).
 pub(super) fn shared_runtime_declarations() -> Module {
     let mut module = Module::default();
-    let declarations: [(&str, &str, &[&str]); 43] = [
+    let declarations: [(&str, &str, &[&str]); 49] = [
         ("wf__frozen_new", "ptr", &["i64"]),
         ("wf__frozen_share", "void", &["ptr"]),
         ("wf__frozen_release", "i32", &["ptr"]),
         ("wf__frozen_free", "void", &["ptr"]),
         ("wf__shared_new", "ptr", &["i64"]),
+        ("wf__decision_cell_new", "ptr", &[]),
+        ("wf__decision_cell_read", "i32", &["ptr"]),
+        ("wf__claim_written", "i32", &["ptr"]),
+        ("wf__claim_killed", "i32", &["ptr"]),
         ("wf__shared_share", "void", &["ptr"]),
         ("wf__shared_release", "i32", &["ptr"]),
         ("wf__shared_free", "void", &["ptr"]),
         ("wf__shared_acquire", "i32", &["ptr", "i32", "ptr"]),
         ("wf__shared_unlock", "void", &["ptr", "i32"]),
+        ("wf__shared_unlock_unwritten", "void", &["ptr", "i32"]),
         ("wf__shared_take", "void", &["ptr", "i32"]),
-        ("wf__shared_watch", "i32", &["ptr", "i32", "ptr"]),
+        ("wf__shared_watch", "i32", &["ptr", "i32", "ptr", "ptr"]),
         ("wf__shared_map_new", "ptr", &["i64", "i64", "i64"]),
         (
             "wf__keyed_table_count",
@@ -264,6 +269,7 @@ pub(super) fn shared_runtime_declarations() -> Module {
         ),
         ("wf__table_unlock_entry", "void", &["ptr", "i32"]),
         ("wf__atomic_group_take", "void", &["ptr", "i64"]),
+        ("wf__atomic_group_acquire", "i32", &["ptr", "i64", "ptr"]),
         (
             "wf__atomic_group_release",
             "void",
@@ -293,7 +299,7 @@ pub(super) fn shared_runtime_declarations() -> Module {
         ("wf__key_set_free", "void", &["ptr"]),
         ("wf__key_set_read_key", "i64", &["ptr", "i64", "ptr", "i64"]),
         ("wf__watch_begin", "void", &["ptr"]),
-        ("wf__watch_object", "void", &["ptr", "ptr"]),
+        ("wf__watch_object", "void", &["ptr", "ptr", "ptr"]),
         ("wf__watch_table", "void", &["ptr", "ptr"]),
         ("wf__watch_park", "i32", &["ptr", "ptr"]),
     ];

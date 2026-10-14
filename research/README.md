@@ -133,6 +133,13 @@ the work-branch and merge boundary.
   the question, comparison and rejection criteria, fixed before any
   measurement, for a model of description plus identity covering the five
   classes of shared-object conflict.
+- [Atomic targets as one form](investigations/atomic-targets/DESIGN.md): the
+  target forms of the atomic statement designed together, present and
+  pending (entries, key sets, shards, the atomic value, a target held only
+  when a condition holds, a guard wait with a deadline), with three ways to
+  place the condition, Firn's programs under each, other languages' designs
+  and failures, and the recommendation of a per-target condition in the
+  header.
 - [Meta commit](investigations/meta-commit/README.md): whether two atomic
   statements on different keys of a shared map compute at the same time and
   meet only when each takes the next sequence number from a shared Meta object

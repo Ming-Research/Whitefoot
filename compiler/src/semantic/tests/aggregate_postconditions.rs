@@ -704,7 +704,9 @@ fn main() -> status: std::process::ExitStatus pure {
     assert_rule(
         none_route,
         SemanticRule::Fn9,
-        SemanticIssueKind::invalid_postcondition_selector(),
+        SemanticIssueKind::InvalidPostconditionFields {
+            required_fields: Vec::new(),
+        },
     );
 
     let unproved = br#"fn find(limit: u64) -> result: Option<u64> pure contract {

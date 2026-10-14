@@ -1,0 +1,21 @@
+fn first(depth: u64) -> done: u64 pure contract {
+  ensures done == 1_u64;
+} {
+  if depth > 0_u64 {
+    let next = depth - 1_u64;
+    let inner = second(depth: next);
+    return inner;
+  }
+  return 1_u64;
+}
+
+fn second(depth: u64) -> done: u64 pure contract {
+  ensures done == 1_u64;
+} {
+  if depth > 0_u64 {
+    let next = depth - 1_u64;
+    let inner = first(depth: next);
+    return inner;
+  }
+  return 2_u64;
+}

@@ -245,8 +245,10 @@ pub(crate) struct CheckedRangePostcondition {
 pub(crate) struct CheckedRangeRoute {
     /// The result ordinal the route names.
     pub(crate) ordinal: u32,
-    /// The tag of its success variant V.
+    /// The tag of its variant V.
     pub(crate) tag: u32,
+    /// The selected field in declaration order.
+    pub(crate) field: u32,
     /// The type of V's payload, which [`CheckedRangeRoot::Result`] of that
     /// ordinal names.
     pub(crate) payload: CheckedType,

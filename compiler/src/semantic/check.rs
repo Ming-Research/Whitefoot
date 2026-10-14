@@ -3,6 +3,7 @@ mod behavior;
 mod cleanup;
 mod contract_reads;
 mod control;
+mod decision_cell;
 mod effect_repairs;
 mod ensures;
 pub(in crate::semantic::check) mod expressions;
@@ -11,6 +12,7 @@ mod frozen;
 mod generics;
 mod inventory;
 mod linearity;
+mod lock_ledger_sources;
 mod nominal_instances;
 mod nominals;
 mod obligations;
@@ -535,11 +537,14 @@ enum PreludeType {
     DivError,
     NarrowError,
     ScanStep,
+    DecisionState,
 }
 
 /// Source declarations and syntax shared read-only by preflight and body checking.
 struct DeclarationInventory<'unit> {
     resolved: &'unit ResolvedSyntaxUnit,
+    /// Lazily indexed source lines for non-normative lock-ledger locations.
+    ledger_line_starts: lock_ledger_sources::SourceLines,
     /// [STOR-8, GRAM-2] whether this compilation unit wrote `program
     /// no_heap;`.
     ///
@@ -910,6 +915,7 @@ impl<'unit> DeclarationInventory<'unit> {
         let no_heap = Checker::declares_no_heap(&tree)?;
         Ok(Self {
             resolved,
+            ledger_line_starts: Default::default(),
             tree,
             no_heap,
         })
@@ -1306,6 +1312,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             .map(|signature| {
                 Ok(PermissionSignature {
                     name: signature.name.clone(),
+                    decision_cell: self.types.decision_cell_boundary(signature.id)?,
                     parameter_declarations: signature
                         .parameters
                         .iter()
@@ -1338,6 +1345,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         let optimistic_batch = function_inventory.iter().any(|checked| {
             ordinary[checked.function.id.0 as usize]
                 && (!checked.function.postconditions.is_empty()
+                    || !checked.function.range_facts.postconditions.is_empty()
                     || Checker::statements_contain_value_if(
                         checked.function.body.as_deref().unwrap_or_default(),
                     ))
@@ -1403,12 +1411,12 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                     Err(stop) => return Err(stop),
                 }
             }
-            // Every accepted fresh analysis is kept, whether or not another
-            // function's rejection fails this check [MOD-8].
+            // An accepted component's fresh analyses are kept even when
+            // another component fails this check [MOD-8].
             for (index, judged) in ranges.iter().enumerate() {
                 rejected[index] |= !judged.issues.is_empty();
             }
-            self.record_receipts(&baseline_functions, &rejected);
+            self.record_receipts(&baseline_functions, &rejected, &postcondition_schedule);
             rejections.sort_by(|left, right| {
                 left.0
                     .components()
@@ -1511,6 +1519,11 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             Vec::new()
         };
 
+        let lock_ledger_sources = self
+            .types
+            .declarations
+            .lock_ledger_sources(&functions, &executable_functions);
+
         Ok(CheckedProgramData {
             nominals: self.types.nominals.clone(),
             nominal_confinement: self
@@ -1553,6 +1566,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             generic_requirements: self.analysis.generic_requirements.clone(),
             permission,
             permission_ledger,
+            lock_ledger_sources,
         })
     }
 
