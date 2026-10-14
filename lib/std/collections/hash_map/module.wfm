@@ -19,17 +19,13 @@ public enum HashMapPut<K, V> {
   HashMapReturned(public reason: HashMapReturnReason, public pair: HashMapPair<K, V>);
 }
 
-public enum HashMapAction {
-  HashMapStop();
-  HashMapSkip();
-  HashMapMiss();
-  HashMapMatch();
-}
-
 public struct HashMap<K, V, const ceiling: u64> {
   public readonly cells: Box<Slots<HashMapSlot<K, V>>>;
   public readonly length: u64;
-  public readonly vacated: u64;
+  public readonly links: Box<Slots<u64>>;
+  public readonly heads: Box<Slots<u64>>;
+  public readonly reuse: u64;
+  public readonly shift: u32;
 }
 
 public interface HashMapKey<K, E> {
@@ -43,11 +39,11 @@ public interface HashMapConsume<K, V, E> {
 
 public fn hash_map_new<K, V, const ceiling: u64>(capacity: u64) -> result: HashMap<K, V, ceiling> pure contract {
   requires capacity <= ceiling;
-} doc "The ceiling is the maximum public capacity: reserve and automatic growth never exceed it. Rebuild can change bucket positions; no stable index or address is promised. Ordinary map semantics require hashing, equality, and their per-call environments to retain one consistent key protocol while entries remain stored, including equal hashes for equivalent keys. These laws are not source-admission prerequisites: ownership safety and finite probe bounds hold even when they are inconsistent, provided callbacks return.";
+} doc "The ceiling is the maximum public capacity: reserve and automatic growth never exceed it. Capacity counts the slots that can hold pairs; a separate power-of-two array of chain heads, rebuilt whenever capacity grows, puts each key in the chain of its home bucket. A stored pair stays in its slot while it stays in the map, but no stable index or address is promised. Ordinary map semantics require hashing, equality, and their per-call environments to retain one consistent key protocol while entries remain stored, including equal hashes for equivalent keys. These laws are not source-admission prerequisites: ownership safety and finite chain bounds hold even when they are inconsistent, provided callbacks return.";
 
 public fn hash_map_len<K, V, const ceiling: u64>(map: &HashMap<K, V, ceiling>) -> length: u64 reads(map) doc "Reports the number of pairs the map holds.";
 
-public fn hash_map_capacity<K, V, const ceiling: u64>(map: &HashMap<K, V, ceiling>) -> capacity: u64 reads(map) doc "Capacity counts the materialized buckets available to probing.";
+public fn hash_map_capacity<K, V, const ceiling: u64>(map: &HashMap<K, V, ceiling>) -> capacity: u64 reads(map) doc "Capacity counts the slots available to pairs.";
 
 public fn hash_map_lookup<interface HashMapKey<K, E>, V, F, R, fn observe(env: &F, key: &K, value: &V) -> result: R reads(key), reads(value), writes(env), const ceiling: u64>(map: &HashMap<K, V, ceiling>, key: &K, key_env: &E, visit_env: &F) -> result: Result<R, unit> reads(map), reads(key), reads(key_env), writes(visit_env) doc "Lends the value stored under key, with that key, to observe and returns its owned result in Ok; Err reports an absent key. Hash and equality come from the key binding.";
 
@@ -61,15 +57,17 @@ public fn hash_map_try_put<interface HashMapKey<K, E>, V, const ceiling: u64>(ma
   ensures map^.cells.inner.cap == entry(map)^.cells.inner.cap;
 } doc "Inserts an owned pair within the current capacity, never growing it: HashMapInserted, or HashMapReturned with HashMapReplaced and the old pair, or HashMapFull and the offered pair.";
 
-public fn hash_map_reserve<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &HashMap<K, V, ceiling>, capacity: u64, env: &E) -> result: Result<unit, unit> reads(env), writes(map) doc "Rebuilds the map to at least capacity buckets within its ceiling; a no-op at or below the current capacity, and Err for a request above the ceiling. Below its ceiling, hash_map_put rebuilds the map again once three quarters of those buckets are filled or vacated.";
+public fn hash_map_reserve<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &HashMap<K, V, ceiling>, capacity: u64, env: &E) -> result: Result<unit, unit> reads(env), writes(map) doc "Raises the capacity to the requested number of slots within its ceiling, keeping every pair in its slot; a no-op at or below the current capacity, and Err for a request above the ceiling. Below its ceiling, hash_map_put raises the capacity again, to twice, when every slot is taken.";
 
-public fn hash_map_rehash<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &HashMap<K, V, ceiling>, env: &E) -> result: Result<unit, unit> reads(env), writes(map) doc "Rebuilds the map at its current capacity, keeping every pair.";
+public fn hash_map_rehash<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &HashMap<K, V, ceiling>, env: &E) -> result: Result<unit, unit> reads(env), writes(map) doc "Rebuilds the chain heads at the current bucket count, keeping every pair.";
 
-public fn hash_map_put<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &HashMap<K, V, ceiling>, key: K, value: V, env: &E) -> result: HashMapPut<K, V> reads(env), writes(map) doc "Inserts an owned pair, first rebuilding a map below its ceiling whose filled and vacated buckets already number three quarters or more of its buckets: at the same capacity when fewer than half that mark, rounded down, are filled, and otherwise from zero buckets to one or at twice its buckets, saturating at the ceiling. A map at its ceiling is not rebuilt. HashMapInserted, or HashMapReturned with HashMapReplaced and the old pair, or HashMapFull and the offered pair.";
+public fn hash_map_put<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &HashMap<K, V, ceiling>, key: K, value: V, env: &E) -> result: HashMapPut<K, V> reads(env), writes(map) doc "Inserts an owned pair, first raising the capacity of a map below its ceiling whose slots are all taken: from zero slots to one, else to twice, saturating at the ceiling. A map at its ceiling is not raised. HashMapInserted, or HashMapReturned with HashMapReplaced and the old pair, or HashMapFull and the offered pair.";
 
 public fn hash_map_remove<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &HashMap<K, V, ceiling>, key: &K, env: &E) -> result: Option<HashMapPair<K, V>> reads(key), reads(env), writes(map) doc "Removes the pair stored under key and returns it owned; None reports an absent key.";
 
 public fn hash_map_each<K, V, E, fn visit(env: &E, key: &K, value: &V) -> result: unit reads(key), reads(value), writes(env), const ceiling: u64>(map: &HashMap<K, V, ceiling>, env: &E) -> result: unit reads(map), writes(env) doc "Lends every stored pair to visit, in no promised order.";
+
+public fn hash_map_scan<K, V, E, fn visit(env: &E, key: &K, value: &V) -> result: unit reads(key), reads(value), writes(env), const ceiling: u64>(map: &HashMap<K, V, ceiling>, cursor: u64, limit: u64, env: &E) -> result: u64 reads(map), writes(env) doc "Resumable scan. The cursor is a position in the mixed hash space: zero starts a pass, any value is accepted, and the returned cursor continues it, with zero meaning the pass is complete. The call lends to visit every pair of up to limit consecutive home buckets, each bucket's whole chain, in hash-position order, then returns the position after the last bucket. Empty buckets count toward the limit, so a call can report no pair and still advance. The last chain is never cut, so one call can exceed limit pairs when many keys share a home bucket; the limit is a hint for work, not a cap on pairs. Between calls the map may change in any way: every pair present from the start of a pass to its completion is lent at least once, a pair can be lent again after the bucket count changes, and a pair inserted or removed during the pass may or may not be lent. A limit of zero returns the cursor unchanged.";
 
 public fn hash_map_pair_consume<interface HashMapConsume<K, V, E>>(pair: HashMapPair<K, V>, env: &E) -> result: unit writes(env) doc "Consumes one pair through the consume binding, key and value alike.";
 

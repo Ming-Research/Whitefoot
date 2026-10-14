@@ -21,7 +21,7 @@ modules checked like any other; their interfaces are their documentation.
 | [`std::collections::vector`](collections/vector/module.wfm) | Reserve, growing append, indexed insertion/removal, and ordered consumption over `Box<Slots<T>>`. |
 | [`std::collections::deque`](collections/deque/module.wfm) | Reference-taking endpoints, logical visitation and drain over `Box<Ring<T>>`; explicit consuming rebase produces a new backing. No automatic endpoint growth or zero-copy two-span interface. |
 | [`std::collections::slab`](collections/slab/module.wfm) | One bounded backing with lazily materialized slots, generation handles, borrowed lookup/edit, reuse, expiry, exhaustion returning the offered owner, and explicit consumption. Handles are relative to the supplied slab. |
-| [`std::collections::hash_map`](collections/hash_map/module.wfm) | Generic owning keys and values with supplied hash/equality, growing insertion, removal, borrowed lookup/edit, rehash, and explicit consumption. No stable bucket index or payload address. |
+| [`std::collections::hash_map`](collections/hash_map/module.wfm) | Generic owning keys and values with supplied hash/equality, growing insertion, removal, borrowed lookup/edit, rehash, resumable bounded scan, and explicit consumption. No stable bucket index or payload address. |
 | [`std::collections::priority_queue`](collections/priority_queue/module.wfm) | Growing boxed binary heap with supplied comparison, proved-nonempty borrowed peek and owning pop/replacement, bottom-up heapify, ordered drain, and explicit final consumption. Indexed operations additionally report resident positions and support arbitrary-position removal/replacement. |
 | [`std::collections::ordered_map`](collections/ordered_map/module.wfm) | Owning B-tree with supplied ordering, insertion/replacement, complete deletion and rebalancing, borrowed lookup/edit, ordered and bounded-range visitation, and explicit consumption. |
 
@@ -44,14 +44,16 @@ disjoint from the Slab's cells under the ordinary effect-path rules.
 capacity. `hash_map_put` returns `HashMapInserted` or `HashMapReturned`, whose
 fields are `reason` and `pair`: `HashMapReplaced` returns the old complete pair
 after installing the offered pair, and `HashMapFull` returns the offered pair.
-`hash_map_try_put` keeps the current capacity. `hash_map_put` first rebuilds a
-map below its ceiling once its filled buckets and the buckets removals vacated
-number three quarters or more of its buckets: at the same capacity when fewer
-than half that mark, rounded down, are filled, and otherwise from zero buckets
-to one or at twice its buckets, saturating at the ceiling; a map at its ceiling
-is not rebuilt, so its vacated buckets remain until `hash_map_rehash`.
-`hash_map_reserve` is a no-op at or below current capacity and refuses requests
-above the ceiling; `hash_map_rehash` rebuilds at the same capacity. Capacity
+`hash_map_try_put` keeps the current capacity. `hash_map_put` first doubles the
+capacity of a map below its ceiling whose slots are all taken, from none to
+one, saturating at the ceiling; removals return slots for reuse, so a map that
+removes as often as it inserts does not grow. `hash_map_reserve` raises
+capacity in place, is a no-op at or below current capacity and refuses requests
+above the ceiling; `hash_map_rehash` rebuilds the chain heads. `hash_map_scan`
+resumes from a cursor and visits the chains of at most `limit` home buckets per
+call: zero starts a pass and ends it, a pair present throughout a pass is lent
+at least once whatever happens between calls, and a pair may be lent again. The
+last chain is never cut, so a call can lend more than `limit` pairs. Capacity
 refusal is not an allocation-failure outcome.
 
 `hash_map_lookup` and `hash_map_each` borrow stored pairs for callbacks.

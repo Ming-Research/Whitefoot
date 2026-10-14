@@ -250,13 +250,17 @@ fn hash_map_operations_preserve_owned_pairs_in_both_lowering_modes() {
         "containers/hash-map-program.wf",
         include_bytes!("../../../tests/programs/containers/hash-map-program.wf"),
     )];
-    // Seventeen map backings, ten payload/query child Boxes, and one fresh
+    // Before the home-bucket chains: seventeen map backings, ten payload/query child Boxes, and one fresh
     // Box returned by the borrowed edit callback and consumed by its caller.
     // The growth case adds ten backings: a map of eight buckets, its doubled
     // and its same-capacity rebuild, a map of three buckets and its doubled
     // rebuild, two maps of sixteen buckets, one doubled and one rebuilt at the
-    // same capacity, and a map at its ceiling that is not rebuilt.
-    execute_container_program("hash-map", &sources, 38, false);
+    // same capacity, and a map at its ceiling that is not rebuilt: 38 in all.
+    // Every HashMap now also owns a link array and a head array, capacity growth
+    // reallocates both, and the resumable-scan case builds maps of up to 512
+    // slots, so the observed total is 120; the count is read from the CI
+    // observer, not derived.
+    execute_container_program("hash-map", &sources, 120, false);
 }
 
 #[test]
@@ -284,13 +288,17 @@ fn indexed_memberships_match_the_model_and_release_every_owner_in_both_lowering_
             include_bytes!("../../../tests/programs/containers/indexed-membership-program.wf"),
         ),
     ];
-    // Four policy/payload traces each allocate six initial store backings,
+    // Before the home-bucket chains the four policy/payload traces allocated
+    // six initial store backings each,
     // eight index growth backings and fifteen payload Boxes: 116 total.
     // Capacity/refusal, retirement and zero capacity add nine backings;
     // direct indexed heapify adds one; the nodrop SlabEdit result adds one
-    // backing and two payload Boxes. The source model independently checks
+    // backing and two payload Boxes: 129 in all. Every HashMap now also owns a
+    // link array and a head array, and capacity growth reallocates both, so the
+    // observed total is 179; the count is read from the CI observer, not derived.
+    // The source model independently checks
     // dictionary membership, sorted expiration and exact owner identities.
-    execute_container_program("indexed-membership", &sources, 129, false);
+    execute_container_program("indexed-membership", &sources, 179, false);
 }
 
 #[test]
