@@ -196,13 +196,16 @@ fn assert_split_with_table_slots(module: &str, base: &str, arms: usize, table_sl
         let targets = entries
             .iter()
             .map(|entry| {
-                entry.strip_prefix(&prefix)
+                entry
+                    .strip_prefix(&prefix)
                     .and_then(|arm| arm.parse::<usize>().ok())
                     .expect("every tag slot names an arm of this split")
             })
             .collect::<Vec<_>>();
-        assert!(targets.iter().all(|arm| *arm < arms)
-            && (0..arms).all(|arm| targets.contains(&arm)), "{table}");
+        assert!(
+            targets.iter().all(|arm| *arm < arms) && (0..arms).all(|arm| targets.contains(&arm)),
+            "{table}"
+        );
     }
     assert!(
         dispatch.contains(&format!("musttail call {convention}")),
@@ -1062,13 +1065,20 @@ fn a_two_variant_tag_indexes_the_handler_table_unsigned() {
 fn high_tag_program(high: u32) -> crate::IrProgram {
     super::system::with_ir(PARITY_TABLE.as_bytes(), |original| {
         let mut program = original.clone();
-        let id = program.nominals.iter().find(|n| n.name() == "Parity").unwrap().id();
+        let id = program
+            .nominals
+            .iter()
+            .find(|n| n.name() == "Parity")
+            .unwrap()
+            .id();
         let nominal = &mut program.nominals[id.index()];
         nominal.kind = crate::IrNominalKind::Enum {
-            variants: (0..=high).map(|tag| crate::IrVariant {
-                tag,
-                fields: Vec::new(),
-            }).collect(),
+            variants: (0..=high)
+                .map(|tag| crate::IrVariant {
+                    tag,
+                    fields: Vec::new(),
+                })
+                .collect(),
         };
         // OP-9 remains four bytes for every tag-only enum with >2 variants.
         program.nominal_ceilings[id.index()] = crate::IrLayoutCeiling {
@@ -1080,7 +1090,10 @@ fn high_tag_program(high: u32) -> crate::IrProgram {
             for block in &mut function.blocks {
                 for instruction in &mut block.instructions {
                     if let crate::IrInstruction::Define {
-                        operation: crate::IrOperation::ConstructEnum { nominal, variant, .. },
+                        operation:
+                            crate::IrOperation::ConstructEnum {
+                                nominal, variant, ..
+                            },
                         ..
                     } = instruction
                         && *nominal == id
@@ -1089,17 +1102,21 @@ fn high_tag_program(high: u32) -> crate::IrProgram {
                     }
                 }
                 if let crate::IrTerminator::Match {
-                    enum_type: crate::IrEnumType::Nominal(matched), targets, ..
+                    enum_type: crate::IrEnumType::Nominal(matched),
+                    targets,
+                    ..
                 } = &mut block.terminator
                     && *matched == id
                 {
                     assert_eq!(targets.len(), 2, "the source has two exhaustive arms");
                     let even = targets.iter().find(|t| t.tag == 0).unwrap().block;
                     let odd = targets.iter().find(|t| t.tag == 1).unwrap().block;
-                    *targets = (0..=high).map(|tag| crate::IrMatchTarget {
-                        tag,
-                        block: if tag == high { odd } else { even },
-                    }).collect();
+                    *targets = (0..=high)
+                        .map(|tag| crate::IrMatchTarget {
+                            tag,
+                            block: if tag == high { odd } else { even },
+                        })
+                        .collect();
                 }
             }
         }
@@ -1114,16 +1131,28 @@ fn high_tags_keep_their_bits_through_construction_storage_match_and_dispatch() {
         let mut module = crate::emit_llvm(&program).expect("dense high-tag enums emit");
         // Direct IR emission has the callable ABI; executable builds add
         // their selected entry's launcher after emission.
-        module.append(crate::driver::launcher::render(&program, "main")
-            .expect("the high-tag fixture's main has an executable launcher"))
+        module
+            .append(
+                crate::driver::launcher::render(&program, "main")
+                    .expect("the high-tag fixture's main has an executable launcher"),
+            )
             .expect("the launcher module appends");
         let module = module.into_string();
         let slots = usize::try_from(high).unwrap() + 1;
         assert_split_with_table_slots(&module, "wf_run", 2, slots);
-        let table = module.lines().find(|line| line.starts_with("@wf_run.dispatch.table = "))
+        let table = module
+            .lines()
+            .find(|line| line.starts_with("@wf_run.dispatch.table = "))
             .expect("the high-tag handler table is emitted");
-        assert_eq!(table.matches("ptr @wf_run.arm.0").count(), slots - 1, "{table}");
-        assert!(table.contains("ptr @wf_run.arm.1]"), "the highest tag selects Odd: {table}");
+        assert_eq!(
+            table.matches("ptr @wf_run.arm.0").count(),
+            slots - 1,
+            "{table}"
+        );
+        assert!(
+            table.contains("ptr @wf_run.arm.1]"),
+            "the highest tag selects Odd: {table}"
+        );
         let dispatch = definition(&module, "wf_run.dispatch");
         assert!(dispatch.contains(&format!("zext i{width} ")), "{dispatch}");
         assert!(!dispatch.contains(&format!("sext i{width} ")), "{dispatch}");
@@ -1136,14 +1165,19 @@ fn high_tags_keep_their_bits_through_construction_storage_match_and_dispatch() {
         assert!(kind.contains(&format!("i{width} {high}, label")), "{kind}");
         for (name, predicate) in [("same_parity", "eq"), ("different_parity", "ne")] {
             let body = emitted_body(&module, name);
-            assert!(body.contains(&format!("icmp {predicate} i{width} ")), "{body}");
+            assert!(
+                body.contains(&format!("icmp {predicate} i{width} ")),
+                "{body}"
+            );
         }
         // Only the 129-variant module is sent to clang. The 32769-variant
         // module has emission assertions, avoiding a large native build while
         // detecting truncation and signed table indexing at the i16 boundary.
         if high == 128 {
-            assert!(definition(&module, "wf__main_body").contains("wf_main"),
-                "the executable launcher invokes the mutated fixture's main");
+            assert!(
+                definition(&module, "wf__main_body").contains("wf_main"),
+                "the executable launcher invokes the mutated fixture's main"
+            );
             let output = compile_and_run(&module);
             assert_eq!(output.status.code(), Some(0), "{output:?}");
         }
@@ -2056,6 +2090,271 @@ fn main() -> status: ExitStatus pure {
 }
 "#;
 
+#[test]
+fn parallel_and_ordinary_entrances_share_handler_layout_and_canonical_addresses() {
+    let source = format!(
+        "{}{}",
+        std::str::from_utf8(HANDLER_CELLS).unwrap(),
+        r#"
+fn paired_cell(cell: &Cell) -> result: u32 reads(cell) {
+  let first = tag(cell: cell);
+  let second = tag(cell: cell);
+  return first +wrap second;
+}
+"#
+    );
+    super::system::with_mutated_ir_lowering(
+        source.as_bytes(),
+        crate::OverlapLowering::On,
+        |program| {
+            let target = crate::target::TargetLayout::host().unwrap();
+            let parallel =
+                crate::backend::emitter::prepare_dispatch_layout(program, target, false).unwrap();
+            let ordinary = crate::backend::emitter::prepare_dispatch_layout(
+                program.canonical_sequential.as_deref().unwrap(),
+                target,
+                false,
+            )
+            .unwrap();
+            let cell = program
+                .nominals()
+                .iter()
+                .find(|n| n.name() == "Cell")
+                .unwrap()
+                .id();
+            assert_eq!(ordinary.program.nominal(cell).unwrap().handler_words, 1);
+            assert_eq!(parallel.program.nominal(cell).unwrap().handler_words, 1);
+            let module = crate::backend::emitter::emit_prepared_llvm(&parallel, target)
+                .expect("checked borrowed handler-bearing values cross worlds without conversion");
+            let ordinary_module =
+                crate::backend::emitter::emit_prepared_llvm(&ordinary, target).unwrap();
+            assert_eq!(
+                canonical_dispatch_definition(&module, &ordinary_module),
+                definition(&ordinary_module, "wf_run.dispatch")
+            );
+            let split = definition(&module, "wf_run.dispatch");
+            let table = module
+                .model
+                .entities
+                .iter()
+                .find(|entity| entity.name == "wf_run.dispatch.table")
+                .expect("split dispatch has its own handler table");
+            for arm in 0..3 {
+                assert!(
+                    table.header.contains(&format!("ptr @wf_run.arm.{arm}")),
+                    "split table must bind split handlers: {}",
+                    table.header
+                );
+            }
+            assert!(!table.header.contains("@wf__par_seq_"), "{}", table.header);
+            // A spare argument register carries the table base from the
+            // enclosing function instead of rematerializing it in each part.
+            let table_operand = if split
+                .lines()
+                .next()
+                .unwrap()
+                .contains("ptr %wf.dispatch.base")
+            {
+                let enclosing = emitted_body(&module, "run");
+                assert!(
+                    enclosing.lines().any(|line| {
+                        line.contains("call ")
+                            && line.contains("@wf_run.dispatch(")
+                            && line.contains("ptr @wf_run.dispatch.table")
+                    }),
+                    "the enclosing split body binds its table: {enclosing}"
+                );
+                "%wf.dispatch.base"
+            } else {
+                "@wf_run.dispatch.table"
+            };
+            assert!(
+                split.contains(&format!(
+                    "getelementptr inbounds [3 x ptr], ptr {table_operand}, i64 0, i64 "
+                )),
+                "split dispatch uses its own frame: {split}"
+            );
+            let constructor = emitted_body(&module, "make_add");
+            assert!(
+                constructor.contains("ptr @wf__par_seq_run.arm."),
+                "{constructor}"
+            );
+            assert!(!constructor.contains("ptr @wf_run.arm."), "{constructor}");
+            for arm in 0..3 {
+                assert!(
+                    module
+                        .model
+                        .entities
+                        .iter()
+                        .any(|entity| entity.name == format!("wf__par_seq_run.arm.{arm}")),
+                    "address-only canonical handler must be imported"
+                );
+            }
+            assert!(module.threaded_layout);
+            assert!(crate::split_module(&module, crate::FragmentGranularity::Function).is_err());
+        },
+    );
+    let output = compile_and_run(&super::emit_lowered(
+        source.as_bytes(),
+        crate::OverlapLowering::On,
+    ));
+    assert!(
+        output.status.success(),
+        "canonical constructors, copies and replacements preserve 18: {output:?}"
+    );
+}
+
+#[test]
+fn canonical_handler_words_requalify_a_previously_fitting_compute_frame() {
+    let source = format!(
+        "{}{}",
+        std::str::from_utf8(HANDLER_CELLS).unwrap(),
+        r#"
+fn wide_cells(values: Array<Cell, 20>) -> result: u32 pure {
+  return tag(cell: &values[0_u64]);
+}
+
+fn paired_wide(values: Array<Cell, 20>) -> result: u32 pure {
+  let first = wide_cells(values: values);
+  let second = wide_cells(values: values);
+  return first +wrap second;
+}
+"#
+    );
+    super::system::with_mutated_ir_lowering(
+        source.as_bytes(),
+        crate::OverlapLowering::On,
+        |program| {
+            let target = crate::target::TargetLayout::host().unwrap();
+            let callee = program
+                .functions()
+                .iter()
+                .find(|f| f.name() == "wide_cells")
+                .unwrap();
+            let fits = |program: &crate::IrProgram| {
+                crate::target::parallel_lane_frame_layout(
+                    target,
+                    program.nominals(),
+                    program.elements(),
+                    callee.parameters().iter().map(|(_, ty)| *ty),
+                    callee.result(),
+                    false,
+                )
+                .unwrap()
+            };
+            assert!(fits(program).is_some(), "the unthreaded frame must fit");
+            assert!(
+                !program
+                    .functions()
+                    .iter()
+                    .find(|f| f.name() == "paired_wide")
+                    .unwrap()
+                    .overlaps()
+                    .is_empty(),
+                "the witness must have permitted offers"
+            );
+            let selected =
+                crate::backend::emitter::prepare_dispatch_layout(program, target, false).unwrap();
+            assert!(
+                fits(&selected.program).is_none(),
+                "canonical words must cross the lane bound"
+            );
+            let module = crate::backend::emitter::emit_prepared_llvm(&selected, target).expect(
+                "larger canonical values decline optional offers without rejecting the program",
+            );
+            let body = definition(&module, "wf_paired_wide");
+            assert!(!body.contains("@wf__par_acquire_lane("), "{body}");
+            assert!(body.contains("@wf_wide_cells("), "{body}");
+        },
+    );
+}
+
+#[test]
+fn no_offer_module_retains_ordinary_handler_dispatch() {
+    super::system::with_mutated_ir_lowering(HANDLER_CELLS, crate::OverlapLowering::On, |program| {
+        for function in &mut program.functions {
+            function.overlaps.clear();
+        }
+        assert!(
+            program
+                .functions()
+                .iter()
+                .all(|function| function.synthesis().is_none())
+        );
+        let target = crate::target::TargetLayout::host().unwrap();
+        let selected =
+            crate::backend::emitter::prepare_dispatch_layout(program, target, false).unwrap();
+        let ordinary = crate::backend::emitter::prepare_dispatch_layout(
+            program.canonical_sequential.as_deref().unwrap(),
+            target,
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            crate::backend::emitter::emit_prepared_llvm(&selected, target).unwrap(),
+            crate::backend::emitter::emit_prepared_llvm(&ordinary, target).unwrap()
+        );
+    });
+}
+
+#[test]
+fn canonical_world_keeps_the_explicit_fragment_dispatch_mode() {
+    super::system::with_mutated_ir_lowering(HANDLER_CELLS, crate::OverlapLowering::On, |program| {
+        let target = crate::target::TargetLayout::host().unwrap();
+        let parallel =
+            crate::backend::emitter::prepare_dispatch_layout(program, target, true).unwrap();
+        let ordinary = crate::backend::emitter::prepare_dispatch_layout(
+            program.canonical_sequential.as_deref().unwrap(),
+            target,
+            true,
+        )
+        .unwrap();
+        let module = crate::backend::emitter::emit_prepared_llvm(&parallel, target).unwrap();
+        let ordinary_module =
+            crate::backend::emitter::emit_prepared_llvm(&ordinary, target).unwrap();
+        let table = module
+            .lines()
+            .find(|line| line.starts_with("@.wf__par_seq_global.wf_run.dispatch.table = "))
+            .unwrap();
+        for arm in 0..3 {
+            assert!(
+                table.contains(&format!("ptr @wf__par_seq_run.arm.{arm}")),
+                "{table}"
+            );
+        }
+        assert!(!module.threaded_layout);
+        assert_eq!(
+            canonical_dispatch_definition(&module, &ordinary_module),
+            definition(&ordinary_module, "wf_run.dispatch")
+        );
+    });
+}
+
+fn canonical_dispatch_definition(
+    module: &crate::LlvmModule,
+    ordinary: &crate::LlvmModule,
+) -> String {
+    let actual = module
+        .model
+        .entities
+        .iter()
+        .find(|entity| entity.name == "wf__par_seq_run.dispatch")
+        .unwrap();
+    let expected = ordinary
+        .model
+        .entities
+        .iter()
+        .find(|entity| entity.name == "wf_run.dispatch")
+        .unwrap();
+    super::canonical_compute::restore_definition(
+        &module.model,
+        &ordinary.model,
+        actual,
+        expected,
+        definition(module, "wf__par_seq_run.dispatch"),
+    )
+}
+
 /// Follow the loaded target from the cursor parameter through the word GEP
 /// to the indirect call. A tag/table implementation cannot satisfy this.
 fn assert_handler_load(module: &str, base: &str, offset: u64, align: u64) {
@@ -2128,24 +2427,38 @@ fn handler_words_preserve_copies_replacements_tags_and_four_byte_alignment() {
             .find(|n| n.name() == "Cell")
             .unwrap();
         let layout = crate::target::union_enum_layout(target, selected, cell.id()).unwrap();
-        assert_eq!((layout.size(), layout.handler_offset(), layout.handler_alignment()),
-            (16, Some(8), Some(4)));
+        assert_eq!(
+            (
+                layout.size(),
+                layout.handler_offset(),
+                layout.handler_alignment()
+            ),
+            (16, Some(8), Some(4))
+        );
         // The same shape with exactly two payload variants has OP-9 ceiling
         // 20 rather than 28, and still admits one word in a 16-byte value.
         // This is a layout-only nominal probe; no altered function is emitted.
         let mut halo_two = selected.clone().into_owned();
-        if let crate::IrNominalKind::Enum { variants } = &mut halo_two.nominals[cell.id().index()].kind {
+        if let crate::IrNominalKind::Enum { variants } =
+            &mut halo_two.nominals[cell.id().index()].kind
+        {
             variants.truncate(2);
         }
         halo_two.nominal_ceilings[cell.id().index()] = crate::IrLayoutCeiling {
-            size: crate::IrLayoutMagnitude::Finite(20), align: 4,
+            size: crate::IrLayoutMagnitude::Finite(20),
+            align: 4,
             stride: crate::IrLayoutMagnitude::Finite(20),
         };
         let two = crate::target::union_enum_layout(target, &halo_two, cell.id()).unwrap();
-        assert_eq!((two.size(), two.handler_offset(), two.handler_alignment()),
-            (16, Some(8), Some(4)));
+        assert_eq!(
+            (two.size(), two.handler_offset(), two.handler_alignment()),
+            (16, Some(8), Some(4))
+        );
         assert!(crate::target::threaded_enum_fits(target, &halo_two, cell.id()).unwrap());
-        (format!("wf.t.{}", cell.link_name()), super::payload_enums::enum_layout_probes(selected))
+        (
+            format!("wf.t.{}", cell.link_name()),
+            super::payload_enums::enum_layout_probes(selected),
+        )
     });
     let module = emit(HANDLER_CELLS);
     assert_handler_load(&module, "wf_run", 8, 4);
@@ -2154,7 +2467,14 @@ fn handler_words_preserve_copies_replacements_tags_and_four_byte_alignment() {
         made.contains("store ptr @wf_run.arm.0,") && made.contains(", align 4"),
         "{made}"
     );
-    let fields = [(0, "i8"), (1, "i8"), (2, "i8"), (3, "i8"), (4, "i32"), (8, "ptr")];
+    let fields = [
+        (0, "i8"),
+        (1, "i8"),
+        (2, "i8"),
+        (3, "i8"),
+        (4, "i32"),
+        (8, "ptr"),
+    ];
     // Incoming and local copies preserve every typed interval and handler word.
     let copied = emitted_body(&module, "copy_cell");
     super::layout_transfers::assert_typed_transfer(copied, &fields);
@@ -2213,11 +2533,20 @@ fn handler_words_preserve_copies_replacements_tags_and_four_byte_alignment() {
         "{main}"
     );
     let tag = emitted_body(&module, "tag");
-    assert!(tag.contains("load i8") && tag.contains("switch i8"), "{tag}");
-    assert!(!tag.contains("load ptr"), "an ordinary match reads only the tag: {tag}");
-    assert!(module.contains(&format!(
-        "%{ty} = type {{ i8, [7 x i8], [8 x i8], [0 x i8], [0 x %{ty}.v0] }}"
-    )), "{module}");
+    assert!(
+        tag.contains("load i8") && tag.contains("switch i8"),
+        "{tag}"
+    );
+    assert!(
+        !tag.contains("load ptr"),
+        "an ordinary match reads only the tag: {tag}"
+    );
+    assert!(
+        module.contains(&format!(
+            "%{ty} = type {{ i8, [7 x i8], [8 x i8], [0 x i8], [0 x %{ty}.v0] }}"
+        )),
+        "{module}"
+    );
     // Fixed layout constants plus LLVM DataLayout and the program's result
     // distinguish a coherent wrong layout from the approved representation.
     probes.insert(ty.clone(), (16, 4));

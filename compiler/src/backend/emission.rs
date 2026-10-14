@@ -11,6 +11,8 @@ use crate::IrBlockId;
 
 use super::emitter::BackendFailure;
 
+mod canonical;
+
 /// A deferred definition's literal text and block-scoped local identifiers.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum DeferredPart {
@@ -268,6 +270,7 @@ pub(crate) struct References {
     pub(crate) symbols: BTreeSet<String>,
     pub(crate) types: BTreeSet<String>,
     pub(crate) attributes: BTreeSet<u64>,
+    pub(crate) metadata: BTreeSet<u64>,
 }
 
 impl References {
@@ -275,6 +278,7 @@ impl References {
         self.symbols.extend(other.symbols.iter().cloned());
         self.types.extend(other.types.iter().cloned());
         self.attributes.extend(other.attributes.iter().copied());
+        self.metadata.extend(other.metadata.iter().copied());
     }
 }
 
@@ -464,6 +468,16 @@ enum ModulePart {
     Declaration(String),
     Entity(usize),
     Attributes(u64),
+    Metadata(u64),
+}
+
+/// Numbered metadata has its own recorded dependency graph. The body keeps
+/// LLVM's `distinct` marker, so independently emitted alias scopes can never
+/// be merged merely because their numbers or spellings coincide.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct Metadata {
+    pub(crate) body: String,
+    pub(crate) references: BTreeSet<u64>,
 }
 
 /// Both renderers consume the same definitions and dependency records. Parts
@@ -476,6 +490,7 @@ pub(crate) struct Module {
     pub(crate) declarations: BTreeMap<String, Declaration>,
     pub(crate) entities: Vec<Entity>,
     pub(crate) attributes: BTreeMap<u64, String>,
+    pub(crate) metadata: BTreeMap<u64, Metadata>,
 }
 
 impl Module {
@@ -487,9 +502,11 @@ impl Module {
         })
     }
 
-    /// Whether composition kept a conflicting declaration or attribute group.
+    /// Whether composition kept a conflicting declaration, attribute group or metadata node.
     pub(crate) fn has_conflict(&self) -> bool {
-        self.repeated_declaration().is_some() || self.repeated_attribute_group().is_some()
+        self.repeated_declaration().is_some()
+            || self.repeated_attribute_group().is_some()
+            || self.repeated_metadata().is_some()
     }
 
     pub(crate) fn repeated_attribute_group(&self) -> Option<u64> {
@@ -498,6 +515,50 @@ impl Module {
             ModulePart::Attributes(id) if !groups.insert(*id) => Some(*id),
             _ => None,
         })
+    }
+
+    pub(crate) fn repeated_metadata(&self) -> Option<u64> {
+        let mut nodes = BTreeSet::new();
+        self.parts.iter().find_map(|part| match part {
+            ModulePart::Metadata(id) if !nodes.insert(*id) => Some(*id),
+            _ => None,
+        })
+    }
+
+    /// A root or transitive edge must resolve even when a destination happens
+    /// to contain another node with that number. Cycles are valid metadata.
+    pub(crate) fn metadata_closure(&self, roots: &BTreeSet<u64>) -> Result<BTreeSet<u64>, u64> {
+        let mut pending = roots.clone();
+        let mut visited = BTreeSet::new();
+        while let Some(id) = pending.pop_first() {
+            if !visited.insert(id) {
+                continue;
+            }
+            let node = self.metadata.get(&id).ok_or(id)?;
+            pending.extend(node.references.iter().copied());
+        }
+        Ok(visited)
+    }
+
+    pub(crate) fn missing_metadata(&self) -> Option<u64> {
+        let mut roots = self.metadata.keys().copied().collect::<BTreeSet<_>>();
+        for entity in &self.entities {
+            roots.extend(&entity.references.metadata);
+            roots.extend(&entity.declaration_references.metadata);
+        }
+        for declaration in self.types.values().chain(self.declarations.values()) {
+            roots.extend(&declaration.references.metadata);
+        }
+        self.metadata_closure(&roots).err()
+    }
+
+    pub(crate) fn metadata_node(&mut self, id: u64, body: String, references: BTreeSet<u64>) {
+        let node = Metadata { body, references };
+        if self.metadata.get(&id) == Some(&node) {
+            return;
+        }
+        self.parts.push(ModulePart::Metadata(id));
+        self.metadata.entry(id).or_insert(node);
     }
 
     fn declarations_match(&self, other: &Self, name: &str) -> bool {
@@ -550,6 +611,39 @@ impl Module {
                 references: References::default(),
             },
         );
+    }
+    /// A typed external variable declaration, including target TLS storage.
+    pub(crate) fn declare_global_kind(&mut self, name: &str, kind: &str, ty: &str, align: u64) {
+        self.register_declaration(
+            name.to_owned(),
+            Declaration {
+                text: format!("@{name} = external {kind} {ty}, align {align}"),
+                references: References::default(),
+            },
+        );
+    }
+    /// A replaceable runtime variable with its matching fragment declaration.
+    pub(crate) fn weak_global(
+        &mut self,
+        name: &str,
+        kind: &str,
+        ty: &str,
+        value: &str,
+        align: u64,
+    ) {
+        let header = format!("@{name} = weak {kind} {ty} {value}, align {align}");
+        self.define(Entity {
+            name: name.to_owned(),
+            header: header.clone(),
+            hidden_header: header,
+            declaration: format!("@{name} = external {kind} {ty}, align {align}"),
+            declaration_references: References::default(),
+            body: String::new(),
+            linkage: Linkage::Weak,
+            global: true,
+            fragment_local: false,
+            references: References::default(),
+        });
     }
     pub(crate) fn declare_named(&mut self, signature: Signature) {
         let parameters = signature
@@ -667,6 +761,15 @@ impl Module {
                 _ => None,
             })
             .collect::<BTreeSet<_>>();
+        let mut seen_metadata = BTreeSet::new();
+        let metadata_conflicts = other
+            .parts
+            .iter()
+            .filter_map(|part| match part {
+                ModulePart::Metadata(id) if !seen_metadata.insert(*id) => Some(*id),
+                _ => None,
+            })
+            .collect::<BTreeSet<_>>();
         // Resolve declaration compatibility before merging either module's
         // attribute definitions, so equal IDs cannot hide different meanings.
         let compatible = other
@@ -690,6 +793,13 @@ impl Module {
                         continue;
                     }
                     self.attributes.entry(*id).or_insert_with(|| body.clone());
+                }
+                ModulePart::Metadata(id) => {
+                    let node = &other.metadata[id];
+                    if !metadata_conflicts.contains(id) && self.metadata.get(id) == Some(node) {
+                        continue;
+                    }
+                    self.metadata.entry(*id).or_insert_with(|| node.clone());
                 }
                 _ => {}
             }
@@ -719,6 +829,9 @@ impl Module {
                     text.push_str(&self.attributes[id]);
                     text.push('\n');
                 }
+                ModulePart::Metadata(id) => {
+                    text.push_str(&format!("!{id} = {}\n", self.metadata[id].body));
+                }
                 ModulePart::Entity(index) => {
                     let entity = &self.entities[*index];
                     text.push_str(&entity.header);
@@ -746,7 +859,7 @@ impl Write for FunctionBody {
 impl Module {
     pub(crate) fn encode(&self) -> Vec<u8> {
         let mut out = ModelWriter(Vec::new());
-        out.text("whitefoot emission 2");
+        out.text("whitefoot emission 3");
         out.number(self.parts.len());
         for part in &self.parts {
             match part {
@@ -768,6 +881,10 @@ impl Module {
                 }
                 ModulePart::Attributes(id) => {
                     out.number(4);
+                    out.integer(*id);
+                }
+                ModulePart::Metadata(id) => {
+                    out.number(5);
                     out.integer(*id);
                 }
             }
@@ -808,12 +925,21 @@ impl Module {
             out.integer(*id);
             out.text(text);
         }
+        out.number(self.metadata.len());
+        for (id, node) in &self.metadata {
+            out.integer(*id);
+            out.text(&node.body);
+            out.number(node.references.len());
+            for dependency in &node.references {
+                out.integer(*dependency);
+            }
+        }
         out.0
     }
 
     pub(crate) fn decode(bytes: &[u8]) -> Option<Self> {
         let mut input = ModelReader(bytes);
-        if input.text()? != "whitefoot emission 2" {
+        if input.text()? != "whitefoot emission 3" {
             return None;
         }
         let mut module = Self::default();
@@ -824,6 +950,7 @@ impl Module {
                 2 => ModulePart::Declaration(input.text()?),
                 3 => ModulePart::Entity(input.count()?),
                 4 => ModulePart::Attributes(input.integer()?),
+                5 => ModulePart::Metadata(input.integer()?),
                 _ => return None,
             });
         }
@@ -890,6 +1017,20 @@ impl Module {
                 return None;
             }
         }
+        for _ in 0..input.count()? {
+            let id = input.integer()?;
+            let body = input.text()?;
+            let references = (0..input.count()?)
+                .map(|_| input.integer())
+                .collect::<Option<_>>()?;
+            if module
+                .metadata
+                .insert(id, Metadata { body, references })
+                .is_some()
+            {
+                return None;
+            }
+        }
         if !input.0.is_empty()
             || !module.parts.iter().all(|part| match part {
                 ModulePart::Text(_) => true,
@@ -897,6 +1038,7 @@ impl Module {
                 ModulePart::Declaration(name) => module.declarations.contains_key(name),
                 ModulePart::Entity(index) => *index < module.entities.len(),
                 ModulePart::Attributes(id) => module.attributes.contains_key(id),
+                ModulePart::Metadata(id) => module.metadata.contains_key(id),
             })
         {
             return None;
@@ -930,6 +1072,10 @@ impl ModelWriter {
         for id in &references.attributes {
             self.integer(*id);
         }
+        self.number(references.metadata.len());
+        for id in &references.metadata {
+            self.integer(*id);
+        }
     }
 }
 
@@ -958,6 +1104,9 @@ impl ModelReader<'_> {
             symbols: self.strings()?.into_iter().collect(),
             types: self.strings()?.into_iter().collect(),
             attributes: (0..self.count()?)
+                .map(|_| self.integer())
+                .collect::<Option<_>>()?,
+            metadata: (0..self.count()?)
                 .map(|_| self.integer())
                 .collect::<Option<_>>()?,
         })
@@ -1006,7 +1155,10 @@ mod declaration_tests {
             1
         );
         assert_eq!(
-            module.render().matches("attributes #1 = { noreturn }").count(),
+            module
+                .render()
+                .matches("attributes #1 = { noreturn }")
+                .count(),
             1
         );
     }

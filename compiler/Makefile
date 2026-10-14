@@ -5,6 +5,12 @@ CC ?= cc
 LLVM_CC ?= clang
 WINDOWS_CC ?= x86_64-w64-mingw32-gcc
 WINDOWS_LLVM_CC ?= clang --target=x86_64-w64-windows-gnu
+# The shared request word must use native PE TLS: FLS withdrawal runs before
+# Windows frees that storage. GCC's emulated TLS has an independent destructor
+# lifetime, so scheduler units (including probes that include core.c) use Clang.
+# Native Windows CI supplies clang without the cross target for its SDK.
+WINDOWS_SCHED_CC ?= $(WINDOWS_LLVM_CC)
+WINDOWS_SCHED_TLS_FLAGS := -fno-emulated-tls
 WINE ?= /usr/lib/wine/wine64
 WINEPREFIX ?= $(WHITEFOOT_SCRATCH_ROOT)/wineprefix
 WHITEFOOT_SCRATCH_ROOT ?= $(patsubst %/,%,$(if $(TMPDIR),$(TMPDIR),/tmp))/whitefoot
@@ -273,7 +279,7 @@ $(eval $(call completion-image,core-read-probe-sanitize,$(COMPLETION_CORE_READ_S
 $(eval $(call completion-image,harness-tsan,$(COMPLETION_SOURCES),$(COMPLETION_TSAN_FLAGS) $(COMPLETION_DEFINES) $(COMPLETION_HARNESS_DEFINES)))
 $(eval $(call completion-image,bridge-default-probe-tsan,$(COMPLETION_DEFAULT_ROUTE_SOURCES),$(COMPLETION_TSAN_FLAGS)))
 
-completion-test: $(COMPLETION_TMP)/harness completion-core-read-test completion-default-route-test sched-smoke sched-deque-test sched-policy-test floor-test concurrent-map-test shared-object-test shared-take-witness decision-cell-test cancel-test driver-service-test driver-service-native-test driver-count-test completion-native-test completion-fork-capsule-test
+completion-test: $(COMPLETION_TMP)/harness completion-core-read-test completion-default-route-test sched-smoke sched-request-test sched-deque-test sched-policy-test floor-test concurrent-map-test shared-object-test shared-take-witness decision-cell-test cancel-test driver-service-test driver-service-native-test driver-count-test completion-native-test completion-fork-capsule-test
 	@mkdir -p "$(COMPLETION_TMP)"
 	$(NO_CORE_DUMPS) $(NATIVE_REQUIREMENT) WF_IO_HELPERS=1 "$(COMPLETION_TMP)/harness" "$(COMPLETION_TMP)" all
 	$(NO_CORE_DUMPS) $(NATIVE_REQUIREMENT) WF_IO_HELPERS=0 "$(COMPLETION_TMP)/harness" "$(COMPLETION_TMP)" bridge
@@ -352,6 +358,8 @@ $(SCHED_PROBE_OBJECT_DIR)/$(1).o: $(SCHED_DIR)/$(2).c $(SCHED_DIR)/core.c $(SCHE
 	$$(CC) $(COMPLETION_BASE_CFLAGS) $(3) -c "$$<" -o "$$@"
 endef
 $(eval $(call scheduler-image,sched-smoke,smoke,-DWF_SCHED_TEST))
+$(eval $(call scheduler-image,sched-demand,demand_probe,))
+$(eval $(call scheduler-image,sched-startup,startup_probe,))
 $(SCHED_PROBE_OBJECT_DIR)/entry-deque.o: $(SCHED_DIR)/entry.c $(COMPLETION_HEADERS) Makefile $(COMPLETION_CONFIG)
 	@mkdir -p "$(dir $@)"
 	$(CC) $(COMPLETION_BASE_CFLAGS) -DWF_SCHED_LANE_SLOTS=8u -c "$<" -o "$@"
@@ -363,6 +371,8 @@ $(eval $(call scheduler-image,sched-policy-clamped,cpu_levels_probe,-DWF_PAR_REC
 # Entry observes WF_SCHED_STATS too; its disabled object cannot be borrowed
 # from the ordinary image. TSan objects likewise retain their own full flags.
 $(eval $(call completion-image,sched-deque-probe-no-stats,$(SCHED_DIR)/deque_probe.c $(SCHED_DIR)/entry.c $(SCHED_DIR)/prim_host.c,$(COMPLETION_BASE_CFLAGS) -DWF_SCHED_LANE_SLOTS=8u -DWF_SCHED_STATS=0))
+$(eval $(call completion-image,sched-demand-tsan,$(SCHED_DIR)/demand_probe.c $(SCHED_DIR)/entry.c $(SCHED_DIR)/prim_host.c,$(COMPLETION_TSAN_FLAGS)))
+$(COMPLETION_TMP)/objects/sched-demand-tsan/sched/demand_probe.o: $(SCHED_DIR)/core.c
 $(eval $(call completion-image,sched-deque-tsan,$(SCHED_DIR)/deque_probe.c $(SCHED_DIR)/entry.c $(SCHED_DIR)/prim_host.c,$(COMPLETION_TSAN_FLAGS) -DWF_SCHED_LANE_SLOTS=8u -DWF_SCHED_STATS=1))
 $(eval $(call completion-image,sched-deque-tsan-no-stats,$(SCHED_DIR)/deque_probe.c $(SCHED_DIR)/entry.c $(SCHED_DIR)/prim_host.c,$(COMPLETION_TSAN_FLAGS) -DWF_SCHED_LANE_SLOTS=8u -DWF_SCHED_STATS=0))
 $(COMPLETION_TMP)/objects/sched-deque-probe-no-stats/sched/deque_probe.o \
@@ -378,15 +388,24 @@ sched-smoke: $(COMPLETION_TMP)/sched-smoke
 		test $$status = 1 && test ! -s "$(COMPLETION_TMP)/startup.out" && \
 		printf '%s\n' 'whitefoot scheduler: WF_WORKERS must be an integer from 0 through 64' | cmp - "$(COMPLETION_TMP)/startup.err"
 
+sched-request-test: $(COMPLETION_TMP)/sched-demand $(COMPLETION_TMP)/sched-startup
+	"$(COMPLETION_TMP)/sched-demand"
+	@set -e; for lanes in 4 8; do \
+		for mode in late-spinning late-parked registered-first helper-registration; do \
+			WF_WORKERS=$$lanes "$(COMPLETION_TMP)/sched-startup" $$mode; \
+		done; \
+	done
+
 sched-deque-test: $(COMPLETION_TMP)/sched-deque-probe $(COMPLETION_TMP)/sched-deque-probe-no-stats
 	"$(COMPLETION_TMP)/sched-deque-probe"
 	"$(COMPLETION_TMP)/sched-deque-probe-no-stats"
 
-sched-deque-tsan: $(COMPLETION_TMP)/sched-deque-tsan $(COMPLETION_TMP)/sched-deque-tsan-no-stats
+sched-deque-tsan: $(COMPLETION_TMP)/sched-deque-tsan $(COMPLETION_TMP)/sched-deque-tsan-no-stats $(COMPLETION_TMP)/sched-demand-tsan
 	TSAN_OPTIONS=halt_on_error=1 "$(COMPLETION_TMP)/sched-deque-tsan"
 	TSAN_OPTIONS=halt_on_error=1 "$(COMPLETION_TMP)/sched-deque-tsan-no-stats"
+	TSAN_OPTIONS=halt_on_error=1 "$(COMPLETION_TMP)/sched-demand-tsan"
 
-sched-policy-test: sched-split-policy-cases $(COMPLETION_TMP)/sched-policy $(COMPLETION_TMP)/sched-policy-asymmetric $(COMPLETION_TMP)/sched-policy-disabled $(COMPLETION_TMP)/sched-policy-clamped
+sched-policy-test: $(COMPLETION_TMP)/sched-policy $(COMPLETION_TMP)/sched-policy-asymmetric $(COMPLETION_TMP)/sched-policy-disabled $(COMPLETION_TMP)/sched-policy-clamped
 	WF_WORKERS=2 "$(COMPLETION_TMP)/sched-policy" host
 	"$(COMPLETION_TMP)/sched-policy" wake
 	@set -e; for variant in '' -asymmetric -disabled; do \
@@ -436,21 +455,7 @@ cpu-affinity-test: $(COMPLETION_TMP)/cpu-affinity-probe $(SCHED_PROBE_OBJECT_DIR
 sched-policy-test: cpu-affinity-test
 endif
 
-# Shared on POSIX and native Windows; each environment is a fresh process.
 SCHED_POLICY_EXE ?= $(COMPLETION_TMP)/sched-policy
-sched-split-policy-cases: $(SCHED_POLICY_EXE)
-	@set -e; unset WF_SPLIT_WORK; WF_WORKERS=4 "$(SCHED_POLICY_EXE)" split 0 2 6 6
-	@set -e; for row in 'empty 0 2 6 6' '0 0 0 0 0' '1 0 6 6 6' '60000 0 3 6 6' '1200000 0 0 3 6' '1000000000 0 0 0 6'; do \
-		set -- $$row; policy=$$1; shift; test "$$policy" != empty || policy=''; \
-		WF_WORKERS=4 WF_SPLIT_WORK="$$policy" "$(SCHED_POLICY_EXE)" split "$$@"; \
-	done
-	WF_WORKERS=64 WF_SPLIT_WORK=1 "$(SCHED_POLICY_EXE)" split 0 10 10 10
-	@set -e; for policy in -1 no 1000000001 18446744073709551616; do \
-		status=0; WF_WORKERS=4 WF_SPLIT_WORK="$$policy" "$(SCHED_POLICY_EXE)" split 0 0 0 0 > "$(COMPLETION_TMP)/split.out" 2> "$(COMPLETION_TMP)/split.err" || status=$$?; \
-		test "$$status" = 1; test ! -s "$(COMPLETION_TMP)/split.out"; \
-		tr -d '\r' < "$(COMPLETION_TMP)/split.err" > "$(COMPLETION_TMP)/split.normalized"; \
-		printf '%s\n' 'whitefoot scheduler: WF_SPLIT_WORK must be an integer from 0 through 1000000000' | cmp - "$(COMPLETION_TMP)/split.normalized"; \
-	done
 
 # The floor body is C-only host evidence. The hooked variant substitutes only
 # floor setup/park calls; compatible scheduler support objects are shared.
@@ -717,6 +722,7 @@ driver-count-test:
 # cases measure contention and must not share the processors.
 COMPLETION_TEST_IMAGES = $(COMPLETION_TMP)/harness $(COMPLETION_TMP)/core-read-probe \
 	$(COMPLETION_TMP)/bridge-default-probe $(COMPLETION_TMP)/sched-smoke \
+	$(COMPLETION_TMP)/sched-demand $(COMPLETION_TMP)/sched-startup \
 	$(COMPLETION_TMP)/sched-deque-probe $(COMPLETION_TMP)/sched-deque-probe-no-stats \
 	$(SCHED_POLICY_EXE) $(COMPLETION_TMP)/sched-policy-asymmetric \
 	$(COMPLETION_TMP)/sched-policy-disabled $(COMPLETION_TMP)/sched-policy-clamped \
@@ -835,7 +841,7 @@ WINDOWS_NATIVE_OBJECTS := $(patsubst src/backend/%.c,$(WINDOWS_OBJECT_DIR)/%.o,$
 
 $(WINDOWS_CONFIG): completion-configuration-force
 	@mkdir -p "$(dir $@)"
-	@{ printf '%s\n' "$(CURDIR)" "$(WINDOWS_CC)" "$(WINDOWS_LLVM_CC)" "$(WINDOWS_CFLAGS)" "$(WINDOWS_LINK_LIBRARIES)"; $(WINDOWS_CC) --version; $(WINDOWS_LLVM_CC) --version; } > "$@.new"
+	@{ printf '%s\n' "$(CURDIR)" "$(WINDOWS_CC)" "$(WINDOWS_LLVM_CC)" "$(WINDOWS_SCHED_CC)" "$(WINDOWS_SCHED_TLS_FLAGS)" "$(WINDOWS_CFLAGS)" "$(WINDOWS_LINK_LIBRARIES)"; $(WINDOWS_CC) --version; $(WINDOWS_LLVM_CC) --version; $(WINDOWS_SCHED_CC) --version; } > "$@.new"
 	@cmp -s "$@.new" "$@" || mv -f "$@.new" "$@"
 	@rm -f "$@.new"
 
@@ -879,15 +885,20 @@ $(COMPLETION_TMP)/windows-bridge-init-fail-stop-probe.exe: $(filter-out $(WINDOW
 # entry/host leaf objects are still compatible with the runtime images above.
 $(WINDOWS_OBJECT_DIR)/sched/smoke.o: $(SCHED_DIR)/smoke.c $(SCHED_DIR)/core.c $(COMPLETION_HEADERS) Makefile $(WINDOWS_CONFIG)
 	@mkdir -p "$(dir $@)"
-	$(WINDOWS_CC) $(WINDOWS_CFLAGS) -DWF_SCHED_TEST -c "$<" -o "$@"
+	$(WINDOWS_SCHED_CC) $(WINDOWS_CFLAGS) $(WINDOWS_SCHED_TLS_FLAGS) -DWF_SCHED_TEST -c "$<" -o "$@"
+
+# These units share the same native TLS ABI as emitted LLVM polling.
+$(addprefix $(WINDOWS_OBJECT_DIR)/sched/,core.o demand_probe.o startup_probe.o cpu_levels_probe.o): $(WINDOWS_OBJECT_DIR)/sched/%.o: $(SCHED_DIR)/%.c $(SCHED_DIR)/core.c $(COMPLETION_HEADERS) Makefile $(WINDOWS_CONFIG)
+	@mkdir -p "$(dir $@)"
+	$(WINDOWS_SCHED_CC) $(WINDOWS_CFLAGS) $(WINDOWS_SCHED_TLS_FLAGS) -c "$<" -o "$@"
 
 $(WINDOWS_OBJECT_DIR)/sched/deque-probe.o: $(SCHED_DIR)/deque_probe.c $(SCHED_DIR)/core.c $(COMPLETION_HEADERS) Makefile $(WINDOWS_CONFIG)
 	@mkdir -p "$(dir $@)"
-	$(WINDOWS_CC) $(WINDOWS_CFLAGS) -DWF_SCHED_LANE_SLOTS=8u -DWF_SCHED_STATS=1 -c "$<" -o "$@"
+	$(WINDOWS_SCHED_CC) $(WINDOWS_CFLAGS) $(WINDOWS_SCHED_TLS_FLAGS) -DWF_SCHED_LANE_SLOTS=8u -DWF_SCHED_STATS=1 -c "$<" -o "$@"
 
 $(WINDOWS_OBJECT_DIR)/sched/deque-probe-no-stats.o: $(SCHED_DIR)/deque_probe.c $(SCHED_DIR)/core.c $(COMPLETION_HEADERS) Makefile $(WINDOWS_CONFIG)
 	@mkdir -p "$(dir $@)"
-	$(WINDOWS_CC) $(WINDOWS_CFLAGS) -DWF_SCHED_LANE_SLOTS=8u -DWF_SCHED_STATS=0 -c "$<" -o "$@"
+	$(WINDOWS_SCHED_CC) $(WINDOWS_CFLAGS) $(WINDOWS_SCHED_TLS_FLAGS) -DWF_SCHED_LANE_SLOTS=8u -DWF_SCHED_STATS=0 -c "$<" -o "$@"
 
 $(WINDOWS_OBJECT_DIR)/sched/cpu_levels_probe.o: $(SCHED_DIR)/core.c $(SCHED_POLICY_INPUTS)
 WINDOWS_SCHED_SUPPORT := $(WINDOWS_OBJECT_DIR)/sched/entry.o $(WINDOWS_OBJECT_DIR)/sched/prim_windows.o
@@ -898,6 +909,10 @@ $(WINDOWS_OBJECT_DIR)/sched/entry-deque-no-stats.o: $(SCHED_DIR)/entry.c $(COMPL
 	@mkdir -p "$(dir $@)"
 	$(WINDOWS_CC) $(WINDOWS_CFLAGS) -DWF_SCHED_LANE_SLOTS=8u -DWF_SCHED_STATS=0 -c "$<" -o "$@"
 $(COMPLETION_TMP)/windows-sched-smoke.exe: $(WINDOWS_SCHED_SUPPORT) $(WINDOWS_OBJECT_DIR)/sched/smoke.o
+	$(WINDOWS_CC) $(WINDOWS_CFLAGS) $^ -o "$@" $(WINDOWS_LINK_LIBRARIES)
+$(COMPLETION_TMP)/windows-sched-demand.exe: $(WINDOWS_SCHED_SUPPORT) $(WINDOWS_OBJECT_DIR)/sched/demand_probe.o
+	$(WINDOWS_CC) $(WINDOWS_CFLAGS) $^ -o "$@" $(WINDOWS_LINK_LIBRARIES)
+$(COMPLETION_TMP)/windows-sched-startup.exe: $(WINDOWS_SCHED_SUPPORT) $(WINDOWS_OBJECT_DIR)/sched/startup_probe.o
 	$(WINDOWS_CC) $(WINDOWS_CFLAGS) $^ -o "$@" $(WINDOWS_LINK_LIBRARIES)
 $(COMPLETION_TMP)/windows-sched-deque.exe: $(WINDOWS_OBJECT_DIR)/sched/prim_windows.o $(WINDOWS_OBJECT_DIR)/sched/entry-deque.o $(WINDOWS_OBJECT_DIR)/sched/deque-probe.o
 	$(WINDOWS_CC) $(WINDOWS_CFLAGS) $^ -o "$@" $(WINDOWS_LINK_LIBRARIES)
@@ -918,7 +933,8 @@ completion-windows-cross: completion-windows-route-build \
     $(COMPLETION_TMP)/windows-bridge-init-fail-stop-probe.exe \
     $(WINDOWS_OBJECT_DIR)/wf_floor_windows.o \
     $(COMPLETION_TMP)/windows-sched-smoke.exe $(COMPLETION_TMP)/windows-sched-cpu-levels.exe \
-    $(COMPLETION_TMP)/windows-sched-deque.exe $(COMPLETION_TMP)/windows-sched-deque-no-stats.exe
+    $(COMPLETION_TMP)/windows-sched-deque.exe $(COMPLETION_TMP)/windows-sched-deque-no-stats.exe \
+    $(COMPLETION_TMP)/windows-sched-demand.exe $(COMPLETION_TMP)/windows-sched-startup.exe
 	@echo "Windows strict native construction: PASS (execution is a separate check)"
 
 # Runs what the cross build produced, under wine, when a wine is installed.
@@ -978,5 +994,5 @@ completion-windows-wine:
 	completion-tsan \
 	completion-sanitize \
 	completion-core-read-sanitize completion-default-route-test ordinary-values-test \
-	completion-default-route-sanitize completion-default-route-tsan sched-smoke \
-	sched-deque-test sched-deque-tsan sched-policy-test sched-split-policy-cases floor-test sched-wake-measure completion-windows-cross completion-windows-route-build windows-runtime-sources completion-windows-wine
+	completion-default-route-sanitize completion-default-route-tsan sched-smoke sched-request-test \
+	sched-deque-test sched-deque-tsan sched-policy-test floor-test sched-wake-measure completion-windows-cross completion-windows-route-build windows-runtime-sources completion-windows-wine

@@ -227,6 +227,7 @@ mod tests {
             if scheduled {
                 pruned.overlaps.push(IrOverlap {
                     members: vec![value(24)],
+                    indexed: Vec::new(),
                 });
             }
             let before = pruned.clone();

@@ -661,7 +661,6 @@ impl CompiledProgram {
         let mut command = Command::new(&self.executable);
         command
             .current_dir(&self.directory)
-            .env_remove("WF_SPLIT_WORK")
             .env_remove("WF_SCHED_REPORT");
         match workers {
             Some(count) => command.env("WF_WORKERS", count),

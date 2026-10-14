@@ -9,9 +9,11 @@ use std::borrow::Cow;
 
 use super::*;
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(super) struct DispatchLayoutPlan {
     families: HashMap<IrNominalId, Vec<DispatchFamily>>,
+    /// Split computation carries canonical addresses but dispatches by its own table.
+    split_world: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -26,9 +28,28 @@ impl DispatchLayoutPlan {
     }
 
     pub(super) fn word(&self, nominal: IrNominalId, owner: &str) -> Option<usize> {
+        if self.split_world {
+            return None;
+        }
         self.families(nominal)
             .iter()
             .position(|family| family.owner == owner)
+    }
+
+    pub(super) fn canonical_roots(&self) -> BTreeSet<String> {
+        if !self.split_world {
+            return BTreeSet::new();
+        }
+        self.families
+            .values()
+            .flatten()
+            .flat_map(|family| {
+                family
+                    .handlers
+                    .iter()
+                    .map(|handler| handler.replacen("wf__par_seq_", "wf_", 1))
+            })
+            .collect()
     }
 
     fn apply(&self, program: &mut IrProgram) -> Result<(), BackendFailure> {
@@ -43,6 +64,7 @@ impl DispatchLayoutPlan {
 pub(crate) struct PreparedDispatch<'program> {
     pub(crate) program: Cow<'program, IrProgram>,
     pub(super) plan: DispatchLayoutPlan,
+    pub(super) fragments: bool,
 }
 
 /// Select all families before laying out any construction site. An enum either
@@ -58,9 +80,53 @@ pub(crate) fn prepare_dispatch_layout(
     let empty = || PreparedDispatch {
         program: Cow::Borrowed(program),
         plan: DispatchLayoutPlan::default(),
+        fragments,
     };
     if fragments {
         return Ok(empty());
+    }
+    if let Some(canonical) = program.canonical_sequential.as_deref() {
+        if program
+            .functions()
+            .iter()
+            .all(|function| function.overlaps().is_empty() && function.synthesis().is_none())
+        {
+            return prepare_dispatch_layout(canonical, target, fragments);
+        }
+        let prepared = prepare_dispatch_layout(canonical, target, fragments)?;
+        let mut selected = program.clone();
+        // Both lowerings enumerate the same checked nominal identities before
+        // optional extraction. Verify the correspondence before sharing bytes.
+        if selected.nominals.len() != prepared.program.nominals.len()
+            || selected
+                .nominals
+                .iter()
+                .zip(&prepared.program.nominals)
+                .any(|(a, b)| {
+                    a.id() != b.id() || a.link_name() != b.link_name() || a.kind() != b.kind()
+                })
+        {
+            return Err(BackendFailure::InvalidIr);
+        }
+        let mut plan = prepared.plan;
+        plan.apply(&mut selected)?;
+        for family in plan.families.values_mut().flatten() {
+            for handler in &mut family.handlers {
+                let suffix = handler
+                    .strip_prefix("wf_")
+                    .ok_or(BackendFailure::InvalidIr)?;
+                *handler = format!("wf__par_seq_{suffix}");
+            }
+        }
+        plan.split_world = true;
+        // Compute frames are compiler-authored opaque transport; their final
+        // qualification uses these shared layouts and may decline an offer.
+        validate_program(target, &selected).map_err(BackendFailure::TargetLayout)?;
+        return Ok(PreparedDispatch {
+            program: Cow::Owned(selected),
+            plan,
+            fragments,
+        });
     }
     let mut plan = census(program, target, &DispatchLayoutPlan::default())?;
     let runtime = runtime_nominals(program)?;
@@ -120,6 +186,7 @@ pub(crate) fn prepare_dispatch_layout(
             return Ok(PreparedDispatch {
                 program: Cow::Owned(selected),
                 plan,
+                fragments,
             });
         }
         // Each retry removes at least one enum; no layout can retain an

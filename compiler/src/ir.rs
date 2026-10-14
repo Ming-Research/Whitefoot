@@ -847,7 +847,7 @@ pub enum IrPlaceStep {
     EntriesElement { offset: IrValueId },
 }
 
-/// A total, nonnegative estimate evaluated only for a parallel split budget.
+/// A total, nonnegative estimate evaluated only for a range driver's price.
 /// Its leaves are existing scalar captures or descriptor lengths, never
 /// element reads or user calls. Arithmetic saturates rather than overflowing.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -866,6 +866,24 @@ pub enum IrWorkEstimate {
     Difference(Box<Self>, Box<Self>),
     /// The divisor is a positive compiler constant.
     Quotient(Box<Self>, u64),
+}
+
+/// One reachable range site's split decision, stated over the entry values of
+/// the function that selects its computation once
+/// (compiler/parallel-lowering/two-worlds).
+///
+/// `span` bounds every remaining range the site's driver can see from above
+/// and `price` bounds its positive iteration price from above, so the site
+/// can never hand out work when `span` is below
+/// `max(2, floor(149999 / max(price, 1)) + 1)`. `cells`, present only for an
+/// indexed site whose family counts are entry values, is the sum the driver
+/// charges three times for a far contribution; a far half no larger than
+/// that charge divided by the price can never pay for its storage either.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct IrEntryPredicate {
+    pub(crate) span: IrWorkEstimate,
+    pub(crate) price: IrWorkEstimate,
+    pub(crate) cells: Option<IrWorkEstimate>,
 }
 
 /// [SHARE-3] A wake test: a condition over one object target's state that
@@ -925,6 +943,9 @@ pub enum IrWakeCode {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum IrOperation {
+    /// Target-private scheduling advice, read only at eligible slice boundaries.
+    /// This observes the current lane's atomic request word and defines Bool.
+    DemandRequested,
     Constant(IrConstant),
     Call {
         function: u32,
@@ -1208,20 +1229,14 @@ pub enum IrOperation {
         private_type: IrType,
         target_domain: IrTargetDomainObligation,
     },
-    /// Split a private slab using its dense value stride, irrespective of the
-    /// source element type recorded on the descriptor.
-    IndexedRange {
-        slice: IrValueId,
-        start: IrValueId,
-        end: IrValueId,
-        private_type: IrType,
-    },
     /// A singleton block-pointer directory borrowing the source allocation.
-    /// Split sites replace it with one separately allocated block per leaf.
+    /// A granted far offer receives a singleton directory naming its own
+    /// private block instead.
     IndexedBlocks {
         address: IrValueId,
     },
-    /// Borrow the first block of a leaf's directory (also the sequential root).
+    /// Borrow the block a singleton directory names: the source root or a
+    /// granted far contribution's private block.
     IndexedBlock {
         blocks: IrValueId,
     },
@@ -1611,14 +1626,16 @@ pub enum IrOperation {
     ///
     /// The whole loop is one instruction here because it has exactly two
     /// renderings and the choice between them is the world, not the source. The
-    /// overlapped world asks the runtime what a split of this span may afford
-    /// and calls `splitter`; the sequential world calls `chunk`, which *is* the
-    /// loop, so that world runs the code the loop always had. A reduction uses
-    /// the first argument and result for its accumulator. An independent map
-    /// uses `Unit` in both positions as a synchronization token; its observable
-    /// result is the disjoint stores completed before the call returns. The
-    /// site additionally owns any indexed private ranges through the join and
-    /// combines their cells in leaf order independently of the scalar result.
+    /// overlapped world enters `splitter`, the segmented range driver, with a
+    /// positive runtime-extent price; the sequential world calls `chunk`,
+    /// which *is* the loop, so that world runs the code the loop always had.
+    /// A reduction uses the first argument and result for its accumulator. An
+    /// independent map uses `Unit` in both positions as a synchronization
+    /// token; its observable result is the disjoint stores completed before
+    /// the call returns. The site passes indexed roots as their current
+    /// destinations and allocates nothing; `indexed` records the families the
+    /// driver's far offer privatizes when a lane is granted (see
+    /// [`IrOverlap`]).
     ///
     /// `splitter` and `chunk` are ordinary synthesized [`IrFunction`]s: the
     /// splitter's two recursive calls are one ordinary overlap group, so the
@@ -1636,8 +1653,8 @@ pub enum IrOperation {
         /// The values the body reads from the enclosing scope, in the order the
         /// two synthesized functions declare them.
         captures: Vec<IrValueId>,
-        /// The static cost estimate of one iteration, which the runtime
-        /// allowance multiplies by the span. A cost over the emitted IR, never
+        /// The static fallback cost of one iteration, multiplied by the
+        /// remaining span for scheduling. A cost over the emitted IR, never
         /// a name, a signature, or a source shape.
         weight: u64,
         /// An available runtime extent estimate; absence keeps `weight`.
@@ -1920,9 +1937,19 @@ pub enum RecursionBudget {
 /// monomorphized function on the same arguments. Optional refusal/frontier
 /// controls may choose a same-ABI sequential clone that declines descendant
 /// offers; the original operations, arguments and join boundary remain.
+///
+/// `indexed` is empty except in a range driver whose loop carries indexed
+/// families. Their `capture`, `private` and `count` positions index the
+/// handed-out member's arguments after its seed and endpoints. The member's
+/// arguments name the driver's current destinations, which a refused or
+/// inline member writes after the retained member, in source order. Only a
+/// granted lane replaces them with one neutral private contribution per
+/// storage group, acquired after the lane and before publication, combined
+/// into those destinations after the join and freed before the lane returns.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct IrOverlap {
     pub(crate) members: Vec<IrValueId>,
+    pub(crate) indexed: Vec<IrIndexedReduction>,
 }
 
 impl IrOverlap {
@@ -2160,6 +2187,14 @@ impl IrFunction {
 
 #[derive(Clone, Debug)]
 pub struct IrProgram {
+    /// Ordinary lowering from the same checked input and roots, retained before
+    /// optional parallel extraction. Its own canonical graph is always absent.
+    pub(crate) canonical_sequential: Option<Box<Self>>,
+    /// Functions that select the ordinary computation once at entry, by
+    /// name: every reachable split of each stays below its grain whenever all
+    /// of its predicates hold. An empty list means every reachable split is
+    /// below its grain for every entry. Empty without parallel extraction.
+    pub(crate) entry_versions: std::collections::BTreeMap<String, Vec<IrEntryPredicate>>,
     /// OP-9 ceilings before target representation choices, indexed by nominal.
     pub(crate) nominal_ceilings: Vec<IrLayoutCeiling>,
     pub(crate) nominals: Vec<IrNominal>,
