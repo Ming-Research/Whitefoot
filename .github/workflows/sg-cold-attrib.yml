@@ -1,0 +1,680 @@
+# Temporary: attributes the cold build of Snowghost's `--par` layout_oracle
+# (research/investigations/cold-build-speed/DESIGN.md, "Measurement plan").
+# Removed before any merge; this branch never merges as is.
+#
+# Job `frontend` splits the 192 s front end: per-module check times, the
+# entry check pinned to one processor and on all four, the whole build pinned
+# to one processor, a frame-pointer profile of the build rolled up by phase
+# and by thread, the checker's per-analysis work counters, and the `gate`
+# against the plain `release` Cargo profile of the same commit.
+#
+# Job `backend` runs the build once with a logging wrapper in place of
+# /usr/bin/clang that keeps every fragment and every link object, then
+# replays the 5,400 fragment compiles serially, with 2 and 4 jobs and in
+# batches, and the ThinLTO link with its default and explicit job counts and
+# a time trace. It also builds two external references on the same runner.
+#
+# The existing attribution jobs measure release wf-d837678c6905 (the one
+# Snowghost pins) or its commit built here from source. Job `comparison`
+# builds that pinned commit and the same commit with this PR's own compiler
+# diff applied, using the same gate profile, then runs two interleaved rounds with
+# an identical-binary base twin. Snowghost-wf is 466e9843 throughout.
+name: sg-cold-attrib
+
+on:
+  push:
+    branches: [claude/sg-cold-build]
+    paths: [.github/workflows/sg-cold-attrib.yml]
+  workflow_dispatch:
+
+concurrency:
+  group: sg-cold-attrib-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+  WHITEFOOT_CHECK_TIMEOUT: 2700
+  WF_COMMIT: d837678c6905
+  WF_RELEASE: wf-d837678c6905
+  SG_COMMIT: 466e9843f7a0fe4926022be8718d4ab677cafed1
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  frontend:
+    name: Front-end attribution
+    runs-on: ubuntu-24.04
+    timeout-minutes: 200
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+
+      - name: Install the host toolchain and perf
+        run: |
+          set -euo pipefail
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          rustup default stable
+          sudo apt-get install -y -q "linux-tools-$(uname -r)" linux-tools-common \
+            || sudo apt-get install -y -q linux-tools-azure linux-tools-common
+          sudo sysctl -w kernel.perf_event_paranoid=-1 kernel.kptr_restrict=0
+
+      - name: Fetch the release and build its commit three ways (not timed)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/attrib"; mkdir -p "$out" "$RUNNER_TEMP/bin"
+          gh release download "$WF_RELEASE" -R "$GITHUB_REPOSITORY" \
+            -p whitefootc-linux-x86_64.tar.gz -D "$RUNNER_TEMP/wfc"
+          tar -xzf "$RUNNER_TEMP/wfc/whitefootc-linux-x86_64.tar.gz" -C "$RUNNER_TEMP/wfc"
+          find "$RUNNER_TEMP/wfc" -type f -name whitefootc -print0 > "$out/release-binaries.nul"
+          mapfile -d '' -t binaries < "$out/release-binaries.nul"
+          if (( ${#binaries[@]} != 1 )); then
+            echo "expected one release compiler, found ${#binaries[@]}" >&2; exit 1
+          fi
+          cp "${binaries[0]}" "$RUNNER_TEMP/bin/rel"
+          git worktree add "$RUNNER_TEMP/wfsrc" "$WF_COMMIT"
+          cd "$RUNNER_TEMP/wfsrc"
+          # The release's own profile, built here with this runner's rustc.
+          perl "$GITHUB_WORKSPACE/.github/run-check.pl" attribution-build-gate \
+            cargo build --manifest-path compiler/Cargo.toml --locked --profile gate \
+            --bin whitefootc --target-dir "$RUNNER_TEMP/t-gate"
+          cp "$RUNNER_TEMP/t-gate/gate/whitefootc" "$RUNNER_TEMP/bin/gate"
+          # Plain release: no debug assertions, no overflow checks.
+          perl "$GITHUB_WORKSPACE/.github/run-check.pl" attribution-build-release \
+            cargo build --manifest-path compiler/Cargo.toml --locked --release \
+            --bin whitefootc --target-dir "$RUNNER_TEMP/t-release"
+          cp "$RUNNER_TEMP/t-release/release/whitefootc" "$RUNNER_TEMP/bin/release"
+          # Profiling build: the gate profile with frame pointers and line tables.
+          RUSTFLAGS="-C force-frame-pointers=yes" \
+          CARGO_PROFILE_GATE_DEBUG=line-tables-only CARGO_PROFILE_GATE_STRIP=none \
+            perl "$GITHUB_WORKSPACE/.github/run-check.pl" attribution-build-profile \
+              cargo build --manifest-path compiler/Cargo.toml --locked --profile gate \
+            --bin whitefootc --target-dir "$RUNNER_TEMP/t-prof"
+          cp "$RUNNER_TEMP/t-prof/gate/whitefootc" "$RUNNER_TEMP/bin/prof"
+          ls -l "$RUNNER_TEMP/bin"
+
+      - name: Check out Snowghost-wf and record the machine
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/attrib"
+          git clone --quiet https://github.com/Ming-Research/Snowghost-wf.git "$RUNNER_TEMP/sg"
+          git -C "$RUNNER_TEMP/sg" checkout --quiet "$SG_COMMIT"
+          git -C "$RUNNER_TEMP/sg" submodule update --quiet --init --recursive
+          /usr/bin/clang --version > "$out/clang-version.txt"
+          { echo "snowghost: $(git -C "$RUNNER_TEMP/sg" rev-parse HEAD)"; nproc; lscpu;
+            grep MemTotal /proc/meminfo; sed -n '1p' "$out/clang-version.txt"; rustc --version;
+            perf --version; } > "$out/machine.txt"
+          cat "$out/machine.txt"
+
+      # E1: the front end decomposed with flags the release supports.
+      - name: E1 per-module checks, entry checks and a pinned build
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/attrib"; cd "$RUNNER_TEMP/sg/renderer"
+          wfc="$RUNNER_TEMP/bin/rel"
+          failed=0
+          t() { label=$1; shift
+            if perl "$GITHUB_WORKSPACE/.github/run-check.pl" "$label" \
+              /usr/bin/time -f "TIME $label wall=%e user=%U sys=%S maxrss_kb=%M" "$@" \
+              > "$out/$label.log" 2>&1; then rc=0; else rc=$?; fi
+            echo "$label exit $rc" >> "$out/status.txt"
+            awk '/^TIME/' "$out/$label.log"
+            if (( rc != 0 )); then failed=1; cat "$out/$label.log"; fi
+          }
+          # The layout_oracle closure, from modules.wfg at this commit.
+          for m in pkg::base::static_atoms pkg::base::atom pkg::dom pkg::text::line_break \
+                   pkg::text::normalization pkg::text::properties pkg::font pkg::css::syntax \
+                   pkg::css::rules pkg::css::color pkg::css::selectors pkg::css::values \
+                   pkg::style pkg::layout::text pkg::layout pkg::html::tokenizer \
+                   pkg::html::tree_builder pkg::oracle::support pkg::oracle::fonts \
+                   pkg::oracle::page pkg::oracle::layout \
+                   std::io std::time std::text std::fs std::process; do
+            t "module-${m//::/_}" "$wfc" --graph modules.wfg --check-module "$m"
+          done
+          rm -rf "$RUNNER_TEMP/c1"
+          t entry-check-1cpu taskset -c 0 "$wfc" --cache "$RUNNER_TEMP/c1" --check \
+            --graph modules.wfg --entry layout_oracle
+          rm -rf "$RUNNER_TEMP/c4"
+          t entry-check-4cpu "$wfc" --cache "$RUNNER_TEMP/c4" --check \
+            --graph modules.wfg --entry layout_oracle
+          rm -rf "$RUNNER_TEMP/cb"
+          t build-1cpu taskset -c 0 "$wfc" --cache "$RUNNER_TEMP/cb" --fragments function \
+            --report --par --graph modules.wfg --entry layout_oracle -o "$RUNNER_TEMP/lo1"
+          if ! grep '^{"build"' "$out/build-1cpu.log"; then failed=1; fi
+          rm -rf "$RUNNER_TEMP/cn"
+          t build-nopar "$wfc" --cache "$RUNNER_TEMP/cn" --fragments function \
+            --report --graph modules.wfg --entry layout_oracle -o "$RUNNER_TEMP/lon"
+          if ! grep '^{"build"' "$out/build-nopar.log"; then failed=1; fi
+          exit "$failed"
+
+      # E2: where the front end's samples fall, by phase and by thread.
+      - name: E2 frame-pointer profile of the cold build
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/attrib"; cd "$RUNNER_TEMP/sg/renderer"
+          rm -rf "$RUNNER_TEMP/cp"
+          if perl "$GITHUB_WORKSPACE/.github/run-check.pl" profile \
+            perf record -F 199 -g --call-graph fp -o "$RUNNER_TEMP/perf.data" -- \
+            "$RUNNER_TEMP/bin/prof" --cache "$RUNNER_TEMP/cp" --fragments function --report \
+            --par --graph modules.wfg --entry layout_oracle -o "$RUNNER_TEMP/lop" \
+            > "$out/profile.log" 2>&1; then rc=0; else rc=$?; fi
+          echo "profile exit $rc" >> "$out/status.txt"
+          if (( rc != 0 )); then cat "$out/profile.log"; exit "$rc"; fi
+          perf report -i "$RUNNER_TEMP/perf.data" --no-children --sort comm,dso --stdio \
+            > "$out/perf-comm.txt" 2> "$out/perf-comm-errors.txt"
+          perf report -i "$RUNNER_TEMP/perf.data" --no-children --comm whitefootc-driv,whitefootc \
+            --sort sym --stdio > "$out/perf-self.txt" 2> "$out/perf-self-errors.txt"
+          sed -n '1,200p' "$out/perf-self.txt" > "$out/perf-self-top.txt"
+          perf script -i "$RUNNER_TEMP/perf.data" -F comm,tid,ip,sym \
+            > "$out/perf-script.txt" 2> "$out/perf-script-errors.txt"
+          python3 -I "$GITHUB_WORKSPACE/.github/sg-cold-phases.py" \
+            < "$out/perf-script.txt" > "$out/perf-phases.txt"
+          cat "$out/perf-phases.txt"
+
+      # E3: which Whitefoot functions carry the proof work (counters, not time).
+      - name: E3 checker work counters
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/attrib"; cd "$RUNNER_TEMP/sg/renderer"
+          rm -rf "$RUNNER_TEMP/cw" "$RUNNER_TEMP/work.tsv"
+          if WHITEFOOT_CHECK_WORK="$RUNNER_TEMP/work.tsv" \
+            perl "$GITHUB_WORKSPACE/.github/run-check.pl" attribution-work "$RUNNER_TEMP/bin/rel" \
+            --cache "$RUNNER_TEMP/cw" --fragments function --par --graph modules.wfg \
+            --entry layout_oracle -o "$RUNNER_TEMP/low" > "$out/work.log" 2>&1; then rc=0; else rc=$?; fi
+          echo "work exit $rc" >> "$out/status.txt"
+          if (( rc != 0 )); then cat "$out/work.log"; exit "$rc"; fi
+          # function-kind rows: name, metric, value; summed over every run of a name.
+          awk -F'\t' '$4=="function" {s[$3"\t"$6]+=$7; if ($6=="joins") n[$3]++}
+            END {for (k in s) print k"\t"s[k]; for (f in n) print f"\truns\t"n[f]}' \
+            "$RUNNER_TEMP/work.tsv" > "$out/work-by-function.tsv"
+          : > "$out/work-top.txt"
+          for metric in runs joins intern_calls affine_attempts; do
+            echo "== top 40 by $metric" >> "$out/work-top.txt"
+            awk -F'\t' -v m="$metric" '$2==m' "$out/work-by-function.tsv" > "$out/work-$metric.tsv"
+            sort -t$'\t' -k3,3nr "$out/work-$metric.tsv" > "$out/work-$metric-sorted.tsv"
+            sed -n '1,40p' "$out/work-$metric-sorted.tsv" >> "$out/work-top.txt"
+          done
+          cat "$out/work-top.txt"
+          awk -F'\t' '$4=="join" && $6=="pairs_evaluated" {p[$3]+=$7} END {for (f in p) print f"\t"p[f]}' \
+            "$RUNNER_TEMP/work.tsv" > "$out/work-pairs.tsv"
+          sort -t$'\t' -k2,2nr "$out/work-pairs.tsv" > "$out/work-pairs-sorted.tsv"
+          sed -n '1,40p' "$out/work-pairs-sorted.tsv" > "$out/work-top-pairs.tsv"
+
+      # E6: what the release's debug assertions and overflow checks cost.
+      - name: E6 gate against release profile, interleaved
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/attrib"; cd "$RUNNER_TEMP/sg/renderer"
+          failed=0
+          for round in 1 2 3; do
+            for profile in gate release; do
+              label="profile-$profile-$round"
+              if perl "$GITHUB_WORKSPACE/.github/run-check.pl" "$label" \
+                /usr/bin/time -f "TIME $label wall=%e user=%U sys=%S maxrss_kb=%M" \
+                "$RUNNER_TEMP/bin/$profile" --par --graph modules.wfg --entry layout_oracle \
+                --emit-llvm -o "$RUNNER_TEMP/$profile.ll" > "$out/$label.log" 2>&1; then rc=0; else rc=$?; fi
+              echo "$label exit $rc" >> "$out/status.txt"
+              awk '/^TIME/' "$out/$label.log"
+              if (( rc != 0 )); then failed=1; cat "$out/$label.log"; fi
+            done
+          done
+          if cmp "$RUNNER_TEMP/gate.ll" "$RUNNER_TEMP/release.ll"; then
+            echo "LLVM identical" >> "$out/status.txt"
+          else
+            echo "LLVM differs or is missing" >> "$out/status.txt"; failed=1
+          fi
+          exit "$failed"
+
+      - name: Summarize
+        if: always()
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          out="$RUNNER_TEMP/attrib"
+          { echo "## sg-cold-attrib frontend"; echo '```'
+            for file in status.txt perf-phases.txt; do
+              if [[ -f "$out/$file" ]]; then cat "$out/$file"; else echo "MISSING $file"; fi
+            done
+            logs=("$out"/*.log)
+            if (( ${#logs[@]} )); then awk '/^TIME|^\{"build"/' "${logs[@]}"; else echo 'MISSING measurement logs'; fi
+            echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sg-cold-attrib-frontend
+          path: ${{ runner.temp }}/attrib
+          if-no-files-found: warn
+
+  backend:
+    name: Fragment compile and link replay, external references
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the host toolchain
+        run: |
+          set -euo pipefail
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          echo "LLVM_MAJOR=$version" >> "$GITHUB_ENV"
+          rustup default stable
+
+      - name: Fetch the release and Snowghost-wf
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/attrib"; mkdir -p "$out"
+          gh release download "$WF_RELEASE" -R "$GITHUB_REPOSITORY" \
+            -p whitefootc-linux-x86_64.tar.gz -D "$RUNNER_TEMP/wfc"
+          tar -xzf "$RUNNER_TEMP/wfc/whitefootc-linux-x86_64.tar.gz" -C "$RUNNER_TEMP/wfc"
+          find "$RUNNER_TEMP/wfc" -type f -name whitefootc -print0 > "$out/release-binaries.nul"
+          mapfile -d '' -t binaries < "$out/release-binaries.nul"
+          if (( ${#binaries[@]} != 1 )); then
+            echo "expected one release compiler, found ${#binaries[@]}" >&2; exit 1
+          fi
+          cp "${binaries[0]}" "$RUNNER_TEMP/wfc-bin"
+          git clone --quiet https://github.com/Ming-Research/Snowghost-wf.git "$RUNNER_TEMP/sg"
+          git -C "$RUNNER_TEMP/sg" checkout --quiet "$SG_COMMIT"
+          git -C "$RUNNER_TEMP/sg" submodule update --quiet --init --recursive
+          { nproc; lscpu; } > "$out/machine.txt"
+          cat "$out/machine.txt"
+
+      # The wrapper passes every call through to the real clang. It keeps each
+      # fragment's .ll and, at the link, every object, and logs each call's
+      # start and end. Its own cost (a bash start per call) makes this build's
+      # times unusable; only the replays below are timed.
+      - name: Capture the build's clang calls
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/attrib"; cap="$RUNNER_TEMP/cap"; mkdir -p "$cap/frag" "$cap/link"
+          sudo tee /usr/local/bin/clang-capture > /dev/null <<EOF
+          #!/bin/bash
+          set -euo pipefail
+          real=/usr/bin/clang-$LLVM_MAJOR
+          cap=$cap
+          start=\$(date +%s%N)
+          kind=other
+          for a in "\$@"; do case "\$a" in fragment-*.ll) kind=fragment; cp "\$a" "\$cap/frag/";; esac; done
+          case " \$* " in *" -flto=thin "*" -o "*.partial*)
+            case " \$* " in *" -c "*) ;; *) kind=link
+              printf '%s\0' "\$@" > "\$cap/link.argv"
+              for a in "\$@"; do case "\$a" in *.o) cp "\$a" "\$cap/link/";; esac; done;; esac;; esac
+          if "\$real" "\$@"; then rc=0; else rc=\$?; fi
+          echo "\$start \$(date +%s%N) \$rc \$kind" >> "\$cap/calls.log"
+          exit \$rc
+          EOF
+          sudo chmod +x /usr/local/bin/clang-capture
+          sudo ln -sf /usr/local/bin/clang-capture /usr/bin/clang
+          cd "$RUNNER_TEMP/sg/renderer"
+          if perl "$GITHUB_WORKSPACE/.github/run-check.pl" attribution-capture \
+            "$RUNNER_TEMP/wfc-bin" --cache "$RUNNER_TEMP/capcache" --fragments function --report \
+            --par --graph modules.wfg --entry layout_oracle -o "$RUNNER_TEMP/locap" > "$out/capture.log" 2>&1; then rc=0; else rc=$?; fi
+          echo "capture exit $rc" >> "$out/status.txt"
+          sudo ln -sf "/usr/bin/clang-$LLVM_MAJOR" /usr/bin/clang
+          if (( rc != 0 )); then cat "$out/capture.log"; exit "$rc"; fi
+          shopt -s nullglob
+          fragments=("$cap/frag"/*.ll); objects=("$cap/link"/*.o)
+          echo "captured fragments=${#fragments[@]} link_objects=${#objects[@]}" >> "$out/status.txt"
+          if (( ${#fragments[@]} == 0 || ${#objects[@]} == 0 )); then
+            echo 'capture produced no fragments or link objects' >&2; exit 1
+          fi
+          # Per-call durations in ms, by kind, wrapper included.
+          awk '{d=($2-$1)/1e6; print $4"\t"d}' "$cap/calls.log" | sort -k1,1 -k2,2n > "$out/calls-ms.tsv"
+          awk -F'\t' '$1=="fragment"{a[n++]=$2; s+=$2} END {print "fragments", n, "sum_ms", s,
+            "p50", a[int(n*0.5)], "p90", a[int(n*0.9)], "p99", a[int(n*0.99)], "max", a[n-1]}' \
+            "$out/calls-ms.tsv" > "$out/calls-summary.txt"
+          cat "$out/calls-summary.txt"
+          du -sh "$cap/frag"
+          find "$cap/frag" -type f -printf '%s\t%f\n' > "$out/fragment-sizes.tsv"
+          sort -t$'\t' -k1,1nr "$out/fragment-sizes.tsv" > "$out/fragment-sizes-sorted.tsv"
+          sed -n '1,5p' "$out/fragment-sizes-sorted.tsv"
+
+      # The fragment compiles as whitefootc issues them (whitefootc.rs
+      # link_cached_objects), replayed without the wrapper.
+      - name: Replay the fragment compiles
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/attrib"
+          # One stage owns the replay batch, without a wrapper per clang job.
+          cat > "$out/replay.sh" <<'EOF'
+          #!/bin/bash
+          set -euo pipefail
+          shopt -s nullglob
+          out="$RUNNER_TEMP/attrib"; cc="/usr/bin/clang-$LLVM_MAJOR"
+          args=(-pthread -flto=thin -Wno-override-module -O2 -falign-functions=64 -c)
+          failed=0
+          for mode in serial p2 p4 batch-p4 serial-again; do
+            dir="$RUNNER_TEMP/replay-$mode"; rm -rf "$dir"; cp -r "$RUNNER_TEMP/cap/frag" "$dir"; cd "$dir"
+            fragments=(fragment-*.ll)
+            if (( ${#fragments[@]} == 0 )); then echo "no captured fragments for $mode" >&2; exit 1; fi
+            printf '%s\0' "${fragments[@]}" > "$RUNNER_TEMP/replay-inputs.nul"
+            start=$(date +%s%N)
+            rc=0
+            case $mode in
+              serial*) for f in "${fragments[@]}"; do
+                if "$cc" "${args[@]}" -x ir "$f" -o "${f%.ll}.o"; then :; else
+                  rc=$?; echo "REPLAY $mode $f exit $rc" >> "$out/status.txt"
+                fi
+              done ;;
+              p2) if xargs -0 -P2 -I{} "$cc" "${args[@]}" -x ir {} -o {}.o < "$RUNNER_TEMP/replay-inputs.nul"; then :; else rc=$?; fi ;;
+              p4) if xargs -0 -P4 -I{} "$cc" "${args[@]}" -x ir {} -o {}.o < "$RUNNER_TEMP/replay-inputs.nul"; then :; else rc=$?; fi ;;
+              # Many inputs per clang process, each written to its own object.
+              batch-p4) if xargs -0 -P4 -n 100 "$cc" "${args[@]}" -x ir < "$RUNNER_TEMP/replay-inputs.nul"; then :; else rc=$?; fi ;;
+            esac
+            elapsed=$(( ($(date +%s%N) - start) / 1000000 ))
+            objects=(*.o)
+            echo "REPLAY $mode exit $rc" >> "$out/status.txt"
+            echo "REPLAY $mode wall_ms=$elapsed objects=${#objects[@]} exit=$rc" >> "$out/replay.txt"
+            if (( rc != 0 || ${#objects[@]} != ${#fragments[@]} )); then failed=1; fi
+          done
+          # Batched objects must equal single-call objects byte for byte.
+          cd "$RUNNER_TEMP/replay-serial"; differ=0
+          objects=(fragment-*.o)
+          for o in "${objects[@]}"; do
+            if cmp -s "$o" "$RUNNER_TEMP/replay-batch-p4/$o"; then rc=0; else rc=$?; fi
+            case "$rc" in
+              0) ;;
+              1) differ=$((differ+1)) ;;
+              *) echo "batch comparison $o error exit $rc" >> "$out/status.txt"; failed=1 ;;
+            esac
+          done
+          echo "batched objects differing from single-call objects: $differ" >> "$out/replay.txt"
+          # The fixed cost of one clang process: a one-function module, 200 times.
+          printf 'define i32 @f(i32 %%x) {\n  ret i32 %%x\n}\n' > "$RUNNER_TEMP/tiny.ll"
+          start=$(date +%s%N)
+          rc=0
+          for (( i=0; i<200; i++ )); do
+            if "$cc" "${args[@]}" -x ir "$RUNNER_TEMP/tiny.ll" -o "$RUNNER_TEMP/tiny.o"; then :; else
+              rc=$?; echo "REPLAY tiny iteration=$i exit $rc" >> "$out/status.txt"
+            fi
+          done
+          echo "REPLAY tiny-x200 wall_ms=$(( ($(date +%s%N) - start) / 1000000 )) exit=$rc" >> "$out/replay.txt"
+          if (( rc != 0 )); then failed=1; fi
+          exit "$failed"
+          EOF
+          if perl "$GITHUB_WORKSPACE/.github/run-check.pl" attribution-fragment-replay \
+            bash "$out/replay.sh" > "$out/replay.log" 2>&1; then rc=0; else rc=$?; fi
+          echo "fragment-replay exit $rc" >> "$out/status.txt"
+          cat "$out/replay.log"
+          if [[ -f "$out/replay.txt" ]]; then cat "$out/replay.txt"; fi
+          exit "$rc"
+
+      - name: Replay the ThinLTO link
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/attrib"; cc="/usr/bin/clang-$LLVM_MAJOR"
+          mapfile -d '' -t argv < "$RUNNER_TEMP/cap/link.argv"
+          if (( ${#argv[@]} == 0 )); then echo 'missing captured link arguments' >&2; exit 1; fi
+          base=()
+          for a in "${argv[@]}"; do
+            case "$a" in
+              *.o) base+=("$RUNNER_TEMP/cap/link/$(basename "$a")") ;;
+              -Wl,--thinlto-cache-dir=*) ;;
+              *.partial) base+=("OUTPUT") ;;
+              *) base+=("$a") ;;
+            esac
+          done
+          failed=0
+          for variant in default jobs-all jobs-1 default-again; do
+            extra=(); case $variant in
+              jobs-all) extra=(-Wl,--thinlto-jobs=all) ;;
+              jobs-1) extra=(-Wl,--thinlto-jobs=1) ;;
+            esac
+            cmd=(); for a in "${base[@]}"; do
+              if [[ "$a" == OUTPUT ]]; then a="$RUNNER_TEMP/link-$variant"; fi
+              cmd+=("$a")
+            done
+            rm -rf "$RUNNER_TEMP/ltocache"
+            # Stream diagnostics while retaining the complete log, even if a
+            # link exhausts the runner before reaching the final report. The
+            # command itself is not in a pipe: its exit code is read directly.
+            {
+              printf '%q' "$cc"
+              printf ' %q' "${cmd[@]}" -Wl,--thinlto-cache-dir="$RUNNER_TEMP/ltocache" "${extra[@]}"
+              printf '\n'
+            } > "$out/link-$variant.command.txt"
+            printf 'link-%s: %s, %s arguments; command: %s\n' \
+              "$variant" "$cc" "${#cmd[@]}" "$out/link-$variant.command.txt"
+            exec {link_log_fd}> >(tee "$out/link-$variant.log")
+            link_logger=$!
+            if perl "$GITHUB_WORKSPACE/.github/run-check.pl" "attribution-link-$variant" \
+              /usr/bin/time -f "LINK $variant wall=%e user=%U sys=%S maxrss_kb=%M" \
+              "$cc" "${cmd[@]}" -Wl,--thinlto-cache-dir="$RUNNER_TEMP/ltocache" "${extra[@]}" \
+              >&"$link_log_fd" 2>&1; then rc=0; else rc=$?; fi
+            exec {link_log_fd}>&-
+            if wait "$link_logger"; then logger_rc=0; else logger_rc=$?; fi
+            echo "link-$variant exit $rc" >> "$out/status.txt"
+            echo "link-$variant logger exit $logger_rc" >> "$out/status.txt"
+            cat "$out/link-$variant.log" >> "$out/link.txt"
+            if (( rc != 0 || logger_rc != 0 )); then failed=1; fi
+          done
+          for v in jobs-all jobs-1 default-again trace; do
+            if cmp -s "$RUNNER_TEMP/link-default" "$RUNNER_TEMP/link-$v"; then rc=0; else rc=$?; fi
+            case "$rc" in
+              0) echo "link-$v identical" >> "$out/link.txt" ;;
+              1) echo "link-$v DIFFERS" >> "$out/link.txt" ;;
+              *) echo "link-$v comparison error exit $rc" >> "$out/link.txt"; failed=1 ;;
+            esac
+          done
+          cat "$out/link.txt"
+          exit "$failed"
+
+      - name: Judge the original fragment and link replay criteria
+        run: |
+          set -euo pipefail
+          python3 -I "$GITHUB_WORKSPACE/.github/sg-cold-compare.py" \
+            --replay-dir "$RUNNER_TEMP/attrib"
+
+      # External references on the same runner: one large C translation unit
+      # (no parallelism available) and a Rust crate graph at four jobs.
+      - name: External references
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/attrib"; cd "$RUNNER_TEMP"
+          curl -fsSLO https://www.sqlite.org/2025/sqlite-amalgamation-3500400.zip
+          unzip -q sqlite-amalgamation-3500400.zip
+          wc -l sqlite-amalgamation-3500400/sqlite3.c >> "$out/ref.txt"
+          if perl "$GITHUB_WORKSPACE/.github/run-check.pl" attribution-sqlite \
+            /usr/bin/time -f "REF sqlite-O2 wall=%e user=%U sys=%S" "/usr/bin/clang-$LLVM_MAJOR" -O2 -c \
+            sqlite-amalgamation-3500400/sqlite3.c -o sqlite3.o > "$out/ref-sqlite.log" 2>&1; then rc=0; else rc=$?; fi
+          echo "reference-sqlite exit $rc" >> "$out/status.txt"
+          cat "$out/ref-sqlite.log" >> "$out/ref.txt"
+          cat "$out/ref-sqlite.log"
+          if (( rc != 0 )); then exit "$rc"; fi
+          git clone --quiet --depth 1 --branch 14.1.1 https://github.com/BurntSushi/ripgrep.git rg
+          (cd rg && cargo fetch --locked -q)
+          if (cd rg && perl "$GITHUB_WORKSPACE/.github/run-check.pl" attribution-ripgrep \
+            /usr/bin/time -f "REF ripgrep-release-j4 wall=%e user=%U sys=%S" \
+            cargo build --release --locked -j 4 -q) > "$out/ref-ripgrep.log" 2>&1; then rc=0; else rc=$?; fi
+          echo "reference-ripgrep exit $rc" >> "$out/status.txt"
+          cat "$out/ref-ripgrep.log" >> "$out/ref.txt"
+          cat "$out/ref-ripgrep.log"
+          if (( rc != 0 )); then exit "$rc"; fi
+          # Lines of every Rust source the build compiled, from the dep-info files.
+          cat rg/target/release/deps/*.d | tr ' ' '\n' | grep '\.rs$' | sort -u | xargs wc -l \
+            | awk '$NF != "total" {sum += $1} END {print "REF ripgrep-rust-lines " sum}' >> "$out/ref.txt"
+          cat "$out/ref.txt"
+
+      - name: Summarize
+        if: always()
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/attrib"
+          { echo "## sg-cold-attrib backend"; echo '```'
+            for file in status.txt calls-summary.txt replay.txt link.txt ref.txt; do
+              if [[ -f "$out/$file" ]]; then cat "$out/$file"; else echo "MISSING $file"; fi
+            done
+            echo '```'
+            if [[ -f "$out/replay-summary.md" ]]; then cat "$out/replay-summary.md"; else echo 'MISSING replay-summary.md'; fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sg-cold-attrib-backend
+          path: ${{ runner.temp }}/attrib
+          if-no-files-found: warn
+
+  comparison:
+    name: Cold build base, twin and head comparison
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Qualify the comparison reporter with synthetic controls
+        run: python3 -I .github/sg-cold-compare.py --self-test
+
+      - name: Construct both compilers on Snowghost's pinned release commit
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/comparison-results"
+          mkdir -p "$out" "$RUNNER_TEMP/comparison-bin"
+          git fetch --no-tags origin '+refs/heads/main:refs/remotes/origin/main'
+          base=$(git rev-parse "$WF_COMMIT")
+          source_base=$(git merge-base origin/main HEAD)
+          source_head=$(git rev-parse HEAD)
+          git diff "$(git merge-base origin/main HEAD)" HEAD -- compiler > "$out/compiler.patch"
+          diff_sha=$(sha256sum "$out/compiler.patch")
+          diff_sha=${diff_sha%% *}
+          head="$base + compiler diff sha256:$diff_sha"
+          printf 'base=%s\nhead_tree=%s\nsource_merge_base=%s\nsource_head=%s\ncompiler_diff_sha256=%s\n' \
+            "$base" "$head" "$source_base" "$source_head" "$diff_sha" > "$out/compiler-inputs.txt"
+          printf 'COMPARISON_BASE=%s\nCOMPARISON_HEAD=%s\n' "$base" "$head" >> "$GITHUB_ENV"
+          git worktree add --detach "$RUNNER_TEMP/comparison-base" "$base"
+          git worktree add --detach "$RUNNER_TEMP/comparison-head" "$base"
+          if ! git -C "$RUNNER_TEMP/comparison-head" apply --3way "$out/compiler.patch" \
+            > "$out/compiler-apply.log" 2>&1; then
+            echo "The PR compiler diff does not apply cleanly to Snowghost's pinned compiler; no comparison will run." >&2
+            {
+              git -C "$RUNNER_TEMP/comparison-head" diff --name-only --diff-filter=U
+              sed -n -E 's/^error: patch failed: (compiler\/.*):[0-9]+$/\1/p; s/^error: (compiler\/[^:]*):.*$/\1/p' \
+                "$out/compiler-apply.log"
+            } | sort -u > "$out/compiler-rejected-files.txt"
+            echo 'Unmerged or rejected compiler files:' >&2
+            cat "$out/compiler-rejected-files.txt" >&2
+            cat "$out/compiler-apply.log" >&2
+            exit 1
+          fi
+          git -C "$RUNNER_TEMP/comparison-base" submodule update --init --recursive
+          git -C "$RUNNER_TEMP/comparison-head" submodule update --init --recursive
+          git diff --stat "$source_base" "$source_head" -- compiler >> "$out/compiler-inputs.txt"
+          cp "$RUNNER_TEMP/comparison-base/compiler/src/bin/whitefootc.rs" "$out/base-driver.rs"
+          cp "$RUNNER_TEMP/comparison-head/compiler/src/bin/whitefootc.rs" "$out/head-driver.rs"
+          cmp .github/llvm-major "$RUNNER_TEMP/comparison-base/.github/llvm-major"
+
+      - name: Install and identify the common four-processor toolchain
+        run: |
+          set -euo pipefail
+          test "$(nproc)" -eq 4
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          rustup default stable
+          {
+            printf 'runner=ubuntu-24.04\navailable_processors=%s\n' "$(nproc)"
+            lscpu
+            grep MemTotal /proc/meminfo
+            /usr/bin/clang --version
+            /usr/bin/ld.lld --version
+            rustc -vV
+            cargo --version
+          } > "$RUNNER_TEMP/comparison-results/machine.txt"
+          cat "$RUNNER_TEMP/comparison-results/machine.txt"
+
+      - name: Build both compilers with the same gate profile (not measured)
+        run: |
+          set -euo pipefail
+          for variant in base head; do
+            source="$RUNNER_TEMP/comparison-$variant"
+            cargo fetch --manifest-path "$source/compiler/Cargo.toml" --locked
+            perl "$GITHUB_WORKSPACE/.github/run-check.pl" "comparison-compiler-$variant" \
+              cargo build --manifest-path "$source/compiler/Cargo.toml" --locked --offline \
+              --profile gate --bin whitefootc --target-dir "$RUNNER_TEMP/comparison-target-$variant"
+            cp "$RUNNER_TEMP/comparison-target-$variant/gate/whitefootc" \
+              "$RUNNER_TEMP/comparison-bin/$variant"
+          done
+          # The twin is the exact base binary, with its own cold-build samples.
+          cp "$RUNNER_TEMP/comparison-bin/base" "$RUNNER_TEMP/comparison-bin/twin"
+          sha256sum "$RUNNER_TEMP/comparison-bin/"{base,twin,head} \
+            >> "$RUNNER_TEMP/comparison-results/compiler-inputs.txt"
+
+      - name: Fetch the identical Snowghost input
+        run: |
+          set -euo pipefail
+          git clone --quiet https://github.com/Ming-Research/Snowghost-wf.git "$RUNNER_TEMP/comparison-sg"
+          git -C "$RUNNER_TEMP/comparison-sg" checkout --quiet "$SG_COMMIT"
+          git -C "$RUNNER_TEMP/comparison-sg" submodule update --quiet --init --recursive
+          git -C "$RUNNER_TEMP/comparison-sg" rev-parse HEAD \
+            >> "$RUNNER_TEMP/comparison-results/compiler-inputs.txt"
+
+      - name: Compare two interleaved rounds with empty build caches
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/comparison-results"
+          normalization=()
+          for variant in base head; do
+            if grep -Fq 'compiling.elapsed().saturating_sub(report.split)' "$out/$variant-driver.rs"; then
+              normalization+=("--$variant-subtracts-split")
+            fi
+          done
+          perl "$GITHUB_WORKSPACE/.github/run-check.pl" cold-comparison \
+            python3 -I "$GITHUB_WORKSPACE/.github/sg-cold-compare.py" \
+            --renderer "$RUNNER_TEMP/comparison-sg/renderer" \
+            --base "$RUNNER_TEMP/comparison-bin/base" \
+            --twin "$RUNNER_TEMP/comparison-bin/twin" \
+            --head "$RUNNER_TEMP/comparison-bin/head" \
+            --base-revision "$COMPARISON_BASE" --head-revision "$COMPARISON_HEAD" \
+            --output-dir "$out" "${normalization[@]}"
+
+      - name: Summarize the comparison
+        if: always()
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/comparison-results"
+          if [ -f "$out/summary.md" ]; then
+            cat "$out/summary.md" >> "$GITHUB_STEP_SUMMARY"
+          else
+            printf '## Cold build comparison\n\nIncomplete: no comparison summary was produced; inspect the failed preparation or measurement step.\n' \
+              >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sg-cold-attrib-comparison
+          path: |
+            ${{ runner.temp }}/comparison-results/compiler-inputs.txt
+            ${{ runner.temp }}/comparison-results/compiler.patch
+            ${{ runner.temp }}/comparison-results/compiler-apply.log
+            ${{ runner.temp }}/comparison-results/compiler-rejected-files.txt
+            ${{ runner.temp }}/comparison-results/machine.txt
+            ${{ runner.temp }}/comparison-results/manifest.json
+            ${{ runner.temp }}/comparison-results/samples.json
+            ${{ runner.temp }}/comparison-results/samples.tsv
+            ${{ runner.temp }}/comparison-results/summary.json
+            ${{ runner.temp }}/comparison-results/summary.md
+            ${{ runner.temp }}/comparison-results/samples/*/*.log
+            ${{ runner.temp }}/comparison-results/samples/*/time.json
+          if-no-files-found: warn
