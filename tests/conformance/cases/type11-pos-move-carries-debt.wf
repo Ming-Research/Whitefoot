@@ -1,4 +1,4 @@
-struct Index {
+nocopy struct Index {
   value: u64;
   invariant bounded(index): index.value < 16_u64;
 }

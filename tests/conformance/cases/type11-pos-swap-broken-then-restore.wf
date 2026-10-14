@@ -1,4 +1,4 @@
-struct Index {
+nocopy struct Index {
   value: u64;
   invariant bounded(index): index.value < 16_u64;
 }
@@ -11,8 +11,8 @@ fn swap_then_restore() -> result: u64 pure {
   let first = Index(value: 1_u64);
   let second = Index(value: 2_u64);
   let indexes = slots_new::<Index, 2>();
-  place_back(window: &indexes, value: first);
-  place_back(window: &indexes, value: second);
+  place_back(window: &indexes, value: move first);
+  place_back(window: &indexes, value: move second);
   let r0 = &indexes[0_u64];
   set r0^.value = 31_u64;
   swap(first: &indexes[0_u64], second: &indexes[1_u64]);

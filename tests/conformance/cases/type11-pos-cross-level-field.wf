@@ -1,0 +1,22 @@
+struct Member {
+  index: u64;
+}
+
+struct Holder {
+  member: Member;
+  size: u64;
+  invariant fits(holder): holder.member.index < holder.size;
+  invariant capped(holder): holder.size <= 16_u64;
+}
+
+fn pick(holder: &Holder, table: &Array<u64, 16>) -> result: u64 reads(holder), reads(table) {
+  let at = holder^.member.index;
+  let got = table^[at];
+  return got;
+}
+
+fn shrink(holder: &Holder) -> result: unit reads(holder.member.index), writes(holder.size) {
+  let wanted = holder^.member.index + 1_u64;
+  set holder^.size = wanted;
+  return unit;
+}

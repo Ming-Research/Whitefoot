@@ -7,8 +7,8 @@ struct Holder {
   index: Index;
 }
 
-fn peek_holder(held: &Option<Holder>, table: &Array<u64, 16>) -> result: u64 reads(held), reads(table) {
-  match &held^ {
+fn peek_holder(maybe: &Option<Holder>, table: &Array<u64, 16>) -> result: u64 reads(maybe), reads(table) {
+  match &maybe^ {
     Some(value: h) => {
       let at = h^.index.value;
       let got = table^[at];
