@@ -1,0 +1,72 @@
+# Temporary quick check for design-log-no-approval; removed before the PR is
+# marked ready.
+name: tmp-design-ready-probe
+
+on:
+  push:
+    branches: [design-log-no-approval]
+
+jobs:
+  probe:
+    name: design-ready accepts a log entry with no approval line
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      TREE: compiler
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check out the submodules the Makefile reads
+        run: git submodule update --init design/skill
+
+      - name: Name main as a local ref
+        run: git fetch --no-tags --prune origin +refs/heads/main:refs/remotes/origin/main
+
+      - name: Probe the readiness check
+        env:
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          set -eu
+          base=$(sh design/skill/review-base.sh "$GITHUB_EVENT_NAME" "$GITHUB_REF" "$PUSH_BEFORE")
+          export DESIGN_REVIEW_BASE=$base
+          git log --oneline -1 "$base"
+          git -C design/skill log --oneline -1
+
+          node=$TREE/probe-readiness
+          printf 'Decision: The probe node exists because the readiness check must be shown to accept a log entry with no approval line.\n' > "design/$node.md"
+
+          add_entry() { # add_entry NODES
+            awk -v nodes="$1" '
+              !done && /^## / {
+                print "## 2026-10-19 Probe entry"; print ""
+                print "Nodes: " nodes; print ""
+                print "Summary: A probe entry without an approval line."; print ""
+                done = 1
+              }
+              { print }' design/log.md > "$RUNNER_TEMP/log.new"
+            cp "$RUNNER_TEMP/log.new" design/log.md
+          }
+          expect_fail() { # expect_fail PATTERN
+            if make design-ready > "$RUNNER_TEMP/probe.out" 2>&1; then
+              cat "$RUNNER_TEMP/probe.out"
+              echo "FAIL: design-ready accepted it"
+              exit 1
+            fi
+            cat "$RUNNER_TEMP/probe.out"
+            grep -q -- "$1" "$RUNNER_TEMP/probe.out" || { echo "FAIL: refused for another reason"; exit 1; }
+          }
+
+          echo "--- 1: a changed node and no new entry must be refused"
+          expect_fail 'newest log entry is not new'
+
+          echo "--- 2: a new entry naming the node, with no Owner-approved line, must pass"
+          add_entry "$node"
+          sed -n '/^## 2026-10-19 Probe entry/,/^Summary:/p' design/log.md
+          make design-ready
+
+          echo "--- 3: a new entry that does not name the changed node must be refused"
+          git checkout -- design/log.md
+          add_entry "$TREE"
+          expect_fail "changed node $node is not named in the newest log entry"
