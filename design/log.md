@@ -1,9 +1,9 @@
 # Design tree change log
 
-Newest first. One entry per approved change of the tree: a dated title,
-`Nodes:` naming every node changed, `Owner-approved:` and `Summary:`;
-the owner's agent instructions own the form. Older entries also record refused amendments,
-a mechanism since retired.
+Newest first. One entry per change of the tree: a dated title, `Nodes:`
+naming every node changed and `Summary:`; the owner's agent instructions own
+the form. Older entries also record refused amendments, a mechanism since
+retired, and carry an `Owner-approved:` line, a field since retired.
 
 ## 2026-10-13 The final gate job retries GitHub API errors and skips cancelled jobs
 
