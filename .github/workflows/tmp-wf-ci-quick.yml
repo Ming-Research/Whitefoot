@@ -102,6 +102,25 @@ jobs:
           echo "asked by this push's head $GITHUB_SHA: '$none'"
           test -z "$none"
 
+      # The job's own script, taken from gate.yml, on a tree with a tmp- file
+      # and on one without; the three changed workflows must also parse.
+      - name: Watch the temporary-workflow job fail and pass
+        run: |
+          ruby -ryaml -e 'ARGV.each { |f| YAML.load_file(f); puts "parses: #{f}" }' \
+            .github/workflows/gate.yml .github/workflows/io-hosts.yml .github/workflows/compute-regression.yml
+          script=$(ruby -ryaml -e 'puts YAML.load_file(".github/workflows/gate.yml")["jobs"]["no-tmp-workflow"]["steps"].last["run"]')
+          printf 'script under test:\n%s\n' "$script"
+          work=$(mktemp -d)
+          mkdir -p "$work/with/.github/workflows" "$work/without/.github/workflows"
+          touch "$work/with/.github/workflows/gate.yml" "$work/with/.github/workflows/tmp-x.yml"
+          touch "$work/without/.github/workflows/gate.yml"
+          if (cd "$work/with" && bash -e -c "$script"); then
+            echo "NOT CAUGHT: a tmp- file did not fail the job"
+            exit 1
+          fi
+          echo "caught: the job fails with a tmp- file"
+          (cd "$work/without" && bash -e -c "$script")
+
       - name: Repository invariants, guidance and prose checks
         run: |
           perl .github/run-check.pl quick/static make --no-print-directory repository-invariants guidance spec-prose-integrity
