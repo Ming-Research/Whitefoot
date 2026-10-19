@@ -31,10 +31,10 @@
 # assumes every move of the branch is a push that starts a run, which a push
 # made with a workflow's own token would not. The run has a concurrency group
 # apart from the pushes' (gate.yml, io-hosts.yml), so it never cancels a push
-# run. A reopening always runs: a push while the pull request was closed was
-# skipped as having no open pull request, so no other run may check its head.
-# A pull request from a fork is not asked: no push to the fork starts a run
-# here, so its opening always runs.
+# run. A ready pull request's reopening always runs: a push while it was closed
+# was skipped as having no open pull request, so no other run may check its
+# head. A ready pull request from a fork is not asked: no push to the fork
+# starts a run here, so its opening always runs.
 #
 # It reads GITHUB_EVENT_NAME, GITHUB_EVENT_PATH, GITHUB_REF, GITHUB_REF_NAME,
 # GITHUB_REPOSITORY, GITHUB_REPOSITORY_OWNER, GITHUB_RUN_ID and

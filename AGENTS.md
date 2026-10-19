@@ -211,7 +211,8 @@ build time apart from test and program execution.
   groups on Linux and macOS both; its job `Gate on both platforms` passes
   only when every group is green on both for the revision, and its job
   `No temporary workflow` fails while a `tmp-` workflow file exists in the
-  checked head. The success of `Gate on both platforms` on the exact
+  checked head, and while it fails the correctness groups and `Gate on both
+  platforms` do not run. The success of `Gate on both platforms` on the exact
   revision to be merged, a head current with `main`, is that revision's
   `make check`. It needs `python3`, `jq`, LLD on Linux (`ld.lld`) and the
   `time` utility.
@@ -220,11 +221,12 @@ build time apart from test and program execution.
   (below). Once the review has passed, delete the `tmp-` file, merge `main`
   into the branch, push, and start the full check on that head by hand:
   `gh workflow run gate.yml --ref <branch>` and `gh workflow run io-hosts.yml
-  --ref <branch>`, and `compute-regression.yml` too when the change touches
-  its inputs. Green on that head is the last run: marking the pull request
-  ready then starts no second gate or I/O run for it. A red is fixed with a
-  temporary workflow again, and the full check is started again once the
-  review has seen the fix; a push after a green needs its own run.
+  --ref <branch>`. Green on that head is the last run: marking the pull
+  request ready then starts no second gate or I/O run for it. A red is fixed
+  with a temporary workflow again, and the full check is started again once
+  the review has seen the fix; a push after a green needs its own run.
+  `compute-regression.yml` runs when the pull request is marked ready and
+  skips no earlier hand-started run.
 - `make design-ready` runs in `design-readiness.yml`.
 - CI only: `io-hosts.yml`, on the same revisions as the gate (Linux io_uring
   and Windows IOCP),

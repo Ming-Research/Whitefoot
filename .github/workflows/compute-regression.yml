@@ -5,7 +5,8 @@
 # being written, shows the job as skipped, as design-readiness.yml does; it
 # runs where its answer decides something: a pull request that is ready for
 # review, and a manual run. The author may start it by hand before marking the
-# pull request ready, to see the answer sooner.
+# pull request ready, to see the answer sooner; marking it ready runs it again,
+# since nothing here skips a head that an earlier manual run already measured.
 name: compute-regression
 on:
   pull_request:

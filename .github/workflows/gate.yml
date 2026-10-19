@@ -114,7 +114,9 @@ jobs:
 
   # A temporary workflow (`tmp-` file) is the author's quick check while
   # writing; it never merges, so the run that decides a merge fails while one
-  # exists in the head it checks.
+  # exists in the head it checks. The matrix and the final job wait for this
+  # cheap check: a head that has one spends no matrix run, and shows no green
+  # `Gate on both platforms`, which AGENTS.md reads as the merge precondition.
   no-tmp-workflow:
     name: No temporary workflow
     needs: groups
@@ -136,7 +138,7 @@ jobs:
           echo "No tmp- workflow in .github/workflows"
 
   gate:
-    needs: groups
+    needs: [groups, no-tmp-workflow]
     if: needs.groups.outputs.run == 'true'
     name: ${{ matrix.stage }} (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -343,8 +345,8 @@ jobs:
   # stand red beside that run's answer.
   platforms:
     name: Gate on both platforms
-    needs: [groups, gate]
-    if: ${{ !cancelled() && needs.groups.outputs.run == 'true' }}
+    needs: [groups, no-tmp-workflow, gate]
+    if: ${{ !cancelled() && needs.groups.outputs.run == 'true' && needs.no-tmp-workflow.result == 'success' }}
     runs-on: ubuntu-24.04
     # A listing makes one call for the runs and one per run of the revision
     # (usually one or two). With three calls, each failing four times before
