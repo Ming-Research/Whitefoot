@@ -329,12 +329,18 @@ fn hash_map_slot_hash<interface HashMapKey<K, E>, V>(slot: &HashMapSlot<K, V>, e
 }
 
 fn hash_map_relink<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &HashMap<K, V, ceiling>, buckets: u64, env: &E) -> result: unit reads(env), writes(map) {
-  doc "Rebuilds the chain heads at the given bucket count and links every stored pair into the chain of its home bucket. Only words move: no pair changes slot, so no owner is taken out or replaced.";
-  let fresh = box_slots_new::<u64>(capacity: buckets);
-  hash_map_pad(cells: &fresh, target: buckets);
-  swap(first: &map^.heads, second: &fresh);
+  doc "Rebuilds the chain heads at the given bucket count and links every stored pair into the chain of its home bucket. Only words move: no pair changes slot, so no owner is taken out or replaced. The head array is cleared in place when the bucket count is unchanged and replaced otherwise.";
+  if buckets == map^.heads.inner.len {
+    for (index in 0_u64..buckets) {
+      hash_map_link_set(links: &map^.heads, index: index, value: 0_u64);
+    }
+  } else {
+    let fresh = box_slots_new::<u64>(capacity: buckets);
+    hash_map_pad(cells: &fresh, target: buckets);
+    swap(first: &map^.heads, second: &fresh);
+    hash_map_release(cells: move fresh);
+  }
   set map^.shift = hash_map_shift(count: buckets);
-  hash_map_release(cells: move fresh);
   if buckets > 0_u64 {
     let count = map^.cells.inner.len;
     for @nodes (index in 0_u64..count) {
