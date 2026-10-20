@@ -5,6 +5,14 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
+## 2026-10-13 A Slab reserves capacity up to its type limit without disturbing handles
+
+Nodes: language/data-model/slab-storage
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve: the new decision and the two rewordings take effect; write the design-tree approval record, mark ready, run the gate on both platforms, merge through the coordinator's queue and release to Firn" (translated), on the card "approve the Slab storage design node's changes (Whitefoot#448, head commit 2c2890351119)?" (translated), whose background listed the new reservation decision, its three refused alternatives and the two rewordings.
+
+Summary: A Slab may reserve capacity explicitly up to its type limit through the ordinary window growth, so existing slots, indices and generations stay and old handles remain valid while a value's address may change; the free list's end marker becomes the type limit instead of the initial capacity, which growth would turn into a valid index. A request beyond the limit returns Err without mutation and a sufficient capacity returns Ok without shrinking, as HashMap reservation does. Fixed capacity after construction, rebuilding the slot records on growth and promising stable value addresses were refused. The first decision now says the Slab uses (not reserves) one backing and keeps slot indices, and the refused dense-array alternative is refused for changing another value's slot index.
+
 ## 2026-10-13 The final gate job retries GitHub API errors and skips cancelled jobs
 
 Nodes: compiler/verification
@@ -13,13 +21,6 @@ Owner-approved: On the shared status board on 2026-10-13, written in Chinese, th
 
 Summary: The final job "Gate on both platforms" failed one pull request four times while every group was green, twice on HTTP 502 or 504 answers and twice on listings that lacked jobs which had passed, and on this branch a duplicate run cancelled one second after the run it duplicated had finished a job made that cancellation the latest entry. The job now retries each GitHub query up to five times with doubling waits, lists runs and jobs again up to four times while an expected job has no entry, leaves cancelled jobs out, and fails at once on any job whose latest completed run did not succeed and on a job still absent after the last listing. Refused: trusting one listing and re-running the whole run on an API error, and listing again after a failure.
 
-## 2026-10-13 A Slab reserves capacity up to its type limit without disturbing handles
-
-Nodes: language/data-model/slab-storage
-
-Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve: the new decision and the two rewordings take effect; write the design-tree approval record, mark ready, run the gate on both platforms, merge through the coordinator's queue and release to Firn" (translated), on the card "approve the Slab storage design node's changes (Whitefoot#448, head commit 2c2890351119)?" (translated), whose background listed the new reservation decision, its three refused alternatives and the two rewordings.
-
-Summary: A Slab may reserve capacity explicitly up to its type limit through the ordinary window growth, so existing slots, indices and generations stay and old handles remain valid while a value's address may change; the free list's end marker becomes the type limit instead of the initial capacity, which growth would turn into a valid index. A request beyond the limit returns Err without mutation and a sufficient capacity returns Ok without shrinking, as HashMap reservation does. Fixed capacity after construction, rebuilding the slot records on growth and promising stable value addresses were refused. The first decision now says the Slab uses (not reserves) one backing and keeps slot indices, and the refused dense-array alternative is refused for changing another value's slot index.
 ## 2026-10-13 One release classification decides whether release does work, and key sets and concurrent hash maps release runtime storage
 
 Nodes: compiler/cleanup-traversal, language/ownership/linearity, language/waiting/shared-objects/keyed-tables
