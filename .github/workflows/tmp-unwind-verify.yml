@@ -24,6 +24,7 @@ jobs:
           sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
           rustup default stable
           cargo --version
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
       - name: Remove the link flag and expect the new check to fail
         run: |
           file=compiler/src/bin/whitefootc.rs
@@ -54,10 +55,13 @@ jobs:
           sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
           rustup default stable
           cargo --version
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
       - name: Build the compiler and compile the witness
         run: |
+          witness=$(find . -name witness.wf -path '*unwind-resume*' -not -path './.git/*')
+          test -f "$witness"
           cargo build --manifest-path compiler/Cargo.toml --profile gate --locked --offline --bin whitefootc
-          compiler/target/gate/whitefootc --check research/experiments/unwind-resume/witness.wf
-          compiler/target/gate/whitefootc -o "$RUNNER_TEMP/witness" research/experiments/unwind-resume/witness.wf
+          compiler/target/gate/whitefootc --check "$witness"
+          compiler/target/gate/whitefootc -o "$RUNNER_TEMP/witness" "$witness"
           test -x "$RUNNER_TEMP/witness"
           echo "witness compiles and links with this branch's compiler"
