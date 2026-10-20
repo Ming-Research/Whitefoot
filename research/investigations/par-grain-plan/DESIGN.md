@@ -66,7 +66,7 @@ The full timeline, with sources, is in the
 | Oct 6 | 64-byte function alignment | placement invariance on tested hosts; records up to 14% slower on one EPYC | adopted |
 | Oct 8 | Exemption only for recursion that offers its own calls | Snowghost edit W4 3,128 to 274 us on the 14900K | adopted |
 | Oct 9 | Conditional calls in groups | no edit speedup alone | adopted |
-| Oct 9 | Small loops skip query and splitter | micro W4 1,075 to 108 ms; unqualified | paused |
+| Oct 9 | Small loops skip query and splitter | micro W4 1,075 to 108 ms; unqualified | merged into stage 3 |
 
 ## The problem as a whole
 
@@ -137,10 +137,10 @@ scheduling (Acar, Charguéraud, Guatto, Rainey and Sieczkowski 2018) is a
 timed variant with a proven overhead bound. Today's loop query already
 returns zero when the worker's deque holds work, but only after a call into
 the runtime and only for loops. Static prices remain only to
-skip the machinery where the work is certainly too small to matter. The
-recursion depth budget becomes unnecessary for most recursion, because a
-busy worker stops offering at every depth, and unbalanced trees offer where
-the work actually is. Its costs: a larger change to lowering and the
+skip the machinery where the work is certainly too small to matter. Recursion
+keeps its depth budget and sequential cut (ruled below), but a busy worker
+stops offering at every depth, and unbalanced trees offer where the work
+actually is. Its costs: a larger change to lowering and the
 runtime; a check on every potential fork, which must cost about a
 nanosecond to win; and two earlier refusals to answer. The August
 demand-bookkeeping trial doubled the layout time, but it used a shared
@@ -163,8 +163,10 @@ moved the limit rather than removing the class of problem.
 
 `--par` is meant to become how nearly every Whitefoot program is built, so
 the criteria are about programs in general, not the projects measured so
-far. Two are hard: a direction that fails either is refused, whatever else
-it does well. Each criterion says what is claimed, how it is tested, what
+far. H1 and H3 are hard: a direction that fails either is refused, whatever else
+it does well. H2 measures parallel use and is not a pass or fail line. The
+text below is the first version; the rulings that changed it are noted in
+each criterion and in the three-study comparison. Each criterion says what is claimed, how it is tested, what
 counts as covering it, and what result refutes a direction.
 
 ### H1. Never slower than one thread
@@ -189,6 +191,11 @@ decision-point executions on the measured path and `a` = 1 ns: each decision
 point may cost the wider of 1 ns or the proportional allowance. A statically
 bounded small site keeps no decision point and adds nothing. The par-demand
 investigation applies this from its rerun after 2026-10-10 onward.
+
+The record reads the ruling as this total, not as a sum over executions of
+the wider of the two for each execution. The per-execution sum is never
+smaller than this total, so the total is the stricter reading, and the one
+used for verdicts.
 
 **Argument as well as measurement.** No suite covers every program, so a
 direction must come with a bound on what it adds: the cost at a fork or
@@ -224,9 +231,11 @@ measurements test the bound's constants and its assumptions.
   as a stand-in for weak targets; and a busy host, with another process
   using the cores.
 
-**Refutation.** Any cell beyond the allowance by more than its
-identical-image twin's spread, after one rerun, refutes the direction as
-built. A failing class that the direction's bound does not cover refutes
+**Refutation.** A cell whose 95% bootstrap interval for the paired ratio
+(each round's time over the same round's sequential time) lies wholly above
+the allowance refutes the direction as built. A cell is void when its
+identical-image twin's interval against the sequential build does not
+contain 1 (owner ruling, 2026-10-10, gran-par-demand-noise). A failing class that the direction's bound does not cover refutes
 the bound.
 
 ### H2. Use the cores
@@ -245,18 +254,34 @@ point where adding workers makes the program slower.
 the work is large enough to pay; the references are written for the formal
 kernels, the recursion kernels and the grid's shapes.
 
-**Refutation.** A class where the references reach at least 1.25 times the
-direction's speedup, unless the shortfall is shown to come from what
-permission admits rather than from how work is handed out (permission gaps
-are a separate line).
+**Reporting.** A class where the references reach at least 1.25 times the
+direction's speedup is reported as a shortfall, unless it is shown to come
+from what permission admits rather than from how work is handed out
+(permission gaps are a separate line). H2 does not by itself refute a
+direction (owner ruling, 2026-10-10, gran-par-cpu-criterion).
+
+### H3. Extra CPU must buy time
+
+**Claim.** On the same work, the total CPU time of the `--par` build (user
+plus system, all threads) is at most `CPU_seq * 1.1 + 0.1 * saved_wall * W`,
+where `CPU_seq` is the sequential build's CPU time, `saved_wall` is
+`T_seq - T_W`, and `W` is the worker count. Spinning idle helpers count as
+CPU, so an idle worker must stop rather than spin.
+
+**Coverage.** The grid and programs of H1, with CPU time recorded for every
+cell.
+
+**Refutation.** A cell above the bound refutes the direction, except that a
+program still getting faster with more workers has H3 reported, not
+enforced, and its CPU margin written in the report (owner rulings, 2026-10-10,
+gran-par-cpu-criterion, and 2026-10-11, gran-par-h3-memory).
 
 ### Secondary criteria
 
 1. **No tuning per program or host**: one set of constants, chosen before
    the held-out measurements.
-2. **CPU spent**: every wall time is reported with CPU time; a program
-   with no parallel work burns at most a fixed small amount of extra CPU,
-   since a busy machine pays for spinning.
+2. **CPU spent**: every wall time is reported with CPU time; the hard form
+   of this is H3.
 3. **Weak targets**: the hot path needs no timers, signals or atomics wider
    than a word, and the policy works on one core.
 4. **Composes**: nested parallel work, waiting contexts and I/O drivers in
@@ -278,7 +303,11 @@ measured.
 This section is this author's position as first written. The owner asked,
 before a direction is chosen, for two further independent studies of the
 same question against the same criteria; [the comparison](#three-independent-studies-compared)
-revises the demand signal and the order of the stages below.
+revises the demand signal and the order of the stages below. The rulings made
+after it (recursion, the clock question, H3, the noise rule) take precedence
+over this section. The stage list the owner ruled is in item coord-wfbl-03-27:
+suite, first experiment, loops and calls, recursion, threads and topology; the
+single decision pass moved to the backlog.
 
 Recommended: **B, with A's single decision pass as its first stage.**
 B addresses the two problem groups that static pricing has failed on
@@ -295,18 +324,19 @@ either direction, so it comes first.
    refactor with no behavior change.
 3. **A demand-driven prototype** for loops and calls only: halve and offer
    only while the worker's own deque is empty; keep the static floor.
-   Compare against today and against the paused small-loop fix on the
+   Compare against today and against the small-loop fix on the
    suite, with criteria fixed before the run. This stage decides between A
    and B with evidence instead of argument.
-4. **Recursion**: if stage 3 succeeds, replace the depth budget for
-   ordinary recursion by the same rule, and re-measure apollo11 and
-   scatter.
-5. **Execution costs** (SMT spinning, allocator, setup), measured on the
-   same suite once the hand-out policy is settled.
+4. **Recursion**: if stage 3 succeeds, give ordinary recursion the same
+   demand rule and keep the sequential cut, with the ruled changes (a stolen
+   task gets a fresh budget; the cut is refreshed on demand). Re-measure
+   apollo11 and scatter.
+5. **Threads and topology** (SMT siblings parked, no CPU burned by idle
+   helpers), measured on the same suite once the hand-out policy is settled.
+   Allocator and construction costs are separate lines (see below).
 
-The paused small-loop work [coord-wfbl-03-54] waits for stage 3: if B is
-chosen, the static floor of stage 3 is that fix; if A, the paused branch is
-its first piece.
+The small-loop work [coord-wfbl-03-54] was cancelled on 2026-10-09 and merged
+into stage 3 [gran-par-s3]; its static floor is part of that stage.
 
 What would overturn the recommendation: a worker-local emptiness check
 that costs as much as today's query (stage 3 measures it first, on the
@@ -385,30 +415,33 @@ file's header says what it was given). This section compares the three:
 
 On the status board on 2026-10-09 the owner chose B, demand-driven hand-out
 with static prices only as advice ("choose B", translated). The stages
-become: the suite and baseline (started), a first experiment, loops and
-calls, recursion, threads and topology, and the single decision pass, in
-that order of dependence. The three sub-questions it left open were settled
-later; see the rulings below.
+became: the suite and baseline, a first experiment, loops and calls,
+recursion, threads and topology, in that order of dependence (the single
+decision pass moved to the backlog). The first experiment finished on
+2026-10-13 with 31 of 38 cells passing, 7 not applicable and none failing.
+The three sub-questions it left open were settled later; see the rulings
+below.
 
 ### The owner's rulings on the three sub-questions
 
 The owner settled the three questions the two studies left open. Each ruling
-is recorded on its card or on the item that carries the stage.
+is on its card, named below.
 
-1. **How "worth handing out" is learned**: no runtime clock. Loops estimate
-   with the run-time range length; calls use the static granularity. This
-   keeps neither Fable's clock-learning nor Astra's compiler work credits as
-   the rule. The estimate is reopened only when a real program shows it
-   wrong. Card: gran-par-s3-clock (option A), stage gran-par-s3.
-2. **Recursion**: keep a cut with a sequential clone below it, as Fable
-   proposed. Below the cut no hand-out is considered and the sequential
-   version runs. A stolen task gets a fresh depth budget, and a budget is
-   topped up on demand, a bounded number of times. Astra's removal of the
-   depth budget is not adopted. Recorded on item coord-wfbl-03-27.
-3. **The first experiment**: both. Fable's demand-gate prototype (does lazy
-   hand-out keep today's speedups) and Astra's no-hand-out experiment (is the
-   bookkeeping affordable at all) test different premises and are both small.
-   Recorded on item coord-wfbl-03-27.
+1. **How "worth handing out" is learned**: first ruled on 2026-10-09 as a
+   runtime clock, Fable's approach (card gran-par-worth, option A). On
+   2026-10-14 the owner changed it on card gran-par-s3-clock: no runtime clock;
+   loops estimate with the run-time range length, calls use the static
+   granularity. That replaces gran-par-worth. The estimate is reopened only
+   when a real program shows it wrong.
+2. **Recursion** (card gran-par-recursion, option A, 2026-10-09): keep the cut
+   and the sequential clone below it, as Fable proposed. A stolen task gets a
+   fresh depth budget. An idle worker refreshes the cut on demand, at most once
+   per lane per 50–100 µs, Fable's rate limit. Astra's removal of the depth
+   budget is not adopted.
+3. **The first experiment** (card gran-par-first-experiment, option A,
+   2026-10-09): both, in order. Astra's no-hand-out experiment first (is the
+   bookkeeping affordable at all); only if it passes, Fable's demand-gate
+   prototype (does lazy hand-out keep today's speedups).
 
 The stages that follow are in the item coord-wfbl-03-27: the suite and
 baseline, a first experiment, loops and calls, recursion, threads and
@@ -423,7 +456,8 @@ it cites; each row's source has the full measurement.
 
 - **Aug 21, owner deques** (`408dd34eb`): per-fork excess 48.8 to 4.80 ns;
   `bal_d8_w16` W8 4.32 to 0.49 s; Apple M4 `q4` W64 25.55 to 0.25 s
-  ([gap hunt](../proof-derived-parallelism/gap-hunt-findings.md)).
+  (the numbers are in the message of commit `408dd34eb`; the `q4` before-value
+  is also in [gap hunt](../proof-derived-parallelism/gap-hunt-findings.md)).
 - **Aug 21, demand bookkeeping**: shared seeking bitmask took the layout
   oracle from 0.49 to 0.93 s; rejected.
 - **Aug 22, two worlds** (`629fad88c`): fib(38) 0.235 to 0.079 s, equal to
