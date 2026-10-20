@@ -65,7 +65,9 @@
 # A push that changes this file, package-acceptance.yml or .github/toolchain runs it as a dry run: it builds, smoke-tests
 # and packages the pushed commit as a bundled package, runs that package's
 # acceptance and keeps the files as a workflow artifact, publishing nothing,
-# so a change to the release path runs before it reaches main.
+# so a change to the release path runs before it reaches main. Only a manual
+# dispatch publishes, a bundled release and a lightweight one alike: no push,
+# merge or schedule makes a release.
 name: compiler-release
 
 on:
@@ -581,7 +583,7 @@ jobs:
     needs: [resolve, assemble, acceptance]
     # !cancelled() permits the lightweight mode when acceptance is deliberately
     # skipped while honoring cancellation. Bundled mode requires qualification.
-    if: ${{ !cancelled() && needs.resolve.outputs.publish == 'true' && needs.assemble.result == 'success' && (needs.resolve.outputs.bundle != 'true' || needs.acceptance.outputs.qualified == 'true') }}
+    if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && needs.resolve.outputs.publish == 'true' && needs.assemble.result == 'success' && (needs.resolve.outputs.bundle != 'true' || needs.acceptance.outputs.qualified == 'true') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
